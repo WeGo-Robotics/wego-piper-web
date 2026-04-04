@@ -1,0 +1,91 @@
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
+from pydantic import BaseModel
+
+from app.services.camera_manager import camera_manager
+
+router = APIRouter(prefix="/api/cameras", tags=["cameras"])
+
+_executor = ThreadPoolExecutor(max_workers=4)
+
+
+@router.get("/scan")
+async def scan_cameras():
+    """카메라 스캔 + 병렬 probe (테스트 + 프리뷰 1장 → 즉시 해제)."""
+    camera_manager.scan()
+    loop = asyncio.get_event_loop()
+    tasks = []
+    for cam in camera_manager.cameras.values():
+        if not cam.connected and not cam.ready:
+            tasks.append(loop.run_in_executor(_executor, cam.probe))
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return [c.to_dict() for c in camera_manager.cameras.values()]
+
+
+class CameraIdRequest(BaseModel):
+    id: str
+
+
+@router.post("/connect")
+async def connect_camera(body: CameraIdRequest):
+    ok, msg = camera_manager.connect_camera(body.id)
+    if not ok:
+        raise HTTPException(400, msg)
+    cam = camera_manager.cameras.get(body.id)
+    return cam.to_dict() if cam else {"status": "connected"}
+
+
+@router.post("/disconnect")
+async def disconnect_camera(body: CameraIdRequest):
+    camera_manager.disconnect_camera(body.id)
+    return {"status": "disconnected"}
+
+
+class CameraConfigRequest(BaseModel):
+    id: str
+    config: dict
+
+
+@router.post("/config")
+async def update_config(body: CameraConfigRequest):
+    if not camera_manager.update_config(body.id, body.config):
+        raise HTTPException(400, "Unknown camera")
+    cam = camera_manager.cameras.get(body.id)
+    return cam.to_dict() if cam else {"status": "ok"}
+
+
+@router.post("/register")
+async def register_camera(body: CameraIdRequest):
+    if not camera_manager.register_camera(body.id):
+        raise HTTPException(400, "등록 실패: 연결되지 않은 카메라입니다")
+    cam = camera_manager.cameras.get(body.id)
+    return cam.to_dict() if cam else {"status": "registered"}
+
+
+@router.post("/unregister")
+async def unregister_camera(body: CameraIdRequest):
+    if not camera_manager.unregister_camera(body.id):
+        raise HTTPException(400, "Unknown camera")
+    return {"status": "unregistered"}
+
+
+@router.get("/ready")
+async def get_ready_cameras():
+    return camera_manager.get_ready_cameras()
+
+
+@router.get("/{cam_id:path}/preview")
+async def preview(cam_id: str):
+    data = camera_manager.get_preview(cam_id)
+    if data is None:
+        raise HTTPException(404, "Preview unavailable")
+    return Response(content=data, media_type="image/jpeg")
+
+
+@router.get("/current")
+async def get_current():
+    return camera_manager.get_current()

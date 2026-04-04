@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash([ -f \"$HOME/.nvm/nvm.sh\" ])",
+      "Read(//home/sw-han/.cache/huggingface/**)",
+      "Read(//home/sw-han/**)",
+      "Bash(find ~/lerobot_last -name \"*.py\" -exec grep -l \"dataset_to_policy_features\\\\|policy_features\" {} \\\\;)",
+      "Bash(python3.13 -c ':*)"
+    ]
+  }
+}
