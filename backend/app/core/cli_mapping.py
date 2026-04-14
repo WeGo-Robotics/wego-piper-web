@@ -145,6 +145,7 @@ TRAIN_ARGS_MAP: dict[str, str] = {
     "dataset_repo_id": "--dataset.repo_id",
     "policy_type": "--policy.type",
     "pretrained_path": "--policy.path",
+    "policy_repo_id": "--policy.repo_id",
     "output_dir": "--output_dir",
     "batch_size": "--batch_size",
     "steps": "--steps",

@@ -18,6 +18,7 @@ class TrainStartRequest(BaseModel):
     dataset_repo_id: str
     policy_type: str = "act"
     pretrained_path: str = ""
+    policy_repo_id: str = ""
     output_dir: str = ""
     batch_size: int = 8
     steps: int = 100000
@@ -41,6 +42,7 @@ class TrainPreviewRequest(BaseModel):
     dataset_repo_id: str = ""
     policy_type: str = "act"
     pretrained_path: str = ""
+    policy_repo_id: str = ""
     output_dir: str = ""
     batch_size: int = 8
     steps: int = 100000

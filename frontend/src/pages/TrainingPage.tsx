@@ -20,6 +20,7 @@ export default function TrainingPage() {
   const [selectedDataset, setSelectedDataset] = useState(_saved.selectedDataset || '')
   const [policyType, setPolicyType] = useState(_saved.policyType || 'act')
   const [pretrainedPath, setPretrainedPath] = useState(_saved.pretrainedPath || '')
+  const [policyRepoId, setPolicyRepoId] = useState(_saved.policyRepoId || '')
   const [outputDir, setOutputDir] = useState(_saved.outputDir || '')
   const [batchSize, setBatchSize] = useState(_saved.batchSize ?? 8)
   const [steps, setSteps] = useState(_saved.steps ?? 100000)
@@ -43,12 +44,12 @@ export default function TrainingPage() {
   // 설정값 변경 시 localStorage에 저장
   useEffect(() => {
     localStorage.setItem('piper_train_settings', JSON.stringify({
-      selectedDataset, policyType, pretrainedPath, outputDir,
+      selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir,
       batchSize, steps, logFreq, saveFreq, numWorkers, seed, device,
       optimizerType, learningRate, wandbEnable, wandbProject, resume,
       stateDim, actionDim, renameMap,
     }))
-  }, [selectedDataset, policyType, pretrainedPath, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, stateDim, actionDim, renameMap])
+  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, stateDim, actionDim, renameMap])
 
   // 실행 상태
   const [trainState, setTrainState] = useState<ProcessState>('idle')
@@ -101,13 +102,13 @@ export default function TrainingPage() {
     if (cliEdited || !selectedDataset) return
     api.post<{ command: string }>('/training/preview', {
       dataset_repo_id: selectedDataset, policy_type: policyType,
-      pretrained_path: pretrainedPath, output_dir: outputDir,
+      pretrained_path: pretrainedPath, policy_repo_id: policyRepoId, output_dir: outputDir,
       batch_size: batchSize, steps, log_freq: logFreq, save_freq: saveFreq,
       num_workers: numWorkers, seed, device, optimizer_type: optimizerType,
       learning_rate: learningRate, wandb_enable: wandbEnable, wandb_project: wandbProject, resume,
       state_dim: stateDim, action_dim: actionDim, rename_map: renameMap,
     }).then((r) => setCliArgs(r.command)).catch(() => {})
-  }, [selectedDataset, policyType, pretrainedPath, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, stateDim, actionDim, cliEdited])
+  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, stateDim, actionDim, cliEdited])
 
   // 체크포인트 폴링 (학습 중)
   const ckptPollRef = useRef<ReturnType<typeof setInterval>>(undefined)
@@ -146,7 +147,7 @@ export default function TrainingPage() {
       } else {
         await api.post('/training/start', {
           dataset_repo_id: selectedDataset, policy_type: policyType,
-          pretrained_path: pretrainedPath, output_dir: outputDir,
+          pretrained_path: pretrainedPath, policy_repo_id: policyRepoId, output_dir: outputDir,
           batch_size: batchSize, steps, log_freq: logFreq, save_freq: saveFreq,
           num_workers: numWorkers, seed, device, optimizer_type: optimizerType,
           learning_rate: learningRate, wandb_enable: wandbEnable, wandb_project: wandbProject, resume,
@@ -257,6 +258,13 @@ export default function TrainingPage() {
                     <option value="">처음부터 학습</option>
                     {models.map((m) => <option key={m.id} value={m.path}>{m.id}</option>)}
                   </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-neutral-400">Policy Repo ID (Hub 업로드용)</label>
+                  <input type="text" value={policyRepoId}
+                    onChange={(e) => { setPolicyRepoId(e.target.value); setCliEdited(false) }}
+                    placeholder="예: wego-hansu/piper_tws_v2"
+                    className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 placeholder:text-neutral-600" />
                 </div>
               </div>
 
