@@ -265,6 +265,20 @@ export default function TrainingPage() {
                     onChange={(e) => { setPolicyRepoId(e.target.value); setCliEdited(false) }}
                     placeholder="예: wego-hansu/piper_tws_v2"
                     className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 placeholder:text-neutral-600" />
+                  {policyRepoId && (() => {
+                    const existing = models.find((m) => m.id.includes(policyRepoId.split('/').pop() || ''))
+                    if (!existing) return null
+                    return (
+                      <p className="text-xs text-amber-400 mt-1">
+                        이미 로컬에 존재합니다: {existing.id}
+                        <button onClick={async () => {
+                          if (!confirm(`"${existing.id}" 모델을 삭제하시겠습니까?\n경로: ${existing.path}`)) return
+                          await api.delete(`/models/${existing.id}`)
+                          api.get<Model[]>('/models').then(setModels).catch(() => {})
+                        }} className="ml-2 text-red-400 hover:text-red-300 underline">삭제</button>
+                      </p>
+                    )
+                  })()}
                 </div>
               </div>
 
