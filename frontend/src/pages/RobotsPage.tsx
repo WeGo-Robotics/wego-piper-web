@@ -475,6 +475,12 @@ export default function RobotsPage() {
                 <div className="flex gap-2">
                   <button onClick={() => setParkingIface(arm.iface)}
                     className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white">파킹 보정</button>
+                  <button onClick={async () => {
+                    try {
+                      await api.post('/robots/parking/torque?enable=false', { iface: arm.iface })
+                    } catch { alert('토크 OFF 실패') }
+                  }}
+                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-amber-600 text-neutral-300 hover:text-white">토크 OFF</button>
                   <button onClick={() => handleUnregister(arm.iface)}
                     className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">등록해제</button>
                 </div>
