@@ -23,6 +23,7 @@ export default function CamerasPage() {
   const [connectingId, setConnectingId] = useState<string | null>(null)
   const [expandedCam, setExpandedCam] = useState<string | null>(null)
   const [previewTs, setPreviewTs] = useState(0)
+  const [liveIds, setLiveIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     api.get<{ cameras: CamInfo[] }>('/cameras/current')
@@ -36,12 +37,12 @@ export default function CamerasPage() {
       .finally(() => setLoading(false))
   }, [])
 
-  // 프리뷰 자동 갱신 (등록된 = 백그라운드 캡처 중인 카메라만)
+  // 프리뷰 자동 갱신 (실시간 보기 중인 카메라)
   useEffect(() => {
-    if (!cams.some((c) => c.ready)) return
-    const interval = setInterval(() => setPreviewTs(Date.now()), 1000)
+    if (liveIds.size === 0) return
+    const interval = setInterval(() => setPreviewTs(Date.now()), 200)
     return () => clearInterval(interval)
-  }, [cams])
+  }, [liveIds])
 
   // 1단계: 스캔 (auto_connect=true → 병렬 연결 + 프리뷰)
   const handleScan = async () => {
@@ -96,6 +97,72 @@ export default function CamerasPage() {
           {scanning ? <><Spinner className="inline" /> 스캔 중...</> : '스캔'}
         </button>
       </div>
+
+      {/* 등록됨 (최상단) */}
+      {ready.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold text-green-400">사용 가능 ({ready.length})</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {ready.map((cam) => {
+              const isLive = liveIds.has(cam.id)
+              return (
+                <div key={cam.id} className="rounded-lg border border-green-500/30 bg-green-500/5 overflow-hidden hover:border-green-500/60 transition-colors">
+                  <img
+                    src={`/api/cameras/${encodeURIComponent(cam.id)}/preview?t=${isLive ? previewTs : previewTs}`}
+                    alt={cam.name}
+                    className="w-full aspect-[4/3] object-cover bg-neutral-900"
+                    onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.2' }}
+                    onLoad={(e) => { (e.target as HTMLImageElement).style.opacity = '1' }}
+                  />
+                  <div className="p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-green-400 text-sm">✓</span>
+                      <span className="font-mono text-sm">{cam.id}</span>
+                    </div>
+                    <div className="text-xs text-neutral-400">
+                      {cam.name}
+                      {cam.config.width && <span className="ml-2">{cam.config.width}x{cam.config.height}</span>}
+                      {cam.config.fps && <span className="ml-2">{cam.config.fps}fps</span>}
+                    </div>
+                    <div className="flex gap-1.5">
+                      <button onClick={async () => {
+                        try {
+                          await api.post('/cameras/probe', { id: cam.id })
+                          setPreviewTs(Date.now())
+                        } catch {}
+                      }}
+                        className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white transition-colors">
+                        업데이트
+                      </button>
+                      <button onClick={async () => {
+                        if (isLive) {
+                          setLiveIds((prev) => { const next = new Set(prev); next.delete(cam.id); return next })
+                          await api.post('/cameras/disconnect', { id: cam.id })
+                          setCams((prev) => prev.map((c) => c.id === cam.id ? { ...c, connected: false } : c))
+                        } else {
+                          // 연결 후 실시간 보기 시작
+                          try {
+                            const updated = await api.post<CamInfo>('/cameras/connect', { id: cam.id })
+                            setCams((prev) => prev.map((c) => c.id === cam.id ? updated : c))
+                            setLiveIds((prev) => new Set(prev).add(cam.id))
+                          } catch { alert('카메라 연결 실패') }
+                        }
+                      }}
+                        className={`flex-1 py-1 text-xs rounded transition-colors ${isLive ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white'}`}>
+                        {isLive ? '중단' : '실시간 보기'}
+                      </button>
+                      <button onClick={() => handleUnregister(cam.id)}
+                        className="py-1 px-2 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white transition-colors">
+                        해제
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 미연결 카메라 */}
       {unconnected.length > 0 && (
@@ -208,41 +275,6 @@ export default function CamerasPage() {
           </div>
         </div>
       )}
-
-      {/* 등록됨 */}
-      <div className="space-y-2">
-        <h2 className="text-sm font-semibold text-neutral-400">사용 가능</h2>
-        {ready.length === 0 ? (
-          <p className="text-xs text-neutral-500">등록된 카메라가 없습니다</p>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {ready.map((cam) => (
-              <div key={cam.id} className="rounded-lg border border-green-500/30 bg-green-500/5 overflow-hidden hover:border-green-500/60 transition-colors">
-                <img
-                  src={`/api/cameras/${encodeURIComponent(cam.id)}/preview?t=${previewTs}`}
-                  alt={cam.name}
-                  className="w-full aspect-[4/3] object-cover bg-neutral-900"
-                  onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.2' }}
-                  onLoad={(e) => { (e.target as HTMLImageElement).style.opacity = '1' }}
-                />
-                <div className="p-3 space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-green-400 text-sm">✓</span>
-                    <span className="font-mono text-sm">{cam.id}</span>
-                  </div>
-                  <div className="text-xs text-neutral-400">
-                    {cam.name}
-                    {cam.config.width && <span className="ml-2">{cam.config.width}x{cam.config.height}</span>}
-                    {cam.config.fps && <span className="ml-2">{cam.config.fps}fps</span>}
-                  </div>
-                  <button onClick={() => handleUnregister(cam.id)}
-                    className="w-full mt-1 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white transition-colors">등록해제</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
       {cams.length === 0 && (
         <p className="text-center text-neutral-500 text-sm py-8">

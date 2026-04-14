@@ -12,11 +12,16 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
 }
 
-export default function ModelsPage() {
+type SortKey = 'name' | 'size' | 'date' | 'policy'
+
+export default function ModelsPage({ embedded = false }: { embedded?: boolean }) {
   const [tab, setTab] = useState<'local' | 'hub'>('local')
   const [models, setModels] = useState<Model[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [sortKey, setSortKey] = useState<SortKey>('date')
+  const [sortAsc, setSortAsc] = useState(false)
 
   const fetchModels = () => {
     setLoading(true)
@@ -50,25 +55,59 @@ export default function ModelsPage() {
 
   const selected = models.find((m) => m.id === selectedId)
 
+  const filteredModels = models
+    .filter((m) => !search || m.id.toLowerCase().includes(search.toLowerCase()) || m.policy_type.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => {
+      let cmp = 0
+      if (sortKey === 'name') cmp = a.id.localeCompare(b.id)
+      else if (sortKey === 'size') cmp = a.size_bytes - b.size_bytes
+      else if (sortKey === 'date') cmp = new Date(a.modified).getTime() - new Date(b.modified).getTime()
+      else if (sortKey === 'policy') cmp = a.policy_type.localeCompare(b.policy_type)
+      return sortAsc ? cmp : -cmp
+    })
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) setSortAsc(!sortAsc)
+    else { setSortKey(key); setSortAsc(false) }
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">모델</h1>
+      {!embedded && (
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">모델</h1>
+          <div className="flex gap-1">
+            <button onClick={() => setTab('local')}
+              className={`px-3 py-1.5 rounded text-sm ${tab === 'local' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}>
+              로컬
+            </button>
+            <button onClick={() => setTab('hub')}
+              className={`px-3 py-1.5 rounded text-sm ${tab === 'hub' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}>
+              Hub
+            </button>
+            <button onClick={fetchModels} disabled={loading}
+              className="px-3 py-1.5 rounded text-sm text-neutral-400 hover:text-white hover:bg-neutral-700 disabled:opacity-50">
+              {loading ? '스캔 중...' : '새로고침'}
+            </button>
+          </div>
+        </div>
+      )}
+      {embedded && (
         <div className="flex gap-1">
-          <button
-            onClick={() => setTab('local')}
-            className={`px-3 py-1.5 rounded text-sm ${tab === 'local' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}
-          >
+          <button onClick={() => setTab('local')}
+            className={`px-3 py-1.5 rounded text-sm ${tab === 'local' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}>
             로컬
           </button>
-          <button
-            onClick={() => setTab('hub')}
-            className={`px-3 py-1.5 rounded text-sm ${tab === 'hub' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}
-          >
+          <button onClick={() => setTab('hub')}
+            className={`px-3 py-1.5 rounded text-sm ${tab === 'hub' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}>
             Hub
           </button>
+          <button onClick={fetchModels} disabled={loading}
+            className="px-3 py-1.5 rounded text-sm text-neutral-400 hover:text-white hover:bg-neutral-700 disabled:opacity-50">
+            {loading ? '스캔 중...' : '새로고침'}
+          </button>
         </div>
-      </div>
+      )}
 
       <DiskUsageBar />
 
@@ -84,7 +123,19 @@ export default function ModelsPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* 모델 목록 */}
           <div className="lg:col-span-1 space-y-2">
-            {models.map((m) => (
+            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="검색 (이름, 정책)..."
+              className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 placeholder:text-neutral-500" />
+            <div className="flex gap-1 text-[10px]">
+              {([['name', '이름'], ['policy', '정책'], ['size', '크기'], ['date', '날짜']] as [SortKey, string][]).map(([k, l]) => (
+                <button key={k} onClick={() => handleSort(k)}
+                  className={`px-2 py-0.5 rounded ${sortKey === k ? 'bg-blue-600 text-white' : 'bg-neutral-700 text-neutral-400'}`}>
+                  {l}{sortKey === k ? (sortAsc ? ' ↑' : ' ↓') : ''}
+                </button>
+              ))}
+              <span className="ml-auto text-neutral-500">{filteredModels.length}/{models.length}</span>
+            </div>
+            {filteredModels.map((m) => (
               <div
                 key={m.id}
                 onClick={() => setSelectedId(m.id)}

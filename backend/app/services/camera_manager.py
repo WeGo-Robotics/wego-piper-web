@@ -12,9 +12,9 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def _run_cmd(cmd: list[str]) -> tuple[int, str, str]:
+def _run_cmd(cmd: list[str], timeout: float = 2) -> tuple[int, str, str]:
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return r.returncode, r.stdout.strip(), r.stderr.strip()
     except Exception as exc:
         return -1, "", str(exc)
@@ -82,21 +82,30 @@ class CameraInfo:
         self.fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
         return cap, frame
 
-    def probe(self) -> tuple[bool, str]:
+    def probe(self, timeout: float = 3.0) -> tuple[bool, str]:
         """연결 테스트 + 프리뷰 1장 → 즉시 해제. 스캔 시 사용."""
         try:
             import cv2
         except ImportError:
             return False, "opencv-python not installed"
-        try:
+
+        import concurrent.futures
+        def _do_probe():
             cap, frame = self._open_cap()
             if cap is None:
                 return False, f"Cannot open {self.id}"
             with self._lock:
                 self._last_frame = frame
             cap.release()
-            self.connected = False  # probe는 연결 유지 안 함
+            self.connected = False
             return True, "OK"
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(_do_probe)
+                return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            return False, f"Timeout ({timeout}s) probing {self.id}"
         except Exception as e:
             return False, str(e)
 
@@ -160,25 +169,39 @@ class CameraInfo:
             return None
 
 
-def scan_cameras() -> list[dict]:
-    """시스템 카메라 스캔 (/dev/video* + v4l2-ctl)."""
-    results = []
-    seen_names: dict[str, int] = {}
+def _scan_one(dev_path: str) -> dict | None:
+    # /sys/class/video4linux/videoN/name 에서 이름 읽기 (빠르고 안전)
+    dev_name = Path(dev_path).name  # "video0"
+    sys_name = Path(f"/sys/class/video4linux/{dev_name}/name")
+    sys_index = Path(f"/sys/class/video4linux/{dev_name}/index")
 
-    for dev in sorted(Path("/dev").glob("video*")):
-        dev_path = str(dev)
+    if not sys_name.exists():
+        return None
+
+    # index > 0 이면 메타데이터 노드 → 스킵
+    try:
+        if sys_index.exists() and int(sys_index.read_text().strip()) > 0:
+            return None
+    except Exception:
+        pass
+
+    try:
+        name = sys_name.read_text().strip()
+    except Exception:
         name = dev_path
 
-        # v4l2-ctl로 이름 추출
-        rc, out, _ = _run_cmd(["v4l2-ctl", f"--device={dev_path}", "--info"])
-        if rc == 0:
-            for line in out.splitlines():
-                if "Card type" in line:
-                    name = line.split(":", 1)[1].strip()
-                    break
+    return {"id": dev_path, "name": name}
 
-        results.append({"id": dev_path, "name": name})
 
+def scan_cameras() -> list[dict]:
+    """시스템 카메라 스캔 (/dev/video* + v4l2-ctl) — 병렬. 캡처 디바이스만."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    devs = sorted(str(d) for d in Path("/dev").glob("video*"))
+    if not devs:
+        return []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = [r for r in pool.map(_scan_one, devs) if r is not None]
     return results
 
 
@@ -254,6 +277,63 @@ class CameraManager:
 
     def get_current(self) -> dict:
         return {"cameras": [c.to_dict() for c in self.cameras.values()]}
+
+
+    # ── 세션 저장/복원 ──
+
+    CAMERA_SESSION_PATH = Path.home() / ".config" / "piper-web" / "camera_session.json"
+
+    def save_session(self) -> None:
+        """등록된 카메라 상태 저장."""
+        import json
+        self.CAMERA_SESSION_PATH.parent.mkdir(parents=True, exist_ok=True)
+        data = []
+        for cam in self.cameras.values():
+            if cam.ready:
+                data.append({
+                    "id": cam.id,
+                    "name": cam.name,
+                    "cam_type": cam.cam_type,
+                    "config": {
+                        "width": cam.width, "height": cam.height, "fps": cam.fps,
+                        "color_mode": cam.color_mode, "rotation": cam.rotation, "fourcc": cam.fourcc,
+                    },
+                })
+        self.CAMERA_SESSION_PATH.write_text(json.dumps(data, indent=2))
+        logger.info("Camera session saved (%d cameras)", len(data))
+
+    def restore_session(self) -> bool:
+        """세션 파일에서 카메라 상태 복원."""
+        import json
+        if not self.CAMERA_SESSION_PATH.exists():
+            return False
+        try:
+            data = json.loads(self.CAMERA_SESSION_PATH.read_text())
+        except Exception:
+            return False
+        if not data:
+            return False
+
+        logger.info("Restoring camera session (%d cameras)...", len(data))
+
+        # 먼저 스캔
+        self.scan()
+
+        restored = 0
+        for cam_data in data:
+            cam_id = cam_data.get("id", "")
+            if cam_id not in self.cameras:
+                logger.warning("  Session camera %s not found in scan, skipping", cam_id)
+                continue
+            cam = self.cameras[cam_id]
+            cam.cam_type = cam_data.get("cam_type", "opencv")
+            cam.update_config(cam_data.get("config", {}))
+            cam.ready = True
+            restored += 1
+            logger.info("  Restored camera %s (%s)", cam_id, cam.name)
+
+        logger.info("Camera session restored: %d/%d cameras", restored, len(data))
+        return restored > 0
 
 
 camera_manager = CameraManager()

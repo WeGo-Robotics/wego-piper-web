@@ -1,10 +1,33 @@
+import logging
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.core.config import settings
 from app.services import hub_client
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/hub", tags=["hub"])
+
+
+@router.get("/whoami")
+async def whoami():
+    """HuggingFace 로그인 정보 조회."""
+    try:
+        from huggingface_hub import HfApi
+        api = HfApi()
+        info = api.whoami()
+        return {
+            "logged_in": True,
+            "username": info.get("name", ""),
+            "fullname": info.get("fullname", ""),
+            "avatar_url": info.get("avatarUrl", ""),
+            "orgs": [o.get("name", "") for o in info.get("orgs", [])],
+            "token_name": info.get("auth", {}).get("accessToken", {}).get("displayName", ""),
+        }
+    except Exception as e:
+        logger.debug("HF whoami failed: %s", e)
+        return {"logged_in": False, "username": "", "fullname": "", "error": str(e)}
 
 
 @router.get("/models")

@@ -69,17 +69,39 @@ class ProcessManager:
         logger.info("Starting process: %s", " ".join(cmd))
 
         try:
+            # subprocess에 깨끗한 환경 전달 (PYTHONPATH 오염 방지)
+            import os as _os
+            env = _os.environ.copy()
+            env.pop("PYTHONPATH", None)
+            # pynput이 X server에 연결할 수 있도록 DISPLAY 보장
+            if "DISPLAY" not in env:
+                env["DISPLAY"] = ":0"
+
             self._process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
             self._set_state(ProcessState.RUNNING)
             self._log_task = asyncio.create_task(self._read_stdout())
+            self._err_task = asyncio.create_task(self._read_stderr())
         except Exception as e:
             logger.error("Failed to start process: %s", e)
             self._set_state(ProcessState.ERROR)
             raise
+
+    async def _read_stderr(self) -> None:
+        """stderr를 읽어서 로그 콜백에 전달. ws.py에서 파싱."""
+        if not self._process or not self._process.stderr:
+            return
+        try:
+            async for line_bytes in self._process.stderr:
+                line = line_bytes.decode("utf-8", errors="replace").rstrip()
+                if line and self._on_log:
+                    self._on_log(line)
+        except asyncio.CancelledError:
+            pass
 
     async def _read_stdout(self) -> None:
         """stdout을 한 줄씩 읽어 콜백으로 전달."""
@@ -102,7 +124,7 @@ class ProcessManager:
         except asyncio.CancelledError:
             pass
 
-    async def stop(self, timeout: float = 5.0) -> None:
+    async def stop(self, timeout: float = 15.0) -> None:
         """Graceful shutdown: SIGTERM → timeout → SIGKILL."""
         if not self._process or self._state not in (
             ProcessState.RUNNING,

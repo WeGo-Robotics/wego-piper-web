@@ -18,6 +18,13 @@ SAFE_PARAMS = {
     "execution_horizon": {"min": 1, "max": 100},
     "temporal_ensemble_coeff": {"min": 0.0, "max": 1.0},
     "n_action_steps": {"min": 1, "max": 100},
+    "fps": {"min": 1, "max": 60},
+    "max_velocity": {"min": 0, "max": 1000},
+    "max_gripper_velocity": {"min": 0, "max": 500},
+    "lowpass_alpha": {"min": 0.05, "max": 1.0},
+    "max_jerk": {"min": 0, "max": 5000},
+    "interpolation_steps": {"min": 0, "max": 10},
+    "use_chunk_size": {"min": 0, "max": 200},
 }
 
 # Unsafe 파라미터: 재시작 필요

@@ -14,7 +14,7 @@ _executor = ThreadPoolExecutor(max_workers=4)
 
 @router.get("/scan")
 async def scan_cameras():
-    """카메라 스캔 + 병렬 probe (테스트 + 프리뷰 1장 → 즉시 해제)."""
+    """카메라 스캔 + 병렬 probe (타임아웃 3초)."""
     camera_manager.scan()
     loop = asyncio.get_event_loop()
     tasks = []
@@ -28,6 +28,19 @@ async def scan_cameras():
 
 class CameraIdRequest(BaseModel):
     id: str
+
+
+@router.post("/probe")
+async def probe_camera(body: CameraIdRequest):
+    """1프레임 캡처 (연결 유지 안 함)."""
+    loop = asyncio.get_event_loop()
+    cam = camera_manager.cameras.get(body.id)
+    if not cam:
+        raise HTTPException(404, f"Unknown camera: {body.id}")
+    ok, msg = await loop.run_in_executor(_executor, cam.probe)
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"status": "ok"}
 
 
 @router.post("/connect")
@@ -62,6 +75,7 @@ async def update_config(body: CameraConfigRequest):
 async def register_camera(body: CameraIdRequest):
     if not camera_manager.register_camera(body.id):
         raise HTTPException(400, "등록 실패: 연결되지 않은 카메라입니다")
+    camera_manager.save_session()
     cam = camera_manager.cameras.get(body.id)
     return cam.to_dict() if cam else {"status": "registered"}
 
@@ -70,6 +84,7 @@ async def register_camera(body: CameraIdRequest):
 async def unregister_camera(body: CameraIdRequest):
     if not camera_manager.unregister_camera(body.id):
         raise HTTPException(400, "Unknown camera")
+    camera_manager.save_session()
     return {"status": "unregistered"}
 
 

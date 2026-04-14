@@ -26,10 +26,37 @@ def _parse_config(config_path: Path) -> dict:
         return {}
 
 
-def extract_model_requirements(config: dict) -> dict:
+def _load_rename_map(model_dir: Path) -> dict[str, str]:
+    """policy_preprocessor.json에서 rename_map을 읽어 역변환 맵 반환.
+    예: {"observation.images.side": "observation.images.camera1"} → {"camera1": "side"}
+    """
+    pre_path = model_dir / "policy_preprocessor.json"
+    if not pre_path.exists():
+        return {}
+    try:
+        data = json.loads(pre_path.read_text())
+        for step in data.get("steps", []):
+            if step.get("registry_name") == "rename_observations_processor":
+                rename_map = step.get("config", {}).get("rename_map", {})
+                # 역변환: camera1 → side
+                reverse = {}
+                for src, dst in rename_map.items():
+                    src_name = src.split("observation.images.")[-1] if "observation.images." in src else src
+                    dst_name = dst.split("observation.images.")[-1] if "observation.images." in dst else dst
+                    reverse[dst_name] = src_name
+                return reverse
+    except Exception:
+        pass
+    return {}
+
+
+def extract_model_requirements(config: dict, model_dir: Path | None = None) -> dict:
     """config.json에서 추론에 필요한 카메라/관절 정보를 추출."""
     input_features = config.get("input_features", {})
     output_features = config.get("output_features", {})
+
+    # rename_map 역변환 (camera1 → side)
+    reverse_rename = _load_rename_map(model_dir) if model_dir else {}
 
     # 카메라 이름 + 해상도
     required_cameras = []
@@ -38,7 +65,8 @@ def extract_model_requirements(config: dict) -> dict:
             cam_name = key.split("observation.images.")[1]
             shape = feat.get("shape", [])
             required_cameras.append({
-                "name": cam_name,
+                "name": reverse_rename.get(cam_name, cam_name),
+                "model_name": cam_name,
                 "channels": shape[0] if len(shape) >= 1 else 3,
                 "height": shape[1] if len(shape) >= 2 else None,
                 "width": shape[2] if len(shape) >= 3 else None,
@@ -80,11 +108,8 @@ def _latest_snapshot(model_dir: Path) -> Path | None:
     return max(candidates, key=lambda d: d.stat().st_mtime)
 
 
-def scan_models() -> list[dict]:
-    models_dir = settings.models_dir
-    if not models_dir.exists():
-        return []
-
+def _scan_hf_cache(models_dir: Path) -> list[dict]:
+    """HuggingFace Hub 캐시 형식: models--org--name/snapshots/hash/config.json"""
     results = []
     for candidate in models_dir.iterdir():
         if not candidate.is_dir():
@@ -110,50 +135,95 @@ def scan_models() -> list[dict]:
             "path": str(snapshot),
             "policy_type": policy_type,
             "config": config,
-            "requirements": extract_model_requirements(config),
+            "requirements": extract_model_requirements(config, snapshot),
             "size_bytes": _dir_size(snapshot),
             "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "source_dir": str(models_dir),
         })
+
+    return results
+
+
+def _scan_train_outputs(models_dir: Path) -> list[dict]:
+    """학습 출력 형식: **/checkpoints/{step}/pretrained_model/config.json
+    날짜 디렉토리(2026-04-13/01-46-49_smolvla/) 등 중첩 구조도 지원."""
+    results = []
+    # checkpoints 디렉토리를 재귀적으로 찾기
+    for checkpoints_dir in models_dir.rglob("checkpoints"):
+        if not checkpoints_dir.is_dir():
+            continue
+        job_dir = checkpoints_dir.parent
+        for ckpt_dir in checkpoints_dir.iterdir():
+            if not ckpt_dir.is_dir():
+                continue
+            model_dir = ckpt_dir / "pretrained_model"
+            config_path = model_dir / "config.json"
+            if not config_path.exists():
+                continue
+
+            config = _parse_config(config_path)
+            policy_type = config.get("type", config.get("policy_type", config.get("_target_", "unknown")))
+            if "." in policy_type:
+                policy_type = policy_type.rsplit(".", 1)[-1]
+
+            step_label = ckpt_dir.name
+            # models_dir 기준 상대경로로 ID 생성
+            try:
+                rel = job_dir.relative_to(models_dir)
+                model_id = f"{rel}/{step_label}"
+            except ValueError:
+                model_id = f"{job_dir.name}/{step_label}"
+
+            stat = model_dir.stat()
+            results.append({
+                "id": model_id,
+                "path": str(model_dir),
+                "policy_type": policy_type,
+                "config": config,
+                "requirements": extract_model_requirements(config, model_dir),
+                "size_bytes": _dir_size(model_dir),
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "source_dir": str(models_dir),
+            })
+
+    return results
+
+
+def _scan_one_dir(models_dir: Path) -> list[dict]:
+    if not models_dir.exists():
+        return []
+
+    results = []
+    results.extend(_scan_hf_cache(models_dir))
+    results.extend(_scan_train_outputs(models_dir))
+    return results
+
+
+def scan_models() -> list[dict]:
+    results = []
+    seen_ids = set()
+    for models_dir in settings.model_paths:
+        for model in _scan_one_dir(models_dir):
+            if model["id"] not in seen_ids:
+                seen_ids.add(model["id"])
+                results.append(model)
 
     results.sort(key=lambda m: m["modified"], reverse=True)
     return results
 
 
 def get_model(model_id: str) -> dict | None:
-    """model_id = 'wego-hansu/piper_smolvla' 형태."""
-    parts = model_id.split("/", 1)
-    if len(parts) != 2:
-        return None
-    dirname = f"models--{parts[0]}--{parts[1]}"
-    model_dir = settings.models_dir / dirname
-
-    snapshot = _latest_snapshot(model_dir)
-    if not snapshot:
-        return None
-
-    config = _parse_config(snapshot / "config.json")
-    policy_type = config.get("type", config.get("policy_type", config.get("_target_", "unknown")))
-    if "." in policy_type:
-        policy_type = policy_type.rsplit(".", 1)[-1]
-
-    files = []
-    for f in sorted(snapshot.rglob("*")):
-        if f.is_file():
-            files.append({
-                "path": str(f.relative_to(snapshot)),
-                "size_bytes": f.stat().st_size,
-            })
-
-    return {
-        "id": model_id,
-        "path": str(snapshot),
-        "policy_type": policy_type,
-        "config": config,
-        "requirements": extract_model_requirements(config),
-        "size_bytes": _dir_size(snapshot),
-        "modified": datetime.fromtimestamp(snapshot.stat().st_mtime).isoformat(),
-        "files": files,
-    }
+    """scan_models()에서 id로 모델 검색. HF 캐시 + 학습 출력 모두 지원."""
+    for model in scan_models():
+        if model["id"] == model_id:
+            # 파일 목록 추가
+            model_path = Path(model["path"])
+            model["files"] = [
+                {"path": str(f.relative_to(model_path)), "size_bytes": f.stat().st_size}
+                for f in sorted(model_path.rglob("*")) if f.is_file()
+            ]
+            return model
+    return None
 
 
 def delete_model(model_id: str) -> bool:

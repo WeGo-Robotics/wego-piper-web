@@ -1,5 +1,6 @@
 export type RequiredCamera = {
   name: string
+  model_name?: string
   channels: number
   height: number | null
   width: number | null

@@ -42,9 +42,16 @@ async def save_selection(body: SelectionRequest):
 
 @router.get("/status")
 async def inference_status():
+    # 실행 중인 추론의 카메라 프리뷰 파일 목록
+    import glob
+    cam_names = []
+    for f in sorted(glob.glob("/tmp/piper_cam_*.jpg")):
+        name = f.split("piper_cam_")[1].replace(".jpg", "")
+        cam_names.append(name)
     return {
         "state": process_manager.state.value,
         "pid": process_manager.pid,
+        "cameras": cam_names,
     }
 
 
@@ -83,7 +90,7 @@ async def validate_config(body: ValidateRequest):
     # TODO: 로봇별 관절 수를 동적으로 가져오기. 현재는 Piper 기준 하드코딩
     robot_joints = PIPER_JOINTS
     if state_dim > 0 and robot_joints != state_dim:
-        errors.append(f"관절 수 불일치: 모델={state_dim}, 로봇={robot_joints}")
+        warnings.append(f"관절 수 불일치: 모델 state={state_dim}, 로봇={robot_joints} (모델이 자동 패딩/트림)")
     if action_dim > 0 and robot_joints != action_dim:
         errors.append(f"액션 차원 불일치: 모델={action_dim}, 로봇={robot_joints}")
 
@@ -135,7 +142,30 @@ async def validate_config(body: ValidateRequest):
 @router.get("/camera/{cam_name}")
 async def inference_camera_preview(cam_name: str):
     """추론 중 카메라 프리뷰 (wrapper가 /tmp에 저장한 JPEG)."""
-    path = Path(f"/tmp/piper_cam_{cam_name}.jpg")
+    path = Path(f"/dev/shm/piper_cam_{cam_name}.jpg")
+    if not path.exists():
+        path = Path(f"/tmp/piper_cam_{cam_name}.jpg")
     if not path.exists():
         raise HTTPException(404, "Preview not available")
     return Response(content=path.read_bytes(), media_type="image/jpeg")
+
+
+@router.get("/viz/{viz_type}/{cam_index}")
+async def inference_viz(viz_type: str, cam_index: int = 0):
+    """추론 중 시각화 이미지 (policy server의 viz_hooks가 /dev/shm에 저장).
+    viz_type: input, features, attention
+    """
+    allowed = {"input", "features", "attention"}
+    if viz_type not in allowed:
+        raise HTTPException(400, f"viz_type must be one of {allowed}")
+    # /dev/shm (RAM disk) 우선, fallback /tmp
+    path = Path(f"/dev/shm/piper_viz_{viz_type}_{cam_index}.jpg")
+    if not path.exists():
+        path = Path(f"/tmp/piper_viz_{viz_type}_{cam_index}.jpg")
+    if not path.exists():
+        raise HTTPException(404, "Visualization not available")
+    return Response(
+        content=path.read_bytes(),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )

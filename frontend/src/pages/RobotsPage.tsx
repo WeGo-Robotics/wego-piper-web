@@ -1,5 +1,153 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { api } from '../services/api'
+
+// ── 파킹 보정 모달 ──
+const JOINT_NAMES = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6', 'gripper']
+
+function ParkingCalibrationModal({ iface, onClose }: { iface: string; onClose: () => void }) {
+  const [step, setStep] = useState<'ready' | 'moving' | 'adjusting' | 'saving'>('ready')
+  const [joints, setJoints] = useState<Record<string, number>>({})
+  const pollRef = useRef<ReturnType<typeof setInterval>>(undefined)
+
+  const readJoints = useCallback(async () => {
+    try {
+      const data = await api.get<Record<string, number>>(`/robots/parking/joints/${iface}`)
+      setJoints(data)
+    } catch { /* ignore */ }
+  }, [iface])
+
+  // 관절 위치 폴링
+  useEffect(() => {
+    readJoints()
+    pollRef.current = setInterval(readJoints, 300)
+    return () => clearInterval(pollRef.current)
+  }, [readJoints])
+
+  const handleGoParking = async () => {
+    setStep('moving')
+    try {
+      // 토크 ON → 파킹 이동
+      await api.post('/robots/parking/torque?enable=true', { iface })
+      await api.post('/robots/parking/go', { iface })
+      // 3초 대기 (이동 완료) → 토크 해제 → 보정 단계
+      setTimeout(async () => {
+        await api.post('/robots/parking/torque?enable=false', { iface })
+        setStep('adjusting')
+      }, 3000)
+    } catch { setStep('ready') }
+  }
+
+  const handleSave = async () => {
+    setStep('saving')
+    // 현재 위치 읽고 저장
+    await readJoints()
+    await api.post('/robots/parking/save', { iface, positions: joints })
+    // 토크 복원
+    await api.post('/robots/parking/torque?enable=true', { iface })
+    onClose()
+  }
+
+  const handleCancel = async () => {
+    // 토크 복원 후 닫기
+    try { await api.post('/robots/parking/torque?enable=true', { iface }) } catch { /* ignore */ }
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={handleCancel}>
+      <div className="bg-neutral-800 rounded-xl border border-neutral-600 p-6 w-[480px] max-h-[90vh] overflow-y-auto space-y-4"
+        onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-lg font-bold">파킹 위치 보정 — {iface}</h2>
+
+        {/* 단계 표시 */}
+        <div className="flex gap-2 text-xs">
+          {(['ready', 'moving', 'adjusting', 'saving'] as const).map((s, i) => (
+            <div key={s} className={`flex items-center gap-1 ${step === s ? 'text-blue-400 font-medium' : 'text-neutral-500'}`}>
+              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === s ? 'bg-blue-600 text-white' : 'bg-neutral-700'}`}>
+                {i + 1}
+              </span>
+              {s === 'ready' && '준비'}
+              {s === 'moving' && '이동 + 토크 해제'}
+              {s === 'adjusting' && '보정'}
+              {s === 'saving' && '저장'}
+            </div>
+          ))}
+        </div>
+
+        {/* 관절 위치 표시 */}
+        <div className="rounded-lg border border-neutral-700 bg-neutral-900 p-3 space-y-2">
+          <h3 className="text-xs font-semibold text-neutral-400">현재 관절 위치</h3>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+            {JOINT_NAMES.map((name) => (
+              <div key={name} className="flex items-center justify-between text-xs">
+                <span className="text-neutral-400 font-mono">{name}</span>
+                <span className="text-neutral-100 font-mono tabular-nums">
+                  {joints[name] !== undefined ? joints[name].toFixed(1) : '—'}
+                </span>
+              </div>
+            ))}
+          </div>
+          {/* 바 차트 */}
+          <div className="space-y-1 pt-1">
+            {JOINT_NAMES.map((name) => {
+              const val = joints[name] ?? 0
+              const isGripper = name === 'gripper'
+              const pct = isGripper ? val : (val + 100) / 2  // [-100,100] → [0,100]
+              return (
+                <div key={name} className="flex items-center gap-2 text-[10px]">
+                  <span className="w-12 text-neutral-500 font-mono">{name.replace('joint', 'J')}</span>
+                  <div className="flex-1 h-2 bg-neutral-700 rounded overflow-hidden relative">
+                    {!isGripper && <div className="absolute left-1/2 w-px h-full bg-neutral-500" />}
+                    <div className={`h-full rounded ${isGripper ? 'bg-green-500' : val >= 0 ? 'bg-blue-500' : 'bg-orange-500'}`}
+                      style={{
+                        width: `${Math.abs(isGripper ? pct : (val / 100) * 50)}%`,
+                        marginLeft: isGripper ? 0 : val >= 0 ? '50%' : `${50 - Math.abs(val / 2)}%`,
+                      }} />
+                  </div>
+                  <span className="w-12 text-right text-neutral-400 tabular-nums">{val.toFixed(1)}</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* 액션 버튼 */}
+        <div className="flex gap-2">
+          {step === 'ready' && (
+            <button onClick={handleGoParking}
+              className="flex-1 px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium">
+              1. 파킹 위치로 이동
+            </button>
+          )}
+          {step === 'moving' && (
+            <button disabled className="flex-1 px-4 py-2 rounded bg-neutral-700 text-neutral-400 text-sm">
+              이동 중...
+            </button>
+          )}
+          {step === 'adjusting' && (
+            <button onClick={handleSave}
+              className="flex-1 px-4 py-2 rounded bg-green-600 hover:bg-green-500 text-white text-sm font-medium">
+              2. 현재 위치 저장
+            </button>
+          )}
+          {step === 'saving' && (
+            <button disabled className="flex-1 px-4 py-2 rounded bg-neutral-700 text-neutral-400 text-sm">
+              저장 중...
+            </button>
+          )}
+          <button onClick={handleCancel}
+            className="px-4 py-2 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 text-sm">
+            취소
+          </button>
+        </div>
+
+        <p className="text-[10px] text-neutral-500">
+          파킹 위치로 이동 후 토크가 자동 해제됩니다. 관절을 원하는 위치로 직접 조정한 후 저장하세요.
+        </p>
+      </div>
+    </div>
+  )
+}
 
 function Spinner({ className = '' }: { className?: string }) {
   return (
@@ -29,6 +177,7 @@ export default function RobotsPage() {
   const [motionIface, setMotionIface] = useState<string | null>(null)
   const [motionStatus, setMotionStatus] = useState<MotionStatus | null>(null)
   const motionPollRef = useRef<ReturnType<typeof setInterval>>(undefined)
+  const [parkingIface, setParkingIface] = useState<string | null>(null)
   // 프리셋
   const [presets, setPresets] = useState<string[]>([])
   const [presetName, setPresetName] = useState('')
@@ -323,13 +472,22 @@ export default function RobotsPage() {
                     {arm.role === 'leader' ? 'piper_leader' : 'piper_follower'}
                   </span>
                 </div>
-                <button onClick={() => handleUnregister(arm.iface)}
-                  className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">등록해제</button>
+                <div className="flex gap-2">
+                  <button onClick={() => setParkingIface(arm.iface)}
+                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white">파킹 보정</button>
+                  <button onClick={() => handleUnregister(arm.iface)}
+                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">등록해제</button>
+                </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* 파킹 보정 모달 */}
+      {parkingIface && (
+        <ParkingCalibrationModal iface={parkingIface} onClose={() => setParkingIface(null)} />
+      )}
     </div>
   )
 }

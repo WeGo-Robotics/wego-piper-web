@@ -12,12 +12,17 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
 }
 
-export default function DatasetsPage() {
+type SortKey = 'name' | 'size' | 'date' | 'episodes'
+
+export default function DatasetsPage({ embedded = false }: { embedded?: boolean }) {
   const [tab, setTab] = useState<'local' | 'hub'>('local')
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [loading, setLoading] = useState(true)
   const [detail, setDetail] = useState<DatasetDetail | null>(null)
   const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([])
+  const [search, setSearch] = useState('')
+  const [sortKey, setSortKey] = useState<SortKey>('date')
+  const [sortAsc, setSortAsc] = useState(false)
 
   const fetchDatasets = () => {
     setLoading(true)
@@ -67,25 +72,59 @@ export default function DatasetsPage() {
     )
   }
 
+  const filteredDatasets = datasets
+    .filter((d) => !search || d.id.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => {
+      let cmp = 0
+      if (sortKey === 'name') cmp = a.id.localeCompare(b.id)
+      else if (sortKey === 'size') cmp = a.size_bytes - b.size_bytes
+      else if (sortKey === 'date') cmp = new Date(a.modified).getTime() - new Date(b.modified).getTime()
+      else if (sortKey === 'episodes') cmp = a.total_episodes - b.total_episodes
+      return sortAsc ? cmp : -cmp
+    })
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) setSortAsc(!sortAsc)
+    else { setSortKey(key); setSortAsc(false) }
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">데이터셋</h1>
+      {!embedded && (
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">데이터셋</h1>
+          <div className="flex gap-1">
+            <button onClick={() => setTab('local')}
+              className={`px-3 py-1.5 rounded text-sm ${tab === 'local' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}>
+              로컬
+            </button>
+            <button onClick={() => setTab('hub')}
+              className={`px-3 py-1.5 rounded text-sm ${tab === 'hub' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}>
+              Hub
+            </button>
+            <button onClick={fetchDatasets} disabled={loading}
+              className="px-3 py-1.5 rounded text-sm text-neutral-400 hover:text-white hover:bg-neutral-700 disabled:opacity-50">
+              {loading ? '스캔 중...' : '새로고침'}
+            </button>
+          </div>
+        </div>
+      )}
+      {embedded && (
         <div className="flex gap-1">
-          <button
-            onClick={() => setTab('local')}
-            className={`px-3 py-1.5 rounded text-sm ${tab === 'local' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}
-          >
+          <button onClick={() => setTab('local')}
+            className={`px-3 py-1.5 rounded text-sm ${tab === 'local' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}>
             로컬
           </button>
-          <button
-            onClick={() => setTab('hub')}
-            className={`px-3 py-1.5 rounded text-sm ${tab === 'hub' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}
-          >
+          <button onClick={() => setTab('hub')}
+            className={`px-3 py-1.5 rounded text-sm ${tab === 'hub' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}>
             Hub
           </button>
+          <button onClick={fetchDatasets} disabled={loading}
+            className="px-3 py-1.5 rounded text-sm text-neutral-400 hover:text-white hover:bg-neutral-700 disabled:opacity-50">
+            {loading ? '스캔 중...' : '새로고침'}
+          </button>
         </div>
-      </div>
+      )}
 
       <DiskUsageBar />
 
@@ -102,7 +141,19 @@ export default function DatasetsPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* 데이터셋 목록 */}
           <div className="lg:col-span-1 space-y-2">
-            {datasets.map((ds) => (
+            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="검색 (이름)..."
+              className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 placeholder:text-neutral-500" />
+            <div className="flex gap-1 text-[10px]">
+              {([['name', '이름'], ['episodes', '에피소드'], ['size', '크기'], ['date', '날짜']] as [SortKey, string][]).map(([k, l]) => (
+                <button key={k} onClick={() => handleSort(k)}
+                  className={`px-2 py-0.5 rounded ${sortKey === k ? 'bg-blue-600 text-white' : 'bg-neutral-700 text-neutral-400'}`}>
+                  {l}{sortKey === k ? (sortAsc ? ' ↑' : ' ↓') : ''}
+                </button>
+              ))}
+              <span className="ml-auto text-neutral-500">{filteredDatasets.length}/{datasets.length}</span>
+            </div>
+            {filteredDatasets.map((ds) => (
               <div
                 key={ds.id}
                 onClick={() => handleSelect(ds.id)}

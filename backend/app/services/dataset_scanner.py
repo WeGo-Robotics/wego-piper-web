@@ -1,6 +1,7 @@
 """
 로컬 데이터셋 스캔.
-HuggingFace Hub 캐시 구조: datasets--org--name/snapshots/hash/
+1. HuggingFace Hub 캐시: datasets--org--name/snapshots/hash/
+2. LeRobot 캐시: org/name/ (meta/info.json 직접 포함)
 """
 
 import json
@@ -47,11 +48,10 @@ def _latest_snapshot(ds_dir: Path) -> Path | None:
     return max(candidates, key=lambda d: d.stat().st_mtime)
 
 
-def scan_datasets() -> list[dict]:
-    datasets_dir = settings.datasets_dir
+def _scan_hub_datasets(datasets_dir: Path) -> list[dict]:
+    """HuggingFace Hub 캐시 스캔 (datasets--org--name/snapshots/hash/)."""
     if not datasets_dir.exists():
         return []
-
     results = []
     for candidate in datasets_dir.iterdir():
         if not candidate.is_dir():
@@ -59,21 +59,18 @@ def scan_datasets() -> list[dict]:
         repo_id = _repo_id_from_dirname(candidate.name)
         if not repo_id:
             continue
-
         snapshot = _latest_snapshot(candidate)
         if not snapshot:
             continue
-
-        # meta/info.json 또는 직접 info.json
         info_path = snapshot / "meta" / "info.json"
         if not info_path.exists():
             info_path = snapshot / "info.json"
         meta = _parse_meta(info_path)
-
         stat = snapshot.stat()
         results.append({
             "id": repo_id,
             "path": str(snapshot),
+            "source": "hub",
             "total_episodes": meta.get("total_episodes", 0),
             "total_frames": meta.get("total_frames", 0),
             "fps": meta.get("fps"),
@@ -81,30 +78,89 @@ def scan_datasets() -> list[dict]:
             "size_bytes": _dir_size(snapshot),
             "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
         })
+    return results
 
+
+def _scan_lerobot_datasets(lerobot_dir: Path) -> list[dict]:
+    """LeRobot 캐시 스캔 (org/name/ — meta/info.json 직접 포함)."""
+    if not lerobot_dir.exists():
+        return []
+    results = []
+    for org_dir in lerobot_dir.iterdir():
+        if not org_dir.is_dir():
+            continue
+        for ds_dir in org_dir.iterdir():
+            if not ds_dir.is_dir():
+                continue
+            info_path = ds_dir / "meta" / "info.json"
+            if not info_path.exists():
+                continue
+            repo_id = f"{org_dir.name}/{ds_dir.name}"
+            meta = _parse_meta(info_path)
+            stat = ds_dir.stat()
+            results.append({
+                "id": repo_id,
+                "path": str(ds_dir),
+                "source": "lerobot",
+                "total_episodes": meta.get("total_episodes", 0),
+                "total_frames": meta.get("total_frames", 0),
+                "fps": meta.get("fps"),
+                "features": meta.get("features", {}),
+                "size_bytes": _dir_size(ds_dir),
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            })
+    return results
+
+
+def scan_datasets() -> list[dict]:
+    results = _scan_hub_datasets(settings.datasets_dir)
+    results += _scan_lerobot_datasets(settings.lerobot_dir)
+    # 중복 제거 (같은 repo_id면 최신 것만)
+    seen: dict[str, dict] = {}
+    for ds in results:
+        existing = seen.get(ds["id"])
+        if existing is None or ds["modified"] > existing["modified"]:
+            seen[ds["id"]] = ds
+    results = list(seen.values())
     results.sort(key=lambda d: d["modified"], reverse=True)
     return results
 
 
-def get_dataset(dataset_id: str) -> dict | None:
+def _find_dataset_dir(dataset_id: str) -> tuple[Path, str] | None:
+    """dataset_id로 실제 디렉토리와 source를 찾는다."""
     parts = dataset_id.split("/", 1)
     if len(parts) != 2:
         return None
-    dirname = f"datasets--{parts[0]}--{parts[1]}"
-    ds_dir = settings.datasets_dir / dirname
+    org, name = parts
 
-    snapshot = _latest_snapshot(ds_dir)
-    if not snapshot:
+    # 1. LeRobot 캐시 (org/name/)
+    lerobot_path = settings.lerobot_dir / org / name
+    if lerobot_path.exists() and (lerobot_path / "meta" / "info.json").exists():
+        return lerobot_path, "lerobot"
+
+    # 2. Hub 캐시 (datasets--org--name/snapshots/hash/)
+    hub_dir = settings.datasets_dir / f"datasets--{org}--{name}"
+    snapshot = _latest_snapshot(hub_dir)
+    if snapshot:
+        return snapshot, "hub"
+
+    return None
+
+
+def get_dataset(dataset_id: str) -> dict | None:
+    result = _find_dataset_dir(dataset_id)
+    if not result:
         return None
+    ds_path, source = result
 
-    info_path = snapshot / "meta" / "info.json"
+    info_path = ds_path / "meta" / "info.json"
     if not info_path.exists():
-        info_path = snapshot / "info.json"
+        info_path = ds_path / "info.json"
     meta = _parse_meta(info_path)
 
     # 에피소드 목록
     episodes = []
-    episodes_path = snapshot / "meta" / "episodes.jsonl"
+    episodes_path = ds_path / "meta" / "episodes.jsonl"
     if episodes_path.exists():
         for line in episodes_path.read_text().strip().split("\n"):
             if line:
@@ -115,7 +171,7 @@ def get_dataset(dataset_id: str) -> dict | None:
 
     # tasks
     tasks = []
-    tasks_path = snapshot / "meta" / "tasks.jsonl"
+    tasks_path = ds_path / "meta" / "tasks.jsonl"
     if tasks_path.exists():
         for line in tasks_path.read_text().strip().split("\n"):
             if line:
@@ -126,28 +182,33 @@ def get_dataset(dataset_id: str) -> dict | None:
 
     return {
         "id": dataset_id,
-        "path": str(snapshot),
+        "path": str(ds_path),
+        "source": source,
         "total_episodes": meta.get("total_episodes", 0),
         "total_frames": meta.get("total_frames", 0),
         "fps": meta.get("fps"),
         "features": meta.get("features", {}),
         "episodes": episodes,
         "tasks": tasks,
-        "size_bytes": _dir_size(snapshot),
-        "modified": datetime.fromtimestamp(snapshot.stat().st_mtime).isoformat(),
+        "size_bytes": _dir_size(ds_path),
+        "modified": datetime.fromtimestamp(ds_path.stat().st_mtime).isoformat(),
     }
 
 
 def delete_dataset(dataset_id: str) -> bool:
-    parts = dataset_id.split("/", 1)
-    if len(parts) != 2:
+    result = _find_dataset_dir(dataset_id)
+    if not result:
         return False
-    dirname = f"datasets--{parts[0]}--{parts[1]}"
-    ds_dir = settings.datasets_dir / dirname
-    if not ds_dir.exists():
+    ds_path, source = result
+    # LeRobot 경로면 dataset 폴더 자체, Hub면 상위 datasets-- 폴더 삭제
+    if source == "hub":
+        target = ds_path.parent.parent  # snapshots/hash → datasets--org--name
+    else:
+        target = ds_path
+    if not target.exists():
         return False
-    shutil.rmtree(ds_dir)
-    logger.info("Deleted dataset: %s", ds_dir)
+    shutil.rmtree(target)
+    logger.info("Deleted dataset: %s", target)
     return True
 
 

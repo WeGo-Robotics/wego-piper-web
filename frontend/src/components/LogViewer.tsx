@@ -17,7 +17,20 @@ export default function LogViewer({ logs, onClear }: Props) {
   }, [logs.length])
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(logs.join('\n'))
+    const text = logs.join('\n')
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // fallback: textarea를 이용한 복사 (HTTP에서도 동작)
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }

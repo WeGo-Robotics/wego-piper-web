@@ -159,6 +159,7 @@ class ArmInfo:
             return False, "piper_sdk not installed"
         try:
             piper = C_PiperInterface_V2(self.iface, judge_flag=False, can_auto_init=False)
+            piper.CreateCanBus(self.iface)
             piper.ConnectPort(piper_init=False, start_thread=True)
             try:
                 piper.SearchPiperFirmwareVersion()
@@ -216,6 +217,120 @@ class ArmInfo:
                 return [j.joint_1, j.joint_2, j.joint_3, j.joint_4, j.joint_5, j.joint_6]
             except Exception:
                 return None
+
+    def read_joints_normalized(self) -> dict[str, float] | None:
+        """정규화된 관절 위치 읽기 (joint1~6 + gripper)."""
+        with self._lock:
+            if not self._piper:
+                return None
+            try:
+                j = self._piper.GetArmJointMsgs().joint_state
+                g = self._piper.GetArmGripperMsgs().gripper_state
+                raw = {
+                    "joint1": float(j.joint_1), "joint2": float(j.joint_2),
+                    "joint3": float(j.joint_3), "joint4": float(j.joint_4),
+                    "joint5": float(j.joint_5), "joint6": float(j.joint_6),
+                    "gripper": float(g.grippers_angle),
+                }
+                # 정규화 (tables.py의 calibration 기준)
+                from lerobot_robot_piper.motors.tables import INITIALIZE_POSITION
+                from lerobot_robot_piper.piper_follower import PiperFollower
+                # 간이 정규화: AGILEX-M [-150000,150000]→[-100,100], AGILEX-S 범위별
+                cal = {
+                    "joint1": (-150000, 150000), "joint2": (0, 180000), "joint3": (-170000, 0),
+                    "joint4": (-100000, 100000), "joint5": (-65000, 65000), "joint6": (-100000, 130000),
+                    "gripper": (0, 68000),
+                }
+                norm = {}
+                for name, value in raw.items():
+                    mn, mx = cal[name]
+                    if name == "gripper":
+                        norm[name] = round(((value - mn) / (mx - mn)) * 100, 2)
+                    else:
+                        norm[name] = round(((value - mn) / (mx - mn)) * 200 - 100, 2)
+                return norm
+            except Exception as e:
+                logger.debug("read_joints_normalized error: %s", e)
+                return None
+
+    def go_parking(self) -> bool:
+        """파킹 위치로 이동."""
+        with self._lock:
+            if not self._piper:
+                return False
+            try:
+                self._piper.EnablePiper()
+                time.sleep(0.3)
+                # 커스텀 파킹 위치 또는 기본값
+                parking_pos = _load_custom_parking(self.iface)
+                from lerobot_robot_piper.motors.tables import INITIALIZE_POSITION
+                target = parking_pos or INITIALIZE_POSITION
+                # set_action 직접 호출 (정규화 값 → raw 변환)
+                cal = {
+                    "joint1": (-150000, 150000), "joint2": (0, 180000), "joint3": (-170000, 0),
+                    "joint4": (-100000, 100000), "joint5": (-65000, 65000), "joint6": (-100000, 130000),
+                    "gripper": (0, 68000),
+                }
+                raw = {}
+                for name, value in target.items():
+                    mn, mx = cal[name]
+                    if name == "gripper":
+                        raw[name] = int(mn + (value / 100) * (mx - mn))
+                    else:
+                        raw[name] = int(mn + ((value + 100) / 200) * (mx - mn))
+
+                self._piper.ModeCtrl(0x01, 0x01, 30, 0x00)
+                self._piper.JointCtrl(
+                    raw["joint1"], raw["joint2"], raw["joint3"],
+                    raw["joint4"], raw["joint5"], raw["joint6"],
+                )
+                self._piper.GripperCtrl(abs(raw["gripper"]), 1000, 0x03, 0)
+                return True
+            except Exception as e:
+                logger.error("go_parking error: %s", e)
+                return False
+
+    def enable_torque(self) -> bool:
+        with self._lock:
+            if not self._piper:
+                return False
+            try:
+                self._piper.EnablePiper()
+                return True
+            except Exception:
+                return False
+
+    def disable_torque(self) -> bool:
+        with self._lock:
+            if not self._piper:
+                return False
+            try:
+                self._piper.DisablePiper()
+                return True
+            except Exception:
+                return False
+
+
+# ── 세션/파킹 저장 경로 ──
+SESSION_DIR = Path.home() / ".config" / "piper-web"
+PARKING_DIR = SESSION_DIR / "parking"
+ROBOT_SESSION_PATH = SESSION_DIR / "robot_session.json"
+
+
+def _load_custom_parking(iface: str) -> dict | None:
+    path = PARKING_DIR / f"{iface}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def _save_custom_parking(iface: str, positions: dict) -> None:
+    PARKING_DIR.mkdir(parents=True, exist_ok=True)
+    (PARKING_DIR / f"{iface}.json").write_text(json.dumps(positions, indent=2))
+    logger.info("Saved custom parking for %s: %s", iface, positions)
 
 
 # ── Robot Manager ──
@@ -462,6 +577,74 @@ class RobotManager:
             "config": self.load_config(),
             "arms": [a.to_dict() for a in self.arms.values()],
         }
+
+
+    # ── 세션 저장/복원 ──
+
+    def save_session(self) -> None:
+        """현재 등록된 로봇 상태를 세션 파일에 저장."""
+        SESSION_DIR.mkdir(parents=True, exist_ok=True)
+        data = {
+            "robot_type": self.selected_type,
+            "config_name": self.config_name,
+            "arms": [],
+        }
+        for arm in self.arms.values():
+            if arm.ready or arm.slot:
+                data["arms"].append({
+                    "iface": arm.iface,
+                    "bus_info": arm.bus_info,
+                    "role": arm.role,
+                    "slot": arm.slot,
+                    "ready": arm.ready,
+                    "config": arm._config_dict(),
+                })
+        ROBOT_SESSION_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        logger.info("Robot session saved (%d arms)", len(data["arms"]))
+
+    def restore_session(self) -> bool:
+        """세션 파일에서 로봇 상태 복원. 스캔 → 연결 → 설정 복원."""
+        if not ROBOT_SESSION_PATH.exists():
+            return False
+        try:
+            data = json.loads(ROBOT_SESSION_PATH.read_text())
+        except Exception:
+            return False
+
+        self.selected_type = data.get("robot_type")
+        self.config_name = data.get("config_name")
+        saved_arms = data.get("arms", [])
+        if not saved_arms:
+            return False
+
+        logger.info("Restoring robot session (%d arms)...", len(saved_arms))
+
+        # 1. CAN 스캔
+        self.scan()
+
+        # 2. 저장된 각 팔에 대해 연결 + 설정 복원
+        restored = 0
+        for arm_data in saved_arms:
+            iface = arm_data.get("iface", "")
+            if iface not in self.arms:
+                logger.warning("  Session arm %s not found in scan, skipping", iface)
+                continue
+            arm = self.arms[iface]
+            if not arm.connected:
+                ok, msg = arm.connect()
+                if not ok:
+                    logger.warning("  Failed to reconnect %s: %s", iface, msg)
+                    continue
+            arm.role = arm_data.get("role", "unknown")
+            arm.slot = arm_data.get("slot")
+            arm.update_config(arm_data.get("config", {}))
+            if arm_data.get("ready", False):
+                arm.ready = True
+            restored += 1
+            logger.info("  Restored %s (role=%s, ready=%s)", iface, arm.role, arm.ready)
+
+        logger.info("Robot session restored: %d/%d arms", restored, len(saved_arms))
+        return restored > 0
 
 
 robot_manager = RobotManager()

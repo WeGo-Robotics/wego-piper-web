@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.services.robot_manager import robot_manager, CONFIGS
+from app.services.robot_manager import robot_manager, CONFIGS, _save_custom_parking, _load_custom_parking
 
 router = APIRouter(prefix="/api/robots", tags=["robots"])
 logger = logging.getLogger(__name__)
@@ -295,6 +295,7 @@ class RegisterRequest(BaseModel):
 async def register_arm(body: RegisterRequest):
     if not robot_manager.register_arm(body.iface):
         raise HTTPException(400, "등록 실패: 연결되지 않았거나 역할이 미지정입니다")
+    robot_manager.save_session()
     arm = robot_manager.arms.get(body.iface)
     return arm.to_dict() if arm else {"status": "registered"}
 
@@ -303,6 +304,7 @@ async def register_arm(body: RegisterRequest):
 async def unregister_arm(body: RegisterRequest):
     if not robot_manager.unregister_arm(body.iface):
         raise HTTPException(400, "Unknown arm")
+    robot_manager.save_session()
     return {"status": "unregistered"}
 
 
@@ -375,6 +377,66 @@ async def delete_preset(name: str):
     if not robot_manager.delete_preset(name):
         raise HTTPException(404, "Preset not found")
     return {"status": "deleted"}
+
+
+# ── 파킹 위치 보정 ──
+
+@router.post("/parking/go")
+async def parking_go(body: ConnectRequest):
+    """파킹 위치로 이동."""
+    arm = robot_manager.arms.get(body.iface)
+    if not arm or not arm.connected:
+        raise HTTPException(404, "Arm not connected")
+    if not arm.go_parking():
+        raise HTTPException(500, "Parking failed")
+    return {"status": "ok"}
+
+
+@router.post("/parking/torque")
+async def parking_torque(body: ConnectRequest, enable: bool = True):
+    """토크 ON/OFF."""
+    arm = robot_manager.arms.get(body.iface)
+    if not arm or not arm.connected:
+        raise HTTPException(404, "Arm not connected")
+    if enable:
+        arm.enable_torque()
+    else:
+        arm.disable_torque()
+    return {"status": "torque_on" if enable else "torque_off"}
+
+
+@router.get("/parking/joints/{iface}")
+async def parking_read_joints(iface: str):
+    """현재 관절 위치 읽기 (정규화값)."""
+    arm = robot_manager.arms.get(iface)
+    if not arm or not arm.connected:
+        raise HTTPException(404, "Arm not connected")
+    joints = arm.read_joints_normalized()
+    if joints is None:
+        raise HTTPException(500, "Failed to read joints")
+    return joints
+
+
+class ParkingSaveBody(BaseModel):
+    iface: str
+    positions: dict[str, float]
+
+
+@router.post("/parking/save")
+async def parking_save(body: ParkingSaveBody):
+    """현재 관절 위치를 커스텀 파킹 위치로 저장."""
+    arm = robot_manager.arms.get(body.iface)
+    if not arm or not arm.connected:
+        raise HTTPException(404, "Arm not connected")
+    _save_custom_parking(body.iface, body.positions)
+    return {"status": "saved", "positions": body.positions}
+
+
+@router.get("/parking/saved/{iface}")
+async def parking_get_saved(iface: str):
+    """저장된 커스텀 파킹 위치 조회."""
+    saved = _load_custom_parking(iface)
+    return {"has_custom": saved is not None, "positions": saved}
 
 
 # 하위 호환: 기존 GET /api/robots → types로 리다이렉트

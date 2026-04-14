@@ -32,11 +32,14 @@ _pkg.__path__ = [_policies_dir]
 _pkg.__package__ = "lerobot.policies"
 sys.modules["lerobot.policies"] = _pkg
 
+# HuggingFace/transformers 오프라인 모드: 로컬 캐시만 사용
+_os.environ["HF_HUB_OFFLINE"] = "1"
+_os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
 import argparse
 import importlib
 import json
 import logging
-import os
 import signal
 import threading
 import time
@@ -48,7 +51,11 @@ from typing import Any
 import numpy as np
 import zmq
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# root logger에 stdout handler만 설정 (중복 방지)
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+logging.root.handlers = [_handler]
+logging.root.setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ── 실시간 변경 가능 파라미터 ──
@@ -71,6 +78,10 @@ PARAM_SETTERS = {
 
 # task 텍스트 (ZMQ로 실시간 변경 가능)
 _current_task = "do the task"
+
+# 액션 필터 (ZMQ로 실시간 변경 가능)
+from action_filter import ActionFilter
+_action_filter = ActionFilter()
 
 # 일시정지 + 수동 조작
 _paused = False
@@ -123,6 +134,10 @@ def param_listener(policy: Any, zmq_addr: str) -> None:
                     _current_task = str(value)
                     logger.info("Updated task = %s", _current_task)
                     continue
+                # 액션 필터 파라미터
+                if _action_filter.update_param(key, value):
+                    logger.info("Updated filter %s = %s", key, value)
+                    continue
                 setter = PARAM_SETTERS.get(key)
                 if setter:
                     try:
@@ -138,7 +153,7 @@ def param_listener(policy: Any, zmq_addr: str) -> None:
 
 def _resolve_policy_path(policy_path: str) -> str:
     """HF repo ID 또는 로컬 경로를 실제 디렉토리 경로로 변환."""
-    if os.path.isdir(policy_path):
+    if _os.path.isdir(policy_path):
         return policy_path
     # HF 캐시에서 찾기
     from huggingface_hub import snapshot_download
@@ -217,38 +232,77 @@ def main() -> None:
 
     model_mod, model_cls, config_mod, config_cls = POLICY_IMPORTS[policy_type]
 
-    # config 서브클래스 import & JSON에서 직접 생성
-    ConfigClass = getattr(importlib.import_module(config_mod), config_cls)
-    import draccus
-    # "type"은 draccus choice discriminator이지 dataclass 필드가 아니므로 제거
-    config_data = {k: v for k, v in config_json.items() if k != "type"}
-    policy_cfg = draccus.decode(ConfigClass, config_data)
-    policy_cfg.device = args.device
-    policy_cfg.use_amp = args.use_amp
-
-    # policy 클래스 import & from_pretrained
+    # policy 클래스 import & from_pretrained (서버 방식: 모델 자체 config 사용)
     PolicyClass = getattr(importlib.import_module(model_mod), model_cls)
     logger.info("Loading %s", model_cls)
-    policy = PolicyClass.from_pretrained(local_path, config=policy_cfg)
+    policy = PolicyClass.from_pretrained(local_path)
+    policy_cfg = policy.config
 
     device = get_safe_torch_device(args.device)
+    policy_cfg.device = args.device
+    policy_cfg.use_amp = args.use_amp
     policy.eval()
     policy.to(device)
 
-    # config 오버라이드 적용
+    # 시각화 hooks 등록 (input/features/attention 이미지 생성)
+    try:
+        from viz_hooks import register_viz_hooks
+        register_viz_hooks(policy)
+        logger.info("Viz hooks registered")
+    except Exception as e:
+        logger.warning("Viz hooks registration failed: %s", e)
+
+    # config 오버라이드 적용 (n_action_steps는 policy.config에 적용하지 않음 — actions_per_chunk로 별도 관리)
+    _actions_per_chunk_override = None
     for key, value in config_overrides.items():
+        if key == "n_action_steps":
+            _actions_per_chunk_override = int(value)
+            logger.info("actions_per_chunk override: %s", value)
+            continue
         setter = PARAM_SETTERS.get(key)
         if setter:
             setter(policy, value)
             logger.info("Config override: %s = %s", key, value)
 
     # ── 3. 전처리/후처리 파이프라인 ──
-    from lerobot.processor import PolicyProcessorPipeline
+    preprocessor = None
+    postprocessor = None
+    try:
+        # SmolVLA 등 정책별 프로세서 레지스트리 등록
+        for _proc_mod in [
+            "lerobot.policies.smolvla.processor_smolvla",
+            "lerobot.policies.pi0.processor_pi0",
+            "lerobot.policies.pi05.processor_pi05",
+        ]:
+            try:
+                importlib.import_module(_proc_mod)
+            except Exception:
+                pass
+        from lerobot.policies.factory import make_pre_post_processors
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg,
+            pretrained_path=local_path,
+            preprocessor_overrides={"device_processor": {"device": args.device}},
+            postprocessor_overrides={"device_processor": {"device": "cpu"}},
+        )
+        logger.info("Preprocessor/Postprocessor loaded via make_pre_post_processors")
+    except Exception as e:
+        logger.warning("Failed to load pre/post processors: %s (falling back to manual)", e)
 
-    pre_path = Path(local_path) / "preprocessor.json"
-    post_path = Path(local_path) / "postprocessor.json"
-    preprocessor = PolicyProcessorPipeline.from_json(str(pre_path)) if pre_path.exists() else PolicyProcessorPipeline()
-    postprocessor = PolicyProcessorPipeline.from_json(str(post_path)) if post_path.exists() else PolicyProcessorPipeline()
+    # preprocessor의 rename_map 추출 (fallback용)
+    _rename_map = {}
+    try:
+        pre_json_path = Path(local_path) / "policy_preprocessor.json"
+        if pre_json_path.exists():
+            import json as _json
+            for step in _json.loads(pre_json_path.read_text()).get("steps", []):
+                if step.get("registry_name") == "rename_observations_processor":
+                    _rename_map = step.get("config", {}).get("rename_map", {})
+                    break
+        if _rename_map:
+            logger.info("Rename map: %s", _rename_map)
+    except Exception:
+        pass
 
     # ── 4. ZMQ 파라미터 리스너 시작 ──
     zmq_thread = threading.Thread(target=param_listener, args=(policy, args.zmq_addr), daemon=True)
@@ -267,8 +321,193 @@ def main() -> None:
 
     target_dt = 1.0 / args.fps
     step = 0
+    _fps_history: list[float] = []
+    _action_filter.fps = args.fps
+
+    # 토크나이저 + 인코딩 캐시 (매 스텝 재호출 방지)
+    _tokenizer = None
+    _max_token_len = getattr(policy_cfg, 'tokenizer_max_length', 48)
+    _cached_task = None
+    _cached_tokens = None
+    _cached_mask = None
+    if hasattr(policy, 'model') and hasattr(policy.model, 'vlm_with_expert'):
+        _tokenizer = policy.model.vlm_with_expert.processor.tokenizer
 
     logger.info("Starting inference loop (fps=%d, device=%s, amp=%s)", args.fps, args.device, args.use_amp)
+
+    # ── CSV 로그 ──
+    import csv
+    import datetime as _dt
+    _log_ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    _csv_path = f"/tmp/piper_inference_{_log_ts}.csv"
+    _csv_motor_names = list(robot.action_features.keys())
+    _csv_cols = (
+        ["timestamp", "step", "fps", "inference_ms", "queue_size"]
+        + [f"target_{m}" for m in _csv_motor_names]
+        + [f"filtered_{m}" for m in _csv_motor_names]
+        + [f"actual_{m}" for m in _csv_motor_names]
+        + ["task", "paused"]
+    )
+    _csv_file = open(_csv_path, "w", newline="")
+    _csv_writer = csv.DictWriter(_csv_file, fieldnames=_csv_cols)
+    _csv_writer.writeheader()
+    logger.info("CSV log: %s", _csv_path)
+
+    # ── obs 변환용 LeRobot 유틸리티 (이전 서버 방식과 동일) ──
+    from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
+
+    lerobot_features = hw_to_dataset_features(robot.observation_features, "observation", use_video=False)
+    policy_image_features = policy.config.image_features
+    actions_per_chunk = _actions_per_chunk_override or policy_cfg.n_action_steps
+    logger.info("actions_per_chunk: %d (model default: %d)", actions_per_chunk, policy_cfg.n_action_steps)
+
+    def _prepare_observation(raw_obs: dict) -> dict:
+        """raw_obs → 모델 입력 변환. preprocessor가 있으면 사용."""
+        OBS_STATE = "observation.state"
+        OBS_IMAGES = "observation.images."
+
+        # 1. build_dataset_frame으로 키 매핑
+        lerobot_obs = build_dataset_frame(lerobot_features, raw_obs, prefix="observation")
+
+        # 2. rename_map 적용 (side→camera1 등)
+        if _rename_map:
+            renamed = {}
+            for key, val in lerobot_obs.items():
+                new_key = _rename_map.get(key, key)
+                renamed[new_key] = val
+            lerobot_obs = renamed
+
+        # 3. state를 모델 기대 차원으로 트림 (학습 시 그리퍼 제외된 경우)
+        _state_dim = policy_cfg.input_features.get("observation.state", {})
+        _expected_state_len = _state_dim.shape[0] if hasattr(_state_dim, 'shape') else 0
+        if _expected_state_len > 0:
+            obs_state = lerobot_obs.get("observation.state")
+            if obs_state is not None and hasattr(obs_state, '__len__') and len(obs_state) > _expected_state_len:
+                lerobot_obs["observation.state"] = obs_state[:_expected_state_len]
+
+        if preprocessor is not None:
+            # preprocessor 파이프라인 사용 (정규화, 토큰화, 디바이스 이동 포함)
+            # 이미지를 (C, H, W) float32 [0,1] 텐서로 변환
+            result = {}
+            for key, val in lerobot_obs.items():
+                if key.startswith(OBS_IMAGES):
+                    img = torch.tensor(val).permute(2, 0, 1).float() / 255.0
+                    result[key] = img
+                elif key == OBS_STATE:
+                    result[key] = torch.tensor(val)
+                else:
+                    result[key] = val
+            result["task"] = _current_task
+            # preprocessor가 batch dim 추가, 토큰화, 정규화, 디바이스 이동을 처리
+            result = preprocessor(result)
+            return result
+
+        # fallback: preprocessor 없는 이전 모델
+        state = torch.tensor(lerobot_obs[OBS_STATE])
+        if state.ndim == 1:
+            state = state.unsqueeze(0)
+        result = {OBS_STATE: state.to(device)}
+
+        for key in list(lerobot_obs.keys()):
+            if key.startswith(OBS_IMAGES):
+                img = torch.tensor(lerobot_obs[key])
+                img = img.permute(2, 0, 1)  # (H,W,C) → (C,H,W)
+                # リサイズしない — prepare_images()が512x512にリサイズ+パディングする
+                img = img.float() / 255.0
+                img = img.contiguous()
+                result[key] = img.unsqueeze(0).to(device)
+
+        task_text = _current_task
+        result["task"] = task_text
+
+        if _tokenizer is not None:
+            nonlocal _cached_task, _cached_tokens, _cached_mask
+            if task_text != _cached_task:
+                encoded = _tokenizer(
+                    task_text, padding="max_length",
+                    max_length=_max_token_len, truncation=True,
+                    return_tensors="pt",
+                )
+                _cached_tokens = encoded["input_ids"].to(device)
+                _cached_mask = encoded["attention_mask"].bool().to(device)
+                _cached_task = task_text
+            result["observation.language.tokens"] = _cached_tokens
+            result["observation.language.attention_mask"] = _cached_mask
+
+        return result
+
+    # ── 비동기 추론: 공유 상태 ──
+    _action_lock = threading.Lock()
+    _latest_action_dict: dict | None = None
+    _latest_action_np: np.ndarray | None = None
+    _action_queue: list = []  # 타임스텝 기반 액션 큐
+    _obs_for_inference: dict | None = None
+    _obs_event = threading.Event()
+    _inference_running = True
+    _inference_ms_shared = 0.0
+    motor_names = list(robot.action_features.keys())
+
+    def _inference_thread_fn():
+        """별도 스레드에서 predict_action_chunk() 실행 (서버 방식)."""
+        nonlocal _latest_action_dict, _latest_action_np, _inference_ms_shared, _action_queue
+        while _inference_running:
+            _obs_event.wait(timeout=1.0)
+            if not _inference_running:
+                break
+            _obs_event.clear()
+
+            raw_obs = _obs_for_inference
+            if raw_obs is None:
+                continue
+
+            t0 = time.monotonic()
+            try:
+                with (
+                    torch.inference_mode(),
+                    torch.autocast(device_type=device.type) if device.type == "cuda" and policy.config.use_amp else nullcontext(),
+                ):
+                    observation = _prepare_observation(raw_obs)
+                    # 시각화용: _captured에 텐서 저장 (features/attention 생성용)
+                    try:
+                        from viz_hooks import _captured
+                        viz_imgs = []
+                        for k, v in raw_obs.items():
+                            if isinstance(v, np.ndarray) and v.ndim == 3:
+                                t = torch.tensor(v.copy()).permute(2, 0, 1).float() / 255.0
+                                viz_imgs.append(t)
+                        if viz_imgs:
+                            _captured["preprocessed_images"] = viz_imgs
+                    except Exception:
+                        pass
+                    # predict_action_chunk — 서버와 동일
+                    action_chunk = policy.predict_action_chunk(observation)
+                    if action_chunk.ndim != 3:
+                        action_chunk = action_chunk.unsqueeze(0)
+                    # (B, chunk_size, action_dim) → (actions_per_chunk, action_dim)
+                    action_chunk = action_chunk[0, :actions_per_chunk, :]
+
+                # postprocessor 적용 (unnormalize) + 액션 큐에 추가
+                new_queue = []
+                for i in range(action_chunk.shape[0]):
+                    action_i = action_chunk[i].unsqueeze(0)  # (1, action_dim)
+                    if postprocessor is not None:
+                        action_i = postprocessor(action_i)
+                    a_np = action_i.squeeze(0).cpu().numpy()
+                    a_dict = {name: float(a_np[j]) for j, name in enumerate(motor_names)}
+                    new_queue.append((a_np, a_dict))
+
+                with _action_lock:
+                    _action_queue = new_queue
+                    # 첫 액션을 latest로 설정
+                    if new_queue:
+                        _latest_action_np, _latest_action_dict = new_queue[0]
+
+                _inference_ms_shared = round((time.monotonic() - t0) * 1000, 1)
+            except Exception as e:
+                logger.error("Inference thread error: %s", e, exc_info=True)
+
+    inference_thread = threading.Thread(target=_inference_thread_fn, daemon=True)
+    inference_thread.start()
 
     try:
         while running:
@@ -278,151 +517,119 @@ def main() -> None:
             if _paused:
                 if _manual_action:
                     robot.send_action(_manual_action)
-                # 일시정지 상태 텔레메트리
                 obs = robot.get_observation()
-                state_values = [float(v) for k, v in obs.items()
-                                if isinstance(v, (int, float))]
+                state_values = [float(v) for k, v in obs.items() if isinstance(v, (int, float))]
                 telemetry = {
                     "t": "telemetry", "step": step, "fps": 0,
                     "inference_ms": 0, "joints": [round(v, 2) for v in state_values],
                     "action": [], "task": _current_task, "paused": True,
                 }
                 print(json.dumps(telemetry), flush=True)
-                # 카메라 프리뷰는 계속 갱신
-                import cv2 as _cv2
-                import tempfile
-                for cam_name, cam_img in obs.items():
-                    if isinstance(cam_img, np.ndarray) and cam_img.ndim >= 2:
-                        preview_path = f"/tmp/piper_cam_{cam_name}.jpg"
-                        fd, tmp_path = tempfile.mkstemp(suffix=".jpg", dir="/tmp")
-                        try:
-                            _cv2.imwrite(tmp_path, cam_img)
-                            os.replace(tmp_path, preview_path)
-                        except Exception:
-                            pass
-                        finally:
-                            try: os.close(fd)
-                            except OSError: pass
                 time.sleep(0.05)
                 continue
 
             # 5a. 관측값 가져오기
             obs = robot.get_observation()
 
-            # 디버그: 첫 스텝에서 observation 키 출력
+            # 시각화: 메인 루프에서 직접 raw 이미지 저장 (obs 원래 순서 유지)
+            try:
+                from viz_hooks import _save_jpg
+                import cv2 as _cv2
+                _viz_i = 0
+                for _k, _v in obs.items():
+                    if isinstance(_v, np.ndarray) and _v.ndim == 3:
+                        _save_jpg(_cv2.cvtColor(_v, _cv2.COLOR_RGB2BGR), f"piper_viz_input_{_viz_i}.jpg")
+                        _viz_i += 1
+            except Exception:
+                pass
+
             if step == 0:
                 logger.info("Observation keys: %s", list(obs.keys()))
-                for k, v in obs.items():
-                    if hasattr(v, 'shape'):
-                        logger.info("  %s: %s %s", k, type(v).__name__, v.shape)
-                    else:
-                        logger.info("  %s: %s %s", k, type(v).__name__, v)
+                # 첫 추론 트리거
+                _obs_for_inference = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()}
+                _obs_event.set()
 
-            # 5b. observation 키를 정책이 기대하는 형태로 변환
-            # robot: "joint1.pos" → "observation.state", "top" → "observation.images.top"
-            mapped_obs: dict = {}
-            state_values = []
-            for k, v in obs.items():
-                if isinstance(v, np.ndarray) and v.ndim >= 2:
-                    # 이미지 → observation.images.{name}
-                    mapped_obs[f"observation.images.{k}"] = v
-                elif isinstance(v, np.ndarray) or isinstance(v, (int, float)):
-                    # 관절값 → state에 추가
-                    state_values.append(float(v) if isinstance(v, (int, float)) else v.item() if v.ndim == 0 else v)
+            # 5b. 관절값 추출 (텔레메트리용)
+            state_values = [float(v) for k, v in obs.items() if isinstance(v, (int, float))]
 
-            # state를 하나의 벡터로 합침
-            if state_values:
-                mapped_obs["observation.state"] = np.array(state_values, dtype=np.float32)
+            # 5c. 액션 큐에서 순서대로 꺼내서 로봇에 전송
+            with _action_lock:
+                if _action_queue:
+                    action_np, action_dict = _action_queue.pop(0)
+                    _latest_action_np = action_np
+                    _latest_action_dict = action_dict
+                else:
+                    action_dict = _latest_action_dict
+                    action_np = _latest_action_np
 
-            _obs = copy(mapped_obs)
-            with (
-                torch.inference_mode(),
-                torch.autocast(device_type=device.type) if device.type == "cuda" and policy.config.use_amp else nullcontext(),
-            ):
-                for name in list(_obs.keys()):
-                    val = _obs[name]
-                    if isinstance(val, np.ndarray):
-                        val = torch.from_numpy(val)
-                    elif isinstance(val, (int, float)):
-                        val = torch.tensor([val])
-                    else:
-                        continue
-                    if "image" in name:
-                        val = val.float() / 255.0
-                        val = val.permute(2, 0, 1).contiguous()
-                    _obs[name] = val.unsqueeze(0).to(device)
+                # 큐가 비면 새 추론 요청 (raw obs 복사하여 전달 — 버퍼 재사용 방지)
+                if not _action_queue:
+                    _obs_for_inference = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()}
+                    _obs_event.set()
 
-                # SmolVLA 등 VLA 모델은 task 텍스트를 토크나이즈하여 전달
-                task_text = _current_task
-                _obs["task"] = task_text
-                _obs["robot_type"] = args.robot_type
-
-                # observation.language.tokens / attention_mask 생성
-                if hasattr(policy, 'model') and hasattr(policy.model, 'vlm_with_expert'):
-                    tokenizer = policy.model.vlm_with_expert.processor.tokenizer
-                    max_len = policy_cfg.tokenizer_max_length if hasattr(policy_cfg, 'tokenizer_max_length') else 48
-                    encoded = tokenizer(
-                        task_text,
-                        padding="max_length",
-                        max_length=max_len,
-                        truncation=True,
-                        return_tensors="pt",
-                    )
-                    _obs["observation.language.tokens"] = encoded["input_ids"].to(device)
-                    _obs["observation.language.attention_mask"] = encoded["attention_mask"].bool().to(device)
-
-                _obs = preprocessor(_obs)
-                action = policy.select_action(_obs)
-                # postprocessor가 비어있으면 Tensor를 직접 반환하므로 건너뜀
-                if len(postprocessor.steps) > 0:
-                    action = postprocessor(action)
-
-            # 5c. 액션 Tensor → dict 변환 후 로봇에 전송
-            if isinstance(action, torch.Tensor):
-                action_np = action.squeeze(0).cpu().numpy()
-                motor_names = list(robot.action_features.keys())
-                action_dict = {name: float(action_np[i]) for i, name in enumerate(motor_names)}
-            else:
-                action_dict = action
-            robot.send_action(action_dict)
+            filtered = None
+            if action_dict is not None:
+                # 현재 관절 상태 (속도 제한용)
+                current_state = {k: v for k, v in obs.items() if isinstance(v, (int, float))}
+                filtered = _action_filter.apply(action_dict, current_state)
+                robot.send_action(filtered)
 
             step += 1
             elapsed = time.monotonic() - start_time
-            inference_ms = round(elapsed * 1000, 1)
-            current_fps = round(1.0 / max(elapsed, 1e-6), 1)
+            # FPS: 최근 20스텝 이동평균
+            _fps_history.append(elapsed)
+            if len(_fps_history) > 20:
+                _fps_history.pop(0)
+            current_fps = round(len(_fps_history) / max(sum(_fps_history), 1e-6), 1)
 
-            # 텔레메트리 + 카메라 프리뷰 (5스텝마다 ≈ 추론 2~3회에 1번)
-            if step % 5 == 0:
-                telemetry = {
-                    "t": "telemetry",
-                    "step": step,
-                    "fps": current_fps,
-                    "inference_ms": inference_ms,
-                    "joints": [round(v, 2) for v in state_values],
-                    "action": [round(float(action_np[i]), 2) for i in range(len(action_np))] if isinstance(action, torch.Tensor) else [],
-                    "task": task_text,
-                }
-                if step % 50 == 0 and torch.cuda.is_available():
-                    telemetry["gpu_mem_mb"] = round(torch.cuda.memory_allocated() / 1024 / 1024)
-                    telemetry["gpu_total_mb"] = round(torch.cuda.get_device_properties(0).total_memory / 1024 / 1024)
-                print(json.dumps(telemetry), flush=True)
+            # 텔레메트리
+            telemetry = {
+                "t": "telemetry",
+                "step": step,
+                "fps": current_fps,
+                "inference_ms": _inference_ms_shared,
+                "joints": [round(v, 2) for v in state_values],
+                "action": [round(float(action_np[i]), 2) for i in range(len(action_np))] if action_np is not None else [],
+                "task": _current_task,
+            }
+            if step % 50 == 0 and torch.cuda.is_available():
+                telemetry["gpu_mem_mb"] = round(torch.cuda.memory_allocated() / 1024 / 1024)
+                telemetry["gpu_total_mb"] = round(torch.cuda.get_device_properties(0).total_memory / 1024 / 1024)
+            print(json.dumps(telemetry), flush=True)
+
+            # CSV 로그
+            with _action_lock:
+                qsize = len(_action_queue)
+            csv_row = {
+                "timestamp": time.monotonic(),
+                "step": step, "fps": current_fps,
+                "inference_ms": _inference_ms_shared,
+                "queue_size": qsize,
+                "task": _current_task, "paused": _paused,
+            }
+            for j, m in enumerate(_csv_motor_names):
+                csv_row[f"target_{m}"] = round(float(action_np[j]), 4) if action_np is not None else ""
+                csv_row[f"filtered_{m}"] = round(filtered.get(m, 0), 4) if filtered else ""
+                csv_row[f"actual_{m}"] = round(state_values[j], 4) if j < len(state_values) else ""
+            _csv_writer.writerow(csv_row)
+            if step % 30 == 0:
+                _csv_file.flush()
 
             # 카메라 프리뷰 (20스텝마다)
             if step % 20 == 0:
-                import cv2 as _cv2
-                import tempfile
-                for cam_name, cam_img in obs.items():
-                    if isinstance(cam_img, np.ndarray) and cam_img.ndim >= 2:
-                        preview_path = f"/tmp/piper_cam_{cam_name}.jpg"
-                        fd, tmp_path = tempfile.mkstemp(suffix=".jpg", dir="/tmp")
-                        try:
-                            _cv2.imwrite(tmp_path, cam_img)
-                            os.replace(tmp_path, preview_path)
-                        except Exception:
-                            pass
-                        finally:
-                            try: os.close(fd)
-                            except OSError: pass
+                def _save_previews(snap):
+                    import cv2 as _cv2
+                    import tempfile as _tf
+                    for cn, ci in snap.items():
+                        if isinstance(ci, np.ndarray) and ci.ndim >= 2:
+                            pp = f"/tmp/piper_cam_{cn}.jpg"
+                            fd, tp = _tf.mkstemp(suffix=".jpg", dir="/tmp")
+                            try: _cv2.imwrite(tp, _cv2.cvtColor(ci, _cv2.COLOR_RGB2BGR)); _os.replace(tp, pp)
+                            except Exception: pass
+                            finally:
+                                try: _os.close(fd)
+                                except OSError: pass
+                threading.Thread(target=_save_previews, args=({k: v for k, v in obs.items()},), daemon=True).start()
 
             # FPS 제어
             if elapsed < target_dt:
@@ -433,10 +640,13 @@ def main() -> None:
     except Exception as e:
         logger.error("Inference error: %s", e, exc_info=True)
     finally:
+        _inference_running = False
+        _obs_event.set()
+        inference_thread.join(timeout=3)
         logger.info("Returning to home position...")
         try:
             robot.parking()
-            time.sleep(1)
+            time.sleep(5)  # 팔이 원위치로 이동할 시간
         except Exception as e:
             logger.warning("Parking failed: %s", e)
         logger.info("Disabling torque and disconnecting...")
@@ -444,7 +654,9 @@ def main() -> None:
             robot.disconnect(disable_torque=True)
         except Exception:
             pass
-        logger.info("Done. Total steps: %d", step)
+        _csv_file.close()
+        print(json.dumps({"t": "log_saved", "csv_path": _csv_path, "steps": step}), flush=True)
+        logger.info("Done. Total steps: %d, CSV log: %s", step, _csv_path)
 
 
 if __name__ == "__main__":

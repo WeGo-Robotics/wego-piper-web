@@ -36,7 +36,7 @@ export default function EStopButton() {
   return (
     <button
       onClick={triggerEstop}
-      className="fixed bottom-6 right-6 z-50 w-20 h-20 rounded-full bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-sm shadow-lg shadow-red-900/50 transition-colors select-none"
+      className="fixed bottom-4 right-4 z-50 w-14 h-14 rounded-full bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-[10px] shadow-lg shadow-red-900/50 transition-colors select-none pointer-events-auto"
       title="긴급 정지 (Escape)"
     >
       E-STOP

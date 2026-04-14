@@ -10,6 +10,8 @@ dependencies = [
     "pyzmq>=26.0",
     "websockets>=13.0",
     "huggingface-hub>=0.25",
+    "pandas>=2.0",
+    "plotly>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -17,4 +19,7 @@ dev = [
     "pytest>=8.0",
     "httpx>=0.27",
     "ruff>=0.6",
+]
+analysis = [
+    "matplotlib>=3.8",
 ]

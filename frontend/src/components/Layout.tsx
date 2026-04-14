@@ -5,9 +5,13 @@ const navItems = [
   { to: '/', label: '대시보드' },
   { to: '/robots', label: '로봇' },
   { to: '/cameras', label: '카메라' },
+  { to: '/recording', label: '수집' },
   { to: '/inference', label: '추론' },
-  { to: '/models', label: '모델' },
-  { to: '/datasets', label: '데이터셋' },
+  { to: '/training', label: '학습' },
+  { to: '/hub', label: '허브' },
+  { to: '/policy-server', label: '정책서버' },
+  { to: '/logs', label: '로그' },
+  { to: '/settings', label: '설정' },
 ]
 
 export default function Layout() {
