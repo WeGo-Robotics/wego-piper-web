@@ -183,8 +183,8 @@ def build_train_args(params: dict) -> list[str]:
         else:
             args.append(f"{cli_flag}={value}")
 
-    # resume: output_dir을 이전 학습의 output_dir로 지정하면 자동으로 마지막 체크포인트에서 재개
-    if params.get("resume"):
+    # resume: --policy.path와 함께 사용 불가 (checkpoint_path가 None이 되어 에러)
+    if params.get("resume") and not has_pretrained:
         args.append("--resume=true")
 
     # rename_map (카메라 이름 매핑)
