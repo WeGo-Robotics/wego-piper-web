@@ -37,7 +37,12 @@ export default function ModelsPage({ embedded = false }: { embedded?: boolean })
   }, [])
 
   const handleDelete = async (id: string) => {
-    if (!confirm(`"${id}" 모델을 삭제하시겠습니까?`)) return
+    const model = models.find((m) => m.id === id)
+    const isLocal = model?.path && !model.path.includes('.cache/huggingface/hub/models--')
+    const msg = isLocal
+      ? `"${id}" 모델 폴더를 삭제하시겠습니까?\n경로: ${model.path}`
+      : `"${id}" 모델을 삭제하시겠습니까?`
+    if (!confirm(msg)) return
     await api.delete(`/models/${id}`)
     fetchModels()
     if (selectedId === id) setSelectedId(null)

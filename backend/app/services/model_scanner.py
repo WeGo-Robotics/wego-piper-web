@@ -229,6 +229,23 @@ def get_model(model_id: str) -> dict | None:
 def delete_model(model_id: str) -> bool:
     import shutil
 
+    # scan_models에서 모델 찾기
+    model = get_model(model_id)
+    if model:
+        model_path = Path(model["path"])
+        # 학습 출력: pretrained_model 폴더 → 체크포인트 폴더 삭제
+        if model_path.name == "pretrained_model":
+            ckpt_dir = model_path.parent  # e.g., .../checkpoints/005000
+            shutil.rmtree(ckpt_dir)
+            logger.info("Deleted checkpoint: %s", ckpt_dir)
+        else:
+            # HF 캐시: snapshot 폴더의 상위 (models--org--name)
+            # 또는 직접 경로
+            shutil.rmtree(model_path)
+            logger.info("Deleted model: %s", model_path)
+        return True
+
+    # fallback: HF 캐시 형식
     parts = model_id.split("/", 1)
     if len(parts) != 2:
         return False
