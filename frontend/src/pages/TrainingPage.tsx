@@ -40,6 +40,7 @@ export default function TrainingPage() {
   const [cliArgs, setCliArgs] = useState('')
   const [cliEdited, setCliEdited] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [confirmConfig, setConfirmConfig] = useState<string | null>(null)
 
   // 설정값 변경 시 localStorage에 저장
   useEffect(() => {
@@ -138,21 +139,54 @@ export default function TrainingPage() {
 
   const isRunning = trainState === 'running' || trainState === 'starting' || trainState === 'stopping'
 
+  const trainParams = () => ({
+    dataset_repo_id: selectedDataset, policy_type: policyType,
+    pretrained_path: pretrainedPath, policy_repo_id: policyRepoId, output_dir: outputDir,
+    batch_size: batchSize, steps, log_freq: logFreq, save_freq: saveFreq,
+    num_workers: numWorkers, seed, device, optimizer_type: optimizerType,
+    learning_rate: learningRate, wandb_enable: wandbEnable, wandb_project: wandbProject, resume,
+    state_dim: stateDim, action_dim: actionDim, rename_map: renameMap,
+  })
+
+  const handlePreConfirm = async () => {
+    // CLI 미리보기를 config 확인용으로 표시
+    try {
+      const r = await api.post<{ command: string; args: string[] }>('/training/preview', trainParams())
+      const configLines = [
+        '=== 학습 설정 확인 ===',
+        '',
+        `데이터셋: ${selectedDataset}`,
+        `정책: ${policyType}`,
+        `Fine-tune: ${pretrainedPath || '(처음부터)'}`,
+        `Repo ID: ${policyRepoId || '(없음)'}`,
+        `Output: ${outputDir || '(자동)'}`,
+        '',
+        `Batch: ${batchSize}  Steps: ${steps}  Save: ${saveFreq}`,
+        `Device: ${device}  AMP: ${policyType === 'smolvla' ? 'preset' : 'false'}`,
+        `Workers: ${numWorkers}  Seed: ${seed}`,
+        `Resume: ${resume}  State: ${stateDim || 'auto'}  Action: ${actionDim || 'auto'}`,
+        '',
+        `Rename map: ${renameMap || '(없음)'}`,
+        '',
+        '=== CLI 명령어 ===',
+        r.command,
+      ].join('\n')
+      setConfirmConfig(configLines)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '미리보기 실패'
+      setLogs((prev) => [...prev, `[ERROR] ${msg}`])
+    }
+  }
+
   const handleStart = async () => {
+    setConfirmConfig(null)
     try {
       if (cliEdited) {
         await api.post('/training/start-custom', {
           args: cliArgs.split(/\s+/).filter(Boolean), total_steps: steps, output_dir: outputDir,
         })
       } else {
-        await api.post('/training/start', {
-          dataset_repo_id: selectedDataset, policy_type: policyType,
-          pretrained_path: pretrainedPath, policy_repo_id: policyRepoId, output_dir: outputDir,
-          batch_size: batchSize, steps, log_freq: logFreq, save_freq: saveFreq,
-          num_workers: numWorkers, seed, device, optimizer_type: optimizerType,
-          learning_rate: learningRate, wandb_enable: wandbEnable, wandb_project: wandbProject, resume,
-          state_dim: stateDim, action_dim: actionDim,
-        })
+        await api.post('/training/start', trainParams())
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : '알 수 없는 오류'
@@ -435,11 +469,29 @@ export default function TrainingPage() {
                   onChange={(e) => { setCliArgs(e.target.value); setCliEdited(true) }}
                   rows={4}
                   className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-xs font-mono text-neutral-100 focus:outline-none focus:border-blue-500 resize-y" />
-                <button onClick={handleStart} disabled={!canStart}
+                <button onClick={cliEdited ? handleStart : handlePreConfirm} disabled={!canStart}
                   className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium">
-                  학습 시작
+                  {cliEdited ? '학습 시작 (CLI 직접)' : '설정 확인 후 시작'}
                 </button>
               </div>
+
+              {/* 설정 확인 모달 */}
+              {confirmConfig && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setConfirmConfig(null)}>
+                  <div className="bg-neutral-800 border border-neutral-600 rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+                    <h3 className="text-lg font-bold mb-3">학습 설정 확인</h3>
+                    <pre className="flex-1 overflow-auto text-xs font-mono bg-neutral-900 p-4 rounded border border-neutral-700 text-neutral-200 whitespace-pre-wrap mb-4">
+                      {confirmConfig}
+                    </pre>
+                    <div className="flex gap-3 justify-end">
+                      <button onClick={() => setConfirmConfig(null)}
+                        className="px-4 py-2 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 text-sm">취소</button>
+                      <button onClick={handleStart}
+                        className="px-6 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium">학습 시작</button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <>
