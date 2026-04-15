@@ -6,7 +6,7 @@ import TrainingMetrics, { type MetricsData, type HistoryData } from '../componen
 
 type ProcessState = 'idle' | 'starting' | 'running' | 'stopping' | 'error'
 type Dataset = { id: string; path: string; total_episodes: number; total_frames: number; fps: number | null; features: Record<string, { shape?: number[]; dtype?: string; names?: string[] }> }
-type Model = { id: string; path: string }
+type Model = { id: string; path: string; policy_type?: string; config?: Record<string, unknown>; requirements?: { required_cameras: { name: string; model_name?: string }[]; state_dim: number; action_dim: number } }
 type Checkpoint = { name: string; step: number; size_kb: number; path: string }
 
 const POLICY_TYPES = ['act', 'diffusion', 'smolvla', 'pi0', 'pi05', 'vqbet', 'tdmpc', 'sac']
@@ -345,6 +345,33 @@ export default function TrainingPage() {
                     {models.map((m) => <option key={m.id} value={m.path}>{m.id}</option>)}
                   </select>
                 </div>
+                {pretrainedPath && (() => {
+                  const m = models.find((mm) => mm.path === pretrainedPath)
+                  if (!m?.requirements) return null
+                  const r = m.requirements
+                  return (
+                    <div className="rounded border border-neutral-700 bg-neutral-900 p-2 space-y-1 text-xs">
+                      <div className="flex items-center gap-2 text-neutral-300">
+                        <span className="font-medium">{m.policy_type ?? '?'}</span>
+                        <span className="text-neutral-500">|</span>
+                        <span>state: {r.state_dim}</span>
+                        <span className="text-neutral-500">|</span>
+                        <span>action: {r.action_dim}</span>
+                      </div>
+                      {r.required_cameras.length > 0 && (
+                        <div className="text-neutral-400">
+                          카메라: {r.required_cameras.map((c) => (
+                            <span key={c.name} className="inline-block mr-2">
+                              <span className="text-neutral-200">{c.name}</span>
+                              {c.model_name && c.model_name !== c.name && <span className="text-neutral-600 text-[10px]">({c.model_name})</span>}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="text-[10px] text-neutral-600 truncate">{m.path}</div>
+                    </div>
+                  )
+                })()}
                 <div className="space-y-1">
                   <label className="text-xs text-neutral-400">Policy Repo ID (Hub 업로드용)</label>
                   <input type="text" value={policyRepoId}
