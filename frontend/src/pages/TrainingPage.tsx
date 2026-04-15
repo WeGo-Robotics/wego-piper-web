@@ -221,17 +221,6 @@ export default function TrainingPage() {
                     {stateShape && actionShape && stateShape[0] !== actionShape[0] && (
                       <p className="text-xs text-amber-400">state({stateShape[0]})와 action({actionShape[0]}) 차원이 다릅니다. 베이스 모델의 기본 state_dim이 다를 수 있으니 CLI에서 확인하세요.</p>
                     )}
-                    <div className="text-xs pt-1">
-                      <label className="text-neutral-400">카메라 이름 매핑 (rename_map)</label>
-                      <textarea value={renameMap}
-                        onChange={(e) => { setRenameMap(e.target.value); setCliEdited(false) }}
-                        rows={3}
-                        placeholder='{"observation.images.side": "observation.images.camera1", ...}'
-                        className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-xs font-mono text-neutral-100 placeholder:text-neutral-600 resize-y" />
-                      <p className="text-neutral-500 text-[10px] mt-0.5">
-                        {renameMap && pretrainedPath ? 'pretrained 모델에서 자동 감지됨 (편집 가능)' : '데이터셋 카메라 이름 → 모델 카메라 이름'}
-                      </p>
-                    </div>
                     {cameras.length > 0 && (
                       <div className="text-xs">
                         <span className="text-neutral-400">카메라 ({cameras.length}대):</span>
@@ -240,6 +229,69 @@ export default function TrainingPage() {
                         </span>
                       </div>
                     )}
+                    <div className="text-xs pt-2 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-neutral-400 font-medium">카메라 이름 매핑</label>
+                        {renameMap && pretrainedPath && <span className="text-[10px] text-green-400">자동 감지됨</span>}
+                      </div>
+                      {(() => {
+                        let entries: [string, string][] = []
+                        try { entries = Object.entries(JSON.parse(renameMap || '{}')) } catch {}
+                        const updateEntries = (newEntries: [string, string][]) => {
+                          const obj: Record<string, string> = {}
+                          newEntries.forEach(([k, v]) => { if (k) obj[k] = v })
+                          setRenameMap(Object.keys(obj).length > 0 ? JSON.stringify(obj, null, 2) : '')
+                          setCliEdited(false)
+                        }
+                        return (
+                          <>
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="text-neutral-500">
+                                  <th className="text-left py-1 pr-2">데이터셋 카메라</th>
+                                  <th className="text-center py-1 px-1">→</th>
+                                  <th className="text-left py-1 pl-2">모델 카메라</th>
+                                  <th className="w-8"></th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {entries.map(([src, dst], idx) => (
+                                  <tr key={idx}>
+                                    <td className="pr-1 py-0.5">
+                                      <input type="text" value={src.replace('observation.images.', '')}
+                                        onChange={(e) => {
+                                          const newEntries = [...entries]
+                                          newEntries[idx] = [`observation.images.${e.target.value}`, dst]
+                                          updateEntries(newEntries)
+                                        }}
+                                        className="w-full px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100" />
+                                    </td>
+                                    <td className="text-center text-neutral-600">→</td>
+                                    <td className="pl-1 py-0.5">
+                                      <input type="text" value={dst.replace('observation.images.', '')}
+                                        onChange={(e) => {
+                                          const newEntries = [...entries]
+                                          newEntries[idx] = [src, `observation.images.${e.target.value}`]
+                                          updateEntries(newEntries)
+                                        }}
+                                        className="w-full px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100" />
+                                    </td>
+                                    <td>
+                                      <button onClick={() => updateEntries(entries.filter((_, i) => i !== idx))}
+                                        className="text-neutral-600 hover:text-red-400 px-1">x</button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            <button onClick={() => updateEntries([...entries, ['observation.images.', 'observation.images.camera' + (entries.length + 1)]])}
+                              className="text-[10px] text-blue-400 hover:text-blue-300">+ 매핑 추가</button>
+                          </>
+                        )
+                      })()}
+                      <textarea value={renameMap} readOnly rows={2}
+                        className="w-full px-2 py-1 rounded bg-neutral-950 border border-neutral-800 text-[10px] font-mono text-neutral-500 resize-none" />
+                    </div>
                   </div>
                 )
               })()}
