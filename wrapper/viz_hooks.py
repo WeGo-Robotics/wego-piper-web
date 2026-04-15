@@ -149,6 +149,7 @@ def _attention_to_heatmap(attn: torch.Tensor, img_range: tuple, bg_img: np.ndarr
 def _hook_prepare_images(policy, orig_fn, batch, *args, **kwargs):
     """SmolVLAPolicy.prepare_images를 감싸서 vision_features_list 초기화."""
     _captured["vision_features_list"] = []  # 새 추론 시작 시 리스트 초기화
+    _captured["attention_weights_list"] = []  # attention 리스트도 초기화
     result = orig_fn(batch, *args, **kwargs)
     # preprocessed_images는 wrapper에서 직접 설정하므로 여기서 덮어쓰지 않음
     return result
@@ -237,9 +238,9 @@ def _hook_predict_action_chunk(policy, orig_fn, batch, *args, **kwargs):
     _dbg = open("/dev/shm/piper_viz_debug.log", "a")
     imgs = _captured.get("preprocessed_images", [])
     feats = _captured.get("vision_features_list", [])
-    attn = _captured.get("attention_weights")
+    attn_list = _captured.get("attention_weights_list", [])
     feats_hash = [str(f.sum().item())[:10] for f in feats] if feats else []
-    _dbg.write(f"{time.time():.1f} [v7] predict | imgs={len(imgs)} feats={len(feats)} feats_hash={feats_hash} attn={attn is not None}\n")
+    _dbg.write(f"{time.time():.1f} [v7] predict | imgs={len(imgs)} feats={len(feats)} feats_hash={feats_hash} attn={len(attn_list)}\n")
 
     try:
         # features/attention을 predict 스레드에서 직접 동기 저장 (백그라운드 스레드 지연 방지)
@@ -252,28 +253,26 @@ def _hook_predict_action_chunk(policy, orig_fn, batch, *args, **kwargs):
                     _dbg.write(f"  feat_{i} SAVED (sync)\n")
                 except Exception as e:
                     _dbg.write(f"  feat_{i} ERROR: {e}\n")
-        if attn is not None:
-            for i, feat in enumerate(feats):
-                if feat is not None:
-                    try:
-                        n_before = sum(f.shape[1] for f in feats[:i]) if i > 0 else 0
-                        n_tokens = feat.shape[1]
-                        img_range = (n_before, n_before + n_tokens)
-                        if i < len(imgs):
-                            img_t = imgs[i]
-                            while img_t.dim() > 3:
-                                img_t = img_t[0]
-                            bgr = _tensor_to_bgr(img_t.detach().cpu())
-                        else:
-                            bgr = np.zeros((480, 640, 3), dtype=np.uint8)
-                        attn_cpu = attn.detach().cpu()
-                        heatmap = _attention_to_heatmap(attn_cpu[0], img_range, bgr)
-                        _save_jpg(heatmap, f"piper_viz_attention_{i}.jpg")
-                        _dbg.write(f"  attn_{i} SAVED (sync)\n")
-                    except Exception as e:
-                        _dbg.write(f"  attn_{i} ERROR: {e}\n")
-        else:
-            _dbg.write(f"  attn SKIP (None)\n")
+        # attention 히트맵 (카메라별)
+        for i in range(len(feats)):
+            if i < len(attn_list) and attn_list[i] is not None and feats[i] is not None:
+                try:
+                    attn_i = attn_list[i]
+                    n_tokens = feats[i].shape[1]
+                    img_range = (0, n_tokens)
+                    if i < len(imgs):
+                        img_t = imgs[i]
+                        while img_t.dim() > 3:
+                            img_t = img_t[0]
+                        bgr = _tensor_to_bgr(img_t.detach().cpu())
+                    else:
+                        bgr = np.zeros((480, 640, 3), dtype=np.uint8)
+                    attn_cpu = attn_i.detach().cpu()
+                    heatmap = _attention_to_heatmap(attn_cpu[0], img_range, bgr)
+                    _save_jpg(heatmap, f"piper_viz_attention_{i}.jpg")
+                    _dbg.write(f"  attn_{i} SAVED (sync)\n")
+                except Exception as e:
+                    _dbg.write(f"  attn_{i} ERROR: {e}\n")
     except Exception as e:
         _dbg.write(f"  SYNC SAVE ERROR: {e}\n")
     _dbg.close()
@@ -345,8 +344,12 @@ def register_viz_hooks(policy) -> None:
                         q = attn_mod.q_proj(hs).view(B, S, attn_mod.num_heads, attn_mod.head_dim).transpose(1, 2)
                         k = attn_mod.k_proj(hs).view(B, S, attn_mod.num_heads, attn_mod.head_dim).transpose(1, 2)
                         scores = torch.matmul(q, k.transpose(-2, -1)) * (attn_mod.head_dim ** -0.5)
+
                         probs = torch.nn.functional.softmax(scores, dim=-1, dtype=torch.float32)
-                        _captured["attention_weights"] = probs.detach()
+                        # 카메라별 attention을 리스트로 축적
+                        if "attention_weights_list" not in _captured:
+                            _captured["attention_weights_list"] = []
+                        _captured["attention_weights_list"].append(probs.detach())
                 except Exception:
                     pass
                 return result
