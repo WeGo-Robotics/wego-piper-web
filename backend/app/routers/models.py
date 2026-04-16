@@ -55,10 +55,15 @@ def _get_first_ready_follower_port() -> str | None:
 
 def _release_all_cameras() -> None:
     """추론 시작 전 camera_manager가 점유한 카메라를 모두 해제."""
+    released = False
     for cam in camera_manager.cameras.values():
         if cam.connected:
             logger.info("Releasing camera %s for inference", cam.id)
             cam.disconnect()
+            released = True
+    if released:
+        import time
+        time.sleep(0.5)  # 커널이 디바이스를 해제할 시간 확보
 
 
 def _build_cameras_draccus(camera_mapping: dict[str, str]) -> str:
@@ -81,14 +86,9 @@ def _build_cameras_json(camera_mapping: dict[str, str]) -> dict:
         return {}
     cameras = {}
     for cam_name, cam_id in camera_mapping.items():
-        # /dev/videoN → 정수 인덱스
-        idx: int | str = cam_id
-        if isinstance(cam_id, str) and cam_id.startswith("/dev/video"):
-            try:
-                idx = int(cam_id.replace("/dev/video", ""))
-            except ValueError:
-                idx = cam_id
-        cameras[cam_name] = {"type": "opencv", "index_or_path": idx}
+        if not cam_id:
+            continue
+        cameras[cam_name] = {"type": "opencv", "index_or_path": cam_id, "backend": 200}
     return cameras
 
 

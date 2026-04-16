@@ -23,7 +23,7 @@ import torch
 logger = logging.getLogger(__name__)
 
 VIZ_DIR = "/dev/shm"  # tmpfs (RAM disk) — SSD에 쓰지 않음
-_viz_lock = threading.Lock()
+
 _last_viz_time = 0.0
 VIZ_INTERVAL = 0.5  # 최소 0.5초 간격
 
@@ -151,7 +151,6 @@ def _hook_prepare_images(policy, orig_fn, batch, *args, **kwargs):
     _captured["vision_features_list"] = []  # 새 추론 시작 시 리스트 초기화
     _captured["attention_weights_list"] = []  # attention 리스트도 초기화
     result = orig_fn(batch, *args, **kwargs)
-    # preprocessed_images는 wrapper에서 직접 설정하므로 여기서 덮어쓰지 않음
     return result
 
 
@@ -349,7 +348,7 @@ def register_viz_hooks(policy) -> None:
                         # 카메라별 attention을 리스트로 축적
                         if "attention_weights_list" not in _captured:
                             _captured["attention_weights_list"] = []
-                        _captured["attention_weights_list"].append(probs.detach())
+                        _captured["attention_weights_list"].append(probs.detach().clone())
                 except Exception:
                     pass
                 return result

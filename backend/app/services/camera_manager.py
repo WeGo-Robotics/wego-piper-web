@@ -318,6 +318,8 @@ def v4l2_list_controls(dev_path: str) -> list[dict]:
         name = raw_name.split(b"\x00")[0].decode(errors="replace")
         cur_val = _v4l2_get_value(fd, cid, default)
 
+        inactive = bool(flags & 0x0010)
+        readonly = bool(flags & 0x0004)
         controls.append({
             "cid": cid,
             "name": name.lower().replace(" ", "_").replace(",", ""),
@@ -328,6 +330,8 @@ def v4l2_list_controls(dev_path: str) -> list[dict]:
             "step": step,
             "default": default,
             "value": cur_val,
+            "inactive": inactive,
+            "readonly": readonly,
         })
 
     os.close(fd)

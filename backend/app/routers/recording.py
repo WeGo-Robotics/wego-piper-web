@@ -81,6 +81,18 @@ async def start_recording(body: RecordStartRequest):
         logger.info("Dataset %s already exists, enabling resume", body.repo_id)
         body.resume = True
 
+    # 녹화 전 camera_manager가 점유한 카메라 해제
+    import time
+    from app.services.camera_manager import camera_manager
+    released = False
+    for cam in camera_manager.cameras.values():
+        if cam.connected:
+            logger.info("Releasing camera %s for recording", cam.id)
+            cam.disconnect()
+            released = True
+    if released:
+        time.sleep(0.5)
+
     params = body.model_dump()
     args = build_record_args(params)
 

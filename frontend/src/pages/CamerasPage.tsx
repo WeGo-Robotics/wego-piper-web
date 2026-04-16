@@ -19,6 +19,7 @@ type CamInfo = {
 type CamControl = {
   cid: number; name: string; label: string; type: number
   min: number; max: number; step: number; default: number; value: number
+  inactive?: boolean; readonly?: boolean
 }
 
 export default function CamerasPage() {
@@ -108,10 +109,14 @@ export default function CamerasPage() {
   }
 
   const handleControl = async (camId: string, name: string, value: number) => {
-    // 즉시 UI 반영
     setControls((prev) => prev.map((c) => c.name === name ? { ...c, value } : c))
     try {
       await api.post('/cameras/control', { id: camId, name, value })
+      // auto 계열 변경 시 다른 컨트롤의 inactive 상태가 바뀔 수 있음 → 다시 조회
+      if (name.startsWith('auto') || name.includes('automatic') || name.includes('white_balance_automatic')) {
+        const data = await api.get<CamControl[]>(`/cameras/${encodeURIComponent(camId)}/controls`)
+        setControls(data)
+      }
     } catch {}
   }
 
@@ -207,30 +212,33 @@ export default function CamerasPage() {
                         )}
                         {controls.length === 0 ? (
                           <p className="text-xs text-neutral-500">지원되는 컨트롤이 없습니다</p>
-                        ) : controls.map((ctrl) => (
-                          <div key={ctrl.name} className="flex items-center gap-2 text-xs">
-                            <span className="text-neutral-400 w-24 shrink-0 truncate" title={ctrl.label}>{ctrl.label}</span>
-                            {ctrl.type === 2 ? (
-                              <input type="checkbox" checked={ctrl.value !== 0}
-                                onChange={(e) => handleControl(cam.id, ctrl.name, e.target.checked ? 1 : 0)}
-                                className="accent-blue-500" />
-                            ) : ctrl.type === 3 ? (
-                              <select value={ctrl.value}
-                                onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
-                                className="flex-1 px-1 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 text-xs">
-                                {Array.from({ length: ctrl.max - ctrl.min + 1 }, (_, i) => ctrl.min + i).map((v) => (
-                                  <option key={v} value={v}>{v}</option>
-                                ))}
-                              </select>
-                            ) : (
-                              <input type="range" min={ctrl.min} max={ctrl.max} step={ctrl.step || 1}
-                                value={ctrl.value}
-                                onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
-                                className="flex-1 h-1 accent-blue-500" />
-                            )}
-                            <span className="text-neutral-300 w-12 text-right font-mono">{ctrl.value}</span>
-                          </div>
-                        ))}
+                        ) : controls.map((ctrl) => {
+                          const locked = ctrl.inactive || ctrl.readonly
+                          return (
+                            <div key={ctrl.name} className={`flex items-center gap-2 text-xs ${locked ? 'opacity-40' : ''}`}>
+                              <span className="text-neutral-400 w-24 shrink-0 truncate" title={ctrl.label + (locked ? ' (자동 모드에 의해 잠김)' : '')}>{ctrl.label}</span>
+                              {ctrl.type === 2 ? (
+                                <input type="checkbox" checked={ctrl.value !== 0} disabled={locked}
+                                  onChange={(e) => handleControl(cam.id, ctrl.name, e.target.checked ? 1 : 0)}
+                                  className="accent-blue-500" />
+                              ) : ctrl.type === 3 ? (
+                                <select value={ctrl.value} disabled={locked}
+                                  onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
+                                  className="flex-1 px-1 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 text-xs disabled:opacity-50">
+                                  {Array.from({ length: ctrl.max - ctrl.min + 1 }, (_, i) => ctrl.min + i).map((v) => (
+                                    <option key={v} value={v}>{v}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input type="range" min={ctrl.min} max={ctrl.max} step={ctrl.step || 1}
+                                  value={ctrl.value} disabled={locked}
+                                  onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
+                                  className="flex-1 h-1 accent-blue-500 disabled:opacity-50" />
+                              )}
+                              <span className="text-neutral-300 w-12 text-right font-mono">{ctrl.value}</span>
+                            </div>
+                          )
+                        })}
                       </div>
                     )}
                   </div>
@@ -357,30 +365,33 @@ export default function CamerasPage() {
                               초기화
                             </button>
                           </div>
-                          {controls.map((ctrl) => (
-                            <div key={ctrl.name} className="flex items-center gap-2 text-xs">
-                              <span className="text-neutral-400 w-24 shrink-0 truncate" title={ctrl.label}>{ctrl.label}</span>
-                              {ctrl.type === 2 ? (
-                                <input type="checkbox" checked={ctrl.value !== 0}
-                                  onChange={(e) => handleControl(cam.id, ctrl.name, e.target.checked ? 1 : 0)}
-                                  className="accent-blue-500" />
-                              ) : ctrl.type === 3 ? (
-                                <select value={ctrl.value}
-                                  onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
-                                  className="flex-1 px-1 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 text-xs">
-                                  {Array.from({ length: ctrl.max - ctrl.min + 1 }, (_, i) => ctrl.min + i).map((v) => (
-                                    <option key={v} value={v}>{v}</option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <input type="range" min={ctrl.min} max={ctrl.max} step={ctrl.step || 1}
-                                  value={ctrl.value}
-                                  onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
-                                  className="flex-1 h-1 accent-blue-500" />
-                              )}
-                              <span className="text-neutral-300 w-12 text-right font-mono">{ctrl.value}</span>
-                            </div>
-                          ))}
+                          {controls.map((ctrl) => {
+                            const locked = ctrl.inactive || ctrl.readonly
+                            return (
+                              <div key={ctrl.name} className={`flex items-center gap-2 text-xs ${locked ? 'opacity-40' : ''}`}>
+                                <span className="text-neutral-400 w-24 shrink-0 truncate" title={ctrl.label + (locked ? ' (자동 모드에 의해 잠김)' : '')}>{ctrl.label}</span>
+                                {ctrl.type === 2 ? (
+                                  <input type="checkbox" checked={ctrl.value !== 0} disabled={locked}
+                                    onChange={(e) => handleControl(cam.id, ctrl.name, e.target.checked ? 1 : 0)}
+                                    className="accent-blue-500" />
+                                ) : ctrl.type === 3 ? (
+                                  <select value={ctrl.value} disabled={locked}
+                                    onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
+                                    className="flex-1 px-1 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 text-xs disabled:opacity-50">
+                                    {Array.from({ length: ctrl.max - ctrl.min + 1 }, (_, i) => ctrl.min + i).map((v) => (
+                                      <option key={v} value={v}>{v}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <input type="range" min={ctrl.min} max={ctrl.max} step={ctrl.step || 1}
+                                    value={ctrl.value} disabled={locked}
+                                    onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
+                                    className="flex-1 h-1 accent-blue-500 disabled:opacity-50" />
+                                )}
+                                <span className="text-neutral-300 w-12 text-right font-mono">{ctrl.value}</span>
+                              </div>
+                            )
+                          })}
                         </div>
                       )}
                     </div>

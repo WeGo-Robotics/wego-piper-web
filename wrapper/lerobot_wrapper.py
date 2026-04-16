@@ -212,6 +212,9 @@ def main() -> None:
             pass
         for cam_name, cam_params in cameras_cfg.items():
             cam_type = cam_params.pop("type", "opencv")
+            # OpenCV 카메라: V4L2 백엔드 강제 (ANY 사용 시 GStreamer 등에서 실패하는 경우 방지)
+            if cam_type == "opencv" and "backend" not in cam_params:
+                cam_params["backend"] = 200  # Cv2Backends.V4L2
             CamCfgClass = CameraConfig.get_choice_class(cam_type)
             robot_cfg.cameras[cam_name] = CamCfgClass(**cam_params)
 
@@ -562,10 +565,10 @@ def main() -> None:
                     action_dict = _latest_action_dict
                     action_np = _latest_action_np
 
-                # 큐가 비면 새 추론 요청 (raw obs 복사하여 전달 — 버퍼 재사용 방지)
-                if not _action_queue:
-                    _obs_for_inference = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()}
-                    _obs_event.set()
+            # 항상 최신 obs를 준비 (추론 스레드가 event.wait()에서 대기 중일 때만 소비됨)
+            _obs_for_inference = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()}
+            if not _obs_event.is_set():
+                _obs_event.set()
 
             filtered = None
             if action_dict is not None:

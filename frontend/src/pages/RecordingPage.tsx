@@ -102,7 +102,7 @@ export default function RecordingPage() {
     const camJson: Record<string, unknown> = {}
     for (const [name, id] of Object.entries(cameraMapping)) {
       if (!id) continue  // 빈 매핑 스킵
-      camJson[name] = { type: 'opencv', index_or_path: id, width: camWidth, height: camHeight, fps }
+      camJson[name] = { type: 'opencv', index_or_path: id, width: camWidth, height: camHeight, fps, backend: 200 }
     }
     return camJson
   }
