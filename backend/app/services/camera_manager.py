@@ -67,10 +67,8 @@ class CameraInfo:
     def _open_cap(self):
         """VideoCapture를 열고 1프레임 읽기. (내부용)"""
         import cv2
-        idx = self.id
-        if isinstance(idx, str) and idx.startswith("/dev/video"):
-            idx = int(idx.replace("/dev/video", ""))
-        cap = cv2.VideoCapture(idx)
+        # 디바이스 경로를 직접 전달 + V4L2 백엔드 명시
+        cap = cv2.VideoCapture(self.id, cv2.CAP_V4L2)
         if not cap.isOpened():
             return None, None
         ret, frame = cap.read()
@@ -155,6 +153,20 @@ class CameraInfo:
             except Exception:
                 break
 
+    # ── v4l2 컨트롤 (밝기, 대비 등) — ioctl 직접 사용 ──
+
+    def get_controls(self) -> list[dict]:
+        """v4l2 ioctl로 카메라 컨트롤 열거 + 현재값/범위 조회."""
+        return v4l2_list_controls(self.id)
+
+    def set_control(self, name: str, value: int) -> bool:
+        """v4l2 ioctl로 컨트롤 값 설정."""
+        controls = v4l2_list_controls(self.id)
+        for ctrl in controls:
+            if ctrl["name"] == name:
+                return v4l2_set_control(self.id, ctrl["cid"], int(value))
+        return False
+
     def capture_preview(self) -> bytes | None:
         """마지막 캡처된 프레임을 JPEG로 즉시 반환."""
         with self._lock:
@@ -167,6 +179,171 @@ class CameraInfo:
             return buf.tobytes()
         except Exception:
             return None
+
+
+# ── v4l2 ioctl 헬퍼 (ctypes + EXT_CTRLS) ──
+
+import os
+import fcntl
+import struct
+import ctypes
+
+
+def _iowr(type_ch: str, nr: int, size: int) -> int:
+    return (3 << 30) | (ord(type_ch) << 8) | nr | (size << 16)
+
+
+# v4l2 ioctl 번호
+_VIDIOC_QUERYCTRL = _iowr("V", 36, 68)
+
+# v4l2 플래그
+_V4L2_CTRL_FLAG_NEXT_CTRL = 0x80000000
+_V4L2_CTRL_FLAG_DISABLED = 0x0001
+
+# v4l2_queryctrl struct
+_QUERYCTRL_FMT = "II32siiiII8s"
+
+
+# ── EXT_CTRLS (G_CTRL/S_CTRL이 실패하는 UVC 디바이스 대응) ──
+
+class _v4l2_ext_control(ctypes.Structure):
+    # 커널 구조체: union이 offset 12, 크기 8 → 총 20바이트
+    # c_int64를 union에 넣으면 ctypes가 8-byte align 패딩 추가 → 깨짐
+    # 대신 value(4) + reserved(4)로 동일 레이아웃 구현
+    _fields_ = [
+        ("id", ctypes.c_uint32),       # offset 0
+        ("size", ctypes.c_uint32),     # offset 4
+        ("reserved2", ctypes.c_uint32),  # offset 8
+        ("value", ctypes.c_int32),     # offset 12 (커널 union.value 위치)
+        ("_pad", ctypes.c_uint32),     # offset 16 (union 나머지)
+    ]
+
+
+class _v4l2_ext_controls(ctypes.Structure):
+    _fields_ = [
+        ("which", ctypes.c_uint32),
+        ("count", ctypes.c_uint32),
+        ("error_idx", ctypes.c_uint32),
+        ("request_fd", ctypes.c_int32),
+        ("reserved", ctypes.c_uint32 * 1),
+        ("controls", ctypes.POINTER(_v4l2_ext_control)),
+    ]
+
+
+_VIDIOC_G_EXT_CTRLS = _iowr("V", 71, ctypes.sizeof(_v4l2_ext_controls))
+_VIDIOC_S_EXT_CTRLS = _iowr("V", 72, ctypes.sizeof(_v4l2_ext_controls))
+# fallback: 기본 G_CTRL/S_CTRL
+_VIDIOC_G_CTRL = _iowr("V", 38, 8)
+_VIDIOC_S_CTRL = _iowr("V", 39, 8)
+
+
+def _v4l2_get_value(fd: int, cid: int, default: int = 0) -> int:
+    """컨트롤 현재값 읽기. EXT_CTRLS → G_CTRL fallback."""
+    # EXT_CTRLS 시도
+    ctrl = _v4l2_ext_control()
+    ctrl.id = cid
+    ctrls = _v4l2_ext_controls()
+    ctrls.which = 0  # V4L2_CTRL_WHICH_CUR_VAL
+    ctrls.count = 1
+    ctrls.controls = ctypes.pointer(ctrl)
+    try:
+        fcntl.ioctl(fd, _VIDIOC_G_EXT_CTRLS, ctrls)
+        return ctrl.value
+    except OSError:
+        pass
+    # G_CTRL fallback
+    try:
+        buf = struct.pack("Ii", cid, 0)
+        res = fcntl.ioctl(fd, _VIDIOC_G_CTRL, buf)
+        _, val = struct.unpack("Ii", res)
+        return val
+    except OSError:
+        return default
+
+
+def _v4l2_set_value(fd: int, cid: int, value: int) -> bool:
+    """컨트롤 값 설정. EXT_CTRLS → S_CTRL fallback."""
+    # EXT_CTRLS 시도
+    ctrl = _v4l2_ext_control()
+    ctrl.id = cid
+    ctrl.value = value
+    ctrls = _v4l2_ext_controls()
+    ctrls.which = 0
+    ctrls.count = 1
+    ctrls.controls = ctypes.pointer(ctrl)
+    try:
+        fcntl.ioctl(fd, _VIDIOC_S_EXT_CTRLS, ctrls)
+        return True
+    except OSError:
+        pass
+    # S_CTRL fallback
+    try:
+        buf = struct.pack("Ii", cid, value)
+        fcntl.ioctl(fd, _VIDIOC_S_CTRL, buf)
+        return True
+    except OSError as e:
+        logger.warning("v4l2 set failed: cid=0x%x value=%d err=%s", cid, value, e)
+        return False
+
+
+def v4l2_list_controls(dev_path: str) -> list[dict]:
+    """디바이스의 모든 v4l2 컨트롤을 열거."""
+    if not isinstance(dev_path, str) or not dev_path.startswith("/dev/video"):
+        return []
+    try:
+        fd = os.open(dev_path, os.O_RDWR)
+    except OSError:
+        return []
+
+    controls = []
+    ctrl_id = _V4L2_CTRL_FLAG_NEXT_CTRL
+
+    for _ in range(200):
+        buf = struct.pack(_QUERYCTRL_FMT, ctrl_id, 0, b"", 0, 0, 0, 0, 0, b"")
+        try:
+            result = fcntl.ioctl(fd, _VIDIOC_QUERYCTRL, buf)
+        except OSError:
+            break
+
+        cid, ctype, raw_name, minimum, maximum, step, default, flags, _ = struct.unpack(
+            _QUERYCTRL_FMT, result
+        )
+        ctrl_id = cid | _V4L2_CTRL_FLAG_NEXT_CTRL
+
+        if flags & _V4L2_CTRL_FLAG_DISABLED:
+            continue
+        if ctype == 6:  # ctrl_class 헤더
+            continue
+
+        name = raw_name.split(b"\x00")[0].decode(errors="replace")
+        cur_val = _v4l2_get_value(fd, cid, default)
+
+        controls.append({
+            "cid": cid,
+            "name": name.lower().replace(" ", "_").replace(",", ""),
+            "label": name,
+            "type": ctype,  # 1=int, 2=bool, 3=menu
+            "min": minimum,
+            "max": maximum,
+            "step": step,
+            "default": default,
+            "value": cur_val,
+        })
+
+    os.close(fd)
+    return controls
+
+
+def v4l2_set_control(dev_path: str, cid: int, value: int) -> bool:
+    """v4l2 컨트롤 값 설정."""
+    try:
+        fd = os.open(dev_path, os.O_RDWR)
+    except OSError:
+        return False
+    try:
+        return _v4l2_set_value(fd, cid, value)
+    finally:
+        os.close(fd)
 
 
 def _scan_one(dev_path: str) -> dict | None:
@@ -274,6 +451,18 @@ class CameraManager:
         if not cam:
             return None
         return cam.capture_preview()
+
+    def get_controls(self, cam_id: str) -> list[dict]:
+        cam = self.cameras.get(cam_id)
+        if not cam:
+            return []
+        return cam.get_controls()
+
+    def set_control(self, cam_id: str, name: str, value: float) -> bool:
+        cam = self.cameras.get(cam_id)
+        if not cam:
+            return False
+        return cam.set_control(name, value)
 
     def get_current(self) -> dict:
         return {"cameras": [c.to_dict() for c in self.cameras.values()]}

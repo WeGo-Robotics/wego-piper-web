@@ -93,6 +93,38 @@ async def get_ready_cameras():
     return camera_manager.get_ready_cameras()
 
 
+@router.get("/current")
+async def get_current():
+    return camera_manager.get_current()
+
+
+class CameraControlRequest(BaseModel):
+    id: str
+    name: str
+    value: float
+
+
+@router.post("/control")
+async def set_control(body: CameraControlRequest):
+    """카메라 v4l2 컨트롤 값 설정."""
+    ok = camera_manager.set_control(body.id, body.name, body.value)
+    if not ok:
+        raise HTTPException(400, f"컨트롤 설정 실패: {body.name}")
+    return {"status": "ok", "name": body.name, "value": body.value}
+
+
+@router.post("/controls/reset")
+async def reset_controls(body: CameraIdRequest):
+    """모든 v4l2 컨트롤을 초기값으로 복원."""
+    controls = camera_manager.get_controls(body.id)
+    if not controls:
+        raise HTTPException(400, "컨트롤이 없습니다")
+    for ctrl in controls:
+        camera_manager.set_control(body.id, ctrl["name"], ctrl["default"])
+    return camera_manager.get_controls(body.id)
+
+
+# path 라우트는 반드시 고정 경로 뒤에 배치
 @router.get("/{cam_id:path}/preview")
 async def preview(cam_id: str):
     data = camera_manager.get_preview(cam_id)
@@ -101,6 +133,8 @@ async def preview(cam_id: str):
     return Response(content=data, media_type="image/jpeg")
 
 
-@router.get("/current")
-async def get_current():
-    return camera_manager.get_current()
+@router.get("/{cam_id:path}/controls")
+async def get_controls(cam_id: str):
+    """카메라가 지원하는 v4l2 컨트롤 목록 + 현재값."""
+    controls = camera_manager.get_controls(cam_id)
+    return controls

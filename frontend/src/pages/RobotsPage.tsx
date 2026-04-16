@@ -161,7 +161,7 @@ function Spinner({ className = '' }: { className?: string }) {
 type ArmInfo = {
   iface: string; bus_info: string; state: string; connected: boolean
   role: string; ctrl_mode: string; firmware: string; slot: string | null
-  ready: boolean; config: Record<string, unknown>
+  ready: boolean; config: Record<string, unknown>; rx_packets?: number
 }
 type MotionStatus = {
   status: string; remaining: number; max_delta: number; threshold: number; found_iface: string | null
@@ -178,6 +178,10 @@ export default function RobotsPage() {
   const [motionStatus, setMotionStatus] = useState<MotionStatus | null>(null)
   const motionPollRef = useRef<ReturnType<typeof setInterval>>(undefined)
   const [parkingIface, setParkingIface] = useState<string | null>(null)
+  // CAN 관리
+  const [renamingIface, setRenamingIface] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [canActive, setCanActive] = useState<Record<string, boolean | 'checking'>>({})  // iface → active
   // 프리셋
   const [presets, setPresets] = useState<string[]>([])
   const [presetName, setPresetName] = useState('')
@@ -213,6 +217,37 @@ export default function RobotsPage() {
     } catch { alert('연결 실패') }
     finally { setConnectingIface(null) }
   }
+  const handleCheckActive = async (iface: string) => {
+    setCanActive((prev) => ({ ...prev, [iface]: 'checking' }))
+    try {
+      const r = await api.get<{ active: boolean }>(`/robots/can/check/${encodeURIComponent(iface)}`)
+      setCanActive((prev) => ({ ...prev, [iface]: r.active }))
+    } catch {
+      setCanActive((prev) => ({ ...prev, [iface]: false }))
+    }
+  }
+
+  // CAN UP 후 자동으로 활성 체크
+  const handleCanUp = async (iface: string) => {
+    try {
+      await api.post('/robots/can/up', { iface })
+      setArms((prev) => prev.map((a) => a.iface === iface ? { ...a, state: 'UP' } : a))
+      handleCheckActive(iface)
+    } catch { alert('CAN UP 실패') }
+  }
+
+  const handleRename = async (oldName: string) => {
+    if (!renameValue.trim() || renameValue === oldName) {
+      setRenamingIface(null)
+      return
+    }
+    try {
+      await api.post('/robots/can/rename', { old_name: oldName, new_name: renameValue.trim() })
+      setArms((prev) => prev.map((a) => a.iface === oldName ? { ...a, iface: renameValue.trim() } : a))
+      setRenamingIface(null)
+    } catch { alert('이름 변경 실패') }
+  }
+
   const handleDisconnect = async (iface: string) => {
     await api.post('/robots/disconnect', { iface })
     setArms((prev) => prev.map((a) =>
@@ -331,16 +366,48 @@ export default function RobotsPage() {
         ) : unconnectedArms.length > 0 ? (
           <div className="space-y-1">
             {unconnectedArms.map((arm) => (
-              <div key={arm.iface} className="flex items-center justify-between rounded border border-neutral-700 p-2.5">
-                <div className="text-sm">
-                  <span className="font-mono">{arm.iface}</span>
-                  <span className="text-xs text-neutral-400 ml-2">{arm.bus_info || ''}</span>
-                  <span className="text-xs text-neutral-500 ml-2">{arm.state}</span>
+              <div key={arm.iface} className="rounded border border-neutral-700 p-2.5 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm flex items-center gap-2">
+                    {renamingIface === arm.iface ? (
+                      <input type="text" value={renameValue} autoFocus
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleRename(arm.iface); if (e.key === 'Escape') setRenamingIface(null) }}
+                        onBlur={() => handleRename(arm.iface)}
+                        className="font-mono px-1.5 py-0.5 rounded bg-neutral-900 border border-blue-500 text-sm text-neutral-100 w-32 focus:outline-none" />
+                    ) : (
+                      <span className="font-mono cursor-pointer hover:text-blue-400"
+                        onClick={() => { setRenamingIface(arm.iface); setRenameValue(arm.iface) }}
+                        title="클릭하여 이름 변경">{arm.iface}</span>
+                    )}
+                    <span className="text-xs text-neutral-400">{arm.bus_info || ''}</span>
+                    <span className={`text-xs ${arm.state === 'UP' ? 'text-green-400' : 'text-red-400'}`}>{arm.state}</span>
+                    {arm.state === 'UP' && (() => {
+                      const status = canActive[arm.iface]
+                      if (status === 'checking') return <span className="text-xs text-yellow-400"><Spinner className="inline" /></span>
+                      if (status === true) return <span className="text-xs text-green-400">RX</span>
+                      if (status === false) return <span className="text-xs text-red-400">NO DATA</span>
+                      return null
+                    })()}
+                  </div>
+                  <div className="flex gap-1">
+                    {arm.state !== 'UP' ? (
+                      <button onClick={() => handleCanUp(arm.iface)}
+                        className="px-2 py-1 text-xs rounded bg-yellow-600 hover:bg-yellow-500 text-white">
+                        UP
+                      </button>
+                    ) : (
+                      <button onClick={() => handleCheckActive(arm.iface)} disabled={canActive[arm.iface] === 'checking'}
+                        className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 disabled:opacity-50">
+                        체크
+                      </button>
+                    )}
+                    <button onClick={() => handleConnect(arm.iface)} disabled={connectingIface === arm.iface}
+                      className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 flex items-center gap-1">
+                      {connectingIface === arm.iface ? <><Spinner /> 연결 중...</> : '연결'}
+                    </button>
+                  </div>
                 </div>
-                <button onClick={() => handleConnect(arm.iface)} disabled={connectingIface === arm.iface}
-                  className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 flex items-center gap-1">
-                  {connectingIface === arm.iface ? <><Spinner /> 연결 중...</> : '연결'}
-                </button>
               </div>
             ))}
           </div>

@@ -97,17 +97,22 @@ export default function RecordingPage() {
     } catch { setLogs(prev => [...prev, `[ERROR] 데이터셋 삭제 실패`]) }
   }
 
+  // 카메라 매핑 JSON 빌드 (preview/start 공용)
+  const buildCameraConfig = () => {
+    const camJson: Record<string, unknown> = {}
+    for (const [name, id] of Object.entries(cameraMapping)) {
+      if (!id) continue  // 빈 매핑 스킵
+      camJson[name] = { type: 'opencv', index_or_path: id, width: camWidth, height: camHeight, fps }
+    }
+    return camJson
+  }
+
   // CLI 미리보기
   useEffect(() => {
     if (cliEdited || !repoId) return
-    const camJson: Record<string, unknown> = {}
-    for (const [name, id] of Object.entries(cameraMapping)) {
-      const idx = id.startsWith('/dev/video') ? parseInt(id.replace('/dev/video', '')) : id
-      camJson[name] = { type: 'opencv', index_or_path: idx, width: camWidth, height: camHeight, fps: fps }
-    }
     api.post<{ command: string }>('/recording/preview', {
       robot_type: 'piper_follower', robot_port: followerPort,
-      robot_cameras: camJson,
+      robot_cameras: buildCameraConfig(),
       teleop_type: 'piper_leader', teleop_port: leaderPort,
       repo_id: repoId, single_task: singleTask,
       num_episodes: numEpisodes, fps, episode_time_s: episodeTime, reset_time_s: resetTime,
@@ -123,14 +128,9 @@ export default function RecordingPage() {
       if (cliEdited) {
         // custom 미지원 — preview에서 빌드된 args 사용
       }
-      const camJson: Record<string, unknown> = {}
-      for (const [name, id] of Object.entries(cameraMapping)) {
-        const idx = id.startsWith('/dev/video') ? parseInt(id.replace('/dev/video', '')) : id
-        camJson[name] = { type: 'opencv', index_or_path: idx, width: camWidth, height: camHeight, fps: fps }
-      }
       await api.post('/recording/start', {
         robot_type: 'piper_follower', robot_port: followerPort,
-        robot_cameras: camJson,
+        robot_cameras: buildCameraConfig(),
         teleop_type: 'piper_leader', teleop_port: leaderPort,
         repo_id: repoId, single_task: singleTask,
         num_episodes: numEpisodes, fps, episode_time_s: episodeTime, reset_time_s: resetTime,

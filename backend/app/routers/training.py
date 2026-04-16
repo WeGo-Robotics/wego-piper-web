@@ -33,6 +33,7 @@ class TrainStartRequest(BaseModel):
     wandb_enable: bool = False
     wandb_project: str = ""
     resume: bool = False
+    use_policy_training_preset: bool = True
     state_dim: int = 0
     action_dim: int = 0
     rename_map: str = ""
@@ -56,6 +57,7 @@ class TrainPreviewRequest(BaseModel):
     wandb_enable: bool = False
     wandb_project: str = ""
     resume: bool = False
+    use_policy_training_preset: bool = True
     state_dim: int = 0
     action_dim: int = 0
     rename_map: str = ""

@@ -210,6 +210,53 @@ async def scan_can():
     return robot_manager.scan()
 
 
+# ── CAN 인터페이스 관리 ──
+
+class CanUpRequest(BaseModel):
+    iface: str
+    bitrate: int = 1_000_000
+
+
+@router.get("/can/check/{iface}")
+async def can_check_active(iface: str):
+    """CAN 포트에 로봇이 연결되어 데이터를 보내고 있는지 확인."""
+    import asyncio
+    from app.services.robot_manager import check_can_active
+    loop = asyncio.get_event_loop()
+    active = await loop.run_in_executor(None, check_can_active, iface)
+    return {"iface": iface, "active": active}
+
+
+@router.post("/can/up")
+async def can_up(body: CanUpRequest):
+    """CAN 인터페이스 UP."""
+    from app.services.robot_manager import init_can_interface
+    ok, msg = init_can_interface(body.iface, body.bitrate)
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"status": "ok", "iface": body.iface}
+
+
+class CanRenameRequest(BaseModel):
+    old_name: str
+    new_name: str
+
+
+@router.post("/can/rename")
+async def can_rename(body: CanRenameRequest):
+    """CAN 인터페이스 이름 변경."""
+    from app.services.robot_manager import rename_can_interface
+    ok, msg = rename_can_interface(body.old_name, body.new_name)
+    if not ok:
+        raise HTTPException(400, msg)
+    # robot_manager의 arms 딕셔너리도 갱신
+    if body.old_name in robot_manager.arms:
+        arm = robot_manager.arms.pop(body.old_name)
+        arm.iface = body.new_name
+        robot_manager.arms[body.new_name] = arm
+    return {"status": "ok", "old_name": body.old_name, "new_name": body.new_name}
+
+
 # ── 팔 연결/해제 ──
 
 class ConnectRequest(BaseModel):

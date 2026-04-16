@@ -34,6 +34,7 @@ export default function TrainingPage() {
   const [wandbEnable, setWandbEnable] = useState(_saved.wandbEnable ?? false)
   const [wandbProject, setWandbProject] = useState(_saved.wandbProject || '')
   const [resume, setResume] = useState(_saved.resume ?? false)
+  const [usePolicyPreset, setUsePolicyPreset] = useState(_saved.usePolicyPreset ?? true)
   const [stateDim] = useState(_saved.stateDim ?? 0)
   const [actionDim] = useState(_saved.actionDim ?? 0)
   const [renameMap, setRenameMap] = useState(_saved.renameMap || '')
@@ -47,10 +48,10 @@ export default function TrainingPage() {
     localStorage.setItem('piper_train_settings', JSON.stringify({
       selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir,
       batchSize, steps, logFreq, saveFreq, numWorkers, seed, device,
-      optimizerType, learningRate, wandbEnable, wandbProject, resume,
+      optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset,
       stateDim, actionDim, renameMap,
     }))
-  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, stateDim, actionDim, renameMap])
+  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset, stateDim, actionDim, renameMap])
 
   // 실행 상태
   const [trainState, setTrainState] = useState<ProcessState>('idle')
@@ -107,9 +108,9 @@ export default function TrainingPage() {
       batch_size: batchSize, steps, log_freq: logFreq, save_freq: saveFreq,
       num_workers: numWorkers, seed, device, optimizer_type: optimizerType,
       learning_rate: learningRate, wandb_enable: wandbEnable, wandb_project: wandbProject, resume,
-      state_dim: stateDim, action_dim: actionDim, rename_map: renameMap,
+      use_policy_training_preset: usePolicyPreset, state_dim: stateDim, action_dim: actionDim, rename_map: renameMap,
     }).then((r) => setCliArgs(r.command)).catch(() => {})
-  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, stateDim, actionDim, cliEdited])
+  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset, stateDim, actionDim, cliEdited])
 
   // 체크포인트 폴링 (학습 중)
   const ckptPollRef = useRef<ReturnType<typeof setInterval>>(undefined)
@@ -145,7 +146,7 @@ export default function TrainingPage() {
     batch_size: batchSize, steps, log_freq: logFreq, save_freq: saveFreq,
     num_workers: numWorkers, seed, device, optimizer_type: optimizerType,
     learning_rate: learningRate, wandb_enable: wandbEnable, wandb_project: wandbProject, resume,
-    state_dim: stateDim, action_dim: actionDim, rename_map: renameMap,
+    use_policy_training_preset: usePolicyPreset, state_dim: stateDim, action_dim: actionDim, rename_map: renameMap,
   })
 
   const handlePreConfirm = async () => {
@@ -164,7 +165,7 @@ export default function TrainingPage() {
         `Batch: ${batchSize}  Steps: ${steps}  Save: ${saveFreq}`,
         `Device: ${device}  AMP: ${policyType === 'smolvla' ? 'preset' : 'false'}`,
         `Workers: ${numWorkers}  Seed: ${seed}`,
-        `Resume: ${resume}  State: ${stateDim || 'auto'}  Action: ${actionDim || 'auto'}`,
+        `Resume: ${resume}  Preset: ${usePolicyPreset}  State: ${stateDim || 'auto'}  Action: ${actionDim || 'auto'}`,
         '',
         `Rename map: ${renameMap || '(없음)'}`,
         '',
@@ -418,6 +419,12 @@ export default function TrainingPage() {
                   <input type="checkbox" checked={resume} onChange={(e) => { setResume(e.target.checked); setCliEdited(false) }}
                     className="accent-blue-500" />
                   <span className="text-neutral-400">체크포인트에서 재개 (Resume)</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input type="checkbox" checked={usePolicyPreset} onChange={(e) => { setUsePolicyPreset(e.target.checked); setCliEdited(false) }}
+                    className="accent-blue-500" />
+                  <span className="text-neutral-400">정책 학습 프리셋 사용 (use_policy_training_preset)</span>
+                  {!usePolicyPreset && <span className="text-yellow-500 text-[10px]">OFF — config.json 값 그대로 사용</span>}
                 </label>
               </div>
 

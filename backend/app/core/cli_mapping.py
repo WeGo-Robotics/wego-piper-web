@@ -159,6 +159,7 @@ TRAIN_ARGS_MAP: dict[str, str] = {
     "learning_rate": "--optimizer.lr",
     "wandb_enable": "--wandb.enable",
     "wandb_project": "--wandb.project",
+    "use_policy_training_preset": "--use_policy_training_preset",
 }
 
 
@@ -182,6 +183,11 @@ def build_train_args(params: dict) -> list[str]:
                 args.append(f"{cli_flag}=false")
         else:
             args.append(f"{cli_flag}={value}")
+
+    # use_policy_training_preset=false면 scheduler 필수 → 기본값 자동 추가
+    if not params.get("use_policy_training_preset", True):
+        if not any(a.startswith("--scheduler.type") for a in args):
+            args.append("--scheduler.type=diffuser")
 
     # resume: --policy.path와 함께 사용 불가 (checkpoint_path가 None이 되어 에러)
     if params.get("resume") and not has_pretrained:

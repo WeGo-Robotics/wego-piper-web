@@ -16,6 +16,11 @@ type CamInfo = {
   config: { width: number | null; height: number | null; fps: number | null; color_mode: string; rotation: number; fourcc: string | null }
 }
 
+type CamControl = {
+  cid: number; name: string; label: string; type: number
+  min: number; max: number; step: number; default: number; value: number
+}
+
 export default function CamerasPage() {
   const [loading, setLoading] = useState(true)
   const [cams, setCams] = useState<CamInfo[]>([])
@@ -24,6 +29,8 @@ export default function CamerasPage() {
   const [expandedCam, setExpandedCam] = useState<string | null>(null)
   const [previewTs, setPreviewTs] = useState(0)
   const [liveIds, setLiveIds] = useState<Set<string>>(new Set())
+  const [controlsCam, setControlsCam] = useState<string | null>(null)
+  const [controls, setControls] = useState<CamControl[]>([])
 
   useEffect(() => {
     api.get<{ cameras: CamInfo[] }>('/cameras/current')
@@ -78,6 +85,34 @@ export default function CamerasPage() {
   const handleUnregister = async (id: string) => {
     await api.post('/cameras/unregister', { id })
     setCams((prev) => prev.map((c) => (c.id === id ? { ...c, ready: false } : c)))
+  }
+
+  const toggleControls = async (camId: string) => {
+    if (controlsCam === camId) {
+      setControlsCam(null)
+      setControls([])
+      return
+    }
+    try {
+      const data = await api.get<CamControl[]>(`/cameras/${encodeURIComponent(camId)}/controls`)
+      setControls(data)
+      setControlsCam(camId)
+    } catch { setControls([]); setControlsCam(camId) }
+  }
+
+  const handleResetControls = async (camId: string) => {
+    try {
+      const data = await api.post<CamControl[]>('/cameras/controls/reset', { id: camId })
+      setControls(data)
+    } catch {}
+  }
+
+  const handleControl = async (camId: string, name: string, value: number) => {
+    // 즉시 UI 반영
+    setControls((prev) => prev.map((c) => c.name === name ? { ...c, value } : c))
+    try {
+      await api.post('/cameras/control', { id: camId, name, value })
+    } catch {}
   }
 
   const unconnected = cams.filter((c) => !c.connected)
@@ -151,11 +186,53 @@ export default function CamerasPage() {
                         className={`flex-1 py-1 text-xs rounded transition-colors ${isLive ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white'}`}>
                         {isLive ? '중단' : '실시간 보기'}
                       </button>
+                      <button onClick={() => toggleControls(cam.id)}
+                        className={`flex-1 py-1 text-xs rounded transition-colors ${controlsCam === cam.id ? 'bg-yellow-600 text-white' : 'bg-neutral-700 hover:bg-yellow-600 text-neutral-300 hover:text-white'}`}>
+                        {controlsCam === cam.id ? '설정 닫기' : '설정'}
+                      </button>
                       <button onClick={() => handleUnregister(cam.id)}
                         className="py-1 px-2 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white transition-colors">
                         해제
                       </button>
                     </div>
+                    {controlsCam === cam.id && (
+                      <div className="border-t border-neutral-700 pt-2 mt-2 space-y-1.5">
+                        {controls.length > 0 && (
+                          <div className="flex justify-end">
+                            <button onClick={() => handleResetControls(cam.id)}
+                              className="px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-orange-600 text-neutral-400 hover:text-white transition-colors">
+                              초기화
+                            </button>
+                          </div>
+                        )}
+                        {controls.length === 0 ? (
+                          <p className="text-xs text-neutral-500">지원되는 컨트롤이 없습니다</p>
+                        ) : controls.map((ctrl) => (
+                          <div key={ctrl.name} className="flex items-center gap-2 text-xs">
+                            <span className="text-neutral-400 w-24 shrink-0 truncate" title={ctrl.label}>{ctrl.label}</span>
+                            {ctrl.type === 2 ? (
+                              <input type="checkbox" checked={ctrl.value !== 0}
+                                onChange={(e) => handleControl(cam.id, ctrl.name, e.target.checked ? 1 : 0)}
+                                className="accent-blue-500" />
+                            ) : ctrl.type === 3 ? (
+                              <select value={ctrl.value}
+                                onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
+                                className="flex-1 px-1 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 text-xs">
+                                {Array.from({ length: ctrl.max - ctrl.min + 1 }, (_, i) => ctrl.min + i).map((v) => (
+                                  <option key={v} value={v}>{v}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input type="range" min={ctrl.min} max={ctrl.max} step={ctrl.step || 1}
+                                value={ctrl.value}
+                                onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
+                                className="flex-1 h-1 accent-blue-500" />
+                            )}
+                            <span className="text-neutral-300 w-12 text-right font-mono">{ctrl.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               )
@@ -228,8 +305,12 @@ export default function CamerasPage() {
                       {cam.config.fps && <span className="ml-2">{cam.config.fps}fps</span>}
                     </div>
                     <div className="flex gap-1.5">
-                      <button onClick={() => setExpandedCam(isExpanded ? null : cam.id)}
-                        className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300">설정</button>
+                      <button onClick={() => {
+                        setExpandedCam(isExpanded ? null : cam.id)
+                        if (!isExpanded) toggleControls(cam.id)
+                        else { setControlsCam(null); setControls([]) }
+                      }}
+                        className={`flex-1 py-1 text-xs rounded transition-colors ${isExpanded ? 'bg-yellow-600 text-white' : 'bg-neutral-700 hover:bg-neutral-600 text-neutral-300'}`}>설정</button>
                       <button onClick={() => handleRegister(cam.id)}
                         className="flex-1 py-1 text-xs rounded bg-green-600 hover:bg-green-500 text-white">등록</button>
                       <button onClick={() => handleDisconnect(cam.id)}
@@ -237,7 +318,7 @@ export default function CamerasPage() {
                     </div>
                   </div>
                   {isExpanded && (
-                    <div className="border-t border-neutral-700 p-3 space-y-2 bg-neutral-900/50">
+                    <div className="border-t border-neutral-700 p-3 space-y-3 bg-neutral-900/50">
                       <div className="grid grid-cols-2 gap-2 text-xs">
                         <div className="flex items-center gap-2">
                           <span className="text-neutral-400 w-14">Width</span>
@@ -267,6 +348,41 @@ export default function CamerasPage() {
                           </select>
                         </div>
                       </div>
+                      {controlsCam === cam.id && controls.length > 0 && (
+                        <div className="border-t border-neutral-700 pt-2 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-neutral-500">이미지 조정</span>
+                            <button onClick={() => handleResetControls(cam.id)}
+                              className="px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-orange-600 text-neutral-400 hover:text-white transition-colors">
+                              초기화
+                            </button>
+                          </div>
+                          {controls.map((ctrl) => (
+                            <div key={ctrl.name} className="flex items-center gap-2 text-xs">
+                              <span className="text-neutral-400 w-24 shrink-0 truncate" title={ctrl.label}>{ctrl.label}</span>
+                              {ctrl.type === 2 ? (
+                                <input type="checkbox" checked={ctrl.value !== 0}
+                                  onChange={(e) => handleControl(cam.id, ctrl.name, e.target.checked ? 1 : 0)}
+                                  className="accent-blue-500" />
+                              ) : ctrl.type === 3 ? (
+                                <select value={ctrl.value}
+                                  onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
+                                  className="flex-1 px-1 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 text-xs">
+                                  {Array.from({ length: ctrl.max - ctrl.min + 1 }, (_, i) => ctrl.min + i).map((v) => (
+                                    <option key={v} value={v}>{v}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input type="range" min={ctrl.min} max={ctrl.max} step={ctrl.step || 1}
+                                  value={ctrl.value}
+                                  onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
+                                  className="flex-1 h-1 accent-blue-500" />
+                              )}
+                              <span className="text-neutral-300 w-12 text-right font-mono">{ctrl.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

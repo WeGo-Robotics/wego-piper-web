@@ -45,6 +45,23 @@ def slot_to_can_name(slot: str) -> str:
 
 # ── CAN 포트 스캔 ──
 
+def _read_can_rx(iface: str) -> int:
+    """sysfs에서 CAN RX 패킷 수 읽기 (non-blocking)."""
+    try:
+        return int(Path(f"/sys/class/net/{iface}/statistics/rx_packets").read_text().strip())
+    except Exception:
+        return 0
+
+
+def check_can_active(iface: str, interval: float = 0.3) -> bool:
+    """CAN 포트에 실제 데이터가 오고 있는지 확인. (interval 초 간격으로 rx 증가 여부)"""
+    rx1 = _read_can_rx(iface)
+    import time
+    time.sleep(interval)
+    rx2 = _read_can_rx(iface)
+    return rx2 > rx1
+
+
 def scan_can_interfaces() -> list[dict]:
     rc, out, _ = _run_cmd(["ip", "-br", "link", "show", "type", "can"])
     if rc != 0 or not out.strip():
@@ -62,7 +79,8 @@ def scan_can_interfaces() -> list[dict]:
                 if ln.strip().startswith("bus-info:"):
                     bus_info = ln.split(":", 1)[1].strip()
                     break
-        result.append({"iface": iface, "bus_info": bus_info, "state": state})
+        rx = _read_can_rx(iface) if state == "UP" else 0
+        result.append({"iface": iface, "bus_info": bus_info, "state": state, "rx_packets": rx})
     return result
 
 
