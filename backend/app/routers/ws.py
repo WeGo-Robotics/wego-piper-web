@@ -152,6 +152,22 @@ def _setup_callbacks() -> None:
     policy_server_manager.pm.set_log_callback(on_ps_log)
     policy_server_manager.pm.set_state_callback(on_ps_state)
 
+    # ── 데이터셋 업로드 콜백 ──
+    from app.routers.datasets import _upload_pm
+
+    def on_upload_log(line: str) -> None:
+        asyncio.run_coroutine_threadsafe(
+            broadcast({"type": "upload_log", "data": line}), loop
+        )
+
+    def on_upload_state(state: ProcessState) -> None:
+        asyncio.run_coroutine_threadsafe(
+            broadcast({"type": "upload_state", "data": state.value}), loop
+        )
+
+    _upload_pm.set_log_callback(on_upload_log)
+    _upload_pm.set_state_callback(on_upload_state)
+
 
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:

@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     # 실행 경로
     local_python: str = "python"  # 로컬 wrapper용 python
     grpc_python: str = str(Path.home() / "miniconda3" / "bin" / "python")  # gRPC wrapper용 python
+    hf_cli: str = ""  # huggingface-cli 경로 (빈 문자열이면 자동 탐색)
 
     model_config = {"env_prefix": "PIPER_", "env_file": ".env"}
 

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { api } from '../services/api'
+import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import type { Dataset, DatasetDetail } from '../types/models'
 import DiskUsageBar from '../components/DiskUsageBar'
 import HubBrowser from '../components/HubBrowser'
@@ -24,6 +25,50 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [sortAsc, setSortAsc] = useState(false)
+  // Hub 업로드
+  const [uploadId, setUploadId] = useState<string | null>(null)
+  const [uploadLogs, setUploadLogs] = useState<string[]>([])
+  const [uploadState, setUploadState] = useState<string>('idle')
+  // hf-cli 설정
+  const [hfCliPath, setHfCliPath] = useState('')
+  const [hfCliResolved, setHfCliResolved] = useState('')
+
+  useWebSocket('/ws', {
+    onMessage: useCallback((msg: WsMessage) => {
+      if (msg.type === 'upload_log') setUploadLogs((prev) => [...prev.slice(-200), msg.data as string])
+      else if (msg.type === 'upload_state') {
+        setUploadState(msg.data as string)
+        if (msg.data === 'idle' || msg.data === 'error') fetchDatasets()
+      }
+    }, []),
+  })
+
+  // hf-cli 경로 로드
+  useEffect(() => {
+    api.get<{ configured: string; resolved: string }>('/datasets/hf-cli')
+      .then((r) => { setHfCliPath(r.configured); setHfCliResolved(r.resolved) })
+      .catch(() => {})
+  }, [])
+
+  const handleSaveHfCli = async () => {
+    try {
+      const r = await api.post<{ resolved: string }>('/datasets/hf-cli', { path: hfCliPath })
+      setHfCliResolved(r.resolved)
+    } catch { alert('경로 저장 실패') }
+  }
+
+  const handleUpload = async (id: string) => {
+    if (!confirm(`"${id}"를 HuggingFace Hub에 업로드하시겠습니까?`)) return
+    setUploadId(id)
+    setUploadLogs([])
+    setUploadState('starting')
+    try {
+      await api.post(`/datasets/${id}/upload`, { private: false })
+    } catch (e) {
+      setUploadLogs((prev) => [...prev, `[ERROR] ${e instanceof Error ? e.message : '업로드 실패'}`])
+      setUploadState('error')
+    }
+  }
 
   const fetchDatasets = () => {
     setLoading(true)
@@ -141,6 +186,21 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
 
       <DiskUsageBar />
 
+      {/* hf-cli 설정 */}
+      {tab === 'local' && (
+        <details className="text-xs">
+          <summary className="text-neutral-500 cursor-pointer hover:text-neutral-300">huggingface-cli 설정</summary>
+          <div className="mt-2 flex items-center gap-2">
+            <input type="text" value={hfCliPath} onChange={(e) => setHfCliPath(e.target.value)}
+              placeholder={hfCliResolved || '자동 탐색'}
+              className="flex-1 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 text-xs placeholder:text-neutral-500" />
+            <button onClick={handleSaveHfCli}
+              className="px-3 py-1 rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white text-xs">저장</button>
+            {hfCliResolved && <span className="text-neutral-500 truncate max-w-[300px]" title={hfCliResolved}>{hfCliResolved}</span>}
+          </div>
+        </details>
+      )}
+
       {tab === 'hub' ? <HubBrowser type="datasets" /> : null}
 
       {tab === 'local' && loading ? (
@@ -180,15 +240,18 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
                 <p className="text-xs text-neutral-400 mt-1">
                   {ds.total_episodes} 에피소드 · {formatBytes(ds.size_bytes)}
                 </p>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleDelete(ds.id)
-                  }}
-                  className="mt-2 px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white"
-                >
-                  삭제
-                </button>
+                <div className="flex gap-1 mt-2">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleUpload(ds.id) }}
+                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white">
+                    Hub 업로드
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDelete(ds.id) }}
+                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">
+                    삭제
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -197,7 +260,39 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
           <div className="lg:col-span-2">
             {detail ? (
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-6 space-y-4">
-                <h2 className="text-lg font-semibold">{detail.id}</h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">{detail.id}</h2>
+                  <div className="flex gap-1">
+                    <button onClick={() => { navigator.clipboard.writeText((detail as Record<string, unknown>).path as string ?? detail.id) }}
+                      className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 hover:text-white">
+                      경로 복사
+                    </button>
+                    <button onClick={() => {
+                      if (!confirm('영상을 프레임별 JPG로 디코딩합니다. 학습 속도가 향상됩니다.')) return
+                      setUploadId(detail.id); setUploadLogs([]); setUploadState('starting')
+                      api.post(`/datasets/${detail.id}/decode-cache`, {}).catch((e) => {
+                        setUploadLogs(prev => [...prev, `[ERROR] ${e instanceof Error ? e.message : '실패'}`])
+                        setUploadState('error')
+                      })
+                    }}
+                      className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white">
+                      디코딩 캐시
+                    </button>
+                    <button onClick={async () => {
+                      if (!confirm('디코딩 캐시(프레임 JPG)를 삭제합니다.')) return
+                      const r = await api.post<{ deleted_files: number }>(`/datasets/${detail.id}/decode-cache/delete`, {})
+                      alert(`${r.deleted_files}개 파일 삭제됨`)
+                      handleSelect(detail.id)
+                    }}
+                      className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-orange-600 text-neutral-300 hover:text-white">
+                      캐시 삭제
+                    </button>
+                    <button onClick={() => handleUpload(detail.id)}
+                      className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white">
+                      Hub 업로드
+                    </button>
+                  </div>
+                </div>
                 <div className="grid grid-cols-3 gap-3 text-sm">
                   <div>
                     <span className="text-neutral-400">에피소드</span>
@@ -300,6 +395,38 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
           </div>
         </div>
       ) : null}
+
+      {/* 업로드 모달 */}
+      {uploadId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => { if (uploadState !== 'running' && uploadState !== 'starting') setUploadId(null) }}>
+          <div className="bg-neutral-800 border border-neutral-600 rounded-lg w-[600px] max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-neutral-700">
+              <h3 className="text-sm font-semibold">Hub 업로드: {uploadId}</h3>
+              <div className="flex items-center gap-2">
+                <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                  uploadState === 'running' || uploadState === 'starting' ? 'bg-blue-500/20 text-blue-400' :
+                  uploadState === 'error' ? 'bg-red-500/20 text-red-400' :
+                  uploadState === 'idle' ? 'bg-green-500/20 text-green-400' : 'bg-neutral-700 text-neutral-400'
+                }`}>{uploadState}</span>
+                {uploadState !== 'running' && uploadState !== 'starting' && (
+                  <button onClick={() => setUploadId(null)} className="text-neutral-400 hover:text-white text-lg leading-none">&times;</button>
+                )}
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto p-4 font-mono text-xs bg-neutral-900 text-neutral-300 min-h-[300px] whitespace-pre-wrap">
+              {uploadLogs.length === 0 ? <span className="text-neutral-500">업로드 시작 대기...</span> : uploadLogs.map((line, i) => <div key={i}>{line}</div>)}
+            </div>
+            <div className="p-3 border-t border-neutral-700 flex justify-end gap-2">
+              {(uploadState === 'running' || uploadState === 'starting') && (
+                <button onClick={() => api.post('/datasets/upload-stop')} className="px-3 py-1 text-xs rounded bg-red-600 hover:bg-red-500 text-white">중지</button>
+              )}
+              {uploadState !== 'running' && uploadState !== 'starting' && (
+                <button onClick={() => setUploadId(null)} className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300">닫기</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
