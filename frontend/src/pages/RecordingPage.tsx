@@ -6,7 +6,7 @@ import LogViewer from '../components/LogViewer'
 type ProcessState = 'idle' | 'starting' | 'running' | 'stopping' | 'error'
 type ReadyArm = { iface: string; role: string }
 type ReadyCam = { id: string; name: string }
-type RecordStatusData = { current_episode: number; total_episodes: number; phase: string; progress: number }
+type RecordStatusData = { state?: string; current_episode: number; total_episodes: number; phase: string; progress: number }
 
 const VCODECS = ['auto', 'libsvtav1', 'h264', 'hevc', 'h264_nvenc', 'libx264']
 
@@ -197,7 +197,7 @@ export default function RecordingPage() {
                           { label: 'top+wrist+side', preset: { top: '', wrist: '', side: '' } },
                           { label: 'front+side', preset: { front: '', side: '' } },
                         ].map(({ label, preset }) => (
-                          <button key={label} onClick={() => { setCameraMapping(preset); setCliEdited(false) }}
+                          <button key={label} onClick={() => { setCameraMapping(preset as Record<string, string>); setCliEdited(false) }}
                             className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-700 text-neutral-400 hover:text-white hover:bg-neutral-600">
                             {label}
                           </button>
@@ -398,8 +398,17 @@ export default function RecordingPage() {
               </div>
 
               {/* 에피소드 제어 */}
-              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
+              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
                 <h3 className="text-sm font-semibold">에피소드 제어</h3>
+
+                {/* 리셋 대기 중: 준비 완료 버튼 강조 */}
+                {status?.phase === 'resetting' && (
+                  <button onClick={handleSkip}
+                    className="w-full px-4 py-3 rounded bg-green-600 hover:bg-green-500 text-white text-sm font-semibold animate-pulse">
+                    준비 완료 — 다음 에피소드 시작
+                  </button>
+                )}
+
                 <div className="grid grid-cols-3 gap-2">
                   <button onClick={handleSkip}
                     className="px-3 py-2 rounded bg-neutral-700 hover:bg-neutral-600 text-sm text-neutral-200">
@@ -417,6 +426,15 @@ export default function RecordingPage() {
                 <p className="text-[10px] text-neutral-500">
                   건너뛰기: 현재 에피소드 건너뛰고 다음으로 | 재녹화: 현재 에피소드 폐기 후 다시 | 정지: 녹화 종료
                 </p>
+              </div>
+
+              {/* 녹화 중 Task 메모 (녹화 후 일괄 변경용) */}
+              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
+                <h3 className="text-sm font-semibold">에피소드별 Task 메모</h3>
+                <p className="text-[10px] text-neutral-500">녹화 완료 후 데이터셋 페이지에서 에피소드별 task를 변경할 수 있습니다.</p>
+                <div className="text-xs text-neutral-400">
+                  현재 Task: <span className="text-neutral-100">{singleTask}</span>
+                </div>
               </div>
             </>
           )}

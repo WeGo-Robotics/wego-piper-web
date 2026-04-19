@@ -74,13 +74,6 @@ async def start_recording(body: RecordStartRequest):
     if not body.teleop_port:
         raise HTTPException(400, "Leader 포트가 필요합니다.")
 
-    # 기존 데이터셋이 존재하면 자동 resume
-    from pathlib import Path
-    dataset_path = Path.home() / ".cache" / "huggingface" / "lerobot" / body.repo_id
-    if dataset_path.exists() and not body.resume:
-        logger.info("Dataset %s already exists, enabling resume", body.repo_id)
-        body.resume = True
-
     # 녹화 전 camera_manager가 점유한 카메라 해제
     import time
     from app.services.camera_manager import camera_manager

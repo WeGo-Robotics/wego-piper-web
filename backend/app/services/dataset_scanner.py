@@ -147,6 +147,76 @@ def _find_dataset_dir(dataset_id: str) -> tuple[Path, str] | None:
     return None
 
 
+def find_dataset_path(dataset_id: str) -> Path | None:
+    """dataset_id → 실제 디렉토리 경로."""
+    result = _find_dataset_dir(dataset_id)
+    return result[0] if result else None
+
+
+def _sanitize_value(v):
+    """numpy/pandas 타입을 JSON 직렬화 가능한 타입으로 변환."""
+    import numpy as np
+    if isinstance(v, np.ndarray):
+        return v.tolist()
+    if isinstance(v, (np.integer,)):
+        return int(v)
+    if isinstance(v, (np.floating,)):
+        return float(v)
+    if isinstance(v, (np.bool_,)):
+        return bool(v)
+    if isinstance(v, dict):
+        return {k2: _sanitize_value(v2) for k2, v2 in v.items()}
+    if isinstance(v, list):
+        return [_sanitize_value(x) for x in v]
+    return v
+
+
+def _sanitize_records(records: list[dict]) -> list[dict]:
+    return [{k: _sanitize_value(v) for k, v in row.items()} for row in records]
+
+
+def _read_meta_table(jsonl_path: Path, parquet_path: Path) -> list[dict]:
+    """jsonl 또는 parquet에서 메타 테이블 읽기."""
+    # jsonl 우선
+    if jsonl_path.exists():
+        rows = []
+        for line in jsonl_path.read_text().strip().split("\n"):
+            if line:
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return rows
+    # parquet (단일 파일 또는 디렉토리)
+    pq_file = parquet_path
+    if parquet_path.is_dir():
+        # episodes/chunk-000/file-000.parquet 구조
+        pq_files = sorted(parquet_path.rglob("*.parquet"))
+        if not pq_files:
+            return []
+        try:
+            import pyarrow.parquet as pq
+            tables = [pq.read_table(f) for f in pq_files]
+            import pyarrow as pa
+            merged = pa.concat_tables(tables)
+            df = merged.to_pandas().reset_index()
+            # stats 컬럼 제거 (numpy nested array → JSON 직렬화 불가)
+            df = df[[c for c in df.columns if not c.startswith("stats/")]]
+            return _sanitize_records(df.to_dict("records"))
+        except Exception as e:
+            logger.warning("Failed to read parquet dir %s: %s", parquet_path, e)
+            return []
+    elif pq_file.exists():
+        try:
+            import pyarrow.parquet as pq
+            table = pq.read_table(pq_file)
+            return _sanitize_records(table.to_pandas().reset_index().to_dict("records"))
+        except Exception as e:
+            logger.warning("Failed to read parquet %s: %s", pq_file, e)
+            return []
+    return []
+
+
 def get_dataset(dataset_id: str) -> dict | None:
     result = _find_dataset_dir(dataset_id)
     if not result:
@@ -158,27 +228,11 @@ def get_dataset(dataset_id: str) -> dict | None:
         info_path = ds_path / "info.json"
     meta = _parse_meta(info_path)
 
-    # 에피소드 목록
-    episodes = []
-    episodes_path = ds_path / "meta" / "episodes.jsonl"
-    if episodes_path.exists():
-        for line in episodes_path.read_text().strip().split("\n"):
-            if line:
-                try:
-                    episodes.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+    # 에피소드 목록 (jsonl → parquet fallback)
+    episodes = _read_meta_table(ds_path / "meta" / "episodes.jsonl", ds_path / "meta" / "episodes")
 
-    # tasks
-    tasks = []
-    tasks_path = ds_path / "meta" / "tasks.jsonl"
-    if tasks_path.exists():
-        for line in tasks_path.read_text().strip().split("\n"):
-            if line:
-                try:
-                    tasks.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+    # tasks (jsonl → parquet fallback)
+    tasks = _read_meta_table(ds_path / "meta" / "tasks.jsonl", ds_path / "meta" / "tasks.parquet")
 
     return {
         "id": dataset_id,

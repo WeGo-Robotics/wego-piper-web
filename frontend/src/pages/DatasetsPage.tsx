@@ -20,6 +20,7 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
   const [loading, setLoading] = useState(true)
   const [detail, setDetail] = useState<DatasetDetail | null>(null)
   const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([])
+  const [editingTask, setEditingTask] = useState<string | null>(null)  // 선택된 에피소드에 적용할 task
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [sortAsc, setSortAsc] = useState(false)
@@ -62,8 +63,20 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
       operation: 'delete_episodes',
       params: { episode_indices: JSON.stringify(selectedEpisodes) },
     })
-    // 새로고침
     handleSelect(detail.id)
+  }
+
+  const handleUpdateTask = async () => {
+    if (!detail || selectedEpisodes.length === 0 || !editingTask?.trim()) return
+    try {
+      await api.post(`/datasets/${detail.id}/update-task`, {
+        episode_indices: selectedEpisodes,
+        task: editingTask.trim(),
+      })
+      setEditingTask(null)
+      setSelectedEpisodes([])
+      handleSelect(detail.id)
+    } catch { alert('Task 변경 실패') }
   }
 
   const toggleEpisode = (idx: number) => {
@@ -208,12 +221,23 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
                         에피소드 목록
                       </span>
                       {selectedEpisodes.length > 0 && (
-                        <button
-                          onClick={handleDeleteEpisodes}
-                          className="px-3 py-1 text-xs rounded bg-red-600 hover:bg-red-500 text-white"
-                        >
-                          선택 삭제 ({selectedEpisodes.length})
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <input type="text" value={editingTask ?? ''}
+                            onChange={(e) => setEditingTask(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleUpdateTask() }}
+                            placeholder="새 Task 입력..."
+                            className="px-2 py-1 text-xs rounded bg-neutral-900 border border-neutral-600 text-neutral-100 w-48 placeholder:text-neutral-500" />
+                          <button onClick={handleUpdateTask} disabled={!editingTask?.trim()}
+                            className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
+                            Task 변경 ({selectedEpisodes.length})
+                          </button>
+                          <button
+                            onClick={handleDeleteEpisodes}
+                            className="px-3 py-1 text-xs rounded bg-red-600 hover:bg-red-500 text-white"
+                          >
+                            삭제 ({selectedEpisodes.length})
+                          </button>
+                        </div>
                       )}
                     </div>
                     <div className="max-h-64 overflow-auto rounded border border-neutral-700">
@@ -241,7 +265,11 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
                               </td>
                               <td className="p-2">{(ep as Record<string, unknown>).episode_index as number ?? i}</td>
                               <td className="p-2 truncate max-w-[200px]">
-                                {(ep as Record<string, unknown>).task as string ?? '-'}
+                                {(() => {
+                                  const r = ep as Record<string, unknown>
+                                  const t = r.tasks ?? r.task
+                                  return Array.isArray(t) ? t.join(', ') : (t as string) ?? '-'
+                                })()}
                               </td>
                               <td className="p-2">
                                 {(ep as Record<string, unknown>).length as number ?? '-'}
