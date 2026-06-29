@@ -110,6 +110,8 @@ async def start_training(body: TrainStartRequest):
         params.pop("wandb_project", None)
     if not params.get("output_dir"):
         params.pop("output_dir", None)
+    if not params.get("policy_repo_id"):
+        params.pop("policy_repo_id", None)
 
     args = build_train_args(params)
 
@@ -167,6 +169,8 @@ async def preview_train_args(body: TrainPreviewRequest):
         params.pop("wandb_project", None)
     if not params.get("output_dir"):
         params.pop("output_dir", None)
+    if not params.get("policy_repo_id"):
+        params.pop("policy_repo_id", None)
     args = build_train_args(params)
     return {"args": args, "command": " ".join(args)}
 

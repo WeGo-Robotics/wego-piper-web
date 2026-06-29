@@ -69,10 +69,14 @@ class ProcessManager:
         logger.info("Starting process: %s", " ".join(cmd))
 
         try:
-            # subprocess에 깨끗한 환경 전달 (PYTHONPATH 오염 방지)
+            # subprocess에 깨끗한 환경 전달 (PYTHONPATH 오염 방지).
+            # 단, logfix 디렉토리만 PYTHONPATH에 넣어 sitecustomize.py가
+            # 자동 import되도록 한다 (라이브러리 로거 이중 출력 차단).
             import os as _os
+            from pathlib import Path as _Path
             env = _os.environ.copy()
-            env.pop("PYTHONPATH", None)
+            _logfix_dir = str(_Path(__file__).resolve().parent.parent / "core" / "logfix")
+            env["PYTHONPATH"] = _logfix_dir
             # pynput이 X server에 연결할 수 있도록 DISPLAY 보장
             if "DISPLAY" not in env:
                 env["DISPLAY"] = ":0"

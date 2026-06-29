@@ -184,6 +184,11 @@ def build_train_args(params: dict) -> list[str]:
         else:
             args.append(f"{cli_flag}={value}")
 
+    # policy.push_to_hub는 기본 True → repo_id 없으면 validate()에서 에러.
+    # 로컬 학습(policy_repo_id 미지정)이면 Hub 푸시를 명시적으로 비활성화
+    if not params.get("policy_repo_id"):
+        args.append("--policy.push_to_hub=false")
+
     # use_policy_training_preset=false면 scheduler 필수 → 기본값 자동 추가
     if not params.get("use_policy_training_preset", True):
         if not any(a.startswith("--scheduler.type") for a in args):
