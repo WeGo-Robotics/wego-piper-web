@@ -163,7 +163,7 @@ export default function TrainingPage() {
         `Output: ${outputDir || '(자동)'}`,
         '',
         `Batch: ${batchSize}  Steps: ${steps}  Save: ${saveFreq}`,
-        `Device: ${device}  AMP: ${policyType === 'smolvla' ? 'preset' : 'false'}`,
+        `Device: ${device}  AMP: ${usePolicyPreset ? 'preset' : 'false'}`,
         `Workers: ${numWorkers}  Seed: ${seed}`,
         `Resume: ${resume}  Preset: ${usePolicyPreset}  State: ${stateDim || 'auto'}  Action: ${actionDim || 'auto'}`,
         '',

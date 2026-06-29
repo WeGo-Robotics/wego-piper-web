@@ -121,7 +121,7 @@ class InferenceStartRequest(BaseModel):
     params: dict = {}
     inference_mode: str = "local"  # "local" | "server"
     server_address: str = "127.0.0.1:8088"
-    policy_type: str = "smolvla"
+    policy_type: str = "act"
     actions_per_chunk: int = 100
     aggregate_fn: str = "weighted_average"
     offset_correction: bool = False
@@ -137,7 +137,7 @@ class InferencePreviewRequest(BaseModel):
     camera_mapping: dict[str, str] = {}
     inference_mode: str = "local"
     server_address: str = "127.0.0.1:8088"
-    policy_type: str = "smolvla"
+    policy_type: str = "act"
     aggregate_fn: str = "weighted_average"
     offset_correction: bool = False
     smoothing: str = "none"

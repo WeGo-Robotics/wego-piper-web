@@ -43,6 +43,8 @@ type ReadyCam = { id: string; name: string; config: { width: number | null; heig
 type ValidationResult = { valid: boolean; errors: string[]; warnings: string[] }
 
 const PIPER_JOINTS = 7
+// flow-matching 정책: RTC(real-time chunking) 가이던스 파라미터 사용
+const RTC_POLICIES = ['smolvla', 'pi0', 'pi05']
 
 export default function InferencePage() {
   const [readyFollowers, setReadyFollowers] = useState<ReadyArm[]>([])
@@ -127,6 +129,14 @@ export default function InferencePage() {
 
   const selectedModelData = models.find((m) => m.id === selectedModel)
   const reqs = selectedModelData?.requirements
+  // 파라미터 패널/정책 표시 기준: 선택 모델의 policy_type 우선, 없으면 수동 선택값
+  const activePolicy = selectedModelData?.policy_type ?? policyType
+
+  // 선택한 체크포인트의 policy_type을 정책 선택값에 자동 반영 (서버 모드 드롭다운 기본값)
+  useEffect(() => {
+    const pt = selectedModelData?.policy_type
+    if (pt) setPolicyType(pt)
+  }, [selectedModelData?.policy_type])
 
   useEffect(() => {
     if (!reqs) { setCameraMapping({}); setValidation(null); return }
@@ -391,7 +401,9 @@ export default function InferencePage() {
                       <option value="diffusion">Diffusion</option>
                       <option value="pi0">PI0</option>
                       <option value="pi05">PI0.5</option>
+                      <option value="pi0_fast">PI0-FAST</option>
                       <option value="vqbet">VQ-BeT</option>
+                      <option value="tdmpc">TD-MPC</option>
                     </select>
                   </div>
                   <div className="flex items-center gap-2 text-xs">
@@ -584,18 +596,24 @@ export default function InferencePage() {
             <ParamSlider label="액션 청크 크기 (0=전부)" value={params.use_chunk_size ?? 0} min={0} max={200} step={5}
               onChange={(v) => handleParamChange('use_chunk_size', v)} />
           </div>
-          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-4">
-            <h3 className="text-sm font-semibold">RTC 파라미터</h3>
-            <ParamSlider label="max_guidance_weight" value={params.max_guidance_weight} min={0} max={50} step={0.5}
-              onChange={(v) => handleParamChange('max_guidance_weight', v)} />
-            <ParamSlider label="execution_horizon" value={params.execution_horizon} min={1} max={100} step={1}
-              onChange={(v) => handleParamChange('execution_horizon', v)} />
-            <h3 className="text-sm font-semibold pt-2">ACT 파라미터</h3>
-            <ParamSlider label="temporal_ensemble_coeff" value={params.temporal_ensemble_coeff} min={0} max={1} step={0.001}
-              onChange={(v) => handleParamChange('temporal_ensemble_coeff', v)} />
-            <ParamSlider label="n_action_steps" value={params.n_action_steps} min={1} max={100} step={1}
-              onChange={(v) => handleParamChange('n_action_steps', v)} />
-          </div>
+          {RTC_POLICIES.includes(activePolicy) && (
+            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-4">
+              <h3 className="text-sm font-semibold">RTC 파라미터</h3>
+              <ParamSlider label="max_guidance_weight" value={params.max_guidance_weight} min={0} max={50} step={0.5}
+                onChange={(v) => handleParamChange('max_guidance_weight', v)} />
+              <ParamSlider label="execution_horizon" value={params.execution_horizon} min={1} max={100} step={1}
+                onChange={(v) => handleParamChange('execution_horizon', v)} />
+            </div>
+          )}
+          {activePolicy === 'act' && (
+            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-4">
+              <h3 className="text-sm font-semibold">ACT 파라미터</h3>
+              <ParamSlider label="temporal_ensemble_coeff" value={params.temporal_ensemble_coeff} min={0} max={1} step={0.001}
+                onChange={(v) => handleParamChange('temporal_ensemble_coeff', v)} />
+              <ParamSlider label="n_action_steps" value={params.n_action_steps} min={1} max={100} step={1}
+                onChange={(v) => handleParamChange('n_action_steps', v)} />
+            </div>
+          )}
         </div>
 
         {/* 3열: 텔레메트리 + 수동/평가 */}
