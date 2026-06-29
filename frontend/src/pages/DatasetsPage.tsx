@@ -4,6 +4,7 @@ import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import type { Dataset, DatasetDetail } from '../types/models'
 import DiskUsageBar from '../components/DiskUsageBar'
 import HubBrowser from '../components/HubBrowser'
+import LogViewer from '../components/LogViewer'
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -413,8 +414,8 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
                 )}
               </div>
             </div>
-            <div className="flex-1 overflow-auto p-4 font-mono text-xs bg-neutral-900 text-neutral-300 min-h-[300px] whitespace-pre-wrap">
-              {uploadLogs.length === 0 ? <span className="text-neutral-500">업로드 시작 대기...</span> : uploadLogs.map((line, i) => <div key={i}>{line}</div>)}
+            <div className="flex-1 overflow-hidden p-2">
+              <LogViewer logs={uploadLogs} height="min-h-[280px] max-h-[50vh]" placeholder="시작 대기..." searchable />
             </div>
             <div className="p-3 border-t border-neutral-700 flex justify-end gap-2">
               {(uploadState === 'running' || uploadState === 'starting') && (
