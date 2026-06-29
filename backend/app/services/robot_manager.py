@@ -53,6 +53,57 @@ def _read_can_rx(iface: str) -> int:
         return 0
 
 
+def sniff_can_ids(iface: str, duration: float = 1.2) -> dict:
+    """raw CAN 소켓으로 버스를 잠깐 청취해 CAN ID 그룹별 빈도와 마스터/슬레이브 정황을 반환.
+
+    Piper CAN ID 규약:
+      - 0x2A1~0x2A8 : 슬레이브/standby 팔의 주기 피드백 (기본)
+      - 0x2B1~0x2C8 : 마스터(示教输入臂)의 오프셋 피드백 (MasterSlaveConfig feedback_offset)
+      - 0x150~0x15F : 마스터가 송신하는 관절 제어지령 (위치 변화 시)
+      - 0x251~0x266 : 드라이버 고속/저속 피드백
+    마스터 정황 = 0x2Bx/0x2Cx 피드백 또는 0x15x 제어지령 관측.
+    """
+    import socket
+    import struct
+    groups = {"slave_fb": 0, "master_fb": 0, "master_ctrl": 0, "driver": 0, "other": 0}
+    ids: dict[int, int] = {}
+    try:
+        s = socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
+        s.bind((iface,))
+        s.settimeout(0.2)
+        end = time.time() + duration
+        while time.time() < end:
+            try:
+                frame = s.recv(16)
+            except socket.timeout:
+                continue
+            cid = struct.unpack("=I", frame[:4])[0] & 0x1FFFFFFF
+            ids[cid] = ids.get(cid, 0) + 1
+            if 0x2A1 <= cid <= 0x2A8:
+                groups["slave_fb"] += 1
+            elif 0x2B1 <= cid <= 0x2C8:
+                groups["master_fb"] += 1
+            elif 0x150 <= cid <= 0x15F:
+                groups["master_ctrl"] += 1
+            elif 0x251 <= cid <= 0x266:
+                groups["driver"] += 1
+            else:
+                groups["other"] += 1
+        s.close()
+    except Exception as exc:
+        return {"iface": iface, "error": str(exc), "total": 0,
+                "groups": groups, "ids": [], "master_detected": False, "has_traffic": False}
+    master = groups["master_fb"] > 0 or groups["master_ctrl"] > 0
+    return {
+        "iface": iface,
+        "total": sum(ids.values()),
+        "has_traffic": bool(ids),
+        "master_detected": master,
+        "groups": groups,
+        "ids": [f"{x:03X}" for x in sorted(ids)],
+    }
+
+
 def check_can_active(iface: str, interval: float = 0.3) -> bool:
     """CAN 포트에 실제 데이터가 오고 있는지 확인. (interval 초 간격으로 rx 증가 여부)"""
     rx1 = _read_can_rx(iface)
@@ -109,6 +160,71 @@ def rename_can_interface(old_name: str, new_name: str) -> tuple[bool, str]:
     return True, "OK"
 
 
+# ── USB 진단 / 복구 ──
+
+XHCI_DRIVER_DIR = Path("/sys/bus/pci/drivers/xhci_hcd")
+
+
+def get_usb_info() -> dict:
+    """lsusb 출력(목록 + 트리)을 반환. root 권한 불필요."""
+    rc1, flat, err1 = _run_cmd(["lsusb"])
+    rc2, tree, err2 = _run_cmd(["lsusb", "-t"])
+    return {
+        "flat": flat if rc1 == 0 else f"(lsusb 실패: {err1})",
+        "tree": tree if rc2 == 0 else f"(lsusb -t 실패: {err2})",
+        "controllers": list_xhci_controllers(),
+    }
+
+
+def list_xhci_controllers() -> list[str]:
+    """xhci_hcd 드라이버에 바인딩된 PCI 컨트롤러 주소 목록."""
+    try:
+        return sorted(
+            n for n in (p.name for p in XHCI_DRIVER_DIR.iterdir())
+            if n[:4].isalnum() and ":" in n and "." in n
+        )
+    except Exception:
+        return []
+
+
+def _sysfs_write(path: str, value: str) -> tuple[int, str, str]:
+    """sudo tee로 sysfs에 기록 (값은 stdin으로 전달)."""
+    cmd = ["sudo", "-n", "/usr/bin/tee", path]
+    try:
+        r = subprocess.run(cmd, input=value, capture_output=True, text=True, timeout=8)
+        return r.returncode, r.stdout.strip(), r.stderr.strip()
+    except Exception as exc:
+        return -1, "", str(exc)
+
+
+def recover_usb_controllers(pci_addrs: list[str] | None = None) -> tuple[bool, str, list[str]]:
+    """xHCI 컨트롤러를 unbind→bind 하여 강제 재열거.
+
+    'HC died'로 USB 트리가 통째로 사라졌을 때 재부팅 없이 복구한다.
+    pci_addrs 미지정 시 바인딩된 모든 xhci_hcd 컨트롤러 대상.
+    반환: (성공여부, 메시지, 처리된 주소 목록)
+    """
+    addrs = pci_addrs or list_xhci_controllers()
+    if not addrs:
+        return False, "xhci_hcd 컨트롤러를 찾을 수 없습니다", []
+    done, errors = [], []
+    for addr in addrs:
+        rc, _, err = _sysfs_write(str(XHCI_DRIVER_DIR / "unbind"), addr)
+        if rc != 0:
+            errors.append(f"{addr} unbind: {err or 'failed'}")
+            continue
+        time.sleep(1.0)
+        rc, _, err = _sysfs_write(str(XHCI_DRIVER_DIR / "bind"), addr)
+        if rc != 0:
+            errors.append(f"{addr} bind: {err or 'failed'}")
+            continue
+        done.append(addr)
+        logger.info("USB controller rebound: %s", addr)
+    if errors:
+        return bool(done), "; ".join(errors), done
+    return True, "OK", done
+
+
 # ── Arm 데이터 ──
 
 @dataclass
@@ -119,6 +235,7 @@ class ArmInfo:
     connected: bool = False
     role: str = "unknown"
     ctrl_mode: str = ""
+    is_master: bool | None = None  # 하드웨어 마스터(示教输入)/슬레이브(运动输出) 모드. None=미확인
     firmware: str = ""
     slot: str | None = None
     ready: bool = False  # 등록 완료 → 사용 가능 리스트에 올라감
@@ -141,6 +258,8 @@ class ArmInfo:
             "connected": self.connected,
             "role": self.role,
             "ctrl_mode": self.ctrl_mode,
+            "master_slave": (None if self.is_master is None
+                             else "master" if self.is_master else "slave"),
             "firmware": self.firmware,
             "slot": self.slot,
             "ready": self.ready,
@@ -191,23 +310,72 @@ class ArmInfo:
                     break
             with self._lock:
                 self._piper = piper
-            try:
-                ctrl_mode = piper.GetArmStatus().arm_status.ctrl_mode
-                mode_int = ctrl_mode.value if hasattr(ctrl_mode, "value") else int(ctrl_mode)
-                mode_names = {
-                    0x00: "Standby", 0x01: "CAN ctrl", 0x02: "Teaching",
-                    0x03: "Ethernet", 0x04: "WiFi", 0x05: "Remote ctrl",
-                    0x06: "Linkage teaching", 0x07: "Offline trajectory",
-                }
-                self.ctrl_mode = mode_names.get(mode_int, f"0x{mode_int:02X}")
+            mode_int = self.refresh_ctrl_mode()
+            if mode_int is not None:
                 self.role = "leader" if mode_int == 0x06 else "follower"
-            except Exception:
+            else:
                 self.ctrl_mode = "?"
                 self.role = "follower"
+            self._classify_master(mode_int)  # RX 유무로 마스터/슬레이브 판별
             self.connected = True
             return True, "OK"
         except Exception as e:
             return False, str(e)
+
+    def refresh_ctrl_mode(self) -> int | None:
+        """GetArmStatus로 현재 제어 모드를 다시 읽어 ctrl_mode 텍스트 갱신.
+
+        반환: mode_int (읽기 실패 시 None — 이 경우 기존 값 유지)
+        """
+        with self._lock:
+            if not self._piper:
+                return None
+            try:
+                ctrl_mode = self._piper.GetArmStatus().arm_status.ctrl_mode
+                mode_int = ctrl_mode.value if hasattr(ctrl_mode, "value") else int(ctrl_mode)
+            except Exception:
+                return None
+        mode_names = {
+            0x00: "Standby", 0x01: "CAN ctrl", 0x02: "Teaching",
+            0x03: "Ethernet", 0x04: "WiFi", 0x05: "Remote ctrl",
+            0x06: "Linkage teaching", 0x07: "Offline trajectory",
+        }
+        self.ctrl_mode = mode_names.get(mode_int, f"0x{mode_int:02X}")
+        return mode_int
+
+    def _classify_master(self, mode_int: int | None = None, rx_interval: float = 0.3) -> None:
+        """마스터/슬레이브 판별 (사용자 지정 규칙).
+
+        - RX 데이터가 있으면 슬레이브: 슬레이브 팔은 주기 피드백(0x2Ax)을 계속 송신한다.
+        - RX 데이터가 없으면 마스터: 마스터(示教输入臂)는 피드백을 송신하지 않아 RX가 비어있다.
+        - ctrl_mode 0x06(연동 示教입력)이면 명시적 마스터로 본다.
+        """
+        rx1 = _read_can_rx(self.iface)
+        time.sleep(rx_interval)
+        rx2 = _read_can_rx(self.iface)
+        self.is_master = (mode_int == 0x06) or (rx2 == rx1)
+
+    def refresh_mode(self) -> None:
+        """ctrl_mode 텍스트 + 마스터/슬레이브를 라이브 갱신."""
+        mode_int = self.refresh_ctrl_mode()
+        self._classify_master(mode_int)
+
+    def set_master_slave(self, master: bool) -> tuple[bool, str]:
+        """팔을 마스터(示教输入臂, 0xFA) 또는 슬레이브(运动输出臂, 0xFC)로 설정.
+
+        설정 후 마스터는 ctrl_mode 0x06(Linkage teaching)을 보고하며 제어지령(0x15x)을
+        송신한다. 전원 재투입 시 풀릴 수 있으므로 재설정이 필요할 수 있다.
+        """
+        with self._lock:
+            if not self._piper:
+                return False, "연결되지 않음"
+            try:
+                self._piper.MasterSlaveConfig(0xFA if master else 0xFC, 0, 0, 0)
+            except Exception as e:
+                return False, str(e)
+        time.sleep(0.4)  # 모드 전환 반영 대기
+        self.refresh_mode()
+        return True, "OK"
 
     def disconnect(self) -> None:
         with self._lock:
@@ -218,6 +386,8 @@ class ArmInfo:
                     pass
                 self._piper = None
             self.connected = False
+            self.is_master = None
+            self.ctrl_mode = ""
 
     def read_joints_raw(self) -> list[int] | None:
         with self._lock:
@@ -589,6 +759,10 @@ class RobotManager:
     # ── 현재 상태 ──
 
     def get_current(self) -> dict:
+        # 연결된 팔은 ctrl_mode와 마스터/슬레이브(RX 유무)를 라이브로 다시 읽어 반영
+        for arm in self.arms.values():
+            if arm.connected:
+                arm.refresh_mode()
         return {
             "selected_type": self.selected_type,
             "config_name": self.config_name,

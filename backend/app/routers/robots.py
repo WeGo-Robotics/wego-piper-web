@@ -200,7 +200,10 @@ async def select_type(body: SelectTypeRequest):
 
 @router.get("/current")
 async def get_current():
-    return robot_manager.get_current()
+    # get_current는 연결된 팔마다 RX 감지로 잠깐 블로킹하므로 executor에서 실행
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, robot_manager.get_current)
 
 
 # ── CAN 스캔 ──
@@ -208,6 +211,30 @@ async def get_current():
 @router.get("/can")
 async def scan_can():
     return robot_manager.scan()
+
+
+# ── USB 진단 / 복구 ──
+
+class UsbRecoverRequest(BaseModel):
+    pci_addrs: list[str] | None = None
+
+
+@router.get("/usb/info")
+async def usb_info():
+    """lsusb 출력(목록 + 트리) 및 xHCI 컨트롤러 목록."""
+    from app.services.robot_manager import get_usb_info
+    return get_usb_info()
+
+
+@router.post("/usb/recover")
+async def usb_recover(body: UsbRecoverRequest):
+    """xHCI 컨트롤러를 재바인딩하여 'HC died'로 사라진 USB 트리를 복구."""
+    import asyncio
+    from app.services.robot_manager import recover_usb_controllers, get_usb_info
+    loop = asyncio.get_event_loop()
+    ok, msg, done = await loop.run_in_executor(None, recover_usb_controllers, body.pci_addrs)
+    await asyncio.sleep(2)  # 재열거 대기
+    return {"ok": ok, "message": msg, "rebound": done, "usb": get_usb_info()}
 
 
 # ── CAN 인터페이스 관리 ──
@@ -225,6 +252,15 @@ async def can_check_active(iface: str):
     loop = asyncio.get_event_loop()
     active = await loop.run_in_executor(None, check_can_active, iface)
     return {"iface": iface, "active": active}
+
+
+@router.get("/can/sniff/{iface}")
+async def can_sniff(iface: str, duration: float = 1.2):
+    """CAN 버스를 잠깐 청취해 ID 그룹 분포와 마스터/슬레이브 정황을 반환."""
+    import asyncio
+    from app.services.robot_manager import sniff_can_ids
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, sniff_can_ids, iface, duration)
 
 
 @router.post("/can/up")
@@ -373,6 +409,27 @@ async def set_role(body: RoleRequest):
         raise HTTPException(400, "Role change failed")
     arm = robot_manager.arms.get(body.iface)
     return arm.to_dict() if arm else {"status": "ok"}
+
+
+# ── 마스터/슬레이브 모드 설정 ──
+
+class MasterSlaveRequest(BaseModel):
+    iface: str
+    master: bool
+
+
+@router.post("/master-slave")
+async def set_master_slave(body: MasterSlaveRequest):
+    """팔을 마스터(示教输入) 또는 슬레이브(运动输出)로 설정."""
+    import asyncio
+    arm = robot_manager.arms.get(body.iface)
+    if not arm:
+        raise HTTPException(404, "Unknown arm")
+    loop = asyncio.get_event_loop()
+    ok, msg = await loop.run_in_executor(None, arm.set_master_slave, body.master)
+    if not ok:
+        raise HTTPException(400, msg)
+    return arm.to_dict()
 
 
 # ── 팔 설정값 업데이트 ──

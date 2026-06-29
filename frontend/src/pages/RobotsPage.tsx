@@ -149,6 +149,94 @@ function ParkingCalibrationModal({ iface, onClose }: { iface: string; onClose: (
   )
 }
 
+// ── USB 진단/복구 모달 ──
+type UsbInfo = { flat: string; tree: string; controllers: string[] }
+
+function UsbInfoModal({ onClose }: { onClose: () => void }) {
+  const [info, setInfo] = useState<UsbInfo | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [recovering, setRecovering] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { setInfo(await api.get<UsbInfo>('/robots/usb/info')) }
+    catch (e) { setMsg(`정보 조회 실패: ${(e as Error).message}`) }
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const handleRecover = async () => {
+    if (!confirm('xHCI USB 컨트롤러를 재바인딩합니다.\n잠깐 동안 키보드/마우스 등 USB 장치가 모두 끊겼다 다시 연결됩니다.\n계속할까요?')) return
+    setRecovering(true)
+    setMsg(null)
+    try {
+      const r = await api.post<{ ok: boolean; message: string; rebound: string[]; usb: UsbInfo }>(
+        '/robots/usb/recover', {})
+      setInfo(r.usb)
+      setMsg(r.ok
+        ? `복구 완료 — 재바인딩: ${r.rebound.join(', ') || '없음'}`
+        : `일부 실패: ${r.message}`)
+    } catch (e) { setMsg(`복구 실패: ${(e as Error).message}`) }
+    finally { setRecovering(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="bg-neutral-800 rounded-xl border border-neutral-600 p-6 w-[720px] max-w-[95vw] max-h-[90vh] overflow-y-auto space-y-4"
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold">USB 진단 / 복구</h2>
+          <div className="flex gap-2">
+            <button onClick={load} disabled={loading || recovering}
+              className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 disabled:opacity-50">
+              새로고침
+            </button>
+            <button onClick={handleRecover} disabled={recovering}
+              className="px-3 py-1 text-xs rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-50 flex items-center gap-1">
+              {recovering ? <><Spinner /> 복구 중...</> : 'USB 컨트롤러 복구'}
+            </button>
+          </div>
+        </div>
+
+        {info?.controllers && info.controllers.length > 0 && (
+          <div className="text-xs text-neutral-400">
+            xHCI 컨트롤러: <span className="font-mono text-neutral-200">{info.controllers.join(', ')}</span>
+          </div>
+        )}
+
+        {msg && (
+          <div className="rounded border border-neutral-700 bg-neutral-900 p-2 text-xs text-amber-300 whitespace-pre-wrap">{msg}</div>
+        )}
+
+        {loading ? (
+          <div className="flex items-center gap-2 text-neutral-400 text-sm py-6"><Spinner /> 불러오는 중...</div>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <h3 className="text-xs font-semibold text-neutral-400 mb-1">lsusb -t (트리)</h3>
+              <pre className="rounded-lg border border-neutral-700 bg-neutral-900 p-3 text-[11px] font-mono text-neutral-200 overflow-x-auto whitespace-pre">
+{info?.tree || '(없음)'}
+              </pre>
+            </div>
+            <div>
+              <h3 className="text-xs font-semibold text-neutral-400 mb-1">lsusb (목록)</h3>
+              <pre className="rounded-lg border border-neutral-700 bg-neutral-900 p-3 text-[11px] font-mono text-neutral-200 overflow-x-auto whitespace-pre">
+{info?.flat || '(없음)'}
+              </pre>
+            </div>
+          </div>
+        )}
+
+        <p className="text-[10px] text-neutral-500">
+          'HC died'로 USB 트리가 사라졌을 때 컨트롤러 복구를 누르면 재부팅 없이 재열거됩니다. 복구 후 "스캔"으로 CAN 포트를 다시 확인하세요.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function Spinner({ className = '' }: { className?: string }) {
   return (
     <svg className={`animate-spin h-4 w-4 ${className}`} viewBox="0 0 24 24" fill="none">
@@ -160,8 +248,22 @@ function Spinner({ className = '' }: { className?: string }) {
 
 type ArmInfo = {
   iface: string; bus_info: string; state: string; connected: boolean
-  role: string; ctrl_mode: string; firmware: string; slot: string | null
+  role: string; ctrl_mode: string; master_slave?: 'master' | 'slave' | null
+  firmware: string; slot: string | null
   ready: boolean; config: Record<string, unknown>; rx_packets?: number
+}
+
+// 하드웨어 마스터(示教输入)/슬레이브(运动输出) 모드 뱃지
+function MasterSlaveBadge({ ms }: { ms?: 'master' | 'slave' | null }) {
+  if (!ms) return null
+  const isMaster = ms === 'master'
+  return (
+    <span className={`px-1.5 py-0.5 text-[10px] rounded font-medium ${
+      isMaster ? 'bg-purple-600/30 text-purple-300' : 'bg-cyan-600/30 text-cyan-300'}`}
+      title={isMaster ? '마스터 모드 (示教入力/직접 조작)' : '슬레이브 모드 (運動出力/제어 대상)'}>
+      {isMaster ? '마스터' : '슬레이브'}
+    </span>
+  )
 }
 type MotionStatus = {
   status: string; remaining: number; max_delta: number; threshold: number; found_iface: string | null
@@ -178,6 +280,8 @@ export default function RobotsPage() {
   const [motionStatus, setMotionStatus] = useState<MotionStatus | null>(null)
   const motionPollRef = useRef<ReturnType<typeof setInterval>>(undefined)
   const [parkingIface, setParkingIface] = useState<string | null>(null)
+  const [usbModalOpen, setUsbModalOpen] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   // CAN 관리
   const [renamingIface, setRenamingIface] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -199,6 +303,13 @@ export default function RobotsPage() {
   const refreshArms = async () => {
     const cur = await api.get<{ arms: ArmInfo[] }>('/robots/current')
     if (cur.arms) setArms(cur.arms)
+  }
+
+  // 연결된 팔의 상태(마스터/슬레이브·ctrl_mode)를 라이브 재읽기
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    try { await refreshArms() } catch {}
+    finally { setRefreshing(false) }
   }
 
   // ── 1단계: 포트 찾기 ──
@@ -257,6 +368,17 @@ export default function RobotsPage() {
   const handleRoleChange = async (iface: string, role: string) => {
     const updated = await api.post<ArmInfo>('/robots/role', { iface, role })
     setArms((prev) => prev.map((a) => (a.iface === iface ? updated : a)))
+  }
+
+  // 마스터(示教入力)/슬레이브(運動出力) 모드 설정
+  const [settingMs, setSettingMs] = useState<string | null>(null)
+  const handleSetMasterSlave = async (iface: string, master: boolean) => {
+    setSettingMs(iface)
+    try {
+      const updated = await api.post<ArmInfo>('/robots/master-slave', { iface, master })
+      setArms((prev) => prev.map((a) => (a.iface === iface ? updated : a)))
+    } catch (e) { alert(`설정 실패: ${(e as Error).message}`) }
+    finally { setSettingMs(null) }
   }
 
   // 움직임 감지 (역할 식별용 — 슬롯 대신 iface 기반)
@@ -326,7 +448,19 @@ export default function RobotsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">로봇</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">로봇</h1>
+        <div className="flex gap-2">
+          <button onClick={handleRefresh} disabled={refreshing}
+            className="px-3 py-1.5 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 disabled:opacity-50 flex items-center gap-1">
+            {refreshing ? <><Spinner /> 새로고침 중...</> : '↻ 상태 새로고침'}
+          </button>
+          <button onClick={() => setUsbModalOpen(true)}
+            className="px-3 py-1.5 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300">
+            USB 진단 / 복구
+          </button>
+        </div>
+      </div>
 
       {/* 프리셋 */}
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
@@ -441,6 +575,7 @@ export default function RobotsPage() {
                           <option value="leader">leader</option>
                           <option value="follower">follower</option>
                         </select>
+                        <MasterSlaveBadge ms={arm.master_slave} />
                       </div>
                       <div className="text-xs text-neutral-400 space-x-3">
                         <span>모드: {arm.ctrl_mode}</span>
@@ -463,6 +598,12 @@ export default function RobotsPage() {
                           className="px-2 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50"
                           title="팔을 움직여서 식별">찾기</button>
                       )}
+                      <button onClick={() => handleSetMasterSlave(arm.iface, true)} disabled={settingMs === arm.iface}
+                        className="px-2 py-1 text-xs rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50"
+                        title="이 팔을 마스터(示教入力)로 설정">마스터</button>
+                      <button onClick={() => handleSetMasterSlave(arm.iface, false)} disabled={settingMs === arm.iface}
+                        className="px-2 py-1 text-xs rounded bg-cyan-700 hover:bg-cyan-600 text-white disabled:opacity-50"
+                        title="이 팔을 슬레이브(運動出力)로 설정">슬레이브</button>
                       <button onClick={() => setExpandedArm(isExpanded ? null : arm.iface)}
                         className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300">설정</button>
                       <button onClick={() => handleRegister(arm.iface)} disabled={!canRegister}
@@ -535,11 +676,18 @@ export default function RobotsPage() {
                   <span className={`px-1.5 py-0.5 text-[10px] rounded ${arm.role === 'leader' ? 'bg-amber-600/30 text-amber-400' : 'bg-blue-600/30 text-blue-400'}`}>
                     {arm.role}
                   </span>
+                  <MasterSlaveBadge ms={arm.master_slave} />
                   <span className="text-xs text-neutral-400">
                     {arm.role === 'leader' ? 'piper_leader' : 'piper_follower'}
                   </span>
                 </div>
                 <div className="flex gap-2">
+                  <button onClick={() => handleSetMasterSlave(arm.iface, true)} disabled={settingMs === arm.iface}
+                    className="px-3 py-1 text-xs rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50"
+                    title="이 팔을 마스터(示教入力)로 설정">마스터</button>
+                  <button onClick={() => handleSetMasterSlave(arm.iface, false)} disabled={settingMs === arm.iface}
+                    className="px-3 py-1 text-xs rounded bg-cyan-700 hover:bg-cyan-600 text-white disabled:opacity-50"
+                    title="이 팔을 슬레이브(運動出力)로 설정">슬레이브</button>
                   <button onClick={() => setParkingIface(arm.iface)}
                     className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white">파킹 보정</button>
                   <button onClick={async () => {
@@ -561,6 +709,9 @@ export default function RobotsPage() {
       {parkingIface && (
         <ParkingCalibrationModal iface={parkingIface} onClose={() => setParkingIface(null)} />
       )}
+
+      {/* USB 진단/복구 모달 */}
+      {usbModalOpen && <UsbInfoModal onClose={() => setUsbModalOpen(false)} />}
     </div>
   )
 }
