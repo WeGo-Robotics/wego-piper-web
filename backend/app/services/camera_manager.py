@@ -9,6 +9,8 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.services.realsense_manager import realsense_hub, rs_available
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,9 +24,12 @@ def _run_cmd(cmd: list[str], timeout: float = 2) -> tuple[int, str, str]:
 
 @dataclass
 class CameraInfo:
-    id: str           # "/dev/video0" 또는 인덱스
+    id: str           # "/dev/video0" / "rs:<serial>:<stream>"
     name: str         # "HD Webcam" 등
+    usb_port: str = ""  # "4-3:1.0" = 연결된 USB 포트 경로 (구분용)
     cam_type: str = "opencv"  # opencv | realsense | zmq
+    serial: str = ""        # realsense 디바이스 시리얼
+    stream_type: str = ""   # realsense 스트림 (color|depth|infrared)
     connected: bool = False
     ready: bool = False
     # 설정값
@@ -42,13 +47,20 @@ class CameraInfo:
     _running: bool = field(default=False, repr=False)
 
     def to_dict(self) -> dict:
+        if self.cam_type == "realsense":
+            has_preview = realsense_hub.has_frame(self.id)
+        else:
+            has_preview = self._last_frame is not None
         return {
             "id": self.id,
             "name": self.name,
+            "usb_port": self.usb_port,
             "cam_type": self.cam_type,
+            "serial": self.serial,
+            "stream_type": self.stream_type,
             "connected": self.connected,
             "ready": self.ready,
-            "has_preview": self._last_frame is not None,
+            "has_preview": has_preview,
             "config": {
                 "width": self.width,
                 "height": self.height,
@@ -82,6 +94,8 @@ class CameraInfo:
 
     def probe(self, timeout: float = 3.0) -> tuple[bool, str]:
         """연결 테스트 + 프리뷰 1장 → 즉시 해제. 스캔 시 사용."""
+        if self.cam_type == "realsense":
+            return realsense_hub.probe(self.id)
         try:
             import cv2
         except ImportError:
@@ -109,6 +123,10 @@ class CameraInfo:
 
     def connect(self) -> tuple[bool, str]:
         """연결 + 백그라운드 캡처 시작. 등록 시 사용."""
+        if self.cam_type == "realsense":
+            ok, msg = realsense_hub.connect(self.id)
+            self.connected = ok
+            return ok, msg
         try:
             import cv2
         except ImportError:
@@ -129,6 +147,11 @@ class CameraInfo:
             return False, str(e)
 
     def disconnect(self) -> None:
+        if self.cam_type == "realsense":
+            realsense_hub.disconnect(self.id)
+            self.connected = False
+            self._last_frame = None
+            return
         self._running = False
         if self._capture_thread:
             self._capture_thread.join(timeout=2)
@@ -156,11 +179,15 @@ class CameraInfo:
     # ── v4l2 컨트롤 (밝기, 대비 등) — ioctl 직접 사용 ──
 
     def get_controls(self) -> list[dict]:
-        """v4l2 ioctl로 카메라 컨트롤 열거 + 현재값/범위 조회."""
+        """카메라 컨트롤 열거 + 현재값/범위 조회 (v4l2 또는 RealSense option)."""
+        if self.cam_type == "realsense":
+            return realsense_hub.list_controls(self.id)
         return v4l2_list_controls(self.id)
 
     def set_control(self, name: str, value: int) -> bool:
-        """v4l2 ioctl로 컨트롤 값 설정."""
+        """컨트롤 값 설정 (v4l2 또는 RealSense option)."""
+        if self.cam_type == "realsense":
+            return realsense_hub.set_control(self.id, name, value)
         controls = v4l2_list_controls(self.id)
         for ctrl in controls:
             if ctrl["name"] == name:
@@ -169,6 +196,8 @@ class CameraInfo:
 
     def capture_preview(self) -> bytes | None:
         """마지막 캡처된 프레임을 JPEG로 즉시 반환."""
+        if self.cam_type == "realsense":
+            return realsense_hub.get_jpeg(self.id)
         with self._lock:
             frame = self._last_frame
         if frame is None:
@@ -338,6 +367,42 @@ def v4l2_list_controls(dev_path: str) -> list[dict]:
     return controls
 
 
+# ── VIDIOC_QUERYCAP (캡처 노드 vs 메타데이터 노드 판별) ──
+
+class _v4l2_capability(ctypes.Structure):
+    _fields_ = [
+        ("driver", ctypes.c_char * 16),
+        ("card", ctypes.c_char * 32),
+        ("bus_info", ctypes.c_char * 32),
+        ("version", ctypes.c_uint32),
+        ("capabilities", ctypes.c_uint32),
+        ("device_caps", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32 * 3),
+    ]
+
+
+_VIDIOC_QUERYCAP = (2 << 30) | (ord("V") << 8) | 0 | (ctypes.sizeof(_v4l2_capability) << 16)
+_V4L2_CAP_VIDEO_CAPTURE = 0x00000001
+
+
+def _is_capture_device(dev_path: str) -> bool:
+    """V4L2 device_caps에 VIDEO_CAPTURE가 있으면 True (메타데이터 노드는 False)."""
+    try:
+        fd = os.open(dev_path, os.O_RDWR)
+    except OSError:
+        return False
+    try:
+        cap = _v4l2_capability()
+        fcntl.ioctl(fd, _VIDIOC_QUERYCAP, cap)
+        # device_caps는 해당 노드 고유 능력. 0이면 전체 capabilities로 폴백.
+        caps = cap.device_caps or cap.capabilities
+        return bool(caps & _V4L2_CAP_VIDEO_CAPTURE)
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
 def v4l2_set_control(dev_path: str, cid: int, value: int) -> bool:
     """v4l2 컨트롤 값 설정."""
     try:
@@ -350,28 +415,47 @@ def v4l2_set_control(dev_path: str, cid: int, value: int) -> bool:
         os.close(fd)
 
 
+def _usb_port_path(dev_path: str) -> str:
+    """디바이스가 연결된 USB 포트 경로 ("4-3:1.0" = 버스-포트:설정.인터페이스).
+    동일 이름 카메라들을 물리 포트로 구분할 때 사용. 비-USB면 빈 문자열."""
+    dev_name = Path(dev_path).name  # "video0"
+    try:
+        # /sys/class/video4linux/videoN/device → USB 인터페이스 디렉터리로 resolve
+        target = Path(f"/sys/class/video4linux/{dev_name}/device").resolve()
+    except Exception:
+        return ""
+    # 마지막 컴포넌트가 USB 인터페이스(예: "4-3:1.0"). USB가 아니면 ":" 없음.
+    iface = target.name
+    return iface if ":" in iface else ""
+
+
 def _scan_one(dev_path: str) -> dict | None:
     # /sys/class/video4linux/videoN/name 에서 이름 읽기 (빠르고 안전)
     dev_name = Path(dev_path).name  # "video0"
     sys_name = Path(f"/sys/class/video4linux/{dev_name}/name")
-    sys_index = Path(f"/sys/class/video4linux/{dev_name}/index")
 
     if not sys_name.exists():
         return None
-
-    # index > 0 이면 메타데이터 노드 → 스킵
-    try:
-        if sys_index.exists() and int(sys_index.read_text().strip()) > 0:
-            return None
-    except Exception:
-        pass
 
     try:
         name = sys_name.read_text().strip()
     except Exception:
         name = dev_path
 
-    return {"id": dev_path, "name": name}
+    # RealSense는 Depth(Z16)/IR(Y8)를 OpenCV로 못 열기 때문에 pyrealsense2
+    # 경로(realsense_hub)로 처리한다. rs 사용 가능하면 v4l2 스캔에서 제외.
+    # ※ 반드시 _is_capture_device(v4l2 open/close) 전에 검사한다 —
+    #   RealSense 노드는 close()가 커널에서 블로킹되어 스캔/서버 startup이 멈춘다.
+    if "realsense" in name.lower() and rs_available():
+        return None
+
+    # VIDEO_CAPTURE 노드만 유지 (메타데이터 노드 제외).
+    # RealSense처럼 한 디바이스가 캡처/메타 노드를 번갈아 노출하므로
+    # sysfs index 순번이 아니라 V4L2 device_caps로 판별해야 한다.
+    if not _is_capture_device(dev_path):
+        return None
+
+    return {"id": dev_path, "name": name, "usb_port": _usb_port_path(dev_path)}
 
 
 def scan_cameras() -> list[dict]:
@@ -391,13 +475,33 @@ class CameraManager:
         self.cameras: dict[str, CameraInfo] = {}
 
     def scan(self) -> list[dict]:
-        devs = scan_cameras()
-        for d in devs:
+        # 일반 웹캠 (OpenCV/V4L2)
+        for d in scan_cameras():
             cam_id = d["id"]
             if cam_id not in self.cameras:
-                self.cameras[cam_id] = CameraInfo(id=cam_id, name=d["name"])
+                self.cameras[cam_id] = CameraInfo(
+                    id=cam_id, name=d["name"], usb_port=d.get("usb_port", "")
+                )
             else:
                 self.cameras[cam_id].name = d["name"]
+                self.cameras[cam_id].usb_port = d.get("usb_port", "")
+
+        # RealSense (pyrealsense2) — 디바이스당 color/depth/infrared 스트림 엔트리
+        if rs_available():
+            for d in realsense_hub.scan():
+                cam_id = d["id"]
+                if cam_id not in self.cameras:
+                    self.cameras[cam_id] = CameraInfo(
+                        id=cam_id, name=d["name"], usb_port=d.get("usb_port", ""),
+                        cam_type="realsense", serial=d["serial"], stream_type=d["stream_type"],
+                    )
+                else:
+                    cam = self.cameras[cam_id]
+                    cam.name = d["name"]
+                    cam.usb_port = d.get("usb_port", "")
+                    cam.serial = d["serial"]
+                    cam.stream_type = d["stream_type"]
+
         return [c.to_dict() for c in self.cameras.values()]
 
     def probe_camera(self, cam_id: str) -> tuple[bool, str]:

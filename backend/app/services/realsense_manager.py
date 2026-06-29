@@ -1,0 +1,463 @@
+"""
+Intel RealSense 카메라 관리 (pyrealsense2 기반).
+
+OpenCV/V4L2로는 RealSense의 Depth(Z16)·IR(Y8) 스트림을 열 수 없으므로
+librealsense를 직접 사용한다. 한 물리 디바이스(시리얼)당 파이프라인 1개를 열고
+color/depth/infrared 스트림을 공유하며, 각 스트림을 UI에서 별도 카메라 엔트리
+("rs:<serial>:<stream>")로 노출한다.
+
+camera_manager 의 OpenCV 경로와 분리된 협력 모듈. RealSense가 아닌 일반 웹캠은
+기존 OpenCV 경로를 그대로 사용한다.
+"""
+
+import logging
+import re
+import threading
+import time
+
+logger = logging.getLogger(__name__)
+
+# UI/엔트리에서 다루는 스트림 종류
+STREAM_TYPES = ("color", "depth", "infrared")
+
+# rs 미설치 환경에서도 import 가 깨지지 않도록 지연 로딩
+try:
+    import pyrealsense2 as rs  # type: ignore
+    _RS_AVAILABLE = True
+except Exception as exc:  # pragma: no cover - 환경 의존
+    rs = None  # type: ignore
+    _RS_AVAILABLE = False
+    logger.info("pyrealsense2 unavailable: %s", exc)
+
+
+def rs_available() -> bool:
+    return _RS_AVAILABLE
+
+
+def _short_usb_port(physical_port: str) -> str:
+    """librealsense physical_port(긴 sysfs 경로)에서 'N-N[.N]' 버스-포트 토큰 추출.
+    OpenCV 경로의 usb_port 표기('4-3:1.0')와 형식을 맞춘다."""
+    if not physical_port:
+        return ""
+    m = re.search(r"\b(\d+-\d+(?:\.\d+)*(?::\d+\.\d+)?)\b", physical_port)
+    return m.group(1) if m else physical_port
+
+
+def make_id(serial: str, stream: str) -> str:
+    return f"rs:{serial}:{stream}"
+
+
+def parse_id(cam_id: str) -> tuple[str, str] | None:
+    """'rs:<serial>:<stream>' → (serial, stream). RealSense id가 아니면 None."""
+    if not cam_id.startswith("rs:"):
+        return None
+    parts = cam_id.split(":")
+    if len(parts) != 3:
+        return None
+    _, serial, stream = parts
+    return serial, stream
+
+
+class _RSDevice:
+    """물리 디바이스 1대. 파이프라인 1개를 활성 스트림 집합에 맞춰 운용."""
+
+    def __init__(self, serial: str, model: str, usb_port: str, available: set[str]):
+        self.serial = serial
+        self.model = model
+        self.usb_port = usb_port
+        self.available = available  # 이 디바이스가 제공 가능한 스트림 종류
+        self._pipeline = None
+        self._active: set[str] = set()  # 현재 파이프라인이 스트리밍 중인 스트림
+        self._refcount: dict[str, int] = {s: 0 for s in STREAM_TYPES}
+        self._latest: dict[str, object] = {}  # stream -> numpy frame (BGR/grey)
+        self._lock = threading.Lock()       # _latest 보호
+        # 파이프라인 수명주기 직렬화: 한 디바이스에 동시에 두 파이프라인을
+        # start 할 수 없으므로 connect/disconnect/probe 를 직렬화한다.
+        self._op_lock = threading.RLock()
+        self._thread: threading.Thread | None = None
+        self._running = False
+
+    # ── 파이프라인 구성 ──
+
+    def _build_config(self, streams: set[str]):
+        cfg = rs.config()
+        rs.config.enable_device(cfg, self.serial)
+        for s in streams:
+            try:
+                if s == "color":
+                    cfg.enable_stream(rs.stream.color)
+                elif s == "depth":
+                    cfg.enable_stream(rs.stream.depth)
+                elif s == "infrared":
+                    # D435 계열은 IR 좌(index 1)를 사용
+                    cfg.enable_stream(rs.stream.infrared, 1)
+            except Exception as exc:
+                logger.warning("enable_stream(%s) failed for %s: %s", s, self.serial, exc)
+        return cfg
+
+    def _ensure_streams(self, streams: set[str]) -> bool:
+        """파이프라인이 주어진 스트림 집합을 스트리밍하도록 보장 (필요시 재시작)."""
+        streams = {s for s in streams if s in self.available}
+        if not streams:
+            return False
+        if self._pipeline is not None and streams.issubset(self._active):
+            return True
+        # 재구성 필요 → 기존 정지 후 재시작
+        self._stop_pipeline()
+        pipeline = rs.pipeline()
+        cfg = self._build_config(streams)
+        try:
+            pipeline.start(cfg)
+        except Exception as exc:
+            logger.error("RealSense %s pipeline start failed (%s): %s", self.serial, streams, exc)
+            return False
+        self._pipeline = pipeline
+        self._active = set(streams)
+        self._start_thread()
+        return True
+
+    def _stop_pipeline(self) -> None:
+        self._running = False
+        t = self._thread
+        if t and t.is_alive():
+            t.join(timeout=2)
+        self._thread = None
+        if self._pipeline is not None:
+            try:
+                self._pipeline.stop()
+            except Exception:
+                pass
+            self._pipeline = None
+        self._active = set()
+
+    # ── 프레임 캡처 ──
+
+    def _start_thread(self) -> None:
+        self._running = True
+        self._thread = threading.Thread(target=self._read_loop, daemon=True)
+        self._thread.start()
+
+    def _read_loop(self) -> None:
+        import numpy as np
+        import cv2
+        while self._running and self._pipeline is not None:
+            try:
+                ok, frames = self._pipeline.try_wait_for_frames(timeout_ms=1000)
+                if not ok or frames is None:
+                    continue
+                updates: dict[str, object] = {}
+                if "color" in self._active:
+                    cf = frames.get_color_frame()
+                    if cf:
+                        img = np.asanyarray(cf.get_data())  # rgb8
+                        updates["color"] = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                if "depth" in self._active:
+                    df = frames.get_depth_frame()
+                    if df:
+                        depth = np.asanyarray(df.get_data())  # uint16 (mm)
+                        vis = cv2.convertScaleAbs(depth, alpha=0.03)
+                        updates["depth"] = cv2.applyColorMap(vis, cv2.COLORMAP_JET)
+                if "infrared" in self._active:
+                    irf = frames.get_infrared_frame(1)
+                    if irf:
+                        ir = np.asanyarray(irf.get_data())  # y8 grey
+                        updates["infrared"] = cv2.cvtColor(ir, cv2.COLOR_GRAY2BGR)
+                if updates:
+                    with self._lock:
+                        self._latest.update(updates)
+            except Exception as exc:
+                logger.debug("RealSense %s read error: %s", self.serial, exc)
+                time.sleep(0.1)
+
+    def get_frame(self, stream: str):
+        with self._lock:
+            return self._latest.get(stream)
+
+    # ── 연결 수명주기 (스트림 단위 refcount) ──
+
+    def connect_stream(self, stream: str) -> bool:
+        if stream not in self.available:
+            return False
+        with self._op_lock:
+            self._refcount[stream] += 1
+            ok = self._ensure_streams({s for s, c in self._refcount.items() if c > 0})
+            if not ok:
+                self._refcount[stream] = max(0, self._refcount[stream] - 1)
+            return ok
+
+    def disconnect_stream(self, stream: str) -> None:
+        with self._op_lock:
+            if self._refcount.get(stream, 0) > 0:
+                self._refcount[stream] -= 1
+            active = {s for s, c in self._refcount.items() if c > 0}
+            if not active:
+                self._stop_pipeline()
+                with self._lock:
+                    self._latest.clear()
+            else:
+                self._ensure_streams(active)
+
+    def probe_stream(self, stream: str, timeout: float = 4.0) -> bool:
+        """스캔용: 임시로 스트림을 켜서 프레임 1장을 확보. 연결 유지 안 함."""
+        if stream not in self.available:
+            return False
+        with self._op_lock:
+            temporary = self._pipeline is None or stream not in self._active
+            if not self._ensure_streams(self._active | {stream}):
+                return False
+            deadline = time.time() + timeout
+            got = False
+            while time.time() < deadline:
+                if self.get_frame(stream) is not None:
+                    got = True
+                    break
+                time.sleep(0.1)
+            # refcount 가 0이고 임시로 켠 것이면 정지
+            if temporary and not any(c > 0 for c in self._refcount.values()):
+                self._stop_pipeline()
+            return got
+
+
+class RealSenseHub:
+    def __init__(self) -> None:
+        self._devices: dict[str, _RSDevice] = {}
+        self._lock = threading.Lock()
+
+    def _available_streams(self, device) -> set[str]:
+        """디바이스 센서 프로파일에서 제공 가능한 스트림 종류 추출."""
+        avail: set[str] = set()
+        try:
+            for sensor in device.query_sensors():
+                for p in sensor.get_stream_profiles():
+                    if not p.is_video_stream_profile():
+                        continue
+                    st = p.stream_type()
+                    if st == rs.stream.color:
+                        avail.add("color")
+                    elif st == rs.stream.depth:
+                        avail.add("depth")
+                    elif st == rs.stream.infrared:
+                        avail.add("infrared")
+        except Exception as exc:
+            logger.warning("query stream profiles failed: %s", exc)
+        return avail
+
+    def scan(self) -> list[dict]:
+        """연결된 RealSense를 스트림별 엔트리로 반환."""
+        if not _RS_AVAILABLE:
+            return []
+        entries: list[dict] = []
+        try:
+            ctx = rs.context()
+            devices = ctx.query_devices()
+        except Exception as exc:
+            logger.warning("RealSense enumeration failed: %s", exc)
+            return []
+
+        seen_serials: set[str] = set()
+        for device in devices:
+            try:
+                serial = device.get_info(rs.camera_info.serial_number)
+                name = device.get_info(rs.camera_info.name)  # "Intel RealSense D435I"
+                try:
+                    usb_port = _short_usb_port(device.get_info(rs.camera_info.physical_port))
+                except Exception:
+                    usb_port = ""
+            except Exception as exc:
+                logger.warning("RealSense device info failed: %s", exc)
+                continue
+            seen_serials.add(serial)
+            available = self._available_streams(device)
+            model = name.replace("Intel RealSense ", "").strip() or name
+            with self._lock:
+                dev = self._devices.get(serial)
+                if dev is None:
+                    dev = _RSDevice(serial, model, usb_port, available)
+                    self._devices[serial] = dev
+                else:
+                    dev.model = model
+                    dev.usb_port = usb_port
+                    dev.available = available
+            for stream in STREAM_TYPES:
+                if stream not in available:
+                    continue
+                entries.append({
+                    "id": make_id(serial, stream),
+                    "name": f"{model} {stream.capitalize()}",
+                    "usb_port": usb_port,
+                    "cam_type": "realsense",
+                    "serial": serial,
+                    "stream_type": stream,
+                })
+        return entries
+
+    def _device(self, serial: str) -> _RSDevice | None:
+        with self._lock:
+            return self._devices.get(serial)
+
+    def connect(self, cam_id: str) -> tuple[bool, str]:
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return False, f"Not a RealSense id: {cam_id}"
+        serial, stream = parsed
+        dev = self._device(serial)
+        if dev is None:
+            return False, f"RealSense {serial} not found (rescan)"
+        if dev.connect_stream(stream):
+            return True, "OK"
+        return False, f"Failed to start RealSense {serial}/{stream}"
+
+    def disconnect(self, cam_id: str) -> None:
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return
+        serial, stream = parsed
+        dev = self._device(serial)
+        if dev is not None:
+            dev.disconnect_stream(stream)
+
+    def probe(self, cam_id: str) -> tuple[bool, str]:
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return False, f"Not a RealSense id: {cam_id}"
+        serial, stream = parsed
+        dev = self._device(serial)
+        if dev is None:
+            return False, f"RealSense {serial} not found (rescan)"
+        if dev.probe_stream(stream):
+            return True, "OK"
+        return False, f"No frame from RealSense {serial}/{stream}"
+
+    # ── 컨트롤 (librealsense sensor option) ──
+
+    def _find_device(self, serial: str):
+        try:
+            for d in rs.context().query_devices():
+                if d.get_info(rs.camera_info.serial_number) == serial:
+                    return d
+        except Exception as exc:
+            logger.warning("RealSense device lookup failed: %s", exc)
+        return None
+
+    def _sensor_for_stream(self, device, stream: str):
+        """스트림 종류에 해당하는 센서 반환 (color→RGB 센서, depth/IR→스테레오 센서)."""
+        target = {
+            "color": rs.stream.color,
+            "depth": rs.stream.depth,
+            "infrared": rs.stream.infrared,
+        }.get(stream)
+        if target is None:
+            return None
+        try:
+            for s in device.query_sensors():
+                for p in s.get_stream_profiles():
+                    if p.is_video_stream_profile() and p.stream_type() == target:
+                        return s
+        except Exception as exc:
+            logger.warning("RealSense sensor lookup failed: %s", exc)
+        return None
+
+    def list_controls(self, cam_id: str) -> list[dict]:
+        """해당 스트림 센서가 지원하는 option을 v4l2 컨트롤과 동일한 dict 형태로 반환."""
+        if not _RS_AVAILABLE:
+            return []
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return []
+        serial, stream = parsed
+        device = self._find_device(serial)
+        if device is None:
+            return []
+        sensor = self._sensor_for_stream(device, stream)
+        if sensor is None:
+            return []
+
+        controls: list[dict] = []
+        try:
+            options = sensor.get_supported_options()
+        except Exception as exc:
+            logger.warning("get_supported_options failed: %s", exc)
+            return []
+
+        for opt in options:
+            try:
+                rng = sensor.get_option_range(opt)
+                if rng.min == rng.max:  # 조절 불가 항목 제외
+                    continue
+                readonly = sensor.is_option_read_only(opt)
+                value = sensor.get_option(opt)
+                label = sensor.get_option_description(opt) or str(opt)
+            except Exception:
+                continue
+            is_bool = rng.min == 0 and rng.max == 1 and rng.step == 1
+            controls.append({
+                "cid": int(opt),
+                "name": str(opt).lower().replace("-", "_").replace(" ", "_"),
+                "label": str(opt).replace("_", " ").title(),
+                "type": 2 if is_bool else 1,
+                "min": rng.min,
+                "max": rng.max,
+                "step": rng.step,
+                "default": rng.default,
+                "value": value,
+                "inactive": False,
+                "readonly": bool(readonly),
+                "description": label,
+            })
+        return controls
+
+    def set_control(self, cam_id: str, name: str, value: float) -> bool:
+        if not _RS_AVAILABLE:
+            return False
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return False
+        serial, stream = parsed
+        device = self._find_device(serial)
+        if device is None:
+            return False
+        sensor = self._sensor_for_stream(device, stream)
+        if sensor is None:
+            return False
+        try:
+            for opt in sensor.get_supported_options():
+                opt_name = str(opt).lower().replace("-", "_").replace(" ", "_")
+                if opt_name == name:
+                    if sensor.is_option_read_only(opt):
+                        return False
+                    rng = sensor.get_option_range(opt)
+                    v = max(rng.min, min(rng.max, float(value)))
+                    sensor.set_option(opt, v)
+                    return True
+        except Exception as exc:
+            logger.warning("RealSense set_option %s=%s failed: %s", name, value, exc)
+        return False
+
+    def has_frame(self, cam_id: str) -> bool:
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return False
+        serial, stream = parsed
+        dev = self._device(serial)
+        return dev is not None and dev.get_frame(stream) is not None
+
+    def get_jpeg(self, cam_id: str) -> bytes | None:
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return None
+        serial, stream = parsed
+        dev = self._device(serial)
+        if dev is None:
+            return None
+        frame = dev.get_frame(stream)
+        if frame is None:
+            return None
+        try:
+            import cv2
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            return buf.tobytes() if ok else None
+        except Exception:
+            return None
+
+
+realsense_hub = RealSenseHub()

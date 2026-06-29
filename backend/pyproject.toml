@@ -23,3 +23,6 @@ dev = [
 analysis = [
     "matplotlib>=3.8",
 ]
+realsense = [
+    "pyrealsense2>=2.56",
+]

@@ -1,0 +1,28 @@
+# Intel RealSense udev rules
+#
+# pip로 설치한 pyrealsense2는 libusb(RSUSB) 백엔드를 사용하므로 /dev/bus/usb/...
+# 노드에 일반 사용자의 읽기/쓰기 권한이 필요하다. 기본값은 root:root(other 읽기 전용)
+# 이라 librealsense가 디바이스를 못 잡고 query_devices()가 0개를 반환한다.
+#
+# 설치:
+#   sudo cp backend/udev/99-realsense-libusb.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   (카메라를 한 번 뽑았다 다시 꽂으면 확실)
+#
+# 이 머신의 카메라: D435i(0b3a), D405(0b5b). 그 외 흔한 D4xx 모델도 함께 포함.
+
+SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad1", MODE:="0666", GROUP:="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad2", MODE:="0666", GROUP:="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad3", MODE:="0666", GROUP:="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad4", MODE:="0666", GROUP:="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad5", MODE:="0666", GROUP:="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b00", MODE:="0666", GROUP:="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b01", MODE:="0666", GROUP:="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b07", MODE:="0666", GROUP:="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b3a", MODE:="0666", GROUP:="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b5b", MODE:="0666", GROUP:="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b5c", MODE:="0666", GROUP:="plugdev"
+
+# 위 목록에 없는 RealSense 모델까지 폭넓게 커버 (Intel D4xx Depth Camera 클래스).
+# 너무 광범위하면 위 개별 라인만 남기고 아래 한 줄은 삭제해도 된다.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b*", MODE:="0666", GROUP:="plugdev"

@@ -11,7 +11,7 @@ function Spinner({ className = '' }: { className?: string }) {
 }
 
 type CamInfo = {
-  id: string; name: string; cam_type: string
+  id: string; name: string; usb_port?: string; cam_type: string
   connected: boolean; ready: boolean; has_preview: boolean
   config: { width: number | null; height: number | null; fps: number | null; color_mode: string; rotation: number; fourcc: string | null }
 }
@@ -158,6 +158,7 @@ export default function CamerasPage() {
                     <div className="flex items-center gap-2">
                       <span className="text-green-400 text-sm">✓</span>
                       <span className="font-mono text-sm">{cam.id}</span>
+                      {cam.usb_port && <span className="ml-auto font-mono text-[10px] text-neutral-500" title="USB 포트">{cam.usb_port}</span>}
                     </div>
                     <div className="text-xs text-neutral-400">
                       {cam.name}
@@ -270,6 +271,7 @@ export default function CamerasPage() {
                   <div className="flex items-center gap-2">
                     <span className="inline-block w-2 h-2 rounded-full bg-neutral-500" />
                     <span className="font-mono text-sm">{cam.id}</span>
+                      {cam.usb_port && <span className="ml-auto font-mono text-[10px] text-neutral-500" title="USB 포트">{cam.usb_port}</span>}
                   </div>
                   <p className="text-xs text-neutral-400">{cam.name}
                     {cam.config.width && <span className="ml-2">{cam.config.width}x{cam.config.height}</span>}
@@ -306,6 +308,7 @@ export default function CamerasPage() {
                     <div className="flex items-center gap-2">
                       <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
                       <span className="font-mono text-sm">{cam.id}</span>
+                      {cam.usb_port && <span className="ml-auto font-mono text-[10px] text-neutral-500" title="USB 포트">{cam.usb_port}</span>}
                     </div>
                     <div className="text-xs text-neutral-400">
                       {cam.name}
