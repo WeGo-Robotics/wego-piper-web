@@ -243,6 +243,17 @@ class _RSDevice:
             else:
                 self._ensure_streams(active)
 
+    def force_release(self) -> None:
+        """모든 스트림 refcount를 0으로 만들고 파이프라인을 정지한다.
+        외부 프로세스(LeRobot 녹화)가 같은 USB 디바이스를 점유하기 전에
+        웹 미리보기 스트림을 강제로 비워 대역폭/디바이스 경합을 막는다."""
+        with self.op_guard():
+            for s in self._refcount:
+                self._refcount[s] = 0
+            self._stop_pipeline()
+            with self._lock:
+                self._latest.clear()
+
     def probe_stream(self, stream: str, timeout: float = 4.0) -> bool:
         """스캔용: 임시로 스트림을 켜서 프레임 1장을 확보. 연결 유지 안 함."""
         if stream not in self.available:
@@ -361,6 +372,22 @@ class RealSenseHub:
         dev = self._device(serial)
         if dev is not None:
             dev.disconnect_stream(stream)
+
+    def release_all(self) -> bool:
+        """모든 디바이스의 활성 스트림을 강제 해제한다. 녹화/추론 등 외부
+        프로세스가 RealSense를 직접 열기 전에 호출해 경합을 막는다.
+        하나라도 해제했으면 True."""
+        released = False
+        with self._lock:
+            devices = list(self._devices.values())
+        for dev in devices:
+            if dev._running:
+                try:
+                    dev.force_release()
+                    released = True
+                except Exception as exc:
+                    logger.warning("RealSense %s force_release failed: %s", dev.serial, exc)
+        return released
 
     def probe(self, cam_id: str) -> tuple[bool, str]:
         parsed = parse_id(cam_id)

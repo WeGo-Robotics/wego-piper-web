@@ -74,15 +74,21 @@ async def start_recording(body: RecordStartRequest):
     if not body.teleop_port:
         raise HTTPException(400, "Leader 포트가 필요합니다.")
 
-    # 녹화 전 camera_manager가 점유한 카메라 해제
+    # 녹화 전 웹이 점유한 카메라 해제 (OpenCV + RealSense 둘 다).
+    # 해제하지 않으면 LeRobot subprocess가 같은 USB 디바이스를 또 열어
+    # 대역폭/디바이스 경합으로 녹화 루프가 목표 FPS 이하로 떨어진다.
     import time
     from app.services.camera_manager import camera_manager
+    from app.services.realsense_manager import realsense_hub
     released = False
     for cam in camera_manager.cameras.values():
         if cam.connected:
             logger.info("Releasing camera %s for recording", cam.id)
             cam.disconnect()
             released = True
+    if realsense_hub.release_all():
+        logger.info("Released RealSense streams for recording")
+        released = True
     if released:
         time.sleep(0.5)
 
