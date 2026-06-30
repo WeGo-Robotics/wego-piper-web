@@ -54,13 +54,21 @@ def _get_first_ready_follower_port() -> str | None:
 
 
 def _release_all_cameras() -> None:
-    """추론 시작 전 camera_manager가 점유한 카메라를 모두 해제."""
+    """추론 시작 전 웹 프리뷰가 점유한 카메라를 모두 해제.
+
+    camera_manager(OpenCV)뿐 아니라 realsense_hub(RealSense 파이프라인)도 강제
+    해제해야 한다. 그렇지 않으면 웹 프리뷰가 RealSense USB 디바이스를 쥔 채로
+    추론 subprocess가 같은 디바이스를 열려다 충돌해 카메라가 먹통이 된다."""
+    from app.services.realsense_manager import realsense_hub
     released = False
     for cam in camera_manager.cameras.values():
         if cam.connected:
             logger.info("Releasing camera %s for inference", cam.id)
             cam.disconnect()
             released = True
+    if realsense_hub.release_all():
+        logger.info("Released RealSense streams for inference")
+        released = True
     if released:
         import time
         time.sleep(0.5)  # 커널이 디바이스를 해제할 시간 확보
