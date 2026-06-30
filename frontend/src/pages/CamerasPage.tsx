@@ -28,17 +28,32 @@ export default function CamerasPage() {
   const [scanning, setScanning] = useState(false)
   const [connectingId, setConnectingId] = useState<string | null>(null)
   const [expandedCam, setExpandedCam] = useState<string | null>(null)
-  const [previewTs, setPreviewTs] = useState(0)
+  // 프리뷰 캐시버스팅 타임스탬프 — 카메라별로 따로 관리해야 한 카메라 동작이
+  // 다른 타일까지 새로고침시키지 않는다.
+  const [previewTs, setPreviewTs] = useState<Record<string, number>>({})
   const [liveIds, setLiveIds] = useState<Set<string>>(new Set())
   const [controlsCam, setControlsCam] = useState<string | null>(null)
   const [controls, setControls] = useState<CamControl[]>([])
+  // 디바이스 작업(초기화/업데이트)이 진행 중인 카메라 — 같은 디바이스에 동시 요청을
+  // 막는다 (RealSense 등에서 컨트롤 질의와 스트림 probe 가 충돌하면 멈춤).
+  const [busyId, setBusyId] = useState<string | null>(null)
+
+  // 지정한 카메라들의 프리뷰만 새로고침 (캐시버스팅 타임스탬프 갱신)
+  const bumpPreview = (ids: string[]) => {
+    const now = Date.now()
+    setPreviewTs((prev) => {
+      const next = { ...prev }
+      for (const id of ids) next[id] = now
+      return next
+    })
+  }
 
   useEffect(() => {
     api.get<{ cameras: CamInfo[] }>('/cameras/current')
       .then((r) => {
         if (r.cameras) {
           setCams(r.cameras)
-          if (r.cameras.some((c) => c.connected)) setPreviewTs(Date.now())
+          bumpPreview(r.cameras.filter((c) => c.connected).map((c) => c.id))
         }
       })
       .catch(() => {})
@@ -48,7 +63,7 @@ export default function CamerasPage() {
   // 프리뷰 자동 갱신 (실시간 보기 중인 카메라)
   useEffect(() => {
     if (liveIds.size === 0) return
-    const interval = setInterval(() => setPreviewTs(Date.now()), 200)
+    const interval = setInterval(() => bumpPreview([...liveIds]), 200)
     return () => clearInterval(interval)
   }, [liveIds])
 
@@ -58,7 +73,7 @@ export default function CamerasPage() {
     try {
       const result = await api.get<CamInfo[]>('/cameras/scan?auto_connect=true')
       setCams(result)
-      setPreviewTs(Date.now())
+      bumpPreview(result.map((c) => c.id))
     } catch {}
     setScanning(false)
   }
@@ -102,10 +117,23 @@ export default function CamerasPage() {
   }
 
   const handleResetControls = async (camId: string) => {
+    if (busyId) return
+    setBusyId(camId)
     try {
       const data = await api.post<CamControl[]>('/cameras/controls/reset', { id: camId })
       setControls(data)
     } catch {}
+    finally { setBusyId(null) }
+  }
+
+  const handleProbe = async (camId: string) => {
+    if (busyId) return
+    setBusyId(camId)
+    try {
+      await api.post('/cameras/probe', { id: camId })
+      bumpPreview([camId])
+    } catch {}
+    finally { setBusyId(null) }
   }
 
   const handleControl = async (camId: string, name: string, value: number) => {
@@ -148,7 +176,7 @@ export default function CamerasPage() {
               return (
                 <div key={cam.id} className="rounded-lg border border-green-500/30 bg-green-500/5 overflow-hidden hover:border-green-500/60 transition-colors">
                   <img
-                    src={`/api/cameras/${encodeURIComponent(cam.id)}/preview?t=${isLive ? previewTs : previewTs}`}
+                    src={`/api/cameras/${encodeURIComponent(cam.id)}/preview?t=${previewTs[cam.id] ?? 0}`}
                     alt={cam.name}
                     className="w-full aspect-[4/3] object-cover bg-neutral-900"
                     onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.2' }}
@@ -166,14 +194,9 @@ export default function CamerasPage() {
                       {cam.config.fps && <span className="ml-2">{cam.config.fps}fps</span>}
                     </div>
                     <div className="flex gap-1.5">
-                      <button onClick={async () => {
-                        try {
-                          await api.post('/cameras/probe', { id: cam.id })
-                          setPreviewTs(Date.now())
-                        } catch {}
-                      }}
-                        className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white transition-colors">
-                        업데이트
+                      <button onClick={() => handleProbe(cam.id)} disabled={busyId === cam.id}
+                        className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                        {busyId === cam.id ? <><Spinner className="inline" /> 처리 중</> : '업데이트'}
                       </button>
                       <button onClick={async () => {
                         if (isLive) {
@@ -186,6 +209,7 @@ export default function CamerasPage() {
                             const updated = await api.post<CamInfo>('/cameras/connect', { id: cam.id })
                             setCams((prev) => prev.map((c) => c.id === cam.id ? updated : c))
                             setLiveIds((prev) => new Set(prev).add(cam.id))
+                            bumpPreview([cam.id])
                           } catch { alert('카메라 연결 실패') }
                         }
                       }}
@@ -205,9 +229,9 @@ export default function CamerasPage() {
                       <div className="border-t border-neutral-700 pt-2 mt-2 space-y-1.5">
                         {controls.length > 0 && (
                           <div className="flex justify-end">
-                            <button onClick={() => handleResetControls(cam.id)}
-                              className="px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-orange-600 text-neutral-400 hover:text-white transition-colors">
-                              초기화
+                            <button onClick={() => handleResetControls(cam.id)} disabled={busyId === cam.id}
+                              className="px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-orange-600 text-neutral-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                              {busyId === cam.id ? '처리 중…' : '초기화'}
                             </button>
                           </div>
                         )}
@@ -260,7 +284,7 @@ export default function CamerasPage() {
                 className="rounded-lg border border-neutral-700 bg-neutral-800 overflow-hidden hover:border-blue-500 hover:bg-blue-500/5 transition-colors group"
               >
                 {cam.has_preview ? (
-                  <img src={`/api/cameras/${encodeURIComponent(cam.id)}/preview?t=${previewTs}`} alt={cam.name}
+                  <img src={`/api/cameras/${encodeURIComponent(cam.id)}/preview?t=${previewTs[cam.id] ?? 0}`} alt={cam.name}
                     className="w-full aspect-[4/3] object-cover bg-neutral-900" />
                 ) : (
                   <div className="w-full aspect-[4/3] bg-neutral-900 flex items-center justify-center text-neutral-600 text-xs">
@@ -298,7 +322,7 @@ export default function CamerasPage() {
                 <div key={cam.id} className="rounded-lg border border-blue-500/30 bg-blue-500/5 overflow-hidden hover:border-blue-500/60 transition-colors">
                   {/* 프리뷰 */}
                   <img
-                    src={`/api/cameras/${encodeURIComponent(cam.id)}/preview?t=${previewTs}`}
+                    src={`/api/cameras/${encodeURIComponent(cam.id)}/preview?t=${previewTs[cam.id] ?? 0}`}
                     alt={cam.name}
                     className="w-full aspect-[4/3] object-cover bg-neutral-900"
                     onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.2' }}
@@ -363,9 +387,9 @@ export default function CamerasPage() {
                         <div className="border-t border-neutral-700 pt-2 space-y-1.5">
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] text-neutral-500">이미지 조정</span>
-                            <button onClick={() => handleResetControls(cam.id)}
-                              className="px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-orange-600 text-neutral-400 hover:text-white transition-colors">
-                              초기화
+                            <button onClick={() => handleResetControls(cam.id)} disabled={busyId === cam.id}
+                              className="px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-orange-600 text-neutral-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                              {busyId === cam.id ? '처리 중…' : '초기화'}
                             </button>
                           </div>
                           {controls.map((ctrl) => {

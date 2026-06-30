@@ -45,7 +45,10 @@ async def probe_camera(body: CameraIdRequest):
 
 @router.post("/connect")
 async def connect_camera(body: CameraIdRequest):
-    ok, msg = camera_manager.connect_camera(body.id)
+    loop = asyncio.get_event_loop()
+    ok, msg = await loop.run_in_executor(
+        _executor, camera_manager.connect_camera, body.id
+    )
     if not ok:
         raise HTTPException(400, msg)
     cam = camera_manager.cameras.get(body.id)
@@ -65,7 +68,11 @@ class CameraConfigRequest(BaseModel):
 
 @router.post("/config")
 async def update_config(body: CameraConfigRequest):
-    if not camera_manager.update_config(body.id, body.config):
+    loop = asyncio.get_event_loop()
+    ok = await loop.run_in_executor(
+        _executor, camera_manager.update_config, body.id, body.config
+    )
+    if not ok:
         raise HTTPException(400, "Unknown camera")
     cam = camera_manager.cameras.get(body.id)
     return cam.to_dict() if cam else {"status": "ok"}
@@ -107,7 +114,10 @@ class CameraControlRequest(BaseModel):
 @router.post("/control")
 async def set_control(body: CameraControlRequest):
     """카메라 v4l2 컨트롤 값 설정."""
-    ok = camera_manager.set_control(body.id, body.name, body.value)
+    loop = asyncio.get_event_loop()
+    ok = await loop.run_in_executor(
+        _executor, camera_manager.set_control, body.id, body.name, body.value
+    )
     if not ok:
         raise HTTPException(400, f"컨트롤 설정 실패: {body.name}")
     return {"status": "ok", "name": body.name, "value": body.value}
@@ -116,12 +126,15 @@ async def set_control(body: CameraControlRequest):
 @router.post("/controls/reset")
 async def reset_controls(body: CameraIdRequest):
     """모든 v4l2 컨트롤을 초기값으로 복원."""
-    controls = camera_manager.get_controls(body.id)
+    loop = asyncio.get_event_loop()
+    controls = await loop.run_in_executor(_executor, camera_manager.get_controls, body.id)
     if not controls:
         raise HTTPException(400, "컨트롤이 없습니다")
     for ctrl in controls:
-        camera_manager.set_control(body.id, ctrl["name"], ctrl["default"])
-    return camera_manager.get_controls(body.id)
+        await loop.run_in_executor(
+            _executor, camera_manager.set_control, body.id, ctrl["name"], ctrl["default"]
+        )
+    return await loop.run_in_executor(_executor, camera_manager.get_controls, body.id)
 
 
 # path 라우트는 반드시 고정 경로 뒤에 배치
@@ -136,5 +149,5 @@ async def preview(cam_id: str):
 @router.get("/{cam_id:path}/controls")
 async def get_controls(cam_id: str):
     """카메라가 지원하는 v4l2 컨트롤 목록 + 현재값."""
-    controls = camera_manager.get_controls(cam_id)
-    return controls
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, camera_manager.get_controls, cam_id)

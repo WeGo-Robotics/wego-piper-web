@@ -10,6 +10,7 @@ camera_manager 의 OpenCV 경로와 분리된 협력 모듈. RealSense가 아닌
 기존 OpenCV 경로를 그대로 사용한다.
 """
 
+import contextlib
 import logging
 import re
 import threading
@@ -32,6 +33,34 @@ except Exception as exc:  # pragma: no cover - 환경 의존
 
 def rs_available() -> bool:
     return _RS_AVAILABLE
+
+
+def _run_guarded(fn, timeout: float, default, what: str):
+    """블로킹 librealsense 호출을 데몬 스레드에서 돌리고 timeout 초과 시 default 반환.
+
+    D405 등에서 UVC 컨트롤(XU) 질의가 커널 uvcvideo 드라이버 안에서 D-state로
+    무한히 멈추는 경우가 있다. 이때 호출 스레드는 SIGKILL로도 회수 불가능하므로,
+    서버 스레드가 영구히 잡히지 않도록 시간 상한을 강제한다. 초과한 호출 스레드는
+    격리(누수)되지만 서버는 살아남는다."""
+    result = [default]
+    done = threading.Event()
+
+    def runner():
+        try:
+            result[0] = fn()
+        except Exception as exc:
+            logger.warning("RealSense %s failed: %s", what, exc)
+        finally:
+            done.set()
+
+    threading.Thread(target=runner, daemon=True).start()
+    if not done.wait(timeout):
+        logger.error(
+            "RealSense %s timed out after %.1fs (orphaned thread; device may be hung in kernel)",
+            what, timeout,
+        )
+        return default
+    return result[0]
 
 
 def _short_usb_port(physical_port: str) -> str:
@@ -71,11 +100,28 @@ class _RSDevice:
         self._refcount: dict[str, int] = {s: 0 for s in STREAM_TYPES}
         self._latest: dict[str, object] = {}  # stream -> numpy frame (BGR/grey)
         self._lock = threading.Lock()       # _latest 보호
-        # 파이프라인 수명주기 직렬화: 한 디바이스에 동시에 두 파이프라인을
-        # start 할 수 없으므로 connect/disconnect/probe 를 직렬화한다.
+        # 디바이스 작업 직렬화: 한 디바이스에 동시에 두 파이프라인을 start 할 수
+        # 없고, librealsense 는 디바이스 단위로 thread-safe 하지 않다. 따라서
+        # connect/disconnect/probe(파이프라인) 와 list/set_control(센서 옵션) 를
+        # 모두 이 락으로 직렬화한다 — 그렇지 않으면 컨트롤 질의와 스트림 시작이
+        # 같은 USB 디바이스에서 충돌해 uvcvideo 가 D-state 로 멈춘다.
         self._op_lock = threading.RLock()
         self._thread: threading.Thread | None = None
         self._running = False
+
+    @contextlib.contextmanager
+    def op_guard(self, timeout: float = 6.0):
+        """op_lock 을 시간 상한을 두고 획득한다. 이전 작업 스레드가 커널 D-state
+        로 멈춰 락을 영구히 쥐고 있어도(고아 스레드) 서버가 무한 대기하지 않도록,
+        획득 실패 시 TimeoutError 를 던져 호출자가 깔끔히 포기하게 한다."""
+        if not self._op_lock.acquire(timeout=timeout):
+            raise TimeoutError(
+                f"RealSense {self.serial} busy (op_lock held >{timeout}s; device may be hung)"
+            )
+        try:
+            yield
+        finally:
+            self._op_lock.release()
 
     # ── 파이프라인 구성 ──
 
@@ -201,7 +247,7 @@ class _RSDevice:
         """스캔용: 임시로 스트림을 켜서 프레임 1장을 확보. 연결 유지 안 함."""
         if stream not in self.available:
             return False
-        with self._op_lock:
+        with self.op_guard():
             temporary = self._pipeline is None or stream not in self._active
             if not self._ensure_streams(self._active | {stream}):
                 return False
@@ -324,7 +370,10 @@ class RealSenseHub:
         dev = self._device(serial)
         if dev is None:
             return False, f"RealSense {serial} not found (rescan)"
-        if dev.probe_stream(stream):
+        # 컨트롤 질의(초기화)와 동시에 호출되면 probe_stream 이 op_lock 을 기다리거나
+        # 디바이스 충돌로 멈출 수 있으므로 시간 상한을 강제한다.
+        ok = _run_guarded(lambda: dev.probe_stream(stream), 8.0, False, f"probe({cam_id})")
+        if ok:
             return True, "OK"
         return False, f"No frame from RealSense {serial}/{stream}"
 
@@ -364,7 +413,17 @@ class RealSenseHub:
         parsed = parse_id(cam_id)
         if not parsed:
             return []
-        serial, stream = parsed
+        return _run_guarded(
+            lambda: self._list_controls_impl(*parsed), 3.0, [], f"list_controls({cam_id})"
+        )
+
+    def _list_controls_impl(self, serial: str, stream: str) -> list[dict]:
+        dev = self._device(serial)
+        guard = dev.op_guard(timeout=2.5) if dev else contextlib.nullcontext()
+        with guard:
+            return self._list_controls_locked(serial, stream)
+
+    def _list_controls_locked(self, serial: str, stream: str) -> list[dict]:
         device = self._find_device(serial)
         if device is None:
             return []
@@ -412,7 +471,18 @@ class RealSenseHub:
         parsed = parse_id(cam_id)
         if not parsed:
             return False
-        serial, stream = parsed
+        return _run_guarded(
+            lambda: self._set_control_impl(*parsed, name, value),
+            3.0, False, f"set_control({cam_id},{name})",
+        )
+
+    def _set_control_impl(self, serial: str, stream: str, name: str, value: float) -> bool:
+        dev = self._device(serial)
+        guard = dev.op_guard(timeout=2.5) if dev else contextlib.nullcontext()
+        with guard:
+            return self._set_control_locked(serial, stream, name, value)
+
+    def _set_control_locked(self, serial: str, stream: str, name: str, value: float) -> bool:
         device = self._find_device(serial)
         if device is None:
             return False
