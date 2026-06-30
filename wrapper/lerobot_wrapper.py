@@ -648,8 +648,8 @@ def main() -> None:
         inference_thread.join(timeout=3)
         logger.info("Returning to home position...")
         try:
-            robot.parking()
-            time.sleep(5)  # 팔이 원위치로 이동할 시간
+            robot.parking()  # motion_status를 폴링하며 팔이 멈출 때까지 이미 블로킹함
+            time.sleep(0.5)  # 토크 차단 전 최종 정지 안정화 여유 (parking이 모션 완료 보장)
         except Exception as e:
             logger.warning("Parking failed: %s", e)
         logger.info("Disabling torque and disconnecting...")

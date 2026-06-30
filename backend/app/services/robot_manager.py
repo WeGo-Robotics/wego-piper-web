@@ -498,6 +498,47 @@ class ArmInfo:
             except Exception:
                 return False
 
+    # ── 에러 플래그 ──
+
+    # err_code 비트 → 의미 (arm_feedback_status.ErrStatus 참조)
+    _ERR_BITS = {
+        0: "joint1_comm", 1: "joint2_comm", 2: "joint3_comm",
+        3: "joint4_comm", 4: "joint5_comm", 5: "joint6_comm",
+        8: "joint1_angle_limit", 9: "joint2_angle_limit", 10: "joint3_angle_limit",
+        11: "joint4_angle_limit", 12: "joint5_angle_limit", 13: "joint6_angle_limit",
+    }
+
+    def read_error(self) -> dict | None:
+        """현재 팔의 에러 코드/플래그를 읽는다. 연결 안 됐거나 실패 시 None."""
+        with self._lock:
+            if not self._piper:
+                return None
+            try:
+                err_code = int(self._piper.GetArmStatus().arm_status.err_code)
+            except Exception as e:
+                logger.debug("read_error failed on %s: %s", self.iface, e)
+                return None
+        flags = [name for bit, name in self._ERR_BITS.items() if err_code & (1 << bit)]
+        return {"err_code": err_code, "flags": flags}
+
+    def clear_error(self) -> bool:
+        """팔의 에러를 무조건 클리어한다 (급정지/일시정지 해제 + 전 관절 에러코드 클리어).
+
+        공식 reset 데모(piper_ctrl_reset.py)의 MotionCtrl_1(0x02) '恢复'와
+        JointConfig clear_err=0xAE(전 관절 에러코드 클리어)를 함께 보낸다.
+        """
+        with self._lock:
+            if not self._piper:
+                return False
+            try:
+                self._piper.MotionCtrl_1(0x02, 0, 0)        # 급정지/일시정지 해제(恢复)
+                time.sleep(0.01)
+                self._piper.JointConfig(joint_num=7, clear_err=0xAE)  # 전 관절 에러코드 클리어
+                return True
+            except Exception as e:
+                logger.error("clear_error failed on %s: %s", self.iface, e)
+                return False
+
 
 # ── 세션/파킹 저장 경로 ──
 SESSION_DIR = Path.home() / ".config" / "piper-web"
@@ -607,6 +648,31 @@ class RobotManager:
             return False
         arm.update_config(cfg)
         return True
+
+    # ── 에러 클리어 ──
+
+    def clear_arm_errors(self, ifaces: list[str] | None = None) -> list[dict]:
+        """팔 에러를 조회 후 무조건 클리어한다.
+
+        ifaces 미지정 시 연결된 모든 follower 대상. 추론 시작/종료 시 호출.
+        반환: 팔별 {iface, error(클리어 전 상태), cleared} 리포트.
+        """
+        report = []
+        for arm in self.arms.values():
+            if not arm.connected:
+                continue
+            if ifaces is not None:
+                if arm.iface not in ifaces:
+                    continue
+            elif arm.role != "follower":
+                continue
+            before = arm.read_error()
+            cleared = arm.clear_error()
+            if before and before.get("err_code"):
+                logger.warning("Arm %s had error 0x%04X before clear: %s",
+                               arm.iface, before["err_code"], before["flags"])
+            report.append({"iface": arm.iface, "error": before, "cleared": cleared})
+        return report
 
     # ── 움직임 감지 ──
 

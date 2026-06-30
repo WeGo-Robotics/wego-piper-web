@@ -74,6 +74,27 @@ def _release_all_cameras() -> None:
         time.sleep(0.5)  # 커널이 디바이스를 해제할 시간 확보
 
 
+def _clear_arm_errors(label: str, ifaces: list[str] | None = None) -> None:
+    """추론 시작/종료 시 로봇팔 에러 플래그를 조회한 뒤 무조건 클리어한다.
+
+    팔과의 CAN 통신은 백엔드 robot_manager가 직접 보유하므로(추론 subprocess와
+    별개), 시작은 subprocess 기동 전에, 종료는 subprocess 정지 후에 호출하여
+    버스 경합을 피한다. 실패해도 추론 흐름은 막지 않는다(best-effort)."""
+    try:
+        report = robot_manager.clear_arm_errors(ifaces)
+    except Exception as e:
+        logger.warning("[%s] 로봇팔 에러 클리어 실패: %s", label, e)
+        return
+    if not report:
+        logger.info("[%s] 에러 클리어 대상 follower 없음", label)
+        return
+    for r in report:
+        err = r.get("error") or {}
+        logger.info("[%s] %s 에러 클리어: code=0x%04X flags=%s cleared=%s",
+                    label, r["iface"], err.get("err_code", 0),
+                    err.get("flags", []), r["cleared"])
+
+
 def _build_cameras_draccus(camera_mapping: dict[str, str]) -> str:
     """카메라 매핑을 draccus 형식 문자열로 변환 (robot_client.py용).
     {"top": "/dev/video12"} → "{ top: {type: opencv, index_or_path: '/dev/video12', width: 640, height: 480, fps: 30}}"
@@ -281,6 +302,10 @@ async def start_inference(body: InferenceStartRequest):
 
     _release_all_cameras()
 
+    # 추론 기동 전 로봇팔 에러 플래그 조회 + 무조건 클리어 (subprocess가 CAN을 쥐기 전)
+    follower_ifaces = body.robot_ports if is_bimanual else ([robot_port] if robot_port else None)
+    _clear_arm_errors("inference-start", follower_ifaces)
+
     try:
         await process_manager.start(args)
     except Exception as e:
@@ -298,6 +323,9 @@ async def start_inference_custom(body: InferenceStartCustomRequest):
     # 추론 전 연결된 모든 카메라 해제 (wrapper가 카메라를 직접 열므로)
     _release_all_cameras()
 
+    # 추론 기동 전 로봇팔 에러 플래그 조회 + 무조건 클리어 (연결된 모든 follower)
+    _clear_arm_errors("inference-start")
+
     try:
         await process_manager.start(body.args)
     except Exception as e:
@@ -308,4 +336,6 @@ async def start_inference_custom(body: InferenceStartCustomRequest):
 @router.post("/inference/stop")
 async def stop_inference():
     await process_manager.stop()
+    # 추론 정지 후(subprocess가 CAN을 놓은 뒤) 로봇팔 에러 플래그 조회 + 무조건 클리어
+    _clear_arm_errors("inference-stop")
     return {"status": "stopped"}
