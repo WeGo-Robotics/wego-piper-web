@@ -69,18 +69,26 @@ def _release_all_cameras() -> None:
 def _build_cameras_draccus(camera_mapping: dict[str, str]) -> str:
     """카메라 매핑을 draccus 형식 문자열로 변환 (robot_client.py용).
     {"top": "/dev/video12"} → "{ top: {type: opencv, index_or_path: '/dev/video12', width: 640, height: 480, fps: 30}}"
+    RealSense 경로('rs:<serial>:<stream>')는 OpenCV V4L2 로 열 수 없으므로
+    intelrealsense 타입으로 변환한다.
     """
     if not camera_mapping:
         return ""
     parts = []
     for cam_name, cam_id in camera_mapping.items():
-        parts.append(f"{cam_name}: {{type: opencv, index_or_path: '{cam_id}', width: 640, height: 480, fps: 30}}")
+        if cam_id.startswith("rs:"):
+            serial = cam_id.split(":")[1]
+            parts.append(f"{cam_name}: {{type: intelrealsense, serial_number_or_name: '{serial}', width: 640, height: 480, fps: 30}}")
+        else:
+            parts.append(f"{cam_name}: {{type: opencv, index_or_path: '{cam_id}', width: 640, height: 480, fps: 30}}")
     return "{ " + ", ".join(parts) + " }"
 
 
 def _build_cameras_json(camera_mapping: dict[str, str]) -> dict:
     """카메라 매핑을 wrapper --cameras JSON으로 변환.
     {"top": "/dev/video0"} → {"top": {"type": "opencv", "index_or_path": "/dev/video0"}}
+    RealSense 경로('rs:<serial>:<stream>')는 OpenCV V4L2 로 열 수 없으므로
+    intelrealsense 타입으로 변환한다.
     """
     if not camera_mapping:
         return {}
@@ -88,7 +96,11 @@ def _build_cameras_json(camera_mapping: dict[str, str]) -> dict:
     for cam_name, cam_id in camera_mapping.items():
         if not cam_id:
             continue
-        cameras[cam_name] = {"type": "opencv", "index_or_path": cam_id, "backend": 200}
+        if cam_id.startswith("rs:"):
+            serial = cam_id.split(":")[1]
+            cameras[cam_name] = {"type": "intelrealsense", "serial_number_or_name": serial}
+        else:
+            cameras[cam_name] = {"type": "opencv", "index_or_path": cam_id, "backend": 200}
     return cameras
 
 

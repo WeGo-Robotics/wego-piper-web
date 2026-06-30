@@ -102,7 +102,14 @@ export default function RecordingPage() {
     const camJson: Record<string, unknown> = {}
     for (const [name, id] of Object.entries(cameraMapping)) {
       if (!id) continue  // 빈 매핑 스킵
-      camJson[name] = { type: 'opencv', index_or_path: id, width: camWidth, height: camHeight, fps, backend: 200 }
+      if (id.startsWith('rs:')) {
+        // RealSense: 'rs:<serial>:<stream>' → intelrealsense 설정. OpenCV V4L2
+        // 백엔드는 rs: 경로를 못 열기 때문에 별도 카메라 타입으로 빌드해야 한다.
+        const serial = id.split(':')[1]
+        camJson[name] = { type: 'intelrealsense', serial_number_or_name: serial, width: camWidth, height: camHeight, fps }
+      } else {
+        camJson[name] = { type: 'opencv', index_or_path: id, width: camWidth, height: camHeight, fps, backend: 200 }
+      }
     }
     return camJson
   }
@@ -189,15 +196,15 @@ export default function RecordingPage() {
                     <div className="flex items-center justify-between">
                       <label className="text-xs text-neutral-400">카메라 매핑</label>
                       <div className="flex gap-1">
-                        {[
+                        {([
                           { label: 'top', preset: { top: '' } },
                           { label: 'top+hand', preset: { top: '', hand: '' } },
                           { label: 'top+wrist', preset: { top: '', wrist: '' } },
                           { label: 'top+left+right', preset: { top: '', left_hand: '', right_hand: '' } },
                           { label: 'top+wrist+side', preset: { top: '', wrist: '', side: '' } },
                           { label: 'front+side', preset: { front: '', side: '' } },
-                        ].map(({ label, preset }) => (
-                          <button key={label} onClick={() => { setCameraMapping(preset as Record<string, string>); setCliEdited(false) }}
+                        ] as { label: string; preset: Record<string, string> }[]).map(({ label, preset }) => (
+                          <button key={label} onClick={() => { setCameraMapping(preset); setCliEdited(false) }}
                             className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-700 text-neutral-400 hover:text-white hover:bg-neutral-600">
                             {label}
                           </button>
