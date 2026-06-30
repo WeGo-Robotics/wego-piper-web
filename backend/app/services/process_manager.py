@@ -59,7 +59,7 @@ class ProcessManager:
         if self._on_state_change:
             self._on_state_change(state)
 
-    async def start(self, cmd: list[str]) -> None:
+    async def start(self, cmd: list[str], env_extra: dict[str, str] | None = None) -> None:
         """CLI 명령어를 subprocess로 실행."""
         if self._state not in (ProcessState.IDLE, ProcessState.ERROR):
             raise RuntimeError(f"Cannot start: current state is {self._state}")
@@ -80,6 +80,9 @@ class ProcessManager:
             # pynput이 X server에 연결할 수 있도록 DISPLAY 보장
             if "DISPLAY" not in env:
                 env["DISPLAY"] = ":0"
+            # 호출부 지정 추가 환경변수 (예: ACCELERATE_MIXED_PRECISION) 주입
+            if env_extra:
+                env.update(env_extra)
 
             self._process = await asyncio.create_subprocess_exec(
                 *cmd,

@@ -12,6 +12,62 @@ type Checkpoint = { name: string; step: number; size_kb: number; path: string }
 const POLICY_TYPES = ['act', 'diffusion', 'smolvla', 'pi0', 'pi05', 'vqbet', 'tdmpc', 'sac']
 const OPTIMIZER_TYPES = ['adam', 'adamw', 'sgd']
 
+// 정책별 학습 옵션 스키마 (단일 소스)
+//  - defaults: 정책 선택 시 공통 옵션(batch/steps/optimizer)에 적용할 권장값
+//  - fields: 노출할 --policy.<key> config 필드 (LeRobot config 클래스에서 확인한 기본값)
+// VLA(SmolVLA/Pi0/Pi05)는 추론 런타임 파라미터가 아닌 학습 config만 노출한다.
+type PolicyField = { key: string; label: string; type: 'number' | 'bool'; default: number | boolean; min?: number; max?: number; step?: number }
+type PolicySchema = { defaults: { batchSize: number; steps: number; optimizerType: string }; fields: PolicyField[] }
+
+const PI_FIELDS: PolicyField[] = [
+  { key: 'chunk_size', label: 'chunk_size', type: 'number', default: 50, min: 1, max: 200, step: 1 },
+  { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 50, min: 1, max: 200, step: 1 },
+  { key: 'freeze_vision_encoder', label: 'freeze_vision_encoder', type: 'bool', default: false },
+  { key: 'train_expert_only', label: 'train_expert_only', type: 'bool', default: false },
+  { key: 'num_inference_steps', label: 'num_inference_steps', type: 'number', default: 10, min: 1, max: 100, step: 1 },
+  { key: 'gradient_checkpointing', label: 'gradient_checkpointing', type: 'bool', default: false },
+]
+
+const POLICY_TRAIN_SCHEMAS: Record<string, PolicySchema> = {
+  act: {
+    defaults: { batchSize: 8, steps: 100000, optimizerType: 'adam' },
+    fields: [
+      { key: 'chunk_size', label: 'chunk_size', type: 'number', default: 100, min: 1, max: 200, step: 1 },
+      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 100, min: 1, max: 200, step: 1 },
+      { key: 'n_obs_steps', label: 'n_obs_steps', type: 'number', default: 1, min: 1, max: 10, step: 1 },
+      { key: 'dim_model', label: 'dim_model', type: 'number', default: 512, min: 64, max: 2048, step: 64 },
+      { key: 'use_vae', label: 'use_vae', type: 'bool', default: true },
+    ],
+  },
+  diffusion: {
+    defaults: { batchSize: 64, steps: 200000, optimizerType: 'adam' },
+    fields: [
+      { key: 'horizon', label: 'horizon', type: 'number', default: 16, min: 1, max: 128, step: 1 },
+      { key: 'n_obs_steps', label: 'n_obs_steps', type: 'number', default: 2, min: 1, max: 10, step: 1 },
+      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 8, min: 1, max: 128, step: 1 },
+      { key: 'num_train_timesteps', label: 'num_train_timesteps', type: 'number', default: 100, min: 1, max: 1000, step: 1 },
+    ],
+  },
+  smolvla: {
+    defaults: { batchSize: 64, steps: 200000, optimizerType: 'adamw' },
+    fields: [
+      { key: 'chunk_size', label: 'chunk_size', type: 'number', default: 50, min: 1, max: 200, step: 1 },
+      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 50, min: 1, max: 200, step: 1 },
+      { key: 'freeze_vision_encoder', label: 'freeze_vision_encoder', type: 'bool', default: true },
+      { key: 'train_expert_only', label: 'train_expert_only', type: 'bool', default: true },
+    ],
+  },
+  pi0: { defaults: { batchSize: 32, steps: 30000, optimizerType: 'adamw' }, fields: PI_FIELDS },
+  pi05: { defaults: { batchSize: 32, steps: 30000, optimizerType: 'adamw' }, fields: PI_FIELDS },
+}
+
+// 정책의 config 필드 기본값 객체 생성
+function policyConfigDefaults(policy: string): Record<string, number | boolean> {
+  const schema = POLICY_TRAIN_SCHEMAS[policy]
+  if (!schema) return {}
+  return Object.fromEntries(schema.fields.map((f) => [f.key, f.default]))
+}
+
 export default function TrainingPage() {
   // 설정 — localStorage에서 복원
   const _saved = (() => { try { return JSON.parse(localStorage.getItem('piper_train_settings') || '{}') } catch { return {} } })()
@@ -38,6 +94,10 @@ export default function TrainingPage() {
   const [stateDim] = useState(_saved.stateDim ?? 0)
   const [actionDim] = useState(_saved.actionDim ?? 0)
   const [renameMap, setRenameMap] = useState(_saved.renameMap || '')
+  const [policyParams, setPolicyParams] = useState<Record<string, number | boolean>>(
+    _saved.policyParams ?? policyConfigDefaults(_saved.policyType || 'act')
+  )
+  const [amp, setAmp] = useState<string>(_saved.amp ?? 'bf16')  // 혼합정밀도: off | bf16 | fp16
   const [cliArgs, setCliArgs] = useState('')
   const [cliEdited, setCliEdited] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -49,9 +109,9 @@ export default function TrainingPage() {
       selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir,
       batchSize, steps, logFreq, saveFreq, numWorkers, seed, device,
       optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset,
-      stateDim, actionDim, renameMap,
+      stateDim, actionDim, renameMap, policyParams, amp,
     }))
-  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset, stateDim, actionDim, renameMap])
+  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset, stateDim, actionDim, renameMap, policyParams, amp])
 
   // 실행 상태
   const [trainState, setTrainState] = useState<ProcessState>('idle')
@@ -109,8 +169,9 @@ export default function TrainingPage() {
       num_workers: numWorkers, seed, device, optimizer_type: optimizerType,
       learning_rate: learningRate, wandb_enable: wandbEnable, wandb_project: wandbProject, resume,
       use_policy_training_preset: usePolicyPreset, state_dim: stateDim, action_dim: actionDim, rename_map: renameMap,
+      policy_params: policyParams, amp,
     }).then((r) => setCliArgs(r.command)).catch(() => {})
-  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset, stateDim, actionDim, cliEdited])
+  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset, stateDim, actionDim, renameMap, policyParams, amp, cliEdited])
 
   // 체크포인트 폴링 (학습 중)
   const ckptPollRef = useRef<ReturnType<typeof setInterval>>(undefined)
@@ -140,6 +201,26 @@ export default function TrainingPage() {
 
   const isRunning = trainState === 'running' || trainState === 'starting' || trainState === 'stopping'
 
+  // 정책 변경 시 권장 기본값 + config 필드 리셋
+  const handlePolicyChange = (next: string) => {
+    setPolicyType(next)
+    const schema = POLICY_TRAIN_SCHEMAS[next]
+    if (schema) {
+      setBatchSize(schema.defaults.batchSize)
+      setSteps(schema.defaults.steps)
+      setOptimizerType(schema.defaults.optimizerType)
+      setPolicyParams(policyConfigDefaults(next))
+    }
+    setCliEdited(false)
+  }
+
+  const setPolicyParam = (key: string, value: number | boolean) => {
+    setPolicyParams((p) => ({ ...p, [key]: value }))
+    setCliEdited(false)
+  }
+
+  const policySchema = POLICY_TRAIN_SCHEMAS[policyType]
+
   const trainParams = () => ({
     dataset_repo_id: selectedDataset, policy_type: policyType,
     pretrained_path: pretrainedPath, policy_repo_id: policyRepoId, output_dir: outputDir,
@@ -147,6 +228,7 @@ export default function TrainingPage() {
     num_workers: numWorkers, seed, device, optimizer_type: optimizerType,
     learning_rate: learningRate, wandb_enable: wandbEnable, wandb_project: wandbProject, resume,
     use_policy_training_preset: usePolicyPreset, state_dim: stateDim, action_dim: actionDim, rename_map: renameMap,
+    policy_params: policyParams, amp,
   })
 
   const handlePreConfirm = async () => {
@@ -163,7 +245,7 @@ export default function TrainingPage() {
         `Output: ${outputDir || '(자동)'}`,
         '',
         `Batch: ${batchSize}  Steps: ${steps}  Save: ${saveFreq}`,
-        `Device: ${device}  AMP: ${usePolicyPreset ? 'preset' : 'false'}`,
+        `Device: ${device}  AMP: ${amp}`,
         `Workers: ${numWorkers}  Seed: ${seed}`,
         `Resume: ${resume}  Preset: ${usePolicyPreset}  State: ${stateDim || 'auto'}  Action: ${actionDim || 'auto'}`,
         '',
@@ -334,7 +416,7 @@ export default function TrainingPage() {
               {/* 정책 */}
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
                 <h3 className="text-sm font-semibold">정책</h3>
-                <select value={policyType} onChange={(e) => { setPolicyType(e.target.value); setCliEdited(false) }}
+                <select value={policyType} onChange={(e) => handlePolicyChange(e.target.value)}
                   className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
                   {POLICY_TYPES.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
@@ -415,6 +497,20 @@ export default function TrainingPage() {
                   ))}
                 </div>
 
+                {/* 혼합정밀도(AMP): ACCELERATE_MIXED_PRECISION env로 적용 (--policy.use_amp는 학습 미사용). 속도 최대 레버 */}
+                <div>
+                  <label className="text-xs text-neutral-400">혼합정밀도 (AMP)</label>
+                  <select value={amp} onChange={(e) => { setAmp(e.target.value); setCliEdited(false) }}
+                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
+                    <option value="bf16">bf16 (권장 · RTX 5090)</option>
+                    <option value="fp16">fp16</option>
+                    <option value="off">off (fp32)</option>
+                  </select>
+                  <p className="text-[10px] text-neutral-500 mt-0.5">
+                    bf16: 속도↑·VRAM↓ (5090 권장). VRAM 여유 시 Batch를 32~48로 키우세요.
+                  </p>
+                </div>
+
                 <label className="flex items-center gap-2 text-xs cursor-pointer">
                   <input type="checkbox" checked={resume} onChange={(e) => { setResume(e.target.checked); setCliEdited(false) }}
                     className="accent-blue-500" />
@@ -427,6 +523,39 @@ export default function TrainingPage() {
                   {!usePolicyPreset && <span className="text-yellow-500 text-[10px]">OFF — config.json 값 그대로 사용</span>}
                 </label>
               </div>
+
+              {/* 정책별 config 파라미터 (from-scratch 학습 시에만; pretrained면 아키텍처 고정) */}
+              {policySchema && policySchema.fields.length > 0 && !pretrainedPath && (
+                <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
+                  <h3 className="text-sm font-semibold">{policyType.toUpperCase()} 파라미터</h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    {policySchema.fields.map((f) => (
+                      <div key={f.key} className={f.type === 'bool' ? 'col-span-2' : ''}>
+                        {f.type === 'bool' ? (
+                          <label className="flex items-center gap-2 text-xs cursor-pointer">
+                            <input type="checkbox" checked={Boolean(policyParams[f.key] ?? f.default)}
+                              onChange={(e) => setPolicyParam(f.key, e.target.checked)}
+                              className="accent-blue-500" />
+                            <span className="text-neutral-400">{f.label}</span>
+                          </label>
+                        ) : (
+                          <>
+                            <label className="text-xs text-neutral-400">{f.label}</label>
+                            <input type="number" value={Number(policyParams[f.key] ?? f.default)}
+                              min={f.min} max={f.max} step={f.step || 1}
+                              onChange={(e) => setPolicyParam(f.key, Number(e.target.value))}
+                              className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {typeof policyParams.n_action_steps === 'number' && typeof policyParams.chunk_size === 'number'
+                    && policyParams.n_action_steps > policyParams.chunk_size && (
+                    <span className="text-yellow-500 text-[10px]">⚠ n_action_steps는 chunk_size 이하여야 합니다</span>
+                  )}
+                </div>
+              )}
 
               {/* 고급 설정 */}
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
@@ -454,6 +583,7 @@ export default function TrainingPage() {
                       <input type="number" value={numWorkers} min={0} max={32}
                         onChange={(e) => { setNumWorkers(Number(e.target.value)); setCliEdited(false) }}
                         className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+                      <p className="text-[10px] text-neutral-500 mt-0.5">data_s &gt; updt_s면 ↑ (데이터 로딩 병목)</p>
                     </div>
                     <div>
                       <label className="text-xs text-neutral-400">Seed</label>
@@ -503,6 +633,12 @@ export default function TrainingPage() {
                   onChange={(e) => { setCliArgs(e.target.value); setCliEdited(true) }}
                   rows={4}
                   className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-xs font-mono text-neutral-100 focus:outline-none focus:border-blue-500 resize-y" />
+                {amp !== 'off' && (
+                  <p className="text-[10px] font-mono text-neutral-500">
+                    env: ACCELERATE_MIXED_PRECISION={amp}
+                    <span className="ml-1 not-italic text-neutral-600">(CLI 직접 편집 시 미적용)</span>
+                  </p>
+                )}
                 <button onClick={cliEdited ? handleStart : handlePreConfirm} disabled={!canStart}
                   className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium">
                   {cliEdited ? '학습 시작 (CLI 직접)' : '설정 확인 후 시작'}

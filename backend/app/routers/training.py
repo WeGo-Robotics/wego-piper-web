@@ -2,9 +2,10 @@
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.cli_mapping import build_train_args
 from app.services.train_manager import train_manager
@@ -37,6 +38,8 @@ class TrainStartRequest(BaseModel):
     state_dim: int = 0
     action_dim: int = 0
     rename_map: str = ""
+    policy_params: dict[str, Any] = Field(default_factory=dict)
+    amp: str = "bf16"  # 혼합정밀도: "off" | "bf16" | "fp16" → ACCELERATE_MIXED_PRECISION env
 
 
 class TrainPreviewRequest(BaseModel):
@@ -61,6 +64,8 @@ class TrainPreviewRequest(BaseModel):
     state_dim: int = 0
     action_dim: int = 0
     rename_map: str = ""
+    policy_params: dict[str, Any] = Field(default_factory=dict)
+    amp: str = "bf16"  # 혼합정밀도: "off" | "bf16" | "fp16" → ACCELERATE_MIXED_PRECISION env
 
 
 class RenameMapQuery(BaseModel):
@@ -89,6 +94,16 @@ class TrainCustomRequest(BaseModel):
     args: list[str]
     total_steps: int = 100000
     output_dir: str = ""
+    amp: str = "bf16"
+
+
+def _amp_env(amp: str) -> dict[str, str] | None:
+    """AMP 선택값 → ACCELERATE_MIXED_PRECISION 환경변수 (off면 None).
+
+    lerobot_train.py는 accelerator.autocast()로 학습하며, 혼합정밀도는
+    --policy.use_amp(학습 루프 미사용)가 아니라 이 환경변수로만 켜진다.
+    """
+    return {"ACCELERATE_MIXED_PRECISION": amp} if amp and amp != "off" else None
 
 
 @router.post("/start")
@@ -101,6 +116,8 @@ async def start_training(body: TrainStartRequest):
         raise HTTPException(409, "학습이 이미 실행 중입니다.")
 
     params = body.model_dump(exclude_none=True)
+    # amp는 CLI 인자가 아니라 환경변수로 주입 → params에서 분리
+    amp = params.pop("amp", "bf16")
     # lr=0이면 기본값 사용 (전달하지 않음)
     if params.get("learning_rate", 0) <= 0:
         params.pop("learning_rate", None)
@@ -116,7 +133,9 @@ async def start_training(body: TrainStartRequest):
     args = build_train_args(params)
 
     try:
-        await train_manager.start(args, total_steps=body.steps, output_dir=body.output_dir)
+        await train_manager.start(
+            args, total_steps=body.steps, output_dir=body.output_dir, env_extra=_amp_env(amp)
+        )
     except Exception as e:
         raise HTTPException(500, f"학습 시작 실패: {e}")
     return {"status": "started", "pid": train_manager.pm.pid, "args": args}
@@ -132,7 +151,9 @@ async def start_training_custom(body: TrainCustomRequest):
     if not body.args:
         raise HTTPException(400, "CLI 인자가 비어있습니다")
     try:
-        await train_manager.start(body.args, total_steps=body.total_steps, output_dir=body.output_dir)
+        await train_manager.start(
+            body.args, total_steps=body.total_steps, output_dir=body.output_dir, env_extra=_amp_env(body.amp)
+        )
     except Exception as e:
         raise HTTPException(500, f"학습 시작 실패: {e}")
     return {"status": "started", "pid": train_manager.pm.pid, "args": body.args}
@@ -161,6 +182,8 @@ async def training_metrics():
 async def preview_train_args(body: TrainPreviewRequest):
     """학습 CLI 인자 미리보기."""
     params = body.model_dump(exclude_none=True)
+    # amp는 CLI 인자가 아니라 환경변수 → command 문자열엔 넣지 않고 env로 별도 반환
+    amp = params.pop("amp", "bf16")
     if params.get("learning_rate", 0) <= 0:
         params.pop("learning_rate", None)
     if not params.get("pretrained_path"):
@@ -172,7 +195,8 @@ async def preview_train_args(body: TrainPreviewRequest):
     if not params.get("policy_repo_id"):
         params.pop("policy_repo_id", None)
     args = build_train_args(params)
-    return {"args": args, "command": " ".join(args)}
+    env = {"ACCELERATE_MIXED_PRECISION": amp} if amp and amp != "off" else {}
+    return {"args": args, "command": " ".join(args), "env": env}
 
 
 @router.get("/checkpoints")

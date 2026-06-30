@@ -139,11 +139,17 @@ class TrainManager:
         if self._on_metrics:
             self._on_metrics(self.get_status())
 
-    async def start(self, cmd: list[str], total_steps: int = 0, output_dir: str = "") -> None:
+    async def start(
+        self,
+        cmd: list[str],
+        total_steps: int = 0,
+        output_dir: str = "",
+        env_extra: dict[str, str] | None = None,
+    ) -> None:
         self.metrics = TrainMetrics(total_steps=total_steps)
         self.history.clear()
         self.output_dir = output_dir
-        await self.pm.start(cmd)
+        await self.pm.start(cmd, env_extra=env_extra)
         # PID 저장
         if self.pm.pid:
             try:
@@ -201,6 +207,8 @@ class TrainManager:
             "grad_norm": self.metrics.grad_norm,
             "lr": self.metrics.lr,
             "epoch": self.metrics.epoch,
+            "update_s": self.metrics.update_time,  # GPU 갱신 시간 (병목 힌트)
+            "data_s": self.metrics.data_time,      # 데이터 로딩 시간 (병목 힌트)
             "output_dir": self.output_dir,
         }
 

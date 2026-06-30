@@ -8,6 +8,8 @@ type MetricsData = {
   grad_norm: number
   lr: number
   epoch: number
+  update_s?: number  // GPU 갱신 시간 (병목 힌트)
+  data_s?: number    // 데이터 로딩 시간 (병목 힌트)
 }
 
 type HistoryData = {
@@ -121,7 +123,29 @@ export default function TrainingMetrics({ metrics, history }: { metrics: Metrics
           <span className="text-neutral-400">Epoch</span>
           <span className="font-mono">{metrics.epoch.toFixed(2)}</span>
         </div>
+        {typeof metrics.update_s === 'number' && (
+          <div className="flex justify-between">
+            <span className="text-neutral-400">updt_s (GPU)</span>
+            <span className="font-mono">{metrics.update_s.toFixed(3)}</span>
+          </div>
+        )}
+        {typeof metrics.data_s === 'number' && (
+          <div className="flex justify-between">
+            <span className="text-neutral-400">data_s (로딩)</span>
+            <span className="font-mono">{metrics.data_s.toFixed(3)}</span>
+          </div>
+        )}
       </div>
+
+      {/* 병목 힌트: 데이터 로딩(CPU) vs GPU 연산 */}
+      {typeof metrics.update_s === 'number' && typeof metrics.data_s === 'number'
+        && (metrics.update_s > 0 || metrics.data_s > 0) && (
+        metrics.data_s > metrics.update_s ? (
+          <p className="text-[11px] text-amber-400">데이터 로딩 병목 (CPU) → num_workers를 늘리세요</p>
+        ) : (
+          <p className="text-[11px] text-green-400">GPU 연산 병목 → AMP(bf16)·Batch가 효과적</p>
+        )
+      )}
 
       {/* Loss 그래프 */}
       {history.steps.length > 1 && (

@@ -198,6 +198,14 @@ def build_train_args(params: dict) -> list[str]:
     if params.get("resume") and not has_pretrained:
         args.append("--resume=true")
 
+    # 정책별 config 오버라이드: --policy.<field>=<value>
+    # 단, pretrained_path가 있으면 아키텍처는 체크포인트 config로 고정 → skip
+    policy_params = params.get("policy_params") or {}
+    if policy_params and not has_pretrained:
+        for k, v in policy_params.items():
+            val = "true" if v is True else "false" if v is False else v
+            args.append(f"--policy.{k}={val}")
+
     # rename_map (카메라 이름 매핑)
     rename_map = params.get("rename_map", "")
     if not rename_map and has_pretrained:
