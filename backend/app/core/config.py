@@ -55,6 +55,11 @@ class Settings(BaseSettings):
 
     # ZMQ
     zmq_address: str = "tcp://127.0.0.1:5555"
+    # 녹화 중 카메라 프레임 미리보기 전송 채널 (wrapper PUSH → 백엔드 PULL)
+    preview_zmq_address: str = "tcp://127.0.0.1:5556"
+    # 녹화 에피소드 제어 채널 (백엔드 PUSH → wrapper PULL): 건너뛰기/재녹화/정지.
+    # 헤드리스라 pynput 키 주입이 불가하므로 LeRobot events dict 을 직접 set 한다.
+    control_zmq_address: str = "tcp://127.0.0.1:5557"
 
     # E-stop
     estop_heartbeat_interval_ms: int = 500

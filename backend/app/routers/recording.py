@@ -34,6 +34,7 @@ class RecordStartRequest(BaseModel):
     push_to_hub: bool = True
     private: bool = False
     resume: bool = False
+    web_preview: bool = True  # 녹화 중 웹 카메라 미리보기 (log_rerun_data 탭)
 
 
 class RecordPreviewRequest(BaseModel):
@@ -92,12 +93,31 @@ async def start_recording(body: RecordStartRequest):
     if released:
         time.sleep(0.5)
 
+    from app.core.config import settings
+    from app.services.control_bridge import control_bridge
+    from app.services.preview_bridge import preview_bridge
+
     params = body.model_dump()
+    params.pop("web_preview", None)
+
+    # 헤드리스 에피소드 제어 채널 (건너뛰기/재녹화/정지)은 미리보기와 무관하게 항상 켠다.
+    env_extra: dict[str, str] = {"PIPER_CONTROL_ZMQ": settings.control_zmq_address}
+    control_bridge.start()
+
+    # 웹 미리보기: display_data=true 로 log_rerun_data 호출을 켜고, wrapper 가
+    # 그 프레임을 JPEG 로 백엔드에 PUSH 하도록 env 를 주입한다.
+    if body.web_preview:
+        params["display_data"] = True
+        env_extra["PIPER_PREVIEW_ZMQ"] = settings.preview_zmq_address
+        preview_bridge.start()
+
     args = build_record_args(params)
 
     try:
-        await record_manager.start(args, total_episodes=body.num_episodes)
+        await record_manager.start(args, total_episodes=body.num_episodes, env_extra=env_extra)
     except Exception as e:
+        control_bridge.stop()
+        preview_bridge.stop()
         raise HTTPException(500, f"녹화 시작 실패: {e}")
     return {"status": "started", "pid": record_manager.pm.pid, "args": args}
 
@@ -110,7 +130,29 @@ async def stop_recording():
     await asyncio.sleep(2)
     if record_manager.is_running:
         await record_manager.stop()
+    from app.services.control_bridge import control_bridge
+    from app.services.preview_bridge import preview_bridge
+    control_bridge.stop()
+    preview_bridge.stop()
     return {"status": "stopped"}
+
+
+@router.get("/preview")
+async def list_preview_cameras():
+    """녹화 중 미리보기 가능한 카메라 이름 목록 (최근 프레임이 있는 것만)."""
+    from app.services.preview_bridge import preview_bridge
+    return {"cameras": preview_bridge.names()}
+
+
+@router.get("/preview/{name}")
+async def get_preview_frame(name: str):
+    """녹화 중 카메라 최신 프레임 (단일 JPEG)."""
+    from fastapi.responses import Response
+    from app.services.preview_bridge import preview_bridge
+    data = preview_bridge.get(name)
+    if data is None:
+        raise HTTPException(404, "Preview unavailable")
+    return Response(content=data, media_type="image/jpeg")
 
 
 @router.post("/skip")

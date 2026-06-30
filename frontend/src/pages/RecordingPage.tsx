@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { api } from '../services/api'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import LogViewer from '../components/LogViewer'
+import RecordPreview from '../components/RecordPreview'
 
 type ProcessState = 'idle' | 'starting' | 'running' | 'stopping' | 'error'
 type ReadyArm = { iface: string; role: string }
@@ -34,6 +35,7 @@ export default function RecordingPage() {
   const [encoderThreads, setEncoderThreads] = useState(_saved.encoderThreads ?? 4)
   const [encoderQueue, setEncoderQueue] = useState(_saved.encoderQueue ?? 100)
   const [pushToHub, setPushToHub] = useState(_saved.pushToHub ?? true)
+  const [webPreview, setWebPreview] = useState(_saved.webPreview ?? true)
   const [resume, setResume] = useState(false)
   const [cliArgs, setCliArgs] = useState('')
   const [cliEdited, setCliEdited] = useState(false)
@@ -45,6 +47,8 @@ export default function RecordingPage() {
   const [status, setStatus] = useState<RecordStatusData | null>(null)
   const [logs, setLogs] = useState<string[]>([])
   const MAX_LOGS = 500
+
+  const isRunning = recordState === 'running' || recordState === 'starting' || recordState === 'stopping'
 
   const { connected } = useWebSocket('/ws', {
     onMessage: useCallback((msg: WsMessage) => {
@@ -77,9 +81,9 @@ export default function RecordingPage() {
     localStorage.setItem('piper_record_settings', JSON.stringify({
       followerPort, leaderPort, cameraMapping, camWidth, camHeight,
       repoId, singleTask, numEpisodes, fps, episodeTime, resetTime,
-      streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub,
+      streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview,
     }))
-  }, [followerPort, leaderPort, cameraMapping, camWidth, camHeight, repoId, singleTask, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub])
+  }, [followerPort, leaderPort, cameraMapping, camWidth, camHeight, repoId, singleTask, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview])
 
   // 데이터셋 존재 여부 확인
   useEffect(() => {
@@ -127,7 +131,6 @@ export default function RecordingPage() {
     }).then(r => setCliArgs(r.command)).catch(() => {})
   }, [followerPort, leaderPort, cameraMapping, repoId, singleTask, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, pushToHub, resume, cliEdited])
 
-  const isRunning = recordState === 'running' || recordState === 'starting' || recordState === 'stopping'
   const canStart = !!followerPort && !!leaderPort && !!repoId && !!singleTask && !isRunning
 
   const handleStart = async () => {
@@ -142,6 +145,7 @@ export default function RecordingPage() {
         repo_id: repoId, single_task: singleTask,
         num_episodes: numEpisodes, fps, episode_time_s: episodeTime, reset_time_s: resetTime,
         streaming_encoding: streamingEncoding, vcodec, encoder_threads: encoderThreads, encoder_queue_maxsize: encoderQueue, push_to_hub: pushToHub, resume,
+        web_preview: webPreview,
       })
     } catch (e) {
       const msg = e instanceof Error ? e.message : '알 수 없는 오류'
@@ -351,6 +355,10 @@ export default function RecordingPage() {
                       <input type="checkbox" checked={resume} onChange={e => { setResume(e.target.checked); setCliEdited(false) }} className="accent-blue-500" />
                       <span className="text-neutral-400">이어서 녹화 (Resume)</span>
                     </label>
+                    <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                      <input type="checkbox" checked={webPreview} onChange={e => setWebPreview(e.target.checked)} className="accent-blue-500" />
+                      <span className="text-neutral-400">녹화 중 웹 미리보기</span>
+                    </label>
                   </div>
                 </div>
               </div>
@@ -447,8 +455,9 @@ export default function RecordingPage() {
           )}
         </div>
 
-        {/* 우측: 로그 */}
+        {/* 우측: 카메라 미리보기 + 로그 */}
         <div className="space-y-4">
+          {isRunning && webPreview && <RecordPreview />}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
             <h3 className="text-sm font-semibold mb-2">로그</h3>
             <LogViewer logs={logs} onClear={() => setLogs([])} />

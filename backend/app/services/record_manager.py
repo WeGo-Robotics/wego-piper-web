@@ -81,32 +81,26 @@ class RecordManager:
         if changed and self._on_status:
             self._on_status(self.get_status())
 
-    async def start(self, cmd: list[str], total_episodes: int = 0) -> None:
+    async def start(
+        self, cmd: list[str], total_episodes: int = 0,
+        env_extra: dict[str, str] | None = None,
+    ) -> None:
         self.status = RecordStatus(total_episodes=total_episodes)
-        await self.pm.start(cmd)
+        await self.pm.start(cmd, env_extra=env_extra)
 
     async def stop(self) -> None:
         await self.pm.stop()
 
     def send_key(self, key: str) -> None:
-        """pynput으로 키 주입 (→, ←, ESC)."""
-        try:
-            from pynput.keyboard import Controller, Key
-            kb = Controller()
-            key_map = {
-                "right": Key.right,
-                "left": Key.left,
-                "escape": Key.esc,
-            }
-            k = key_map.get(key)
-            if k:
-                kb.press(k)
-                kb.release(k)
-                logger.info("Injected key: %s", key)
-        except ImportError:
-            logger.warning("pynput not available, cannot inject key")
-        except Exception as e:
-            logger.error("Key injection failed: %s", e)
+        """에피소드 제어 명령 전송 (right=건너뛰기, left=재녹화, escape=정지).
+
+        헤드리스라 pynput 키 주입은 불가하므로, ZMQ 제어 채널로 wrapper 에 명령을
+        보내 LeRobot events dict 를 직접 set 한다."""
+        from app.services.control_bridge import control_bridge
+        if control_bridge.send(key):
+            logger.info("Sent control command: %s", key)
+        else:
+            logger.warning("Control command not delivered: %s", key)
 
     def get_status(self) -> dict:
         progress = 0.0
