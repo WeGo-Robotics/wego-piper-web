@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { api } from '../services/api'
+import { copyText } from '../services/clipboard'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import type { Dataset, DatasetDetail } from '../types/models'
 import DiskUsageBar from '../components/DiskUsageBar'
@@ -264,7 +265,7 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-semibold">{detail.id}</h2>
                   <div className="flex gap-1">
-                    <button onClick={() => { navigator.clipboard.writeText((detail as Record<string, unknown>).path as string ?? detail.id) }}
+                    <button onClick={() => { copyText((detail as Record<string, unknown>).path as string ?? detail.id) }}
                       className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 hover:text-white">
                       경로 복사
                     </button>
