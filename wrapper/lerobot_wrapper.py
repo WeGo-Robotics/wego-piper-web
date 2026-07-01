@@ -72,7 +72,7 @@ PARAM_SETTERS = {
     "max_guidance_weight": lambda p, v: _set_rtc(p, "max_guidance_weight", float(v)),
     "execution_horizon": lambda p, v: _set_rtc(p, "execution_horizon", int(v)),
     "temporal_ensemble_coeff": lambda p, v: setattr(p.config, "temporal_ensemble_coeff", float(v)) if hasattr(p.config, "temporal_ensemble_coeff") else None,
-    "n_action_steps": lambda p, v: setattr(p.config, "n_action_steps", int(v)),
+    # n_action_steps는 policy.config가 아니라 _actions_per_chunk(큐 크기)로 별도 관리 → param_listener에서 처리
     "use_amp": lambda p, v: setattr(p.config, "use_amp", bool(v)),
 }
 
@@ -86,6 +86,15 @@ _action_filter = ActionFilter()
 # 일시정지 + 수동 조작
 _paused = False
 _manual_action: dict | None = None  # {"joint1.pos": 0.0, ...}
+
+# 다음 추론 트리거 시점: 액션 큐 잔량이 이 % 이하로 떨어지면 재추론.
+#   0   = 큐가 완전히 빌 때만 (지연 동안 정지 가능)
+#   100 = 매 스텝 재추론
+_refill_threshold_pct = 20.0
+
+# 추론 1회에서 받아 큐에 넣는 액션 수 (모델 chunk_size 이하로 자동 클램핑).
+# 시작 시 확정하되 ZMQ n_action_steps로 런타임 변경 가능. 0 = 모델 전체 청크.
+_actions_per_chunk = 0
 
 # 정책 타입별 lazy import (policies/__init__.py 우회)
 POLICY_IMPORTS = {
@@ -110,7 +119,7 @@ POLICY_IMPORTS = {
 
 def param_listener(policy: Any, zmq_addr: str) -> None:
     """ZMQ PULL 소켓에서 파라미터를 수신하여 policy 객체에 실시간 반영."""
-    global _current_task, _paused, _manual_action
+    global _current_task, _paused, _manual_action, _refill_threshold_pct, _actions_per_chunk
     ctx = zmq.Context()
     sock = ctx.socket(zmq.PULL)
     sock.bind(zmq_addr)
@@ -133,6 +142,18 @@ def param_listener(policy: Any, zmq_addr: str) -> None:
                 if key == "task":
                     _current_task = str(value)
                     logger.info("Updated task = %s", _current_task)
+                    continue
+                # 재추론 트리거 임계치 (큐 잔량 %)
+                if key == "refill_threshold_pct":
+                    _refill_threshold_pct = max(0.0, min(100.0, float(value)))
+                    logger.info("Updated refill_threshold_pct = %s", _refill_threshold_pct)
+                    continue
+                # 받아오는 액션 청크 크기 (실제 슬라이싱은 모델 chunk_size로 클램핑)
+                #   use_chunk_size: 0=모델 전체, N=앞 N개만 사용 (UI "액션 청크 크기" 슬라이더)
+                #   n_action_steps: ACT 파라미터 슬라이더 (동일하게 청크 크기로 처리)
+                if key in ("use_chunk_size", "n_action_steps"):
+                    _actions_per_chunk = max(0, int(value)) if key == "use_chunk_size" else max(1, int(value))
+                    logger.info("Updated actions_per_chunk = %d (via %s)", _actions_per_chunk, key)
                     continue
                 # 액션 필터 파라미터
                 if _action_filter.update_param(key, value):
@@ -172,6 +193,7 @@ def main() -> None:
     parser.add_argument("--task", default=None)
     parser.add_argument("--zmq-addr", default="tcp://127.0.0.1:5555")
     parser.add_argument("--config-overrides", default="{}")
+    parser.add_argument("--debug", action="store_true", help="주고받은 모든 데이터를 별도 폴더에 기록")
     args = parser.parse_args()
 
     cameras_cfg = json.loads(args.cameras)
@@ -189,7 +211,7 @@ def main() -> None:
 
     register_third_party_plugins()
 
-    global _current_task
+    global _current_task, _refill_threshold_pct, _actions_per_chunk
     _current_task = args.task if args.task else "do the task"
 
     # ── 1. 로봇 생성 ──
@@ -261,6 +283,10 @@ def main() -> None:
         if key == "n_action_steps":
             _actions_per_chunk_override = int(value)
             logger.info("actions_per_chunk override: %s", value)
+            continue
+        if key == "refill_threshold_pct":
+            _refill_threshold_pct = max(0.0, min(100.0, float(value)))
+            logger.info("refill_threshold_pct override: %s", _refill_threshold_pct)
             continue
         setter = PARAM_SETTERS.get(key)
         if setter:
@@ -356,13 +382,30 @@ def main() -> None:
     _csv_writer.writeheader()
     logger.info("CSV log: %s", _csv_path)
 
+    # ── 디버그 레코더 (--debug 시 주고받은 모든 데이터 기록) ──
+    recorder = None
+    if args.debug:
+        try:
+            from debug_recorder import DebugRecorder
+            recorder = DebugRecorder("local", {
+                "policy_path": args.policy_path,
+                "robot_type": args.robot_type,
+                "robot_port": args.robot_port,
+                "fps": args.fps,
+                "device": args.device,
+                "motor_names": _csv_motor_names,
+                "cameras": list(cameras_cfg.keys()),
+            })
+        except Exception as e:
+            logger.error("Debug recorder init failed: %s", e)
+
     # ── obs 변환용 LeRobot 유틸리티 (이전 서버 방식과 동일) ──
     from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 
     lerobot_features = hw_to_dataset_features(robot.observation_features, "observation", use_video=False)
     policy_image_features = policy.config.image_features
-    actions_per_chunk = _actions_per_chunk_override or policy_cfg.n_action_steps
-    logger.info("actions_per_chunk: %d (model default: %d)", actions_per_chunk, policy_cfg.n_action_steps)
+    _actions_per_chunk = _actions_per_chunk_override or policy_cfg.n_action_steps
+    logger.info("actions_per_chunk: %d (model default: %d)", _actions_per_chunk, policy_cfg.n_action_steps)
 
     def _prepare_observation(raw_obs: dict) -> dict:
         """raw_obs → 모델 입력 변환. preprocessor가 있으면 사용."""
@@ -448,20 +491,30 @@ def main() -> None:
     _obs_event = threading.Event()
     _inference_running = True
     _inference_ms_shared = 0.0
+    _infer_seq = 0
     motor_names = list(robot.action_features.keys())
 
     def _inference_thread_fn():
         """별도 스레드에서 predict_action_chunk() 실행 (서버 방식)."""
-        nonlocal _latest_action_dict, _latest_action_np, _inference_ms_shared, _action_queue
+        nonlocal _latest_action_dict, _latest_action_np, _inference_ms_shared, _action_queue, _infer_seq
         while _inference_running:
-            _obs_event.wait(timeout=1.0)
+            triggered = _obs_event.wait(timeout=1.0)
             if not _inference_running:
                 break
+            # 타임아웃(새 관측 없음)이면 재추론 금지 — 낡은 obs로 큐를 채워
+            # 메인 루프의 큐-소진 재추론(_obs_for_inference 갱신)을 막는 것을 방지.
+            if not triggered:
+                continue
             _obs_event.clear()
 
             raw_obs = _obs_for_inference
             if raw_obs is None:
                 continue
+
+            seq = _infer_seq
+            _infer_seq += 1
+            if recorder is not None:
+                recorder.record_observation(seq, raw_obs, _current_task)
 
             t0 = time.monotonic()
             try:
@@ -486,8 +539,11 @@ def main() -> None:
                     action_chunk = policy.predict_action_chunk(observation)
                     if action_chunk.ndim != 3:
                         action_chunk = action_chunk.unsqueeze(0)
-                    # (B, chunk_size, action_dim) → (actions_per_chunk, action_dim)
-                    action_chunk = action_chunk[0, :actions_per_chunk, :]
+                    # (B, chunk_size, action_dim) → (n, action_dim).
+                    # 원하는 크기가 모델 실제 청크 길이를 넘지 않도록 클램핑 (0=전체).
+                    _model_chunk = action_chunk.shape[1]
+                    _apc = _model_chunk if _actions_per_chunk <= 0 else max(1, min(_actions_per_chunk, _model_chunk))
+                    action_chunk = action_chunk[0, :_apc, :]
 
                 # postprocessor 적용 (unnormalize) + 액션 큐에 추가
                 new_queue = []
@@ -506,6 +562,14 @@ def main() -> None:
                         _latest_action_np, _latest_action_dict = new_queue[0]
 
                 _inference_ms_shared = round((time.monotonic() - t0) * 1000, 1)
+
+                if recorder is not None:
+                    recorder.record_inference(
+                        seq,
+                        action_chunk.cpu().numpy(),
+                        [a_dict for (_, a_dict) in new_queue],
+                        _inference_ms_shared,
+                    )
             except Exception as e:
                 logger.error("Inference thread error: %s", e, exc_info=True)
 
@@ -564,10 +628,14 @@ def main() -> None:
                 else:
                     action_dict = _latest_action_dict
                     action_np = _latest_action_np
+                qsize_after = len(_action_queue)
 
-            # 항상 최신 obs를 준비 (추론 스레드가 event.wait()에서 대기 중일 때만 소비됨)
-            _obs_for_inference = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()}
-            if not _obs_event.is_set():
+            # 큐 잔량이 임계치(%) 이하로 떨어질 때만 새 추론을 트리거 (매 스텝 X).
+            # 임계치를 높이면 큐가 비기 전에 미리 재추론해 지연을 감추고(액션 일부 폐기),
+            # 낮추면 청크를 더 소진한 뒤 재추론(폐기 최소화, 지연 노출 위험).
+            _refill_lead = max(1, _actions_per_chunk) * (_refill_threshold_pct / 100.0)
+            if qsize_after <= _refill_lead and not _obs_event.is_set():
+                _obs_for_inference = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()}
                 _obs_event.set()
 
             filtered = None
@@ -618,6 +686,17 @@ def main() -> None:
             if step % 30 == 0:
                 _csv_file.flush()
 
+            if recorder is not None:
+                recorder.record_step(
+                    step,
+                    action_dict,
+                    filtered,
+                    {m: round(state_values[j], 4) for j, m in enumerate(_csv_motor_names) if j < len(state_values)},
+                    _current_task,
+                    _paused,
+                    current_fps,
+                )
+
             # 카메라 프리뷰 (20스텝마다)
             if step % 20 == 0:
                 def _save_previews(snap):
@@ -658,8 +737,10 @@ def main() -> None:
         except Exception:
             pass
         _csv_file.close()
-        print(json.dumps({"t": "log_saved", "csv_path": _csv_path, "steps": step}), flush=True)
-        logger.info("Done. Total steps: %d, CSV log: %s", step, _csv_path)
+        _debug_dir = recorder.close() if recorder is not None else None
+        print(json.dumps({"t": "log_saved", "csv_path": _csv_path, "steps": step, "debug_dir": _debug_dir}), flush=True)
+        logger.info("Done. Total steps: %d, CSV log: %s%s", step, _csv_path,
+                    f", debug: {_debug_dir}" if _debug_dir else "")
 
 
 if __name__ == "__main__":

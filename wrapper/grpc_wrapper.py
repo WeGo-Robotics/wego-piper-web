@@ -168,6 +168,7 @@ def main() -> None:
     parser.add_argument("--task", default="do the task")
     parser.add_argument("--fps", type=int, default=20)
     parser.add_argument("--zmq-addr", default="tcp://127.0.0.1:5555")
+    parser.add_argument("--debug", action="store_true", help="주고받은 모든 데이터를 별도 폴더에 기록")
     args = parser.parse_args()
 
     cameras_cfg = json.loads(args.cameras)
@@ -339,6 +340,25 @@ def main() -> None:
     fps_tracker = FPSTracker(target_fps=args.fps)
     _obs_sending = threading.Event()  # obs 전송 중 플래그 (중복 전송 방지)
 
+    # ── 디버그 레코더 (--debug 시 주고받은 모든 데이터 기록) ──
+    recorder = None
+    _recv_seq = 0
+    _obs_seq = 0
+    if args.debug:
+        try:
+            from debug_recorder import DebugRecorder
+            recorder = DebugRecorder("server", {
+                "server_address": args.server_address,
+                "pretrained_path": args.pretrained_path,
+                "policy_type": args.policy_type,
+                "robot_type": args.robot_type,
+                "fps": args.fps,
+                "motor_names": motor_names,
+                "cameras": list(cameras_cfg.keys()),
+            })
+        except Exception as e:
+            logger.error("Debug recorder init failed: %s", e)
+
     def _actions_to_numpy(actions):
         """TimedAction 리스트를 numpy 배열로 일괄 변환 (torch→numpy 1회)."""
         return np.stack([a.get_action().numpy() for a in actions])
@@ -435,7 +455,7 @@ def main() -> None:
         _dlog(f"AGG_DETAIL np_conv+filter={(_t2-_t0)*1000:.1f}ms snap={(_t3-_t2)*1000:.1f}ms merge={(_t4-_t3)*1000:.1f}ms swap={(_t5-_t4)*1000:.1f}ms")
 
     def receive_actions():
-        nonlocal action_chunk_size
+        nonlocal action_chunk_size, _recv_seq
         start_barrier.wait()
         logger.info("Action receiver thread starting")
         while not shutdown_event.is_set():
@@ -451,6 +471,12 @@ def main() -> None:
                 if _use_chunk_size > 0 and len(timed_actions) > _use_chunk_size:
                     timed_actions = timed_actions[:_use_chunk_size]
                 action_chunk_size = max(action_chunk_size, len(timed_actions))
+                if recorder is not None:
+                    try:
+                        recorder.record_inference(_recv_seq, _actions_to_numpy(timed_actions))
+                        _recv_seq += 1
+                    except Exception:
+                        pass
                 t_agg_start = time.perf_counter()
                 _aggregate_action_queues(timed_actions)
                 t_agg_end = time.perf_counter()
@@ -650,6 +676,10 @@ def main() -> None:
             if step % 30 == 0:
                 _csv_file.flush()
 
+            if recorder is not None:
+                recorder.record_step(step, target_action, action_dict, actual_vals,
+                                     _current_task, _paused, round(_actual_fps, 1))
+
             # (2) 관측 읽기 + 전송 — 큐 50% 소진 시 전송 (서버 과부하 방지)
             obs_sending_now = _obs_sending.is_set()
             with action_queue_lock:
@@ -659,7 +689,7 @@ def main() -> None:
 
             if ready_to_send and not obs_sending_now:
                 def _read_and_send_obs():
-                    nonlocal obs
+                    nonlocal obs, _obs_seq
                     _obs_sending.set()
                     try:
                         t_obs_start = time.perf_counter()
@@ -684,6 +714,9 @@ def main() -> None:
                         obs_iter = send_bytes_in_chunks(obs_bytes, services_pb2.Observation, log_prefix="[WEB]", silent=True)
                         stub.SendObservations(obs_iter)
                         t_send = time.perf_counter()
+                        if recorder is not None:
+                            recorder.record_observation(_obs_seq, obs, _current_task)
+                            _obs_seq += 1
                         _dlog(f"OBS_THREAD read={(t_obs_read-t_obs_start)*1000:.1f}ms pickle={(t_pickle-t_obs_read)*1000:.1f}ms send={(t_send-t_pickle)*1000:.1f}ms total={(t_send-t_obs_start)*1000:.1f}ms")
                     except Exception as e:
                         _dlog(f"OBS_THREAD ERROR: {e}")
@@ -752,8 +785,10 @@ def main() -> None:
         channel.close()
         _csv_file.close()
         _debug_log.close()
-        print(json.dumps({"t": "log_saved", "csv_path": _csv_path, "steps": step}), flush=True)
-        logger.info("Done. Total steps: %d, CSV log: %s", step, _csv_path)
+        _debug_dir = recorder.close() if recorder is not None else None
+        print(json.dumps({"t": "log_saved", "csv_path": _csv_path, "steps": step, "debug_dir": _debug_dir}), flush=True)
+        logger.info("Done. Total steps: %d, CSV log: %s%s", step, _csv_path,
+                    f", debug: {_debug_dir}" if _debug_dir else "")
 
 
 if __name__ == "__main__":

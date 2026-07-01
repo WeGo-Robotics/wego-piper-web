@@ -11,6 +11,7 @@ const navItems = [
   { to: '/hub', label: '허브' },
   { to: '/policy-server', label: '정책서버' },
   { to: '/logs', label: '로그' },
+  { to: '/debug', label: '디버그 ↗', external: true },
   { to: '/settings', label: '설정' },
 ]
 
@@ -21,22 +22,34 @@ export default function Layout() {
         <div className="max-w-7xl mx-auto px-4 flex items-center h-14 gap-6">
           <span className="font-bold text-lg">Piper</span>
           <div className="flex gap-1">
-            {navItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === '/'}
-                className={({ isActive }) =>
-                  `px-3 py-1.5 rounded text-sm transition-colors ${
-                    isActive
-                      ? 'bg-neutral-700 text-white'
-                      : 'text-neutral-400 hover:text-white'
-                  }`
-                }
-              >
-                {item.label}
-              </NavLink>
-            ))}
+            {navItems.map((item) =>
+              item.external ? (
+                <a
+                  key={item.to}
+                  href={item.to}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 rounded text-sm transition-colors text-neutral-400 hover:text-white"
+                >
+                  {item.label}
+                </a>
+              ) : (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === '/'}
+                  className={({ isActive }) =>
+                    `px-3 py-1.5 rounded text-sm transition-colors ${
+                      isActive
+                        ? 'bg-neutral-700 text-white'
+                        : 'text-neutral-400 hover:text-white'
+                    }`
+                  }
+                >
+                  {item.label}
+                </NavLink>
+              )
+            )}
           </div>
         </div>
       </nav>

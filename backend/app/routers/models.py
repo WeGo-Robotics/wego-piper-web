@@ -180,6 +180,7 @@ class InferenceStartRequest(BaseModel):
     offset_correction: bool = False
     smoothing: str = "none"
     smoothing_window: int = 5
+    debug_mode: bool = False
 
 
 class InferencePreviewRequest(BaseModel):
@@ -197,6 +198,7 @@ class InferencePreviewRequest(BaseModel):
     smoothing_window: int = 5
     actions_per_chunk: int = 100
     params: dict = {}
+    debug_mode: bool = False
 
 
 @router.post("/inference/preview")
@@ -224,6 +226,7 @@ async def preview_inference_args(body: InferencePreviewRequest):
             "smoothing_window": body.smoothing_window,
             "task": body.params.get("task", "do the task"),
             "fps": 20,
+            "debug": body.debug_mode,
         }
         if cameras:
             build_params["cameras"] = cameras
@@ -238,6 +241,7 @@ async def preview_inference_args(body: InferencePreviewRequest):
             "robot_port": robot_port,
             "device": "cuda",
             "use_amp": True,
+            "debug": body.debug_mode,
             **body.params,
         }
         if cameras:
@@ -291,6 +295,7 @@ async def start_inference(body: InferenceStartRequest):
             "smoothing_window": body.smoothing_window,
             "task": body.params.get("task", "do the task"),
             "fps": 20,
+            "debug": body.debug_mode,
         }
         if cameras:
             build_params["cameras"] = cameras
@@ -306,6 +311,7 @@ async def start_inference(body: InferenceStartRequest):
             "robot_port": robot_port,
             "device": "cuda",
             "use_amp": True,
+            "debug": body.debug_mode,
             **body.params,
         }
         if cameras:
@@ -318,8 +324,9 @@ async def start_inference(body: InferenceStartRequest):
     follower_ifaces = body.robot_ports if is_bimanual else ([robot_port] if robot_port else None)
     _clear_arm_errors("inference-start", follower_ifaces)
 
+    env_extra = {"PIPER_DEBUG_DIR": settings.debug_dir} if body.debug_mode else None
     try:
-        await process_manager.start(args)
+        await process_manager.start(args, env_extra=env_extra)
     except Exception as e:
         raise HTTPException(500, f"프로세스 시작 실패: {e}")
     return {"status": "started", "pid": process_manager.pid, "args": args, "mode": body.inference_mode}
@@ -338,8 +345,9 @@ async def start_inference_custom(body: InferenceStartCustomRequest):
     # 추론 기동 전 로봇팔 에러 플래그 조회 + 무조건 클리어 (연결된 모든 follower)
     _clear_arm_errors("inference-start")
 
+    env_extra = {"PIPER_DEBUG_DIR": settings.debug_dir} if "--debug" in body.args else None
     try:
-        await process_manager.start(body.args)
+        await process_manager.start(body.args, env_extra=env_extra)
     except Exception as e:
         raise HTTPException(500, f"프로세스 시작 실패: {e}")
     return {"status": "started", "pid": process_manager.pid, "args": body.args}

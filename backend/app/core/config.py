@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     # 디스크 용량 경고 임계치 (GB)
     disk_warning_threshold_gb: float = 10.0
 
+    # 디버그 모드에서 추론 데이터를 기록할 폴더 (wrapper에 PIPER_DEBUG_DIR로 전달)
+    debug_dir: str = "/tmp/piper_debug"
+
     # 실행 경로
     local_python: str = "python"  # 로컬 wrapper용 python
     grpc_python: str = str(Path.home() / "miniconda3" / "bin" / "python")  # gRPC wrapper용 python

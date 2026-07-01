@@ -67,6 +67,7 @@ export default function InferencePage() {
   const [smoothingWindow, setSmoothingWindow] = useState(5)
   const [policyType, setPolicyType] = useState('smolvla')
   const [actionsPerChunk, setActionsPerChunk] = useState(100)
+  const [debugMode, setDebugMode] = useState(false)
   const [processState, setProcessState] = useState<ProcessState>('idle')
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null)
   const [paused, setPaused] = useState(false)
@@ -78,6 +79,7 @@ export default function InferencePage() {
   const [params, setParams] = useState({
     fps: 20, max_velocity: 180, max_gripper_velocity: 300,
     lowpass_alpha: 0.5, max_jerk: 0, interpolation_steps: 0, use_chunk_size: 0,
+    refill_threshold_pct: 20,
     max_guidance_weight: 10.0, execution_horizon: 10,
     temporal_ensemble_coeff: 0.01, n_action_steps: 50,
   })
@@ -93,10 +95,14 @@ export default function InferencePage() {
         setTelemetry(td)
         if (td.paused !== undefined) setPaused(td.paused)
       } else if (msg.type === 'log_saved') {
-        const d = msg.data as { csv_path: string; steps: number }
+        const d = msg.data as { csv_path: string; steps: number; debug_dir?: string | null }
         const filename = d.csv_path.split('/').pop() ?? ''
         setLastLogFile(filename)
-        setLogs((prev) => [...prev, `[INFO] CSV 로그 저장 완료: ${d.csv_path} (${d.steps} steps)`])
+        setLogs((prev) => {
+          const next = [...prev, `[INFO] CSV 로그 저장 완료: ${d.csv_path} (${d.steps} steps)`]
+          if (d.debug_dir) next.push(`[INFO] 디버그 기록 저장됨: ${d.debug_dir} → "디버그" 탭에서 확인`)
+          return next
+        })
       } else if (msg.type === 'log') setLogs((prev) => {
         const next = [...prev, msg.data as string]
         return next.length > MAX_LOGS ? next.slice(-MAX_LOGS) : next
@@ -165,12 +171,12 @@ export default function InferencePage() {
             inference_mode: inferenceMode, server_address: serverAddress,
             policy_type: policyType, actions_per_chunk: actionsPerChunk,
             aggregate_fn: aggregateFn, offset_correction: offsetCorrection,
-            smoothing, smoothing_window: smoothingWindow,
+            smoothing, smoothing_window: smoothingWindow, debug_mode: debugMode,
           }).then((r) => { if (!cliEdited) setCliArgs(r.command) }).catch(() => {})
         }
       }
     }).catch(() => {})
-  }, [selectedModel, selectedFollower, cameraMapping, inferenceMode, serverAddress, policyType, actionsPerChunk, aggregateFn, offsetCorrection, smoothing, smoothingWindow])
+  }, [selectedModel, selectedFollower, cameraMapping, inferenceMode, serverAddress, policyType, actionsPerChunk, aggregateFn, offsetCorrection, smoothing, smoothingWindow, debugMode])
 
   const saveSelectionRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => {
@@ -202,6 +208,7 @@ export default function InferencePage() {
         offset_correction: offsetCorrection,
         smoothing,
         smoothing_window: smoothingWindow,
+        debug_mode: debugMode,
       })
     } catch (e) {
       const msg = e instanceof Error ? e.message : '알 수 없는 오류'
@@ -454,6 +461,12 @@ export default function InferencePage() {
                 onChange={(e) => { setTaskText(e.target.value); localStorage.setItem('piper_task', e.target.value) }}
                 placeholder="언어 명령어 입력..."
                 className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
+              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <input type="checkbox" checked={debugMode}
+                  onChange={(e) => { setDebugMode(e.target.checked); setCliEdited(false) }}
+                  className="accent-blue-500" />
+                <span className="text-neutral-400">디버그 모드 (주고받은 모든 데이터를 별도 폴더에 기록)</span>
+              </label>
             </div>
 
             {/* CLI */}
@@ -593,8 +606,10 @@ export default function InferencePage() {
               onChange={(v) => handleParamChange('max_jerk', v)} />
             <ParamSlider label="보간 스텝 (0=OFF)" value={params.interpolation_steps ?? 0} min={0} max={10} step={1}
               onChange={(v) => handleParamChange('interpolation_steps', v)} />
-            <ParamSlider label="액션 청크 크기 (0=전부)" value={params.use_chunk_size ?? 0} min={0} max={200} step={5}
+            <ParamSlider label="받는 액션 청크 크기 (0=모델 전체)" value={params.use_chunk_size ?? 0} min={0} max={200} step={5}
               onChange={(v) => handleParamChange('use_chunk_size', v)} />
+            <ParamSlider label="재추론 트리거 (큐 잔량 ≤ %, 0=소진 시)" value={params.refill_threshold_pct ?? 20} min={0} max={100} step={5}
+              onChange={(v) => handleParamChange('refill_threshold_pct', v)} />
           </div>
           {RTC_POLICIES.includes(activePolicy) && (
             <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-4">

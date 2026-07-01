@@ -25,6 +25,7 @@ SAFE_PARAMS = {
     "max_jerk": {"min": 0, "max": 5000},
     "interpolation_steps": {"min": 0, "max": 10},
     "use_chunk_size": {"min": 0, "max": 200},
+    "refill_threshold_pct": {"min": 0, "max": 100},
 }
 
 # Unsafe 파라미터: 재시작 필요

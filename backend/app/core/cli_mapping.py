@@ -26,6 +26,7 @@ INFERENCE_ARGS_MAP: dict[str, str] = {
     "use_amp": "--use-amp",
     "task": "--task",
     "cameras": "--cameras",
+    "debug": "--debug",
 }
 
 # 데이터셋 편집 operation 매핑
@@ -44,7 +45,7 @@ def build_inference_args(params: dict) -> list[str]:
 
     # RTC/ACT 파라미터는 config-overrides로 묶어서 전달
     overrides = {}
-    override_keys = {"max_guidance_weight", "execution_horizon", "temporal_ensemble_coeff", "n_action_steps"}
+    override_keys = {"max_guidance_weight", "execution_horizon", "temporal_ensemble_coeff", "n_action_steps", "refill_threshold_pct"}
 
     for key, value in params.items():
         if key in override_keys:
@@ -91,6 +92,7 @@ GRPC_CLIENT_ARGS_MAP: dict[str, str] = {
     "smoothing_window": "--smoothing-window",
     "task": "--task",
     "fps": "--fps",
+    "debug": "--debug",
 }
 
 
