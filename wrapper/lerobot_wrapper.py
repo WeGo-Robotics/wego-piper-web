@@ -495,11 +495,12 @@ def main() -> None:
     _inference_running = True
     _inference_ms_shared = 0.0
     _infer_seq = 0
+    _inference_in_flight = False  # 연산 중 재트리거 방지 (이벤트는 연산 시작 시 clear되므로 별도 플래그 필요)
     motor_names = list(robot.action_features.keys())
 
     def _inference_thread_fn():
         """별도 스레드에서 predict_action_chunk() 실행 (서버 방식)."""
-        nonlocal _latest_action_dict, _latest_action_np, _inference_ms_shared, _action_queue, _infer_seq
+        nonlocal _latest_action_dict, _latest_action_np, _inference_ms_shared, _action_queue, _infer_seq, _inference_in_flight
         while _inference_running:
             triggered = _obs_event.wait(timeout=1.0)
             if not _inference_running:
@@ -509,9 +510,11 @@ def main() -> None:
             if not triggered:
                 continue
             _obs_event.clear()
+            _inference_in_flight = True
 
             raw_obs = _obs_for_inference
             if raw_obs is None:
+                _inference_in_flight = False
                 continue
 
             seq = _infer_seq
@@ -575,6 +578,8 @@ def main() -> None:
                     )
             except Exception as e:
                 logger.error("Inference thread error: %s", e, exc_info=True)
+            finally:
+                _inference_in_flight = False
 
     inference_thread = threading.Thread(target=_inference_thread_fn, daemon=True)
     inference_thread.start()
@@ -637,7 +642,10 @@ def main() -> None:
             # 임계치를 높이면 큐가 비기 전에 미리 재추론해 지연을 감추고(액션 일부 폐기),
             # 낮추면 청크를 더 소진한 뒤 재추론(폐기 최소화, 지연 노출 위험).
             _refill_lead = max(1, _actions_per_chunk) * (_refill_threshold_pct / 100.0)
-            if qsize_after <= _refill_lead and not _obs_event.is_set():
+            # 이벤트 대기(set)뿐 아니라 실제 연산 중(_inference_in_flight)에도 재트리거 금지 —
+            # 연산 시작 시 이벤트가 clear되므로 이 플래그가 없으면 연산 도중 큐가 임계치 이하로
+            # 떨어져 중복 추론이 짝지어 발생함.
+            if qsize_after <= _refill_lead and not _obs_event.is_set() and not _inference_in_flight:
                 _obs_for_inference = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()}
                 _obs_event.set()
 
