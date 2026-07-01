@@ -83,6 +83,9 @@ _current_task = "do the task"
 from action_filter import ActionFilter
 _action_filter = ActionFilter()
 
+# 단계별 파킹 컨트롤러 (추론 종료 후 원점 복귀)
+from parking_controller import ParkingController
+
 # 일시정지 + 수동 조작
 _paused = False
 _manual_action: dict | None = None  # {"joint1.pos": 0.0, ...}
@@ -726,14 +729,20 @@ def main() -> None:
         _obs_event.set()
         inference_thread.join(timeout=3)
         logger.info("Returning to home position...")
+        ctrl = ParkingController(robot)
         try:
-            robot.parking()  # motion_status를 폴링하며 팔이 멈출 때까지 이미 블로킹함
-            time.sleep(0.5)  # 토크 차단 전 최종 정지 안정화 여유 (parking이 모션 완료 보장)
+            # 이상 시 False(모션 스킵), 정상 시 단계별 파킹 후 True
+            parked = ctrl.run()
+            if parked:
+                time.sleep(0.5)  # 토크 차단 전 최종 정지 안정화 여유
         except Exception as e:
             logger.warning("Parking failed: %s", e)
         logger.info("Disabling torque and disconnecting...")
         try:
-            robot.disconnect(disable_torque=True)
+            # disconnect(disable_torque=True)는 내부에서 기존 동시-파킹을 재호출하므로,
+            # 토크는 여기서 명시적으로 끊고(closePort 전 CAN 전송) disconnect는 파킹 없이 호출.
+            ctrl.disable_torque()
+            robot.disconnect(disable_torque=False)
         except Exception:
             pass
         _csv_file.close()
