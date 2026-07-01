@@ -50,6 +50,47 @@ npm run build       # 프로덕션 빌드
 npx tsc --noEmit    # 타입 체크
 ```
 
+## Docker 배포
+
+전체 스택(백엔드 + LeRobot + Piper 플러그인 + 프론트엔드)을 컨테이너로 제공한다.
+호스트 환경(Python 3.13 / torch 2.11.0+cu130 / lerobot 0.5.0)을 그대로 재현하며,
+**로봇이 물리적으로 연결된 호스트**에서만 실행한다 (하드웨어 직접 접근이 필요).
+
+### 사전 요구사항 (호스트)
+
+- Docker + Docker Compose v2
+- [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) (GPU 패스스루)
+- CAN 인터페이스(`can_follower1` 등) 호스트에서 구성/기동 — 커널/네트워크 레벨이라 컨테이너 밖
+- `v4l2loopback` 커널 모듈 호스트에 로드 — 커널 모듈은 컨테이너에서 삽입 불가
+- RealSense udev 규칙 설치: `sudo cp backend/udev/99-realsense-libusb.rules /etc/udev/rules.d/ && sudo udevadm control --reload`
+
+### 내부 패키지 (vendor/)
+
+`lerobot_robot_piper`, `wego_piper` 는 공개 PyPI에 없어 `vendor/` 에 스냅샷으로 포함되어 있다.
+소스가 바뀌면 [vendor/README.md](vendor/README.md) 의 갱신 방법을 따라 다시 떠야 한다.
+
+### 실행
+
+```bash
+docker compose up -d --build      # 빌드 + 기동
+docker compose logs -f backend    # 백엔드 로그
+docker compose down               # 정지
+```
+
+브라우저에서 `http://<호스트IP>/` 접속 (nginx `:80` → backend `:8000` 프록시).
+
+### 볼륨 (영속화)
+
+| 호스트 경로 | 컨테이너 | 용도 |
+|-------------|----------|------|
+| `~/.cache/huggingface` | `/root/.cache/huggingface` | 모델·데이터셋·lerobot 캐시 |
+| `~/.config/piper-web` | `/root/.config/piper-web` | `model_paths.json` 등 사용자 설정 |
+| `./backend/data` | `/app/backend/data` | 로그/평가 데이터 |
+| `./backend/outputs` | `/app/backend/outputs` | 학습 체크포인트 |
+
+> GPU가 안 잡히면 compose 의 `deploy.resources...` 대신 `runtime: nvidia` 를 사용한다.
+> 호스트 `:80`/`:8000` 이 이미 사용 중이면 충돌하므로 비워둔다 (host network).
+
 ## 추론 로그
 
 ### CSV 로깅

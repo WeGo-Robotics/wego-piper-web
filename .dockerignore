@@ -1,0 +1,31 @@
+# 빌드 컨텍스트 축소 (context 는 레포 루트, backend/ frontend/ Dockerfile 공유)
+
+.git
+.claude
+.vscode
+.idea
+
+# 프론트: 컨테이너에서 npm ci 로 재생성/재빌드
+frontend/node_modules
+frontend/dist
+
+# 파이썬 캐시/빌드 산출물
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+backend/build
+vendor/**/build
+
+# 대용량·런타임 데이터 (볼륨으로 마운트)
+backend/outputs
+backend/data
+
+# 시크릿/로컬 설정
+**/.env
+*.log
+
+# 문서/스크립트 (이미지에 불필요)
+docs
+tools
+*.md
+!vendor/**/README.md

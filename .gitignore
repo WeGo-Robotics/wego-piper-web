@@ -5,6 +5,11 @@ backend/__pycache__/
 backend/**/__pycache__/
 backend/*.egg-info/
 
+# Vendored package build artifacts (source is committed, build output is not)
+vendor/**/build/
+vendor/**/*.egg-info/
+vendor/**/__pycache__/
+
 # Environment
 backend/.env
 .env

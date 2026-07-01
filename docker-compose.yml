@@ -1,0 +1,56 @@
+# piper-web full-stack (backend + LeRobot + frontend).
+#
+# 반드시 로봇이 물리적으로 연결된 호스트에서 실행한다.
+# 사전 요구사항 (호스트, 컨테이너 밖):
+#   - nvidia-container-toolkit 설치 (GPU 패스스루)
+#   - CAN 인터페이스(can_follower1 등) 호스트에서 구성/기동
+#   - v4l2loopback 커널 모듈 호스트에 로드 (커널 모듈은 컨테이너에서 삽입 불가)
+#   - RealSense udev 규칙(backend/udev/99-realsense-libusb.rules)을 호스트 /etc/udev/rules.d/ 에 설치
+#
+# 실행:  docker compose up -d --build
+# 접속:  http://<호스트IP>/        (nginx :80 → backend :8000 프록시)
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: piper-web-backend
+    container_name: piper-web-backend
+    # CAN 넷디바이스 접근 + ZMQ localhost + nginx→backend 도달을 위해 호스트 네트워크
+    network_mode: host
+    # 하드웨어: raw CAN 소켓, /dev/video*, RealSense libusb, USB 리바인딩 복구(/sys 쓰기) 모두 필요
+    privileged: true
+    volumes:
+      - /dev:/dev                                             # 카메라/USB 장치 노드 (핫플러그 포함)
+      - /run/udev:/run/udev:ro                                # libusb/RealSense udev 조회
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface   # 모델·데이터셋·lerobot 캐시 (대용량)
+      - ${HOME}/.config/piper-web:/root/.config/piper-web      # model_paths.json 등 사용자 설정
+      - ./backend/data:/app/backend/data                      # 로그/평가 데이터 영속화
+      - ./backend/outputs:/app/backend/outputs                # 학습 체크포인트 영속화
+    environment:
+      - PIPER_LOCAL_PYTHON=/opt/venv/bin/python
+      - PIPER_GRPC_PYTHON=/opt/venv/bin/python
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all                        # compute+video (NVDEC/torchcodec)
+    # GPU (nvidia-container-toolkit). 아래가 안 되면 `runtime: nvidia` 로 대체.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: piper-web-frontend
+    container_name: piper-web-frontend
+    # host network 인 backend 에 127.0.0.1:8000 으로 프록시하기 위해 동일하게 호스트 네트워크
+    network_mode: host   # nginx :80
+    depends_on:
+      - backend
+    restart: unless-stopped
