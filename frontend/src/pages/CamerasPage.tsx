@@ -126,6 +126,38 @@ export default function CamerasPage() {
     finally { setBusyId(null) }
   }
 
+  // RealSense 하드웨어 리셋 (펌웨어 파워사이클) → 재열거 대기 후 재스캔
+  const handleResetDevice = async (camId: string) => {
+    if (busyId) return
+    if (!confirm('카메라를 하드웨어 리셋합니다.\n수 초간 사라졌다 다시 나타납니다. 계속할까요?')) return
+    setBusyId(camId)
+    // 실시간 보기/컨트롤 패널 정리 (리셋 중 프리뷰는 무의미)
+    setLiveIds((prev) => { const next = new Set(prev); next.delete(camId); return next })
+    if (controlsCam === camId) { setControlsCam(null); setControls([]) }
+    try {
+      await api.post('/cameras/reset-device', { id: camId })
+      // 리셋 후 USB 재열거까지 대기 → 재스캔으로 엔트리 갱신
+      await new Promise((r) => setTimeout(r, 4000))
+      const result = await api.get<CamInfo[]>('/cameras/scan?auto_connect=true')
+      setCams(result)
+      bumpPreview(result.map((c) => c.id))
+    } catch (e) {
+      alert('하드웨어 리셋 실패: ' + (e instanceof Error ? e.message : '알 수 없는 오류'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  // RealSense 카메라에만 노출되는 하드웨어 리셋 버튼
+  const ResetDeviceButton = ({ cam }: { cam: CamInfo }) =>
+    cam.cam_type === 'realsense' ? (
+      <button onClick={() => handleResetDevice(cam.id)} disabled={busyId === cam.id}
+        title="하드웨어 리셋 (펌웨어 파워사이클)"
+        className="py-1 px-2 text-xs rounded bg-neutral-700 hover:bg-orange-600 text-neutral-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        {busyId === cam.id ? <Spinner className="inline" /> : '리셋'}
+      </button>
+    ) : null
+
   const handleProbe = async (camId: string) => {
     if (busyId) return
     setBusyId(camId)
@@ -224,6 +256,7 @@ export default function CamerasPage() {
                         className="py-1 px-2 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white transition-colors">
                         해제
                       </button>
+                      <ResetDeviceButton cam={cam} />
                     </div>
                     {controlsCam === cam.id && (
                       <div className="border-t border-neutral-700 pt-2 mt-2 space-y-1.5">
@@ -300,10 +333,13 @@ export default function CamerasPage() {
                   <p className="text-xs text-neutral-400">{cam.name}
                     {cam.config.width && <span className="ml-2">{cam.config.width}x{cam.config.height}</span>}
                   </p>
-                  <button onClick={() => handleRegister(cam.id)} disabled={connectingId === cam.id}
-                    className="w-full py-1.5 text-xs rounded bg-neutral-700 group-hover:bg-green-600 text-neutral-300 group-hover:text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
-                    {connectingId === cam.id ? <><Spinner /> 등록 중...</> : '등록'}
-                  </button>
+                  <div className="flex gap-1.5">
+                    <button onClick={() => handleRegister(cam.id)} disabled={connectingId === cam.id}
+                      className="flex-1 py-1.5 text-xs rounded bg-neutral-700 group-hover:bg-green-600 text-neutral-300 group-hover:text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
+                      {connectingId === cam.id ? <><Spinner /> 등록 중...</> : '등록'}
+                    </button>
+                    <ResetDeviceButton cam={cam} />
+                  </div>
                 </div>
               </div>
             ))}
@@ -350,6 +386,7 @@ export default function CamerasPage() {
                         className="flex-1 py-1 text-xs rounded bg-green-600 hover:bg-green-500 text-white">등록</button>
                       <button onClick={() => handleDisconnect(cam.id)}
                         className="py-1 px-2 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">해제</button>
+                      <ResetDeviceButton cam={cam} />
                     </div>
                   </div>
                   {isExpanded && (

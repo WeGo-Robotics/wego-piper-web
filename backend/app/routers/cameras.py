@@ -6,15 +6,40 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.services.camera_manager import camera_manager
+from app.services.process_manager import ProcessState, process_manager
+from app.services.realsense_manager import realsense_hub
+from app.services.record_manager import record_manager
 
 router = APIRouter(prefix="/api/cameras", tags=["cameras"])
 
 _executor = ThreadPoolExecutor(max_workers=4)
 
 
+def _camera_owner() -> str | None:
+    """추론/녹화 subprocess가 실행 중이면 그 프로세스가 물리 카메라를 소유한다.
+
+    이때 백엔드가 같은 RealSense 디바이스를 동시에 열거나 UVC 컨트롤을 질의하면
+    (특히 D405) 커널 uvcvideo가 D-state로 물려 librealsense가 SIGABRT(-6)로 죽고
+    카메라까지 먹통이 된다. 디바이스를 직접 건드리는 엔드포인트는 이 동안 막는다."""
+    if process_manager.state in (ProcessState.RUNNING, ProcessState.STARTING):
+        return "추론"
+    if record_manager.is_running:
+        return "녹화"
+    return None
+
+
+def _guard_device_access() -> None:
+    owner = _camera_owner()
+    if owner:
+        raise HTTPException(409, f"{owner} 실행 중에는 카메라 디바이스에 접근할 수 없습니다")
+
+
 @router.get("/scan")
 async def scan_cameras():
     """카메라 스캔 + 병렬 probe (타임아웃 3초)."""
+    if _camera_owner():
+        # 프로세스가 카메라를 소유 중 → 디바이스 재열거/probe 없이 캐시만 반환
+        return [c.to_dict() for c in camera_manager.cameras.values()]
     camera_manager.scan()
     loop = asyncio.get_event_loop()
     tasks = []
@@ -33,6 +58,7 @@ class CameraIdRequest(BaseModel):
 @router.post("/probe")
 async def probe_camera(body: CameraIdRequest):
     """1프레임 캡처 (연결 유지 안 함)."""
+    _guard_device_access()
     loop = asyncio.get_event_loop()
     cam = camera_manager.cameras.get(body.id)
     if not cam:
@@ -45,6 +71,7 @@ async def probe_camera(body: CameraIdRequest):
 
 @router.post("/connect")
 async def connect_camera(body: CameraIdRequest):
+    _guard_device_access()
     loop = asyncio.get_event_loop()
     ok, msg = await loop.run_in_executor(
         _executor, camera_manager.connect_camera, body.id
@@ -68,6 +95,7 @@ class CameraConfigRequest(BaseModel):
 
 @router.post("/config")
 async def update_config(body: CameraConfigRequest):
+    _guard_device_access()
     loop = asyncio.get_event_loop()
     ok = await loop.run_in_executor(
         _executor, camera_manager.update_config, body.id, body.config
@@ -114,6 +142,7 @@ class CameraControlRequest(BaseModel):
 @router.post("/control")
 async def set_control(body: CameraControlRequest):
     """카메라 v4l2 컨트롤 값 설정."""
+    _guard_device_access()
     loop = asyncio.get_event_loop()
     ok = await loop.run_in_executor(
         _executor, camera_manager.set_control, body.id, body.name, body.value
@@ -123,9 +152,29 @@ async def set_control(body: CameraControlRequest):
     return {"status": "ok", "name": body.name, "value": body.value}
 
 
+@router.post("/reset-device")
+async def reset_device(body: CameraIdRequest):
+    """RealSense 하드웨어 리셋 (librealsense hardware_reset, 펌웨어 파워사이클).
+
+    카메라가 멈췄을 때 재부팅 없이 복구한다. reset 후 디바이스가 USB에서 잠시
+    사라졌다 재열거되므로 프론트는 응답 후 재스캔해야 한다."""
+    _guard_device_access()
+    cam = camera_manager.cameras.get(body.id)
+    if cam is not None and cam.cam_type != "realsense":
+        raise HTTPException(400, "RealSense 카메라만 하드웨어 리셋을 지원합니다")
+    loop = asyncio.get_event_loop()
+    ok, msg = await loop.run_in_executor(
+        _executor, realsense_hub.hardware_reset, body.id
+    )
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"status": "ok"}
+
+
 @router.post("/controls/reset")
 async def reset_controls(body: CameraIdRequest):
     """모든 v4l2 컨트롤을 초기값으로 복원."""
+    _guard_device_access()
     loop = asyncio.get_event_loop()
     controls = await loop.run_in_executor(_executor, camera_manager.get_controls, body.id)
     if not controls:
@@ -149,5 +198,8 @@ async def preview(cam_id: str):
 @router.get("/{cam_id:path}/controls")
 async def get_controls(cam_id: str):
     """카메라가 지원하는 v4l2 컨트롤 목록 + 현재값."""
+    # RealSense UVC 컨트롤 질의는 D405를 D-state로 물리게 하는 대표 원인이므로
+    # 추론/녹화가 디바이스를 소유 중일 때는 건드리지 않는다.
+    _guard_device_access()
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, camera_manager.get_controls, cam_id)

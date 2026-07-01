@@ -125,10 +125,20 @@ class _RSDevice:
 
     # ── 파이프라인 구성 ──
 
+    def is_d405(self) -> bool:
+        return "405" in (self.model or "")
+
     def _build_config(self, streams: set[str]):
         cfg = rs.config()
         rs.config.enable_device(cfg, self.serial)
-        for s in streams:
+        # D405는 단일 Stereo Module에서 color를 뽑는데, depth가 함께 켜져 있지
+        # 않으면 color 프레임이 아예 안 나온다(color-only=0 fps). color 요청 시
+        # depth를 조용히 함께 켜 준다(refcount/_active엔 안 들어가 read_loop가
+        # depth를 굳이 추출하진 않음 — 파이프라인만 활성화).
+        enable = set(streams)
+        if "color" in enable and self.is_d405() and "depth" in self.available:
+            enable.add("depth")
+        for s in enable:
             try:
                 if s == "color":
                     cfg.enable_stream(rs.stream.color)
@@ -352,6 +362,14 @@ class RealSenseHub:
         with self._lock:
             return self._devices.get(serial)
 
+    def is_d405(self, serial: str) -> bool:
+        """serial이 D405 모델인지 (마지막 scan 캐시 기준, 미확인이면 False).
+
+        D405는 depth 스트림이 함께 켜져야 color 프레임이 나오므로, 추론/녹화
+        카메라 설정에서 이 카메라만 use_depth를 켜기 위해 쓴다."""
+        dev = self._device(serial)
+        return dev is not None and dev.is_d405()
+
     def connect(self, cam_id: str) -> tuple[bool, str]:
         parsed = parse_id(cam_id)
         if not parsed:
@@ -388,6 +406,43 @@ class RealSenseHub:
                 except Exception as exc:
                     logger.warning("RealSense %s force_release failed: %s", dev.serial, exc)
         return released
+
+    def hardware_reset(self, cam_id: str) -> tuple[bool, str]:
+        """librealsense hardware_reset — 카메라 펌웨어를 파워사이클해 강제 재열거.
+
+        D405 등이 멈췄거나(프레임 정지) 상태가 꼬였을 때 재부팅/재연결 없이 복구한다.
+        먼저 활성 파이프라인·스트림을 정지(force_release)해 디바이스를 놓은 뒤 reset
+        명령을 보낸다. reset 후 카메라는 USB에서 수 초간 사라졌다 다시 나타나므로,
+        호출자는 이후 재스캔(scan)으로 엔트리를 갱신해야 한다.
+
+        주의: reset 명령도 UVC 경로로 디바이스에 접근하므로 이미 커널 D-state로 물린
+        경우 멈출 수 있어 _run_guarded 로 시간 상한을 강제한다. 이 경우 USB 리바인딩
+        (robot_manager.recover_usb_controllers)만이 복구 수단이다."""
+        if not _RS_AVAILABLE:
+            return False, "pyrealsense2 unavailable"
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return False, f"Not a RealSense id: {cam_id}"
+        serial, _ = parsed
+        dev = self._device(serial)
+        if dev is None:
+            return False, f"RealSense {serial} not found (rescan)"
+        ok = _run_guarded(
+            lambda: self._hardware_reset_impl(dev), 8.0, False, f"hardware_reset({cam_id})"
+        )
+        if ok:
+            return True, "OK"
+        return False, f"RealSense {serial} 하드웨어 리셋 실패 또는 응답 없음(디바이스 멈춤 의심)"
+
+    def _hardware_reset_impl(self, dev: "_RSDevice") -> bool:
+        # 파이프라인 정지 + refcount/프레임 비움 (op_guard 내부에서 획득)
+        dev.force_release()
+        with dev.op_guard(timeout=5.0):
+            device = self._find_device(dev.serial)
+            if device is None:
+                return False
+            device.hardware_reset()
+            return True
 
     def probe(self, cam_id: str) -> tuple[bool, str]:
         parsed = parse_id(cam_id)
