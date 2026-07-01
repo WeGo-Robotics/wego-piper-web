@@ -107,7 +107,9 @@ def _build_cameras_draccus(camera_mapping: dict[str, str]) -> str:
     for cam_name, cam_id in camera_mapping.items():
         if cam_id.startswith("rs:"):
             serial = cam_id.split(":")[1]
-            parts.append(f"{cam_name}: {{type: intelrealsense, serial_number_or_name: '{serial}', width: 640, height: 480, fps: 30}}")
+            from app.services.realsense_manager import realsense_hub
+            depth = ", use_depth: true" if realsense_hub.is_d405(serial) else ""
+            parts.append(f"{cam_name}: {{type: intelrealsense, serial_number_or_name: '{serial}', width: 640, height: 480, fps: 30, warmup_s: 5{depth}}}")
         else:
             parts.append(f"{cam_name}: {{type: opencv, index_or_path: '{cam_id}', width: 640, height: 480, fps: 30}}")
     return "{ " + ", ".join(parts) + " }"
@@ -127,7 +129,17 @@ def _build_cameras_json(camera_mapping: dict[str, str]) -> dict:
             continue
         if cam_id.startswith("rs:"):
             serial = cam_id.split(":")[1]
-            cameras[cam_name] = {"type": "intelrealsense", "serial_number_or_name": serial}
+            # warmup_s 기본값(1초)은 카메라 2대가 USB 대역폭을 나눠 초기화할 때
+            # 두 번째 카메라의 첫 프레임이 1초를 넘겨 connect가 TimeoutError로
+            # 실패한다. 여유를 둬 첫 프레임 대기 상한을 늘린다.
+            cam_cfg = {"type": "intelrealsense", "serial_number_or_name": serial, "warmup_s": 5}
+            # D405는 depth가 함께 켜지지 않으면 color 프레임이 아예 안 나온다
+            # (color-only=0fps → warmup TimeoutError). use_depth는 파이프라인만
+            # 켤 뿐 async_read는 여전히 color만 반환 → 정책/데이터셋 영향 없음.
+            from app.services.realsense_manager import realsense_hub
+            if realsense_hub.is_d405(serial):
+                cam_cfg["use_depth"] = True
+            cameras[cam_name] = cam_cfg
         else:
             cameras[cam_name] = {"type": "opencv", "index_or_path": cam_id, "backend": 200}
     return cameras
