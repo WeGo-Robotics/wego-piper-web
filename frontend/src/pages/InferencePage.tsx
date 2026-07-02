@@ -76,12 +76,22 @@ export default function InferencePage() {
   const [lastLogFile, setLastLogFile] = useState<string | null>(null)
   const MAX_LOGS = 500
   const [taskText, setTaskText] = useState(() => localStorage.getItem('piper_task') || 'do the task')
-  const [params, setParams] = useState({
-    fps: 20, max_velocity: 180, max_gripper_velocity: 300,
-    lowpass_alpha: 0.5, max_jerk: 0, interpolation_steps: 0, use_chunk_size: 0,
-    refill_threshold_pct: 20,
-    max_guidance_weight: 10.0, execution_horizon: 10,
-    temporal_ensemble_coeff: 0.01, n_action_steps: 50,
+  const [params, setParams] = useState(() => {
+    // 이전 실행에서 맞춘 파라미터(진동 감소/이동속도 등)를 그대로 복원.
+    // 새로 추가된 파라미터는 defaults가 채워지도록 병합.
+    const defaults = {
+      fps: 20, max_velocity: 180, max_gripper_velocity: 300,
+      lowpass_alpha: 0.5, max_jerk: 0, interpolation_steps: 0, use_chunk_size: 0,
+      refill_threshold_pct: 20,
+      max_guidance_weight: 10.0, execution_horizon: 10,
+      temporal_ensemble_coeff: 0.01, n_action_steps: 50,
+    }
+    try {
+      const saved = JSON.parse(localStorage.getItem('piper_inference_params') || '{}')
+      return { ...defaults, ...saved }
+    } catch {
+      return defaults
+    }
   })
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -132,6 +142,11 @@ export default function InferencePage() {
         }).catch(() => {})
     })
   }, [])
+
+  // 파라미터 변경 시 localStorage에 저장 → 다음 실행에서 그대로 복원
+  useEffect(() => {
+    localStorage.setItem('piper_inference_params', JSON.stringify(params))
+  }, [params])
 
   const selectedModelData = models.find((m) => m.id === selectedModel)
   const reqs = selectedModelData?.requirements
