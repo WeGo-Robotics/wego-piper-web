@@ -496,11 +496,12 @@ def main() -> None:
     _inference_ms_shared = 0.0
     _infer_seq = 0
     _inference_in_flight = False  # 연산 중 재트리거 방지 (이벤트는 연산 시작 시 clear되므로 별도 플래그 필요)
+    _effective_chunk_len = max(1, _actions_per_chunk)  # 모델 청크로 클램핑된 실제 청크 길이 — refill_lead 계산용
     motor_names = list(robot.action_features.keys())
 
     def _inference_thread_fn():
         """별도 스레드에서 predict_action_chunk() 실행 (서버 방식)."""
-        nonlocal _latest_action_dict, _latest_action_np, _inference_ms_shared, _action_queue, _infer_seq, _inference_in_flight
+        nonlocal _latest_action_dict, _latest_action_np, _inference_ms_shared, _action_queue, _infer_seq, _inference_in_flight, _effective_chunk_len
         while _inference_running:
             triggered = _obs_event.wait(timeout=1.0)
             if not _inference_running:
@@ -563,6 +564,9 @@ def main() -> None:
 
                 with _action_lock:
                     _action_queue = new_queue
+                    # 실제 큐에 담긴 길이 = 모델 청크로 클램핑된 값. refill_lead가 raw 슬라이더
+                    # 값(클램핑 전)을 쓰면 청크보다 큰 임계치가 나와 매번 재추론하므로 이 값을 사용.
+                    _effective_chunk_len = max(1, len(new_queue))
                     # 첫 액션을 latest로 설정
                     if new_queue:
                         _latest_action_np, _latest_action_dict = new_queue[0]
@@ -641,7 +645,7 @@ def main() -> None:
             # 큐 잔량이 임계치(%) 이하로 떨어질 때만 새 추론을 트리거 (매 스텝 X).
             # 임계치를 높이면 큐가 비기 전에 미리 재추론해 지연을 감추고(액션 일부 폐기),
             # 낮추면 청크를 더 소진한 뒤 재추론(폐기 최소화, 지연 노출 위험).
-            _refill_lead = max(1, _actions_per_chunk) * (_refill_threshold_pct / 100.0)
+            _refill_lead = _effective_chunk_len * (_refill_threshold_pct / 100.0)
             # 이벤트 대기(set)뿐 아니라 실제 연산 중(_inference_in_flight)에도 재트리거 금지 —
             # 연산 시작 시 이벤트가 clear되므로 이 플래그가 없으면 연산 도중 큐가 임계치 이하로
             # 떨어져 중복 추론이 짝지어 발생함.
