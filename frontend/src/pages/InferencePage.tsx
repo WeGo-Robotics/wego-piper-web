@@ -82,7 +82,7 @@ export default function InferencePage() {
     const defaults = {
       fps: 20, max_velocity: 180, max_gripper_velocity: 300,
       lowpass_alpha: 0.5, max_jerk: 0, interpolation_steps: 0, use_chunk_size: 0,
-      refill_threshold_pct: 20,
+      refill_threshold_pct: 20, gripper_bypass_filter: true,
       max_guidance_weight: 10.0, execution_horizon: 10,
       temporal_ensemble_coeff: 0.01, n_action_steps: 50,
     }
@@ -244,7 +244,7 @@ export default function InferencePage() {
     }
   }
   const handleStop = async () => { await api.post('/models/inference/stop') }
-  const handleParamChange = (key: string, value: number) => {
+  const handleParamChange = (key: string, value: number | boolean) => {
     setParams((prev) => ({ ...prev, [key]: value }))
     clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
@@ -596,17 +596,25 @@ export default function InferencePage() {
                 onChange={(e) => handleParamChange('max_velocity', Math.round(Number(e.target.value) * 500 / 100))}
                 className="w-full accent-blue-500" />
             </div>
-            <ParamSlider label="그리퍼 속도 (%/s)" value={params.max_gripper_velocity ?? 100} min={0} max={500} step={10}
-              onChange={(v) => handleParamChange('max_gripper_velocity', v)} />
-            <div className="space-y-1">
-              <div className="flex justify-between text-xs">
-                <span className="text-neutral-400">그리퍼 속도 제한 (%)</span>
-                <span className="text-neutral-100">{Math.round(((params.max_gripper_velocity ?? 100) / 500) * 100)}%</span>
+            <label className="flex items-center gap-2 text-xs cursor-pointer">
+              <input type="checkbox" checked={params.gripper_bypass_filter ?? true}
+                onChange={(e) => handleParamChange('gripper_bypass_filter', e.target.checked)}
+                className="accent-blue-500" />
+              <span className="text-neutral-300">그리퍼 속도 제한/필터 미적용 (원본 그대로)</span>
+            </label>
+            <div className={params.gripper_bypass_filter ? 'opacity-40 pointer-events-none space-y-4' : 'space-y-4'}>
+              <ParamSlider label="그리퍼 속도 (%/s)" value={params.max_gripper_velocity ?? 100} min={0} max={500} step={10}
+                onChange={(v) => handleParamChange('max_gripper_velocity', v)} />
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="text-neutral-400">그리퍼 속도 제한 (%)</span>
+                  <span className="text-neutral-100">{Math.round(((params.max_gripper_velocity ?? 100) / 500) * 100)}%</span>
+                </div>
+                <input type="range" value={Math.round(((params.max_gripper_velocity ?? 100) / 500) * 100)}
+                  min={0} max={100} step={5}
+                  onChange={(e) => handleParamChange('max_gripper_velocity', Math.round(Number(e.target.value) * 500 / 100))}
+                  className="w-full accent-blue-500" />
               </div>
-              <input type="range" value={Math.round(((params.max_gripper_velocity ?? 100) / 500) * 100)}
-                min={0} max={100} step={5}
-                onChange={(e) => handleParamChange('max_gripper_velocity', Math.round(Number(e.target.value) * 500 / 100))}
-                className="w-full accent-blue-500" />
             </div>
           </div>
         </div>

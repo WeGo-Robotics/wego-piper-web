@@ -28,6 +28,9 @@ SAFE_PARAMS = {
     "refill_threshold_pct": {"min": 0, "max": 100},
 }
 
+# Boolean 파라미터: 실시간 변경 가능 (클램핑 대신 bool 변환)
+BOOL_PARAMS = {"gripper_bypass_filter"}
+
 # Unsafe 파라미터: 재시작 필요
 UNSAFE_PARAMS = {"chunk_size", "dim_model", "n_obs_steps", "use_vae"}
 
@@ -60,6 +63,9 @@ class ZmqBridge:
         for key, value in params.items():
             if key == "task":
                 safe[key] = str(value)
+                continue
+            if key in BOOL_PARAMS:
+                safe[key] = bool(value)
                 continue
             if key in UNSAFE_PARAMS:
                 unsafe_found.append(key)

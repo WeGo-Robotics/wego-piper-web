@@ -7,6 +7,7 @@ ZMQ로 실시간 변경 가능한 파라미터:
   - max_gripper_velocity: 그리퍼 최대 속도 (%/s, 0=무제한)
   - max_jerk: 가속도 변화율 제한 (deg/s², 0=무제한)
   - interpolation_steps: 액션 보간 스텝 수 (0=OFF)
+  - gripper_bypass_filter: 그리퍼에 속도 제한/필터 미적용 (True=우회, 기본값)
 """
 
 
@@ -19,6 +20,8 @@ class ActionFilter:
         self.max_jerk: float = 0.0
         self.interpolation_steps: int = 0
         self.use_chunk_size: int = 0
+        # 그리퍼는 기본적으로 속도 제한/필터를 걸지 않고 원본 액션 그대로 전송
+        self.gripper_bypass_filter: bool = True
 
         # 내부 상태
         self._prev_sent: dict | None = None
@@ -46,6 +49,9 @@ class ActionFilter:
             return True
         elif key == "use_chunk_size":
             self.use_chunk_size = max(0, min(200, int(value)))
+            return True
+        elif key == "gripper_bypass_filter":
+            self.gripper_bypass_filter = bool(value)
             return True
         elif key == "fps":
             self.fps = max(1.0, min(60.0, float(value)))
@@ -116,6 +122,12 @@ class ActionFilter:
                 k: alpha * v + (1 - alpha) * self._prev_sent.get(k, v)
                 for k, v in result.items()
             }
+
+        # 5. 그리퍼 우회: 위 필터/속도제한 결과를 무시하고 원본 액션 그대로 복원
+        if self.gripper_bypass_filter:
+            for key in result:
+                if "gripper" in key and key in target:
+                    result[key] = target[key]
 
         self._prev_sent = dict(result)
         return result

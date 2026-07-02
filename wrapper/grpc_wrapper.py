@@ -76,10 +76,11 @@ _lowpass_alpha: float = 0.5  # 저역 통과 필터 계수 (1.0=필터 없음, 0
 _max_jerk: float = 0.0  # deg/s² — Jerk 제한 (0=무제한)
 _interpolation_steps: int = 0  # 액션 보간 스텝 수 (0=보간 없음)
 _use_chunk_size: int = 0  # 수신 chunk에서 사용할 액션 수 (0=전부 사용)
+_gripper_bypass_filter: bool = True  # 그리퍼 속도 제한/필터 미적용 (True=우회, 기본값)
 
 
 def zmq_listener(zmq_addr: str) -> None:
-    global _current_task, _paused, _manual_action, _target_fps, _max_velocity, _max_gripper_velocity, _lowpass_alpha, _max_jerk, _interpolation_steps, _use_chunk_size
+    global _current_task, _paused, _manual_action, _target_fps, _max_velocity, _max_gripper_velocity, _lowpass_alpha, _max_jerk, _interpolation_steps, _use_chunk_size, _gripper_bypass_filter
     ctx = zmq.Context()
     sock = ctx.socket(zmq.PULL)
     sock.bind(zmq_addr)
@@ -117,6 +118,9 @@ def zmq_listener(zmq_addr: str) -> None:
                 elif key == "use_chunk_size":
                     _use_chunk_size = max(0, min(200, int(value)))
                     logger.info("Updated use_chunk_size = %d", _use_chunk_size)
+                elif key == "gripper_bypass_filter":
+                    _gripper_bypass_filter = bool(value)
+                    logger.info("Updated gripper_bypass_filter = %s", _gripper_bypass_filter)
         except Exception as e:
             logger.error("ZMQ error: %s", e)
 
@@ -656,6 +660,12 @@ def main() -> None:
                     k: alpha * v + (1 - alpha) * _prev_sent.get(k, v)
                     for k, v in action_dict.items()
                 }
+
+            # 그리퍼 우회: 위 필터/속도제한 결과를 무시하고 원본 액션 그대로 복원
+            if action_dict is not None and _gripper_bypass_filter and target_action:
+                for key in action_dict:
+                    if "gripper" in key and key in target_action:
+                        action_dict[key] = target_action[key]
 
             if action_dict is not None:
                 _prev_sent = dict(action_dict)
