@@ -43,9 +43,17 @@ def build_inference_args(params: dict) -> list[str]:
     """웹 UI 파라미터를 wrapper CLI 인자 리스트로 변환."""
     args = [settings.local_python, "-u", WRAPPER_PATH]  # -u: unbuffered stdout
 
-    # RTC/ACT 파라미터는 config-overrides로 묶어서 전달
+    # RTC/ACT 파라미터 + 액션 필터값은 config-overrides로 묶어 전달.
+    # 필터값은 CLI 인자가 아니라 래퍼 init에서 _action_filter에 적용된다
+    # (여기 없으면 시작 시 ActionFilter 기본값으로 떨어져 UI값이 반영 안 됨).
     overrides = {}
-    override_keys = {"max_guidance_weight", "execution_horizon", "temporal_ensemble_coeff", "n_action_steps", "refill_threshold_pct"}
+    override_keys = {
+        "max_guidance_weight", "execution_horizon", "temporal_ensemble_coeff",
+        "n_action_steps", "refill_threshold_pct",
+        # 액션 필터 (실시간 변경 가능하지만 시작값도 이 경로로 전달)
+        "max_velocity", "max_gripper_velocity", "lowpass_alpha",
+        "max_jerk", "interpolation_steps", "gripper_bypass_filter",
+    }
 
     for key, value in params.items():
         if key in override_keys:

@@ -293,6 +293,10 @@ def main() -> None:
             _refill_threshold_pct = max(0.0, min(100.0, float(value)))
             logger.info("refill_threshold_pct override: %s", _refill_threshold_pct)
             continue
+        # 액션 필터 시작값 (런타임 ZMQ와 동일 경로로 적용)
+        if _action_filter.update_param(key, value):
+            logger.info("Filter override: %s = %s", key, value)
+            continue
         setter = PARAM_SETTERS.get(key)
         if setter:
             setter(policy, value)
