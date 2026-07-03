@@ -63,6 +63,13 @@ def extract_model_requirements(config: dict, model_dir: Path | None = None) -> d
     for key, feat in input_features.items():
         if key.startswith("observation.images."):
             cam_name = key.split("observation.images.")[1]
+            # base 모델에서 상속됐지만 실제 학습 데이터엔 없는 이미지 슬롯 제외.
+            # rename_map이 있으면 그 대상(camera1/2 등)만 실제 학습 카메라이므로,
+            # rename 대상이 아닌 슬롯(camera3 등)은 유령 요구사항으로 보고 제외한다.
+            # rename_map이 없으면(리네임 없이 학습) 전부 포함해 기존 동작을 보존.
+            if reverse_rename and cam_name not in reverse_rename:
+                logger.info("모델 요구사항에서 상속된 빈 카메라 슬롯 제외: %s", cam_name)
+                continue
             shape = feat.get("shape", [])
             required_cameras.append({
                 "name": reverse_rename.get(cam_name, cam_name),
