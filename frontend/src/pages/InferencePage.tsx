@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react'
 import { api } from '../services/api'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import type { Model } from '../types/models'
@@ -32,6 +32,33 @@ function CameraPreview({ cameraNames }: { cameraNames: string[] }) {
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// 접을 수 있는 카드 (제목 클릭으로 토글, 접힘 상태는 localStorage에 저장)
+function CollapsibleCard({ title, storageKey, defaultOpen = true, children }: {
+  title: string
+  storageKey: string
+  defaultOpen?: boolean
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(() => {
+    const v = localStorage.getItem(storageKey)
+    return v === null ? defaultOpen : v === '1'
+  })
+  const toggle = () => setOpen((o) => {
+    localStorage.setItem(storageKey, o ? '0' : '1')
+    return !o
+  })
+  return (
+    <div className="rounded-lg border border-neutral-700 bg-neutral-800">
+      <button onClick={toggle}
+        className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-left hover:bg-neutral-700/40 rounded-lg">
+        <span>{title}</span>
+        <span className="text-neutral-400 text-xs">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && <div className="px-4 pb-4 space-y-4">{children}</div>}
     </div>
   )
 }
@@ -87,7 +114,7 @@ export default function InferencePage() {
       temporal_ensemble_coeff: 0.01, n_action_steps: 50,
     }
     try {
-      const saved = JSON.parse(localStorage.getItem('piper_inference_params') || '{}')
+      const saved = JSON.parse(localStorage.getItem('piper_inference_params') || '{}') as Partial<typeof defaults>
       return { ...defaults, ...saved }
     } catch {
       return defaults
@@ -596,11 +623,10 @@ export default function InferencePage() {
       {/* 카메라 프리뷰 */}
       <CameraPreview cameraNames={reqs?.required_cameras.map((c) => c.name) ?? (activeCameras.length > 0 ? activeCameras : Object.keys(cameraMapping))} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {/* 1열: Task + 실행 속도 */}
         <div className="space-y-4">
-          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-            <h3 className="text-sm font-semibold">Task</h3>
+          <CollapsibleCard title="Task" storageKey="piper_fold_task">
             <input type="text" value={taskText}
               onChange={(e) => {
                 setTaskText(e.target.value)
@@ -612,9 +638,8 @@ export default function InferencePage() {
               }}
               placeholder="언어 명령어 입력..."
               className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
-          </div>
-          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-4">
-            <h3 className="text-sm font-semibold">실행 속도</h3>
+          </CollapsibleCard>
+          <CollapsibleCard title="실행 속도" storageKey="piper_fold_speed">
             <ParamSlider label="FPS" value={params.fps ?? 30} min={1} max={60} step={1}
               onChange={(v) => handleParamChange('fps', v)} />
             <ParamSlider label="관절 속도 (deg/s)" value={params.max_velocity ?? 180} min={0} max={500} step={10}
@@ -649,13 +674,12 @@ export default function InferencePage() {
                   className="w-full accent-blue-500" />
               </div>
             </div>
-          </div>
+          </CollapsibleCard>
         </div>
 
         {/* 2열: 진동 감소 + 정책 파라미터 */}
         <div className="space-y-4">
-          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-4">
-            <h3 className="text-sm font-semibold">진동 감소</h3>
+          <CollapsibleCard title="진동 감소" storageKey="piper_fold_smooth">
             <ParamSlider label="저역통과 필터 α (1.0=OFF)" value={params.lowpass_alpha ?? 0.5} min={0.05} max={1} step={0.05}
               onChange={(v) => handleParamChange('lowpass_alpha', v)} />
             <ParamSlider label="Jerk 제한 (deg/s², 0=OFF)" value={params.max_jerk ?? 0} min={0} max={5000} step={100}
@@ -666,24 +690,22 @@ export default function InferencePage() {
               onChange={(v) => handleParamChange('use_chunk_size', v)} />
             <ParamSlider label="재추론 트리거 (큐 잔량 ≤ %, 0=소진 시)" value={params.refill_threshold_pct ?? 20} min={0} max={100} step={5}
               onChange={(v) => handleParamChange('refill_threshold_pct', v)} />
-          </div>
+          </CollapsibleCard>
           {RTC_POLICIES.includes(activePolicy) && (
-            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-4">
-              <h3 className="text-sm font-semibold">RTC 파라미터</h3>
+            <CollapsibleCard title="RTC 파라미터" storageKey="piper_fold_rtc" defaultOpen={false}>
               <ParamSlider label="max_guidance_weight" value={params.max_guidance_weight} min={0} max={50} step={0.5}
                 onChange={(v) => handleParamChange('max_guidance_weight', v)} />
               <ParamSlider label="execution_horizon" value={params.execution_horizon} min={1} max={100} step={1}
                 onChange={(v) => handleParamChange('execution_horizon', v)} />
-            </div>
+            </CollapsibleCard>
           )}
           {activePolicy === 'act' && (
-            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-4">
-              <h3 className="text-sm font-semibold">ACT 파라미터</h3>
+            <CollapsibleCard title="ACT 파라미터" storageKey="piper_fold_act">
               <ParamSlider label="temporal_ensemble_coeff" value={params.temporal_ensemble_coeff} min={0} max={1} step={0.001}
                 onChange={(v) => handleParamChange('temporal_ensemble_coeff', v)} />
               <ParamSlider label="n_action_steps" value={params.n_action_steps} min={1} max={100} step={1}
                 onChange={(v) => handleParamChange('n_action_steps', v)} />
-            </div>
+            </CollapsibleCard>
           )}
         </div>
 
@@ -700,20 +722,18 @@ export default function InferencePage() {
           />
           <EvalPanel checkpoint={selectedModel} />
         </div>
+      </div>
 
-        {/* 4열: 로그 */}
-        <div className="space-y-4">
-          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
-            <h3 className="text-sm font-semibold mb-2">로그</h3>
-            <LogViewer logs={logs} onClear={() => setLogs([])} />
-            {lastLogFile && !isRunning && (
-              <a href={`/api/logs/download/${lastLogFile}`}
-                download className="inline-block mt-2 text-xs text-blue-400 hover:text-blue-300 underline">
-                CSV 로그 다운로드: {lastLogFile}
-              </a>
-            )}
-          </div>
-        </div>
+      {/* 로그 (하단 전체폭) */}
+      <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
+        <h3 className="text-sm font-semibold mb-2">로그</h3>
+        <LogViewer logs={logs} onClear={() => setLogs([])} height="h-[32rem]" />
+        {lastLogFile && !isRunning && (
+          <a href={`/api/logs/download/${lastLogFile}`}
+            download className="inline-block mt-2 text-xs text-blue-400 hover:text-blue-300 underline">
+            CSV 로그 다운로드: {lastLogFile}
+          </a>
+        )}
       </div>
     </div>
   )
