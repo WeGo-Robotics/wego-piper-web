@@ -30,6 +30,14 @@ class ActionFilter:
         self._interp_to: dict | None = None
         self._interp_progress: int = 0
 
+    def reset(self) -> None:
+        """필터 내부 히스토리 초기화(파라미터 값은 유지). 리셋/재시작 시 호출."""
+        self._prev_sent = None
+        self._prev_velocity = {}
+        self._interp_from = None
+        self._interp_to = None
+        self._interp_progress = 0
+
     def update_param(self, key: str, value) -> bool:
         """ZMQ 파라미터 업데이트. 처리했으면 True 반환."""
         if key == "lowpass_alpha":

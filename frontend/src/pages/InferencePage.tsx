@@ -71,6 +71,7 @@ export default function InferencePage() {
   const [processState, setProcessState] = useState<ProcessState>('idle')
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null)
   const [paused, setPaused] = useState(false)
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [activeCameras, setActiveCameras] = useState<string[]>([])
   const [logs, setLogs] = useState<string[]>([])
   const [lastLogFile, setLastLogFile] = useState<string | null>(null)
@@ -244,6 +245,13 @@ export default function InferencePage() {
     }
   }
   const handleStop = async () => { await api.post('/models/inference/stop') }
+  const handleReset = async () => {
+    // window.confirm은 브라우저 이벤트 루프를 블로킹해 E-stop heartbeat(500ms)가 멈추고,
+    // 2초 타임아웃에 걸려 추론이 강제 종료된다. 논블로킹 React 모달로 확인받는다.
+    setShowResetConfirm(false)
+    await api.post('/params/reset').catch(() => {})
+    setPaused(false)
+  }
   const handleParamChange = (key: string, value: number | boolean) => {
     setParams((prev) => ({ ...prev, [key]: value }))
     clearTimeout(debounceRef.current)
@@ -522,6 +530,30 @@ export default function InferencePage() {
   // ── 추론 중 UI ──
   return (
     <div className="space-y-6">
+      {/* 원위치+리셋 확인 모달 (window.confirm은 heartbeat를 막아 E-stop을 유발하므로 사용 금지) */}
+      {showResetConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={() => setShowResetConfirm(false)}>
+          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-6 max-w-sm mx-4 space-y-4"
+            onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold">원위치 + 리셋</h3>
+            <p className="text-sm text-neutral-300">
+              로봇을 원위치로 되돌리고 액션 버퍼를 비운 뒤 추론을 새로 시작합니다.
+              팔이 크게 움직입니다. 진행할까요?
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowResetConfirm(false)}
+                className="px-4 py-1.5 rounded bg-neutral-700 hover:bg-neutral-600 text-white text-sm font-medium">
+                취소
+              </button>
+              <button onClick={handleReset}
+                className="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium">
+                원위치+리셋
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">추론</h1>
         <div className="flex items-center gap-3">
@@ -542,6 +574,10 @@ export default function InferencePage() {
           }}
             className={`px-4 py-1.5 rounded text-sm font-medium ${paused ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-amber-600 hover:bg-amber-500 text-white'}`}>
             {paused ? '추론 재개' : '일시정지'}
+          </button>
+          <button onClick={() => setShowResetConfirm(true)}
+            className="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium">
+            원위치+리셋
           </button>
           <button onClick={handleStop}
             className="px-4 py-1.5 rounded bg-red-600 hover:bg-red-500 text-white text-sm font-medium">

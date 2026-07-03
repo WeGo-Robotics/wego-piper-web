@@ -77,10 +77,11 @@ _max_jerk: float = 0.0  # deg/s² — Jerk 제한 (0=무제한)
 _interpolation_steps: int = 0  # 액션 보간 스텝 수 (0=보간 없음)
 _use_chunk_size: int = 0  # 수신 chunk에서 사용할 액션 수 (0=전부 사용)
 _gripper_bypass_filter: bool = True  # 그리퍼 속도 제한/필터 미적용 (True=우회, 기본값)
+_reset_requested: bool = False  # 원위치+리셋 요청 (실제 처리는 제어 루프)
 
 
 def zmq_listener(zmq_addr: str) -> None:
-    global _current_task, _paused, _manual_action, _target_fps, _max_velocity, _max_gripper_velocity, _lowpass_alpha, _max_jerk, _interpolation_steps, _use_chunk_size, _gripper_bypass_filter
+    global _current_task, _paused, _manual_action, _target_fps, _max_velocity, _max_gripper_velocity, _lowpass_alpha, _max_jerk, _interpolation_steps, _use_chunk_size, _gripper_bypass_filter, _reset_requested
     ctx = zmq.Context()
     sock = ctx.socket(zmq.PULL)
     sock.bind(zmq_addr)
@@ -121,6 +122,9 @@ def zmq_listener(zmq_addr: str) -> None:
                 elif key == "gripper_bypass_filter":
                     _gripper_bypass_filter = bool(value)
                     logger.info("Updated gripper_bypass_filter = %s", _gripper_bypass_filter)
+                elif key == "reset":
+                    _reset_requested = True
+                    logger.info("Reset requested (home + clear buffers)")
         except Exception as e:
             logger.error("ZMQ error: %s", e)
 
@@ -508,7 +512,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    global _target_fps
+    global _target_fps, _reset_requested
     _target_fps = float(args.fps)
 
     step = 0
@@ -550,6 +554,36 @@ def main() -> None:
     try:
         while running and not shutdown_event.is_set():
             loop_start = time.perf_counter()
+
+            # 원위치+리셋: 원점 복귀 + 액션 큐/필터 상태 초기화 후 새로 시작.
+            # (pause 상태와 무관하게 최상단에서 처리하고, 리셋 후 자동 재개)
+            if _reset_requested:
+                _reset_requested = False
+                logger.info("Reset: homing robot + clearing action buffers")
+                with action_queue_lock:
+                    action_queue.queue.clear()
+                latest_action = -1
+                last_executed_action = None
+                # 필터 히스토리 초기화
+                _prev_sent = {}
+                _prev_velocity = {}
+                _interp_from = None
+                _interp_to = None
+                _interp_progress = 0
+                # UI에 리셋(원점 복귀) 진행 중 표시
+                print(json.dumps({
+                    "t": "telemetry", "step": step, "fps": 0, "inference_ms": 0,
+                    "joints": [], "action": [], "task": _current_task,
+                    "paused": False, "resetting": True,
+                }), flush=True)
+                # 원점 복귀 (단계별 파킹, 블로킹 ~수초)
+                for r in (robots.values() if is_bimanual else [robot]):
+                    try:
+                        r.parking()
+                    except Exception as e:
+                        logger.warning("Reset homing failed: %s", e)
+                _paused = False
+                continue
 
             # 일시정지
             if _paused:

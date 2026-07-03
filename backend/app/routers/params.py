@@ -41,6 +41,13 @@ async def resume_inference():
     return {"status": "resumed"}
 
 
+@router.post("/reset")
+async def reset_inference():
+    """로봇을 원위치로 복귀시키고 액션 버퍼/필터 상태를 초기화한 뒤 새로 시작."""
+    await zmq_bridge.send_params({"reset": True})
+    return {"status": "reset"}
+
+
 class ManualAction(BaseModel):
     action: dict  # {"joint1.pos": 0.0, "joint2.pos": -50.0, ...}
 

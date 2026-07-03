@@ -90,6 +90,11 @@ from parking_controller import ParkingController
 _paused = False
 _manual_action: dict | None = None  # {"joint1.pos": 0.0, ...}
 
+# 원위치+리셋: ZMQ "reset" 수신 시 True → 메인 루프가 원점 복귀+버퍼/필터 초기화 수행.
+# _reset_gen은 in-flight 추론 무효화용 세대 카운터 (리셋 시 증가 → 이전 세대 결과 폐기).
+_reset_requested = False
+_reset_gen = 0
+
 # 다음 추론 트리거 시점: 액션 큐 잔량이 이 % 이하로 떨어지면 재추론.
 #   0   = 큐가 완전히 빌 때만 (지연 동안 정지 가능)
 #   100 = 매 스텝 재추론
@@ -122,7 +127,7 @@ POLICY_IMPORTS = {
 
 def param_listener(policy: Any, zmq_addr: str) -> None:
     """ZMQ PULL 소켓에서 파라미터를 수신하여 policy 객체에 실시간 반영."""
-    global _current_task, _paused, _manual_action, _refill_threshold_pct, _actions_per_chunk
+    global _current_task, _paused, _manual_action, _refill_threshold_pct, _actions_per_chunk, _reset_requested
     ctx = zmq.Context()
     sock = ctx.socket(zmq.PULL)
     sock.bind(zmq_addr)
@@ -140,6 +145,11 @@ def param_listener(policy: Any, zmq_addr: str) -> None:
                 # 수동 관절 조작
                 if key == "manual_action":
                     _manual_action = value if isinstance(value, dict) else None
+                    continue
+                # 원위치+리셋 요청 (실제 처리는 메인 루프)
+                if key == "reset":
+                    _reset_requested = True
+                    logger.info("Reset requested (home + clear buffers)")
                     continue
                 # task 변경
                 if key == "task":
@@ -214,7 +224,7 @@ def main() -> None:
 
     register_third_party_plugins()
 
-    global _current_task, _refill_threshold_pct, _actions_per_chunk
+    global _current_task, _refill_threshold_pct, _actions_per_chunk, _paused, _reset_requested, _reset_gen
     _current_task = args.task if args.task else "do the task"
 
     # ── 1. 로봇 생성 ──
@@ -518,6 +528,9 @@ def main() -> None:
                 _inference_in_flight = False
                 continue
 
+            # 리셋 세대 캡처: 연산 도중 리셋이 발생하면 이 결과는 폐기(스톨 액션 방지)
+            my_gen = _reset_gen
+
             seq = _infer_seq
             _infer_seq += 1
             if recorder is not None:
@@ -563,6 +576,10 @@ def main() -> None:
                     new_queue.append((a_np, a_dict))
 
                 with _action_lock:
+                    # 연산 도중 리셋이 발생했으면(_reset_gen 변경) 이 결과는 낡은 것 → 폐기
+                    if my_gen != _reset_gen:
+                        logger.info("Discarding stale inference result (reset occurred)")
+                        continue
                     _action_queue = new_queue
                     # 실제 큐에 담긴 길이 = 모델 청크로 클램핑된 값. refill_lead가 raw 슬라이더
                     # 값(클램핑 전)을 쓰면 청크보다 큰 임계치가 나와 매번 재추론하므로 이 값을 사용.
@@ -591,6 +608,40 @@ def main() -> None:
     try:
         while running:
             start_time = time.monotonic()
+
+            # 원위치+리셋: 원점 복귀 + 버퍼/필터/policy 초기화 후 첫 추론처럼 새로 시작.
+            # (pause 상태와 무관하게 최상단에서 처리하고, 리셋 후에는 자동 재개)
+            if _reset_requested:
+                _reset_requested = False
+                logger.info("Reset: homing robot + clearing action buffers")
+                # in-flight 추론 무효화 + 다음 트리거 대기 초기화
+                _reset_gen += 1
+                _obs_event.clear()
+                with _action_lock:
+                    _action_queue = []
+                    _latest_action_dict = None
+                    _latest_action_np = None
+                    _effective_chunk_len = 1
+                _action_filter.reset()
+                try:
+                    policy.reset()
+                except Exception as e:
+                    logger.warning("policy.reset() failed: %s", e)
+                # UI에 리셋(원점 복귀) 진행 중 표시
+                print(json.dumps({
+                    "t": "telemetry", "step": step, "fps": 0, "inference_ms": 0,
+                    "joints": [], "action": [], "task": _current_task,
+                    "paused": False, "resetting": True,
+                }), flush=True)
+                # 원점 복귀 (단계별 파킹, 블로킹 ~수초)
+                try:
+                    ParkingController(robot).run()
+                except Exception as e:
+                    logger.warning("Reset homing failed: %s", e)
+                # 첫 추론처럼 새로 시작: 자동 재개 + step=0 → 다음 이터레이션 첫 추론 트리거
+                _paused = False
+                step = 0
+                continue
 
             # 일시정지 중: 수동 액션만 처리
             if _paused:
