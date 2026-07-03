@@ -148,24 +148,3 @@ async def inference_camera_preview(cam_name: str):
     if not path.exists():
         raise HTTPException(404, "Preview not available")
     return Response(content=path.read_bytes(), media_type="image/jpeg")
-
-
-@router.get("/viz/{viz_type}/{cam_index}")
-async def inference_viz(viz_type: str, cam_index: int = 0):
-    """추론 중 시각화 이미지 (policy server의 viz_hooks가 /dev/shm에 저장).
-    viz_type: input, features, attention
-    """
-    allowed = {"input", "features", "attention"}
-    if viz_type not in allowed:
-        raise HTTPException(400, f"viz_type must be one of {allowed}")
-    # /dev/shm (RAM disk) 우선, fallback /tmp
-    path = Path(f"/dev/shm/piper_viz_{viz_type}_{cam_index}.jpg")
-    if not path.exists():
-        path = Path(f"/tmp/piper_viz_{viz_type}_{cam_index}.jpg")
-    if not path.exists():
-        raise HTTPException(404, "Visualization not available")
-    return Response(
-        content=path.read_bytes(),
-        media_type="image/jpeg",
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-    )

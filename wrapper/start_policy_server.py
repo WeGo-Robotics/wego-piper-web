@@ -147,13 +147,6 @@ class CachedPolicyServer(PolicyServer):
         self._loaded_type = policy_specs.policy_type
         self._loaded_device = policy_specs.device
 
-        # 시각화 hook 등록
-        try:
-            from viz_hooks import register_viz_hooks
-            register_viz_hooks(self.policy)
-        except Exception as e:
-            self.logger.warning(f"Viz hooks registration failed: {e}")
-
         self.logger.info(f"Policy loaded in {elapsed:.2f}s on {self.device}")
         return services_pb2.Empty()
 

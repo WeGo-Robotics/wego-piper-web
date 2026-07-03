@@ -282,14 +282,6 @@ def main() -> None:
     policy.eval()
     policy.to(device)
 
-    # 시각화 hooks 등록 (input/features/attention 이미지 생성)
-    try:
-        from viz_hooks import register_viz_hooks
-        register_viz_hooks(policy)
-        logger.info("Viz hooks registered")
-    except Exception as e:
-        logger.warning("Viz hooks registration failed: %s", e)
-
     # config 오버라이드 적용 (n_action_steps는 policy.config에 적용하지 않음 — actions_per_chunk로 별도 관리)
     _actions_per_chunk_override = None
     for key, value in config_overrides.items():
@@ -543,18 +535,6 @@ def main() -> None:
                     torch.autocast(device_type=device.type) if device.type == "cuda" and policy.config.use_amp else nullcontext(),
                 ):
                     observation = _prepare_observation(raw_obs)
-                    # 시각화용: _captured에 텐서 저장 (features/attention 생성용)
-                    try:
-                        from viz_hooks import _captured
-                        viz_imgs = []
-                        for k, v in raw_obs.items():
-                            if isinstance(v, np.ndarray) and v.ndim == 3:
-                                t = torch.tensor(v.copy()).permute(2, 0, 1).float() / 255.0
-                                viz_imgs.append(t)
-                        if viz_imgs:
-                            _captured["preprocessed_images"] = viz_imgs
-                    except Exception:
-                        pass
                     # predict_action_chunk — 서버와 동일
                     action_chunk = policy.predict_action_chunk(observation)
                     if action_chunk.ndim != 3:
@@ -660,18 +640,6 @@ def main() -> None:
 
             # 5a. 관측값 가져오기
             obs = robot.get_observation()
-
-            # 시각화: 메인 루프에서 직접 raw 이미지 저장 (obs 원래 순서 유지)
-            try:
-                from viz_hooks import _save_jpg
-                import cv2 as _cv2
-                _viz_i = 0
-                for _k, _v in obs.items():
-                    if isinstance(_v, np.ndarray) and _v.ndim == 3:
-                        _save_jpg(_cv2.cvtColor(_v, _cv2.COLOR_RGB2BGR), f"piper_viz_input_{_viz_i}.jpg")
-                        _viz_i += 1
-            except Exception:
-                pass
 
             if step == 0:
                 logger.info("Observation keys: %s", list(obs.keys()))

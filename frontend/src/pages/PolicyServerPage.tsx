@@ -153,7 +153,6 @@ export default function PolicyServerPage() {
             <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 text-xs text-neutral-400 space-y-1">
               <p>gRPC 정책 서버 (lerobot async_inference)</p>
               <p>모델 캐싱: 같은 모델은 재로딩 없이 재사용</p>
-              <p>시각화 hook: 전처리 입력 / 특징맵 / Attention 히트맵</p>
             </div>
           </div>
 

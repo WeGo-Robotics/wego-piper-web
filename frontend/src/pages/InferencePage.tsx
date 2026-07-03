@@ -7,7 +7,6 @@ import LogViewer from '../components/LogViewer'
 import EvalPanel from '../components/EvalPanel'
 import TelemetryPanel, { type TelemetryData } from '../components/TelemetryPanel'
 import ManualControlPanel from '../components/ManualControlPanel'
-import VizPanel from '../components/VizPanel'
 
 function CameraPreview({ cameraNames }: { cameraNames: string[] }) {
   const [ts, setTs] = useState(0)
@@ -596,8 +595,6 @@ export default function InferencePage() {
 
       {/* 카메라 프리뷰 */}
       <CameraPreview cameraNames={reqs?.required_cameras.map((c) => c.name) ?? (activeCameras.length > 0 ? activeCameras : Object.keys(cameraMapping))} />
-      {/* 모델 시각화 */}
-      <VizPanel cameraCount={reqs?.required_cameras.length ?? 1} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-6">
         {/* 1열: Task + 실행 속도 */}

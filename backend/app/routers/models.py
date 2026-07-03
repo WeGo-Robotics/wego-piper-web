@@ -256,17 +256,8 @@ class InferenceStartCustomRequest(BaseModel):
     args: list[str]  # 직접 편집된 CLI 인자 리스트
 
 
-def _clear_viz_cache():
-    """이전 추론의 시각화 이미지 삭제."""
-    import glob, os
-    for f in glob.glob("/dev/shm/piper_viz_*.jpg") + glob.glob("/tmp/piper_viz_*.jpg"):
-        try: os.remove(f)
-        except OSError: pass
-
-
 @router.post("/inference/start")
 async def start_inference(body: InferenceStartRequest):
-    _clear_viz_cache()
     if train_manager.is_running:
         raise HTTPException(409, "학습이 실행 중입니다. 학습을 먼저 중지하세요.")
     robot_type = body.robot_type or robot_manager.selected_type
@@ -335,7 +326,6 @@ async def start_inference(body: InferenceStartRequest):
 @router.post("/inference/start-custom")
 async def start_inference_custom(body: InferenceStartCustomRequest):
     """직접 편집한 CLI 인자로 추론 시작."""
-    _clear_viz_cache()
     if not body.args:
         raise HTTPException(400, "CLI 인자가 비어있습니다")
 
