@@ -18,12 +18,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #  libgl1/libglib  : opencv 런타임
 #  v4l-utils       : v4l2-ctl (camera_manager)
 #  iproute2/can-utils : CAN 인터페이스 관리 (ip link / candump)
+#  ethtool         : CAN 어댑터 드라이버 식별 (robot_manager.scan_can_interfaces)
+#  kmod            : modprobe gs_usb (호스트 /lib/modules 를 ro 마운트해야 실효)
 #  libusb-1.0-0/usbutils : RealSense · piper_sdk USB
 #  gstreamer*      : 카메라 분배 (v4l2loopback 커널 모듈은 호스트에 로드)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential git \
         ffmpeg libgl1 libglib2.0-0 \
-        v4l-utils iproute2 can-utils \
+        v4l-utils iproute2 can-utils ethtool kmod \
         libusb-1.0-0 usbutils \
         gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
     && rm -rf /var/lib/apt/lists/*
@@ -35,10 +37,15 @@ RUN pip install --upgrade pip setuptools wheel
 
 # ── LeRobot + torch (호스트 버전 고정) ──
 # lerobot 0.5.0 은 torch<2.11 을 요구하지만 호스트는 2.11.0+cu130 으로 override 되어 있다.
-# 동일하게: lerobot 설치 후 torch 계열을 cu130 휠로 강제 재설치(--no-deps).
-RUN pip install lerobot==0.5.0
-RUN pip install --force-reinstall --no-deps \
-        --index-url https://download.pytorch.org/whl/cu130 \
+# 동일하게 맞추되, cu12 스택을 먼저 걷어내고 cu130 을 deps 포함으로 설치한다.
+#   ※ --no-deps 로 설치하면 nvidia-*-cu13 런타임이 안 들어와서
+#     libcudart.so.13 누락 → `import torch` 자체가 죽는다. (cu12 잔재만 남음)
+#   ※ 한 RUN 으로 묶는 이유: 레이어는 누적이라 별도 RUN 에서 uninstall 해도
+#     cu12 파일(~5GB)이 앞 레이어에 그대로 남아 이미지가 두 배가 된다.
+RUN pip install lerobot==0.5.0 \
+    && pip uninstall -y torch torchvision torchcodec \
+    && pip freeze | grep -E '^nvidia-[a-z0-9_-]+-cu12' | cut -d= -f1 | xargs -r pip uninstall -y \
+    && pip install --index-url https://download.pytorch.org/whl/cu130 \
         torch==2.11.0 torchvision==0.26.0 torchcodec==0.11.0
 
 # ── Piper 하드웨어 스택 ──

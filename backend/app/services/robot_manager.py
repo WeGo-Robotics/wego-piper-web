@@ -5,6 +5,7 @@ CAN 포트 스캔, 연결, 역할 감지, 움직임 감지, 설정값, 프리셋
 
 import json
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -28,8 +29,13 @@ CONFIGS: dict[str, list[str]] = {
 }
 
 
+def _is_root() -> bool:
+    """이미 root면 sudo가 불필요하다 (컨테이너 실행 시 sudo 자체가 미설치)."""
+    return os.geteuid() == 0
+
+
 def _run_cmd(cmd: list[str], sudo: bool = False) -> tuple[int, str, str]:
-    if sudo:
+    if sudo and not _is_root():
         cmd = ["sudo", "-n"] + cmd
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
@@ -188,7 +194,13 @@ def list_xhci_controllers() -> list[str]:
 
 
 def _sysfs_write(path: str, value: str) -> tuple[int, str, str]:
-    """sudo tee로 sysfs에 기록 (값은 stdin으로 전달)."""
+    """sudo tee로 sysfs에 기록 (값은 stdin으로 전달). root면 직접 쓴다."""
+    if _is_root():
+        try:
+            Path(path).write_text(value)
+            return 0, "", ""
+        except Exception as exc:
+            return -1, "", str(exc)
     cmd = ["sudo", "-n", "/usr/bin/tee", path]
     try:
         r = subprocess.run(cmd, input=value, capture_output=True, text=True, timeout=8)

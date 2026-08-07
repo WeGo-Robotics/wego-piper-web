@@ -24,6 +24,7 @@ services:
     volumes:
       - /dev:/dev                                             # 카메라/USB 장치 노드 (핫플러그 포함)
       - /run/udev:/run/udev:ro                                # libusb/RealSense udev 조회
+      - /lib/modules:/lib/modules:ro                          # modprobe gs_usb (USB-CAN 어댑터 드라이버)
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface   # 모델·데이터셋·lerobot 캐시 (대용량)
       - ${HOME}/.config/piper-web:/root/.config/piper-web      # model_paths.json 등 사용자 설정
       - ./backend/data:/app/backend/data                      # 로그/평가 데이터 영속화
