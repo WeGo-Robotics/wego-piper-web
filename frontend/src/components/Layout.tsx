@@ -1,19 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import EStopButton from './EStopButton'
-
-const navItems = [
-  { to: '/', label: '대시보드' },
-  { to: '/robots', label: '로봇' },
-  { to: '/cameras', label: '카메라' },
-  { to: '/recording', label: '수집' },
-  { to: '/inference', label: '추론' },
-  { to: '/training', label: '학습' },
-  { to: '/hub', label: '허브' },
-  { to: '/policy-server', label: '정책서버' },
-  { to: '/logs', label: '로그' },
-  { to: '/debug', label: '디버그 ↗', external: true },
-  { to: '/settings', label: '설정' },
-]
+import { navPages } from '../config/pages'
 
 export default function Layout() {
   return (
@@ -22,22 +9,22 @@ export default function Layout() {
         <div className="max-w-7xl mx-auto px-4 flex items-center h-14 gap-6">
           <span className="font-bold text-lg">Piper</span>
           <div className="flex gap-1">
-            {navItems.map((item) =>
-              item.external ? (
+            {navPages.map((page) =>
+              page.external ? (
                 <a
-                  key={item.to}
-                  href={item.to}
+                  key={page.path}
+                  href={page.path}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-3 py-1.5 rounded text-sm transition-colors text-neutral-400 hover:text-white"
                 >
-                  {item.label}
+                  {page.label} ↗
                 </a>
               ) : (
                 <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.to === '/'}
+                  key={page.path}
+                  to={page.path}
+                  end={page.path === '/'}
                   className={({ isActive }) =>
                     `px-3 py-1.5 rounded text-sm transition-colors ${
                       isActive
@@ -46,7 +33,7 @@ export default function Layout() {
                     }`
                   }
                 >
-                  {item.label}
+                  {page.label}
                 </NavLink>
               )
             )}
