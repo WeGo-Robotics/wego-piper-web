@@ -44,6 +44,53 @@ async def disk_usage():
     return check_disk_usage()
 
 
+# ⚠ 아래 고정 경로들은 `/{dataset_id:path}` **위에** 있어야 한다.
+# catch-all 이 먼저 매칭되면 `GET /api/datasets/upload-status` 가
+# "Dataset not found" 404 가 된다 — 실제로 그 상태였다.
+
+@router.get("/upload-status")
+async def upload_status():
+    """업로드 진행 상태."""
+    return {"state": _upload_pm.state.value, "pid": _upload_pm.pid}
+
+
+@router.post("/upload-stop")
+async def upload_stop():
+    """업로드 중지."""
+    await _upload_pm.stop()
+    return {"status": "stopped"}
+
+
+@router.get("/hf-cli")
+async def get_hf_cli():
+    """huggingface-cli 경로 조회."""
+    from app.core.config import settings
+    resolved = _find_hf_cli()
+    return {"configured": settings.hf_cli, "resolved": resolved}
+
+
+class HfCliRequest(BaseModel):
+    path: str
+
+
+@router.post("/hf-cli")
+async def set_hf_cli(body: HfCliRequest):
+    """huggingface-cli 경로 설정 (.env에 저장)."""
+    if body.path and not Path(body.path).exists():
+        raise HTTPException(400, f"경로가 존재하지 않습니다: {body.path}")
+    # .env 파일에 PIPER_HF_CLI 추가/수정
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    lines = env_path.read_text().splitlines() if env_path.exists() else []
+    new_lines = [l for l in lines if not l.startswith("PIPER_HF_CLI=")]
+    if body.path:
+        new_lines.append(f"PIPER_HF_CLI={body.path}")
+    env_path.write_text("\n".join(new_lines) + "\n")
+    # 런타임 설정도 갱신
+    from app.core.config import settings
+    settings.hf_cli = body.path
+    return {"status": "ok", "path": body.path, "resolved": _find_hf_cli()}
+
+
 @router.get("/{dataset_id:path}")
 async def dataset_detail(dataset_id: str):
     ds = get_dataset(dataset_id)
@@ -187,19 +234,6 @@ async def upload_to_hub(dataset_id: str, body: UploadRequest):
     return {"status": "started", "dataset_id": dataset_id, "pid": _upload_pm.pid}
 
 
-@router.get("/upload-status")
-async def upload_status():
-    """업로드 진행 상태."""
-    return {"state": _upload_pm.state.value, "pid": _upload_pm.pid}
-
-
-@router.post("/upload-stop")
-async def upload_stop():
-    """업로드 중지."""
-    await _upload_pm.stop()
-    return {"status": "stopped"}
-
-
 @router.post("/{dataset_id:path}/decode-cache")
 async def create_decode_cache(dataset_id: str):
     """데이터셋의 mp4 영상을 프레임별 jpg로 디코딩 캐시 생성."""
@@ -287,33 +321,3 @@ async def delete_decode_cache(dataset_id: str):
         deleted += sum(1 for _ in images_dir.rglob("*") if _.is_file())
         shutil.rmtree(images_dir)
     return {"status": "ok", "deleted_files": deleted}
-
-
-@router.get("/hf-cli")
-async def get_hf_cli():
-    """huggingface-cli 경로 조회."""
-    from app.core.config import settings
-    resolved = _find_hf_cli()
-    return {"configured": settings.hf_cli, "resolved": resolved}
-
-
-class HfCliRequest(BaseModel):
-    path: str
-
-
-@router.post("/hf-cli")
-async def set_hf_cli(body: HfCliRequest):
-    """huggingface-cli 경로 설정 (.env에 저장)."""
-    if body.path and not Path(body.path).exists():
-        raise HTTPException(400, f"경로가 존재하지 않습니다: {body.path}")
-    # .env 파일에 PIPER_HF_CLI 추가/수정
-    env_path = Path(__file__).resolve().parents[2] / ".env"
-    lines = env_path.read_text().splitlines() if env_path.exists() else []
-    new_lines = [l for l in lines if not l.startswith("PIPER_HF_CLI=")]
-    if body.path:
-        new_lines.append(f"PIPER_HF_CLI={body.path}")
-    env_path.write_text("\n".join(new_lines) + "\n")
-    # 런타임 설정도 갱신
-    from app.core.config import settings
-    settings.hf_cli = body.path
-    return {"status": "ok", "path": body.path, "resolved": _find_hf_cli()}

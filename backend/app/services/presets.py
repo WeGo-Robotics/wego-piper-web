@@ -65,6 +65,7 @@ class ApplyReport:
     values: dict = field(default_factory=dict)
     missing: list[str] = field(default_factory=list)   # 프리셋에 없어 기본값으로 채움
     unknown: list[str] = field(default_factory=list)   # 지금은 없는 파라미터 → 무시
+    clamped: list[dict] = field(default_factory=list)  # 범위 밖이라 조정됨
     policy_mismatch: dict | None = None
 
     def to_dict(self) -> dict:
@@ -158,19 +159,28 @@ def apply(
     known_keys: set[str],
     defaults: dict | None = None,
     current_policy_type: str = "",
+    bounds: dict[str, dict[str, float]] | None = None,
 ) -> ApplyReport:
     """프리셋을 현재 스키마에 맞춰 정리한다.
 
     - 지금 없는 파라미터 → `unknown` 에 담고 버린다
     - 프리셋에 없는 파라미터 → `defaults` 로 채우고 `missing` 에 담는다
+    - 범위 밖 값 → 클램프하고 `clamped` 에 담는다 (범위가 바뀌었을 수 있다)
     - 정책 타입이 다르면 `policy_mismatch` 로 알린다 (**조용히 넘기지 않는다**)
     """
     report = ApplyReport()
+    bounds = bounds or {}
     for key, value in preset.values.items():
-        if key in known_keys:
-            report.values[key] = value
-        else:
+        if key not in known_keys:
             report.unknown.append(key)
+            continue
+        b = bounds.get(key)
+        if b is not None and isinstance(value, (int, float)) and not isinstance(value, bool):
+            fixed = max(b["min"], min(b["max"], value))
+            if fixed != value:
+                report.clamped.append({"key": key, "saved": value, "applied": fixed})
+                value = fixed
+        report.values[key] = value
 
     for key, value in (defaults or {}).items():
         if key not in report.values:

@@ -137,18 +137,30 @@ def save(ds_path: Path, result: dict) -> tuple[Path, Path | None]:
     labels_path.parent.mkdir(parents=True, exist_ok=True)
 
     signals = result.pop("_signals", None)
-    # 기존 사이드카가 있으면 검토 상태(reviewed/note)를 보존한다 — 재분석에 사람 작업이 날아가면 안 된다
     existing = load(ds_path)
     if existing:
-        for name, prev in existing.get("episodes", {}).items():
-            cur = result["episodes"].get(name)
-            if cur and prev.get("reviewed"):
+        merged = dict(existing.get("episodes", {}))
+        for name, cur in result["episodes"].items():
+            prev = merged.get(name)
+            # 검토 상태(reviewed/note)를 보존한다 — 재분석에 사람 작업이 날아가면 안 된다
+            if prev and prev.get("reviewed"):
                 cur["reviewed"] = True
                 cur["edited_by"] = prev.get("edited_by", "auto")
                 cur["note"] = prev.get("note", "")
+            merged[name] = cur
+        # ⚠ **부분 분석이 전체를 덮어쓰면 안 된다.** 문서가 의도한 "선택 에피소드만
+        # 재분석해 파라미터 미리보기"(§3.5)가 나머지 45개를 날리는 사고가 된다.
+        result["episodes"] = merged
 
     labels_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
     if signals is not None and len(signals):
+        # 신호도 같은 이유로 병합한다 (분석한 에피소드만 갱신)
+        if signals_path.exists():
+            old = pd.read_parquet(signals_path)
+            touched = set(signals["episode_index"].unique())
+            signals = pd.concat(
+                [old[~old.episode_index.isin(touched)], signals], ignore_index=True
+            ).sort_values(["episode_index", "frame_index"], ignore_index=True)
         signals.to_parquet(signals_path, index=False)
         logger.info("사이드카 저장: %s (+ 신호 %d행)", labels_path, len(signals))
         return labels_path, signals_path

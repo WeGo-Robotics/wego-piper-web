@@ -17,3 +17,10 @@ upload_pm = ProcessManager()
 
 # 데이터셋 편집 (추론과 분리)
 edit_pm = ProcessManager()
+
+# 페이즈 분석/굽기 (업로드와 분리)
+#
+# decode-cache 가 upload_pm 을 공유해서 "다른 작업이 진행 중" 409 로 서로를 막는다.
+# 페이즈 분석은 수 분 걸릴 수 있고 업로드 중에도 돌 수 있어야 하므로 전용으로 둔다
+# (feature/01-phase-annotation.md §5.3).
+phase_pm = ProcessManager()

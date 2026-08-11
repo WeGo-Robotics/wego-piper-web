@@ -21,6 +21,7 @@ type ApplyReport = {
   values: Record<string, unknown>
   missing: string[]
   unknown: string[]
+  clamped: { key: string; saved: number; applied: number }[]
   policy_mismatch: { saved: string; current: string } | null
 }
 
@@ -36,11 +37,13 @@ type Props = {
   defaults?: Record<string, unknown>
   scope?: 'device' | 'shared'
   disabled?: boolean
+  /** 선택된 프리셋 이름 알림 — 평가 기록에 남긴다 */
+  onSelect?: (name: string) => void
 }
 
 export default function PresetBar({
   domain, values, onApply, policyType = '', defaults = {},
-  scope = 'device', disabled = false,
+  scope = 'device', disabled = false, onSelect,
 }: Props) {
   const [list, setList] = useState<PresetMeta[]>([])
   const [selected, setSelected] = useState('')
@@ -60,6 +63,7 @@ export default function PresetBar({
         name, values: values(), scope, policy_type: policyType,
       })
       setSelected(name)
+      onSelect?.(name)
       setMsg(`"${name}" 저장됨`)
       refresh()
     } catch (e) {
@@ -74,11 +78,13 @@ export default function PresetBar({
         policy_type: policyType, defaults,
       })
       onApply(r.values)
+      onSelect?.(name)
       // 조용히 버리지 않는다 — 무엇이 무시됐고 채워졌는지 알린다
       const notes: string[] = []
       if (r.policy_mismatch) {
         notes.push(`정책이 다름(${r.policy_mismatch.saved} → ${r.policy_mismatch.current}), 공통 항목만 적용`)
       }
+      if (r.clamped?.length) notes.push(`범위 조정: ${r.clamped.map((c) => `${c.key} ${c.saved}→${c.applied}`).join(', ')}`)
       if (r.unknown.length) notes.push(`무시됨: ${r.unknown.join(', ')}`)
       if (r.missing.length) notes.push(`기본값으로 채움: ${r.missing.join(', ')}`)
       setMsg(notes.length ? `"${name}" 적용 — ${notes.join(' / ')}` : `"${name}" 적용됨`)
@@ -92,6 +98,7 @@ export default function PresetBar({
     try {
       await api.delete(`/presets/${domain}/${selected}`)
       setSelected('')
+      onSelect?.('')
       setMsg(`"${selected}" 삭제됨`)
       refresh()
     } catch (e) {

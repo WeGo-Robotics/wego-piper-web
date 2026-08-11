@@ -1,7 +1,7 @@
 # 1. 작업 단계(phase) 라벨 — 상태 슬롯 추가 + 자동 라벨러 + 편집 UI
 
-> **◐ 1~2단계 완료.** 라벨러는 [phase/piper_phase/](../phase/piper_phase/) 설치 패키지로,
-> 분석 배치는 [phase_labeler.py](../backend/app/services/phase_labeler.py) 로 만들었다.
+> **◐ 1~3단계 완료.** 라벨러는 [phase/piper_phase/](../phase/piper_phase/) 설치 패키지로,
+> 분석 배치는 [phase_labeler.py](../backend/app/services/phase_labeler.py), API 는 [routers/phase.py](../backend/app/routers/phase.py) 로 만들었다.
 > 문서의 실측값이 **정확히 재현됐다** — ep0 830프레임, 갭 min/mean −35.0/−13.3,
 > **50 에피소드 전부 3사이클**.
 >
@@ -10,6 +10,15 @@
 > - 라벨러 위치를 `wrapper/phase_fsm.py` 가 아니라 **설치 패키지**(`pip install -e phase/`)로.
 >   백엔드가 `wrapper/` 를 import 하려면 `sys.path` 조작이 필요한데,
 >   `bus/` 와 같은 방식이면 양쪽이 깔끔하게 같은 코드를 쓴다.
+>
+> 3단계에서 문서가 경고한 **catch-all 라우트 사고가 실재함을 확인**했다 —
+> `/api/datasets/upload-status` 와 `/hf-cli` 가 `/{dataset_id:path}` 에 먹혀 404 였고
+> 프론트는 조용히 실패하고 있었다. 고정 경로를 위로 올려 고쳤고,
+> 페이즈 API 는 아예 `/api/phase` 접두사로 분리해 구조적으로 피했다.
+>
+> 또 하나: **부분 분석이 사이드카 전체를 덮어썼다.** 문서가 의도한
+> "선택 에피소드만 재분석해 파라미터 미리보기"(§3.5)가 나머지 45개를 날리는 사고였다.
+> 병합 저장으로 고쳤다.
 >
 > 착수 중 확인된 것: **임계값은 태스크마다 다르다.** `min_cube` 기본값(`hold_gap=-15`)으로
 > `yeonwonju` 를 돌리면 0사이클이 16개인데, `-8` 로 낮추면 2개가 된다.
@@ -470,7 +479,7 @@ UI에 띄우고 버튼을 노출한다.
 |---|---|---|---|
 | 1 | ☑ [phase/piper_phase/fsm.py](../phase/piper_phase/fsm.py) — 신호 + 인과 FSM | numpy만. `pip install -e phase/` | ☑ **50 에피소드 전부 3사이클** |
 | 2 | ☑ [phase_labeler.py](../backend/app/services/phase_labeler.py) | `phase_labels.json`, `phase_signals.parquet` | ☑ 4개 데이터셋 전수 + 이상 목록 |
-| 3 | API (분석/조회/저장/프레임) | 라우터 + 전용 ProcessManager | curl 라운드트립 |
+| 3 | ☑ [routers/phase.py](../backend/app/routers/phase.py) — 분석/조회/저장/신호 | `/api/phase/*` + 전용 `phase_pm` | ☑ 14개 테스트 |
 | 4 | `PhaseEditorPage` — 스크러버 + 그래프 + 구간 바 | 페이지 1개 | `npm run build` |
 | 5 | 편집 인터랙션 (드래그/분할/병합/단축키/undo) | | 실제로 50개 검토해보기 |
 | 6 | 굽기 → `{name}_phase` | 새 데이터셋 | `LeRobotDataset`로 로드, `state.shape==(8,)` |

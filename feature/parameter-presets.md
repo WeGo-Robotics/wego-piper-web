@@ -183,8 +183,8 @@ class Preset:
 | 1 | ☑ [services/presets.py](../backend/app/services/presets.py) + `/api/presets/{domain}` CRUD | — |
 | 2 | ☑ 로봇 프리셋 이관 (기동 시 1회, 재실행 안전) | 1 |
 | 3 | ☑ 학습 프리셋 — 키를 `TrainStartRequest` 에서 파생 + [PresetBar](../frontend/src/components/PresetBar.tsx) | 1 |
-| 4 | 추론 프리셋 — `PARAM_SPEC` 기반 검증 + UI | **[#1 단계 2](../refactor/01-inference-params.md)** |
-| 5 | `eval_log` 에 `preset_id` 기록 + 통계에서 프리셋별 성공률 | 4 |
+| 4 | ☑ 추론 프리셋 — 키·범위 모두 `PARAM_SPEC` 파생, 범위 밖 값 클램프 | ☑ #1 단계 2 완료 |
+| 5 | ☑ `eval_log` 에 `preset`·`params`·`robot_id` + 프리셋/체크포인트별 성공률 | 4 |
 | 6 | 카메라 프로파일을 이 스토어로 흡수 | 1, [camera-profiles](camera-profiles.md) |
 
 2번을 초반에 하는 이유: **기존 것을 흡수하지 않으면 프리셋 시스템이 두 개가 된다.**
@@ -219,4 +219,4 @@ class Preset:
 
 ## 상태
 
-◐ 1~3단계 완료 — 4~5(추론 프리셋 · eval_log 연동)는 `PARAM_SPEC` 이후
+◐ 1~5단계 완료 — 6(카메라 프로파일 흡수)만 남음 (camera-profiles 착수 시)

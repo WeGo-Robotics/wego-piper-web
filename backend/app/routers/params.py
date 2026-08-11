@@ -1,10 +1,19 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.core.inference_params import defaults, spec_for_frontend
+from app.core.inference_params import bounds, defaults, realtime_params, spec_for_frontend
+from app.routers.presets import register_domain
 from app.services.zmq_bridge import zmq_bridge
 
 router = APIRouter(prefix="/api/params", tags=["params"])
+
+# 추론 프리셋 도메인 — 키와 범위 **모두 PARAM_SPEC 에서 파생한다.**
+# 프리셋 코드가 파라미터 목록을 자체로 알면 그게 다섯 번째 사본이 된다
+# (feature/parameter-presets.md "선행 의존").
+#
+# `task` 는 담지 않는다 — 태스크 텍스트는 "실행 대상"이지 튜닝이 아니다.
+PRESET_DOMAIN = "inference"
+register_domain(PRESET_DOMAIN, set(realtime_params()) , bounds())
 
 
 @router.get("/spec")

@@ -19,6 +19,10 @@ class EvalEntry(BaseModel):
     success: bool
     checkpoint: str = ""
     memo: str = ""
+    # 어떤 파라미터로 돌린 추론인지. 없으면 "이 체크포인트 성공률 70%" 의 70% 가
+    # 어느 속도·필터 설정에서 나온 것인지 알 수 없다 (feature/parameter-presets.md).
+    preset: str = ""
+    params: dict = {}
 
 
 @router.post("/log")
@@ -28,6 +32,11 @@ async def log_eval(entry: EvalEntry):
         "success": entry.success,
         "checkpoint": entry.checkpoint,
         "memo": entry.memo,
+        "preset": entry.preset,
+        # 프리셋 이름만으로는 부족하다 — 프리셋을 나중에 고치면 그 때의 값이 사라진다.
+        # 실제로 쓴 값을 함께 남긴다 (재현성).
+        "params": entry.params,
+        "robot_id": settings.resolved_robot_id,
     }
     EVAL_DIR.mkdir(parents=True, exist_ok=True)
     with open(EVAL_FILE, "a") as f:
@@ -58,4 +67,26 @@ async def eval_stats(last_n: int = 0):
         "successes": successes,
         "rate": round(successes / total, 3) if total else 0,
         "recent": records[-10:][::-1],
+        "by_preset": _rate_by(subset, "preset"),
+        "by_checkpoint": _rate_by(subset, "checkpoint"),
     }
+
+
+def _rate_by(records: list[dict], key: str) -> list[dict]:
+    """그룹별 성공률 — **"어느 설정이 잘 됐나"** 를 비교할 수 있게 한다."""
+    groups: dict[str, list[bool]] = {}
+    for r in records:
+        name = r.get(key) or ""
+        if not name:
+            continue
+        groups.setdefault(name, []).append(bool(r.get("success")))
+    out = [
+        {
+            key: name,
+            "total": len(v),
+            "successes": sum(v),
+            "rate": round(sum(v) / len(v), 3),
+        }
+        for name, v in groups.items()
+    ]
+    return sorted(out, key=lambda x: (-x["rate"], -x["total"]))

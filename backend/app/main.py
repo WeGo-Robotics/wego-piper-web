@@ -21,7 +21,7 @@ logging.getLogger("uvicorn.access").addFilter(_QuietAccessFilter())
 # uvicorn.access 필터가 라우터 import 보다 먼저 붙어야 한다.
 from app.routers import (
     activity, cameras, datasets, debug_logs, encoder, estop, eval_log, health,
-    hub, inference, logs, models, params, policies, policy_server, presets,
+    hub, inference, logs, models, params, phase, policies, policy_server, presets,
     recording, robots, training, ws,
 )
 
@@ -33,7 +33,7 @@ from app.routers import (
 ROUTERS = [
     health, ws, estop, params, models, datasets, hub, inference, eval_log,
     robots, cameras, logs, debug_logs, training, recording, policy_server,
-    encoder, activity, policies, presets,
+    encoder, activity, policies, presets, phase,
 ]
 from app.services.estop_bridge import estop_bridge
 from app.services.zmq_bridge import zmq_bridge

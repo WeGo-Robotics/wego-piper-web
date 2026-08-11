@@ -120,3 +120,99 @@ def test_robot_preset_roundtrip_keeps_shape():
     }
     presets.save("robot", "작업대A", values, scope="device")
     assert presets.get("robot", "작업대A").values == values
+
+
+# ── 추론 프리셋 (4단계) — PARAM_SPEC 파생 ──
+
+def test_inference_domain_derives_from_param_spec():
+    """프리셋 코드가 파라미터 목록을 자체로 알면 **다섯 번째 사본**이 된다."""
+    from app.core import inference_params as P
+    from app.routers.params import PRESET_DOMAIN
+    from app.routers.presets import _BOUNDS, _KNOWN_KEYS
+
+    assert _KNOWN_KEYS[PRESET_DOMAIN] == set(P.realtime_params())
+    assert _BOUNDS[PRESET_DOMAIN] == P.bounds()
+
+
+def test_apply_clamps_out_of_range_values():
+    """범위가 바뀐 뒤 옛 프리셋을 열면 클램프하고 **알린다**."""
+    p = Preset(domain="inference", name="x", values={"max_velocity": 800, "max_jerk": 100})
+    bounds = {"max_velocity": {"min": 0, "max": 500}, "max_jerk": {"min": 0, "max": 5000}}
+    r = presets.apply(p, {"max_velocity", "max_jerk"}, bounds=bounds)
+    assert r.values["max_velocity"] == 500
+    assert r.values["max_jerk"] == 100
+    assert r.clamped == [{"key": "max_velocity", "saved": 800, "applied": 500}]
+
+
+def test_apply_does_not_clamp_booleans():
+    p = Preset(domain="inference", name="x", values={"gripper_bypass_filter": True})
+    r = presets.apply(p, {"gripper_bypass_filter"},
+                      bounds={"gripper_bypass_filter": {"min": 0, "max": 1}})
+    assert r.values["gripper_bypass_filter"] is True
+    assert r.clamped == []
+
+
+def test_inference_preset_roundtrip_through_api(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    monkeypatch.setattr(presets, "PRESETS_ROOT", tmp_path / "presets")
+    c = TestClient(app)
+    c.post("/api/presets/inference", json={
+        "name": "야간-저속", "scope": "device", "policy_type": "smolvla",
+        "values": {"max_velocity": 9999, "lowpass_alpha": 0.3, "없어진키": 1},
+    })
+    r = c.post("/api/presets/inference/야간-저속/apply",
+               json={"policy_type": "act", "defaults": {"max_jerk": 0}}).json()
+    assert r["values"]["max_velocity"] == 500          # 클램프
+    assert r["values"]["lowpass_alpha"] == 0.3
+    assert r["clamped"][0]["saved"] == 9999
+    assert r["unknown"] == ["없어진키"]
+    assert "max_jerk" in r["missing"]
+    assert r["policy_mismatch"] == {"saved": "smolvla", "current": "act"}
+
+
+# ── eval_log 연동 (5단계) ──
+
+def test_eval_log_records_preset_and_params(tmp_path, monkeypatch):
+    """**"이 체크포인트 성공률 70%" 의 70% 가 어느 설정에서 나왔는지**를 남긴다."""
+    import app.routers.eval_log as EL
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    monkeypatch.setattr(EL, "EVAL_DIR", tmp_path)
+    monkeypatch.setattr(EL, "EVAL_FILE", tmp_path / "eval_log.jsonl")
+    c = TestClient(app)
+    for preset, ok in [("저속", True), ("저속", True), ("고속", True), ("고속", False), ("고속", False)]:
+        c.post("/api/eval/log", json={
+            "success": ok, "checkpoint": "m1", "preset": preset,
+            "params": {"max_velocity": 200 if preset == "저속" else 450},
+        })
+    s = c.get("/api/eval/stats").json()
+    assert s["total"] == 5
+    by = {x["preset"]: x for x in s["by_preset"]}
+    assert by["저속"]["rate"] == 1.0
+    assert by["고속"]["rate"] == pytest.approx(0.333, abs=0.001)
+    # 프리셋을 나중에 고쳐도 그때 쓴 값이 남아야 한다
+    assert s["recent"][0]["params"]["max_velocity"] in (200, 450)
+    assert s["recent"][0]["robot_id"]
+
+
+def test_eval_stats_ignores_records_without_preset(tmp_path, monkeypatch):
+    """옛 기록에는 preset 이 없다 — 그룹에서 빠지되 전체 통계에는 들어간다."""
+    import app.routers.eval_log as EL
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    monkeypatch.setattr(EL, "EVAL_DIR", tmp_path)
+    monkeypatch.setattr(EL, "EVAL_FILE", tmp_path / "eval_log.jsonl")
+    c = TestClient(app)
+    c.post("/api/eval/log", json={"success": True, "checkpoint": "m1"})
+    c.post("/api/eval/log", json={"success": False, "checkpoint": "m1", "preset": "저속"})
+    s = c.get("/api/eval/stats").json()
+    assert s["total"] == 2
+    assert [x["preset"] for x in s["by_preset"]] == ["저속"]
+    assert [x["checkpoint"] for x in s["by_checkpoint"]] == ["m1"]

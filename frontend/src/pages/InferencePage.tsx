@@ -7,6 +7,7 @@ import { usePolicies } from '../hooks/usePolicies'
 import { useParamSpec } from '../hooks/useParamSpec'
 import type { Model } from '../types/models'
 import ParamSlider from '../components/ParamSlider'
+import PresetBar from '../components/PresetBar'
 import LogViewer from '../components/LogViewer'
 import EvalPanel from '../components/EvalPanel'
 import TelemetryPanel, { type TelemetryData } from '../components/TelemetryPanel'
@@ -130,6 +131,7 @@ export default function InferencePage() {
   const { isBlocked, blockedBy, refresh: refreshActivity } = useActivity()
   // 정책 목록·RTC 여부는 백엔드 core/policies.py 한 곳에서 온다
   const { inferable, isRtc } = usePolicies()
+  const [activePreset, setActivePreset] = useState('')
   // 파라미터 범위·기본값은 백엔드 core/inference_params.py 에서 온다
   const { rangeOf, defaults: specDefaults } = useParamSpec()
 
@@ -660,6 +662,12 @@ export default function InferencePage() {
               placeholder="언어 명령어 입력..."
               className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
           </CollapsibleCard>
+          {/* 프리셋 — 속도·필터는 팔마다 다르므로 device scope */}
+          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
+            <PresetBar domain="inference" scope="device" policyType={activePolicy}
+              values={() => params} onApply={(v) => setParams((prev) => ({ ...prev, ...v }))}
+              defaults={specDefaults} onSelect={setActivePreset} />
+          </div>
           <CollapsibleCard title="실행 속도" storageKey="piper_fold_speed">
             <ParamSlider label="FPS" value={params.fps ?? 20} {...rangeOf('fps', { min: 1, max: 60, step: 1 })}
               onChange={(v) => handleParamChange('fps', v)} />
@@ -742,7 +750,7 @@ export default function InferencePage() {
             currentJoints={telemetry?.joints ?? []}
             disabled={!paused}
           />
-          <EvalPanel checkpoint={selectedModel} />
+          <EvalPanel checkpoint={selectedModel} preset={activePreset} params={params} />
         </div>
       </div>
 

@@ -168,7 +168,7 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 
 검증: pytest **106개** · `npm run build` · ruff 통과. 실기 확인은 각 문서의 "검증" 절 참고.
 
-### Phase 3a — phase-annotation 1~3 (독립 트랙) ◐ 1~2 완료
+### Phase 3a — phase-annotation 1~3 (독립 트랙) ☑ 완료
 
 `wrapper/phase_fsm.py` + 분석 배치 + API. **백엔드 구조 개편과 파일이 거의 안 겹친다.**
 문서 자체가 *"1~2단계만 해도 에피소드 품질 검사 도구로 쓸 수 있다"* 고 한다.
@@ -193,7 +193,7 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 
 | 기능 | 상태 |
 |---|---|
-| **[parameter-presets](feature/parameter-presets.md) 4~5** | 추론 프리셋 + `eval_log` 에 `preset_id`. **#1 단계 2 ☑ 완료 → 착수 가능** |
+| ~~parameter-presets 4~5~~ | ☑ 완료 — 추론 프리셋 + 프리셋별 성공률 |
 | **camera-profiles** | camerad 위에서. 트리거 배선(4단계)이 통째로 빠지고 나머지도 한 프로세스 안에 모인다. **프리셋 스토어 공유** |
 | **phase-annotation 4~8** | UI · 굽기 · 추론 경로 |
 | **cloud-training 5~12** | 데이터 전송 · 체크포인트 회수 · 비용 가드 · 유료 프로바이더 |

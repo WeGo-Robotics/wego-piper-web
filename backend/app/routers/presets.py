@@ -21,11 +21,19 @@ router = APIRouter(prefix="/api/presets", tags=["presets"])
 # 값 스키마를 아는 도메인 — `apply` 검증에 쓴다.
 # 모르는 도메인은 저장/조회만 되고 검증은 통과시킨다.
 _KNOWN_KEYS: dict[str, set[str]] = {}
+# 숫자 범위를 아는 도메인 — 범위 밖 값을 클램프한다.
+_BOUNDS: dict[str, dict[str, dict[str, float]]] = {}
 
 
-def register_domain(domain: str, known_keys: set[str]) -> None:
+def register_domain(
+    domain: str,
+    known_keys: set[str],
+    bounds: dict[str, dict[str, float]] | None = None,
+) -> None:
     """도메인이 자기 값 스키마를 등록한다."""
     _KNOWN_KEYS[domain] = known_keys
+    if bounds:
+        _BOUNDS[domain] = bounds
 
 
 class SaveRequest(BaseModel):
@@ -100,7 +108,10 @@ async def apply_preset(domain: str, name: str, body: ApplyRequest):
     known = _KNOWN_KEYS.get(domain)
     if known is None:
         # 스키마를 모르는 도메인(로봇 등)은 그대로 돌려준다
-        return {"values": preset.values, "missing": [], "unknown": [], "policy_mismatch": None}
+        return {"values": preset.values, "missing": [], "unknown": [],
+                "clamped": [], "policy_mismatch": None}
 
-    report = presets.apply(preset, known, body.defaults, body.policy_type)
+    report = presets.apply(
+        preset, known, body.defaults, body.policy_type, _BOUNDS.get(domain)
+    )
     return report.to_dict()
