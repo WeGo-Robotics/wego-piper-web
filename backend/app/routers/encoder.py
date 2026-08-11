@@ -1,0 +1,204 @@
+"""이미지 엔코더 프로브 — 추론과 무관한 오프라인 진단.
+
+이미지 한 장을 정책의 이미지 엔코더에만 통과시켜 패치 특징을 뽑고, 그 위에서
+PCA / 클릭 코사인 유사도 / k-means 를 계산해 돌려준다. 로봇을 움직이지 않으므로
+E-stop 이나 추론 루프와 무관하다.
+
+모델 실행은 wrapper/encoder_probe.py subprocess 가 담당하고(백엔드는 torch 미사용),
+이후 상호작용은 캐시된 특징에서 numpy 로 즉시 계산된다.
+"""
+
+import asyncio
+import base64
+import binascii
+import logging
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
+from pydantic import BaseModel
+
+from app.services.camera_manager import camera_manager
+from app.services.encoder_probe import (
+    cosine_map,
+    encoder_probe_manager,
+    kmeans_labels,
+    pca_rgb,
+)
+from app.services.model_scanner import scan_models
+from app.services.process_manager import process_manager
+from app.services.train_manager import train_manager
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/encoder", tags=["encoder"])
+
+# 엔코더 실행은 GPU를 잡으므로 한 번에 하나씩. 다만 겹친 요청을 곧바로 거절하면
+# 슬롯 A/B 를 연달아 누르는 정상적인 사용이 실패하므로, 짧게 줄을 세운다.
+# (1회 4초 안팎이라 대기가 자연스럽다. 무한정 쌓이는 것만 막는다.)
+_run_lock = asyncio.Lock()
+_QUEUE_LIMIT = 3
+_waiting = 0
+
+SUPPORTED = {"smolvla", "act"}
+
+
+def _gpu_busy() -> str:
+    """학습/추론이 GPU를 쓰고 있으면 사유를 반환."""
+    if train_manager.is_running:
+        return "학습"
+    if process_manager.state.value in ("starting", "running"):
+        return "추론"
+    return ""
+
+
+@router.get("/models")
+async def list_encoder_models():
+    """프로브가 지원하는 정책의 체크포인트 목록."""
+    models = [m for m in scan_models() if m.get("policy_type") in SUPPORTED]
+    models.sort(key=lambda m: m.get("modified") or "", reverse=True)  # 최신 체크포인트가 위로
+    return [
+        {
+            "id": m["id"],
+            "path": m["path"],
+            "policy_type": m["policy_type"],
+            "modified": m.get("modified"),
+            "cameras": [c.get("name") for c in m.get("requirements", {}).get("required_cameras", [])],
+        }
+        for m in models
+    ]
+
+
+@router.get("/sessions")
+async def list_sessions():
+    return {"sessions": encoder_probe_manager.list(), "gpu_busy": _gpu_busy()}
+
+
+class EncodeRequest(BaseModel):
+    policy_type: str
+    source: str = "camera"  # camera | upload
+    camera_id: str = ""
+    image_b64: str = ""  # data URL 또는 순수 base64
+    checkpoint_path: str = ""
+    image_key: str = ""
+    tap: str = "siglip"
+    device: str = ""  # 비우면 GPU 사용 여부를 자동 판단
+
+
+def _decode_upload(raw: str) -> bytes:
+    payload = raw.split(",", 1)[1] if raw.startswith("data:") else raw
+    try:
+        return base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(400, "이미지 디코딩에 실패했습니다")
+
+
+@router.post("/encode")
+async def encode(body: EncodeRequest):
+    if body.policy_type not in SUPPORTED:
+        raise HTTPException(400, f"지원하지 않는 정책: {body.policy_type}")
+    if body.policy_type == "act" and not body.checkpoint_path:
+        raise HTTPException(400, "ACT는 백본이 학습된 가중치라 체크포인트가 필요합니다")
+
+    if body.source == "camera":
+        if not body.camera_id:
+            raise HTTPException(400, "카메라를 선택하세요")
+        image = camera_manager.get_preview(body.camera_id)
+        if image is None:
+            raise HTTPException(404, f"카메라 프레임을 가져올 수 없습니다: {body.camera_id}")
+    elif body.source == "upload":
+        if not body.image_b64:
+            raise HTTPException(400, "이미지가 비어 있습니다")
+        image = _decode_upload(body.image_b64)
+    else:
+        raise HTTPException(400, f"알 수 없는 소스: {body.source}")
+
+    busy = _gpu_busy()
+    device = body.device or ("cpu" if busy else "cuda")
+
+    global _waiting
+    if _waiting >= _QUEUE_LIMIT:
+        raise HTTPException(429, f"엔코딩 요청이 밀려 있습니다 (대기 {_waiting}건). 잠시 후 다시 시도하세요")
+    _waiting += 1
+    try:
+        async with _run_lock:
+            sess = await asyncio.to_thread(
+                encoder_probe_manager.run,
+                image,
+                body.policy_type,
+                body.checkpoint_path,
+                body.image_key,
+                body.tap,
+                device,
+            )
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc))
+    finally:
+        _waiting -= 1
+
+    return {
+        "sid": sess.sid,
+        "meta": sess.meta,
+        "gpu_busy": busy,
+        "device_note": f"{busy} 중이라 CPU로 실행했습니다" if busy and not body.device else "",
+    }
+
+
+def _session(sid: str):
+    sess = encoder_probe_manager.get(sid)
+    if not sess:
+        raise HTTPException(404, "세션을 찾을 수 없습니다 (서버 재시작 또는 만료)")
+    return sess
+
+
+def _ref(sid: str, ref: str | None):
+    """비교 기준 세션. 지정이 없으면 자기 자신."""
+    target = _session(sid)
+    reference = _session(ref) if ref and ref != sid else target
+    if reference.features().shape[1] != target.features().shape[1]:
+        raise HTTPException(400, "특징 차원이 달라 비교할 수 없습니다 (같은 모델/탭으로 인코딩하세요)")
+    return target, reference
+
+
+@router.get("/{sid}/input.jpg")
+async def input_image(sid: str):
+    sess = _session(sid)
+    path = sess.path / "input.jpg"
+    if not path.exists():
+        raise HTTPException(404, "입력 이미지가 없습니다")
+    return Response(content=path.read_bytes(), media_type="image/jpeg")
+
+
+@router.get("/{sid}/source.jpg")
+async def source_image(sid: str):
+    sess = _session(sid)
+    path = sess.path / "source.jpg"
+    if not path.exists():
+        raise HTTPException(404, "원본 이미지가 없습니다")
+    return Response(content=path.read_bytes(), media_type="image/jpeg")
+
+
+@router.get("/{sid}/pca")
+async def pca(sid: str, ref: str | None = None):
+    target, reference = _ref(sid, ref)
+    return pca_rgb(target, reference)
+
+
+@router.get("/{sid}/similarity")
+async def similarity(sid: str, patch: int, ref: str | None = None):
+    target, reference = _ref(sid, ref)
+    try:
+        return cosine_map(target, reference, patch)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.get("/{sid}/kmeans")
+async def kmeans(sid: str, k: int = 6):
+    return kmeans_labels(_session(sid), k)
+
+
+@router.delete("/{sid}")
+async def delete_session(sid: str):
+    if not encoder_probe_manager.delete(sid):
+        raise HTTPException(404, "세션을 찾을 수 없습니다")
+    return {"status": "ok"}

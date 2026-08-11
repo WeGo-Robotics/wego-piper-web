@@ -10,6 +10,7 @@ import DatasetsPage from '../pages/DatasetsPage'
 import TrainingPage from '../pages/TrainingPage'
 import HubPage from '../pages/HubPage'
 import PolicyServerPage from '../pages/PolicyServerPage'
+import EncoderProbePage from '../pages/EncoderProbePage'
 import LogsPage from '../pages/LogsPage'
 import SettingsPage from '../pages/SettingsPage'
 
@@ -84,6 +85,7 @@ export const pages: PageEntry[] = [
   { path: '/training', label: '학습', component: TrainingPage, nav: true },
   { path: '/hub', label: '허브', component: HubPage, nav: true },
   { path: '/policy-server', label: '정책서버', component: PolicyServerPage, nav: true },
+  { path: '/encoder', label: '엔코더', component: EncoderProbePage, nav: true },
   { path: '/logs', label: '로그', component: LogsPage, nav: true },
   { path: '/debug', label: '디버그', component: DebugLogsPage, nav: true, external: true, standalone: true },
   { path: '/settings', label: '설정', component: SettingsPage, nav: true },

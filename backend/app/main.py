@@ -17,7 +17,7 @@ class _QuietAccessFilter(logging.Filter):
 
 
 logging.getLogger("uvicorn.access").addFilter(_QuietAccessFilter())
-from app.routers import health, ws, estop, params, models, datasets, hub, inference, eval_log, robots, cameras, logs, training, recording, policy_server, debug_logs
+from app.routers import health, ws, estop, params, models, datasets, hub, inference, eval_log, robots, cameras, logs, training, recording, policy_server, debug_logs, encoder
 from app.services.estop_watchdog import estop_watchdog
 from app.services.zmq_bridge import zmq_bridge
 from app.services.robot_manager import robot_manager
@@ -76,3 +76,4 @@ app.include_router(debug_logs.router)
 app.include_router(training.router)
 app.include_router(recording.router)
 app.include_router(policy_server.router)
+app.include_router(encoder.router)
