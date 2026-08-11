@@ -4,6 +4,7 @@ import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import type { ProcessState } from '../types/ws'
 import { useActivity, isStateMessage } from '../hooks/useActivity'
 import { usePolicies } from '../hooks/usePolicies'
+import { useParamSpec } from '../hooks/useParamSpec'
 import type { Model } from '../types/models'
 import ParamSlider from '../components/ParamSlider'
 import LogViewer from '../components/LogViewer'
@@ -129,6 +130,18 @@ export default function InferencePage() {
   const { isBlocked, blockedBy, refresh: refreshActivity } = useActivity()
   // 정책 목록·RTC 여부는 백엔드 core/policies.py 한 곳에서 온다
   const { inferable, isRtc } = usePolicies()
+  // 파라미터 범위·기본값은 백엔드 core/inference_params.py 에서 온다
+  const { rangeOf, defaults: specDefaults } = useParamSpec()
+
+  // 스펙이 도착하면 아직 없는 파라미터를 서버 기본값으로 보충한다
+  // (프론트에 기본값을 또 적지 않기 위해)
+  useEffect(() => {
+    if (!Object.keys(specDefaults).length) return
+    setParams((prev) => {
+      const merged = { ...specDefaults, ...prev }
+      return JSON.stringify(merged) === JSON.stringify(prev) ? prev : merged
+    })
+  }, [specDefaults])
 
   const { connected } = useWebSocket('/ws', {
     onMessage: useCallback((msg: WsMessage) => {
@@ -648,9 +661,9 @@ export default function InferencePage() {
               className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
           </CollapsibleCard>
           <CollapsibleCard title="실행 속도" storageKey="piper_fold_speed">
-            <ParamSlider label="FPS" value={params.fps ?? 20} min={1} max={60} step={1}
+            <ParamSlider label="FPS" value={params.fps ?? 20} {...rangeOf('fps', { min: 1, max: 60, step: 1 })}
               onChange={(v) => handleParamChange('fps', v)} />
-            <ParamSlider label="관절 속도 (deg/s)" value={params.max_velocity ?? 180} min={0} max={500} step={10}
+            <ParamSlider label="관절 속도 (deg/s)" value={params.max_velocity ?? 180} {...rangeOf('max_velocity', { min: 0, max: 500, step: 10 })}
               onChange={(v) => handleParamChange('max_velocity', v)} />
             <div className="space-y-1">
               <div className="flex justify-between text-xs">
@@ -669,7 +682,7 @@ export default function InferencePage() {
               <span className="text-neutral-300">그리퍼 속도 제한/필터 미적용 (원본 그대로)</span>
             </label>
             <div className={params.gripper_bypass_filter ? 'opacity-40 pointer-events-none space-y-4' : 'space-y-4'}>
-              <ParamSlider label="그리퍼 속도 (%/s)" value={params.max_gripper_velocity ?? 300} min={0} max={500} step={10}
+              <ParamSlider label="그리퍼 속도 (%/s)" value={params.max_gripper_velocity ?? 300} {...rangeOf('max_gripper_velocity', { min: 0, max: 500, step: 10 })}
                 onChange={(v) => handleParamChange('max_gripper_velocity', v)} />
               <div className="space-y-1">
                 <div className="flex justify-between text-xs">
@@ -688,28 +701,28 @@ export default function InferencePage() {
         {/* 2열: 진동 감소 + 정책 파라미터 */}
         <div className="space-y-4">
           <CollapsibleCard title="진동 감소" storageKey="piper_fold_smooth">
-            <ParamSlider label="저역통과 필터 α (1.0=OFF)" value={params.lowpass_alpha ?? 0.5} min={0.05} max={1} step={0.05}
+            <ParamSlider label="저역통과 필터 α (1.0=OFF)" value={params.lowpass_alpha ?? 0.5} {...rangeOf('lowpass_alpha', { min: 0.05, max: 1, step: 0.05 })}
               onChange={(v) => handleParamChange('lowpass_alpha', v)} />
-            <ParamSlider label="Jerk 제한 (deg/s², 0=OFF)" value={params.max_jerk ?? 0} min={0} max={5000} step={100}
+            <ParamSlider label="Jerk 제한 (deg/s², 0=OFF)" value={params.max_jerk ?? 0} {...rangeOf('max_jerk', { min: 0, max: 5000, step: 100 })}
               onChange={(v) => handleParamChange('max_jerk', v)} />
-            <ParamSlider label="보간 스텝 (0=OFF)" value={params.interpolation_steps ?? 0} min={0} max={10} step={1}
+            <ParamSlider label="보간 스텝 (0=OFF)" value={params.interpolation_steps ?? 0} {...rangeOf('interpolation_steps', { min: 0, max: 10, step: 1 })}
               onChange={(v) => handleParamChange('interpolation_steps', v)} />
-            <ParamSlider label="받는 액션 청크 크기 (0=모델 전체)" value={params.use_chunk_size ?? 0} min={0} max={200} step={5}
+            <ParamSlider label="받는 액션 청크 크기 (0=모델 전체)" value={params.use_chunk_size ?? 0} {...rangeOf('use_chunk_size', { min: 0, max: 200, step: 5 })}
               onChange={(v) => handleParamChange('use_chunk_size', v)} />
-            <ParamSlider label="재추론 트리거 (큐 잔량 ≤ %, 0=소진 시)" value={params.refill_threshold_pct ?? 20} min={0} max={100} step={5}
+            <ParamSlider label="재추론 트리거 (큐 잔량 ≤ %, 0=소진 시)" value={params.refill_threshold_pct ?? 20} {...rangeOf('refill_threshold_pct', { min: 0, max: 100, step: 5 })}
               onChange={(v) => handleParamChange('refill_threshold_pct', v)} />
           </CollapsibleCard>
           {isRtc(activePolicy) && (
             <CollapsibleCard title="RTC 파라미터" storageKey="piper_fold_rtc" defaultOpen={false}>
-              <ParamSlider label="max_guidance_weight" value={params.max_guidance_weight} min={0} max={50} step={0.5}
+              <ParamSlider label="max_guidance_weight" value={params.max_guidance_weight} {...rangeOf('max_guidance_weight', { min: 0, max: 50, step: 0.5 })}
                 onChange={(v) => handleParamChange('max_guidance_weight', v)} />
-              <ParamSlider label="execution_horizon" value={params.execution_horizon} min={1} max={100} step={1}
+              <ParamSlider label="execution_horizon" value={params.execution_horizon} {...rangeOf('execution_horizon', { min: 1, max: 100, step: 1 })}
                 onChange={(v) => handleParamChange('execution_horizon', v)} />
             </CollapsibleCard>
           )}
           {activePolicy === 'act' && (
             <CollapsibleCard title="ACT 파라미터" storageKey="piper_fold_act">
-              <ParamSlider label="temporal_ensemble_coeff" value={params.temporal_ensemble_coeff} min={0} max={1} step={0.001}
+              <ParamSlider label="temporal_ensemble_coeff" value={params.temporal_ensemble_coeff} {...rangeOf('temporal_ensemble_coeff', { min: 0, max: 1, step: 0.001 })}
                 onChange={(v) => handleParamChange('temporal_ensemble_coeff', v)} />
               <p className="text-[10px] text-neutral-500">
                 액션 스텝 수는 위 &ldquo;받는 액션 청크 크기&rdquo;로 통합되었습니다.

@@ -106,7 +106,19 @@ CLI 인자다. 즉 **모드에 따라 두 슬라이더의 의미가 다르다.**
 (실제로 `fps` 하드코딩을 양쪽에 똑같이 고쳐야 했다). 사용자가 화면에서 확인한
 CLI 명령이 거짓이 되는 구조라 합쳤다.
 
-### 남은 것 — 단계 2 구조 통합
+### ☑ 단계 2 완료 — 구조 통합
+
+[app/core/inference_params.py](../backend/app/core/inference_params.py) 가 정본이고 나머지가 파생한다:
+
+| 파생 대상 | 근거 |
+|---|---|
+| `zmq_bridge.SAFE_PARAMS` / `BOOL_PARAMS` | `realtime=True` |
+| `cli_mapping.OVERRIDE_KEYS` | `send_at_start=True` |
+| 프론트 슬라이더 범위·기본값 | `GET /api/params/spec` → [useParamSpec](../frontend/src/hooks/useParamSpec.ts) |
+
+테스트가 **프론트에 min/max 하드코딩이 다시 생기면 실패**한다 (드리프트 2 재발 방지).
+
+### 원래 계획 (참고)
 
 백엔드에 파라미터 스펙 단일 소스를 만든다:
 
@@ -155,4 +167,4 @@ PARAM_SPEC = {
 
 ## 상태
 
-☑ 단계 1 완료 (실기 검증 대기) / ☐ 단계 2 구조 통합
+☑ 완료 (단계 1·2) — 실기 검증 대기

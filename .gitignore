@@ -10,6 +10,13 @@ vendor/**/build/
 vendor/**/*.egg-info/
 vendor/**/__pycache__/
 
+# 최상위 공유 패키지 (bus/, phase/) — 소스만 커밋, 빌드 산출물은 제외.
+# 게이트웨이·데몬·wrapper 가 함께 import 하므로 pip install -e 로 설치된다.
+bus/**/*.egg-info/
+bus/**/__pycache__/
+phase/**/*.egg-info/
+phase/**/__pycache__/
+
 # Environment
 backend/.env
 .env

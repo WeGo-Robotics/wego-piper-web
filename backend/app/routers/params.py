@@ -1,9 +1,20 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from app.core.inference_params import defaults, spec_for_frontend
 from app.services.zmq_bridge import zmq_bridge
 
 router = APIRouter(prefix="/api/params", tags=["params"])
+
+
+@router.get("/spec")
+async def param_spec():
+    """추론 파라미터 스펙 — 프론트가 슬라이더를 여기서 생성한다.
+
+    이전에는 기본값·범위·라벨이 프론트에 손으로 적혀 있어서 백엔드 클램프 범위와
+    어긋났다 (`max_velocity` 가 프론트 500 / 백엔드 1000).
+    """
+    return {"params": spec_for_frontend(), "defaults": defaults()}
 
 
 class ParamUpdate(BaseModel):

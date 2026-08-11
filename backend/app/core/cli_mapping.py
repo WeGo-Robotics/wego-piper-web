@@ -6,6 +6,7 @@ LeRobot 업데이트 시 이 파일만 수정하면 됨.
 import logging
 from pathlib import Path
 
+from app.core import inference_params
 from app.core.config import settings
 
 # wrapper 경로 (프로젝트 내 상대경로)
@@ -41,20 +42,12 @@ EDIT_OPERATIONS: dict[str, str] = {
 
 
 # CLI 플래그가 아니라 `--config-overrides` JSON으로 실어 보낼 키.
+# **PARAM_SPEC 에서 파생한다** (`send_at_start=True`).
 #
 # 이 값들은 실행 중 ZMQ로도 바꿀 수 있지만, **시작값도 반드시 이 경로로 전달해야 한다** —
 # 여기 없으면 wrapper 기본값으로 떨어져 UI에서 맞춘 값이 조용히 유실된다(에러 없음).
 # 로컬 wrapper 와 gRPC wrapper 가 같은 집합을 쓴다.
-OVERRIDE_KEYS: set[str] = {
-    # 정책 파라미터
-    "max_guidance_weight", "execution_horizon", "temporal_ensemble_coeff",
-    "n_action_steps", "refill_threshold_pct",
-    # 액션 청크 크기 (0 = 모델 전체)
-    "use_chunk_size",
-    # 액션 필터
-    "max_velocity", "max_gripper_velocity", "lowpass_alpha",
-    "max_jerk", "interpolation_steps", "gripper_bypass_filter",
-}
+OVERRIDE_KEYS: set[str] = inference_params.start_params()
 
 
 def _split_overrides(params: dict) -> tuple[dict, dict]:

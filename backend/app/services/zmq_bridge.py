@@ -8,32 +8,20 @@ import logging
 import zmq
 import zmq.asyncio
 
+from app.core import inference_params
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Safe 파라미터: 실시간 변경 가능
-SAFE_PARAMS = {
-    "max_guidance_weight": {"min": 0.0, "max": 50.0},
-    "execution_horizon": {"min": 1, "max": 100},
-    "temporal_ensemble_coeff": {"min": 0.0, "max": 1.0},
-    "n_action_steps": {"min": 1, "max": 100},
-    "fps": {"min": 1, "max": 60},
-    # 상한 500 — 프론트 슬라이더와 "관절 속도 제한(%)" 환산식이 500 기준이다.
-    # 이전에는 백엔드만 1000이라 어느 쪽이 의도한 상한인지 불명확했다.
-    "max_velocity": {"min": 0, "max": 500},
-    "max_gripper_velocity": {"min": 0, "max": 500},
-    "lowpass_alpha": {"min": 0.05, "max": 1.0},
-    "max_jerk": {"min": 0, "max": 5000},
-    "interpolation_steps": {"min": 0, "max": 10},
-    "use_chunk_size": {"min": 0, "max": 200},
-    "refill_threshold_pct": {"min": 0, "max": 100},
-}
+# 실시간 변경 가능한 파라미터와 클램프 범위 — **PARAM_SPEC 에서 파생한다.**
+# 이전에는 이 목록이 프론트 기본값·슬라이더·override_keys 와 따로 적혀 있어서
+# 하나만 빠져도 조용히 값이 유실됐다 (refactor/01-inference-params.md).
+SAFE_PARAMS: dict[str, dict[str, float]] = inference_params.bounds()
 
-# Boolean 파라미터: 실시간 변경 가능 (클램핑 대신 bool 변환)
-BOOL_PARAMS = {"gripper_bypass_filter"}
+# Boolean 파라미터: 클램핑 대신 bool 변환
+BOOL_PARAMS: set[str] = inference_params.bool_params()
 
-# Unsafe 파라미터: 재시작 필요
+# Unsafe 파라미터: 재시작 필요 (모델 아키텍처라 스펙에 없다)
 UNSAFE_PARAMS = {"chunk_size", "dim_model", "n_obs_steps", "use_vae"}
 
 

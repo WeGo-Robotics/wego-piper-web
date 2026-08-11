@@ -17,7 +17,24 @@ class _QuietAccessFilter(logging.Filter):
 
 
 logging.getLogger("uvicorn.access").addFilter(_QuietAccessFilter())
-from app.routers import health, ws, estop, params, models, datasets, hub, inference, eval_log, robots, cameras, logs, training, recording, policy_server, debug_logs, encoder, activity, policies, presets
+# ⚠ 이 import 는 위 로깅 필터 설정 **뒤에** 있어야 한다 —
+# uvicorn.access 필터가 라우터 import 보다 먼저 붙어야 한다.
+from app.routers import (
+    activity, cameras, datasets, debug_logs, encoder, estop, eval_log, health,
+    hub, inference, logs, models, params, policies, policy_server, presets,
+    recording, robots, training, ws,
+)
+
+# 라우터 목록 — 등록 누락을 구조적으로 막는다.
+# 이전에는 import 줄과 `include_router()` 17줄을 **둘 다** 고쳐야 했고,
+# 등록을 빠뜨리면 라우트가 조용히 404 가 됐다 (refactor/07-router-registration.md).
+#
+# `pkgutil` 자동 순회는 일부러 쓰지 않는다 — 등록 순서가 암묵적이 되고 import 부작용이 숨는다.
+ROUTERS = [
+    health, ws, estop, params, models, datasets, hub, inference, eval_log,
+    robots, cameras, logs, debug_logs, training, recording, policy_server,
+    encoder, activity, policies, presets,
+]
 from app.services.estop_bridge import estop_bridge
 from app.services.zmq_bridge import zmq_bridge
 from app.services.robot_manager import robot_manager
@@ -69,23 +86,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(health.router)
-app.include_router(ws.router)
-app.include_router(estop.router)
-app.include_router(params.router)
-app.include_router(models.router)
-app.include_router(datasets.router)
-app.include_router(hub.router)
-app.include_router(inference.router)
-app.include_router(eval_log.router)
-app.include_router(robots.router)
-app.include_router(cameras.router)
-app.include_router(logs.router)
-app.include_router(debug_logs.router)
-app.include_router(training.router)
-app.include_router(recording.router)
-app.include_router(policy_server.router)
-app.include_router(encoder.router)
-app.include_router(activity.router)
-app.include_router(policies.router)
-app.include_router(presets.router)
+for _router_module in ROUTERS:
+    app.include_router(_router_module.router)

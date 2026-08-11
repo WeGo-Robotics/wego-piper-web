@@ -1,0 +1,13 @@
+[project]
+name = "piper_phase"
+version = "0.1.0"
+description = "작업 단계 라벨러 (백엔드 라벨러 ↔ wrapper 온라인 추정기 공유)"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24"]
+
+[tool.setuptools.packages.find]
+include = ["piper_phase*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

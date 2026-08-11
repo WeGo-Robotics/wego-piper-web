@@ -1,5 +1,20 @@
 # 1. 작업 단계(phase) 라벨 — 상태 슬롯 추가 + 자동 라벨러 + 편집 UI
 
+> **◐ 1~2단계 완료.** 라벨러는 [phase/piper_phase/](../phase/piper_phase/) 설치 패키지로,
+> 분석 배치는 [phase_labeler.py](../backend/app/services/phase_labeler.py) 로 만들었다.
+> 문서의 실측값이 **정확히 재현됐다** — ep0 830프레임, 갭 min/mean −35.0/−13.3,
+> **50 에피소드 전부 3사이클**.
+>
+> 문서와 다르게 간 것 둘:
+> - `done_still` 20 → **5**. 실측 꼬리가 5~25프레임이라 20이면 절반이 `DONE` 을 못 받는다.
+> - 라벨러 위치를 `wrapper/phase_fsm.py` 가 아니라 **설치 패키지**(`pip install -e phase/`)로.
+>   백엔드가 `wrapper/` 를 import 하려면 `sys.path` 조작이 필요한데,
+>   `bus/` 와 같은 방식이면 양쪽이 깔끔하게 같은 코드를 쓴다.
+>
+> 착수 중 확인된 것: **임계값은 태스크마다 다르다.** `min_cube` 기본값(`hold_gap=-15`)으로
+> `yeonwonju` 를 돌리면 0사이클이 16개인데, `-8` 로 낮추면 2개가 된다.
+> 사이드카에 `params` 를 함께 저장하는 설계가 맞았다.
+
 `observation.state`에 슬롯 하나를 추가해 "지금 로봇이 무슨 단계를 수행 중인지"를 넣는다.
 그 값을 자동으로 채워주는 후처리 도구와, 결과를 영상 편집기처럼 확인·수정하는 UI를 만든다.
 
@@ -453,8 +468,8 @@ UI에 띄우고 버튼을 노출한다.
 
 | # | 단계 | 산출물 | 검증 |
 |---|---|---|---|
-| 1 | `wrapper/phase_fsm.py` — 신호 + 인과 FSM | 순수 함수, 의존성 numpy만 | 실측 에피소드 10개에서 사이클 3개 검출 |
-| 2 | 분석 배치 + 사이드카 저장 | `phase_labels.json`, `phase_signals.parquet` | 50 에피소드 전수, 이상 에피소드 목록 |
+| 1 | ☑ [phase/piper_phase/fsm.py](../phase/piper_phase/fsm.py) — 신호 + 인과 FSM | numpy만. `pip install -e phase/` | ☑ **50 에피소드 전부 3사이클** |
+| 2 | ☑ [phase_labeler.py](../backend/app/services/phase_labeler.py) | `phase_labels.json`, `phase_signals.parquet` | ☑ 4개 데이터셋 전수 + 이상 목록 |
 | 3 | API (분석/조회/저장/프레임) | 라우터 + 전용 ProcessManager | curl 라운드트립 |
 | 4 | `PhaseEditorPage` — 스크러버 + 그래프 + 구간 바 | 페이지 1개 | `npm run build` |
 | 5 | 편집 인터랙션 (드래그/분할/병합/단축키/undo) | | 실제로 50개 검토해보기 |
