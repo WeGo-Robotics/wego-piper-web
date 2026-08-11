@@ -13,12 +13,10 @@ from app.services.dataset_scanner import (
     check_disk_usage,
     find_dataset_path,
 )
-from app.services.process_manager import process_manager, ProcessManager
+from app.services.dataset_jobs import edit_pm as _edit_pm, upload_pm as _upload_pm
+from app.services.exclusivity import Activity, require_idle
 
 logger = logging.getLogger(__name__)
-
-# Hub 업로드 전용 ProcessManager (추론/학습과 독립)
-_upload_pm = ProcessManager()
 
 
 def _find_hf_cli() -> str:
@@ -68,12 +66,13 @@ class EditDatasetRequest(BaseModel):
 
 @router.post("/{dataset_id:path}/edit")
 async def edit_dataset(dataset_id: str, body: EditDatasetRequest):
+    require_idle(Activity.DATASET_EDIT)
     try:
         args = build_edit_dataset_args(dataset_id, body.operation, body.params)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    await process_manager.start(args)
+    await _edit_pm.start(args)
     return {"status": "started", "command": args}
 
 
@@ -171,8 +170,7 @@ async def upload_to_hub(dataset_id: str, body: UploadRequest):
     ds_path = find_dataset_path(dataset_id)
     if not ds_path:
         raise HTTPException(404, "Dataset not found")
-    if _upload_pm.state.value in ("running", "starting"):
-        raise HTTPException(409, "업로드가 이미 진행 중입니다.")
+    require_idle(Activity.UPLOAD)
 
     hf_cli = _find_hf_cli()
     if not hf_cli:
@@ -208,8 +206,8 @@ async def create_decode_cache(dataset_id: str):
     ds_path = find_dataset_path(dataset_id)
     if not ds_path:
         raise HTTPException(404, "Dataset not found")
-    if _upload_pm.state.value in ("running", "starting"):
-        raise HTTPException(409, "다른 작업이 진행 중입니다.")
+    # 디코딩 캐시는 업로드와 같은 ProcessManager 를 공유한다 (둘 다 느린 디스크 작업)
+    require_idle(Activity.UPLOAD)
 
     from app.core.config import settings
     # LeRobot 공식 캐시 형식: images/{key}/episode-{ep:06d}/frame-{frame:06d}.png

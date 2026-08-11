@@ -1,4 +1,11 @@
-# 2. 정책 타입 목록 6곳 불일치 (A급)
+# 2. 정책 타입 목록 6곳 불일치 (A급) — ☑ 완료
+
+> **[core/policies.py](../backend/app/core/policies.py) 한 곳으로 통합.**
+> 결정: `sac` 제거(강화학습이라 수집→학습→추론 흐름과 안 맞음) / `pi0_fast` 학습에도 추가 /
+> Hub 태깅에서 `rtc` 제거 + **긴 이름 우선 매칭**(`pi05_base` 가 `pi0` 로 잡히던 버그).
+> 프론트는 `GET /api/policies` 를 [usePolicies](../frontend/src/hooks/usePolicies.ts) 로 받는다.
+> 계약은 [test_policies.py](../backend/tests/test_policies.py) 가 고정한다 — 특히
+> **`infer: True` 인데 wrapper `POLICY_IMPORTS` 에 없으면 실패**(sac 사고의 재발 방지).
 
 ## 문제
 
@@ -70,4 +77,4 @@ POLICIES = {
 
 ## 상태
 
-☐ 미착수
+☑ 완료

@@ -23,19 +23,19 @@
 
 | # | 항목 | 급 | 상태 | 문서 |
 |---|------|----|----|------|
-| 1 | 추론 파라미터 3중 정의 (드리프트 2건) | A | ☐ | [01-inference-params.md](01-inference-params.md) |
-| 2 | 정책 타입 목록 6곳 불일치 | A | ☐ | [02-policy-registry.md](02-policy-registry.md) |
-| 3 | wrapper 부트스트랩 40줄 복붙 ×3 | B | ☐ | [03-wrapper-bootstrap.md](03-wrapper-bootstrap.md) |
-| 4 | `_ERR_BITS` 프로세스 경계 넘어 복붙 | B | ☐ | [04-err-bits.md](04-err-bits.md) |
-| 5 | 관절 캘리브레이션 `cal` dict 2회 중복 | B | ☐ | [05-joint-calibration.md](05-joint-calibration.md) |
-| 6 | 관절 이름·범위 프론트 3곳 | B | ☐ | [06-joint-names-frontend.md](06-joint-names-frontend.md) |
+| 1 | 추론 파라미터 3중 정의 (드리프트 **3건**) | A | ◐ 단계1 완료 | [01-inference-params.md](01-inference-params.md) |
+| 2 | 정책 타입 목록 6곳 불일치 | A | ☑ | [02-policy-registry.md](02-policy-registry.md) |
+| 3 | wrapper 부트스트랩 40줄 복붙 ×3 | B | ☑ | [03-wrapper-bootstrap.md](03-wrapper-bootstrap.md) |
+| 4 | `_ERR_BITS` 프로세스 경계 넘어 복붙 | B | ☑ | [04-err-bits.md](04-err-bits.md) |
+| 5 | 관절 캘리브레이션 `cal` dict **3회** 중복 | B | ☑ | [05-joint-calibration.md](05-joint-calibration.md) |
+| 6 | 관절 이름·범위 프론트 3곳 | B | ☑ | [06-joint-names-frontend.md](06-joint-names-frontend.md) |
 | 7 | 라우터 등록 2중 (main.py) | C | ☐ | [07-router-registration.md](07-router-registration.md) |
-| 8 | `PIPER_JOINTS = 7` 프론트/백 각각 | C | ☐ | [08-piper-joints.md](08-piper-joints.md) |
-| 9 | `robot_type: 'piper_follower'` 5곳 | C | ☐ | [09-robot-type.md](09-robot-type.md) |
-| 10 | 배타 모드 가드 8곳 부분집합 불일치 (드리프트 3건) | A | ☐ | [10-exclusive-mode-guard.md](10-exclusive-mode-guard.md) |
-| 11 | HF 캐시 레이아웃 해석 중복 (드리프트 1건) | B | ☐ | [11-hf-cache-layout.md](11-hf-cache-layout.md) |
-| 12 | WS 메시지 타입 16종 계약 없음 | B | ☐ | [12-ws-message-contract.md](12-ws-message-contract.md) |
-| 13 | `ProcessState` 유니온 프론트 4곳 | C | ☐ | [13-process-state-union.md](13-process-state-union.md) |
+| 8 | `PIPER_JOINTS = 7` 프론트/백 각각 | C | ☑ | [08-piper-joints.md](08-piper-joints.md) |
+| 9 | `robot_type: 'piper_follower'` 5곳 | C | ☑ | [09-robot-type.md](09-robot-type.md) |
+| 10 | 배타 모드 가드 8곳 부분집합 불일치 (드리프트 3건) | A | ☑ | [10-exclusive-mode-guard.md](10-exclusive-mode-guard.md) |
+| 11 | HF 캐시 레이아웃 해석 중복 (드리프트 1건) | B | ☑ | [11-hf-cache-layout.md](11-hf-cache-layout.md) |
+| 12 | WS 메시지 타입 15종 계약 없음 | B | ☑ | [12-ws-message-contract.md](12-ws-message-contract.md) |
+| 13 | `ProcessState` 유니온 프론트 4곳 | C | ☑ | [13-process-state-union.md](13-process-state-union.md) |
 
 상태: ☐ 미착수 / ◐ 진행중 / ☑ 완료
 

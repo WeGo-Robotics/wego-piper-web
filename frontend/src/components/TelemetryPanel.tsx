@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { JOINT_NAMES, JOINT_RANGE } from '../config/joints'
 
 export type TelemetryData = {
   step: number
@@ -11,16 +12,6 @@ export type TelemetryData = {
   gpu_total_mb?: number
 }
 
-const JOINT_NAMES = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6', 'gripper']
-const JOINT_RANGE: Record<string, [number, number]> = {
-  joint1: [-100, 100],
-  joint2: [-100, 100],
-  joint3: [-100, 100],
-  joint4: [-100, 100],
-  joint5: [-100, 100],
-  joint6: [-100, 100],
-  gripper: [0, 100],
-}
 
 type Props = {
   data: TelemetryData | null

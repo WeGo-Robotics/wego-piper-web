@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from 'react'
 import { api } from '../services/api'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
+import type { ProcessState } from '../types/ws'
 import LogViewer from '../components/LogViewer'
 
-type ProcessState = 'idle' | 'starting' | 'running' | 'stopping' | 'error'
 type ServerStatus = { state: string; pid: number | null; address: string; host: string; port: number; fps: number }
 type RemoteCheck = { reachable: boolean; address: string; error?: string }
 

@@ -6,9 +6,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.services.camera_manager import camera_manager
-from app.services.process_manager import ProcessState, process_manager
+from app.services.exclusivity import Activity, blocked_reason
 from app.services.realsense_manager import realsense_hub
-from app.services.record_manager import record_manager
 
 router = APIRouter(prefix="/api/cameras", tags=["cameras"])
 
@@ -20,12 +19,10 @@ def _camera_owner() -> str | None:
 
     이때 백엔드가 같은 RealSense 디바이스를 동시에 열거나 UVC 컨트롤을 질의하면
     (특히 D405) 커널 uvcvideo가 D-state로 물려 librealsense가 SIGABRT(-6)로 죽고
-    카메라까지 먹통이 된다. 디바이스를 직접 건드리는 엔드포인트는 이 동안 막는다."""
-    if process_manager.state in (ProcessState.RUNNING, ProcessState.STARTING):
-        return "추론"
-    if record_manager.is_running:
-        return "녹화"
-    return None
+    카메라까지 먹통이 된다. 디바이스를 직접 건드리는 엔드포인트는 이 동안 막는다.
+
+    누가 소유하는지는 exclusivity 의 CAMERA_ACCESS 규칙 한 곳에 정의돼 있다."""
+    return blocked_reason(Activity.CAMERA_ACCESS)
 
 
 def _guard_device_access() -> None:

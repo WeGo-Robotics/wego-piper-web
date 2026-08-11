@@ -1,4 +1,8 @@
-# 6. 관절 이름·범위 프론트 3곳 (B급)
+# 6. 관절 이름·범위 프론트 3곳 (B급) — ☑ 완료
+
+> [config/joints.ts](../frontend/src/config/joints.ts) 로 통합.
+> `actionKey` 를 명시 필드로 둬서 `` `${name}.pos` `` 조립이 흩어지지 않게 했다.
+> **순서가 백엔드와 어긋나면 수동 제어가 엉뚱한 관절을 움직이므로** 테스트로 고정했다.
 
 ## 문제
 
@@ -56,4 +60,4 @@ export const JOINT_RANGE = Object.fromEntries(JOINTS.map(j => [j.name, [j.min, j
 
 ## 상태
 
-☐ 미착수
+☑ 완료 (수동 제어 실기 검증 대기)

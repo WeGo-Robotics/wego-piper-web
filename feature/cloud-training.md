@@ -402,9 +402,9 @@ PROVIDERS = {
 
 | # | 작업 | 산출물 | 위험 | 선행 |
 |---|---|---|---|---|
-| 0 | 메트릭 파서·히스토리를 `training/metrics.py`로 분리 | 동작 변화 0 | 낮음 | — |
-| 1 | `TrainRunner` Protocol + `LocalRunner`로 현 동작 이식 | 동작 변화 0 | 중 | 0 |
-| 2 | `build_train_args`에서 인터프리터/파일시스템 의존 분리 | 동작 변화 0 | 중 | — |
+| 0 | 메트릭 파서·히스토리를 `training/metrics.py`로 분리 | ☑ 완료 | 낮음 | — |
+| 1 | `TrainRunner` Protocol + `LocalRunner`로 현 동작 이식 | ☑ 완료 | 중 | 0 |
+| 2 | `build_train_args`에서 인터프리터/파일시스템 의존 분리 | ☑ 완료 (**미리보기 부작용 버그도 수정**) | 중 | — |
 | 3 | job 레지스트리 + 다중 job + WS `job_id` | 로컬도 job 목록으로 보임 | **높음** (WS 계약 변경) | 1 |
 | 4 | `static_ssh` 프로바이더 + `SSHRunner` | 사내 서버로 학습 | 높음 | 1,2,3 |
 | 5 | 데이터셋 업로드 연동 + 사전 검증 | 원격이 데이터를 봄 | 중 | 4 |
@@ -495,4 +495,4 @@ PROVIDERS = {
 
 ## 상태
 
-☐ 미착수
+◐ 0~2단계 완료 — 3단계(job 레지스트리)는 Redis 이후

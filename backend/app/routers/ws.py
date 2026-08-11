@@ -4,8 +4,10 @@ import re
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.core import ws_messages as M
+from app.services.estop_bridge import estop_bridge
 from app.services.process_manager import ProcessState, process_manager
-from app.services.train_manager import train_manager
+from app.services.training import train_manager
 from app.services.record_manager import record_manager
 from app.services.policy_server_manager import policy_server_manager
 
@@ -46,12 +48,12 @@ def _setup_callbacks() -> None:
                 msg_type = data.get("t")
                 if msg_type == "telemetry":
                     asyncio.run_coroutine_threadsafe(
-                        broadcast({"type": "telemetry", "data": data}), loop
+                        broadcast({"type": M.TELEMETRY, "data": data}), loop
                     )
                     return
                 if msg_type == "log_saved":
                     asyncio.run_coroutine_threadsafe(
-                        broadcast({"type": "log_saved", "data": data}), loop
+                        broadcast({"type": M.LOG_SAVED, "data": data}), loop
                     )
                     return
             except json.JSONDecodeError:
@@ -82,17 +84,19 @@ def _setup_callbacks() -> None:
                 "task": "",
             }
             asyncio.run_coroutine_threadsafe(
-                broadcast({"type": "telemetry", "data": telemetry}), loop
+                broadcast({"type": M.TELEMETRY, "data": telemetry}), loop
             )
 
         # 3. 일반 로그로 전송 (접두사 없이)
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": "log", "data": clean_line}), loop
+            broadcast({"type": M.LOG, "data": clean_line}), loop
         )
 
     def on_state_change(state: ProcessState) -> None:
+        # estopd 가 죽일 PID 를 갱신한다 (추론 프로세스가 뜨고 질 때마다)
+        estop_bridge.sync_activities()
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": "state", "data": state.value}), loop
+            broadcast({"type": M.STATE, "data": state.value}), loop
         )
 
     process_manager.set_log_callback(on_log)
@@ -101,17 +105,17 @@ def _setup_callbacks() -> None:
     # ── 학습 콜백 ──
     def on_train_log(line: str) -> None:
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": "train_log", "data": line}), loop
+            broadcast({"type": M.TRAIN_LOG, "data": line}), loop
         )
 
     def on_train_state(state: ProcessState) -> None:
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": "train_state", "data": state.value}), loop
+            broadcast({"type": M.TRAIN_STATE, "data": state.value}), loop
         )
 
     def on_train_metrics(metrics: dict) -> None:
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": "train_metrics", "data": metrics}), loop
+            broadcast({"type": M.TRAIN_METRICS, "data": metrics}), loop
         )
 
     train_manager.set_log_callback(on_train_log)
@@ -121,17 +125,18 @@ def _setup_callbacks() -> None:
     # ── 녹화 콜백 ──
     def on_record_log(line: str) -> None:
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": "record_log", "data": line}), loop
+            broadcast({"type": M.RECORD_LOG, "data": line}), loop
         )
 
     def on_record_state(state: ProcessState) -> None:
+        estop_bridge.sync_activities()
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": "record_state", "data": state.value}), loop
+            broadcast({"type": M.RECORD_STATE, "data": state.value}), loop
         )
 
     def on_record_status(status: dict) -> None:
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": "record_status", "data": status}), loop
+            broadcast({"type": M.RECORD_STATUS, "data": status}), loop
         )
 
     record_manager.set_log_callback(on_record_log)
@@ -141,12 +146,12 @@ def _setup_callbacks() -> None:
     # ── 정책 서버 콜백 ──
     def on_ps_log(line: str) -> None:
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": "ps_log", "data": line}), loop
+            broadcast({"type": M.PS_LOG, "data": line}), loop
         )
 
     def on_ps_state(state: ProcessState) -> None:
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": "ps_state", "data": state.value}), loop
+            broadcast({"type": M.PS_STATE, "data": state.value}), loop
         )
 
     policy_server_manager.pm.set_log_callback(on_ps_log)
@@ -157,12 +162,12 @@ def _setup_callbacks() -> None:
 
     def on_upload_log(line: str) -> None:
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": "upload_log", "data": line}), loop
+            broadcast({"type": M.UPLOAD_LOG, "data": line}), loop
         )
 
     def on_upload_state(state: ProcessState) -> None:
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": "upload_state", "data": state.value}), loop
+            broadcast({"type": M.UPLOAD_STATE, "data": state.value}), loop
         )
 
     _upload_pm.set_log_callback(on_upload_log)
@@ -176,15 +181,15 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
     await ws.accept()
     _clients.add(ws)
-    await ws.send_json({"type": "state", "data": process_manager.state.value})
-    await ws.send_json({"type": "train_state", "data": train_manager.state.value})
-    await ws.send_json({"type": "record_state", "data": record_manager.state.value})
+    await ws.send_json({"type": M.STATE, "data": process_manager.state.value})
+    await ws.send_json({"type": M.TRAIN_STATE, "data": train_manager.state.value})
+    await ws.send_json({"type": M.RECORD_STATE, "data": record_manager.state.value})
 
     try:
         while True:
             data = await ws.receive_json()
             if data.get("type") == "ping":
-                await ws.send_json({"type": "pong"})
+                await ws.send_json({"type": M.PONG})
     except WebSocketDisconnect:
         pass
     finally:

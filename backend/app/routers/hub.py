@@ -14,9 +14,9 @@ router = APIRouter(prefix="/api/hub", tags=["hub"])
 async def whoami():
     """HuggingFace 로그인 정보 조회."""
     try:
-        from huggingface_hub import HfApi
-        api = HfApi()
-        info = api.whoami()
+        # HfApi 를 새로 만들지 않는다 — endpoint 설정이 한쪽에만 걸리면
+        # 여기만 조용히 huggingface.co 를 보게 된다.
+        info = hub_client.get_api().whoami()
         return {
             "logged_in": True,
             "username": info.get("name", ""),

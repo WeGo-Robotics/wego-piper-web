@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.config import settings
+from app.core.joints import denormalize_all, normalize_all
+from app.services import presets
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +23,9 @@ FIND_THRESHOLD_RAW = 45_000
 FIND_TIMEOUT_SEC = 30
 DEFAULT_BITRATE = 1_000_000
 CONFIG_PATH = settings.robot_config_path
-PRESETS_DIR = settings.config_dir / "presets"
+PRESET_DOMAIN = "robot"
+# 이관 전 경로 — 기존 프리셋을 새 스토어(presets/robot/)로 한 번 옮긴다
+_LEGACY_PRESETS_DIR = settings.config_dir / "presets"
 
 CONFIGS: dict[str, list[str]] = {
     "1 Leader / 1 Follower": ["leader_1", "follower_1"],
@@ -434,23 +438,7 @@ class ArmInfo:
                     "joint5": float(j.joint_5), "joint6": float(j.joint_6),
                     "gripper": float(g.grippers_angle),
                 }
-                # 정규화 (tables.py의 calibration 기준)
-                from lerobot_robot_piper.motors.tables import INITIALIZE_POSITION
-                from lerobot_robot_piper.piper_follower import PiperFollower
-                # 간이 정규화: AGILEX-M [-150000,150000]→[-100,100], AGILEX-S 범위별
-                cal = {
-                    "joint1": (-150000, 150000), "joint2": (0, 180000), "joint3": (-170000, 0),
-                    "joint4": (-100000, 100000), "joint5": (-65000, 65000), "joint6": (-100000, 130000),
-                    "gripper": (0, 68000),
-                }
-                norm = {}
-                for name, value in raw.items():
-                    mn, mx = cal[name]
-                    if name == "gripper":
-                        norm[name] = round(((value - mn) / (mx - mn)) * 100, 2)
-                    else:
-                        norm[name] = round(((value - mn) / (mx - mn)) * 200 - 100, 2)
-                return norm
+                return normalize_all(raw)
             except Exception as e:
                 logger.debug("read_joints_normalized error: %s", e)
                 return None
@@ -468,18 +456,7 @@ class ArmInfo:
                 from lerobot_robot_piper.motors.tables import INITIALIZE_POSITION
                 target = parking_pos or INITIALIZE_POSITION
                 # set_action 직접 호출 (정규화 값 → raw 변환)
-                cal = {
-                    "joint1": (-150000, 150000), "joint2": (0, 180000), "joint3": (-170000, 0),
-                    "joint4": (-100000, 100000), "joint5": (-65000, 65000), "joint6": (-100000, 130000),
-                    "gripper": (0, 68000),
-                }
-                raw = {}
-                for name, value in target.items():
-                    mn, mx = cal[name]
-                    if name == "gripper":
-                        raw[name] = int(mn + (value / 100) * (mx - mn))
-                    else:
-                        raw[name] = int(mn + ((value + 100) / 200) * (mx - mn))
+                raw = denormalize_all(target)
 
                 self._piper.ModeCtrl(0x01, 0x01, 30, 0x00)
                 self._piper.JointCtrl(
@@ -787,36 +764,60 @@ class RobotManager:
 
     # ── 프리셋 ──
 
+    @staticmethod
+    def migrate_legacy_presets() -> int:
+        """`config_dir/presets/*.json` → `config_dir/presets/robot/`.
+
+        새 도메인만 새 스토어에 넣고 로봇은 그대로 두면 **프리셋 시스템이 둘이 된다.**
+        서버 기동 시 한 번 돌린다. 이미 옮겼으면 아무것도 안 한다.
+        """
+        if not _LEGACY_PRESETS_DIR.exists():
+            return 0
+        moved = 0
+        for f in _LEGACY_PRESETS_DIR.glob("*.json"):
+            try:
+                data = json.loads(f.read_text())
+                name = data.pop("name", f.stem)
+                if presets.get(PRESET_DOMAIN, name) is not None:
+                    continue  # 이미 있음
+                presets.save(PRESET_DOMAIN, name, data, scope="device",
+                             note="이전 형식에서 이관됨")
+                f.unlink()
+                moved += 1
+            except Exception as e:
+                logger.warning("프리셋 이관 실패, 원본 유지: %s (%s)", f, e)
+        if moved:
+            logger.info("로봇 프리셋 %d개를 presets/robot/ 으로 이관했습니다", moved)
+        return moved
+
     def list_presets(self) -> list[str]:
-        if not PRESETS_DIR.exists():
-            return []
-        return sorted(p.stem for p in PRESETS_DIR.glob("*.json"))
+        return [p["name"] for p in presets.list_presets(PRESET_DOMAIN)]
 
     def save_preset(self, name: str) -> None:
-        PRESETS_DIR.mkdir(parents=True, exist_ok=True)
-        data = {
-            "name": name,
+        """현재 로봇 구성을 프리셋으로. 값 구조는 이전과 동일하다."""
+        values = {
             "robot_type": self.selected_type,
             "config_name": self.config_name,
-            "arms": [],
-        }
-        for arm in self.arms.values():
-            if arm.slot:
-                data["arms"].append({
+            "arms": [
+                {
                     "slot": arm.slot,
                     "can_name": arm.iface,
                     "bus_info": arm.bus_info,
                     "role": arm.role,
                     "config": arm._config_dict(),
-                })
-        (PRESETS_DIR / f"{name}.json").write_text(json.dumps(data, indent=2, ensure_ascii=False))
-        logger.info("Preset saved: %s", name)
+                }
+                for arm in self.arms.values()
+                if arm.slot
+            ],
+        }
+        # CAN 이름·bus_info 는 이 기기의 것이므로 device scope
+        presets.save(PRESET_DOMAIN, name, values, scope="device")
 
     def load_preset(self, name: str) -> dict | None:
-        path = PRESETS_DIR / f"{name}.json"
-        if not path.exists():
+        preset = presets.get(PRESET_DOMAIN, name)
+        if preset is None:
             return None
-        data = json.loads(path.read_text())
+        data = preset.values
         # 상태 복원 (설정값만, CAN 재연결은 하지 않음)
         self.selected_type = data.get("robot_type")
         self.config_name = data.get("config_name")
@@ -827,14 +828,11 @@ class RobotManager:
                 arm.slot = arm_data.get("slot")
                 arm.role = arm_data.get("role", "unknown")
                 arm.update_config(arm_data.get("config", {}))
-        return data
+        # 프론트 호환: 예전 응답이 name 을 포함했다
+        return {"name": name, **data}
 
     def delete_preset(self, name: str) -> bool:
-        path = PRESETS_DIR / f"{name}.json"
-        if not path.exists():
-            return False
-        path.unlink()
-        return True
+        return presets.delete(PRESET_DOMAIN, name)
 
     # ── 현재 상태 ──
 

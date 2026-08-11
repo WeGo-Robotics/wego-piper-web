@@ -8,9 +8,8 @@ from pydantic import BaseModel
 
 from app.core.cli_mapping import build_record_args
 from app.core.config import settings
+from app.services.exclusivity import Activity, require_idle
 from app.services.record_manager import record_manager
-from app.services.process_manager import process_manager
-from app.services.train_manager import train_manager
 
 router = APIRouter(prefix="/api/recording", tags=["recording"])
 logger = logging.getLogger(__name__)
@@ -61,12 +60,7 @@ class RecordPreviewRequest(BaseModel):
 @router.post("/start")
 async def start_recording(body: RecordStartRequest):
     """녹화 시작."""
-    if process_manager.state.value not in ("idle", "error"):
-        raise HTTPException(409, "추론이 실행 중입니다.")
-    if train_manager.is_running:
-        raise HTTPException(409, "학습이 실행 중입니다.")
-    if record_manager.is_running:
-        raise HTTPException(409, "녹화가 이미 실행 중입니다.")
+    require_idle(Activity.RECORDING)
     if not body.repo_id:
         raise HTTPException(400, "데이터셋 이름(repo_id)이 필요합니다.")
     if not body.single_task:

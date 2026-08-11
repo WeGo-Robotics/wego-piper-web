@@ -1,4 +1,10 @@
-# 12. WebSocket 메시지 타입 16종이 계약 없이 문자열 리터럴 (B급)
+# 12. WebSocket 메시지 타입 15종이 계약 없이 문자열 리터럴 (B급) — ☑ 완료
+
+> 백엔드 [core/ws_messages.py](../backend/app/core/ws_messages.py) 상수 +
+> 프론트 [types/ws.ts](../frontend/src/types/ws.ts) **판별 유니언**.
+> 오타가 이제 컴파일 에러다 (`TS2367: no overlap`).
+> 두 언어에 걸쳐 있으므로 문서의 (c) 안대로 **목록 일치 테스트**로 고정했다 —
+> [test_ws_contract.py](../backend/tests/test_ws_contract.py).
 
 ## 문제
 
@@ -91,4 +97,4 @@ train/record/ps는 각자 [:104](../backend/app/routers/ws.py#L104)/[:124](../ba
 
 ## 상태
 
-☐ 미착수 — daemon-split 1단계와 묶어서 판단
+☑ 완료 — daemon-split 1단계에서 `piper_bus/` 로 이사할 자리다

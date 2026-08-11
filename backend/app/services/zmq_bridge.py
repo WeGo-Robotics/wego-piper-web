@@ -19,7 +19,9 @@ SAFE_PARAMS = {
     "temporal_ensemble_coeff": {"min": 0.0, "max": 1.0},
     "n_action_steps": {"min": 1, "max": 100},
     "fps": {"min": 1, "max": 60},
-    "max_velocity": {"min": 0, "max": 1000},
+    # 상한 500 — 프론트 슬라이더와 "관절 속도 제한(%)" 환산식이 500 기준이다.
+    # 이전에는 백엔드만 1000이라 어느 쪽이 의도한 상한인지 불명확했다.
+    "max_velocity": {"min": 0, "max": 500},
     "max_gripper_velocity": {"min": 0, "max": 500},
     "lowpass_alpha": {"min": 0.05, "max": 1.0},
     "max_jerk": {"min": 0, "max": 5000},

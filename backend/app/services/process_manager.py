@@ -80,6 +80,11 @@ class ProcessManager:
             # pynput이 X server에 연결할 수 있도록 DISPLAY 보장
             if "DISPLAY" not in env:
                 env["DISPLAY"] = ":0"
+            # LeRobot 내부가 huggingface_hub 를 직접 부른다 — 우리 코드를 안 거치므로
+            # 자체 Hub 로 방향을 바꾸는 레버는 이 환경변수 하나뿐이다.
+            from app.core.config import settings as _settings
+            if _settings.hf_endpoint:
+                env["HF_ENDPOINT"] = _settings.hf_endpoint
             # 호출부 지정 추가 환경변수 (예: ACCELERATE_MIXED_PRECISION) 주입
             if env_extra:
                 env.update(env_extra)

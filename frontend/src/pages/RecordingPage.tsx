@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import { api } from '../services/api'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
+import type { ProcessState } from '../types/ws'
+import { useActivity, isStateMessage } from '../hooks/useActivity'
 import LogViewer from '../components/LogViewer'
 import RecordPreview from '../components/RecordPreview'
 
-type ProcessState = 'idle' | 'starting' | 'running' | 'stopping' | 'error'
 type ReadyArm = { iface: string; role: string }
 type ReadyCam = { id: string; name: string }
 type RecordStatusData = { state?: string; current_episode: number; total_episodes: number; phase: string; progress: number }
@@ -50,8 +51,12 @@ export default function RecordingPage() {
 
   const isRunning = recordState === 'running' || recordState === 'starting' || recordState === 'stopping'
 
+  // 배타 규칙은 백엔드 exclusivity.py 한 곳에만 있다
+  const { isBlocked, blockedBy, refresh: refreshActivity } = useActivity()
+
   const { connected } = useWebSocket('/ws', {
     onMessage: useCallback((msg: WsMessage) => {
+      if (isStateMessage(msg.type)) refreshActivity()
       if (msg.type === 'record_state') {
         setRecordState(msg.data as ProcessState)
         // 녹화 종료 시 데이터셋 존재 재확인 트리거
@@ -64,7 +69,7 @@ export default function RecordingPage() {
         const next = [...prev, msg.data as string]
         return next.length > MAX_LOGS ? next.slice(-MAX_LOGS) : next
       })
-    }, []),
+    }, [refreshActivity]),
   })
 
   useEffect(() => {
@@ -128,16 +133,17 @@ export default function RecordingPage() {
   useEffect(() => {
     if (cliEdited || !repoId) return
     api.post<{ command: string }>('/recording/preview', {
-      robot_type: 'piper_follower', robot_port: followerPort,
+      robot_port: followerPort,
       robot_cameras: buildCameraConfig(),
-      teleop_type: 'piper_leader', teleop_port: leaderPort,
+      teleop_port: leaderPort,
       repo_id: repoId, single_task: singleTask,
       num_episodes: numEpisodes, fps, episode_time_s: episodeTime, reset_time_s: resetTime,
       streaming_encoding: streamingEncoding, vcodec, encoder_threads: encoderThreads, encoder_queue_maxsize: encoderQueue, push_to_hub: pushToHub, resume,
     }).then(r => setCliArgs(r.command)).catch(() => {})
   }, [followerPort, leaderPort, cameraMapping, repoId, singleTask, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, pushToHub, resume, cliEdited])
 
-  const canStart = !!followerPort && !!leaderPort && !!repoId && !!singleTask && !isRunning
+  const recordBlockedBy = blockedBy('recording')
+  const canStart = !!followerPort && !!leaderPort && !!repoId && !!singleTask && !isRunning && !isBlocked('recording')
 
   const handleStart = async () => {
     try {
@@ -145,9 +151,9 @@ export default function RecordingPage() {
         // custom 미지원 — preview에서 빌드된 args 사용
       }
       await api.post('/recording/start', {
-        robot_type: 'piper_follower', robot_port: followerPort,
+        robot_port: followerPort,
         robot_cameras: buildCameraConfig(),
-        teleop_type: 'piper_leader', teleop_port: leaderPort,
+        teleop_port: leaderPort,
         repo_id: repoId, single_task: singleTask,
         num_episodes: numEpisodes, fps, episode_time_s: episodeTime, reset_time_s: resetTime,
         streaming_encoding: streamingEncoding, vcodec, encoder_threads: encoderThreads, encoder_queue_maxsize: encoderQueue, push_to_hub: pushToHub, resume,
@@ -378,6 +384,9 @@ export default function RecordingPage() {
                 <textarea value={cliArgs} onChange={e => { setCliArgs(e.target.value); setCliEdited(true) }}
                   rows={4}
                   className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-xs font-mono text-neutral-100 resize-y" />
+                {recordBlockedBy && (
+                  <p className="text-xs text-amber-400">{recordBlockedBy} 실행 중 — 먼저 중지하세요</p>
+                )}
                 <button onClick={handleStart} disabled={!canStart}
                   className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium">
                   녹화 시작

@@ -67,6 +67,7 @@ HF 저장소가 git + LFS인 건 맞지만 **클라이언트가 git으로 말하
 | [camera-profiles](feature/camera-profiles.md) | 구조 개편이 **이 기능의 절반을 삭제한다** | **뒤로** |
 | [cloud-training](feature/cloud-training.md) | 0~2는 **독립 리팩터**, 3~4는 Redis 이후 | **쪼개서 앞당김** |
 | [phase-annotation](feature/01-phase-annotation.md) 1~3 | 거의 **안 겹친다** | **지금** |
+| [parameter-presets](feature/parameter-presets.md) | 학습은 독립 · 추론은 **#1 단계 2에 의존** | **쪼갬** |
 
 ---
 
@@ -141,25 +142,31 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 | [#10 배타 모드 가드](refactor/10-exclusive-mode-guard.md) | **안전.** 녹화 중 학습·추론이 시작되고, `/inference/start-custom`은 녹화 중에도 카메라를 뺏는다. 게다가 후속 3개의 전제 |
 | [#1](refactor/01-inference-params.md) 드리프트 2건만 핀포인트 | 지금 UI 값이 유실된다 |
 
-### Phase 1 — 계약 세우기 (1~2주)
+### Phase 1 — 계약 세우기 ☑ 완료
 
 전부 **나중 작업이 소비하는 것**들이다. 여기서 안 하면 각 기능이 자기 방식으로 확장한다.
 
-| 작업 | 이걸 기다리는 것 |
+| 작업 | 결과 |
 |---|---|
-| [#12](refactor/12-ws-message-contract.md) + [#13](refactor/13-process-state-union.md) WS 계약 | cloud-training 3, camera-profiles, phase-annotation 6.3 |
-| [#9 robot_type](refactor/09-robot-type.md) | robot-transport |
-| [#8 PIPER_JOINTS](refactor/08-piper-joints.md) | phase-annotation 2 |
-| [#2 정책 레지스트리](refactor/02-policy-registry.md) | (A급 — `sac` 선택 시 실제로 죽는다) |
-| `HF_ENDPOINT` 배선 + `HfApi()` 통합 | 자체 Hub. 지금 두 줄, 나중엔 실행 경로 전부 |
-| **`robot_id` 를 settings에** | repo 네이밍, 데이터셋 메타, 기기별 설정이 전부 이걸 쓴다 |
+| [#12](refactor/12-ws-message-contract.md) + [#13](refactor/13-process-state-union.md) WS 계약 | `core/ws_messages.py` + `types/ws.ts` 판별 유니언. **오타가 컴파일 에러**가 됐다 |
+| [#9 robot_type](refactor/09-robot-type.md) | 프론트 5곳 제거. 로봇 페이지 선택이 무시되던 **버그도 함께 수정** |
+| [#8 PIPER_JOINTS](refactor/08-piper-joints.md) | `/inference/validate` 응답에 `robot_joints`. 새 엔드포인트 없이 해결 |
+| [#2 정책 레지스트리](refactor/02-policy-registry.md) | `core/policies.py`. `sac` 제거 · `pi0_fast` 학습 추가 · **`pi05`→`pi0` 오태깅 수정** |
+| `HF_ENDPOINT` 배선 + `HfApi()` 통합 | `settings.hf_endpoint` → `HfApi` 1개 + **subprocess env 로 LeRobot 까지** |
+| **`robot_id` 를 settings에** | `settings.resolved_robot_id` (비면 호스트명) |
 
-### Phase 2 — 저위험 (병렬 가능)
+검증: pytest **51개** · `npm run build` · ruff 통과.
+실기 확인이 남은 것은 각 문서의 "검증" 절 참고.
+
+### Phase 2 — 저위험 (병렬 가능) ☑ 완료
 
 | 작업 | 비고 |
 |---|---|
 | [#3](refactor/03-wrapper-bootstrap.md) [#4](refactor/04-err-bits.md) [#5](refactor/05-joint-calibration.md) [#6](refactor/06-joint-names-frontend.md) [#11](refactor/11-hf-cache-layout.md) | 동작 변화 0. 아무것도 안 막는다. **#5는 robotd 캘리브레이션 단일 소유자화의 전제**라 Phase 3 전에 |
 | **cloud-training 0~2** | 메트릭 파서 분리 · `TrainRunner` Protocol · `build_train_args` 경로 분리. 문서 자체가 *"클라우드와 무관한 순수 리팩터, 지금 당장 해도 손해 없음"* 이라 한다 |
+| **[parameter-presets](feature/parameter-presets.md) 1~3** | 공통 프리셋 스토어 + **로봇 프리셋 이관** + 학습 프리셋. 추론 프리셋만 `PARAM_SPEC` 을 기다린다 |
+
+검증: pytest **106개** · `npm run build` · ruff 통과. 실기 확인은 각 문서의 "검증" 절 참고.
 
 ### Phase 3a — phase-annotation 1~3 (독립 트랙)
 
@@ -172,8 +179,8 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 
 | # | 작업 | 비고 |
 |---|---|---|
-| 1 | `piper_bus/` 계약 + Redis | 데몬 0개 |
-| 2 | [estopd](refactor/daemon-inventory.md) | 최소 크기, 최대 안전 이득, 시범 케이스 |
+| 1 | ☑ `piper_bus/` 계약 + Redis ([bus/](bus/)) | 데몬 0개 |
+| 2 | ☑ [estopd](daemons/estopd.py) — **게이트웨이를 얼려도 팔이 선다** | 최소 크기, 최대 안전 이득, 시범 케이스 |
 | 3 | 브리지 3개 → Redis | 경계는 그대로, 전송만 |
 | **3.5** | **cloud-training 3~4** — job 레지스트리(Redis 위에) + SSH 러너 | ← **여기서 클라우드 학습이 실제로 돈다.** 데몬 분리를 안 기다린다 |
 | 4 | **shm 전송 계층** — [카메라](refactor/camera-transport.md) + [로봇](refactor/robot-transport.md) | 데몬 분리의 전제조건 |
@@ -186,7 +193,8 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 
 | 기능 | 상태 |
 |---|---|
-| **camera-profiles** | camerad 위에서. 트리거 배선(4단계)이 통째로 빠지고 나머지도 한 프로세스 안에 모인다 |
+| **[parameter-presets](feature/parameter-presets.md) 4~5** | 추론 프리셋 + `eval_log` 에 `preset_id`. **#1 단계 2 뒤** |
+| **camera-profiles** | camerad 위에서. 트리거 배선(4단계)이 통째로 빠지고 나머지도 한 프로세스 안에 모인다. **프리셋 스토어 공유** |
 | **phase-annotation 4~8** | UI · 굽기 · 추론 경로 |
 | **cloud-training 5~12** | 데이터 전송 · 체크포인트 회수 · 비용 가드 · 유료 프로바이더 |
 | **[robotd-safety](refactor/robotd-safety.md)** | **별도 트랙.** URDF 확보라는 독립 선결 조건. robotd(3b-5)가 서면 언제든 |

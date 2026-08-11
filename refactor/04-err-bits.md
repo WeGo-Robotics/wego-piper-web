@@ -1,4 +1,10 @@
-# 4. `_ERR_BITS` 프로세스 경계 넘어 복붙 (B급)
+# 4. `_ERR_BITS` 프로세스 경계 넘어 복붙 (B급) — ☑ 완료 (c안)
+
+> 문서는 (a) *"wrapper 에 두고 백엔드가 읽기"* 를 권했지만 **(c) 테스트 고정**을 택했다:
+> 백엔드가 `wrapper/` 를 import 하려면 `sys.path` 조작이 필요하고(선례 없음),
+> `_ERR_BITS` 는 비공개 이름이며, daemon-split 후 robotd 가 CAN 을 독점하면
+> wrapper 쪽 사본이 사라져 그 결합을 되돌려야 한다.
+> 드리프트 위험은 (a) 와 동일하게 없어진다 — [test_err_bits.py](../backend/tests/test_err_bits.py).
 
 ## 문제
 
@@ -61,4 +67,4 @@ wrapper에만 있다. 백엔드에도 같은 개념이 필요해지면 같은 �
 
 ## 상태
 
-☐ 미착수
+☑ 완료 (테스트로 고정)

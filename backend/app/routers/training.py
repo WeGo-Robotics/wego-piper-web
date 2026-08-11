@@ -7,11 +7,20 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.core.cli_mapping import build_train_args
-from app.services.train_manager import train_manager
-from app.services.process_manager import process_manager
+from app.core.cli_mapping import apply_dim_overrides, build_train_args, resolve_rename_map
+from app.routers.presets import register_domain
+from app.services.exclusivity import Activity, require_idle
+from app.services.training import train_manager
 
 router = APIRouter(prefix="/api/training", tags=["training"])
+
+# 프리셋에 담는 값 = "튜닝" 만. `dataset_repo_id` 나 `output_dir` 같은 **실행 대상**은
+# 담지 않는다 — 담으면 다른 데이터셋에 재사용할 수 없다 (feature/parameter-presets.md).
+PRESET_DOMAIN = "training"
+PRESET_EXCLUDED = {
+    "dataset_repo_id", "output_dir", "pretrained_path", "policy_repo_id",
+    "resume", "state_dim", "action_dim", "rename_map",
+}
 logger = logging.getLogger(__name__)
 
 
@@ -68,6 +77,14 @@ class TrainPreviewRequest(BaseModel):
     amp: str = "bf16"  # 혼합정밀도: "off" | "bf16" | "fp16" → ACCELERATE_MIXED_PRECISION env
 
 
+def preset_keys() -> set[str]:
+    """프리셋이 담는 키 — `TrainStartRequest` 에서 파생한다 (사본을 만들지 않는다)."""
+    return set(TrainStartRequest.model_fields) - PRESET_EXCLUDED
+
+
+register_domain(PRESET_DOMAIN, preset_keys())
+
+
 class RenameMapQuery(BaseModel):
     pretrained_path: str
 
@@ -109,11 +126,7 @@ def _amp_env(amp: str) -> dict[str, str] | None:
 @router.post("/start")
 async def start_training(body: TrainStartRequest):
     """학습 시작."""
-    # GPU 경합 방지
-    if process_manager.state.value not in ("idle", "error"):
-        raise HTTPException(409, "추론이 실행 중입니다. 추론을 먼저 중지하세요.")
-    if train_manager.is_running:
-        raise HTTPException(409, "학습이 이미 실행 중입니다.")
+    require_idle(Activity.TRAINING)
 
     params = body.model_dump(exclude_none=True)
     # amp는 CLI 인자가 아니라 환경변수로 주입 → params에서 분리
@@ -130,7 +143,15 @@ async def start_training(body: TrainStartRequest):
     if not params.get("policy_repo_id"):
         params.pop("policy_repo_id", None)
 
-    args = build_train_args(params)
+    # 파일시스템 접근은 인자 조립과 분리돼 있다 (원격 학습 대비).
+    # config.json 수정은 **파괴적**이라 시작 경로에서만 한다.
+    rename_map = ""
+    if params.get("pretrained_path"):
+        rename_map = resolve_rename_map(params["pretrained_path"])
+        apply_dim_overrides(
+            params["pretrained_path"], body.state_dim, body.action_dim
+        )
+    args = build_train_args(params, rename_map=rename_map)
 
     try:
         await train_manager.start(
@@ -138,16 +159,13 @@ async def start_training(body: TrainStartRequest):
         )
     except Exception as e:
         raise HTTPException(500, f"학습 시작 실패: {e}")
-    return {"status": "started", "pid": train_manager.pm.pid, "args": args}
+    return {"status": "started", "pid": train_manager.runner.pid, "args": args}
 
 
 @router.post("/start-custom")
 async def start_training_custom(body: TrainCustomRequest):
     """직접 편집한 CLI 인자로 학습 시작."""
-    if process_manager.state.value not in ("idle", "error"):
-        raise HTTPException(409, "추론이 실행 중입니다.")
-    if train_manager.is_running:
-        raise HTTPException(409, "학습이 이미 실행 중입니다.")
+    require_idle(Activity.TRAINING)
     if not body.args:
         raise HTTPException(400, "CLI 인자가 비어있습니다")
     try:
@@ -156,7 +174,7 @@ async def start_training_custom(body: TrainCustomRequest):
         )
     except Exception as e:
         raise HTTPException(500, f"학습 시작 실패: {e}")
-    return {"status": "started", "pid": train_manager.pm.pid, "args": body.args}
+    return {"status": "started", "pid": train_manager.runner.pid, "args": body.args}
 
 
 @router.post("/stop")
@@ -194,7 +212,12 @@ async def preview_train_args(body: TrainPreviewRequest):
         params.pop("output_dir", None)
     if not params.get("policy_repo_id"):
         params.pop("policy_repo_id", None)
-    args = build_train_args(params)
+    # ⚠ 미리보기는 **부작용이 없어야 한다** — 이전에는 build_train_args() 안에서
+    # 체크포인트의 config.json 을 수정했다.
+    rename_map = (
+        resolve_rename_map(params["pretrained_path"]) if params.get("pretrained_path") else ""
+    )
+    args = build_train_args(params, rename_map=rename_map)
     env = {"ACCELERATE_MIXED_PRECISION": amp} if amp and amp != "off" else {}
     return {"args": args, "command": " ".join(args), "env": env}
 

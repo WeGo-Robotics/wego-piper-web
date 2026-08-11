@@ -1,6 +1,9 @@
 import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react'
 import { api } from '../services/api'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
+import type { ProcessState } from '../types/ws'
+import { useActivity, isStateMessage } from '../hooks/useActivity'
+import { usePolicies } from '../hooks/usePolicies'
 import type { Model } from '../types/models'
 import ParamSlider from '../components/ParamSlider'
 import LogViewer from '../components/LogViewer'
@@ -63,14 +66,12 @@ function CollapsibleCard({ title, storageKey, defaultOpen = true, children }: {
   )
 }
 
-type ProcessState = 'idle' | 'starting' | 'running' | 'stopping' | 'error'
 type ReadyArm = { iface: string; role: string; config: Record<string, unknown> }
 type ReadyCam = { id: string; name: string; config: { width: number | null; height: number | null; fps: number | null } }
-type ValidationResult = { valid: boolean; errors: string[]; warnings: string[] }
+type ValidationResult = { valid: boolean; errors: string[]; warnings: string[]; robot_joints?: number }
 
-const PIPER_JOINTS = 7
-// flow-matching 정책: RTC(real-time chunking) 가이던스 파라미터 사용
-const RTC_POLICIES = ['smolvla', 'pi0', 'pi05']
+// 관절 수와 정책 목록은 백엔드에서 온다 —
+// robot_joints 는 /inference/validate 응답, 정책 목록은 usePolicies()
 
 export default function InferencePage() {
   const [readyFollowers, setReadyFollowers] = useState<ReadyArm[]>([])
@@ -111,7 +112,9 @@ export default function InferencePage() {
       lowpass_alpha: 0.5, max_jerk: 0, interpolation_steps: 0, use_chunk_size: 0,
       refill_threshold_pct: 20, gripper_bypass_filter: true,
       max_guidance_weight: 10.0, execution_horizon: 10,
-      temporal_ensemble_coeff: 0.01, n_action_steps: 50,
+      temporal_ensemble_coeff: 0.01,
+      // n_action_steps 는 로컬 모드에서 use_chunk_size 와 같은 변수를 가리켰다 →
+      // "받는 액션 청크 크기" 슬라이더 하나로 통합했다.
     }
     try {
       const saved = JSON.parse(localStorage.getItem('piper_inference_params') || '{}') as Partial<typeof defaults>
@@ -122,8 +125,14 @@ export default function InferencePage() {
   })
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
+  // 배타 규칙은 백엔드 exclusivity.py 한 곳에만 있다
+  const { isBlocked, blockedBy, refresh: refreshActivity } = useActivity()
+  // 정책 목록·RTC 여부는 백엔드 core/policies.py 한 곳에서 온다
+  const { inferable, isRtc } = usePolicies()
+
   const { connected } = useWebSocket('/ws', {
     onMessage: useCallback((msg: WsMessage) => {
+      if (isStateMessage(msg.type)) refreshActivity()
       if (msg.type === 'state') {
         setProcessState(msg.data as ProcessState)
         if (msg.data !== 'running') setTelemetry(null)
@@ -144,7 +153,7 @@ export default function InferencePage() {
         const next = [...prev, msg.data as string]
         return next.length > MAX_LOGS ? next.slice(-MAX_LOGS) : next
       })
-    }, []),
+    }, [refreshActivity]),
   })
 
   useEffect(() => {
@@ -207,7 +216,7 @@ export default function InferencePage() {
         const model = models.find((m) => m.id === selectedModel)
         if (model) {
           api.post<{ command: string }>('/models/inference/preview', {
-            checkpoint_path: model.path, robot_type: 'piper_follower',
+            checkpoint_path: model.path,
             robot_port: selectedFollower, camera_mapping: cameraMapping,
             params: { ...params, task: taskText },
             inference_mode: inferenceMode, server_address: serverAddress,
@@ -237,7 +246,6 @@ export default function InferencePage() {
       // start API를 직접 호출 (subprocess 리스트로 안전하게 전달)
       await api.post('/models/inference/start', {
         checkpoint_path: model.path,
-        robot_type: 'piper_follower',
         robot_port: robotMode === 'single' ? selectedFollower : leftFollower,
         robot_ports: robotMode === 'bimanual' ? [leftFollower, rightFollower] : [],
         camera_mapping: cameraMapping,
@@ -262,7 +270,7 @@ export default function InferencePage() {
     const model = models.find((m) => m.id === selectedModel)
     if (model) {
       api.post<{ command: string }>('/models/inference/preview', {
-        checkpoint_path: model.path, robot_type: 'piper_follower', params,
+        checkpoint_path: model.path, params,
         inference_mode: inferenceMode, server_address: serverAddress,
         policy_type: policyType, actions_per_chunk: actionsPerChunk,
         aggregate_fn: aggregateFn, offset_correction: offsetCorrection,
@@ -290,7 +298,8 @@ export default function InferencePage() {
   const followerReady = robotMode === 'bimanual'
     ? (!!leftFollower && !!rightFollower && leftFollower !== rightFollower)
     : !!selectedFollower
-  const canStart = followerReady && !!selectedModel && !isRunning && validation?.valid === true
+  const inferBlockedBy = blockedBy('inference')
+  const canStart = followerReady && !!selectedModel && !isRunning && validation?.valid === true && !isBlocked('inference')
 
   // ── 정지 상태 UI ──
   if (!isRunning) {
@@ -392,9 +401,10 @@ export default function InferencePage() {
                 <div className="flex items-center gap-2 text-xs">
                   <span className="text-neutral-400">관절:</span>
                   <span>{reqs.state_dim}개</span>
-                  {selectedFollower && (reqs.state_dim === PIPER_JOINTS
-                    ? <span className="text-green-400">✓</span>
-                    : <span className="text-red-400">✗ (follower: {PIPER_JOINTS})</span>
+                  {selectedFollower && validation?.robot_joints != null && (
+                    reqs.state_dim === validation.robot_joints
+                      ? <span className="text-green-400">✓</span>
+                      : <span className="text-red-400">✗ (follower: {validation.robot_joints})</span>
                   )}
                 </div>
                 <div className="space-y-2">
@@ -452,14 +462,9 @@ export default function InferencePage() {
                     <span className="text-neutral-400 w-20">Policy</span>
                     <select value={policyType} onChange={(e) => { setPolicyType(e.target.value); setCliEdited(false) }}
                       className="flex-1 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
-                      <option value="smolvla">SmolVLA</option>
-                      <option value="act">ACT</option>
-                      <option value="diffusion">Diffusion</option>
-                      <option value="pi0">PI0</option>
-                      <option value="pi05">PI0.5</option>
-                      <option value="pi0_fast">PI0-FAST</option>
-                      <option value="vqbet">VQ-BeT</option>
-                      <option value="tdmpc">TD-MPC</option>
+                      {inferable.map((p) => (
+                        <option key={p.type} value={p.type}>{p.label}</option>
+                      ))}
                     </select>
                   </div>
                   <div className="flex items-center gap-2 text-xs">
@@ -528,6 +533,9 @@ export default function InferencePage() {
                 rows={4} placeholder="모델과 카메라를 매핑하면 CLI 명령어가 자동 생성됩니다"
                 className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-xs font-mono text-neutral-100 focus:outline-none focus:border-blue-500 resize-y" />
               {cliEdited && <p className="text-[10px] text-amber-400">직접 편집됨</p>}
+              {inferBlockedBy && (
+                <p className="text-[10px] text-amber-400">{inferBlockedBy} 실행 중 — 먼저 중지하세요</p>
+              )}
               <button onClick={handleStart} disabled={!canStart || !cliArgs.trim()}
                 className="w-full py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium disabled:opacity-50">
                 추론 시작
@@ -640,7 +648,7 @@ export default function InferencePage() {
               className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
           </CollapsibleCard>
           <CollapsibleCard title="실행 속도" storageKey="piper_fold_speed">
-            <ParamSlider label="FPS" value={params.fps ?? 30} min={1} max={60} step={1}
+            <ParamSlider label="FPS" value={params.fps ?? 20} min={1} max={60} step={1}
               onChange={(v) => handleParamChange('fps', v)} />
             <ParamSlider label="관절 속도 (deg/s)" value={params.max_velocity ?? 180} min={0} max={500} step={10}
               onChange={(v) => handleParamChange('max_velocity', v)} />
@@ -661,14 +669,14 @@ export default function InferencePage() {
               <span className="text-neutral-300">그리퍼 속도 제한/필터 미적용 (원본 그대로)</span>
             </label>
             <div className={params.gripper_bypass_filter ? 'opacity-40 pointer-events-none space-y-4' : 'space-y-4'}>
-              <ParamSlider label="그리퍼 속도 (%/s)" value={params.max_gripper_velocity ?? 100} min={0} max={500} step={10}
+              <ParamSlider label="그리퍼 속도 (%/s)" value={params.max_gripper_velocity ?? 300} min={0} max={500} step={10}
                 onChange={(v) => handleParamChange('max_gripper_velocity', v)} />
               <div className="space-y-1">
                 <div className="flex justify-between text-xs">
                   <span className="text-neutral-400">그리퍼 속도 제한 (%)</span>
-                  <span className="text-neutral-100">{Math.round(((params.max_gripper_velocity ?? 100) / 500) * 100)}%</span>
+                  <span className="text-neutral-100">{Math.round(((params.max_gripper_velocity ?? 300) / 500) * 100)}%</span>
                 </div>
-                <input type="range" value={Math.round(((params.max_gripper_velocity ?? 100) / 500) * 100)}
+                <input type="range" value={Math.round(((params.max_gripper_velocity ?? 300) / 500) * 100)}
                   min={0} max={100} step={5}
                   onChange={(e) => handleParamChange('max_gripper_velocity', Math.round(Number(e.target.value) * 500 / 100))}
                   className="w-full accent-blue-500" />
@@ -691,7 +699,7 @@ export default function InferencePage() {
             <ParamSlider label="재추론 트리거 (큐 잔량 ≤ %, 0=소진 시)" value={params.refill_threshold_pct ?? 20} min={0} max={100} step={5}
               onChange={(v) => handleParamChange('refill_threshold_pct', v)} />
           </CollapsibleCard>
-          {RTC_POLICIES.includes(activePolicy) && (
+          {isRtc(activePolicy) && (
             <CollapsibleCard title="RTC 파라미터" storageKey="piper_fold_rtc" defaultOpen={false}>
               <ParamSlider label="max_guidance_weight" value={params.max_guidance_weight} min={0} max={50} step={0.5}
                 onChange={(v) => handleParamChange('max_guidance_weight', v)} />
@@ -703,8 +711,9 @@ export default function InferencePage() {
             <CollapsibleCard title="ACT 파라미터" storageKey="piper_fold_act">
               <ParamSlider label="temporal_ensemble_coeff" value={params.temporal_ensemble_coeff} min={0} max={1} step={0.001}
                 onChange={(v) => handleParamChange('temporal_ensemble_coeff', v)} />
-              <ParamSlider label="n_action_steps" value={params.n_action_steps} min={1} max={100} step={1}
-                onChange={(v) => handleParamChange('n_action_steps', v)} />
+              <p className="text-[10px] text-neutral-500">
+                액션 스텝 수는 위 &ldquo;받는 액션 청크 크기&rdquo;로 통합되었습니다.
+              </p>
             </CollapsibleCard>
           )}
         </div>

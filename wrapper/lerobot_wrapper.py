@@ -282,12 +282,23 @@ def main() -> None:
     policy.eval()
     policy.to(device)
 
-    # config 오버라이드 적용 (n_action_steps는 policy.config에 적용하지 않음 — actions_per_chunk로 별도 관리)
+    # config 오버라이드 적용
+    # (n_action_steps/use_chunk_size는 policy.config에 적용하지 않음 — actions_per_chunk로 별도 관리)
+    #
+    # 두 키가 같은 _actions_per_chunk를 가리킨다. use_chunk_size가 UI의 정식 슬라이더이고
+    # 0 = "지정 안 함(모델 전체)" 이므로, 0이 아니면 use_chunk_size가 이긴다.
+    # n_action_steps는 예전 localStorage 값이 남아 들어올 수 있어 폴백으로만 둔다.
     _actions_per_chunk_override = None
     for key, value in config_overrides.items():
+        if key == "use_chunk_size":
+            if int(value) > 0:
+                _actions_per_chunk_override = int(value)
+                logger.info("actions_per_chunk override: %s (use_chunk_size)", value)
+            continue
         if key == "n_action_steps":
-            _actions_per_chunk_override = int(value)
-            logger.info("actions_per_chunk override: %s", value)
+            if _actions_per_chunk_override is None:
+                _actions_per_chunk_override = int(value)
+                logger.info("actions_per_chunk override: %s (n_action_steps)", value)
             continue
         if key == "refill_threshold_pct":
             _refill_threshold_pct = max(0.0, min(100.0, float(value)))

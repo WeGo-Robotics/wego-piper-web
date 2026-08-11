@@ -1,4 +1,10 @@
-# 11. HF 캐시 레이아웃 해석 규칙 중복 (B급)
+# 11. HF 캐시 레이아웃 해석 규칙 중복 (B급) — ☑ 완료
+
+> [app/core/hf_layout.py](../backend/app/core/hf_layout.py) 로 통합.
+> `info.json` 폴백을 **한 곳으로 모아** 목록과 상세가 같은 규칙을 보게 했다.
+> 곁다리로 `/api/models` 가 이 머신에서 **500 을 내고 있던 것**도 고쳤다 —
+> `model_paths.json` 에 남은 `/root/.cache/...` 하나 때문에 `.exists()` 가
+> `PermissionError` 를 던져 모델 목록 전체가 죽었다.
 
 ## 문제
 
@@ -68,4 +74,4 @@ model_scanner / dataset_scanner는 이걸 부르기만 한다. 순수 경로 계
 
 ## 상태
 
-☐ 미착수
+☑ 완료

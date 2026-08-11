@@ -13,7 +13,7 @@
 
 | # | 데몬 | 소유 | 현재 코드 |
 |---|---|---|---|
-| 1 | `piper-estopd` | heartbeat 시계 | [estop_watchdog.py](../backend/app/services/estop_watchdog.py) (77) |
+| 1 | `piper-estopd` ☑ | heartbeat 시계 | [daemons/estopd.py](../daemons/estopd.py) — **분리 완료** |
 | 2 | `piper-robotd` | CAN 소켓, 팔 상태, 프리셋/파킹, **기구학 안전 필터** | [robot_manager.py](../backend/app/services/robot_manager.py) (922) |
 | 3 | `piper-camerad` | `/dev/video*` (v4l2) | [camera_manager.py](../backend/app/services/camera_manager.py) (637) |
 | 4 | `piper-rsd` | RealSense USB 파이프라인 | [realsense_manager.py](../backend/app/services/realsense_manager.py) (615) |
@@ -201,8 +201,8 @@ LeRobot이 로그 문구를 한 글자 바꾸면 **조용히 텔레메트리가 
 
 | 단계 | 대상 | 왜 이 순서 |
 |---|---|---|
-| 1 | `piper_bus/` + `redis`(#11) | 계약이 먼저. 데몬 0개 |
-| 2 | `piper-estopd`(#1) | 최소 크기, 최대 안전 이득, 시범 케이스 |
+| 1 ☑ | `piper_bus/` + `redis`(#11) | [bus/](../bus/) — 계약이 먼저. 데몬 0개 |
+| 2 ☑ | `piper-estopd`(#1) | 최소 크기, 최대 안전 이득, 시범 케이스 |
 | 3 | 브리지 3개 → Redis | 프로세스 경계는 그대로, 전송만 교체 |
 | 4 | **shm 전송 계층** — [카메라](camera-transport.md) + [로봇](robot-transport.md) | ⚠ 아래 데몬들의 전제조건 |
 | 5 | `robotd`(#2) → `camerad`(#3) → `rsd`(#4) | 큰 것부터. 각각 독립 검증 |

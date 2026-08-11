@@ -7,11 +7,11 @@ logger = logging.getLogger(__name__)
 
 from app.core.cli_mapping import build_inference_args, build_grpc_client_args
 from app.core.config import settings
+from app.services.exclusivity import Activity, require_idle
 from app.services.model_scanner import scan_models, get_model, delete_model
 from app.services.process_manager import process_manager
 from app.services.robot_manager import robot_manager
 from app.services.camera_manager import camera_manager
-from app.services.train_manager import train_manager
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -145,6 +145,57 @@ def _build_cameras_json(camera_mapping: dict[str, str]) -> dict:
     return cameras
 
 
+def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
+    """추론 CLI 인자 생성 — `/inference/preview` 와 `/inference/start` 가 함께 쓴다.
+
+    두 곳에 복붙되어 있던 것을 합쳤다. 미리보기가 실제 실행과 다르면 사용자가
+    화면에서 확인한 명령이 거짓이 된다.
+
+    `body.params`(UI 슬라이더 값)는 두 모드 모두 그대로 넘긴다 — gRPC 모드는
+    이전에 `task` 만 꺼내 쓰고 `fps` 를 20 으로 하드코딩해서 슬라이더 값이 전부 유실됐다.
+    실제로 실릴 키는 `cli_mapping.OVERRIDE_KEYS` 와 각 ARGS_MAP 이 정한다.
+    """
+    cameras = _build_cameras_json(body.camera_mapping)
+    is_bimanual = len(body.robot_ports) >= 2
+
+    if body.inference_mode == "server":
+        params = {
+            "server_address": body.server_address,
+            "robot_type": robot_type,
+            "robot_port": body.robot_ports[0] if is_bimanual else robot_port,
+            "checkpoint_path": body.checkpoint_path,
+            "policy_type": body.policy_type,
+            "policy_device": "cuda",
+            "actions_per_chunk": body.actions_per_chunk,
+            "chunk_size_threshold": 0.8,
+            "aggregate_fn": body.aggregate_fn,
+            "offset_correction": body.offset_correction,
+            "smoothing": body.smoothing,
+            "smoothing_window": body.smoothing_window,
+            "debug": body.debug_mode,
+            **body.params,
+            "task": body.params.get("task", "do the task"),
+        }
+        if cameras:
+            params["cameras"] = cameras
+        if is_bimanual:
+            params["robot_ports"] = body.robot_ports
+        return build_grpc_client_args(params)
+
+    params = {
+        "checkpoint_path": body.checkpoint_path,
+        "robot_type": robot_type,
+        "robot_port": robot_port,
+        "device": "cuda",
+        "use_amp": True,
+        "debug": body.debug_mode,
+        **body.params,
+    }
+    if cameras:
+        params["cameras"] = cameras
+    return build_inference_args(params)
+
+
 @router.get("")
 async def list_models():
     return scan_models()
@@ -206,47 +257,7 @@ async def preview_inference_args(body: InferencePreviewRequest):
     """추론 CLI 인자 미리보기 (실행하지 않음)."""
     robot_type = body.robot_type or robot_manager.selected_type or "piper_follower"
     robot_port = body.robot_port or _get_first_ready_follower_port()
-    cameras = _build_cameras_json(body.camera_mapping)
-
-    if body.inference_mode == "server":
-        # gRPC wrapper 모드
-        cameras = _build_cameras_json(body.camera_mapping)
-        build_params = {
-            "server_address": body.server_address,
-            "robot_type": robot_type,
-            "robot_port": robot_port,
-            "checkpoint_path": body.checkpoint_path,
-            "policy_type": body.policy_type,
-            "policy_device": "cuda",
-            "actions_per_chunk": body.actions_per_chunk,
-            "chunk_size_threshold": 0.8,
-            "aggregate_fn": body.aggregate_fn,
-            "offset_correction": body.offset_correction,
-            "smoothing": body.smoothing,
-            "smoothing_window": body.smoothing_window,
-            "task": body.params.get("task", "do the task"),
-            "fps": 20,
-            "debug": body.debug_mode,
-        }
-        if cameras:
-            build_params["cameras"] = cameras
-        if len(body.robot_ports) >= 2:
-            build_params["robot_ports"] = body.robot_ports
-        args = build_grpc_client_args(build_params)
-    else:
-        # 로컬 wrapper 모드
-        build_params = {
-            "checkpoint_path": body.checkpoint_path,
-            "robot_type": robot_type,
-            "robot_port": robot_port,
-            "device": "cuda",
-            "use_amp": True,
-            "debug": body.debug_mode,
-            **body.params,
-        }
-        if cameras:
-            build_params["cameras"] = cameras
-        args = build_inference_args(build_params)
+    args = _build_args_for(body, robot_type, robot_port)
 
     import shlex
     return {"args": args, "command": " ".join(shlex.quote(a) for a in args)}
@@ -258,8 +269,7 @@ class InferenceStartCustomRequest(BaseModel):
 
 @router.post("/inference/start")
 async def start_inference(body: InferenceStartRequest):
-    if train_manager.is_running:
-        raise HTTPException(409, "학습이 실행 중입니다. 학습을 먼저 중지하세요.")
+    require_idle(Activity.INFERENCE)
     robot_type = body.robot_type or robot_manager.selected_type
     if not robot_type:
         raise HTTPException(400, "로봇이 선택되지 않았습니다. 로봇 페이지에서 먼저 선택하세요.")
@@ -268,46 +278,7 @@ async def start_inference(body: InferenceStartRequest):
     if not is_bimanual and not robot_port:
         raise HTTPException(400, "등록된 follower가 없습니다. 로봇 페이지에서 먼저 등록하세요.")
 
-    if body.inference_mode == "server":
-        # gRPC wrapper 모드
-        cameras = _build_cameras_json(body.camera_mapping)
-        build_params = {
-            "server_address": body.server_address,
-            "robot_type": robot_type,
-            "robot_port": robot_port if not is_bimanual else body.robot_ports[0],
-            "checkpoint_path": body.checkpoint_path,
-            "policy_type": body.policy_type,
-            "policy_device": "cuda",
-            "actions_per_chunk": body.actions_per_chunk,
-            "chunk_size_threshold": 0.8,
-            "aggregate_fn": body.aggregate_fn,
-            "offset_correction": body.offset_correction,
-            "smoothing": body.smoothing,
-            "smoothing_window": body.smoothing_window,
-            "task": body.params.get("task", "do the task"),
-            "fps": 20,
-            "debug": body.debug_mode,
-        }
-        if cameras:
-            build_params["cameras"] = cameras
-        if is_bimanual:
-            build_params["robot_ports"] = body.robot_ports
-        args = build_grpc_client_args(build_params)
-    else:
-        # 로컬 wrapper 모드
-        cameras = _build_cameras_json(body.camera_mapping)
-        build_params = {
-            "checkpoint_path": body.checkpoint_path,
-            "robot_type": robot_type,
-            "robot_port": robot_port,
-            "device": "cuda",
-            "use_amp": True,
-            "debug": body.debug_mode,
-            **body.params,
-        }
-        if cameras:
-            build_params["cameras"] = cameras
-        args = build_inference_args(build_params)
+    args = _build_args_for(body, robot_type, robot_port)
 
     _release_all_cameras()
 
@@ -326,6 +297,8 @@ async def start_inference(body: InferenceStartRequest):
 @router.post("/inference/start-custom")
 async def start_inference_custom(body: InferenceStartCustomRequest):
     """직접 편집한 CLI 인자로 추론 시작."""
+    # 카메라를 해제하기 전에 막는다 — 녹화 중이면 여기서 뺏으면 안 된다
+    require_idle(Activity.INFERENCE)
     if not body.args:
         raise HTTPException(400, "CLI 인자가 비어있습니다")
 

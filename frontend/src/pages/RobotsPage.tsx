@@ -1,8 +1,8 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { api } from '../services/api'
+import { JOINT_NAMES } from '../config/joints'
 
 // ── 파킹 보정 모달 ──
-const JOINT_NAMES = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6', 'gripper']
 
 function ParkingCalibrationModal({ iface, onClose }: { iface: string; onClose: () => void }) {
   const [step, setStep] = useState<'ready' | 'moving' | 'adjusting' | 'saving'>('ready')

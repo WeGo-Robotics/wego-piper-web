@@ -1,4 +1,11 @@
-# 5. 관절 캘리브레이션 `cal` dict 2회 중복 (B급)
+# 5. 관절 캘리브레이션 `cal` dict 2회 중복 (B급) — ☑ 완료
+
+> [app/core/joints.py](../backend/app/core/joints.py) 로 통합.
+> **2회가 아니라 3회였다** — 같은 범위가 `vendor/lerobot_robot_piper` 의
+> `PiperFollower.__init__` 에 `MotorCalibration(...)` 으로 있고 **실제 추론·녹화는 그쪽을 쓴다.**
+> vendor 는 외부 repo 스냅샷이라 고치면 다음 갱신에 덮이므로 복제를 유지하되
+> 어긋나면 테스트가 잡는다.
+> 변환은 관절 7개 × 2001 포인트 × 양방향 **28,014건 전부 비트 단위 일치** 확인.
 
 ## 문제
 
@@ -63,4 +70,4 @@ def denormalize_joint(name: str, norm: float) -> int: ...
 
 ## 상태
 
-☐ 미착수
+☑ 완료 (파킹 실기 검증 대기)

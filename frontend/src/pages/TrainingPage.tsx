@@ -1,15 +1,19 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { api } from '../services/api'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
+import type { ProcessState } from '../types/ws'
+import { useActivity, isStateMessage } from '../hooks/useActivity'
+import { usePolicies } from '../hooks/usePolicies'
+import PresetBar from '../components/PresetBar'
 import LogViewer from '../components/LogViewer'
 import TrainingMetrics, { type MetricsData, type HistoryData } from '../components/TrainingMetrics'
 
-type ProcessState = 'idle' | 'starting' | 'running' | 'stopping' | 'error'
 type Dataset = { id: string; path: string; total_episodes: number; total_frames: number; fps: number | null; features: Record<string, { shape?: number[]; dtype?: string; names?: string[] }> }
 type Model = { id: string; path: string; policy_type?: string; config?: Record<string, unknown>; requirements?: { required_cameras: { name: string; model_name?: string }[]; state_dim: number; action_dim: number } }
 type Checkpoint = { name: string; step: number; size_kb: number; path: string }
 
-const POLICY_TYPES = ['act', 'diffusion', 'smolvla', 'pi0', 'pi05', 'vqbet', 'tdmpc', 'sac']
+// 정책 목록은 백엔드 core/policies.py 하나에서 온다 (usePolicies)
+// 이전에는 여기 `sac` 이 있었는데 추론 시작에서 ValueError 로 죽었다.
 const OPTIMIZER_TYPES = ['adam', 'adamw', 'sgd']
 
 // 정책별 학습 옵션 스키마 (단일 소스)
@@ -125,11 +129,44 @@ export default function TrainingPage() {
   const [history, setHistory] = useState<HistoryData>({ steps: [], losses: [], grad_norms: [], lrs: [] })
   const [logs, setLogs] = useState<string[]>([])
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([])
-  const [inferenceRunning, setInferenceRunning] = useState(false)
   const MAX_LOGS = 500
+
+  // 프리셋에 담는 것은 "튜닝" 만 — dataset/output_dir 같은 실행 대상은 제외한다.
+  // 키 이름은 백엔드 TrainStartRequest 필드명을 그대로 쓴다.
+  const presetValues = () => ({
+    policy_type: policyType, batch_size: batchSize, steps, log_freq: logFreq,
+    save_freq: saveFreq, num_workers: numWorkers, seed, device,
+    optimizer_type: optimizerType, learning_rate: learningRate,
+    wandb_enable: wandbEnable, wandb_project: wandbProject,
+    use_policy_training_preset: usePolicyPreset, policy_params: policyParams, amp,
+  })
+  const applyPreset = (v: Record<string, unknown>) => {
+    if (v.policy_type !== undefined) setPolicyType(v.policy_type as string)
+    if (v.batch_size !== undefined) setBatchSize(v.batch_size as number)
+    if (v.steps !== undefined) setSteps(v.steps as number)
+    if (v.log_freq !== undefined) setLogFreq(v.log_freq as number)
+    if (v.save_freq !== undefined) setSaveFreq(v.save_freq as number)
+    if (v.num_workers !== undefined) setNumWorkers(v.num_workers as number)
+    if (v.seed !== undefined) setSeed(v.seed as number)
+    if (v.device !== undefined) setDevice(v.device as string)
+    if (v.optimizer_type !== undefined) setOptimizerType(v.optimizer_type as string)
+    if (v.learning_rate !== undefined) setLearningRate(v.learning_rate as number)
+    if (v.wandb_enable !== undefined) setWandbEnable(v.wandb_enable as boolean)
+    if (v.wandb_project !== undefined) setWandbProject(v.wandb_project as string)
+    if (v.use_policy_training_preset !== undefined) setUsePolicyPreset(v.use_policy_training_preset as boolean)
+    if (v.policy_params !== undefined) setPolicyParams(v.policy_params as Record<string, number | boolean>)
+    if (v.amp !== undefined) setAmp(v.amp as string)
+    setCliEdited(false)
+  }
+
+  // 배타 규칙은 백엔드 exclusivity.py 한 곳에만 있다
+  const { isBlocked, blockedBy, refresh: refreshActivity } = useActivity()
+  // 정책 목록도 백엔드 core/policies.py 한 곳에서 온다
+  const { trainable } = usePolicies()
 
   const { connected } = useWebSocket('/ws', {
     onMessage: useCallback((msg: WsMessage) => {
+      if (isStateMessage(msg.type)) refreshActivity()
       if (msg.type === 'train_state') {
         setTrainState(msg.data as ProcessState)
       } else if (msg.type === 'train_metrics') {
@@ -140,11 +177,8 @@ export default function TrainingPage() {
           const next = [...prev, msg.data as string]
           return next.length > MAX_LOGS ? next.slice(-MAX_LOGS) : next
         })
-      } else if (msg.type === 'state') {
-        // 추론 상태 감시 (GPU 경합 표시용)
-        setInferenceRunning((msg.data as string) === 'running')
       }
-    }, []),
+    }, [refreshActivity]),
   })
 
   // 초기 데이터 로드
@@ -285,7 +319,8 @@ export default function TrainingPage() {
 
   const handleStop = async () => { await api.post('/training/stop') }
 
-  const canStart = !!selectedDataset && !isRunning && !inferenceRunning
+  const trainBlockedBy = blockedBy('training')
+  const canStart = !!selectedDataset && !isRunning && !isBlocked('training')
 
   return (
     <div className="space-y-6">
@@ -296,8 +331,8 @@ export default function TrainingPage() {
           {isRunning && (
             <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-500/20 text-green-400">{trainState}</span>
           )}
-          {inferenceRunning && (
-            <span className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-400">추론 실행 중 (GPU 사용)</span>
+          {trainBlockedBy && (
+            <span className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-400">{trainBlockedBy} 실행 중 — 학습을 시작할 수 없습니다</span>
           )}
         </div>
       </div>
@@ -307,6 +342,11 @@ export default function TrainingPage() {
         <div className="space-y-4">
           {!isRunning ? (
             <>
+              {/* 프리셋 — 학습 파라미터는 기기와 무관하므로 shared */}
+              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
+                <PresetBar domain="training" scope="shared" policyType={policyType}
+                  values={presetValues} onApply={applyPreset} disabled={isRunning} />
+              </div>
               {/* 데이터셋 */}
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
                 <h3 className="text-sm font-semibold">데이터셋</h3>
@@ -424,7 +464,7 @@ export default function TrainingPage() {
                 <h3 className="text-sm font-semibold">정책</h3>
                 <select value={policyType} onChange={(e) => handlePolicyChange(e.target.value)}
                   className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                  {POLICY_TYPES.map((p) => <option key={p} value={p}>{p}</option>)}
+                  {trainable.map((p) => <option key={p.type} value={p.type}>{p.label}</option>)}
                 </select>
                 <div className="space-y-1">
                   <label className="text-xs text-neutral-400">Fine-tune 모델 (선택)</label>

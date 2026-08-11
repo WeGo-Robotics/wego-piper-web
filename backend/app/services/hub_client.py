@@ -9,9 +9,20 @@ from functools import partial
 
 from huggingface_hub import HfApi, snapshot_download
 
+from app.core import policies
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
-_api = HfApi()
+# HF API 클라이언트 — **이 저장소의 유일한 인스턴스**.
+# 두 곳에 있으면 endpoint 설정이 한쪽에만 걸려 나머지가 조용히 huggingface.co 를 본다.
+# 사내 자체 Hub 로 옮길 때 여기와 `HF_ENDPOINT` 환경변수만 보면 된다 (ROADMAP 참고).
+_api = HfApi(endpoint=settings.hf_endpoint or None)
+
+
+def get_api() -> HfApi:
+    """다른 모듈이 HfApi 를 직접 만들지 않도록 여기서 받아 쓴다."""
+    return _api
 
 # 다운로드 진행 상태 추적
 _download_status: dict[str, dict] = {}
@@ -34,12 +45,11 @@ def _search_models(query: str = "", author: str = "lerobot", limit: int = 30) ->
         policy_tags = [t.removesuffix("-policy") for t in tags if t.endswith("-policy")]
         model_name = (model.id or "").lower().split("/")[-1]
 
-        # policy_type: 태그 → 이름에서 유추
+        # policy_type: 태그 → 이름에서 유추 (레지스트리에서 파생, 긴 이름 우선)
         if not policy_tags:
-            for pt in ("smolvla", "act", "diffusion", "pi0", "pi05", "vqbet", "tdmpc", "sac", "rtc"):
-                if pt in model_name:
-                    policy_tags = [pt]
-                    break
+            guessed = policies.guess_from_name(model_name)
+            if guessed:
+                policy_tags = [guessed]
 
         is_base = "base" in model_name.split("_") or (not policy_tags and not dataset_tags)
 
@@ -55,25 +65,11 @@ def _search_models(query: str = "", author: str = "lerobot", limit: int = 30) ->
             pass
 
         # base_model이 없으면 policy_type에서 잘 알려진 베이스 모델 추론
-        # policy base = lerobot 체크포인트, vlm base = VLM backbone
-        _KNOWN_POLICY_BASES = {
-            "smolvla": "lerobot/smolvla_base",
-            "act": None,
-            "diffusion": None,
-            "pi0": "lerobot/pi0_base",
-            "pi05": "lerobot/pi05_base",
-            "vqbet": None,
-            "tdmpc": None,
-        }
-        _KNOWN_VLM_BASES = {
-            "smolvla": "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
-            "pi0": "google/paligemma-3b-pt-224",
-            "pi05": "google/paligemma-3b-pt-224",
-        }
+        # (레지스트리에서 파생. 이전에는 이 dict 두 개가 루프 안에 있어 모델마다 재생성됐다)
         if not base_model and not is_base and policy_tags:
-            pt = policy_tags[0]
-            policy_base = _KNOWN_POLICY_BASES.get(pt)
-            vlm_base = _KNOWN_VLM_BASES.get(pt)
+            spec = policies.POLICIES.get(policy_tags[0], {})
+            policy_base = spec.get("policy_base")
+            vlm_base = spec.get("vlm_base")
             if policy_base and vlm_base:
                 base_model = f"{policy_base} (VLM: {vlm_base})"
             elif policy_base:

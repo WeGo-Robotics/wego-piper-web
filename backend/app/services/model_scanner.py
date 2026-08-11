@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.core.config import settings
+from app.core.hf_layout import dirname_from_repo_id, latest_snapshot, repo_id_from_dirname
 
 logger = logging.getLogger(__name__)
 
@@ -94,25 +95,8 @@ def extract_model_requirements(config: dict, model_dir: Path | None = None) -> d
     }
 
 
-def _repo_id_from_dirname(dirname: str) -> str | None:
-    """models--wego-hansu--piper_smolvla → wego-hansu/piper_smolvla"""
-    if not dirname.startswith("models--"):
-        return None
-    parts = dirname.split("--", 2)
-    if len(parts) < 3:
-        return None
-    return f"{parts[1]}/{parts[2]}"
 
 
-def _latest_snapshot(model_dir: Path) -> Path | None:
-    """snapshots/ 아래에서 가장 최근 수정된 스냅샷 디렉토리 반환."""
-    snapshots_dir = model_dir / "snapshots"
-    if not snapshots_dir.exists():
-        return None
-    candidates = [d for d in snapshots_dir.iterdir() if d.is_dir()]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda d: d.stat().st_mtime)
 
 
 def _scan_hf_cache(models_dir: Path) -> list[dict]:
@@ -121,11 +105,11 @@ def _scan_hf_cache(models_dir: Path) -> list[dict]:
     for candidate in models_dir.iterdir():
         if not candidate.is_dir():
             continue
-        repo_id = _repo_id_from_dirname(candidate.name)
+        repo_id = repo_id_from_dirname(candidate.name, "models")
         if not repo_id:
             continue
 
-        snapshot = _latest_snapshot(candidate)
+        snapshot = latest_snapshot(candidate)
         if not snapshot:
             continue
 
@@ -197,7 +181,14 @@ def _scan_train_outputs(models_dir: Path) -> list[dict]:
 
 
 def _scan_one_dir(models_dir: Path) -> list[dict]:
-    if not models_dir.exists():
+    # `.exists()` 는 접근 권한이 없으면 False 가 아니라 PermissionError 를 던진다.
+    # model_paths.json 에 남은 남의 홈 경로(예: 도커 시절의 /root/.cache/...) 하나 때문에
+    # 모델 목록 전체가 500 이 됐다. 못 읽는 경로는 조용히 건너뛴다.
+    try:
+        if not models_dir.exists():
+            return []
+    except OSError as e:
+        logger.warning("모델 경로를 읽을 수 없어 건너뜀: %s (%s)", models_dir, e)
         return []
 
     results = []
@@ -256,7 +247,7 @@ def delete_model(model_id: str) -> bool:
     parts = model_id.split("/", 1)
     if len(parts) != 2:
         return False
-    dirname = f"models--{parts[0]}--{parts[1]}"
+    dirname = dirname_from_repo_id(model_id, "models") or ""
     model_dir = settings.models_dir / dirname
     if not model_dir.exists():
         return False

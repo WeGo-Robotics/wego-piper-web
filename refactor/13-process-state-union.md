@@ -1,4 +1,7 @@
-# 13. `ProcessState` 유니온이 프론트 4곳 + 백엔드 1곳 (C급)
+# 13. `ProcessState` 유니온이 프론트 4곳 + 백엔드 1곳 (C급) — ☑ 완료
+
+> [types/ws.ts](../frontend/src/types/ws.ts) 로 통합. 예상대로 #12의 부산물로 해결됐다.
+> `isBusy()` 헬퍼도 함께 뒀다 — `stopping` 을 실행 중으로 볼지가 갈리던 문제.
 
 ## 문제
 
@@ -59,4 +62,4 @@ export const isStoppable = (s: ProcessState) => s === 'running' || s === 'starti
 
 ## 상태
 
-☐ 미착수 — #12에 흡수 예정
+☑ 완료 (#12에 흡수)

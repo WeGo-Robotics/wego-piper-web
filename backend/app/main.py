@@ -17,8 +17,8 @@ class _QuietAccessFilter(logging.Filter):
 
 
 logging.getLogger("uvicorn.access").addFilter(_QuietAccessFilter())
-from app.routers import health, ws, estop, params, models, datasets, hub, inference, eval_log, robots, cameras, logs, training, recording, policy_server, debug_logs, encoder
-from app.services.estop_watchdog import estop_watchdog
+from app.routers import health, ws, estop, params, models, datasets, hub, inference, eval_log, robots, cameras, logs, training, recording, policy_server, debug_logs, encoder, activity, policies, presets
+from app.services.estop_bridge import estop_bridge
 from app.services.zmq_bridge import zmq_bridge
 from app.services.robot_manager import robot_manager
 from app.services.camera_manager import camera_manager
@@ -28,8 +28,17 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    estop_watchdog.start()
+    # E-stop 감시는 독립 프로세스(daemons/estopd.py)가 한다.
+    # 게이트웨이는 heartbeat 와 활동 PID 만 버스에 올린다 —
+    # 이벤트 루프가 막혀도 팔이 서야 하기 때문이다.
+    estop_bridge.connect()
+    estop_bridge.sync_activities()
     await zmq_bridge.connect()
+    # 프리셋 이관 (이전 형식 → presets/robot/). 한 번만 동작한다.
+    try:
+        robot_manager.migrate_legacy_presets()
+    except Exception as e:
+        logger.warning("Preset migration failed: %s", e)
     # 이전 세션 복원 (로봇 + 카메라)
     try:
         robot_manager.restore_session()
@@ -41,13 +50,13 @@ async def lifespan(app: FastAPI):
         logger.warning("Camera session restore failed: %s", e)
     # 학습 프로세스 복원
     try:
-        from app.services.train_manager import train_manager
+        from app.services.training import train_manager
         train_manager.restore_running_process()
     except Exception as e:
         logger.warning("Train process restore failed: %s", e)
     yield
     await zmq_bridge.close()
-    estop_watchdog.stop()
+
 
 
 app = FastAPI(title="Piper Web", lifespan=lifespan)
@@ -77,3 +86,6 @@ app.include_router(training.router)
 app.include_router(recording.router)
 app.include_router(policy_server.router)
 app.include_router(encoder.router)
+app.include_router(activity.router)
+app.include_router(policies.router)
+app.include_router(presets.router)

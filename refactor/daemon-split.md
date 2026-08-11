@@ -199,9 +199,12 @@ Docker로 남기려면 `ExecStart=docker run --rm` 유닛도 된다.
 각 단계가 끝난 시점에 시스템이 동작해야 한다. 빅뱅 금지.
 어떤 프로세스를 몇 개로 쪼개는지는 **[daemon-inventory.md](daemon-inventory.md)** 에 별도로 정리했다.
 
-1. **`piper_bus/` 계약 패키지 + Redis 기동** — 토픽/스키마 정의만. 아직 아무도 안 쓴다.
-2. **estop을 먼저 뗀다** — 제일 작고, 안전상 이득이 제일 크고, 실패해도 영향 범위가 좁다.
-   버스와 systemd 유닛 패턴의 시범 케이스.
+1. ☑ **`piper_bus/` 계약 패키지 + Redis** — [bus/piper_bus/](../bus/piper_bus/). `pip install -e bus/` 로 게이트웨이·데몬이 같은 패키지를 import 한다.
+2. ☑ **estopd 분리** — [daemons/estopd.py](../daemons/estopd.py) +
+   [systemd 유닛](../deploy/systemd/piper-estopd.service).
+   **버스로 "정지해줘"를 보내지 않는다** — 게이트웨이가 응답 못 하는 상황이 이 데몬의 존재 이유라,
+   게이트웨이가 Redis 에 올려둔 활동 PID 를 읽어 **직접 SIGKILL** 한다.
+   게이트웨이를 `SIGSTOP` 으로 얼려도 팔이 서는 것을 회귀 테스트로 고정했다.
 3. **ZMQ 브리지 3개를 Redis로 교체** — 프로세스 경계는 그대로 두고 전송만 바꾼다.
    wrapper 쪽도 같이 바뀌므로 여기서 계약 패키지가 검증된다.
 4. **장치 lease / quiesce 프로토콜 정의** — ⚠ 아래 단계들의 전제조건.

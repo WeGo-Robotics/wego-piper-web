@@ -24,9 +24,9 @@ from app.services.encoder_probe import (
     kmeans_labels,
     pca_rgb,
 )
+from app.core.policies import encoder_probe_policies
+from app.services.exclusivity import Activity, blocked_reason
 from app.services.model_scanner import scan_models
-from app.services.process_manager import process_manager
-from app.services.train_manager import train_manager
 
 logger = logging.getLogger(__name__)
 
@@ -39,16 +39,13 @@ _run_lock = asyncio.Lock()
 _QUEUE_LIMIT = 3
 _waiting = 0
 
-SUPPORTED = {"smolvla", "act"}
+# 정책 레지스트리에서 파생 — 정책을 추가할 때 여기를 따로 고칠 필요가 없다
+SUPPORTED = encoder_probe_policies()
 
 
 def _gpu_busy() -> str:
-    """학습/추론이 GPU를 쓰고 있으면 사유를 반환."""
-    if train_manager.is_running:
-        return "학습"
-    if process_manager.state.value in ("starting", "running"):
-        return "추론"
-    return ""
+    """학습/추론이 GPU를 쓰고 있으면 사유를 반환. 막지는 않고 CPU 폴백에 쓴다."""
+    return blocked_reason(Activity.ENCODER_PROBE) or ""
 
 
 @router.get("/models")

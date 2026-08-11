@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.services.exclusivity import Activity, require_idle
 from app.services.policy_server_manager import policy_server_manager
 
 router = APIRouter(prefix="/api/policy-server", tags=["policy-server"])
@@ -41,8 +42,7 @@ class PolicyServerStartRequest(BaseModel):
 @router.post("/start")
 async def start_policy_server(body: PolicyServerStartRequest):
     """정책 서버 시작."""
-    if policy_server_manager.is_running:
-        raise HTTPException(409, "정책 서버가 이미 실행 중입니다.")
+    require_idle(Activity.POLICY_SERVER)
     try:
         await policy_server_manager.start(host=body.host, port=body.port, fps=body.fps)
     except Exception as e:

@@ -1,4 +1,7 @@
-# 1. 추론 파라미터 3중 정의 (A급 — 드리프트 2건 발생 중)
+# 1. 추론 파라미터 3중 정의 (A급 — 단계 1 완료)
+
+> **단계 1(핀포인트) 완료.** 착수 중 **드리프트 3(gRPC 모드 전량 유실)** 을 새로 발견해 함께 고쳤다.
+> 단계 2(PARAM_SPEC 단일 소스)는 [../ROADMAP.md](../ROADMAP.md) Phase 4에 남아 있다.
 
 ## 문제
 
@@ -50,6 +53,22 @@ override_keys = {
 프론트가 더 좁아서 당장 위험하진 않지만(백엔드 클램프가 발동할 일이 없음),
 어느 쪽이 의도한 상한인지 불명확하다. 나머지 11개 파라미터는 범위가 일치한다.
 
+## 드리프트 (3) — gRPC 모드는 필터 파라미터가 시작 시 **전부** 유실 (착수 중 발견)
+
+문서 작성 시 놓쳤던 것. 로컬 모드는 `use_chunk_size` 하나가 빠진 정도였지만,
+**gRPC 모드는 전달 경로 자체가 없었다.**
+
+- [models.py](../backend/app/routers/models.py)의 gRPC 분기가 `body.params` 에서 `task` 만 꺼내 썼다
+  (로컬은 `**body.params`)
+- `GRPC_CLIENT_ARGS_MAP` 에도 `grpc_wrapper` argparse 에도 필터 인자가 하나도 없었다
+  (`--config-overrides` 자체가 없었다)
+- `fps` 가 `20` 으로 하드코딩되어 UI 슬라이더를 무시했다
+
+**티가 안 났던 이유**: `grpc_wrapper` 의 전역 기본값이 UI 기본값과 우연히 전부 일치했다
+(max_velocity 180, lowpass_alpha 0.5, gripper_bypass_filter True …).
+기본값으로 쓰면 멀쩡해 보이고, **값을 바꿔놓고 시작하면 무시되며, 한쪽 기본값만 바뀌면
+조용히 어긋난다** — 이 폴더가 다루는 문제 유형 그대로다.
+
 ## 함께 정리할 것 — 노브 2개가 같은 변수를 건드림
 
 로컬 모드에서 `use_chunk_size`와 `n_action_steps` 슬라이더가 런타임에 **똑같이
@@ -64,19 +83,30 @@ if key in ("use_chunk_size", "n_action_steps"):
 gRPC 모드에서는 `use_chunk_size`가 별개 변수(`_use_chunk_size`)이고 `actions_per_chunk`는
 CLI 인자다. 즉 **모드에 따라 두 슬라이더의 의미가 다르다.**
 
-구조 통합 전에 이 둘의 의도를 먼저 정해야 한다:
-- (a) 로컬/gRPC 모두에서 별개 개념으로 유지 → UI에서 모드별로 표시 분리
-- (b) 로컬에서는 하나로 합침 → 슬라이더 하나 제거
+**결정: (b) 슬라이더 하나로 합침.** ACT 섹션의 `n_action_steps` 슬라이더를 제거하고
+"받는 액션 청크 크기"(`use_chunk_size`) 하나로 통일했다. gRPC 모드에서 `n_action_steps` 는
+어차피 쓰이지 않았고(서버에 요청할 개수는 별도 UI 필드 `actions_per_chunk`),
+로컬 모드에서는 두 슬라이더가 같은 `_actions_per_chunk` 를 가리켰다.
 
-## 해결안
+## 완료 (단계 1)
 
-### 단계 1 — 핀포인트 수정 (먼저 할 것)
+| 변경 | 파일 |
+|---|---|
+| `override_keys` → 모듈 상수 `OVERRIDE_KEYS`, `use_chunk_size` 추가 | [cli_mapping.py](../backend/app/core/cli_mapping.py) |
+| `build_grpc_client_args` 도 `--config-overrides` 를 싣도록 (`_split_overrides` 공유) | [cli_mapping.py](../backend/app/core/cli_mapping.py) |
+| `max_velocity` 클램프 1000 → **500** (프론트 기준으로 통일) | [zmq_bridge.py](../backend/app/services/zmq_bridge.py) |
+| gRPC 분기가 `**body.params` 전달, `fps` 하드코딩 제거 | [models.py](../backend/app/routers/models.py) |
+| **미리보기/실행에 복붙돼 있던 인자 생성을 `_build_args_for()` 하나로** | [models.py](../backend/app/routers/models.py) |
+| 시작 시 `use_chunk_size` 처리 (0이 아니면 `n_action_steps` 보다 우선) | [lerobot_wrapper.py](../wrapper/lerobot_wrapper.py) |
+| `--config-overrides` 추가 + `apply_param()` 추출 (ZMQ와 시작 경로 공유) | [grpc_wrapper.py](../wrapper/grpc_wrapper.py) |
+| `n_action_steps` 슬라이더 제거, `?? ` 폴백을 기본값과 일치 | [InferencePage.tsx](../frontend/src/pages/InferencePage.tsx) |
 
-1. `override_keys`에 `use_chunk_size` 추가 — 단, 위 "노브 2개" 문제 때문에 로컬 모드에서
-   `n_action_steps`와 충돌한다. 어느 쪽이 이기는지 정한 뒤 넣어야 한다.
-2. `max_velocity` 상한을 500/1000 중 하나로 통일.
+`_build_args_for()` 추출은 계획에 없던 것이다 — 같은 블록이 `/inference/preview` 와
+`/inference/start` 에 복붙돼 있어서 **미리보기가 실제 실행과 다를 수 있었다**
+(실제로 `fps` 하드코딩을 양쪽에 똑같이 고쳐야 했다). 사용자가 화면에서 확인한
+CLI 명령이 거짓이 되는 구조라 합쳤다.
 
-### 단계 2 — 구조 통합
+### 남은 것 — 단계 2 구조 통합
 
 백엔드에 파라미터 스펙 단일 소스를 만든다:
 
@@ -102,11 +132,27 @@ PARAM_SPEC = {
 
 ## 검증
 
-- `use_chunk_size`를 0이 아닌 값으로 두고 추론 시작 → wrapper 로그에
-  `actions_per_chunk: N` 이 UI 값과 일치하는지 확인
-- `cd frontend && npm run build`
+자동 ([test_inference_params.py](../backend/tests/test_inference_params.py), 7개 — 전체 37개 통과):
+
+- UI 파라미터 전량이 **두 모드 모두** 인자에 실리는지
+- 두 모드가 **같은 오버라이드 집합**을 싣는지 (갈리면 모드마다 다르게 동작한다)
+- gRPC `--fps` 가 하드코딩 20 이 아닌지
+- `use_chunk_size` 가 `OVERRIDE_KEYS` 에 있는지 / `max_velocity` 상한이 500 인지
+- **실시간 변경 가능한 값은 시작값도 반드시 전달되는지** —
+  `(SAFE_PARAMS ∪ BOOL_PARAMS) - {fps, task} ⊆ OVERRIDE_KEYS`.
+  한쪽에만 있으면 "슬라이더를 움직여야 적용되는 값"이 생긴다. 이게 원래 버그의 형태다
+
+`cd frontend && npm run build` ☑
+
+실기 확인이 남은 것 (하드웨어 필요, wrapper 를 고쳤으므로 필수):
+
+- **로컬**: `use_chunk_size` 를 0이 아닌 값으로 두고 시작 → 로그에
+  `actions_per_chunk: N (use_chunk_size)` 가 UI 값과 일치하는지
+- **gRPC**: 시작 로그에 `Updated max_velocity/lowpass_alpha/...` 가 UI 값으로 찍히는지
+  (이전에는 아무것도 안 찍혔다)
+- 옛 `n_action_steps` 가 localStorage 에 남은 브라우저에서 시작해도 정상 동작하는지
 - 슬라이더 전 항목을 극단값으로 밀어보고 백엔드 클램프 로그 확인
 
 ## 상태
 
-☐ 미착수
+☑ 단계 1 완료 (실기 검증 대기) / ☐ 단계 2 구조 통합

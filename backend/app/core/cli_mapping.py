@@ -3,6 +3,7 @@ LeRobot CLI 인자 매핑 테이블.
 LeRobot 업데이트 시 이 파일만 수정하면 됨.
 """
 
+import logging
 from pathlib import Path
 
 from app.core.config import settings
@@ -39,24 +40,39 @@ EDIT_OPERATIONS: dict[str, str] = {
 }
 
 
+# CLI 플래그가 아니라 `--config-overrides` JSON으로 실어 보낼 키.
+#
+# 이 값들은 실행 중 ZMQ로도 바꿀 수 있지만, **시작값도 반드시 이 경로로 전달해야 한다** —
+# 여기 없으면 wrapper 기본값으로 떨어져 UI에서 맞춘 값이 조용히 유실된다(에러 없음).
+# 로컬 wrapper 와 gRPC wrapper 가 같은 집합을 쓴다.
+OVERRIDE_KEYS: set[str] = {
+    # 정책 파라미터
+    "max_guidance_weight", "execution_horizon", "temporal_ensemble_coeff",
+    "n_action_steps", "refill_threshold_pct",
+    # 액션 청크 크기 (0 = 모델 전체)
+    "use_chunk_size",
+    # 액션 필터
+    "max_velocity", "max_gripper_velocity", "lowpass_alpha",
+    "max_jerk", "interpolation_steps", "gripper_bypass_filter",
+}
+
+
+def _split_overrides(params: dict) -> tuple[dict, dict]:
+    """(CLI 인자로 갈 것, --config-overrides 로 갈 것) 으로 나눈다."""
+    cli_params, overrides = {}, {}
+    for key, value in params.items():
+        (overrides if key in OVERRIDE_KEYS else cli_params)[key] = value
+    return cli_params, overrides
+
+
 def build_inference_args(params: dict) -> list[str]:
     """웹 UI 파라미터를 wrapper CLI 인자 리스트로 변환."""
     args = [settings.local_python, "-u", WRAPPER_PATH]  # -u: unbuffered stdout
 
-    # RTC/ACT 파라미터 + 액션 필터값은 config-overrides로 묶어 전달.
-    # 필터값은 CLI 인자가 아니라 래퍼 init에서 _action_filter에 적용된다
-    # (여기 없으면 시작 시 ActionFilter 기본값으로 떨어져 UI값이 반영 안 됨).
     overrides = {}
-    override_keys = {
-        "max_guidance_weight", "execution_horizon", "temporal_ensemble_coeff",
-        "n_action_steps", "refill_threshold_pct",
-        # 액션 필터 (실시간 변경 가능하지만 시작값도 이 경로로 전달)
-        "max_velocity", "max_gripper_velocity", "lowpass_alpha",
-        "max_jerk", "interpolation_steps", "gripper_bypass_filter",
-    }
 
     for key, value in params.items():
-        if key in override_keys:
+        if key in OVERRIDE_KEYS:
             overrides[key] = value
             continue
         cli_flag = INFERENCE_ARGS_MAP.get(key)
@@ -105,10 +121,16 @@ GRPC_CLIENT_ARGS_MAP: dict[str, str] = {
 
 
 def build_grpc_client_args(params: dict) -> list[str]:
-    """gRPC grpc_wrapper.py CLI 인자 빌더."""
-    args = [settings.grpc_python, "-u", GRPC_WRAPPER_PATH]
+    """gRPC grpc_wrapper.py CLI 인자 빌더.
 
-    for key, value in params.items():
+    로컬 모드와 동일하게 필터/정책 파라미터는 `--config-overrides` 로 묶어 보낸다.
+    이전에는 이 경로가 없어서 UI 슬라이더 값이 시작 시 전부 유실됐다
+    (wrapper 전역 기본값이 UI 기본값과 우연히 같아 티가 안 났다).
+    """
+    args = [settings.grpc_python, "-u", GRPC_WRAPPER_PATH]
+    cli_params, overrides = _split_overrides(params)
+
+    for key, value in cli_params.items():
         cli_flag = GRPC_CLIENT_ARGS_MAP.get(key)
         if cli_flag is None:
             continue
@@ -122,6 +144,10 @@ def build_grpc_client_args(params: dict) -> list[str]:
             args.extend([cli_flag, json.dumps(value, separators=(",", ":"))])
         else:
             args.extend([cli_flag, str(value)])
+
+    if overrides:
+        import json
+        args.extend(["--config-overrides", json.dumps(overrides, separators=(",", ":"))])
 
     return args
 
@@ -173,9 +199,77 @@ TRAIN_ARGS_MAP: dict[str, str] = {
 }
 
 
-def build_train_args(params: dict) -> list[str]:
-    """학습 CLI 인자 빌더."""
-    args = [settings.grpc_python, "-m", "lerobot.scripts.lerobot_train"]
+def resolve_rename_map(pretrained_path: str) -> str:
+    """pretrained 모델의 preprocessor 에서 rename_map(카메라 이름 매핑) 추출.
+
+    **로컬 파일시스템을 읽는다.** 원격 학습에서는 호출부가 다른 방법으로 구해야 하므로
+    인자 조립(`build_train_args`)과 분리해 둔다 (feature/cloud-training.md §1-(4)).
+    """
+    import json
+
+    pre_path = Path(pretrained_path) / "policy_preprocessor.json"
+    if not pre_path.exists():
+        return ""
+    try:
+        pre_data = json.loads(pre_path.read_text())
+        for step in pre_data.get("steps", []):
+            if step.get("registry_name") == "rename_observations_processor":
+                rm = step.get("config", {}).get("rename_map", {})
+                if rm:
+                    return json.dumps(rm)
+    except Exception:
+        pass
+    return ""
+
+
+def apply_dim_overrides(pretrained_path: str, state_dim: int, action_dim: int) -> bool:
+    """체크포인트의 `config.json` 을 **수정한다**. 바꿨으면 True.
+
+    ⚠ 파괴적이다. 이전에는 `build_train_args()` 안에 있어서
+    **`/training/preview`(미리보기)도 체크포인트를 수정했다.**
+    이제 학습 시작 경로에서만 호출한다.
+
+    ⚠ 원격 학습에서는 체크포인트가 원격에 있어 불가능하다 —
+    러너가 지원하지 않으면 **명시적으로 에러를 내야 한다** (조용한 무시 금지).
+    """
+    import json
+
+    if not (state_dim or action_dim):
+        return False
+    config_path = Path(pretrained_path) / "config.json"
+    if not config_path.exists():
+        return False
+    try:
+        cfg = json.loads(config_path.read_text())
+        modified = False
+        if state_dim and state_dim > 0 and "observation.state" in cfg.get("input_features", {}):
+            cfg["input_features"]["observation.state"]["shape"] = [state_dim]
+            modified = True
+        if action_dim and action_dim > 0 and "action" in cfg.get("output_features", {}):
+            cfg["output_features"]["action"]["shape"] = [action_dim]
+            modified = True
+        if modified:
+            config_path.write_text(json.dumps(cfg, indent=2))
+            logging.getLogger(__name__).info(
+                "Updated config.json: state=%s action=%s", state_dim, action_dim
+            )
+        return modified
+    except Exception:
+        return False
+
+
+def build_train_args(
+    params: dict,
+    *,
+    python: str | None = None,
+    rename_map: str = "",
+) -> list[str]:
+    """학습 CLI 인자 빌더 — **순수 함수. 파일시스템을 만지지 않는다.**
+
+    `python` 을 주면 인터프리터를 바꿔 끼울 수 있다 (원격은 로컬 conda 경로가 아니다).
+    `rename_map` 은 호출부가 `resolve_rename_map()` 으로 미리 구해서 넘긴다.
+    """
+    args = [python or settings.grpc_python, "-m", "lerobot.scripts.lerobot_train"]
 
     # --policy.path와 --policy.type은 동시에 사용 불가
     has_pretrained = bool(params.get("pretrained_path"))
@@ -187,15 +281,14 @@ def build_train_args(params: dict) -> list[str]:
         if cli_flag is None:
             continue
         if isinstance(value, bool):
-            if value:
-                args.append(f"{cli_flag}=true")
-            else:
-                args.append(f"{cli_flag}=false")
+            args.append(f"{cli_flag}={'true' if value else 'false'}")
         else:
             args.append(f"{cli_flag}={value}")
 
     # policy.push_to_hub는 기본 True → repo_id 없으면 validate()에서 에러.
-    # 로컬 학습(policy_repo_id 미지정)이면 Hub 푸시를 명시적으로 비활성화
+    # 로컬 학습(policy_repo_id 미지정)이면 Hub 푸시를 명시적으로 비활성화.
+    # ⚠ 클라우드 학습에서는 이게 **체크포인트 회수 경로를 지우는 설정**이다
+    #   (feature/cloud-training.md §6) → 러너별로 갈라야 한다.
     if not params.get("policy_repo_id"):
         args.append("--policy.push_to_hub=false")
 
@@ -227,52 +320,12 @@ def build_train_args(params: dict) -> list[str]:
     ):
         args.append("--policy.load_vlm_weights=true")
 
-    # rename_map (카메라 이름 매핑)
-    rename_map = params.get("rename_map", "")
-    if not rename_map and has_pretrained:
-        # pretrained 모델의 preprocessor에서 rename_map 자동 추출
-        import json
-        pre_path = Path(params["pretrained_path"]) / "policy_preprocessor.json"
-        if pre_path.exists():
-            try:
-                pre_data = json.loads(pre_path.read_text())
-                for step in pre_data.get("steps", []):
-                    if step.get("registry_name") == "rename_observations_processor":
-                        rm = step.get("config", {}).get("rename_map", {})
-                        if rm:
-                            rename_map = json.dumps(rm)
-                            break
-            except Exception:
-                pass
+    rename_map = params.get("rename_map") or rename_map
     if rename_map:
         args.append(f"--rename_map={rename_map}")
 
-    # state/action 차원 오버라이드: pretrained 모델의 config.json을 임시 수정
-    state_dim = params.get("state_dim", 0)
-    action_dim = params.get("action_dim", 0)
-    if (state_dim or action_dim) and has_pretrained:
-        import json as _json
-        config_path = Path(params["pretrained_path"]) / "config.json"
-        if config_path.exists():
-            try:
-                cfg = _json.loads(config_path.read_text())
-                modified = False
-                if state_dim and state_dim > 0:
-                    if "observation.state" in cfg.get("input_features", {}):
-                        cfg["input_features"]["observation.state"]["shape"] = [state_dim]
-                        modified = True
-                if action_dim and action_dim > 0:
-                    if "action" in cfg.get("output_features", {}):
-                        cfg["output_features"]["action"]["shape"] = [action_dim]
-                        modified = True
-                if modified:
-                    config_path.write_text(_json.dumps(cfg, indent=2))
-                    import logging
-                    logging.getLogger(__name__).info("Updated config.json: state=%s action=%s", state_dim, action_dim)
-            except Exception:
-                pass
-
     return args
+
 
 
 # ── 레코딩 ──

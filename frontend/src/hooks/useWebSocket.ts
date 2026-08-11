@@ -1,9 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
+import type { WsMessage } from '../types/ws'
 
-export type WsMessage = {
-  type: string
-  data: unknown
-}
+export type { WsMessage } from '../types/ws'
 
 type UseWebSocketOptions = {
   onMessage?: (msg: WsMessage) => void

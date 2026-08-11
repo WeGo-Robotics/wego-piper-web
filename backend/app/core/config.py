@@ -36,6 +36,18 @@ class Settings(BaseSettings):
     port: int = 8000
     debug: bool = False
 
+    # 이 기기의 로봇 식별자. 로봇마다 별도 인스턴스로 배포하므로 기기별 설정이다.
+    # 데이터셋 repo 네이밍({org}/{robot_id}_{task}_{date})과 에피소드 메타데이터가
+    # 이 값을 쓴다 — 없으면 사람이 매번 손으로 정하게 되고 반드시 틀린다.
+    # 비워두면 호스트명을 쓴다.
+    robot_id: str = ""
+
+    # HuggingFace API 엔드포인트. 비우면 huggingface.co.
+    # 사내 자체 Hub(HF API 호환)로 옮길 때 이 하나만 바꾸면 백엔드와
+    # **LeRobot subprocess 까지** 함께 방향이 바뀐다 — huggingface_hub 가
+    # HF_ENDPOINT 환경변수를 기본으로 읽기 때문이다 (ROADMAP 참고).
+    hf_endpoint: str = ""
+
     # CORS
     cors_origins: list[str] = ["http://localhost:5173"]
 
@@ -99,6 +111,14 @@ class Settings(BaseSettings):
     local_python: str = "python"  # 로컬 wrapper용 python
     grpc_python: str = str(Path.home() / "miniconda3" / "bin" / "python")  # gRPC wrapper용 python
     hf_cli: str = ""  # huggingface-cli 경로 (빈 문자열이면 자동 탐색)
+
+    @property
+    def resolved_robot_id(self) -> str:
+        """설정된 robot_id, 없으면 호스트명."""
+        if self.robot_id:
+            return self.robot_id
+        import socket
+        return socket.gethostname()
 
     # env_file 도 절대경로로. 상대경로면 실행 CWD 에 따라 .env 가 조용히 무시된다.
     model_config = {"env_prefix": "PIPER_", "env_file": str(_BACKEND_DIR / ".env")}

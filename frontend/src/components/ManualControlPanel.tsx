@@ -1,15 +1,7 @@
 import { useState, useRef } from 'react'
 import { api } from '../services/api'
+import { JOINTS } from '../config/joints'
 
-const JOINTS = [
-  { name: 'joint1.pos', label: 'Joint 1', min: -100, max: 100 },
-  { name: 'joint2.pos', label: 'Joint 2', min: -100, max: 100 },
-  { name: 'joint3.pos', label: 'Joint 3', min: -100, max: 100 },
-  { name: 'joint4.pos', label: 'Joint 4', min: -100, max: 100 },
-  { name: 'joint5.pos', label: 'Joint 5', min: -100, max: 100 },
-  { name: 'joint6.pos', label: 'Joint 6', min: -100, max: 100 },
-  { name: 'gripper.pos', label: 'Gripper', min: 0, max: 100 },
-]
 
 type Props = {
   currentJoints: number[]
@@ -19,7 +11,7 @@ type Props = {
 export default function ManualControlPanel({ currentJoints, disabled }: Props) {
   const [values, setValues] = useState<Record<string, number>>(() => {
     const init: Record<string, number> = {}
-    JOINTS.forEach((j, i) => { init[j.name] = currentJoints[i] ?? 0 })
+    JOINTS.forEach((j, i) => { init[j.actionKey] = currentJoints[i] ?? 0 })
     return init
   })
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -36,7 +28,7 @@ export default function ManualControlPanel({ currentJoints, disabled }: Props) {
   // currentJoints가 바뀌면 슬라이더 동기화 (추론 재개 후 다시 돌아올 때)
   const syncFromRobot = () => {
     const synced: Record<string, number> = {}
-    JOINTS.forEach((j, i) => { synced[j.name] = currentJoints[i] ?? 0 })
+    JOINTS.forEach((j, i) => { synced[j.actionKey] = currentJoints[i] ?? 0 })
     setValues(synced)
   }
 
@@ -62,15 +54,15 @@ export default function ManualControlPanel({ currentJoints, disabled }: Props) {
               min={joint.min}
               max={joint.max}
               step={1}
-              value={values[joint.name] ?? 0}
-              onChange={(e) => handleChange(joint.name, Number(e.target.value))}
+              value={values[joint.actionKey] ?? 0}
+              onChange={(e) => handleChange(joint.actionKey, Number(e.target.value))}
               disabled={disabled}
               className="flex-1 accent-amber-500"
             />
             <input
               type="number"
-              value={Math.round(values[joint.name] ?? 0)}
-              onChange={(e) => handleChange(joint.name, Number(e.target.value))}
+              value={Math.round(values[joint.actionKey] ?? 0)}
+              onChange={(e) => handleChange(joint.actionKey, Number(e.target.value))}
               disabled={disabled}
               className="w-14 text-right px-1 py-0.5 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-amber-500 disabled:opacity-50"
             />

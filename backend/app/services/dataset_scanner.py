@@ -11,6 +11,12 @@ from datetime import datetime
 from pathlib import Path
 
 from app.core.config import settings
+from app.core.hf_layout import (
+    dirname_from_repo_id,
+    latest_snapshot,
+    repo_id_from_dirname,
+    resolve_info_json,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,24 +34,8 @@ def _parse_meta(meta_path: Path) -> dict:
         return {}
 
 
-def _repo_id_from_dirname(dirname: str) -> str | None:
-    """datasets--wego-hansu--piper_data → wego-hansu/piper_data"""
-    if not dirname.startswith("datasets--"):
-        return None
-    parts = dirname.split("--", 2)
-    if len(parts) < 3:
-        return None
-    return f"{parts[1]}/{parts[2]}"
 
 
-def _latest_snapshot(ds_dir: Path) -> Path | None:
-    snapshots_dir = ds_dir / "snapshots"
-    if not snapshots_dir.exists():
-        return None
-    candidates = [d for d in snapshots_dir.iterdir() if d.is_dir()]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda d: d.stat().st_mtime)
 
 
 def _scan_hub_datasets(datasets_dir: Path) -> list[dict]:
@@ -56,15 +46,15 @@ def _scan_hub_datasets(datasets_dir: Path) -> list[dict]:
     for candidate in datasets_dir.iterdir():
         if not candidate.is_dir():
             continue
-        repo_id = _repo_id_from_dirname(candidate.name)
+        repo_id = repo_id_from_dirname(candidate.name, "datasets")
         if not repo_id:
             continue
-        snapshot = _latest_snapshot(candidate)
+        snapshot = latest_snapshot(candidate)
         if not snapshot:
             continue
-        info_path = snapshot / "meta" / "info.json"
-        if not info_path.exists():
-            info_path = snapshot / "info.json"
+        info_path = resolve_info_json(snapshot)
+        if not info_path:
+            continue
         meta = _parse_meta(info_path)
         stat = snapshot.stat()
         results.append({
@@ -92,8 +82,8 @@ def _scan_lerobot_datasets(lerobot_dir: Path) -> list[dict]:
         for ds_dir in org_dir.iterdir():
             if not ds_dir.is_dir():
                 continue
-            info_path = ds_dir / "meta" / "info.json"
-            if not info_path.exists():
+            info_path = resolve_info_json(ds_dir)
+            if not info_path:
                 continue
             repo_id = f"{org_dir.name}/{ds_dir.name}"
             meta = _parse_meta(info_path)
@@ -139,8 +129,8 @@ def _find_dataset_dir(dataset_id: str) -> tuple[Path, str] | None:
         return lerobot_path, "lerobot"
 
     # 2. Hub 캐시 (datasets--org--name/snapshots/hash/)
-    hub_dir = settings.datasets_dir / f"datasets--{org}--{name}"
-    snapshot = _latest_snapshot(hub_dir)
+    hub_dir = settings.datasets_dir / (dirname_from_repo_id(f"{org}/{name}", "datasets") or "")
+    snapshot = latest_snapshot(hub_dir)
     if snapshot:
         return snapshot, "hub"
 
@@ -223,10 +213,8 @@ def get_dataset(dataset_id: str) -> dict | None:
         return None
     ds_path, source = result
 
-    info_path = ds_path / "meta" / "info.json"
-    if not info_path.exists():
-        info_path = ds_path / "info.json"
-    meta = _parse_meta(info_path)
+    info_path = resolve_info_json(ds_path)
+    meta = _parse_meta(info_path) if info_path else {}
 
     # 에피소드 목록 (jsonl → parquet fallback)
     episodes = _read_meta_table(ds_path / "meta" / "episodes.jsonl", ds_path / "meta" / "episodes")

@@ -16,34 +16,12 @@ gRPC 추론 래퍼 (lerobot 0.5+ / python3.13) — 원격 정책 서버 + 웹 UI
     --zmq-addr tcp://127.0.0.1:5555
 """
 
-# ── lerobot.policies.__init__.py 우회 (Python 3.13 groot 호환성) ──
-import sys
-import types as _types
-import importlib as _il
 import os as _os
+import sys
 
-_lerobot = _il.import_module("lerobot")
-_policies_dir = _os.path.join(_os.path.dirname(_lerobot.__file__), "policies")
-_pkg = _types.ModuleType("lerobot.policies")
-_pkg.__path__ = [_policies_dir]
-_pkg.__package__ = "lerobot.policies"
-sys.modules["lerobot.policies"] = _pkg
-
-# helpers.py가 필요로 하는 config 클래스를 개별 서브모듈에서 import하여 더미 패키지에 등록
-_config_imports = {
-    "ACTConfig": "lerobot.policies.act.configuration_act",
-    "DiffusionConfig": "lerobot.policies.diffusion.configuration_diffusion",
-    "PI0Config": "lerobot.policies.pi0.configuration_pi0",
-    "PI05Config": "lerobot.policies.pi05.configuration_pi05",
-    "SmolVLAConfig": "lerobot.policies.smolvla.configuration_smolvla",
-    "VQBeTConfig": "lerobot.policies.vqbet.configuration_vqbet",
-}
-for _cls_name, _mod_path in _config_imports.items():
-    try:
-        _mod = _il.import_module(_mod_path)
-        setattr(_pkg, _cls_name, getattr(_mod, _cls_name))
-    except Exception:
-        pass  # 일부 정책이 없어도 무시
+# lerobot.policies.__init__ 우회 — 다른 lerobot import 보다 먼저여야 한다
+# (groot 블록은 원래 없었다 → load_groot_config() 호출하지 않는다)
+import lerobot_bootstrap  # noqa: F401
 
 import argparse
 import json
@@ -80,8 +58,55 @@ _gripper_bypass_filter: bool = True  # 그리퍼 속도 제한/필터 미적용 
 _reset_requested: bool = False  # 원위치+리셋 요청 (실제 처리는 제어 루프)
 
 
-def zmq_listener(zmq_addr: str) -> None:
+def apply_param(key: str, value) -> bool:
+    """파라미터 하나를 적용. 처리했으면 True.
+
+    ZMQ 실시간 변경과 **시작 시 `--config-overrides`** 가 같은 코드를 탄다.
+    두 벌로 나뉘면 반드시 어긋난다 (실제로 시작 경로가 아예 없어서
+    UI 슬라이더 값이 전부 유실되고 있었다).
+    """
     global _current_task, _paused, _manual_action, _target_fps, _max_velocity, _max_gripper_velocity, _lowpass_alpha, _max_jerk, _interpolation_steps, _use_chunk_size, _gripper_bypass_filter, _reset_requested
+    if key == "task":
+        _current_task = str(value)
+        logger.info("Updated task = %s", _current_task)
+    elif key == "pause":
+        _paused = bool(value)
+        logger.info("Inference %s", "PAUSED" if _paused else "RESUMED")
+    elif key == "manual_action":
+        _manual_action = value if isinstance(value, dict) else None
+    elif key == "fps":
+        _target_fps = max(1.0, min(60.0, float(value)))
+        logger.info("Updated FPS = %.1f", _target_fps)
+    elif key == "max_velocity":
+        _max_velocity = max(0.0, min(500.0, float(value)))
+        logger.info("Updated max_velocity = %.1f deg/s", _max_velocity)
+    elif key == "max_gripper_velocity":
+        _max_gripper_velocity = max(0.0, min(500.0, float(value)))
+        logger.info("Updated max_gripper_velocity = %.1f %%/s", _max_gripper_velocity)
+    elif key == "lowpass_alpha":
+        _lowpass_alpha = max(0.05, min(1.0, float(value)))
+        logger.info("Updated lowpass_alpha = %.2f", _lowpass_alpha)
+    elif key == "max_jerk":
+        _max_jerk = max(0.0, min(5000.0, float(value)))
+        logger.info("Updated max_jerk = %.1f", _max_jerk)
+    elif key == "interpolation_steps":
+        _interpolation_steps = max(0, min(10, int(value)))
+        logger.info("Updated interpolation_steps = %d", _interpolation_steps)
+    elif key == "use_chunk_size":
+        _use_chunk_size = max(0, min(200, int(value)))
+        logger.info("Updated use_chunk_size = %d", _use_chunk_size)
+    elif key == "gripper_bypass_filter":
+        _gripper_bypass_filter = bool(value)
+        logger.info("Updated gripper_bypass_filter = %s", _gripper_bypass_filter)
+    elif key == "reset":
+        _reset_requested = True
+        logger.info("Reset requested (home + clear buffers)")
+    else:
+        return False
+    return True
+
+
+def zmq_listener(zmq_addr: str) -> None:
     ctx = zmq.Context()
     sock = ctx.socket(zmq.PULL)
     sock.bind(zmq_addr)
@@ -90,41 +115,7 @@ def zmq_listener(zmq_addr: str) -> None:
         try:
             msg = sock.recv_json()
             for key, value in msg.items():
-                if key == "task":
-                    _current_task = str(value)
-                    logger.info("Updated task = %s", _current_task)
-                elif key == "pause":
-                    _paused = bool(value)
-                    logger.info("Inference %s", "PAUSED" if _paused else "RESUMED")
-                elif key == "manual_action":
-                    _manual_action = value if isinstance(value, dict) else None
-                elif key == "fps":
-                    _target_fps = max(1.0, min(60.0, float(value)))
-                    logger.info("Updated FPS = %.1f", _target_fps)
-                elif key == "max_velocity":
-                    _max_velocity = max(0.0, min(1000.0, float(value)))
-                    logger.info("Updated max_velocity = %.1f deg/s", _max_velocity)
-                elif key == "max_gripper_velocity":
-                    _max_gripper_velocity = max(0.0, min(500.0, float(value)))
-                    logger.info("Updated max_gripper_velocity = %.1f %%/s", _max_gripper_velocity)
-                elif key == "lowpass_alpha":
-                    _lowpass_alpha = max(0.05, min(1.0, float(value)))
-                    logger.info("Updated lowpass_alpha = %.2f", _lowpass_alpha)
-                elif key == "max_jerk":
-                    _max_jerk = max(0.0, min(5000.0, float(value)))
-                    logger.info("Updated max_jerk = %.1f", _max_jerk)
-                elif key == "interpolation_steps":
-                    _interpolation_steps = max(0, min(10, int(value)))
-                    logger.info("Updated interpolation_steps = %d", _interpolation_steps)
-                elif key == "use_chunk_size":
-                    _use_chunk_size = max(0, min(200, int(value)))
-                    logger.info("Updated use_chunk_size = %d", _use_chunk_size)
-                elif key == "gripper_bypass_filter":
-                    _gripper_bypass_filter = bool(value)
-                    logger.info("Updated gripper_bypass_filter = %s", _gripper_bypass_filter)
-                elif key == "reset":
-                    _reset_requested = True
-                    logger.info("Reset requested (home + clear buffers)")
+                apply_param(key, value)
         except Exception as e:
             logger.error("ZMQ error: %s", e)
 
@@ -176,6 +167,8 @@ def main() -> None:
     parser.add_argument("--task", default="do the task")
     parser.add_argument("--fps", type=int, default=20)
     parser.add_argument("--zmq-addr", default="tcp://127.0.0.1:5555")
+    parser.add_argument("--config-overrides", default="{}",
+                        help="UI 슬라이더 시작값 JSON (필터·청크·fps). 실시간 ZMQ와 같은 경로로 적용된다")
     parser.add_argument("--debug", action="store_true", help="주고받은 모든 데이터를 별도 폴더에 기록")
     args = parser.parse_args()
 
@@ -183,6 +176,13 @@ def main() -> None:
 
     global _current_task
     _current_task = args.task
+
+    # UI 슬라이더 시작값 적용 (실시간 ZMQ 변경과 동일 경로).
+    # fps 는 --fps CLI 인자로 따로 오고 제어 루프 진입 시 _target_fps 에 반영된다.
+    # 정책 파라미터(RTC/ACT)는 gRPC 모드에서 서버 쪽 소관이라 여기선 무시된다.
+    for _k, _v in json.loads(args.config_overrides).items():
+        if not apply_param(_k, _v):
+            logger.debug("config-override 무시됨 (이 모드에서 미사용): %s", _k)
 
     # ── LeRobot 0.5 import ──
     import grpc

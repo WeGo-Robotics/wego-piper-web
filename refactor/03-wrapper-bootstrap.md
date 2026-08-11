@@ -1,4 +1,9 @@
-# 3. wrapper 부트스트랩 40줄 복붙 ×3 (B급)
+# 3. wrapper 부트스트랩 40줄 복붙 ×3 (B급) — ☑ 완료
+
+> [wrapper/lerobot_bootstrap.py](../wrapper/lerobot_bootstrap.py) 로 추출.
+> **groot 블록은 `load_groot_config()` 함수 안에 뒀다** — `grpc_wrapper.py` 에는
+> 원래 그 블록이 없었으므로 모듈 로드 side-effect 로 하면 동작이 바뀐다.
+> 잘라내면서 실제로 쓰이던 `os`/`sys`/`_os` 가 함께 날아가 복원했다 (AST 로 미정의 이름 검출).
 
 ## 문제
 
@@ -78,4 +83,4 @@ LeRobot이 정책을 추가하면 세 파일을 다 고쳐야 한다. `lerobot_w
 
 ## 상태
 
-☐ 미착수
+☑ 완료 (실기 3경로 검증 대기)

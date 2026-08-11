@@ -8,6 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "pydantic-settings>=2.0",
     "pyzmq>=26.0",
+    "redis>=5.0",
     "websockets>=13.0",
     "huggingface-hub>=0.25",
     "pandas>=2.0",

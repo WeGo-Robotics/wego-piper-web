@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: piper_bus
+Version: 0.1.0
+Summary: Piper 게이트웨이·데몬 공유 버스 계약 (Redis)
+Requires-Python: >=3.11
+Requires-Dist: redis>=5.0

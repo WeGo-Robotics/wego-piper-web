@@ -89,6 +89,7 @@ async def validate_config(body: ValidateRequest):
     # 3) 관절 수 검증
     # TODO: 로봇별 관절 수를 동적으로 가져오기. 현재는 Piper 기준 하드코딩
     robot_joints = PIPER_JOINTS
+    # 프론트가 같은 상수를 따로 들고 있지 않도록 응답에 실어 보낸다
     if state_dim > 0 and robot_joints != state_dim:
         warnings.append(f"관절 수 불일치: 모델 state={state_dim}, 로봇={robot_joints} (모델이 자동 패딩/트림)")
     if action_dim > 0 and robot_joints != action_dim:
@@ -136,6 +137,7 @@ async def validate_config(body: ValidateRequest):
         "errors": errors,
         "warnings": warnings,
         "model_requirements": reqs,
+        "robot_joints": robot_joints,
     }
 
 
