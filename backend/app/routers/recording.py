@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.cli_mapping import build_record_args
+from app.core.config import settings
 from app.services.record_manager import record_manager
 from app.services.process_manager import process_manager
 from app.services.train_manager import train_manager
@@ -182,8 +183,7 @@ async def recording_status():
 @router.get("/check-dataset/{repo_id:path}")
 async def check_dataset_exists(repo_id: str):
     """데이터셋 로컬 존재 여부 확인."""
-    from pathlib import Path
-    dataset_path = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
+    dataset_path = settings.lerobot_dir / repo_id
     exists = dataset_path.exists()
     size_mb = 0.0
     if exists:
@@ -195,8 +195,7 @@ async def check_dataset_exists(repo_id: str):
 async def delete_dataset_for_recording(repo_id: str):
     """레코딩용 데이터셋 삭제."""
     import shutil
-    from pathlib import Path
-    dataset_path = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
+    dataset_path = settings.lerobot_dir / repo_id
     if not dataset_path.exists():
         raise HTTPException(404, "데이터셋이 없습니다.")
     shutil.rmtree(dataset_path)

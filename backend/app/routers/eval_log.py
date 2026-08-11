@@ -1,14 +1,17 @@
 import json
 import time
-from pathlib import Path
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from app.core.config import settings
+
 router = APIRouter(prefix="/api/eval", tags=["eval"])
 
-EVAL_DIR = Path("data/eval_logs")
-EVAL_DIR.mkdir(parents=True, exist_ok=True)
+# CWD 상대경로였던 것을 절대경로로. 도커에서는 log_dir 이 /data/logs.
+# mkdir 은 import 시점이 아니라 기록 시점에 한다 — 마운트 전이거나 권한이 없으면
+# import 가 죽으면서 앱 전체가 뜨지 않는다.
+EVAL_DIR = settings.log_dir / "eval_logs"
 EVAL_FILE = EVAL_DIR / "eval_log.jsonl"
 
 
@@ -26,6 +29,7 @@ async def log_eval(entry: EvalEntry):
         "checkpoint": entry.checkpoint,
         "memo": entry.memo,
     }
+    EVAL_DIR.mkdir(parents=True, exist_ok=True)
     with open(EVAL_FILE, "a") as f:
         f.write(json.dumps(record) + "\n")
     return {"status": "logged"}

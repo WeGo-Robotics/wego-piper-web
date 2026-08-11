@@ -14,6 +14,11 @@ dependencies = [
     "plotly>=6.0",
 ]
 
+[tool.setuptools.packages.find]
+# 평평한 레이아웃에서 app 패키지만 배포 대상으로 지정.
+# (udev/data 등 비패키지 디렉터리가 있으면 자동탐색이 실패하므로 명시)
+include = ["app*"]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

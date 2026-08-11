@@ -42,7 +42,12 @@ RUN pip install --upgrade pip setuptools wheel
 #     libcudart.so.13 누락 → `import torch` 자체가 죽는다. (cu12 잔재만 남음)
 #   ※ 한 RUN 으로 묶는 이유: 레이어는 누적이라 별도 RUN 에서 uninstall 해도
 #     cu12 파일(~5GB)이 앞 레이어에 그대로 남아 이미지가 두 배가 된다.
-RUN pip install lerobot==0.5.0 \
+# [smolvla] extra 필수: 이게 없으면 transformers 가 안 들어와
+# lerobot.policies.smolvla.modeling_smolvla import 자체가 실패한다 (추론/학습/엔코더 프로브 전부).
+# transformers 는 호스트와 동일하게 5.3.0 으로 고정한다. 5.14 에서는 PretrainedConfig 에
+# 기본값 필드가 늘어 lerobot 의 groot config 데이터클래스가 깨지고(backbone_cfg follows
+# problem_type), lerobot.policies.__init__ 이 groot 를 import 하므로 ACT 까지 전부 죽는다.
+RUN pip install "lerobot[smolvla]==0.5.0" "transformers==5.3.0" \
     && pip uninstall -y torch torchvision torchcodec \
     && pip freeze | grep -E '^nvidia-[a-z0-9_-]+-cu12' | cut -d= -f1 | xargs -r pip uninstall -y \
     && pip install --index-url https://download.pytorch.org/whl/cu130 \
@@ -62,8 +67,28 @@ WORKDIR /app
 COPY backend/ /app/backend/
 COPY wrapper/ /app/wrapper/
 
+# ── 데이터 경로 계약 ──
+# 컨테이너 내부 경로는 호스트와 무관한 고정 상수다. 호스트 디렉토리는 compose 가
+# <DATA_ROOT>:/data 단일 마운트로 붙인다. 바꾸려면 compose environment 로 덮어쓴다.
+# ※ Path.home() 은 컨테이너에서 /root 라 호스트와 갈리므로 경로 근거로 쓰지 않는다.
+ENV HF_HOME=/data/hf \
+    PIPER_MODELS_DIR=/data/hf/hub \
+    PIPER_DATASETS_DIR=/data/hf/hub \
+    PIPER_LEROBOT_DIR=/data/hf/lerobot \
+    PIPER_CONFIG_DIR=/data/config \
+    PIPER_ROBOT_CONFIG_PATH=/data/config/piper_config.json \
+    PIPER_LOG_DIR=/data/logs \
+    PIPER_DEBUG_DIR=/data/logs/debug \
+    PIPER_MODEL_PATHS=/data/hf/hub:/data/outputs/train
+
 # 백엔드 의존성 설치 (fastapi/uvicorn/pyzmq/pandas/plotly + pyrealsense2)
 RUN pip install -e "/app/backend[realsense]"
+
+# LeRobot train 의 기본 output_dir 은 CWD 상대(`outputs/train/...`)이고 우리가 바꿀 수
+# 없다. CWD(/app/backend) 아래 심볼릭 링크를 걸어 체크포인트가 마운트로 떨어지게 한다.
+# (.dockerignore 가 backend/outputs 를 제외하므로 이 자리는 비어 있다.
+#  빌드 시점엔 /data 가 아직 없어 dangling 이므로 pip install 이후에 만든다)
+RUN ln -s /data/outputs /app/backend/outputs
 
 # 두 python 진입점 모두 이 venv 를 가리키게 함 (compose 에서 override 가능)
 ENV PIPER_LOCAL_PYTHON=/opt/venv/bin/python \
@@ -72,5 +97,7 @@ ENV PIPER_LOCAL_PYTHON=/opt/venv/bin/python \
 WORKDIR /app/backend
 EXPOSE 8000
 
+# /data 는 런타임 마운트라 빌드 시 mkdir 해봐야 가려진다. 기동 직전에 만든다.
 # subprocess/ZMQ 상태가 인메모리라 단일 워커 고정, --reload 없음
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "mkdir -p /data/hf /data/outputs/train /data/logs /data/config && \
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

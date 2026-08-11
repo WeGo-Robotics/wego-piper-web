@@ -30,3 +30,4 @@ Thumbs.db
 *.pyc
 *.log
 backend/outputs/
+backend/data/debug/

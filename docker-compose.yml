@@ -6,6 +6,8 @@
 #   - CAN 인터페이스(can_follower1 등) 호스트에서 구성/기동
 #   - v4l2loopback 커널 모듈 호스트에 로드 (커널 모듈은 컨테이너에서 삽입 불가)
 #   - RealSense udev 규칙(backend/udev/99-realsense-libusb.rules)을 호스트 /etc/udev/rules.d/ 에 설치
+#   - 데이터 루트 생성:  sudo mkdir -p /srv/piper-data
+#     (경로 변경은 PIPER_DATA_ROOT 로. 컨테이너는 항상 /data 로 본다)
 #
 # 실행:  docker compose up -d --build
 # 접속:  http://<호스트IP>/        (nginx :80 → backend :8000 프록시)
@@ -25,10 +27,11 @@ services:
       - /dev:/dev                                             # 카메라/USB 장치 노드 (핫플러그 포함)
       - /run/udev:/run/udev:ro                                # libusb/RealSense udev 조회
       - /lib/modules:/lib/modules:ro                          # modprobe gs_usb (USB-CAN 어댑터 드라이버)
-      - ${HOME}/.cache/huggingface:/root/.cache/huggingface   # 모델·데이터셋·lerobot 캐시 (대용량)
-      - ${HOME}/.config/piper-web:/root/.config/piper-web      # model_paths.json 등 사용자 설정
-      - ./backend/data:/app/backend/data                      # 로그/평가 데이터 영속화
-      - ./backend/outputs:/app/backend/outputs                # 학습 체크포인트 영속화
+      # 데이터는 이 하나로 끝. 내부 레이아웃(/data/hf, outputs, logs, config)과
+      # 각 PIPER_* 경로는 backend/Dockerfile 의 "데이터 경로 계약" ENV 에 정의돼 있다.
+      # 호스트 절대경로가 컨테이너로 새어 들어가지 않도록 호스트의 ~/.cache/huggingface
+      # 나 ~/.config/piper-web 은 일부러 마운트하지 않는다 (환경별 경로 오염 방지).
+      - ${PIPER_DATA_ROOT:-/srv/piper-data}:/data
     environment:
       - PIPER_LOCAL_PYTHON=/opt/venv/bin/python
       - PIPER_GRPC_PYTHON=/opt/venv/bin/python

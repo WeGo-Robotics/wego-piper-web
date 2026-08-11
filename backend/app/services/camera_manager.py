@@ -9,6 +9,7 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.core.config import settings
 from app.services.realsense_manager import realsense_hub, rs_available
 
 logger = logging.getLogger(__name__)
@@ -578,7 +579,7 @@ class CameraManager:
 
     # ── 세션 저장/복원 ──
 
-    CAMERA_SESSION_PATH = Path.home() / ".config" / "piper-web" / "camera_session.json"
+    CAMERA_SESSION_PATH = settings.config_dir / "camera_session.json"
 
     def save_session(self) -> None:
         """등록된 카메라 상태 저장."""

@@ -12,14 +12,16 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 # ── 상수 ──
 FIND_THRESHOLD_RAW = 45_000
 FIND_TIMEOUT_SEC = 30
 DEFAULT_BITRATE = 1_000_000
-CONFIG_PATH = Path.home() / "piper_config.json"
-PRESETS_DIR = Path.home() / ".config" / "piper-web" / "presets"
+CONFIG_PATH = settings.robot_config_path
+PRESETS_DIR = settings.config_dir / "presets"
 
 CONFIGS: dict[str, list[str]] = {
     "1 Leader / 1 Follower": ["leader_1", "follower_1"],
@@ -553,7 +555,7 @@ class ArmInfo:
 
 
 # ── 세션/파킹 저장 경로 ──
-SESSION_DIR = Path.home() / ".config" / "piper-web"
+SESSION_DIR = settings.config_dir
 PARKING_DIR = SESSION_DIR / "parking"
 ROBOT_SESSION_PATH = SESSION_DIR / "robot_session.json"
 

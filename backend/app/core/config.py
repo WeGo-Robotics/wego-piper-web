@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings
 from pathlib import Path
 import json
@@ -5,21 +6,28 @@ import logging
 
 _logger = logging.getLogger(__name__)
 
-_MODEL_PATHS_FILE = Path.home() / ".config" / "piper-web" / "model_paths.json"
+_BACKEND_DIR = Path(__file__).resolve().parents[2]  # backend/
 
 
-def _load_model_paths() -> list[str]:
-    if _MODEL_PATHS_FILE.exists():
+def _model_paths_file(config_dir: Path) -> Path:
+    return config_dir / "model_paths.json"
+
+
+def _load_model_paths(config_dir: Path) -> list[str]:
+    """UI에서 추가한 스캔 경로. 없으면 빈 목록 (기본 경로는 Settings.model_paths가 결정)."""
+    f = _model_paths_file(config_dir)
+    if f.exists():
         try:
-            return json.loads(_MODEL_PATHS_FILE.read_text())
+            return json.loads(f.read_text())
         except Exception:
-            pass
-    return [str(Path.home() / ".cache" / "huggingface" / "hub")]
+            _logger.warning("model_paths.json 파싱 실패, 무시함: %s", f)
+    return []
 
 
-def _save_model_paths(paths: list[str]) -> None:
-    _MODEL_PATHS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _MODEL_PATHS_FILE.write_text(json.dumps(paths, indent=2))
+def _save_model_paths(config_dir: Path, paths: list[str]) -> None:
+    f = _model_paths_file(config_dir)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(paths, indent=2))
 
 
 class Settings(BaseSettings):
@@ -31,26 +39,42 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:5173"]
 
-    # 경로
+    # ── 경로 ──
+    # 기본값은 호스트(직접 실행) 기준. 도커에서는 compose가 /data/* 로 덮어쓴다.
+    # 절대경로만 사용한다 (CWD가 바뀌어도 같은 곳을 가리켜야 함).
     models_dir: Path = Path.home() / ".cache" / "huggingface" / "hub"
     datasets_dir: Path = Path.home() / ".cache" / "huggingface" / "hub"
     lerobot_dir: Path = Path.home() / ".cache" / "huggingface" / "lerobot"
 
+    # 사용자 설정/세션 (model_paths.json, 프리셋, 카메라·로봇 세션)
+    config_dir: Path = Path.home() / ".config" / "piper-web"
+    # 로봇 CAN 설정. config_dir 와 별개인 이유는 기존 호스트 파일 위치를 유지하기 위함.
+    robot_config_path: Path = Path.home() / "piper_config.json"
+    # 앱이 생성하는 로그/기록 (eval_logs, debug)
+    log_dir: Path = _BACKEND_DIR / "data"
+
+    # 모델 스캔 루트. ':' 로 구분 (PATH 형식). 비우면 models_dir 하나만 스캔.
+    # 필드명이 model_ 로 시작하면 pydantic 보호 네임스페이스와 충돌하므로 alias 로 매핑.
+    scan_paths: str = Field(default="", validation_alias="PIPER_MODEL_PATHS")
+
     @property
     def model_paths(self) -> list[Path]:
-        return [Path(p) for p in _load_model_paths()]
+        """스캔 루트 = 환경변수(또는 models_dir) + UI에서 추가한 경로."""
+        base = [p for p in self.scan_paths.split(":") if p] or [str(self.models_dir)]
+        merged = list(dict.fromkeys(base + _load_model_paths(self.config_dir)))
+        return [Path(p) for p in merged]
 
     def add_model_path(self, path: str) -> list[str]:
-        paths = _load_model_paths()
+        paths = _load_model_paths(self.config_dir)
         if path not in paths:
             paths.append(path)
-            _save_model_paths(paths)
+            _save_model_paths(self.config_dir, paths)
         return paths
 
     def remove_model_path(self, path: str) -> list[str]:
-        paths = _load_model_paths()
+        paths = _load_model_paths(self.config_dir)
         paths = [p for p in paths if p != path]
-        _save_model_paths(paths)
+        _save_model_paths(self.config_dir, paths)
         return paths
 
     # ZMQ
@@ -76,7 +100,8 @@ class Settings(BaseSettings):
     grpc_python: str = str(Path.home() / "miniconda3" / "bin" / "python")  # gRPC wrapper용 python
     hf_cli: str = ""  # huggingface-cli 경로 (빈 문자열이면 자동 탐색)
 
-    model_config = {"env_prefix": "PIPER_", "env_file": ".env"}
+    # env_file 도 절대경로로. 상대경로면 실행 CWD 에 따라 .env 가 조용히 무시된다.
+    model_config = {"env_prefix": "PIPER_", "env_file": str(_BACKEND_DIR / ".env")}
 
 
 settings = Settings()
