@@ -55,6 +55,10 @@ const POLICY_TRAIN_SCHEMAS: Record<string, PolicySchema> = {
       { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 50, min: 1, max: 200, step: 1 },
       { key: 'freeze_vision_encoder', label: 'freeze_vision_encoder', type: 'bool', default: true },
       { key: 'train_expert_only', label: 'train_expert_only', type: 'bool', default: true },
+      // LeRobot 기본값은 false — 처음부터 학습할 때 false면 VLM(SigLIP 비전 인코더 포함)이
+      // 랜덤 초기화된다. freeze_vision_encoder=true와 겹치면 학습조차 되지 않으므로 기본 true.
+      // (pretrained_path로 파인튜닝할 땐 체크포인트에서 가중치가 오므로 이 패널 자체가 숨겨진다)
+      { key: 'load_vlm_weights', label: 'load_vlm_weights', type: 'bool', default: true },
     ],
   },
   pi0: { defaults: { batchSize: 32, steps: 30000, optimizerType: 'adamw' }, fields: PI_FIELDS },
@@ -94,8 +98,10 @@ export default function TrainingPage() {
   const [stateDim] = useState(_saved.stateDim ?? 0)
   const [actionDim] = useState(_saved.actionDim ?? 0)
   const [renameMap, setRenameMap] = useState(_saved.renameMap || '')
+  // 저장값을 스키마 기본값 위에 덮어쓴다. 스키마에 필드가 추가되면 저장값에 없던 키가
+  // 그대로 누락되어(=CLI 인자 미생성) LeRobot 기본값으로 학습되는 것을 막기 위함.
   const [policyParams, setPolicyParams] = useState<Record<string, number | boolean>>(
-    _saved.policyParams ?? policyConfigDefaults(_saved.policyType || 'act')
+    { ...policyConfigDefaults(_saved.policyType || 'act'), ...(_saved.policyParams ?? {}) }
   )
   const [amp, setAmp] = useState<string>(_saved.amp ?? 'bf16')  // 혼합정밀도: off | bf16 | fp16
   const [cliArgs, setCliArgs] = useState('')
@@ -553,6 +559,14 @@ export default function TrainingPage() {
                   {typeof policyParams.n_action_steps === 'number' && typeof policyParams.chunk_size === 'number'
                     && policyParams.n_action_steps > policyParams.chunk_size && (
                     <span className="text-yellow-500 text-[10px]">⚠ n_action_steps는 chunk_size 이하여야 합니다</span>
+                  )}
+                  {policyType === 'smolvla' && !policyParams.load_vlm_weights && (
+                    <span className="block text-red-400 text-[10px]">
+                      ⚠ load_vlm_weights=false — VLM이 랜덤 초기화됩니다
+                      {policyParams.freeze_vision_encoder
+                        ? ' (freeze_vision_encoder=true와 겹쳐 비전 인코더가 학습조차 되지 않습니다)'
+                        : ''}
+                    </span>
                   )}
                 </div>
               )}

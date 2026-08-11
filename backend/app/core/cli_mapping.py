@@ -216,6 +216,17 @@ def build_train_args(params: dict) -> list[str]:
             val = "true" if v is True else "false" if v is False else v
             args.append(f"--policy.{k}={val}")
 
+    # SmolVLA를 처음부터 학습할 때 load_vlm_weights를 빠뜨리면 LeRobot 기본값(false)이 적용되어
+    # VLM 전체(SigLIP 비전 인코더 포함)가 랜덤 초기화된다. freeze_vision_encoder 기본값이 true라
+    # 그 랜덤 가중치는 학습조차 되지 않는다. UI가 값을 보내지 않는 경우(오래된 localStorage 등)를
+    # 위한 안전망. 파인튜닝(has_pretrained)은 체크포인트에서 가중치가 오므로 false가 정상이다.
+    if (
+        params.get("policy_type") == "smolvla"
+        and not has_pretrained
+        and "load_vlm_weights" not in policy_params
+    ):
+        args.append("--policy.load_vlm_weights=true")
+
     # rename_map (카메라 이름 매핑)
     rename_map = params.get("rename_map", "")
     if not rename_map and has_pretrained:
