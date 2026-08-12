@@ -161,6 +161,42 @@ TRAIN_LOG_LINES: Final = _k("train", "log_lines")
 LOCAL_JOB_ID: Final = "local"
 
 
+# ── 데몬 RPC (게이트웨이 → 하드웨어 데몬) ───────────────────────────────────
+#
+# 프레임은 shm 으로 나가지만 **제어**(스캔·연결·컨트롤)는 요청/응답이 필요하다.
+# 리스트 기반 요청 + 응답 전용 키로 만든다 — pub/sub 은 구독자가 없으면 버려서
+# 데몬이 재시작 중일 때 요청이 조용히 사라진다.
+#
+#   요청: LPUSH piper:rpc:<daemon>  {"id","method","args"}
+#   응답: LPUSH piper:rpc:reply:<id> {"ok","result"|"error"}  (짧은 TTL)
+#
+# 응답 키에 TTL 을 두는 이유: 요청자가 타임아웃으로 떠나면 응답이 영원히 남는다.
+
+
+def rpc_queue(daemon: str) -> str:
+    return _k("rpc", daemon)
+
+
+def rpc_reply_key(request_id: str) -> str:
+    return _k("rpc", "reply", request_id)
+
+
+# 데몬이 살아있음을 알리는 키 (TTL 로 갱신). 없으면 게이트웨이가 "데몬 없음"으로 안다.
+def daemon_alive_key(daemon: str) -> str:
+    return _k("daemon", "alive", daemon)
+
+
+DAEMON_ALIVE_TTL_MS: Final = 3000
+
+# 응답이 버려지지 않게 요청자가 기다리는 기본 시간.
+# `hardware_reset`·`probe` 는 수 초 걸리므로 넉넉해야 한다.
+RPC_TIMEOUT_S: Final = 20
+RPC_REPLY_TTL_MS: Final = 30_000
+
+RSD: Final = "rsd"          # RealSense 데몬
+CAMERAD: Final = "camerad"  # v4l2 데몬
+
+
 # ── 기본값 ────────────────────────────────────────────────────────────────────
 
 DEFAULT_REDIS_URL: Final = "redis://127.0.0.1:6379/0"

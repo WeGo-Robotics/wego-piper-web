@@ -1,0 +1,13 @@
+[project]
+name = "piper-rs"
+version = "0.1.0"
+description = "Piper RealSense daemon core (owns pyrealsense2 pipelines)"
+requires-python = ">=3.11"
+dependencies = ["numpy", "piper-shm"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["piper_rs*"]

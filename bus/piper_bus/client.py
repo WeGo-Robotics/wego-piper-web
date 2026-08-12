@@ -8,6 +8,7 @@ ZMQ 소켓 3개(5555/5556/5557)를 대체하는 자리다. 상태가 Redis 에 �
 import json
 import os
 import time
+import uuid
 from typing import Any
 
 import redis
@@ -257,6 +258,55 @@ class Bus:
         buffered = int(self.r.llen(C.train_log_key(job_id)) or 0)
         total = int(self.r.hget(C.TRAIN_LOG_LINES, job_id) or 0)
         return {"buffered": buffered, "total": total, "dropped": max(0, total - buffered)}
+
+    # ── 데몬 RPC ──
+
+    def rpc_call(self, daemon: str, method: str, args: list | None = None,
+                 timeout: int = C.RPC_TIMEOUT_S):
+        """데몬에 요청하고 응답을 기다린다. 데몬이 없으면 `TimeoutError`.
+
+        요청 id 를 여기서 만들고 응답 전용 키로 받는다 — 여러 요청자가 섞이지 않는다.
+        """
+        rid = uuid.uuid4().hex
+        self.r.lpush(C.rpc_queue(daemon), json.dumps(
+            {"id": rid, "method": method, "args": args or []}))
+        item = self._brpop(C.rpc_reply_key(rid), timeout)
+        if item is None:
+            raise TimeoutError(f"{daemon}.{method} 응답 없음 ({timeout}s) — 데몬이 떠 있나요?")
+        reply = json.loads(item[1])
+        if not reply.get("ok"):
+            raise RuntimeError(f"{daemon}.{method}: {reply.get('error')}")
+        return reply.get("result")
+
+    def rpc_next_request(self, daemon: str, timeout: int = 1) -> dict | None:
+        """데몬 쪽 — 다음 요청. 타임아웃이면 `None` (종료 플래그 확인용)."""
+        item = self._brpop(C.rpc_queue(daemon), timeout)
+        if item is None:
+            return None
+        try:
+            return json.loads(item[1])
+        except (TypeError, ValueError):
+            return None
+
+    def rpc_reply(self, request_id: str, ok: bool, result=None, error: str = "") -> None:
+        payload = {"ok": ok, "result": result} if ok else {"ok": False, "error": error}
+        key = C.rpc_reply_key(request_id)
+        pipe = self.r.pipeline()
+        pipe.lpush(key, json.dumps(payload))
+        # 요청자가 타임아웃으로 떠나면 응답이 영원히 남는다 — TTL 로 청소한다
+        pipe.pexpire(key, C.RPC_REPLY_TTL_MS)
+        pipe.execute()
+
+    # ── 데몬 생존 ──
+
+    def mark_alive(self, daemon: str) -> None:
+        self.r.set(C.daemon_alive_key(daemon), "1", px=C.DAEMON_ALIVE_TTL_MS)
+
+    def is_alive(self, daemon: str) -> bool:
+        try:
+            return self.r.get(C.daemon_alive_key(daemon)) == "1"
+        except Exception:
+            return False
 
     def ping(self) -> bool:
         try:

@@ -1,0 +1,21 @@
+[Unit]
+Description=Piper RealSense daemon (owns pyrealsense2 pipelines)
+Documentation=file:///opt/piper/refactor/daemon-inventory.md
+After=network.target redis-server.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+# RealSense 가 죽어도 게이트웨이·웹캠은 산다 — 그래서 camerad 와 따로 둔다.
+# 죽으면 되살린다: 장치를 독점하므로 없는 동안 카메라가 전혀 안 보인다.
+Restart=always
+RestartSec=2
+ExecStart=/usr/bin/python3 /opt/piper/daemons/rsd.py
+Environment=PIPER_REDIS_URL=redis://127.0.0.1:6379/0
+# USB 장치 접근
+SupplementaryGroups=video plugdev
+# 세그먼트를 소비자(컨테이너 포함)와 공유해야 한다
+PrivateTmp=no
+
+[Install]
+WantedBy=multi-user.target

@@ -15,9 +15,14 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if redis-cli ping >/dev/null 2>&1; then
   echo "Starting E-stop watchdog (estopd)..."
   python3 "$REPO/daemons/estopd.py" &
+  # rsd 는 RealSense 를 독점하는 데몬이다 (daemon-inventory.md #4).
+  # 안 띄우면 게이트웨이가 RealSense 를 전혀 못 본다 — 이제 장치를 직접 열지 않는다.
+  echo "Starting RealSense daemon (rsd)..."
+  python3 "$REPO/daemons/rsd.py" &
 else
   echo "⚠ Redis 미실행 — 게이트웨이는 뜨지만 다음이 전부 동작하지 않습니다:"
   echo "   · heartbeat 타임아웃 정지(estopd)  · 추론 실시간 파라미터 변경"
+  echo "   · RealSense 카메라 전체(rsd)"
   echo "   · 녹화 제어(건너뛰기/재녹화/정지)   · 녹화 미리보기"
   echo "   sudo systemctl start redis-server"
 fi
