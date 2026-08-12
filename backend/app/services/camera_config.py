@@ -94,6 +94,33 @@ def build_cameras_json(
     return cameras
 
 
+# `shm` 에서 장치를 직접 여는 카메라 타입. 이게 wrapper 로 넘어가면 데몬이 쥔 장치를
+# 또 열려다 `Device or resource busy` 로 죽는다 — LeRobot 3겹 안쪽에서 터져서
+# 원인을 찾기 어렵다.
+_DEVICE_OPENING_TYPES = {"intelrealsense", "opencv"}
+
+
+def check_camera_config(cameras: dict) -> str | None:
+    """전송 방식과 어긋나는 카메라 설정이면 사람이 읽을 사유, 맞으면 `None`.
+
+    ⚠ **낡은 프론트가 보낸 설정을 그대로 넘기면 안 된다.** 실제로 vite 가 낡은
+    번들을 서빙해 브라우저가 `intelrealsense` 설정을 보냈고, rsd 가 쥔 장치를
+    wrapper 가 또 열려다 죽었다. 시작 전에 여기서 막는다.
+    """
+    if settings.camera_transport != "shm" or not cameras:
+        return None
+    bad = sorted(
+        name for name, cfg in cameras.items()
+        if isinstance(cfg, dict) and cfg.get("type") in _DEVICE_OPENING_TYPES
+    )
+    if not bad:
+        return None
+    return (
+        f"카메라 전송이 shm 인데 장치를 직접 여는 설정이 왔습니다: {', '.join(bad)}. "
+        "브라우저가 옛 코드를 돌고 있을 수 있습니다 — 새로고침(Ctrl+Shift+R) 후 다시 시도하세요."
+    )
+
+
 def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str) -> None:
     """전송 방식에 맞게 카메라를 준비한다. **두 방식이 정반대다.**
 

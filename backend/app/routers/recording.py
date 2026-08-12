@@ -89,8 +89,14 @@ async def start_recording(body: RecordStartRequest):
     from app.services.camera_config import (
         CameraPrepareError,
         build_cameras_json,
+        check_camera_config,
         prepare_cameras,
     )
+
+    # 낡은 프론트가 보낸 장치 설정을 그대로 넘기면 데몬이 쥔 장치를 또 열려다
+    # LeRobot 3겹 안쪽에서 `Device or resource busy` 로 죽는다.
+    if err := check_camera_config(body.robot_cameras):
+        raise HTTPException(400, err)
 
     try:
         prepare_cameras(body.camera_mapping, purpose="recording")

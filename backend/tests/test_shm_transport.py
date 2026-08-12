@@ -296,3 +296,43 @@ def test_segment_name_comes_from_the_device_not_the_lerobot_key():
     }
     assert not any("VideoCapture" in c for c in calls), "게이트웨이가 아직 장치를 연다"
     assert not any("publish" in c for c in calls), "게이트웨이가 아직 발행한다"
+
+
+def test_device_opening_config_is_rejected_under_shm(monkeypatch):
+    """**회귀** — 낡은 프론트가 보낸 장치 설정이 그대로 wrapper 로 넘어갔다.
+
+    vite 가 낡은 번들을 서빙해 브라우저가 `intelrealsense` 설정을 보냈고,
+    rsd 가 쥔 장치를 wrapper 가 또 열려다 죽었다. 에러는 LeRobot 3겹 안쪽에서
+    `xioctl(VIDIOC_S_FMT) failed, errno=16 Device or resource busy` 로 났다 —
+    거기서 원인을 되짚기는 어렵다. 시작 전에 막는다.
+    """
+    from app.core.config import settings
+    from app.services.camera_config import check_camera_config
+
+    legacy = {"top": {"type": "intelrealsense", "serial_number_or_name": "1"},
+              "wrist": {"type": "opencv", "index_or_path": "/dev/video0"}}
+    shm_cfg = {"top": {"type": "shm", "segment": "rs_1_color"}}
+
+    monkeypatch.setattr(settings, "camera_transport", "shm")
+    err = check_camera_config(legacy)
+    assert err and "top" in err and "wrist" in err, "장치 직접 열기를 못 잡는다"
+    assert "새로고침" in err, "사용자가 무엇을 해야 하는지 안 알려준다"
+    assert check_camera_config(shm_cfg) is None
+    assert check_camera_config({}) is None
+
+    # direct 에서는 당연히 정상 설정이다
+    monkeypatch.setattr(settings, "camera_transport", "direct")
+    assert check_camera_config(legacy) is None
+
+
+def test_recording_start_checks_before_launching():
+    """프로세스를 띄운 뒤 검사하면 팔·카메라를 다 잡은 뒤에 죽는다."""
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    src = (repo / "backend" / "app" / "routers" / "recording.py").read_text()
+    start = src.split('@router.post("/start")', 1)[1].split("@router.", 1)[0]
+    assert "check_camera_config" in start, "녹화 시작이 카메라 설정을 검사하지 않는다"
+    assert start.index("check_camera_config") < start.index("record_manager.start"), (
+        "프로세스를 띄운 뒤에 검사한다"
+    )
