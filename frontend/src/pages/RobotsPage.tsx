@@ -287,6 +287,9 @@ export default function RobotsPage() {
   const [renameValue, setRenameValue] = useState('')
   const [canActive, setCanActive] = useState<Record<string, boolean | 'checking'>>({})  // iface → active
   // 프리셋
+  // 저장 실패 사유를 화면에 띄운다 — 예전에는 빈 프리셋이 조용히 저장돼
+  // "저장은 됐는데 불러오면 아무 일도 없다" 가 됐다.
+  const [presetMsg, setPresetMsg] = useState<string | null>(null)
   const [presets, setPresets] = useState<string[]>([])
   const [presetName, setPresetName] = useState('')
 
@@ -423,13 +426,26 @@ export default function RobotsPage() {
   // ── 프리셋 ──
   const handlePresetSave = async () => {
     if (!presetName.trim()) return
-    await api.post('/robots/presets/save', { name: presetName.trim() })
-    setPresets(await api.get<string[]>('/robots/presets'))
-    setPresetName('')
+    setPresetMsg(null)
+    try {
+      await api.post('/robots/presets/save', { name: presetName.trim() })
+      setPresets(await api.get<string[]>('/robots/presets'))
+      setPresetName('')
+      setPresetMsg(`"${presetName.trim()}" 저장됨`)
+    } catch (e) {
+      setPresetMsg(`저장 실패: ${(e as Error).message}`)
+    }
   }
   const handlePresetLoad = async (name: string) => {
-    await api.post('/robots/presets/load', { name })
-    await refreshArms()
+    setPresetMsg(null)
+    try {
+      const d = await api.post<{ arms?: unknown[] }>('/robots/presets/load', { name })
+      await refreshArms()
+      const n = d.arms?.length ?? 0
+      setPresetMsg(n ? `"${name}" 적용 — 팔 ${n}대` : `"${name}" 에 저장된 팔이 없습니다`)
+    } catch (e) {
+      setPresetMsg(`불러오기 실패: ${(e as Error).message}`)
+    }
   }
   const handlePresetDelete = async (name: string) => {
     if (!confirm(`"${name}" 프리셋을 삭제하시겠습니까?`)) return
@@ -438,9 +454,16 @@ export default function RobotsPage() {
   }
 
   // 파생 데이터
-  const connectedArms = arms.filter((a) => a.connected && !a.ready)
+  //
+  // ⚠ 세 목록은 **배타적이어야 한다.** 등록된 팔(`ready`)은 이미 사용 가능 목록에
+  // 있으므로 1·2단계에 또 나오면 안 된다 — 같은 팔을 두 번 등록하게 된다.
+  //
+  // 프리셋을 불러오면 `ready` 만 서고 연결은 안 되므로 `ready && !connected` 가
+  // 생기는데, 예전 `unconnectedArms` 는 `ready` 를 안 봐서 그 팔이 1단계와
+  // 사용 가능 목록에 **동시에** 떴다.
   const readyArms = arms.filter((a) => a.ready)
-  const unconnectedArms = arms.filter((a) => !a.connected)
+  const connectedArms = arms.filter((a) => a.connected && !a.ready)
+  const unconnectedArms = arms.filter((a) => !a.connected && !a.ready)
 
   if (loading) {
     return <div className="flex items-center justify-center h-64 gap-2 text-neutral-400"><Spinner /> 로딩 중...</div>
@@ -484,6 +507,7 @@ export default function RobotsPage() {
           <button onClick={handlePresetSave} disabled={!presetName.trim()}
             className="px-4 py-1.5 text-xs rounded bg-green-600 hover:bg-green-500 text-white disabled:opacity-50">저장</button>
         </div>
+        {presetMsg && <p className="text-xs text-amber-300 whitespace-pre-wrap">{presetMsg}</p>}
       </div>
 
       {/* 1단계: 포트 찾기 */}

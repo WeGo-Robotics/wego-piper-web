@@ -460,7 +460,10 @@ class PresetSaveRequest(BaseModel):
 
 @router.post("/presets/save")
 async def save_preset(body: PresetSaveRequest):
-    robot_manager.save_preset(body.name)
+    try:
+        robot_manager.save_preset(body.name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     return {"status": "saved", "name": body.name}
 
 

@@ -329,12 +329,17 @@ class ArmInfo:
             with self._lock:
                 self._piper = piper
             mode_int = self.refresh_ctrl_mode()
-            if mode_int is not None:
-                self.role = "leader" if mode_int == 0x06 else "follower"
-            else:
+            if mode_int is None:
                 self.ctrl_mode = "?"
-                self.role = "follower"
             self._classify_master(mode_int)  # RX 유무로 마스터/슬레이브 판별
+            # 역할 기본값은 **마스터/슬레이브 판별 결과를 따른다.**
+            #
+            # 예전에는 `ctrl_mode == 0x06` 만 보고 role 을 정했는데, 마스터가 되는 길은
+            # 둘이다 — 0x06 을 보고하거나, RX 가 없거나(피드백을 송신하지 않는 팔).
+            # 전원을 껐다 켜면 마스터 설정이 풀려 Standby(0x00)를 보고하므로
+            # **RX 규칙으로만 마스터로 잡히고 role 은 follower 로 남았다.**
+            # 사용자가 원하면 `set_role()` 로 언제든 바꿀 수 있다.
+            self.role = "leader" if self.is_master else "follower"
             self.connected = True
             return True, "OK"
         except Exception as e:
@@ -374,7 +379,12 @@ class ArmInfo:
         self.is_master = (mode_int == 0x06) or (rx2 == rx1)
 
     def refresh_mode(self) -> None:
-        """ctrl_mode 텍스트 + 마스터/슬레이브를 라이브 갱신."""
+        """ctrl_mode 텍스트 + 마스터/슬레이브를 라이브 갱신.
+
+        ⚠ **`role` 은 건드리지 않는다.** 이건 `/robots/current` 폴링마다 불리므로,
+        여기서 role 을 덮으면 사용자가 `set_role()` 로 고른 값이 조용히 되돌아간다.
+        자동 판별은 연결 시점(`connect`)과 마스터/슬레이브를 직접 바꿀 때만 한다.
+        """
         mode_int = self.refresh_ctrl_mode()
         self._classify_master(mode_int)
 
@@ -393,6 +403,9 @@ class ArmInfo:
                 return False, str(e)
         time.sleep(0.4)  # 모드 전환 반영 대기
         self.refresh_mode()
+        # 사용자가 명시적으로 바꿨으므로 역할도 따라간다 — 마스터로 바꿔놓고
+        # 화면에 follower 로 남아 있으면 슬롯 배정에서 그대로 어긋난다.
+        self.role = "leader" if master else "follower"
         return True, "OK"
 
     def disconnect(self) -> None:
@@ -794,7 +807,26 @@ class RobotManager:
         return [p["name"] for p in presets.list_presets(PRESET_DOMAIN)]
 
     def save_preset(self, name: str) -> None:
-        """현재 로봇 구성을 프리셋으로. 값 구조는 이전과 동일하다."""
+        """현재 로봇 구성을 프리셋으로.
+
+        ## 무엇을 "설정된 팔"로 볼 것인가
+
+        예전에는 `slot` 이 있는 팔만 담았다. 그런데 실제 사용 흐름은
+        **스캔 → 연결 → (역할 자동 판별) → 등록**이고, 이 경로는 `ready` 만 세우고
+        `slot` 은 건드리지 않는다 — 슬롯 배정은 별도 구성 단계다.
+        그래서 등록을 다 끝낸 사용자도 `arms: []` 인 빈 프리셋을 받았다.
+
+        `slot` 이든 `ready` 든 **사용자가 손댄 팔**이면 담는다.
+
+        ⚠ 하나도 없으면 거부한다. 예전에는 빈 프리셋을 조용히 저장해서,
+        저장은 성공했다고 나오는데 불러오면 아무 일도 일어나지 않았다.
+        """
+        configured = [arm for arm in self.arms.values() if arm.slot or arm.ready]
+        if not configured:
+            raise ValueError(
+                "저장할 구성이 없습니다 — 사용 가능 목록에 등록된 팔이 없습니다. "
+                "스캔 → 연결 → 등록을 먼저 하세요."
+            )
         values = {
             "robot_type": self.selected_type,
             "config_name": self.config_name,
@@ -804,10 +836,12 @@ class RobotManager:
                     "can_name": arm.iface,
                     "bus_info": arm.bus_info,
                     "role": arm.role,
+                    # 등록 상태도 담는다 — 안 담으면 불러와도 사용 가능 목록이 빈 채라
+                    # "불러왔는데 아무것도 안 바뀐다"가 된다
+                    "ready": arm.ready,
                     "config": arm._config_dict(),
                 }
-                for arm in self.arms.values()
-                if arm.slot
+                for arm in configured
             ],
         }
         # CAN 이름·bus_info 는 이 기기의 것이므로 device scope
@@ -827,6 +861,8 @@ class RobotManager:
                 arm = self.arms[iface]
                 arm.slot = arm_data.get("slot")
                 arm.role = arm_data.get("role", "unknown")
+                # 등록 상태 복원. 없으면(옛 프리셋) 슬롯 유무로 추정한다.
+                arm.ready = arm_data.get("ready", bool(arm_data.get("slot")))
                 arm.update_config(arm_data.get("config", {}))
         # 프론트 호환: 예전 응답이 name 을 포함했다
         return {"name": name, **data}
