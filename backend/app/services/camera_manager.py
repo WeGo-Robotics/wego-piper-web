@@ -41,10 +41,9 @@ class CameraInfo:
     stream_type: str = ""   # realsense 스트림 (color|depth|infrared)
     connected: bool = False
     ready: bool = False
-    # 이 카메라를 흘려보낼 세그먼트 이름 = **LeRobot 카메라 키**(`top`/`wrist`).
-    # 별칭(`탑뷰`)이나 장치 id 가 아니다 — 소비자가 그 키로 세그먼트를 연다.
-    # 비어 있으면 shm 발행을 하지 않는다(= 지금까지의 동작 그대로).
-    shm_key: str = ""
+    # 세그먼트 이름은 **장치에서 파생**된다 (`piper_shm.segment_for_camera`).
+    # LeRobot 키(`top`)가 아니다 — 발행자는 어떤 실행에 어떤 키로 쓰일지 모른 채
+    # 연결돼 있는 동안 **항상** 발행한다. 데몬(camerad/rsd)으로 옮겨도 그대로다.
     # 설정값
     width: int | None = None
     height: int | None = None
@@ -141,9 +140,6 @@ class CameraInfo:
     def connect(self) -> tuple[bool, str]:
         """연결 + 백그라운드 캡처 시작. 등록 시 사용."""
         if self.cam_type == "realsense":
-            # 세그먼트 이름을 허브에 넘긴다 — RealSense 는 캡처 루프가 장치 단위라
-            # `CameraInfo` 가 직접 발행할 수 없다.
-            realsense_hub.set_shm_key(self.id, self.shm_key)
             ok, msg = realsense_hub.connect(self.id)
             self.connected = ok
             return ok, msg
@@ -169,12 +165,12 @@ class CameraInfo:
     def disconnect(self) -> None:
         # ⚠ 세그먼트를 반드시 닫는다. 남기면 소비자가 그걸 열고 **멈춘 화면**을 본다 —
         # 파일이 있으니 연결은 성공하는데 발행자가 없어 프레임이 안 온다.
-        if self.shm_key:
-            from app.services.shm_publisher import shm_publisher
+        from piper_shm import segment_for_camera
 
-            shm_publisher.stop(self.shm_key)
+        from app.services.shm_publisher import shm_publisher
+
+        shm_publisher.stop(segment_for_camera(self.id))
         if self.cam_type == "realsense":
-            realsense_hub.set_shm_key(self.id, "")
             realsense_hub.disconnect(self.id)
             self.connected = False
             self._last_frame = None
@@ -200,6 +196,8 @@ class CameraInfo:
         (refactor/camera-transport.md 착수 순서 2단계).
         **기존 경로(_last_frame·프리뷰·녹화)는 그대로다.**
         """
+        from piper_shm import segment_for_camera
+
         from app.services.shm_publisher import shm_publisher
 
         while self._running and self._cap:
@@ -208,8 +206,7 @@ class CameraInfo:
                 if ret and frame is not None:
                     with self._lock:
                         self._last_frame = frame
-                    if self.shm_key:
-                        shm_publisher.publish(self.shm_key, frame)
+                    shm_publisher.publish(segment_for_camera(self.id), frame)
             except Exception:
                 break
 

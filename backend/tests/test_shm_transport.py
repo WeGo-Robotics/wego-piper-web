@@ -215,7 +215,12 @@ def test_transport_switch_changes_both_paths(monkeypatch):
 
     monkeypatch.setattr(settings, "camera_transport", "shm")
     shm = build_cameras_json(mapping, width=640, height=480, fps=15)
-    assert all(v == {"type": "shm", "segment": k} for k, v in shm.items())
+    # **키는 dict 키로, 세그먼트는 장치로.** 발행자는 매핑을 모른 채 항상 발행하므로
+    # 세그먼트 이름이 LeRobot 키면 매핑이 바뀔 때마다 다시 만들어야 한다.
+    assert shm == {
+        "top": {"type": "shm", "segment": "rs_1_color"},
+        "wrist": {"type": "shm", "segment": "dev_video0"},
+    }
     # 해상도는 발행자가 정한다 — 소비자 설정이 새어들면 안 된다
     assert not any("width" in v for v in shm.values())
 
@@ -257,3 +262,27 @@ def test_arm_error_clearing_survives_refactors():
     assert "_clear_arm_errors" in names, "에러 클리어 함수가 사라졌다"
     # 호출부가 정의보다 많은데 정의가 없으면 NameError — 정적으로 못 박는다
     assert src.count("_clear_arm_errors(") >= 4, "정의 1 + 호출 3 이어야 한다"
+
+
+def test_segment_name_comes_from_the_device_not_the_lerobot_key():
+    """**설계** — 발행자는 매핑을 모른 채 항상 발행한다.
+
+    세그먼트 이름이 LeRobot 키(`top`)면 발행자가 "이번 실행에서 이 카메라가 무슨
+    키로 쓰이는지"를 알아야 하고, 매핑이 바뀔 때마다 세그먼트를 다시 만들어야 한다.
+    데몬(camerad/rsd)은 실행과 무관하게 사는 존재라 그 모델과 맞지 않는다.
+    """
+    from piper_shm import segment_for_camera
+
+    assert segment_for_camera("rs:250122070363:color") == "rs_250122070363_color"
+    assert segment_for_camera("/dev/video0") == "dev_video0"
+
+    # 발행측이 장치에서 이름을 뽑는지 (키를 쓰면 데몬 이전이 막힌다)
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1] / "app" / "services"
+    for f in ("camera_manager.py", "realsense_manager.py"):
+        src = (backend / f).read_text()
+        assert "segment_for_camera" in src, f"{f} 가 장치 기준 이름을 안 쓴다"
+    assert "shm_key" not in (backend / "camera_manager.py").read_text(), (
+        "키 기반 발행이 남아 있다"
+    )

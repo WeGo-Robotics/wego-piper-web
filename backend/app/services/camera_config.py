@@ -58,9 +58,12 @@ def build_cameras_json(
         return {}
 
     if settings.camera_transport == "shm":
-        # 세그먼트 이름 = 카메라 키. 매핑이 그대로 이름이 된다.
+        # **키는 dict 키로, 세그먼트는 장치로.** 발행자는 매핑을 모른 채 항상 발행하므로
+        # 세그먼트 이름이 장치에서 나와야 한다 (`piper_shm.segment_for_camera`).
+        from piper_shm import segment_for_camera
+
         return {
-            name: {"type": "shm", "segment": name}
+            name: {"type": "shm", "segment": segment_for_camera(cam_id)}
             for name, cam_id in camera_mapping.items() if cam_id
         }
 
@@ -104,26 +107,28 @@ def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str) -> None:
         release_all_cameras(purpose)
         return
 
+    from piper_shm import segment_for_camera
+
     from app.services.shm_publisher import sweep_stale_segments
 
-    keys = {name for name, cam_id in camera_mapping.items() if cam_id}
-    # 이번에 쓸 것 외의 남은 세그먼트는 치운다 — 남으면 소비자가 멈춘 화면을 본다
-    sweep_stale_segments(keep=keys)
-
+    # 쓸 카메라를 붙잡는다. 연결돼 있으면 이미 발행 중이라 건드리지 않는다 —
+    # 끊었다 붙이면 그 사이 소비자가 프레임을 잃는다.
+    keep = set()
     for name, cam_id in camera_mapping.items():
         if not cam_id:
             continue
         cam = camera_manager.cameras.get(cam_id)
         if cam is None:
             raise CameraPrepareError(f"카메라를 찾을 수 없습니다: {cam_id}")
-        cam.shm_key = name
-        if cam.connected:
-            # 이미 연결돼 있어도 shm_key 가 방금 붙었으니 캡처 루프에 반영시킨다
-            cam.disconnect()
-        ok, msg = cam.connect()
-        if not ok:
-            raise CameraPrepareError(f"카메라 연결 실패 ({cam_id}): {msg}")
-        logger.info("shm 발행 준비(%s): %s ← %s", purpose, name, cam_id)
+        keep.add(segment_for_camera(cam_id))
+        if not cam.connected:
+            ok, msg = cam.connect()
+            if not ok:
+                raise CameraPrepareError(f"카메라 연결 실패 ({cam_id}): {msg}")
+        logger.info("shm 발행 중(%s): %s ← %s", purpose, name, cam_id)
+
+    # 쓰지 않는 남은 세그먼트만 치운다 — 남으면 소비자가 멈춘 화면을 본다
+    sweep_stale_segments(keep=keep)
 
 
 def release_all_cameras(purpose: str = "inference") -> bool:

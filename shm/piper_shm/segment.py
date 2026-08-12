@@ -50,6 +50,23 @@ DTYPE_UINT8 = 1
 _DTYPE_ITEMSIZE = {DTYPE_UINT8: 1}
 
 
+def segment_for_camera(cam_id: str) -> str:
+    """카메라 장치 id → 세그먼트 이름.
+
+    ⚠ **LeRobot 카메라 키(`top`)가 아니라 장치 기준이다.**
+    발행자(camerad/rsd)는 어떤 실행에 어떤 키로 쓰일지 모른 채 **항상** 발행한다.
+    키를 이름으로 쓰면 발행자가 매핑을 알아야 하고, 매핑이 바뀔 때마다
+    세그먼트를 다시 만들어야 한다 — 데몬 모델과 맞지 않는다.
+
+    소비자는 `{"top": {"type": "shm", "segment": "rs_250122070363_color"}}` 처럼
+    **키는 dict 키로, 세그먼트는 장치로** 지정한다.
+
+        rs:250122070363:color  →  rs_250122070363_color
+        /dev/video0            →  dev_video0
+    """
+    return cam_id.replace(":", "_").replace("/", "_").strip("_")
+
+
 def segment_path(name: str) -> Path:
     """카메라 이름 → `/dev/shm` 경로. 카메라당 하나라 수명이 독립적이다."""
     return SHM_DIR / f"{NAME_PREFIX}{name}"

@@ -9,6 +9,7 @@ from piper_shm.segment import (
     Layout,
     SegmentError,
     list_segments,
+    segment_for_camera,
     segment_name,
     segment_path,
     unlink,
@@ -16,5 +17,5 @@ from piper_shm.segment import (
 
 __all__ = [
     "Publisher", "Subscriber", "Layout", "SegmentError",
-    "list_segments", "segment_name", "segment_path", "unlink",
+    "list_segments", "segment_for_camera", "segment_name", "segment_path", "unlink",
 ]
