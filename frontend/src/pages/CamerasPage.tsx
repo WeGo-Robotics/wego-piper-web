@@ -12,6 +12,10 @@ function Spinner({ className = '' }: { className?: string }) {
 
 type CamInfo = {
   id: string; name: string; usb_port?: string; cam_type: string
+  /** 사람이 붙인 별칭("탑뷰"). LeRobot 카메라 키와는 별개 — 화면 표시용이다. */
+  label?: string
+  /** `label || name`. 각 화면이 따로 계산하지 않도록 백엔드가 준다. */
+  display_name?: string
   connected: boolean; ready: boolean; has_preview: boolean
   config: { width: number | null; height: number | null; fps: number | null; color_mode: string; rotation: number; fourcc: string | null }
 }
@@ -27,7 +31,11 @@ export default function CamerasPage() {
   const [cams, setCams] = useState<CamInfo[]>([])
   const [scanning, setScanning] = useState(false)
   const [connectingId, setConnectingId] = useState<string | null>(null)
-  const [expandedCam, setExpandedCam] = useState<string | null>(null)
+  // 미등록 카드에서 입력 중인 별칭 (등록 버튼을 누를 때 함께 보낸다)
+  const [labelDraft, setLabelDraft] = useState<Record<string, string>>({})
+  // 설정은 **모달로 띄운다.** 카드 안에서 펼치면 그리드 행 높이가 늘어나
+  // 같은 줄의 다른 카드까지 함께 커진다.
+  const [settingsCam, setSettingsCam] = useState<string | null>(null)
   // 프리뷰 캐시버스팅 타임스탬프 — 카메라별로 따로 관리해야 한 카메라 동작이
   // 다른 타일까지 새로고침시키지 않는다.
   const [previewTs, setPreviewTs] = useState<Record<string, number>>({})
@@ -67,6 +75,25 @@ export default function CamerasPage() {
     return () => clearInterval(interval)
   }, [liveIds])
 
+  // 모달은 Esc 로도 닫힌다
+  useEffect(() => {
+    if (!settingsCam) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeSettings() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [settingsCam])
+
+  // 설정 모달이 열려 있는 동안 프리뷰를 갱신한다 — 밝기·노출·회전을 만지면서
+  // 결과를 못 보면 설정 자체가 의미가 없다.
+  //
+  // `liveIds` 에 넣지 않는 이유: 그건 카드의 "실시간 보기/중단" 버튼 상태를 겸해서,
+  // 모달을 열었다고 카드가 "중단"으로 바뀌면 사용자가 헷갈린다.
+  useEffect(() => {
+    if (!settingsCam) return
+    const id = setInterval(() => bumpPreview([settingsCam]), 200)
+    return () => clearInterval(id)
+  }, [settingsCam])
+
   // 1단계: 스캔 (auto_connect=true → 병렬 연결 + 프리뷰)
   const handleScan = async () => {
     setScanning(true)
@@ -95,27 +122,41 @@ export default function CamerasPage() {
   const handleRegister = async (id: string) => {
     setConnectingId(id)
     try {
-      const updated = await api.post<CamInfo>('/cameras/register', { id })
+      const label = (labelDraft[id] ?? '').trim()
+      const updated = await api.post<CamInfo>('/cameras/register', { id, label })
       setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
     } catch { alert('등록 실패') }
     finally { setConnectingId(null) }
+  }
+
+  // 등록 후에도 별칭을 고칠 수 있다 — 카메라를 옮겨 달면 탑뷰가 손목이 된다.
+  const handleLabel = async (id: string, label: string) => {
+    try {
+      const updated = await api.post<CamInfo>('/cameras/label', { id, label })
+      setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
+    } catch { /* 표시 이름일 뿐이라 실패해도 조용히 둔다 */ }
   }
   const handleUnregister = async (id: string) => {
     await api.post('/cameras/unregister', { id })
     setCams((prev) => prev.map((c) => (c.id === id ? { ...c, ready: false } : c)))
   }
 
-  const toggleControls = async (camId: string) => {
-    if (controlsCam === camId) {
-      setControlsCam(null)
-      setControls([])
-      return
-    }
+  // 설정 모달 열기 — 컨트롤 목록은 열 때 한 번 읽는다.
+  // RealSense 는 스트리밍 중 컨트롤 질의가 충돌하면 멈출 수 있어(D405 UVC hang)
+  // 필요할 때만 묻는다.
+  const openSettings = async (camId: string) => {
+    setSettingsCam(camId)
+    setControls([])
+    setControlsCam(camId)
     try {
-      const data = await api.get<CamControl[]>(`/cameras/${encodeURIComponent(camId)}/controls`)
-      setControls(data)
-      setControlsCam(camId)
-    } catch { setControls([]); setControlsCam(camId) }
+      setControls(await api.get<CamControl[]>(`/cameras/${encodeURIComponent(camId)}/controls`))
+    } catch { setControls([]) }
+  }
+
+  const closeSettings = () => {
+    setSettingsCam(null)
+    setControlsCam(null)
+    setControls([])
   }
 
   const handleResetControls = async (camId: string) => {
@@ -186,6 +227,10 @@ export default function CamerasPage() {
   // `ready && !connected` 가 되는데(정상 상태 — 등록은 유지, 장치만 놓아준다),
   // 예전 `unconnected` 는 `ready` 를 안 봐서 그 카메라가 "사용 가능"과
   // "미등록"에 **동시에** 떴다. 6대인데 5+2=7 로 보이던 원인.
+  // 모달이 최신 카드 데이터를 보게 id 로 찾는다 — 스냅샷을 들고 있으면
+  // 설정을 바꿔도 모달 안 값이 안 갱신된다.
+  const settingsCamera = settingsCam ? cams.find((c) => c.id === settingsCam) ?? null : null
+
   const ready = cams.filter((c) => c.ready)
   const connected = cams.filter((c) => c.connected && !c.ready)
   const unconnected = cams.filter((c) => !c.connected && !c.ready)
@@ -223,11 +268,25 @@ export default function CamerasPage() {
                   <div className="p-3 space-y-2">
                     <div className="flex items-center gap-2">
                       <span className="text-green-400 text-sm">✓</span>
-                      <span className="font-mono text-sm">{cam.id}</span>
-                      {cam.usb_port && <span className="ml-auto font-mono text-[10px] text-neutral-500" title="USB 포트">{cam.usb_port}</span>}
+                      {/* 별칭이 주인공 — 카메라를 옮겨 달면 여기서 바로 고친다.
+                          blur 에 저장해 타이핑 중 요청이 쏟아지지 않게 한다. */}
+                      <input
+                        type="text"
+                        defaultValue={cam.label ?? ''}
+                        key={cam.label ?? ''}
+                        onBlur={(e) => {
+                          const v = e.target.value.trim()
+                          if (v !== (cam.label ?? '')) handleLabel(cam.id, v)
+                        }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                        placeholder="이름 없음"
+                        title="표시 이름 — 데이터셋 피처 이름은 바뀌지 않습니다"
+                        className="flex-1 min-w-0 px-1.5 py-0.5 text-sm rounded bg-transparent border border-transparent hover:border-neutral-700 focus:bg-neutral-900 focus:border-blue-500 text-neutral-100 placeholder:text-neutral-600 focus:outline-none" />
+                      {cam.usb_port && <span className="font-mono text-[10px] text-neutral-500" title="USB 포트">{cam.usb_port}</span>}
                     </div>
                     <div className="text-xs text-neutral-400">
-                      {cam.name}
+                      <span className="font-mono text-[10px] text-neutral-500">{cam.id}</span>
+                      <span className="ml-2">{cam.name}</span>
                       {cam.config.width && <span className="ml-2">{cam.config.width}x{cam.config.height}</span>}
                       {cam.config.fps && <span className="ml-2">{cam.config.fps}fps</span>}
                     </div>
@@ -254,9 +313,9 @@ export default function CamerasPage() {
                         className={`flex-1 py-1 text-xs rounded transition-colors ${isLive ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white'}`}>
                         {isLive ? '중단' : '실시간 보기'}
                       </button>
-                      <button onClick={() => toggleControls(cam.id)}
-                        className={`flex-1 py-1 text-xs rounded transition-colors ${controlsCam === cam.id ? 'bg-yellow-600 text-white' : 'bg-neutral-700 hover:bg-yellow-600 text-neutral-300 hover:text-white'}`}>
-                        {controlsCam === cam.id ? '설정 닫기' : '설정'}
+                      <button onClick={() => openSettings(cam.id)}
+                        className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-yellow-600 text-neutral-300 hover:text-white transition-colors">
+                        설정
                       </button>
                       <button onClick={() => handleUnregister(cam.id)}
                         className="py-1 px-2 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white transition-colors">
@@ -264,47 +323,6 @@ export default function CamerasPage() {
                       </button>
                       <ResetDeviceButton cam={cam} />
                     </div>
-                    {controlsCam === cam.id && (
-                      <div className="border-t border-neutral-700 pt-2 mt-2 space-y-1.5">
-                        {controls.length > 0 && (
-                          <div className="flex justify-end">
-                            <button onClick={() => handleResetControls(cam.id)} disabled={busyId === cam.id}
-                              className="px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-orange-600 text-neutral-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                              {busyId === cam.id ? '처리 중…' : '초기화'}
-                            </button>
-                          </div>
-                        )}
-                        {controls.length === 0 ? (
-                          <p className="text-xs text-neutral-500">지원되는 컨트롤이 없습니다</p>
-                        ) : controls.map((ctrl) => {
-                          const locked = ctrl.inactive || ctrl.readonly
-                          return (
-                            <div key={ctrl.name} className={`flex items-center gap-2 text-xs ${locked ? 'opacity-40' : ''}`}>
-                              <span className="text-neutral-400 w-24 shrink-0 truncate" title={ctrl.label + (locked ? ' (자동 모드에 의해 잠김)' : '')}>{ctrl.label}</span>
-                              {ctrl.type === 2 ? (
-                                <input type="checkbox" checked={ctrl.value !== 0} disabled={locked}
-                                  onChange={(e) => handleControl(cam.id, ctrl.name, e.target.checked ? 1 : 0)}
-                                  className="accent-blue-500" />
-                              ) : ctrl.type === 3 ? (
-                                <select value={ctrl.value} disabled={locked}
-                                  onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
-                                  className="flex-1 px-1 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 text-xs disabled:opacity-50">
-                                  {Array.from({ length: ctrl.max - ctrl.min + 1 }, (_, i) => ctrl.min + i).map((v) => (
-                                    <option key={v} value={v}>{v}</option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <input type="range" min={ctrl.min} max={ctrl.max} step={ctrl.step || 1}
-                                  value={ctrl.value} disabled={locked}
-                                  onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
-                                  className="flex-1 h-1 accent-blue-500 disabled:opacity-50" />
-                              )}
-                              <span className="text-neutral-300 w-12 text-right font-mono">{ctrl.value}</span>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
                   </div>
                 </div>
               )
@@ -344,6 +362,14 @@ export default function CamerasPage() {
                   <p className="text-xs text-neutral-400">{cam.name}
                     {cam.config.width && <span className="ml-2">{cam.config.width}x{cam.config.height}</span>}
                   </p>
+                  {/* 별칭 — 등록할 때 함께 보낸다. 나중에 카드에서 고칠 수도 있다. */}
+                  <input
+                    type="text"
+                    value={labelDraft[cam.id] ?? ''}
+                    onChange={(e) => setLabelDraft((prev) => ({ ...prev, [cam.id]: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleRegister(cam.id) }}
+                    placeholder="이름 (예: 탑뷰, 손목)"
+                    className="w-full px-2 py-1 text-xs rounded bg-neutral-900 border border-neutral-700 text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-blue-500" />
                   <div className="flex gap-1.5">
                     <button onClick={() => handleRegister(cam.id)} disabled={connectingId === cam.id}
                       className="flex-1 py-1.5 text-xs rounded bg-neutral-700 group-hover:bg-green-600 text-neutral-300 group-hover:text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
@@ -364,7 +390,6 @@ export default function CamerasPage() {
           <h2 className="text-sm font-semibold text-neutral-400">연결됨 (미등록)</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {connected.map((cam) => {
-              const isExpanded = expandedCam === cam.id
               return (
                 <div key={cam.id} className="rounded-lg border border-blue-500/30 bg-blue-500/5 overflow-hidden hover:border-blue-500/60 transition-colors">
                   {/* 프리뷰 */}
@@ -387,12 +412,8 @@ export default function CamerasPage() {
                       {cam.config.fps && <span className="ml-2">{cam.config.fps}fps</span>}
                     </div>
                     <div className="flex gap-1.5">
-                      <button onClick={() => {
-                        setExpandedCam(isExpanded ? null : cam.id)
-                        if (!isExpanded) toggleControls(cam.id)
-                        else { setControlsCam(null); setControls([]) }
-                      }}
-                        className={`flex-1 py-1 text-xs rounded transition-colors ${isExpanded ? 'bg-yellow-600 text-white' : 'bg-neutral-700 hover:bg-neutral-600 text-neutral-300'}`}>설정</button>
+                      <button onClick={() => openSettings(cam.id)}
+                        className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-yellow-600 text-neutral-300 hover:text-white transition-colors">설정</button>
                       <button onClick={() => handleRegister(cam.id)}
                         className="flex-1 py-1 text-xs rounded bg-green-600 hover:bg-green-500 text-white">등록</button>
                       <button onClick={() => handleDisconnect(cam.id)}
@@ -400,77 +421,6 @@ export default function CamerasPage() {
                       <ResetDeviceButton cam={cam} />
                     </div>
                   </div>
-                  {isExpanded && (
-                    <div className="border-t border-neutral-700 p-3 space-y-3 bg-neutral-900/50">
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div className="flex items-center gap-2">
-                          <span className="text-neutral-400 w-14">Width</span>
-                          <input type="number" value={cam.config.width ?? ''} placeholder="auto"
-                            onChange={(e) => handleConfig(cam.id, { width: e.target.value ? Number(e.target.value) : null })}
-                            className="flex-1 px-2 py-1 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-neutral-400 w-14">Height</span>
-                          <input type="number" value={cam.config.height ?? ''} placeholder="auto"
-                            onChange={(e) => handleConfig(cam.id, { height: e.target.value ? Number(e.target.value) : null })}
-                            className="flex-1 px-2 py-1 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-neutral-400 w-14">FPS</span>
-                          <input type="number" value={cam.config.fps ?? ''} placeholder="auto"
-                            onChange={(e) => handleConfig(cam.id, { fps: e.target.value ? Number(e.target.value) : null })}
-                            className="flex-1 px-2 py-1 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-neutral-400 w-14">Rot</span>
-                          <select value={cam.config.rotation}
-                            onChange={(e) => handleConfig(cam.id, { rotation: Number(e.target.value) })}
-                            className="flex-1 px-2 py-1 rounded bg-neutral-800 border border-neutral-700 text-neutral-100">
-                            <option value={0}>0°</option><option value={90}>90°</option>
-                            <option value={180}>180°</option><option value={270}>270°</option>
-                          </select>
-                        </div>
-                      </div>
-                      {controlsCam === cam.id && controls.length > 0 && (
-                        <div className="border-t border-neutral-700 pt-2 space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] text-neutral-500">이미지 조정</span>
-                            <button onClick={() => handleResetControls(cam.id)} disabled={busyId === cam.id}
-                              className="px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-orange-600 text-neutral-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                              {busyId === cam.id ? '처리 중…' : '초기화'}
-                            </button>
-                          </div>
-                          {controls.map((ctrl) => {
-                            const locked = ctrl.inactive || ctrl.readonly
-                            return (
-                              <div key={ctrl.name} className={`flex items-center gap-2 text-xs ${locked ? 'opacity-40' : ''}`}>
-                                <span className="text-neutral-400 w-24 shrink-0 truncate" title={ctrl.label + (locked ? ' (자동 모드에 의해 잠김)' : '')}>{ctrl.label}</span>
-                                {ctrl.type === 2 ? (
-                                  <input type="checkbox" checked={ctrl.value !== 0} disabled={locked}
-                                    onChange={(e) => handleControl(cam.id, ctrl.name, e.target.checked ? 1 : 0)}
-                                    className="accent-blue-500" />
-                                ) : ctrl.type === 3 ? (
-                                  <select value={ctrl.value} disabled={locked}
-                                    onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
-                                    className="flex-1 px-1 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 text-xs disabled:opacity-50">
-                                    {Array.from({ length: ctrl.max - ctrl.min + 1 }, (_, i) => ctrl.min + i).map((v) => (
-                                      <option key={v} value={v}>{v}</option>
-                                    ))}
-                                  </select>
-                                ) : (
-                                  <input type="range" min={ctrl.min} max={ctrl.max} step={ctrl.step || 1}
-                                    value={ctrl.value} disabled={locked}
-                                    onChange={(e) => handleControl(cam.id, ctrl.name, Number(e.target.value))}
-                                    className="flex-1 h-1 accent-blue-500 disabled:opacity-50" />
-                                )}
-                                <span className="text-neutral-300 w-12 text-right font-mono">{ctrl.value}</span>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               )
             })}
@@ -482,6 +432,148 @@ export default function CamerasPage() {
         <p className="text-center text-neutral-500 text-sm py-8">
           "스캔"을 눌러 카메라를 검색하세요
         </p>
+      )}
+
+      {/* 설정 모달 — 등록·미등록 카드가 같은 창을 연다.
+          카드 안에서 펼치면 그리드 행 높이가 늘어나 옆 카드까지 커졌다. */}
+      {settingsCamera && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={closeSettings}>
+          <div className="bg-neutral-800 rounded-xl border border-neutral-600 p-6 w-[960px] max-w-[95vw] max-h-[90vh] flex flex-col gap-4"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-lg font-bold truncate">
+                  {settingsCamera.label || settingsCamera.name}
+                </h2>
+                <p className="font-mono text-[11px] text-neutral-500 truncate">{settingsCamera.id}</p>
+              </div>
+              <button onClick={closeSettings}
+                className="px-2 py-1 text-sm rounded text-neutral-400 hover:bg-neutral-700 hover:text-white">✕</button>
+            </div>
+
+            {/* 좌: 프리뷰 / 우: 설정. 세로로 쌓으면 슬라이더를 만질 때 화면이
+                스크롤 밖으로 밀려 결과를 못 본다 — 붙여 놓는 것이 요점이다.
+                좁은 화면(<lg)에서는 자동으로 위아래로 접힌다. */}
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-4 min-h-0 flex-1">
+            {/* 프리뷰 — 오른쪽 설정을 만지면 여기서 바로 결과가 보인다 */}
+            <div className="relative self-start">
+              <img
+                src={`/api/cameras/${encodeURIComponent(settingsCamera.id)}/preview?t=${previewTs[settingsCamera.id] ?? 0}`}
+                alt={settingsCamera.display_name ?? settingsCamera.name}
+                className="w-full max-h-[62vh] aspect-[4/3] object-contain rounded bg-neutral-900"
+                onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.2' }}
+                onLoad={(e) => { (e.target as HTMLImageElement).style.opacity = '1' }}
+              />
+              {!settingsCamera.connected && (
+                // 연결 안 된 카메라는 프레임이 안 들어온다. 여기서 몰래 열지 않는다 —
+                // 장치를 쥐는 것은 사용자가 결정할 일이다.
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 rounded">
+                  <p className="text-xs text-neutral-300">연결되지 않아 화면이 갱신되지 않습니다</p>
+                  <button onClick={async () => {
+                    try {
+                      const updated = await api.post<CamInfo>('/cameras/connect', { id: settingsCamera.id })
+                      setCams((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
+                      bumpPreview([settingsCamera.id])
+                    } catch { /* 연결 실패는 카드 쪽 흐름에서 다룬다 */ }
+                  }}
+                    className="px-3 py-1 text-xs rounded bg-green-600 hover:bg-green-500 text-white">연결</button>
+                </div>
+              )}
+            </div>
+
+            {/* 오른쪽 열 — 항목이 길어지면 여기만 스크롤한다 */}
+            <div className="space-y-4 min-h-0 overflow-y-auto pr-1">
+            {/* 이름 — 등록 여부와 무관하게 여기서 고칠 수 있다 */}
+            <div className="space-y-1">
+              <span className="text-xs text-neutral-400">이름</span>
+              <input type="text" defaultValue={settingsCamera.label ?? ''} key={`label-${settingsCamera.id}`}
+                onBlur={(e) => {
+                  const v = e.target.value.trim()
+                  if (v !== (settingsCamera.label ?? '')) handleLabel(settingsCamera.id, v)
+                }}
+                placeholder="예: 탑뷰, 손목"
+                className="w-full px-2 py-1.5 text-sm rounded bg-neutral-900 border border-neutral-700 text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-blue-500" />
+              <p className="text-[10px] text-neutral-500">
+                화면에서 알아보기 위한 이름입니다. 데이터셋 피처 이름은 바뀌지 않습니다.
+              </p>
+            </div>
+
+            {/* 해상도·FPS·회전 */}
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-neutral-400 w-14">Width</span>
+                <input type="number" value={settingsCamera.config.width ?? ''} placeholder="auto"
+                  onChange={(e) => handleConfig(settingsCamera.id, { width: e.target.value ? Number(e.target.value) : null })}
+                  className="flex-1 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-neutral-400 w-14">Height</span>
+                <input type="number" value={settingsCamera.config.height ?? ''} placeholder="auto"
+                  onChange={(e) => handleConfig(settingsCamera.id, { height: e.target.value ? Number(e.target.value) : null })}
+                  className="flex-1 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-neutral-400 w-14">FPS</span>
+                <input type="number" value={settingsCamera.config.fps ?? ''} placeholder="auto"
+                  onChange={(e) => handleConfig(settingsCamera.id, { fps: e.target.value ? Number(e.target.value) : null })}
+                  className="flex-1 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-neutral-400 w-14">Rot</span>
+                <select value={settingsCamera.config.rotation}
+                  onChange={(e) => handleConfig(settingsCamera.id, { rotation: Number(e.target.value) })}
+                  className="flex-1 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
+                  <option value={0}>0°</option><option value={90}>90°</option>
+                  <option value={180}>180°</option><option value={270}>270°</option>
+                </select>
+              </div>
+            </div>
+
+            {/* 이미지 조정 (v4l2 컨트롤) */}
+            <div className="border-t border-neutral-700 pt-3 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-neutral-400">이미지 조정</span>
+                {controls.length > 0 && (
+                  <button onClick={() => handleResetControls(settingsCamera.id)} disabled={busyId === settingsCamera.id}
+                    className="px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-orange-600 text-neutral-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    {busyId === settingsCamera.id ? '처리 중…' : '초기화'}
+                  </button>
+                )}
+              </div>
+              {controls.length === 0 ? (
+                <p className="text-xs text-neutral-500">지원되는 컨트롤이 없습니다</p>
+              ) : controls.map((ctrl) => {
+                const locked = ctrl.inactive || ctrl.readonly
+                return (
+                  <div key={ctrl.name} className={`flex items-center gap-2 text-xs ${locked ? 'opacity-40' : ''}`}>
+                    <span className="text-neutral-400 w-28 shrink-0 truncate" title={ctrl.label + (locked ? ' (자동 모드에 의해 잠김)' : '')}>{ctrl.label}</span>
+                    {ctrl.type === 2 ? (
+                      <input type="checkbox" checked={ctrl.value !== 0} disabled={locked}
+                        onChange={(e) => handleControl(settingsCamera.id, ctrl.name, e.target.checked ? 1 : 0)}
+                        className="accent-blue-500" />
+                    ) : ctrl.type === 3 ? (
+                      <select value={ctrl.value} disabled={locked}
+                        onChange={(e) => handleControl(settingsCamera.id, ctrl.name, Number(e.target.value))}
+                        className="flex-1 px-1 py-0.5 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 text-xs disabled:opacity-50">
+                        {Array.from({ length: ctrl.max - ctrl.min + 1 }, (_, i) => ctrl.min + i).map((v) => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input type="range" min={ctrl.min} max={ctrl.max} step={ctrl.step || 1}
+                        value={ctrl.value} disabled={locked}
+                        onChange={(e) => handleControl(settingsCamera.id, ctrl.name, Number(e.target.value))}
+                        className="flex-1 h-1 accent-blue-500 disabled:opacity-50" />
+                    )}
+                    <span className="text-neutral-300 w-12 text-right font-mono">{ctrl.value}</span>
+                  </div>
+                )
+              })}
+            </div>
+            </div>{/* /오른쪽 열 */}
+            </div>{/* /좌우 그리드 */}
+          </div>
+        </div>
       )}
     </div>
   )

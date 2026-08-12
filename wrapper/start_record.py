@@ -7,6 +7,7 @@ lerobot.policies.__init__ 우회 후 lerobot-record를 실행.
 """
 
 import os
+import sys
 
 # lerobot.policies.__init__ 우회 — 다른 lerobot import 보다 먼저여야 한다
 import lerobot_bootstrap
@@ -105,7 +106,7 @@ if os.environ.get("PIPER_PREVIEW") == "1":
 
 
 # ── 헤드리스 에피소드 제어 ──
-# 헤드리스라 LeRobot 의 키보드 리스너가 꺼져 건너뛰기/재녹화/정지가 동작하지 않는다.
+# 헤드리스라 LeRobot 의 키보드 리스너가 꺼져 에피소드 제어가 동작하지 않는다.
 # init_keyboard_listener 를 가로채, 백엔드가 PUSH 하는 명령으로 events dict 를
 # 직접 set 한다(record() 가 이 dict 를 모든 record_loop 에 공유 사용).
 def _install_control() -> None:
@@ -128,7 +129,7 @@ def _install_control() -> None:
                     break
                 if cmd is None:      # 타임아웃 — 빈 큐일 뿐이다
                     continue
-                if cmd == C.CONTROL_SKIP:
+                if cmd == C.CONTROL_NEXT:
                     events["exit_early"] = True
                 elif cmd == C.CONTROL_RERECORD:
                     events["rerecord_episode"] = True
@@ -144,6 +145,42 @@ def _install_control() -> None:
     import lerobot.scripts.lerobot_record as LR
     LR.init_keyboard_listener = _patched_listener
 
+    # 우리는 **설계상 헤드리스**다 — 에피소드 제어가 키보드가 아니라 버스로 온다.
+    # 그런데 LeRobot 의 `is_headless()` 는 매번 `import pynput` 을 시도하고,
+    # X 가 없으면 ImportError 스택트레이스를 통째로 로그에 쏟는다.
+    # 정상 동작인데 화면상 에러로 보여서 진짜 원인을 가린다 (녹화 종료 때마다 나왔다).
+    #
+    # `lerobot_record` 가 `from ... import is_headless` 로 **자기 네임스페이스에**
+    # 들여왔으므로 원본 모듈만 고치면 소용없다. 양쪽 다 바꾼다.
+    import lerobot.utils.control_utils as CU
+    LR.is_headless = lambda: True
+    CU.is_headless = lambda: True
+
+    # ── 녹화 중 task 변경 ──
+    #
+    # LeRobot 은 에피소드마다 `record_loop(..., single_task=cfg.dataset.single_task)` 를
+    # 부르고, 그 값을 그 에피소드의 **모든 프레임**에 찍는다. 그래서 진입 시점에
+    # 버스 값으로 덮으면 **다음 에피소드부터** 새 task 가 적용된다.
+    # (도중에 바꾸면 한 에피소드 안에서 프레임마다 task 가 달라진다 — 하지 않는다.)
+    _orig_record_loop = LR.record_loop
+    _last_task = [None]
+    # 제어 루프는 BRPOP 으로 연결을 오래 잡고 있으므로 읽기용 연결을 따로 둔다.
+    _task_bus = Bus()
+
+    def _record_loop(*args, **kwargs):
+        try:
+            task = _task_bus.record_task()
+        except Exception:
+            task = None
+        if task and task != kwargs.get("single_task"):
+            kwargs["single_task"] = task
+            if task != _last_task[0]:
+                _last_task[0] = task
+                print(f"[start_record] task: {task}", flush=True)
+        return _orig_record_loop(*args, **kwargs)
+
+    LR.record_loop = _record_loop
+
 
 # 주소는 `PIPER_REDIS_URL` 에서 온다. 헤드리스에서 유일한 에피소드 제어 경로다.
 try:
@@ -156,3 +193,17 @@ from lerobot.scripts.lerobot_record import record
 
 if __name__ == "__main__":
     record()
+
+    # `record()` 가 돌아왔다 = 데이터셋 기록과 로봇 해제가 모두 끝났다.
+    #
+    # 여기서 그냥 두면 인터프리터 종료 중 C++ 정적 소멸자가 돌면서
+    # `terminate called without an active exception` 으로 abort 한다
+    # (librealsense/ffmpeg 스레드가 아직 joinable 한 채로 파괴되는 흔한 형태).
+    # 작업은 이미 끝난 뒤라 데이터에는 영향이 없지만, **종료 코드가 SIGABRT 가 되어**
+    # 게이트웨이가 정상 종료를 실패로 판정하고 로그에도 에러처럼 남는다.
+    #
+    # 버퍼를 비운 뒤 정적 소멸자를 건너뛰고 끝낸다. `record()` 가 예외를 던지면
+    # 여기까지 오지 않으므로 **진짜 실패는 그대로 0 이 아닌 코드로 드러난다.**
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)

@@ -290,6 +290,8 @@ export default function RobotsPage() {
   // 저장 실패 사유를 화면에 띄운다 — 예전에는 빈 프리셋이 조용히 저장돼
   // "저장은 됐는데 불러오면 아무 일도 없다" 가 됐다.
   const [presetMsg, setPresetMsg] = useState<string | null>(null)
+  // 프리셋 로드는 스캔 + 팔마다 CAN 열기라 수 초 걸린다
+  const [presetBusy, setPresetBusy] = useState(false)
   const [presets, setPresets] = useState<string[]>([])
   const [presetName, setPresetName] = useState('')
 
@@ -438,14 +440,25 @@ export default function RobotsPage() {
   }
   const handlePresetLoad = async (name: string) => {
     setPresetMsg(null)
+    setPresetBusy(true)
     try {
-      const d = await api.post<{ arms?: unknown[] }>('/robots/presets/load', { name })
+      // 백엔드가 **실제로 적용된 것**을 돌려준다. 예전에는 프리셋에 적힌 팔 수를
+      // 세어서, 하나도 못 붙였는데도 "적용됨"이라고 떴다.
+      const d = await api.post<{ applied?: string[]; missing?: string[]; failed?: string[] }>(
+        '/robots/presets/load', { name })
       await refreshArms()
-      const n = d.arms?.length ?? 0
-      setPresetMsg(n ? `"${name}" 적용 — 팔 ${n}대` : `"${name}" 에 저장된 팔이 없습니다`)
+      const applied = d.applied ?? []
+      const notes: string[] = []
+      if (d.missing?.length) notes.push(`못 찾음: ${d.missing.join(', ')} (연결 확인)`)
+      if (d.failed?.length) notes.push(`연결 실패: ${d.failed.join(', ')}`)
+      setPresetMsg(
+        applied.length
+          ? `"${name}" 적용 — ${applied.join(', ')}${notes.length ? ` / ${notes.join(' / ')}` : ''}`
+          : `"${name}" 을 적용하지 못했습니다${notes.length ? ` — ${notes.join(' / ')}` : ''}`
+      )
     } catch (e) {
       setPresetMsg(`불러오기 실패: ${(e as Error).message}`)
-    }
+    } finally { setPresetBusy(false) }
   }
   const handlePresetDelete = async (name: string) => {
     if (!confirm(`"${name}" 프리셋을 삭제하시겠습니까?`)) return
@@ -493,8 +506,10 @@ export default function RobotsPage() {
             ? <span className="text-xs text-neutral-500">저장된 프리셋 없음</span>
             : presets.map((p) => (
                 <div key={p} className="flex items-center gap-1">
-                  <button onClick={() => handlePresetLoad(p)}
-                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white">{p}</button>
+                  <button onClick={() => handlePresetLoad(p)} disabled={presetBusy}
+                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-50">
+                    {presetBusy ? '적용 중…' : p}
+                  </button>
                   <button onClick={() => handlePresetDelete(p)}
                     className="px-1.5 py-1 text-xs rounded hover:bg-red-600 text-neutral-500 hover:text-white">x</button>
                 </div>
@@ -695,7 +710,11 @@ export default function RobotsPage() {
             {readyArms.map((arm) => (
               <div key={arm.iface} className="flex items-center justify-between rounded border border-green-500/30 bg-green-500/5 p-2.5">
                 <div className="flex items-center gap-2">
-                  <span className="text-green-400 text-sm">✓</span>
+                  {/* 등록됐다고 연결까지 되어 있는 것은 아니다 — 팔 전원이 꺼져 있거나
+                      프리셋 로드 중 연결이 실패하면 여기 끊긴 채로 남는다. */}
+                  <span className={arm.connected ? 'text-green-400 text-sm' : 'text-amber-400 text-sm'}>
+                    {arm.connected ? '✓' : '⚠'}
+                  </span>
                   <span className="font-mono text-sm">{arm.iface}</span>
                   <span className={`px-1.5 py-0.5 text-[10px] rounded ${arm.role === 'leader' ? 'bg-amber-600/30 text-amber-400' : 'bg-blue-600/30 text-blue-400'}`}>
                     {arm.role}
@@ -704,8 +723,17 @@ export default function RobotsPage() {
                   <span className="text-xs text-neutral-400">
                     {arm.role === 'leader' ? 'piper_leader' : 'piper_follower'}
                   </span>
+                  {!arm.connected && <span className="text-[10px] text-amber-400">연결 끊김</span>}
                 </div>
                 <div className="flex gap-2">
+                  {/* 끊긴 팔을 다시 붙일 길 — 1단계 목록에서는 이미 빠졌으므로
+                      여기에 없으면 등록을 끝낼 방법이 없어진다. */}
+                  {!arm.connected && (
+                    <button onClick={() => handleConnect(arm.iface)} disabled={connectingIface === arm.iface}
+                      className="px-3 py-1 text-xs rounded bg-green-600 hover:bg-green-500 text-white disabled:opacity-50">
+                      {connectingIface === arm.iface ? '연결 중...' : '연결'}
+                    </button>
+                  )}
                   <button onClick={() => handleSetMasterSlave(arm.iface, true)} disabled={settingMs === arm.iface}
                     className="px-3 py-1 text-xs rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50"
                     title="이 팔을 마스터(示教入力)로 설정">마스터</button>

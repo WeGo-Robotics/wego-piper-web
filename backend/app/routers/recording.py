@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.cli_mapping import build_record_args
+from app.core.hf_layout import repo_id_error
 from app.core.config import settings
 from app.services.exclusivity import Activity, require_idle
 from app.services.record_manager import record_manager
@@ -61,8 +62,10 @@ class RecordPreviewRequest(BaseModel):
 async def start_recording(body: RecordStartRequest):
     """녹화 시작."""
     require_idle(Activity.RECORDING)
-    if not body.repo_id:
-        raise HTTPException(400, "데이터셋 이름(repo_id)이 필요합니다.")
+    # LeRobot 은 `repo_id.split("/")` 를 2개로 언패킹한다 — 슬래시가 없으면
+    # 팔·카메라를 다 잡은 뒤 ValueError 로 죽어서 원인을 알기 어렵다. 시작 전에 막는다.
+    if err := repo_id_error(body.repo_id):
+        raise HTTPException(400, err)
     if not body.single_task:
         raise HTTPException(400, "Task 설명이 필요합니다.")
     if not body.robot_port:
@@ -94,7 +97,7 @@ async def start_recording(body: RecordStartRequest):
     params = body.model_dump()
     params.pop("web_preview", None)
 
-    # 헤드리스 에피소드 제어 채널 (건너뛰기/재녹화/정지)은 미리보기와 무관하게 항상 켠다.
+    # 헤드리스 에피소드 제어 채널은 미리보기와 무관하게 항상 켠다.
     # 버스 주소는 ProcessManager 가 모든 자식에게 넣으므로 여기서 넘기지 않는다.
     env_extra: dict[str, str] = {}
     control_bridge.start()
@@ -117,19 +120,63 @@ async def start_recording(body: RecordStartRequest):
     return {"status": "started", "pid": record_manager.pm.pid, "args": args}
 
 
+# `escape` 를 보낸 뒤 LeRobot 이 스스로 끝날 때까지 기다리는 시간.
+#
+# ⚠ **2초는 너무 짧았다.** `escape` 는 "지금 에피소드를 마무리하고 끝내라"는 뜻이라,
+# LeRobot 은 프레임을 데이터셋에 쓰고 **비디오를 인코딩**한 뒤에야 종료한다.
+# 60초 에피소드면 카메라당 900프레임이라 2초 안에 못 끝낸다 — 그 상태로 SIGTERM 을
+# 보내면 인코딩 도중에 끊긴다. 실측에서도 `escape` 후 종료까지 7초가 걸렸고,
+# 그 사이(2초 시점)에 SIGTERM 이 들어갔다.
+GRACEFUL_STOP_S = 60
+
+
 @router.post("/stop")
 async def stop_recording():
-    """녹화 정지 (ESC 키 주입 후 프로세스 종료)."""
-    record_manager.send_key("escape")
+    """녹화 정지. `escape` 로 정상 종료를 요청하고, 안 끝나면 프로세스를 내린다."""
     import asyncio
-    await asyncio.sleep(2)
-    if record_manager.is_running:
+
+    record_manager.send_key("escape")
+
+    # 스스로 끝나면 그 즉시 빠져나온다 — 다 기다리지 않는다.
+    deadline = GRACEFUL_STOP_S * 4
+    for _ in range(deadline):
+        if not record_manager.is_running:
+            break
+        await asyncio.sleep(0.25)
+
+    graceful = not record_manager.is_running
+    if not graceful:
+        logger.warning(
+            "escape 후 %d초 안에 끝나지 않아 프로세스를 종료합니다", GRACEFUL_STOP_S
+        )
         await record_manager.stop()
+
     from app.services.control_bridge import control_bridge
     from app.services.preview_bridge import preview_bridge
     control_bridge.stop()
     preview_bridge.stop()
-    return {"status": "stopped"}
+    return {"status": "stopped", "graceful": graceful}
+
+
+class TaskRequest(BaseModel):
+    task: str
+
+
+@router.post("/task")
+async def set_task(body: TaskRequest):
+    """녹화 중 task 문구 변경. **다음 에피소드부터** 적용된다.
+
+    LeRobot 은 에피소드 시작 시점의 task 를 그 에피소드의 모든 프레임에 찍는다.
+    진행 중인 에피소드를 도중에 바꾸면 한 에피소드 안에서 프레임마다 task 가 달라져
+    "에피소드 = 하나의 task" 전제가 깨지므로, 경계에서만 바꾼다.
+    """
+    task = body.task.strip()
+    if not task:
+        raise HTTPException(400, "task 가 비어 있습니다")
+    from app.services.control_bridge import control_bridge
+    if not control_bridge.set_task(task):
+        raise HTTPException(409, "녹화 중이 아니거나 버스에 연결되지 않았습니다")
+    return {"status": "ok", "task": task, "applies_from": "next_episode"}
 
 
 @router.get("/preview")
@@ -152,7 +199,11 @@ async def get_preview_frame(name: str):
 
 @router.post("/skip")
 async def skip_episode():
-    """현재 에피소드 건너뛰기 (→ 키 주입)."""
+    """이번 에피소드를 지금 마감하고 **저장**한 뒤 다음으로 (→ 키).
+
+    ⚠ 건너뛰기가 아니다 — LeRobot 이 `save_episode()` 로 떨어진다.
+    리셋 대기 중이면 "리셋 끝, 다음 시작"이 된다. 버리려면 `/rerecord` 를 쓴다.
+    """
     if not record_manager.is_running:
         raise HTTPException(400, "녹화가 실행 중이 아닙니다.")
     record_manager.send_key("right")

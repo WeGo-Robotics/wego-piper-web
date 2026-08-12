@@ -18,6 +18,34 @@ def _dir_size(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
+
+def _policy_type_of(config: dict) -> tuple[str, bool]:
+    """config.json 에서 정책 타입과 **정책 체크포인트인지 여부**를 뽑는다.
+
+    LeRobot 정책은 draccus ChoiceRegistry 판별자인 `type` 을 반드시 갖는다
+    (`act`/`smolvla`/`pi0`...). 그게 없으면 정책이 아니다 —
+    예: `HuggingFaceTB/SmolVLM2-500M-Video-Instruct` 는 smolvla 의 **비전-언어 백본**이라
+    models 디렉토리에 있지만 학습·추론 대상이 아니다. 그런데 파인튜닝 목록에 떠서
+    고르면 학습이 깨진다.
+
+    아는 정책 이름인지는 `core/policies.py` 한 곳에서 판단한다 — 목록을 또 만들지 않는다.
+    """
+    from app.core.policies import POLICIES
+
+    raw = config.get("type") or config.get("policy_type") or config.get("_target_") or "unknown"
+    name = raw.rsplit(".", 1)[-1] if "." in raw else raw
+    if name in POLICIES:
+        return name, True
+
+    # 옛 `_target_` 형식은 클래스 이름으로 온다 (`SmolVLAConfig`). 이제 이 판정이
+    # 체크포인트를 **숨기는** 방향으로 쓰이므로, 못 알아보면 멀쩡한 모델이 사라진다.
+    key = name.removesuffix("Config").lower()
+    for policy in POLICIES:
+        if policy.replace("_", "") == key:
+            return policy, True
+    return name, False
+
+
 def _parse_config(config_path: Path) -> dict:
     if not config_path.exists():
         return {}
@@ -116,15 +144,14 @@ def _scan_hf_cache(models_dir: Path) -> list[dict]:
         config_path = snapshot / "config.json"
         config = _parse_config(config_path)
 
-        policy_type = config.get("type", config.get("policy_type", config.get("_target_", "unknown")))
-        if "." in policy_type:
-            policy_type = policy_type.rsplit(".", 1)[-1]
+        policy_type, is_policy = _policy_type_of(config)
 
         stat = snapshot.stat()
         results.append({
             "id": repo_id,
             "path": str(snapshot),
             "policy_type": policy_type,
+            "is_policy": is_policy,
             "config": config,
             "requirements": extract_model_requirements(config, snapshot),
             "size_bytes": _dir_size(snapshot),
@@ -153,9 +180,7 @@ def _scan_train_outputs(models_dir: Path) -> list[dict]:
                 continue
 
             config = _parse_config(config_path)
-            policy_type = config.get("type", config.get("policy_type", config.get("_target_", "unknown")))
-            if "." in policy_type:
-                policy_type = policy_type.rsplit(".", 1)[-1]
+            policy_type, is_policy = _policy_type_of(config)
 
             step_label = ckpt_dir.name
             # models_dir 기준 상대경로로 ID 생성
@@ -170,6 +195,7 @@ def _scan_train_outputs(models_dir: Path) -> list[dict]:
                 "id": model_id,
                 "path": str(model_dir),
                 "policy_type": policy_type,
+                "is_policy": is_policy,
                 "config": config,
                 "requirements": extract_model_requirements(config, model_dir),
                 "size_bytes": _dir_size(model_dir),

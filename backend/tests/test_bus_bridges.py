@@ -93,10 +93,10 @@ def test_control_commands_come_from_the_contract():
     """
     from piper_bus import contract as C
 
-    assert C.CONTROL_COMMANDS == {C.CONTROL_SKIP, C.CONTROL_RERECORD, C.CONTROL_STOP}
+    assert C.CONTROL_COMMANDS == {C.CONTROL_NEXT, C.CONTROL_RERECORD, C.CONTROL_STOP}
     # wrapper 가 리터럴 대신 계약 상수를 쓰는지
     src = (_REPO / "wrapper" / "start_record.py").read_text()
-    assert "C.CONTROL_SKIP" in src and "C.CONTROL_STOP" in src
+    assert "C.CONTROL_NEXT" in src and "C.CONTROL_STOP" in src
     # record_manager 가 보내는 키가 계약에 있는 명령인지
     rm = (_REPO / "backend" / "app" / "services" / "record_manager.py").read_text()
     for cmd in C.CONTROL_COMMANDS:
@@ -205,7 +205,7 @@ def test_control_bridge_clears_queue_on_start_and_stop(bus):
     cb.start()
     assert bus.pop_control(timeout=1) is None, "start() 가 이전 명령을 안 버렸다"
 
-    assert cb.send(C.CONTROL_SKIP) is True
+    assert cb.send(C.CONTROL_NEXT) is True
     cb.stop()
     assert bus.pop_control(timeout=1) is None, "stop() 이 큐를 안 비웠다"
 
@@ -215,7 +215,7 @@ def test_control_bridge_is_noop_when_not_recording(bus):
     from app.services.control_bridge import ControlBridge
 
     cb = ControlBridge(bus)
-    assert cb.send(C.CONTROL_SKIP) is False
+    assert cb.send(C.CONTROL_NEXT) is False
     assert bus.pop_control(timeout=1) is None
 
 
@@ -259,3 +259,66 @@ def test_preview_bridge_clears_previous_session(bus):
     pb.start()
     assert pb.names() == []
     assert pb.get("top") is None
+
+
+def test_stop_waits_for_the_episode_to_be_written():
+    """**회귀** — `escape` 후 2초 만에 SIGTERM 을 보내면 인코딩 도중에 끊긴다.
+
+    `escape` 는 "지금 에피소드를 마무리하고 끝내라"는 뜻이라, LeRobot 은 프레임을
+    데이터셋에 쓰고 비디오를 인코딩한 뒤에야 종료한다. 실측에서 종료까지 7초가 걸렸고
+    그 사이(2초 시점)에 SIGTERM 이 들어갔다 — 60초 에피소드면 훨씬 위험하다.
+    """
+    src = (_REPO / "backend" / "app" / "routers" / "recording.py").read_text()
+    assert "GRACEFUL_STOP_S" in src, "정상 종료 대기 시간이 상수로 없다"
+    ns: dict = {}
+    for line in src.splitlines():
+        if line.startswith("GRACEFUL_STOP_S"):
+            exec(line, ns)
+    assert ns["GRACEFUL_STOP_S"] >= 30, "에피소드 인코딩을 기다리기엔 너무 짧다"
+
+    stop = src.split('@router.post("/stop")', 1)[1].split("@router.", 1)[0]
+    assert "record_manager.is_running" in stop, (
+        "스스로 끝났는지 확인하지 않고 무조건 기다리거나 무조건 죽인다"
+    )
+
+
+def test_record_task_is_cleared_between_sessions(bus):
+    """**세션 격리** — 지난 녹화의 task 가 다음 녹화 첫 에피소드에 새면 안 된다."""
+    from app.services.control_bridge import ControlBridge
+
+    bus.set_record_task("이전 세션 task")
+    cb = ControlBridge(bus)
+
+    cb.start()
+    assert bus.record_task() is None, "start() 가 이전 task 를 안 버렸다"
+
+    assert cb.set_task("새 task") is True
+    assert bus.record_task() == "새 task"
+
+    cb.stop()
+    assert bus.record_task() is None, "stop() 이 task 를 안 비웠다"
+
+
+def test_task_change_is_rejected_when_not_recording(bus):
+    from app.services.control_bridge import ControlBridge
+
+    assert ControlBridge(bus).set_task("x") is False
+    assert bus.record_task() is None
+
+
+def test_tests_never_touch_the_production_bus():
+    """**회귀** — 테스트가 운영 Redis DB 를 건드리면 안 된다.
+
+    실제로 일어났다: `test_train_jobs.py` 의 fixture 가 `piper:train:jobs` 를 지워서,
+    **돌고 있던 학습 기록이 pytest 를 돌릴 때마다 사라졌다.**
+    반대 방향은 더 위험하다 — 테스트가 띄운 estopd 가 진짜 추론 PID 를 SIGKILL 한다.
+
+    예전에는 파일마다 격리를 넣었다가 하나를 빠뜨렸다.
+    이제 `conftest.py` 의 autouse 픽스처가 전부 처리한다.
+    """
+    from piper_bus.client import url
+
+    from conftest import TEST_REDIS_URL
+
+    assert url() == TEST_REDIS_URL, f"테스트가 운영 DB 를 본다: {url()}"
+    assert not url().endswith("/0"), "0번은 운영 DB 다"

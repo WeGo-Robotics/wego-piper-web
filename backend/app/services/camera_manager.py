@@ -26,7 +26,15 @@ def _run_cmd(cmd: list[str], timeout: float = 2) -> tuple[int, str, str]:
 @dataclass
 class CameraInfo:
     id: str           # "/dev/video0" / "rs:<serial>:<stream>"
-    name: str         # "HD Webcam" 등
+    name: str         # 하드웨어가 말하는 이름 — "D435 Color", "HD Webcam" 등
+    # 사람이 붙이는 별칭 — "탑뷰", "손목". 등록할 때 지정한다.
+    #
+    # ⚠ **LeRobot 카메라 키와는 다른 값이다.** 데이터셋 피처는
+    # `observation.images.<키>` 로 굳고 정책도 그 키로 학습되므로, 여기서 이름을
+    # 바꾸면 학습된 정책이 안 열린다. 그래서 별칭은 **화면 표시 전용**으로 두고,
+    # 실제 키는 녹화·추론 페이지에서 따로 정한다. 대신 그 드롭다운이 별칭을 보여줘서
+    # "어느 게 탑뷰인지" 를 고르는 순간에 알 수 있게 한다.
+    label: str = ""
     usb_port: str = ""  # "4-3:1.0" = 연결된 USB 포트 경로 (구분용)
     cam_type: str = "opencv"  # opencv | realsense | zmq
     serial: str = ""        # realsense 디바이스 시리얼
@@ -55,6 +63,10 @@ class CameraInfo:
         return {
             "id": self.id,
             "name": self.name,
+            "label": self.label,
+            # 화면에 한 줄로 쓰기 좋은 표시명 — 별칭이 있으면 그것, 없으면 하드웨어 이름.
+            # 각 화면이 `label || name` 을 따로 적으면 규칙이 갈린다.
+            "display_name": self.label or self.name,
             "usb_port": self.usb_port,
             "cam_type": self.cam_type,
             "serial": self.serial,
@@ -533,7 +545,7 @@ class CameraManager:
         cam.update_config(cfg)
         return True
 
-    def register_camera(self, cam_id: str) -> bool:
+    def register_camera(self, cam_id: str, label: str | None = None) -> bool:
         cam = self.cameras.get(cam_id)
         if not cam:
             return False
@@ -542,7 +554,20 @@ class CameraManager:
             ok, _ = cam.connect()
             if not ok:
                 return False
+        if label is not None:
+            cam.label = label.strip()
         cam.ready = True
+        return True
+
+    def set_label(self, cam_id: str, label: str) -> bool:
+        """별칭만 바꾼다 — 등록 후에도 고칠 수 있어야 한다.
+
+        빈 문자열이면 별칭을 지우고 하드웨어 이름으로 되돌아간다.
+        """
+        cam = self.cameras.get(cam_id)
+        if not cam:
+            return False
+        cam.label = label.strip()
         return True
 
     def unregister_camera(self, cam_id: str) -> bool:
@@ -591,6 +616,7 @@ class CameraManager:
                 data.append({
                     "id": cam.id,
                     "name": cam.name,
+                    "label": cam.label,
                     "cam_type": cam.cam_type,
                     "config": {
                         "width": cam.width, "height": cam.height, "fps": cam.fps,
@@ -625,10 +651,11 @@ class CameraManager:
                 continue
             cam = self.cameras[cam_id]
             cam.cam_type = cam_data.get("cam_type", "opencv")
+            cam.label = cam_data.get("label", "")
             cam.update_config(cam_data.get("config", {}))
             cam.ready = True
             restored += 1
-            logger.info("  Restored camera %s (%s)", cam_id, cam.name)
+            logger.info("  Restored camera %s (%s)", cam_id, cam.label or cam.name)
 
         logger.info("Camera session restored: %d/%d cameras", restored, len(data))
         return restored > 0

@@ -85,13 +85,30 @@ PARAMS_QUEUE: Final = _k("params", "queue")
 # ── 녹화 제어 (게이트웨이 → wrapper) ─────────────────────────────────────────
 #
 # ZMQ PUSH/PULL tcp://127.0.0.1:5557 대체. 위와 같은 이유로 리스트다.
-# 헤드리스라 LeRobot 키보드 리스너가 꺼져 있어 이 채널이 건너뛰기/재녹화/정지의 유일한 경로다.
+# 헤드리스라 LeRobot 키보드 리스너가 꺼져 있어 이 채널이 에피소드 제어의 유일한 경로다.
 RECORD_CONTROL_QUEUE: Final = _k("record", "control")
 
-CONTROL_SKIP: Final = "right"       # exit_early
-CONTROL_RERECORD: Final = "left"    # rerecord_episode
-CONTROL_STOP: Final = "escape"      # stop_recording
-CONTROL_COMMANDS: Final = frozenset({CONTROL_SKIP, CONTROL_RERECORD, CONTROL_STOP})
+# ⚠ `right` 는 **건너뛰기가 아니다.** LeRobot 은 이 신호로 record 루프를 빠져나온 뒤
+# `dataset.save_episode()` 로 떨어진다 — **에피소드는 저장된다.** 지정 시간을 다 채우지
+# 않고 지금 마감한다는 뜻이다. (리셋 대기 중이면 "리셋 끝, 다음 시작"이 된다.)
+# 에피소드를 버리는 것은 `left`(재녹화)뿐이다. 이름이 "skip" 이던 시절 UI 문구까지
+# "건너뛰기"로 새어 사용자가 "이번 걸 버린다"로 읽었다.
+CONTROL_NEXT: Final = "right"       # exit_early — 지금 마감하고 저장 → 다음
+CONTROL_RERECORD: Final = "left"    # rerecord_episode — 폐기 후 다시
+CONTROL_STOP: Final = "escape"      # stop_recording — 저장하고 녹화 종료
+CONTROL_COMMANDS: Final = frozenset({CONTROL_NEXT, CONTROL_RERECORD, CONTROL_STOP})
+
+
+# ── 녹화 task (게이트웨이 → wrapper) ─────────────────────────────────────────
+#
+# 녹화 중 task 문구를 바꾼다. **큐가 아니라 키다** — 최신 값만 의미가 있고,
+# wrapper 는 에피소드를 시작할 때 한 번 읽는다.
+#
+# ⚠ **에피소드 단위로만 바뀐다.** LeRobot 은 `record_loop` 진입 시점의 task 를
+# 그 에피소드의 **모든 프레임**에 찍는다. 도중에 바꾸면 한 에피소드 안에서
+# 프레임마다 task 가 달라져 데이터셋의 "에피소드 = 하나의 task" 전제가 깨진다.
+# 그래서 바꾼 값은 **다음 에피소드부터** 적용한다.
+RECORD_TASK: Final = _k("record", "task")
 
 
 # ── 녹화 프리뷰 (wrapper → 게이트웨이) ───────────────────────────────────────

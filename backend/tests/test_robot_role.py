@@ -135,3 +135,117 @@ def test_page_lists_are_disjoint():
     )
     conn = next(ln for ln in src.splitlines() if "const connectedArms" in ln)
     assert "!a.ready" in conn, f"connectedArms 가 ready 를 걸러내지 않는다: {conn.strip()}"
+
+
+# ── 프리셋 로드는 연결까지 한다 ─────────────────────────────────────────────
+
+def _preset_manager(monkeypatch, tmp_path, *, connect_ok: bool):
+    from app.services import presets as preset_store
+    from app.services.robot_manager import RobotManager
+
+    monkeypatch.setattr(preset_store, "PRESETS_ROOT", tmp_path / "presets")
+    preset_store.save("robot", "사무실", {
+        "robot_type": None, "config_name": None,
+        "arms": [{"slot": None, "can_name": "can1", "bus_info": "3-3:1.0",
+                  "role": "leader", "ready": True, "config": {}}],
+    })
+
+    rm = RobotManager()
+    arm = ArmInfo(iface="can1", bus_info="3-3:1.0")
+    monkeypatch.setattr(
+        ArmInfo, "connect",
+        lambda self: (setattr(self, "connected", connect_ok) or (connect_ok, "OK" if connect_ok else "포트 없음")),
+    )
+    rm.arms["can1"] = arm
+    return rm, arm
+
+
+def test_preset_load_connects_the_arm(monkeypatch, tmp_path):
+    """**회귀** — `ready` 만 세우면 팔이 1·2단계 목록에서 빠지는데 CAN 은 안 열려 있다.
+
+    그 상태에서는 연결 버튼(1단계에만 있다)에 닿을 수가 없어 **등록을 끝낼 방법이 없다.**
+    `restore_session` 이 연결까지 하는 것과 같은 이유다.
+    """
+    rm, arm = _preset_manager(monkeypatch, tmp_path, connect_ok=True)
+    rm.load_preset("사무실")
+    assert arm.connected is True
+    assert arm.ready is True
+    assert arm.role == "leader"
+
+
+def test_preset_load_does_not_mark_failed_arm_as_ready(monkeypatch, tmp_path):
+    """연결 실패한 팔을 "사용 가능"으로 올리면 쓸 수 없는데 쓸 수 있다고 말하는 셈이다.
+
+    1단계에 남아야 사용자가 다시 시도할 수 있다.
+    """
+    rm, arm = _preset_manager(monkeypatch, tmp_path, connect_ok=False)
+    rm.load_preset("사무실")
+    assert arm.connected is False
+    assert arm.ready is False, "연결 못 한 팔이 사용 가능 목록에 올라갔다"
+
+
+def test_ready_card_can_reconnect():
+    """끊긴 팔을 다시 붙일 길이 사용 가능 카드에도 있어야 한다."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2]
+           / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
+    ready_section = src.split("사용 가능 로봇", 1)[1]
+    assert "!arm.connected" in ready_section and "handleConnect" in ready_section, (
+        "등록된 팔이 끊겼을 때 다시 연결할 방법이 없다"
+    )
+
+
+def test_preset_load_scans_first(monkeypatch, tmp_path):
+    """**회귀** — 스캔 안 하고 프리셋을 누르면 `self.arms` 가 비어 전부 건너뛴다.
+
+    "스캔 먼저"를 사용자가 알고 있어야 하는 것은 UI 의 잘못이다.
+    `restore_session` 도 스캔부터 한다.
+    """
+    from app.services import presets as preset_store
+    from app.services.robot_manager import RobotManager
+
+    monkeypatch.setattr(preset_store, "PRESETS_ROOT", tmp_path / "presets")
+    preset_store.save("robot", "p", {"robot_type": None, "config_name": None, "arms": [
+        {"slot": None, "can_name": "can1", "bus_info": "3-3:1.0",
+         "role": "leader", "ready": True, "config": {}}]})
+
+    rm = RobotManager()                      # arms 비어 있음 = 스캔 전
+    found = ArmInfo(iface="can1", bus_info="3-3:1.0")
+    monkeypatch.setattr(RobotManager, "scan",
+                        lambda self: self.arms.update({"can1": found}))
+    monkeypatch.setattr(ArmInfo, "connect",
+                        lambda self: (setattr(self, "connected", True), (True, "OK"))[1])
+
+    out = rm.load_preset("p")
+    assert out["applied"] == ["can1"], "스캔을 안 해서 팔을 못 찾았다"
+    assert found.ready is True
+
+
+def test_preset_load_reports_what_it_could_not_apply(monkeypatch, tmp_path):
+    """**회귀** — 하나도 적용 못 했는데 "적용됨"이라고 뜨면 안 된다."""
+    from app.services import presets as preset_store
+    from app.services.robot_manager import RobotManager
+
+    monkeypatch.setattr(preset_store, "PRESETS_ROOT", tmp_path / "presets")
+    preset_store.save("robot", "p", {"robot_type": None, "config_name": None, "arms": [
+        {"slot": None, "can_name": "can9", "bus_info": "9-9:9.9",
+         "role": "leader", "ready": True, "config": {}}]})
+
+    rm = RobotManager()
+    monkeypatch.setattr(RobotManager, "scan", lambda self: None)   # 아무것도 못 찾음
+
+    out = rm.load_preset("p")
+    assert out["applied"] == []
+    assert out["missing"] == ["can9"], "못 찾은 팔을 알려주지 않는다"
+
+
+def test_frontend_message_uses_the_actual_result():
+    """프리셋에 적힌 팔 수를 세면 '적용 안 됐는데 적용됨'이 된다."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2]
+           / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
+    handler = src.split("const handlePresetLoad", 1)[1].split("const handlePresetDelete", 1)[0]
+    assert "d.applied" in handler or "applied" in handler, "실제 적용 결과를 안 본다"
+    assert "d.arms?.length" not in handler, "프리셋에 적힌 팔 수를 세고 있다"

@@ -21,26 +21,7 @@ _ESTOPD = _REPO / "daemons" / "estopd.py"
 pytest.importorskip("redis")
 from piper_bus import Bus, contract as C  # noqa: E402
 
-# ⚠ **테스트 전용 Redis DB.** 운영과 같은 DB 를 쓰면 두 방향 모두 사고가 난다:
-#
-#   - 실행 중인 estopd 가 테스트의 heartbeat/PID 를 보고 테스트 victim 을 죽인다
-#   - 더 위험한 쪽: **테스트가 띄운 estopd 가 진짜 추론·녹화 PID 를 SIGKILL 한다.**
-#     학습·녹화 중에 `pytest` 를 돌리면 팔이 멈춘다.
-#
-# DB 번호만 바꾸면 키 공간이 완전히 갈린다.
-_TEST_DB = 15
-
-
-@pytest.fixture(autouse=True)
-def isolated_redis(monkeypatch):
-    """이 모듈의 모든 테스트(와 그 자식 estopd)를 별도 DB 로 격리한다."""
-    from piper_bus import client as bus_client
-
-    url = f"redis://127.0.0.1:6379/{_TEST_DB}"
-    monkeypatch.setenv("PIPER_REDIS_URL", url)
-    # 이미 만들어진 클라이언트가 있어도 새로 붙게 한다
-    monkeypatch.setattr(bus_client, "url", lambda: url)
-    yield
+# Redis 격리는 `conftest.py` 의 autouse 픽스처가 한다 — 파일마다 반복하지 않는다.
 
 
 @pytest.fixture

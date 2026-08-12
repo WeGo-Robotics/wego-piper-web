@@ -473,7 +473,12 @@ class PresetLoadRequest(BaseModel):
 
 @router.post("/presets/load")
 async def load_preset(body: PresetLoadRequest):
-    data = robot_manager.load_preset(body.name)
+    # 프리셋 로드는 팔마다 CAN 을 여느라 초 단위로 블로킹한다 —
+    # 이벤트 루프에서 돌리면 그동안 heartbeat 이 끊겨 E-stop 이 돈다.
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(None, robot_manager.load_preset, body.name)
     if not data:
         raise HTTPException(404, "Preset not found")
     return data

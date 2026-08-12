@@ -16,6 +16,8 @@ export type PolicyInfo = {
   infer: boolean
   rtc: boolean
   encoder_probe: boolean
+  /** 처음부터 학습이 무의미한 정책의 권장 시작점 (없으면 빈 문자열). */
+  policy_base: string
 }
 
 export function usePolicies() {
@@ -31,8 +33,15 @@ export function usePolicies() {
     [policies],
   )
 
+  /** 권장 베이스 체크포인트 — 프론트가 목록을 또 만들면 백엔드와 갈라진다. */
+  const policyBase = useCallback(
+    (type: string) => policies.find((p) => p.type === type)?.policy_base || '',
+    [policies],
+  )
+
   return {
     policies,
+    policyBase,
     trainable: policies.filter((p) => p.train),
     inferable: policies.filter((p) => p.infer),
     isRtc,

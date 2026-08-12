@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { type ReadyCam } from '../types/camera'
 
 type PolicyType = 'smolvla' | 'act'
 type SlotKey = 'A' | 'B'
 type ViewKind = 'input' | 'pca' | 'sim' | 'kmeans'
 
 type EncoderModel = { id: string; path: string; policy_type: PolicyType; modified?: string; cameras: string[] }
-type ReadyCam = { id: string; name: string }
 
 type Meta = {
   policy_type: PolicyType

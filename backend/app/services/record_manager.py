@@ -92,7 +92,10 @@ class RecordManager:
         await self.pm.stop()
 
     def send_key(self, key: str) -> None:
-        """에피소드 제어 명령 전송 (right=건너뛰기, left=재녹화, escape=정지).
+        """에피소드 제어 명령 전송.
+
+        `right`=지금 마감하고 저장 → 다음 (**건너뛰기가 아니다**),
+        `left`=폐기 후 재녹화, `escape`=저장하고 종료.
 
         헤드리스라 pynput 키 주입은 불가하므로, 버스 제어 채널로 wrapper 에 명령을
         보내 LeRobot events dict 를 직접 set 한다."""

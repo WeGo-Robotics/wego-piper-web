@@ -9,23 +9,41 @@ import LogViewer from '../components/LogViewer'
 import TrainingMetrics, { type MetricsData, type HistoryData } from '../components/TrainingMetrics'
 
 type Dataset = { id: string; path: string; total_episodes: number; total_frames: number; fps: number | null; features: Record<string, { shape?: number[]; dtype?: string; names?: string[] }> }
-type Model = { id: string; path: string; policy_type?: string; config?: Record<string, unknown>; requirements?: { required_cameras: { name: string; model_name?: string }[]; state_dim: number; action_dim: number } }
+type Model = { id: string; path: string; policy_type?: string; is_policy?: boolean; config?: Record<string, unknown>; requirements?: { required_cameras: { name: string; model_name?: string }[]; state_dim: number; action_dim: number } }
 type Checkpoint = { name: string; step: number; size_kb: number; path: string }
 
 // 정책 목록은 백엔드 core/policies.py 하나에서 온다 (usePolicies)
 // 이전에는 여기 `sac` 이 있었는데 추론 시작에서 ValueError 로 죽었다.
 const OPTIMIZER_TYPES = ['adam', 'adamw', 'sgd']
 
+// 정책별 **권장 시작점** — Hub 에 올라온 사전학습 정책 체크포인트.
+//
+// 이게 없으면 "처음부터 학습"밖에 못 고르는데, VLA 계열은 그러면 액션 전문가를
+// 맨바닥에서 올리는 셈이라 사실상 못 쓴다. 목록이 비었을 때 무엇을 받아야 하는지
+// 알려주고 바로 받을 수 있게 한다.
+// 처음부터 학습할 때 **가중치가 어디서 오는지** — 정책마다 다르다.
+// ACT 는 자체 기본값이 ImageNet 이라 받을 게 없고, VLA 는 베이스 체크포인트가 필요하다.
+const SCRATCH_WEIGHTS: Record<string, string> = {
+  act: '비전 백본(ResNet18)이 ImageNet 가중치로 시작합니다 — 받을 베이스 체크포인트가 없습니다',
+  diffusion: '비전 백본(ResNet18)을 ImageNet 가중치로 시작하도록 지정합니다 (LeRobot 기본값은 랜덤)',
+  vqbet: '비전 백본(ResNet18)을 ImageNet 가중치로 시작하도록 지정합니다 (LeRobot 기본값은 랜덤)',
+  tdmpc: '별도 비전 백본 사전학습이 없습니다',
+}
+
+
 // 정책별 학습 옵션 스키마 (단일 소스)
 //  - defaults: 정책 선택 시 공통 옵션(batch/steps/optimizer)에 적용할 권장값
 //  - fields: 노출할 --policy.<key> config 필드 (LeRobot config 클래스에서 확인한 기본값)
 // VLA(SmolVLA/Pi0/Pi05)는 추론 런타임 파라미터가 아닌 학습 config만 노출한다.
-type PolicyField = { key: string; label: string; type: 'number' | 'bool'; default: number | boolean; min?: number; max?: number; step?: number }
+// `arch: true` = 모델 구조를 정하는 값. 체크포인트에서 이어 학습(pretrained)하면
+// 구조가 이미 고정이라 바꿀 수 없다. 나머지는 **학습 방식** 이라 파인튜닝에도 유효하다
+// (예: freeze_vision_encoder — 파인튜닝에서 가장 중요한 스위치인데 예전엔 숨어 있었다).
+type PolicyField = { key: string; label: string; type: 'number' | 'bool'; default: number | boolean; min?: number; max?: number; step?: number; arch?: boolean }
 type PolicySchema = { defaults: { batchSize: number; steps: number; optimizerType: string }; fields: PolicyField[] }
 
 const PI_FIELDS: PolicyField[] = [
-  { key: 'chunk_size', label: 'chunk_size', type: 'number', default: 50, min: 1, max: 200, step: 1 },
-  { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 50, min: 1, max: 200, step: 1 },
+  { key: 'chunk_size', label: 'chunk_size', type: 'number', default: 50, min: 1, max: 200, step: 1, arch: true },
+  { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 50, min: 1, max: 200, step: 1, arch: true },
   { key: 'freeze_vision_encoder', label: 'freeze_vision_encoder', type: 'bool', default: false },
   { key: 'train_expert_only', label: 'train_expert_only', type: 'bool', default: false },
   { key: 'num_inference_steps', label: 'num_inference_steps', type: 'number', default: 10, min: 1, max: 100, step: 1 },
@@ -36,27 +54,27 @@ const POLICY_TRAIN_SCHEMAS: Record<string, PolicySchema> = {
   act: {
     defaults: { batchSize: 8, steps: 100000, optimizerType: 'adam' },
     fields: [
-      { key: 'chunk_size', label: 'chunk_size', type: 'number', default: 100, min: 1, max: 200, step: 1 },
-      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 100, min: 1, max: 200, step: 1 },
-      { key: 'n_obs_steps', label: 'n_obs_steps', type: 'number', default: 1, min: 1, max: 10, step: 1 },
-      { key: 'dim_model', label: 'dim_model', type: 'number', default: 512, min: 64, max: 2048, step: 64 },
-      { key: 'use_vae', label: 'use_vae', type: 'bool', default: true },
+      { key: 'chunk_size', label: 'chunk_size', type: 'number', default: 100, min: 1, max: 200, step: 1, arch: true },
+      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 100, min: 1, max: 200, step: 1, arch: true },
+      { key: 'n_obs_steps', label: 'n_obs_steps', type: 'number', default: 1, min: 1, max: 10, step: 1, arch: true },
+      { key: 'dim_model', label: 'dim_model', type: 'number', default: 512, min: 64, max: 2048, step: 64, arch: true },
+      { key: 'use_vae', label: 'use_vae', type: 'bool', default: true, arch: true },
     ],
   },
   diffusion: {
     defaults: { batchSize: 64, steps: 200000, optimizerType: 'adam' },
     fields: [
-      { key: 'horizon', label: 'horizon', type: 'number', default: 16, min: 1, max: 128, step: 1 },
-      { key: 'n_obs_steps', label: 'n_obs_steps', type: 'number', default: 2, min: 1, max: 10, step: 1 },
-      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 8, min: 1, max: 128, step: 1 },
-      { key: 'num_train_timesteps', label: 'num_train_timesteps', type: 'number', default: 100, min: 1, max: 1000, step: 1 },
+      { key: 'horizon', label: 'horizon', type: 'number', default: 16, min: 1, max: 128, step: 1, arch: true },
+      { key: 'n_obs_steps', label: 'n_obs_steps', type: 'number', default: 2, min: 1, max: 10, step: 1, arch: true },
+      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 8, min: 1, max: 128, step: 1, arch: true },
+      { key: 'num_train_timesteps', label: 'num_train_timesteps', type: 'number', default: 100, min: 1, max: 1000, step: 1, arch: true },
     ],
   },
   smolvla: {
     defaults: { batchSize: 64, steps: 200000, optimizerType: 'adamw' },
     fields: [
-      { key: 'chunk_size', label: 'chunk_size', type: 'number', default: 50, min: 1, max: 200, step: 1 },
-      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 50, min: 1, max: 200, step: 1 },
+      { key: 'chunk_size', label: 'chunk_size', type: 'number', default: 50, min: 1, max: 200, step: 1, arch: true },
+      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 50, min: 1, max: 200, step: 1, arch: true },
       { key: 'freeze_vision_encoder', label: 'freeze_vision_encoder', type: 'bool', default: true },
       { key: 'train_expert_only', label: 'train_expert_only', type: 'bool', default: true },
       // LeRobot 기본값은 false — 처음부터 학습할 때 false면 VLM(SigLIP 비전 인코더 포함)이
@@ -67,6 +85,35 @@ const POLICY_TRAIN_SCHEMAS: Record<string, PolicySchema> = {
   },
   pi0: { defaults: { batchSize: 32, steps: 30000, optimizerType: 'adamw' }, fields: PI_FIELDS },
   pi05: { defaults: { batchSize: 32, steps: 30000, optimizerType: 'adamw' }, fields: PI_FIELDS },
+  // 아래 셋은 백엔드 `core/policies.py` 의 trainable 목록에 있는데 스키마가 없어서
+  // **선택해도 화면이 전혀 안 바뀌었다.** 기본값은 LeRobot config 클래스에서 읽어 맞췄다.
+  pi0_fast: {
+    defaults: { batchSize: 32, steps: 30000, optimizerType: 'adamw' },
+    fields: [
+      { key: 'chunk_size', label: 'chunk_size', type: 'number', default: 50, min: 1, max: 200, step: 1, arch: true },
+      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 50, min: 1, max: 200, step: 1, arch: true },
+      { key: 'max_decoding_steps', label: 'max_decoding_steps', type: 'number', default: 256, min: 1, max: 1024, step: 1, arch: true },
+      { key: 'freeze_vision_encoder', label: 'freeze_vision_encoder', type: 'bool', default: false },
+      { key: 'gradient_checkpointing', label: 'gradient_checkpointing', type: 'bool', default: false },
+    ],
+  },
+  tdmpc: {
+    defaults: { batchSize: 256, steps: 100000, optimizerType: 'adam' },
+    fields: [
+      { key: 'horizon', label: 'horizon', type: 'number', default: 5, min: 1, max: 64, step: 1, arch: true },
+      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 1, min: 1, max: 64, step: 1, arch: true },
+      { key: 'n_obs_steps', label: 'n_obs_steps', type: 'number', default: 1, min: 1, max: 10, step: 1, arch: true },
+      { key: 'latent_dim', label: 'latent_dim', type: 'number', default: 50, min: 8, max: 1024, step: 1, arch: true },
+    ],
+  },
+  vqbet: {
+    defaults: { batchSize: 64, steps: 250000, optimizerType: 'adam' },
+    fields: [
+      { key: 'n_obs_steps', label: 'n_obs_steps', type: 'number', default: 5, min: 1, max: 20, step: 1, arch: true },
+      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 5, min: 1, max: 64, step: 1, arch: true },
+      { key: 'n_vqvae_training_steps', label: 'n_vqvae_training_steps', type: 'number', default: 20000, min: 100, max: 200000, step: 100 },
+    ],
+  },
 }
 
 // 정책의 config 필드 기본값 객체 생성
@@ -166,7 +213,7 @@ export default function TrainingPage() {
   // 배타 규칙은 백엔드 exclusivity.py 한 곳에만 있다
   const { isBlocked, blockedBy, refresh: refreshActivity } = useActivity()
   // 정책 목록도 백엔드 core/policies.py 한 곳에서 온다
-  const { trainable } = usePolicies()
+  const { trainable, policyBase } = usePolicies()
 
   const { connected } = useWebSocket('/ws', {
     onMessage: useCallback((msg: WsMessage) => {
@@ -270,9 +317,34 @@ export default function TrainingPage() {
 
   const isRunning = trainState === 'running' || trainState === 'starting' || trainState === 'stopping'
 
+  // 권장 베이스 체크포인트 받기 — 목록이 비었을 때 유일한 탈출구다
+  const [fetchingBase, setFetchingBase] = useState(false)
+  const handleFetchBase = async (repoId: string) => {
+    setFetchingBase(true)
+    try {
+      await api.post('/hub/download', { repo_id: repoId, repo_type: 'model' })
+      // 다운로드는 백그라운드다 — 완료를 기다렸다가 목록을 새로 읽는다
+      for (let i = 0; i < 120; i++) {
+        await new Promise((r) => setTimeout(r, 2000))
+        const st: { status?: string } = await api
+          .get<{ status?: string }>(`/hub/download/status?repo_id=${encodeURIComponent(repoId)}`)
+          .catch(() => ({}))
+        if (st.status && st.status !== 'running' && st.status !== 'started') break
+      }
+      setModels(await api.get<Model[]>('/models'))
+    } catch { /* 실패 사유는 Hub 페이지에서 확인한다 */ }
+    finally { setFetchingBase(false) }
+  }
+
   // 정책 변경 시 권장 기본값 + config 필드 리셋
   const handlePolicyChange = (next: string) => {
     setPolicyType(next)
+    // 고른 체크포인트가 새 정책과 안 맞으면 비운다 — 남겨두면 화면에는 안 보이는데
+    // CLI 인자에는 실려서 "왜 다른 모델로 학습되지"가 된다.
+    if (pretrainedPath) {
+      const cur = models.find((m) => m.path === pretrainedPath)
+      if (cur && cur.policy_type && cur.policy_type !== next) setPretrainedPath('')
+    }
     const schema = POLICY_TRAIN_SCHEMAS[next]
     if (schema) {
       setBatchSize(schema.defaults.batchSize)
@@ -288,7 +360,17 @@ export default function TrainingPage() {
     setCliEdited(false)
   }
 
+  // 파인튜닝 후보는 **같은 정책의 체크포인트뿐**이다.
+  // 예전에는 models 디렉토리의 모든 것을 나열해서, smolvla 의 비전-언어 백본
+  // (`SmolVLM2-500M-Video-Instruct`) 처럼 정책이 아닌 모델까지 떴다 — 고르면 학습이 깨진다.
+  const finetuneCandidates = models.filter(
+    (m) => m.is_policy !== false && (!m.policy_type || m.policy_type === policyType)
+  )
+
   const policySchema = POLICY_TRAIN_SCHEMAS[policyType]
+  // 체크포인트에서 이어 학습하면 모델 구조는 이미 고정 — `arch` 값만 가린다.
+  // 학습 방식 스위치(freeze_vision_encoder 등)는 파인튜닝에서도 유효하다.
+  const policyFields = (policySchema?.fields ?? []).filter((f) => !(pretrainedPath && f.arch))
 
   const trainParams = () => ({
     dataset_repo_id: selectedDataset, policy_type: policyType,
@@ -380,422 +462,474 @@ export default function TrainingPage() {
         </div>
       </div>
 
-      <div className={`grid gap-6 ${isRunning ? 'grid-cols-1 lg:grid-cols-[1fr_2fr]' : 'grid-cols-1 lg:grid-cols-[2fr_1fr]'}`}>
-        {/* 좌측: 설정 또는 메트릭 */}
-        <div className="space-y-4">
-          {!isRunning ? (
-            <>
-              {/* 프리셋 — 학습 파라미터는 기기와 무관하므로 shared */}
-              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
-                <PresetBar domain="training" scope="shared" policyType={policyType}
-                  values={presetValues} onApply={applyPreset} disabled={isRunning} />
-              </div>
-              {/* 데이터셋 */}
-              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-                <h3 className="text-sm font-semibold">데이터셋</h3>
-                <select value={selectedDataset} onChange={(e) => { setSelectedDataset(e.target.value); setCliEdited(false) }}
-                  className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                  <option value="">선택...</option>
-                  {datasets.map((d) => (
-                    <option key={d.id} value={d.id}>{d.id} ({d.total_episodes} ep, {d.total_frames} frames)</option>
-                  ))}
-                </select>
-              </div>
+      {!isRunning ? (
+        <>
+          {/* 설정은 두 열로 나눠 담고, CLI 와 로그는 가로를 다 쓴다.
+              예전에는 2:1 세로 분할이라 로그가 좁고 길게 눌려 한 줄이 자꾸 접혔다 —
+              LeRobot 로그는 경로와 JSON 이 길어서 가로가 중요하다. */}
+          {/* 프리셋 — 얇은 바라 2열 셀에 넣으면 어색하다. 위에 전체폭으로 둔다.
+              학습 파라미터는 기기와 무관하므로 shared */}
+          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
+            <PresetBar domain="training" scope="shared" policyType={policyType}
+              values={presetValues} onApply={applyPreset} disabled={isRunning} />
+          </div>
 
-              {/* 데이터셋 정보 */}
-              {selectedDataset && (() => {
-                const ds = datasets.find((d) => d.id === selectedDataset)
-                if (!ds?.features) return null
-                const stateShape = ds.features['observation.state']?.shape
-                const actionShape = ds.features['action']?.shape
-                const stateNames = ds.features['observation.state']?.names
-                const cameras = Object.keys(ds.features).filter((k) => k.startsWith('observation.images.'))
-                return (
-                  <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-                    <h3 className="text-sm font-semibold">데이터셋 정보</h3>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div>
-                        <span className="text-neutral-400">관절 (state):</span>
-                        <span className="ml-1 text-neutral-100">{stateShape?.[0] ?? '?'}개</span>
-                        {stateNames && <span className="text-neutral-500 ml-1">({stateNames.join(', ')})</span>}
-                      </div>
-                      <div>
-                        <span className="text-neutral-400">액션:</span>
-                        <span className="ml-1 text-neutral-100">{actionShape?.[0] ?? '?'}차원</span>
-                      </div>
-                    </div>
-                    {stateShape && actionShape && stateShape[0] !== actionShape[0] && (
-                      <p className="text-xs text-amber-400">state({stateShape[0]})와 action({actionShape[0]}) 차원이 다릅니다. 베이스 모델의 기본 state_dim이 다를 수 있으니 CLI에서 확인하세요.</p>
-                    )}
-                    {cameras.length > 0 && (
-                      <div className="text-xs">
-                        <span className="text-neutral-400">카메라 ({cameras.length}대):</span>
-                        <span className="ml-1 text-neutral-100">
-                          {cameras.map((c) => c.replace('observation.images.', '')).join(', ')}
-                        </span>
-                      </div>
-                    )}
-                    <div className="text-xs pt-2 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <label className="text-neutral-400 font-medium">카메라 이름 매핑</label>
-                        {renameMap && pretrainedPath && <span className="text-[10px] text-green-400">자동 감지됨</span>}
-                      </div>
-                      {(() => {
-                        let entries: [string, string][] = []
-                        try { entries = Object.entries(JSON.parse(renameMap || '{}')) } catch {}
-                        const updateEntries = (newEntries: [string, string][]) => {
-                          const obj: Record<string, string> = {}
-                          newEntries.forEach(([k, v]) => { if (k) obj[k] = v })
-                          setRenameMap(Object.keys(obj).length > 0 ? JSON.stringify(obj, null, 2) : '')
-                          setCliEdited(false)
-                        }
-                        return (
-                          <>
-                            <table className="w-full text-xs">
-                              <thead>
-                                <tr className="text-neutral-500">
-                                  <th className="text-left py-1 pr-2">데이터셋 카메라</th>
-                                  <th className="text-center py-1 px-1">→</th>
-                                  <th className="text-left py-1 pl-2">모델 카메라</th>
-                                  <th className="w-8"></th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {entries.map(([src, dst], idx) => (
-                                  <tr key={idx}>
-                                    <td className="pr-1 py-0.5">
-                                      <input type="text" value={src.replace('observation.images.', '')}
-                                        onChange={(e) => {
-                                          const newEntries = [...entries]
-                                          newEntries[idx] = [`observation.images.${e.target.value}`, dst]
-                                          updateEntries(newEntries)
-                                        }}
-                                        className="w-full px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100" />
-                                    </td>
-                                    <td className="text-center text-neutral-600">→</td>
-                                    <td className="pl-1 py-0.5">
-                                      <input type="text" value={dst.replace('observation.images.', '')}
-                                        onChange={(e) => {
-                                          const newEntries = [...entries]
-                                          newEntries[idx] = [src, `observation.images.${e.target.value}`]
-                                          updateEntries(newEntries)
-                                        }}
-                                        className="w-full px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100" />
-                                    </td>
-                                    <td>
-                                      <button onClick={() => updateEntries(entries.filter((_, i) => i !== idx))}
-                                        className="text-neutral-600 hover:text-red-400 px-1">x</button>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                            <button onClick={() => updateEntries([...entries, ['observation.images.', 'observation.images.camera' + (entries.length + 1)]])}
-                              className="text-[10px] text-blue-400 hover:text-blue-300">+ 매핑 추가</button>
-                          </>
-                        )
-                      })()}
-                      <textarea value={renameMap} readOnly rows={2}
-                        className="w-full px-2 py-1 rounded bg-neutral-950 border border-neutral-800 text-[10px] font-mono text-neutral-500 resize-none" />
-                    </div>
+          <div className="grid gap-6 grid-cols-1 lg:grid-cols-2 items-start">
+          {/* 데이터셋 */}
+          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
+            <h3 className="text-sm font-semibold">데이터셋</h3>
+            <select value={selectedDataset} onChange={(e) => { setSelectedDataset(e.target.value); setCliEdited(false) }}
+              className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
+              <option value="">선택...</option>
+              {datasets.map((d) => (
+                <option key={d.id} value={d.id}>{d.id} ({d.total_episodes} ep, {d.total_frames} frames)</option>
+              ))}
+            </select>
+          </div>
+
+          {/* 데이터셋 정보 */}
+          {selectedDataset && (() => {
+            const ds = datasets.find((d) => d.id === selectedDataset)
+            if (!ds?.features) return null
+            const stateShape = ds.features['observation.state']?.shape
+            const actionShape = ds.features['action']?.shape
+            const stateNames = ds.features['observation.state']?.names
+            const cameras = Object.keys(ds.features).filter((k) => k.startsWith('observation.images.'))
+            return (
+              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
+                <h3 className="text-sm font-semibold">데이터셋 정보</h3>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-neutral-400">관절 (state):</span>
+                    <span className="ml-1 text-neutral-100">{stateShape?.[0] ?? '?'}개</span>
+                    {stateNames && <span className="text-neutral-500 ml-1">({stateNames.join(', ')})</span>}
                   </div>
-                )
-              })()}
-
-              {/* 정책 */}
-              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-                <h3 className="text-sm font-semibold">정책</h3>
-                <select value={policyType} onChange={(e) => handlePolicyChange(e.target.value)}
-                  className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                  {trainable.map((p) => <option key={p.type} value={p.type}>{p.label}</option>)}
-                </select>
-                <div className="space-y-1">
-                  <label className="text-xs text-neutral-400">Fine-tune 모델 (선택)</label>
-                  <select value={pretrainedPath} onChange={(e) => { setPretrainedPath(e.target.value); setCliEdited(false) }}
-                    className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                    <option value="">처음부터 학습</option>
-                    {models.map((m) => <option key={m.id} value={m.path}>{m.id}</option>)}
-                  </select>
+                  <div>
+                    <span className="text-neutral-400">액션:</span>
+                    <span className="ml-1 text-neutral-100">{actionShape?.[0] ?? '?'}차원</span>
+                  </div>
                 </div>
-                {pretrainedPath && (() => {
-                  const m = models.find((mm) => mm.path === pretrainedPath)
-                  if (!m?.requirements) return null
-                  const r = m.requirements
-                  return (
-                    <div className="rounded border border-neutral-700 bg-neutral-900 p-2 space-y-1 text-xs">
-                      <div className="flex items-center gap-2 text-neutral-300">
-                        <span className="font-medium">{m.policy_type ?? '?'}</span>
-                        <span className="text-neutral-500">|</span>
-                        <span>state: {r.state_dim}</span>
-                        <span className="text-neutral-500">|</span>
-                        <span>action: {r.action_dim}</span>
-                      </div>
-                      {r.required_cameras.length > 0 && (
-                        <div className="text-neutral-400">
-                          카메라: {r.required_cameras.map((c) => (
-                            <span key={c.name} className="inline-block mr-2">
-                              <span className="text-neutral-200">{c.name}</span>
-                              {c.model_name && c.model_name !== c.name && <span className="text-neutral-600 text-[10px]">({c.model_name})</span>}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      <div className="text-[10px] text-neutral-600 truncate">{m.path}</div>
-                    </div>
-                  )
-                })()}
-                <div className="space-y-1">
-                  <label className="text-xs text-neutral-400">Policy Repo ID (Hub 업로드용)</label>
-                  <input type="text" value={policyRepoId}
-                    onChange={(e) => { setPolicyRepoId(e.target.value); setCliEdited(false) }}
-                    placeholder="예: wego-hansu/piper_tws_v2"
-                    className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 placeholder:text-neutral-600" />
-                  {policyRepoId && (() => {
-                    const existing = models.find((m) => m.id.includes(policyRepoId.split('/').pop() || ''))
-                    if (!existing) return null
+                {stateShape && actionShape && stateShape[0] !== actionShape[0] && (
+                  <p className="text-xs text-amber-400">state({stateShape[0]})와 action({actionShape[0]}) 차원이 다릅니다. 베이스 모델의 기본 state_dim이 다를 수 있으니 CLI에서 확인하세요.</p>
+                )}
+                {cameras.length > 0 && (
+                  <div className="text-xs">
+                    <span className="text-neutral-400">카메라 ({cameras.length}대):</span>
+                    <span className="ml-1 text-neutral-100">
+                      {cameras.map((c) => c.replace('observation.images.', '')).join(', ')}
+                    </span>
+                  </div>
+                )}
+                <div className="text-xs pt-2 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-neutral-400 font-medium">카메라 이름 매핑</label>
+                    {renameMap && pretrainedPath && <span className="text-[10px] text-green-400">자동 감지됨</span>}
+                  </div>
+                  {(() => {
+                    let entries: [string, string][] = []
+                    try { entries = Object.entries(JSON.parse(renameMap || '{}')) } catch {}
+                    const updateEntries = (newEntries: [string, string][]) => {
+                      const obj: Record<string, string> = {}
+                      newEntries.forEach(([k, v]) => { if (k) obj[k] = v })
+                      setRenameMap(Object.keys(obj).length > 0 ? JSON.stringify(obj, null, 2) : '')
+                      setCliEdited(false)
+                    }
                     return (
-                      <p className="text-xs text-amber-400 mt-1">
-                        이미 로컬에 존재합니다: {existing.id}
-                        <button onClick={async () => {
-                          if (!confirm(`"${existing.id}" 모델을 삭제하시겠습니까?\n경로: ${existing.path}`)) return
-                          await api.delete(`/models/${existing.id}`)
-                          api.get<Model[]>('/models').then(setModels).catch(() => {})
-                        }} className="ml-2 text-red-400 hover:text-red-300 underline">삭제</button>
-                      </p>
+                      <>
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-neutral-500">
+                              <th className="text-left py-1 pr-2">데이터셋 카메라</th>
+                              <th className="text-center py-1 px-1">→</th>
+                              <th className="text-left py-1 pl-2">모델 카메라</th>
+                              <th className="w-8"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {entries.map(([src, dst], idx) => (
+                              <tr key={idx}>
+                                <td className="pr-1 py-0.5">
+                                  <input type="text" value={src.replace('observation.images.', '')}
+                                    onChange={(e) => {
+                                      const newEntries = [...entries]
+                                      newEntries[idx] = [`observation.images.${e.target.value}`, dst]
+                                      updateEntries(newEntries)
+                                    }}
+                                    className="w-full px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100" />
+                                </td>
+                                <td className="text-center text-neutral-600">→</td>
+                                <td className="pl-1 py-0.5">
+                                  <input type="text" value={dst.replace('observation.images.', '')}
+                                    onChange={(e) => {
+                                      const newEntries = [...entries]
+                                      newEntries[idx] = [src, `observation.images.${e.target.value}`]
+                                      updateEntries(newEntries)
+                                    }}
+                                    className="w-full px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100" />
+                                </td>
+                                <td>
+                                  <button onClick={() => updateEntries(entries.filter((_, i) => i !== idx))}
+                                    className="text-neutral-600 hover:text-red-400 px-1">x</button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <button onClick={() => updateEntries([...entries, ['observation.images.', 'observation.images.camera' + (entries.length + 1)]])}
+                          className="text-[10px] text-blue-400 hover:text-blue-300">+ 매핑 추가</button>
+                      </>
                     )
                   })()}
+                  <textarea value={renameMap} readOnly rows={2}
+                    className="w-full px-2 py-1 rounded bg-neutral-950 border border-neutral-800 text-[10px] font-mono text-neutral-500 resize-none" />
                 </div>
               </div>
+            )
+          })()}
 
-              {/* 기본 파라미터 */}
-              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-                <h3 className="text-sm font-semibold">파라미터</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { label: 'Batch Size', value: batchSize, set: setBatchSize, min: 1, max: 256 },
-                    { label: 'Steps', value: steps, set: setSteps, min: 1000, max: 10000000, step: 10000 },
-                    { label: 'Log Freq', value: logFreq, set: setLogFreq, min: 10, max: 10000 },
-                    { label: 'Save Freq', value: saveFreq, set: setSaveFreq, min: 1000, max: 100000 },
-                  ].map(({ label, value, set, min, max, step }) => (
-                    <div key={label}>
-                      <label className="text-xs text-neutral-400">{label}</label>
-                      <input type="number" value={value} min={min} max={max} step={step || 1}
-                        onChange={(e) => { set(Number(e.target.value)); setCliEdited(false) }}
-                        className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
-                    </div>
-                  ))}
-                </div>
-
-                {/* 혼합정밀도(AMP): ACCELERATE_MIXED_PRECISION env로 적용 (--policy.use_amp는 학습 미사용). 속도 최대 레버 */}
-                <div>
-                  <label className="text-xs text-neutral-400">혼합정밀도 (AMP)</label>
-                  <select value={amp} onChange={(e) => { setAmp(e.target.value); setCliEdited(false) }}
-                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                    <option value="bf16">bf16 (권장 · RTX 5090)</option>
-                    <option value="fp16">fp16</option>
-                    <option value="off">off (fp32)</option>
-                  </select>
-                  <p className="text-[10px] text-neutral-500 mt-0.5">
-                    bf16: 속도↑·VRAM↓ (5090 권장). VRAM 여유 시 Batch를 32~48로 키우세요.
+          {/* 정책 */}
+          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
+            <h3 className="text-sm font-semibold">정책</h3>
+            <select value={policyType} onChange={(e) => handlePolicyChange(e.target.value)}
+              className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
+              {trainable.map((p) => <option key={p.type} value={p.type}>{p.label}</option>)}
+            </select>
+            <div className="space-y-1">
+              <label className="text-xs text-neutral-400">Fine-tune 모델 (선택)</label>
+              <select value={pretrainedPath} onChange={(e) => { setPretrainedPath(e.target.value); setCliEdited(false) }}
+                className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
+                <option value="">처음부터 학습</option>
+                {finetuneCandidates.map((m) => <option key={m.id} value={m.path}>{m.id}</option>)}
+              </select>
+              {/* SmolVLA 의 `load_vlm_weights` 는 LeRobot 기본값이 **false** 다.
+                  false 면 `SmolVLMForConditionalGeneration(config=...)` 로 VLM 을
+                  **랜덤 초기화**한다 — 사전학습 가중치를 안 쓴다는 뜻이다.
+                  이 저장소가 예전에 실제로 당한 문제라(커밋 ce768bc) 눈에 보이게 경고한다. */}
+              {!pretrainedPath && policyType === 'smolvla' && policyParams.load_vlm_weights === false && (
+                <p className="mt-1 px-2 py-1.5 rounded bg-red-500/10 border border-red-500/30 text-[10px] text-red-300">
+                  ⚠ <b>load_vlm_weights 가 꺼져 있습니다.</b> 이 상태로 처음부터 학습하면
+                  비전-언어 백본까지 랜덤 초기화되어 사실상 학습이 되지 않습니다.
+                  아래 파라미터에서 켜거나 체크포인트를 골라주세요.
+                </p>
+              )}
+              {!pretrainedPath && SCRATCH_WEIGHTS[policyType] && (
+                <p className="text-[10px] text-neutral-500 mt-1">
+                  처음부터 학습 — {SCRATCH_WEIGHTS[policyType]}
+                </p>
+              )}
+              {finetuneCandidates.length === 0 && (
+                <div className="mt-1 space-y-1">
+                  <p className="text-[10px] text-neutral-500">
+                    로컬에 {policyType} 체크포인트가 없습니다.
+                    {models.length > 0 && ` (다른 정책 모델 ${models.length}개는 이어서 학습할 수 없어 숨겼습니다)`}
                   </p>
-                </div>
-
-                <label className="flex items-center gap-2 text-xs cursor-pointer">
-                  <input type="checkbox" checked={resume} onChange={(e) => { setResume(e.target.checked); setCliEdited(false) }}
-                    className="accent-blue-500" />
-                  <span className="text-neutral-400">체크포인트에서 재개 (Resume)</span>
-                </label>
-                <label className="flex items-center gap-2 text-xs cursor-pointer">
-                  <input type="checkbox" checked={usePolicyPreset} onChange={(e) => { setUsePolicyPreset(e.target.checked); setCliEdited(false) }}
-                    className="accent-blue-500" />
-                  <span className="text-neutral-400">정책 학습 프리셋 사용 (use_policy_training_preset)</span>
-                  {!usePolicyPreset && <span className="text-yellow-500 text-[10px]">OFF — config.json 값 그대로 사용</span>}
-                </label>
-              </div>
-
-              {/* 정책별 config 파라미터 (from-scratch 학습 시에만; pretrained면 아키텍처 고정) */}
-              {policySchema && policySchema.fields.length > 0 && !pretrainedPath && (
-                <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-                  <h3 className="text-sm font-semibold">{policyType.toUpperCase()} 파라미터</h3>
-                  <div className="grid grid-cols-2 gap-2">
-                    {policySchema.fields.map((f) => (
-                      <div key={f.key} className={f.type === 'bool' ? 'col-span-2' : ''}>
-                        {f.type === 'bool' ? (
-                          <label className="flex items-center gap-2 text-xs cursor-pointer">
-                            <input type="checkbox" checked={Boolean(policyParams[f.key] ?? f.default)}
-                              onChange={(e) => setPolicyParam(f.key, e.target.checked)}
-                              className="accent-blue-500" />
-                            <span className="text-neutral-400">{f.label}</span>
-                          </label>
-                        ) : (
-                          <>
-                            <label className="text-xs text-neutral-400">{f.label}</label>
-                            <input type="number" value={Number(policyParams[f.key] ?? f.default)}
-                              min={f.min} max={f.max} step={f.step || 1}
-                              onChange={(e) => setPolicyParam(f.key, Number(e.target.value))}
-                              className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
-                          </>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  {typeof policyParams.n_action_steps === 'number' && typeof policyParams.chunk_size === 'number'
-                    && policyParams.n_action_steps > policyParams.chunk_size && (
-                    <span className="text-yellow-500 text-[10px]">⚠ n_action_steps는 chunk_size 이하여야 합니다</span>
-                  )}
-                  {policyType === 'smolvla' && !policyParams.load_vlm_weights && (
-                    <span className="block text-red-400 text-[10px]">
-                      ⚠ load_vlm_weights=false — VLM이 랜덤 초기화됩니다
-                      {policyParams.freeze_vision_encoder
-                        ? ' (freeze_vision_encoder=true와 겹쳐 비전 인코더가 학습조차 되지 않습니다)'
-                        : ''}
-                    </span>
+                  {policyBase(policyType) && (
+                    <div className="flex items-center gap-2 px-2 py-1.5 rounded bg-amber-500/10 border border-amber-500/30">
+                      <span className="text-[10px] text-amber-300 flex-1">
+                        권장 시작점: <span className="font-mono">{policyBase(policyType)}</span>
+                        {' '}— 없이 처음부터 학습하면 액션 전문가를 맨바닥에서 올립니다
+                      </span>
+                      <button onClick={() => handleFetchBase(policyBase(policyType))}
+                        disabled={fetchingBase}
+                        className="shrink-0 px-2 py-0.5 text-[10px] rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
+                        {fetchingBase ? '받는 중…' : 'Hub 에서 받기'}
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
+            </div>
+            {pretrainedPath && (() => {
+              const m = models.find((mm) => mm.path === pretrainedPath)
+              if (!m?.requirements) return null
+              const r = m.requirements
+              return (
+                <div className="rounded border border-neutral-700 bg-neutral-900 p-2 space-y-1 text-xs">
+                  <div className="flex items-center gap-2 text-neutral-300">
+                    <span className="font-medium">{m.policy_type ?? '?'}</span>
+                    <span className="text-neutral-500">|</span>
+                    <span>state: {r.state_dim}</span>
+                    <span className="text-neutral-500">|</span>
+                    <span>action: {r.action_dim}</span>
+                  </div>
+                  {r.required_cameras.length > 0 && (
+                    <div className="text-neutral-400">
+                      카메라: {r.required_cameras.map((c) => (
+                        <span key={c.name} className="inline-block mr-2">
+                          <span className="text-neutral-200">{c.name}</span>
+                          {c.model_name && c.model_name !== c.name && <span className="text-neutral-600 text-[10px]">({c.model_name})</span>}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="text-[10px] text-neutral-600 truncate">{m.path}</div>
+                </div>
+              )
+            })()}
+            <div className="space-y-1">
+              <label className="text-xs text-neutral-400">Policy Repo ID (Hub 업로드용)</label>
+              <input type="text" value={policyRepoId}
+                onChange={(e) => { setPolicyRepoId(e.target.value); setCliEdited(false) }}
+                placeholder="예: wego-hansu/piper_tws_v2"
+                className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 placeholder:text-neutral-600" />
+              {policyRepoId && (() => {
+                const existing = models.find((m) => m.id.includes(policyRepoId.split('/').pop() || ''))
+                if (!existing) return null
+                return (
+                  <p className="text-xs text-amber-400 mt-1">
+                    이미 로컬에 존재합니다: {existing.id}
+                    <button onClick={async () => {
+                      if (!confirm(`"${existing.id}" 모델을 삭제하시겠습니까?\n경로: ${existing.path}`)) return
+                      await api.delete(`/models/${existing.id}`)
+                      api.get<Model[]>('/models').then(setModels).catch(() => {})
+                    }} className="ml-2 text-red-400 hover:text-red-300 underline">삭제</button>
+                  </p>
+                )
+              })()}
+            </div>
+          </div>
 
-              {/* 고급 설정 */}
-              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-                <button onClick={() => setShowAdvanced(!showAdvanced)}
-                  className="text-sm font-semibold text-neutral-300 hover:text-white">
-                  {showAdvanced ? '▾' : '▸'} 고급 설정
-                </button>
-                {showAdvanced && (
-                  <div className="grid grid-cols-2 gap-2 pt-2">
-                    <div>
-                      <label className="text-xs text-neutral-400">Optimizer</label>
-                      <select value={optimizerType} onChange={(e) => { setOptimizerType(e.target.value); setCliEdited(false) }}
-                        className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                        {OPTIMIZER_TYPES.map((o) => <option key={o} value={o}>{o}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-xs text-neutral-400">Learning Rate (0=기본)</label>
-                      <input type="number" value={learningRate} step={0.0001} min={0}
-                        onChange={(e) => { setLearningRate(Number(e.target.value)); setCliEdited(false) }}
-                        className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
-                    </div>
-                    <div>
-                      <label className="text-xs text-neutral-400">Workers</label>
-                      <input type="number" value={numWorkers} min={0} max={32}
-                        onChange={(e) => { setNumWorkers(Number(e.target.value)); setCliEdited(false) }}
-                        className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
-                      <p className="text-[10px] text-neutral-500 mt-0.5">data_s &gt; updt_s면 ↑ (데이터 로딩 병목)</p>
-                    </div>
-                    <div>
-                      <label className="text-xs text-neutral-400">Seed</label>
-                      <input type="number" value={seed}
-                        onChange={(e) => { setSeed(Number(e.target.value)); setCliEdited(false) }}
-                        className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
-                    </div>
-                    <div>
-                      <label className="text-xs text-neutral-400">Device</label>
-                      <select value={device} onChange={(e) => { setDevice(e.target.value); setCliEdited(false) }}
-                        className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                        <option value="cuda">CUDA (GPU)</option>
-                        <option value="cpu">CPU</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-xs text-neutral-400">Output Dir (비우면 자동)</label>
-                      <input type="text" value={outputDir}
-                        onChange={(e) => { setOutputDir(e.target.value); setCliEdited(false) }}
-                        className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
-                    </div>
-                    <div className="col-span-2">
+          {/* 기본 파라미터 */}
+          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
+            <h3 className="text-sm font-semibold">파라미터</h3>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { label: 'Batch Size', value: batchSize, set: setBatchSize, min: 1, max: 256 },
+                { label: 'Steps', value: steps, set: setSteps, min: 1000, max: 10000000, step: 10000 },
+                { label: 'Log Freq', value: logFreq, set: setLogFreq, min: 10, max: 10000 },
+                { label: 'Save Freq', value: saveFreq, set: setSaveFreq, min: 1000, max: 100000 },
+              ].map(({ label, value, set, min, max, step }) => (
+                <div key={label}>
+                  <label className="text-xs text-neutral-400">{label}</label>
+                  <input type="number" value={value} min={min} max={max} step={step || 1}
+                    onChange={(e) => { set(Number(e.target.value)); setCliEdited(false) }}
+                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+                </div>
+              ))}
+            </div>
+
+            {/* 혼합정밀도(AMP): ACCELERATE_MIXED_PRECISION env로 적용 (--policy.use_amp는 학습 미사용). 속도 최대 레버 */}
+            <div>
+              <label className="text-xs text-neutral-400">혼합정밀도 (AMP)</label>
+              <select value={amp} onChange={(e) => { setAmp(e.target.value); setCliEdited(false) }}
+                className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
+                <option value="bf16">bf16 (권장 · RTX 5090)</option>
+                <option value="fp16">fp16</option>
+                <option value="off">off (fp32)</option>
+              </select>
+              <p className="text-[10px] text-neutral-500 mt-0.5">
+                bf16: 속도↑·VRAM↓ (5090 권장). VRAM 여유 시 Batch를 32~48로 키우세요.
+              </p>
+            </div>
+
+            <label className="flex items-center gap-2 text-xs cursor-pointer">
+              <input type="checkbox" checked={resume} onChange={(e) => { setResume(e.target.checked); setCliEdited(false) }}
+                className="accent-blue-500" />
+              <span className="text-neutral-400">체크포인트에서 재개 (Resume)</span>
+            </label>
+            <label className="flex items-center gap-2 text-xs cursor-pointer">
+              <input type="checkbox" checked={usePolicyPreset} onChange={(e) => { setUsePolicyPreset(e.target.checked); setCliEdited(false) }}
+                className="accent-blue-500" />
+              <span className="text-neutral-400">정책 학습 프리셋 사용 (use_policy_training_preset)</span>
+              {!usePolicyPreset && <span className="text-yellow-500 text-[10px]">OFF — config.json 값 그대로 사용</span>}
+            </label>
+          </div>
+
+          {/* 정책별 파라미터.
+              예전에는 pretrained 가 있으면 **패널 전체를 숨겼다.** 아키텍처 값이
+              체크포인트에 고정되는 건 맞지만, `freeze_vision_encoder` 같은 **학습 스위치**
+              까지 같이 사라져서 파인튜닝에서 가장 중요한 손잡이를 못 만졌다.
+              이제 `arch` 값만 가린다. */}
+          {policyFields.length > 0 && (
+            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
+              <h3 className="text-sm font-semibold">{policyType.toUpperCase()} 파라미터</h3>
+              {pretrainedPath && (
+                <p className="text-[10px] text-neutral-500">
+                  체크포인트에서 이어 학습 중 — 모델 구조 값(chunk_size 등)은 체크포인트에 고정돼 숨겼습니다.
+                </p>
+              )}
+              <div className="grid grid-cols-2 gap-2">
+                {policyFields.map((f) => (
+                  <div key={f.key} className={f.type === 'bool' ? 'col-span-2' : ''}>
+                    {f.type === 'bool' ? (
                       <label className="flex items-center gap-2 text-xs cursor-pointer">
-                        <input type="checkbox" checked={wandbEnable} onChange={(e) => { setWandbEnable(e.target.checked); setCliEdited(false) }}
+                        <input type="checkbox" checked={Boolean(policyParams[f.key] ?? f.default)}
+                          onChange={(e) => setPolicyParam(f.key, e.target.checked)}
                           className="accent-blue-500" />
-                        <span className="text-neutral-400">WandB 로깅</span>
+                        <span className="text-neutral-400">{f.label}</span>
                       </label>
-                      {wandbEnable && (
-                        <input type="text" value={wandbProject} placeholder="WandB project name"
-                          onChange={(e) => { setWandbProject(e.target.value); setCliEdited(false) }}
-                          className="mt-1 w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
-                      )}
-                    </div>
+                    ) : (
+                      <>
+                        <label className="text-xs text-neutral-400">{f.label}</label>
+                        <input type="number" value={Number(policyParams[f.key] ?? f.default)}
+                          min={f.min} max={f.max} step={f.step || 1}
+                          onChange={(e) => setPolicyParam(f.key, Number(e.target.value))}
+                          className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+                      </>
+                    )}
                   </div>
-                )}
+                ))}
               </div>
+              {typeof policyParams.n_action_steps === 'number' && typeof policyParams.chunk_size === 'number'
+                && policyParams.n_action_steps > policyParams.chunk_size && (
+                <span className="text-yellow-500 text-[10px]">⚠ n_action_steps는 chunk_size 이하여야 합니다</span>
+              )}
+              {policyType === 'smolvla' && !policyParams.load_vlm_weights && (
+                <span className="block text-red-400 text-[10px]">
+                  ⚠ load_vlm_weights=false — VLM이 랜덤 초기화됩니다
+                  {policyParams.freeze_vision_encoder
+                    ? ' (freeze_vision_encoder=true와 겹쳐 비전 인코더가 학습조차 되지 않습니다)'
+                    : ''}
+                </span>
+              )}
+            </div>
+          )}
 
-              {/* CLI 미리보기 */}
-              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">CLI 명령어</h3>
-                  {cliEdited && (
-                    <button onClick={() => setCliEdited(false)} className="text-xs text-blue-400 hover:underline">초기화</button>
+          {/* 고급 설정 */}
+          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
+            <button onClick={() => setShowAdvanced(!showAdvanced)}
+              className="text-sm font-semibold text-neutral-300 hover:text-white">
+              {showAdvanced ? '▾' : '▸'} 고급 설정
+            </button>
+            {showAdvanced && (
+              <div className="grid grid-cols-2 gap-2 pt-2">
+                <div>
+                  <label className="text-xs text-neutral-400">Optimizer</label>
+                  <select value={optimizerType} onChange={(e) => { setOptimizerType(e.target.value); setCliEdited(false) }}
+                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
+                    {OPTIMIZER_TYPES.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-neutral-400">Learning Rate (0=기본)</label>
+                  <input type="number" value={learningRate} step={0.0001} min={0}
+                    onChange={(e) => { setLearningRate(Number(e.target.value)); setCliEdited(false) }}
+                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+                </div>
+                <div>
+                  <label className="text-xs text-neutral-400">Workers</label>
+                  <input type="number" value={numWorkers} min={0} max={32}
+                    onChange={(e) => { setNumWorkers(Number(e.target.value)); setCliEdited(false) }}
+                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+                  <p className="text-[10px] text-neutral-500 mt-0.5">data_s &gt; updt_s면 ↑ (데이터 로딩 병목)</p>
+                </div>
+                <div>
+                  <label className="text-xs text-neutral-400">Seed</label>
+                  <input type="number" value={seed}
+                    onChange={(e) => { setSeed(Number(e.target.value)); setCliEdited(false) }}
+                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+                </div>
+                <div>
+                  <label className="text-xs text-neutral-400">Device</label>
+                  <select value={device} onChange={(e) => { setDevice(e.target.value); setCliEdited(false) }}
+                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
+                    <option value="cuda">CUDA (GPU)</option>
+                    <option value="cpu">CPU</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-neutral-400">Output Dir (비우면 자동)</label>
+                  <input type="text" value={outputDir}
+                    onChange={(e) => { setOutputDir(e.target.value); setCliEdited(false) }}
+                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+                </div>
+                <div className="col-span-2">
+                  <label className="flex items-center gap-2 text-xs cursor-pointer">
+                    <input type="checkbox" checked={wandbEnable} onChange={(e) => { setWandbEnable(e.target.checked); setCliEdited(false) }}
+                      className="accent-blue-500" />
+                    <span className="text-neutral-400">WandB 로깅</span>
+                  </label>
+                  {wandbEnable && (
+                    <input type="text" value={wandbProject} placeholder="WandB project name"
+                      onChange={(e) => { setWandbProject(e.target.value); setCliEdited(false) }}
+                      className="mt-1 w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
                   )}
                 </div>
-                <textarea value={cliArgs}
-                  onChange={(e) => { setCliArgs(e.target.value); setCliEdited(true) }}
-                  rows={4}
-                  className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-xs font-mono text-neutral-100 focus:outline-none focus:border-blue-500 resize-y" />
-                {amp !== 'off' && (
-                  <p className="text-[10px] font-mono text-neutral-500">
-                    env: ACCELERATE_MIXED_PRECISION={amp}
-                    <span className="ml-1 not-italic text-neutral-600">(CLI 직접 편집 시 미적용)</span>
-                  </p>
-                )}
-                <button onClick={cliEdited ? handleStart : handlePreConfirm} disabled={!canStart}
-                  className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium">
-                  {cliEdited ? '학습 시작 (CLI 직접)' : '설정 확인 후 시작'}
-                </button>
               </div>
+            )}
+          </div>
 
-              {/* 설정 확인 모달 */}
-              {confirmConfig && (
-                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setConfirmConfig(null)}>
-                  <div className="bg-neutral-800 border border-neutral-600 rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-                    <h3 className="text-lg font-bold mb-3">학습 설정 확인</h3>
-                    <pre className="flex-1 overflow-auto text-xs font-mono bg-neutral-900 p-4 rounded border border-neutral-700 text-neutral-200 whitespace-pre-wrap mb-4">
-                      {confirmConfig}
-                    </pre>
-                    <div className="flex gap-3 justify-end">
-                      <button onClick={() => setConfirmConfig(null)}
-                        className="px-4 py-2 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 text-sm">취소</button>
-                      <button onClick={handleStart}
-                        className="px-6 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium">학습 시작</button>
-                    </div>
-                  </div>
-                </div>
+          </div>
+
+          {/* CLI 미리보기 */}
+          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">CLI 명령어</h3>
+              {cliEdited && (
+                <button onClick={() => setCliEdited(false)} className="text-xs text-blue-400 hover:underline">초기화</button>
               )}
-            </>
-          ) : (
-            <>
-              {/* 실행 중: 메트릭 + 체크포인트 */}
-              <TrainingMetrics metrics={metrics} history={history} />
+            </div>
+            <textarea value={cliArgs}
+              onChange={(e) => { setCliArgs(e.target.value); setCliEdited(true) }}
+              rows={4}
+              className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-xs font-mono text-neutral-100 focus:outline-none focus:border-blue-500 resize-y" />
+            {amp !== 'off' && (
+              <p className="text-[10px] font-mono text-neutral-500">
+                env: ACCELERATE_MIXED_PRECISION={amp}
+                <span className="ml-1 not-italic text-neutral-600">(CLI 직접 편집 시 미적용)</span>
+              </p>
+            )}
+            <button onClick={cliEdited ? handleStart : handlePreConfirm} disabled={!canStart}
+              className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium">
+              {cliEdited ? '학습 시작 (CLI 직접)' : '설정 확인 후 시작'}
+            </button>
+          </div>
 
-              {/* 체크포인트 */}
-              {checkpoints.length > 0 && (
-                <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-                  <h3 className="text-sm font-semibold">체크포인트</h3>
-                  <div className="space-y-1 max-h-40 overflow-y-auto">
-                    {checkpoints.map((ck) => (
-                      <div key={ck.name} className="flex items-center justify-between text-xs px-2 py-1 rounded bg-neutral-900">
-                        <span className="font-mono">step {ck.step.toLocaleString()}</span>
-                        <span className="text-neutral-400">{ck.size_kb.toFixed(0)} KB</span>
-                      </div>
-                    ))}
-                  </div>
+          {/* 설정 확인 모달 */}
+          {confirmConfig && (
+            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setConfirmConfig(null)}>
+              <div className="bg-neutral-800 border border-neutral-600 rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+                <h3 className="text-lg font-bold mb-3">학습 설정 확인</h3>
+                <pre className="flex-1 overflow-auto text-xs font-mono bg-neutral-900 p-4 rounded border border-neutral-700 text-neutral-200 whitespace-pre-wrap mb-4">
+                  {confirmConfig}
+                </pre>
+                <div className="flex gap-3 justify-end">
+                  <button onClick={() => setConfirmConfig(null)}
+                    className="px-4 py-2 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 text-sm">취소</button>
+                  <button onClick={handleStart}
+                    className="px-6 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium">학습 시작</button>
                 </div>
-              )}
-
-              <button onClick={handleStop}
-                className="w-full px-4 py-2 rounded bg-red-600 hover:bg-red-500 text-white text-sm font-medium">
-                학습 정지
-              </button>
-            </>
+              </div>
+            </div>
           )}
-        </div>
 
-        {/* 우측: 로그 */}
-        <div className="space-y-4">
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
             <h3 className="text-sm font-semibold mb-2">로그</h3>
             <LogViewer logs={logs} onClear={() => setLogs([])} />
           </div>
-        </div>
-      </div>
+        </>
+      ) : (
+        <>
+          {/* 학습 중 — 그래프는 넓을수록 읽기 좋다 */}
+          {/* 실행 중: 메트릭 + 체크포인트 */}
+          <TrainingMetrics metrics={metrics} history={history} />
+
+          {/* 체크포인트 */}
+          {checkpoints.length > 0 && (
+            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
+              <h3 className="text-sm font-semibold">체크포인트</h3>
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {checkpoints.map((ck) => (
+                  <div key={ck.name} className="flex items-center justify-between text-xs px-2 py-1 rounded bg-neutral-900">
+                    <span className="font-mono">step {ck.step.toLocaleString()}</span>
+                    <span className="text-neutral-400">{ck.size_kb.toFixed(0)} KB</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <button onClick={handleStop}
+            className="w-full px-4 py-2 rounded bg-red-600 hover:bg-red-500 text-white text-sm font-medium">
+            학습 정지
+          </button>
+
+          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
+            <h3 className="text-sm font-semibold mb-2">로그</h3>
+            <LogViewer logs={logs} onClear={() => setLogs([])} />
+          </div>
+        </>
+      )}
     </div>
   )
 }

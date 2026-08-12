@@ -848,24 +848,58 @@ class RobotManager:
         presets.save(PRESET_DOMAIN, name, values, scope="device")
 
     def load_preset(self, name: str) -> dict | None:
+        """프리셋을 현재 하드웨어에 적용한다.
+
+        **무엇이 실제로 적용됐는지 돌려준다** (`applied`/`missing`/`failed`).
+        예전에는 결과와 무관하게 프리셋 내용만 돌려줘서, 팔을 하나도 못 붙였는데도
+        화면에는 "적용됨"이라고 떴다.
+        """
         preset = presets.get(PRESET_DOMAIN, name)
         if preset is None:
             return None
         data = preset.values
-        # 상태 복원 (설정값만, CAN 재연결은 하지 않음)
+
+        # ⚠ **먼저 스캔한다** (`restore_session` 과 같은 순서).
+        # 안 하면 `self.arms` 가 비어 있어 프리셋의 팔을 전부 건너뛴다 —
+        # 사용자가 "스캔 먼저"를 알고 있어야 하는 것은 UI 의 잘못이다.
+        self.scan()
+
         self.selected_type = data.get("robot_type")
         self.config_name = data.get("config_name")
+        applied: list[str] = []
+        missing: list[str] = []
+        failed: list[str] = []
         for arm_data in data.get("arms", []):
             iface = arm_data.get("can_name", "")
-            if iface in self.arms:
-                arm = self.arms[iface]
-                arm.slot = arm_data.get("slot")
-                arm.role = arm_data.get("role", "unknown")
-                # 등록 상태 복원. 없으면(옛 프리셋) 슬롯 유무로 추정한다.
-                arm.ready = arm_data.get("ready", bool(arm_data.get("slot")))
-                arm.update_config(arm_data.get("config", {}))
+            if iface not in self.arms:
+                logger.warning("프리셋의 팔 %s 를 스캔 결과에서 못 찾음 — 건너뜀", iface)
+                missing.append(iface)
+                continue
+            arm = self.arms[iface]
+            arm.slot = arm_data.get("slot")
+            arm.role = arm_data.get("role", "unknown")
+            arm.update_config(arm_data.get("config", {}))
+
+            # ⚠ **연결까지 해야 한다** (`restore_session` 과 같은 이유).
+            #
+            # 예전에는 `ready` 만 세웠는데, 그러면 팔이 "사용 가능"에 올라가면서도
+            # CAN 은 안 열린 상태로 남는다. 화면에서는 1·2단계 목록에서 빠지므로
+            # **연결 버튼에 닿을 방법이 없어져** 등록을 끝낼 수가 없다.
+            if not arm.connected:
+                ok, msg = arm.connect()
+                if not ok:
+                    logger.warning("프리셋 로드 중 %s 연결 실패: %s", iface, msg)
+                    # 연결 실패한 팔을 ready 로 올리지 않는다 — 쓸 수 없는데
+                    # 쓸 수 있다고 말하는 셈이다. 1단계에 남아 다시 시도할 수 있다.
+                    arm.ready = False
+                    failed.append(iface)
+                    continue
+            # 등록 상태 복원. 없으면(옛 프리셋) 슬롯 유무로 추정한다.
+            arm.ready = arm_data.get("ready", bool(arm_data.get("slot")))
+            applied.append(iface)
         # 프론트 호환: 예전 응답이 name 을 포함했다
-        return {"name": name, **data}
+        return {"name": name, **data,
+                "applied": applied, "missing": missing, "failed": failed}
 
     def delete_preset(self, name: str) -> bool:
         return presets.delete(PRESET_DOMAIN, name)

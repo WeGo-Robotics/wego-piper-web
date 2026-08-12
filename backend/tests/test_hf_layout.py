@@ -90,3 +90,48 @@ def test_scanners_use_the_shared_module():
         assert "def _latest_snapshot" not in src, f"{name} 에 사본이 다시 생겼다"
         assert "def _repo_id_from_dirname" not in src, f"{name} 에 사본이 다시 생겼다"
         assert "hf_layout" in src
+
+
+# ── repo_id 형식 ─────────────────────────────────────────────────────────────
+
+from pathlib import Path  # noqa: E402
+
+import pytest  # noqa: E402
+
+from app.core.hf_layout import repo_id_error  # noqa: E402
+
+
+@pytest.mark.parametrize("value", [
+    "wego/piper_demo", "wego-hansu/2-CAM", "org/pick_v1.0", "a/b",
+])
+def test_valid_repo_ids(value):
+    assert repo_id_error(value) is None
+
+
+@pytest.mark.parametrize("value,hint", [
+    ("2-CAM", "네임스페이스"),        # **실기에서 실제로 터진 입력**
+    ("", "필요"),
+    ("a/b/c", "슬래시는 하나"),
+    ("wego/한글", "쓸 수 없는 문자"),  # `\w` 는 유니코드를 먹으므로 ASCII 로 못 박았다
+    ("-bad/x", "쓸 수 없는 문자"),
+    ("wego/", "쓸 수 없는 문자"),
+])
+def test_invalid_repo_ids(value, hint):
+    err = repo_id_error(value)
+    assert err and hint in err, f"{value!r} → {err!r}"
+
+
+def test_recording_start_rejects_bad_repo_id_before_touching_hardware():
+    """**회귀** — LeRobot 은 `repo_id.split("/")` 를 2개로 언패킹한다.
+
+    슬래시가 없으면 녹화 프로세스가 뜬 **뒤** ValueError 로 죽는데, 그 시점엔 이미
+    팔·카메라를 다 잡은 상태라 스택트레이스만 남고 이유를 알기 어렵다.
+    라우터가 시작 전에 막아야 한다.
+    """
+    src = (Path(__file__).resolve().parents[2]
+           / "backend" / "app" / "routers" / "recording.py").read_text()
+    start = src.split('@router.post("/start")', 1)[1].split("@router.", 1)[0]
+    assert "repo_id_error" in start, "녹화 시작 경로가 repo_id 형식을 검사하지 않는다"
+    assert start.index("repo_id_error") < start.index("record_manager.start"), (
+        "프로세스를 띄운 뒤에 검사하면 늦다"
+    )

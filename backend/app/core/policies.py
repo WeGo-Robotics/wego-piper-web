@@ -17,6 +17,10 @@ from typing import TypedDict
 
 class Policy(TypedDict, total=False):
     label: str
+    # 지금 실제로 지원하는가. **정의는 지우지 않고 꺼둔다** —
+    # 스키마·베이스 체크포인트·백본 안전망이 이미 붙어 있어서,
+    # 나중에 이 한 줄만 켜면 되살아난다.
+    supported: bool
     train: bool           # 학습 화면에서 고를 수 있는가
     infer: bool           # 추론 화면에서 고를 수 있는가 (= wrapper POLICY_IMPORTS 에 있어야 함)
     rtc: bool             # flow-matching → RTC 가이던스 파라미터 노출
@@ -28,12 +32,14 @@ class Policy(TypedDict, total=False):
 POLICIES: dict[str, Policy] = {
     "smolvla": {
         "label": "SmolVLA",
+        "supported": True,
         "train": True, "infer": True, "rtc": True, "encoder_probe": True,
         "policy_base": "lerobot/smolvla_base",
         "vlm_base": "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
     },
     "act": {
         "label": "ACT",
+        "supported": True,
         "train": True, "infer": True, "rtc": False, "encoder_probe": True,
     },
     "diffusion": {
@@ -71,7 +77,19 @@ POLICIES: dict[str, Policy] = {
 
 
 def _names(flag: str) -> list[str]:
-    return [name for name, spec in POLICIES.items() if spec.get(flag)]
+    """플래그가 켜진 **지원 정책**만. 미지원은 어느 목록에도 안 나온다.
+
+    지금은 ACT·SmolVLA 만 지원한다 — 나머지는 정의를 남겨둔 채 꺼져 있다.
+    한 정책을 되살리려면 `"supported": True` 한 줄이면 된다.
+    """
+    return [
+        name for name, spec in POLICIES.items()
+        if spec.get(flag) and spec.get("supported")
+    ]
+
+
+def supported() -> list[str]:
+    return [name for name, spec in POLICIES.items() if spec.get("supported")]
 
 
 def trainable() -> list[str]:
@@ -112,6 +130,10 @@ def spec_for_frontend() -> list[dict]:
             "infer": bool(spec.get("infer")),
             "rtc": bool(spec.get("rtc")),
             "encoder_probe": bool(spec.get("encoder_probe")),
+            # 처음부터 학습이 무의미한 정책의 권장 시작점.
+            # 프론트가 따로 목록을 만들면 또 갈라진다.
+            "policy_base": spec.get("policy_base", ""),
         }
         for name, spec in POLICIES.items()
+        if spec.get("supported")
     ]

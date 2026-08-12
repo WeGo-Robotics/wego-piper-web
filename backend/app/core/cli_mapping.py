@@ -251,6 +251,12 @@ def apply_dim_overrides(pretrained_path: str, state_dim: int, action_dim: int) -
         return False
 
 
+# 비전 백본을 ImageNet 가중치로 시작해야 하는 정책.
+# LeRobot 기본값이 `None`(랜덤)이라 명시하지 않으면 조용히 맨바닥에서 시작한다.
+# ACT 는 자체 기본값이 이미 ImageNet 이라 빠져 있다.
+_IMAGENET_BACKBONE_POLICIES = {"diffusion", "vqbet"}
+
+
 def build_train_args(
     params: dict,
     *,
@@ -312,6 +318,19 @@ def build_train_args(
         and "load_vlm_weights" not in policy_params
     ):
         args.append("--policy.load_vlm_weights=true")
+
+    # Diffusion/VQ-BeT 는 `pretrained_backbone_weights` 기본값이 **None** 이라
+    # ResNet18 이 랜덤 초기화된다 (`get_model(..., weights=None)`).
+    # smolvla 의 `load_vlm_weights=False` 와 정확히 같은 함정이다.
+    #
+    # ACT 만 기본값이 `ResNet18_Weights.IMAGENET1K_V1` 이라 그대로 둬도 된다 —
+    # 그래서 ACT 는 베이스 체크포인트를 받을 필요가 없다.
+    if (
+        params.get("policy_type") in _IMAGENET_BACKBONE_POLICIES
+        and not has_pretrained
+        and "pretrained_backbone_weights" not in policy_params
+    ):
+        args.append("--policy.pretrained_backbone_weights=ResNet18_Weights.IMAGENET1K_V1")
 
     rename_map = params.get("rename_map") or rename_map
     if rename_map:

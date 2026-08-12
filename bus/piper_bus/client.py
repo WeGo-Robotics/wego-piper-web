@@ -170,6 +170,20 @@ class Bus:
         """세션 격리 — 이전 녹화의 명령이 다음 녹화로 새면 엉뚱한 에피소드가 버려진다."""
         return int(self.r.delete(C.RECORD_CONTROL_QUEUE))
 
+    # ── 녹화 task (게이트웨이 → wrapper) ──
+
+    def set_record_task(self, task: str) -> None:
+        """다음 에피소드부터 쓸 task. 큐가 아니라 키 — 최신 값만 의미가 있다."""
+        self.r.set(C.RECORD_TASK, task)
+
+    def record_task(self) -> str | None:
+        """설정된 task. 없으면 `None` → wrapper 는 CLI 로 받은 값을 그대로 쓴다."""
+        return self.r.get(C.RECORD_TASK)
+
+    def clear_record_task(self) -> int:
+        """세션 격리 — 지난 녹화의 task 가 다음 녹화 첫 에피소드에 새면 안 된다."""
+        return int(self.r.delete(C.RECORD_TASK))
+
     # ── 녹화 프리뷰 (wrapper → 게이트웨이) ──
 
     def put_preview(self, name: str, jpeg: bytes) -> None:

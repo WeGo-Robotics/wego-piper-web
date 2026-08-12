@@ -103,13 +103,40 @@ async def update_config(body: CameraConfigRequest):
     return cam.to_dict() if cam else {"status": "ok"}
 
 
+class CameraRegisterRequest(BaseModel):
+    id: str
+    # 사람이 붙이는 별칭 — "탑뷰", "손목". 화면에서 어느 카메라인지 알아보는 용도다.
+    # LeRobot 카메라 키(`observation.images.<키>`)와는 별개다 — 아래 /label 참고.
+    label: str | None = None
+
+
 @router.post("/register")
-async def register_camera(body: CameraIdRequest):
-    if not camera_manager.register_camera(body.id):
+async def register_camera(body: CameraRegisterRequest):
+    if not camera_manager.register_camera(body.id, body.label):
         raise HTTPException(400, "등록 실패: 연결되지 않은 카메라입니다")
     camera_manager.save_session()
     cam = camera_manager.cameras.get(body.id)
     return cam.to_dict() if cam else {"status": "registered"}
+
+
+class CameraLabelRequest(BaseModel):
+    id: str
+    label: str
+
+
+@router.post("/label")
+async def set_camera_label(body: CameraLabelRequest):
+    """별칭만 변경. 등록 후에도 고칠 수 있어야 한다.
+
+    ⚠ **데이터셋 피처 이름은 안 바뀐다.** `observation.images.<키>` 의 키는
+    녹화·추론 페이지에서 정하고 학습된 정책이 그 키에 묶여 있다. 여기서 바꾸는 것은
+    화면에 보이는 이름뿐이라, 이미 구운 데이터셋이나 정책에 영향을 주지 않는다.
+    """
+    if not camera_manager.set_label(body.id, body.label):
+        raise HTTPException(404, "카메라를 찾을 수 없습니다")
+    camera_manager.save_session()
+    cam = camera_manager.cameras.get(body.id)
+    return cam.to_dict() if cam else {"status": "ok"}
 
 
 @router.post("/unregister")

@@ -1,10 +1,10 @@
 """녹화 에피소드 제어 채널 (백엔드 → wrapper).
 
 헤드리스 환경에서는 pynput 키 주입이 불가능하고(X 없음), LeRobot 도 키보드
-리스너를 끄기 때문에 건너뛰기/재녹화/정지 버튼이 동작하지 않는다. 대신 wrapper
+리스너를 끄기 때문에 에피소드 제어 버튼이 동작하지 않는다. 대신 wrapper
 가 LeRobot 의 events dict 를 직접 set 하도록, 여기서 명령을 버스에 올린다.
 
-명령: `right`(건너뛰기/exit_early), `left`(재녹화), `escape`(정지) —
+명령: `right`(지금 마감하고 저장/exit_early), `left`(폐기 후 재녹화), `escape`(저장하고 종료) —
 이름은 [piper_bus.contract](../../../../bus/piper_bus/contract.py) 가 갖는다.
 
 ZMQ PUSH(`tcp://127.0.0.1:5557`) 를 Redis 큐로 교체했다 (refactor/daemon-split.md 3단계).
@@ -48,6 +48,7 @@ class ControlBridge:
         if bus is None:
             return
         try:
+            bus.clear_record_task()
             dropped = bus.clear_control()
         except Exception as exc:
             logger.error("ControlBridge 시작 실패: %s", exc)
@@ -56,6 +57,27 @@ class ControlBridge:
             logger.warning("이전 세션의 제어 명령 %d개를 버렸습니다", dropped)
         self._active = True
         logger.info("ControlBridge started (Redis)")
+
+    def set_task(self, task: str) -> bool:
+        """녹화 중 task 변경. **다음 에피소드부터** 적용된다.
+
+        LeRobot 은 `record_loop` 진입 시점의 task 를 그 에피소드의 모든 프레임에
+        찍으므로, 진행 중인 에피소드를 도중에 바꾸면 한 에피소드 안에서 프레임마다
+        task 가 달라진다 — 그래서 다음 에피소드 경계에서만 바뀐다.
+        """
+        if not self._active:
+            logger.warning("녹화 중이 아니라 task 변경을 무시합니다")
+            return False
+        bus = self._connect()
+        if bus is None:
+            return False
+        try:
+            bus.set_record_task(task)
+            logger.info("녹화 task 변경(다음 에피소드부터): %s", task)
+            return True
+        except Exception as exc:
+            logger.warning("task 변경 실패: %s", exc)
+            return False
 
     def send(self, command: str) -> bool:
         if not self._active:
@@ -80,6 +102,7 @@ class ControlBridge:
         if bus is not None:
             try:
                 bus.clear_control()
+                bus.clear_record_task()
             except Exception as exc:
                 logger.warning("ControlBridge 정리 실패: %s", exc)
         logger.info("ControlBridge stopped")

@@ -10,6 +10,7 @@
 정하므로**, 사내 자체 Hub 로 옮겨도 이 모듈은 그대로 쓴다 (ROADMAP 참고).
 """
 
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -69,3 +70,35 @@ def repo_root_for_delete(path: Path, kind: RepoKind) -> Path:
         if parent.name.startswith(prefix):
             return parent
     return path
+
+
+# ── repo_id 형식 ─────────────────────────────────────────────────────────────
+
+# HuggingFace repo id 는 `<네임스페이스>/<이름>` 이다. 문자셋은 영숫자와 `-_.`.
+# `\w` 는 유니코드를 먹어 한글이 통과한다 — 문자셋을 ASCII 로 못 박는다.
+_REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def repo_id_error(repo_id: str) -> str | None:
+    """형식이 틀렸으면 사람이 읽을 사유, 맞으면 None.
+
+    LeRobot 의 `sanity_check_dataset_name` 이 `repo_id.split("/")` 를 2개로 언패킹한다.
+    슬래시가 없으면 **녹화 시작 직후 ValueError 로 죽는데**, 그 시점엔 이미 팔·카메라를
+    다 잡은 뒤라 스택트레이스만 남고 이유를 알기 어렵다. 시작 전에 여기서 막는다.
+    """
+    name = (repo_id or "").strip()
+    if not name:
+        return "데이터셋 이름이 필요합니다."
+    if "/" not in name:
+        return (
+            f"데이터셋 이름은 '네임스페이스/이름' 형식이어야 합니다 (입력: {name!r}). "
+            f"예: my-org/{name}"
+        )
+    if name.count("/") > 1:
+        return f"슬래시는 하나만 쓸 수 있습니다 (입력: {name!r})."
+    if not _REPO_ID_RE.match(name):
+        return (
+            f"데이터셋 이름에 쓸 수 없는 문자가 있습니다 (입력: {name!r}). "
+            "영문·숫자와 -_. 만 쓸 수 있고 각 부분은 영문·숫자로 시작해야 합니다."
+        )
+    return None

@@ -12,6 +12,7 @@ import LogViewer from '../components/LogViewer'
 import EvalPanel from '../components/EvalPanel'
 import TelemetryPanel, { type TelemetryData } from '../components/TelemetryPanel'
 import ManualControlPanel from '../components/ManualControlPanel'
+import { camOptionText, type ReadyCam } from '../types/camera'
 
 function CameraPreview({ cameraNames }: { cameraNames: string[] }) {
   const [ts, setTs] = useState(0)
@@ -69,7 +70,6 @@ function CollapsibleCard({ title, storageKey, defaultOpen = true, children }: {
 }
 
 type ReadyArm = { iface: string; role: string; config: Record<string, unknown> }
-type ReadyCam = { id: string; name: string; config: { width: number | null; height: number | null; fps: number | null } }
 type ValidationResult = { valid: boolean; errors: string[]; warnings: string[]; robot_joints?: number }
 
 // 관절 수와 정책 목록은 백엔드에서 온다 —
@@ -433,7 +433,7 @@ export default function InferencePage() {
                         <option value="">카메라 선택...</option>
                         {readyCameras.map((c) => {
                           const usedBy = Object.entries(cameraMapping).find(([k, v]) => v === c.id && k !== cam.name)
-                          return <option key={c.id} value={c.id} disabled={!!usedBy}>{c.id} ({c.name}){usedBy ? ` — ${usedBy[0]}에서 사용 중` : ''}</option>
+                          return <option key={c.id} value={c.id} disabled={!!usedBy}>{camOptionText(c)}{usedBy ? ` — ${usedBy[0]}에서 사용 중` : ''}</option>
                         })}
                       </select>
                       {cameraMapping[cam.name] ? <span className="text-green-400">✓</span> : <span className="text-neutral-500">-</span>}
