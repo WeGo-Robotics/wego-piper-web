@@ -18,7 +18,6 @@ from app.services.model_scanner import scan_models, get_model, delete_model
 from app.services.param_bridge import param_bridge
 from app.services.process_manager import process_manager
 from app.services.robot_manager import robot_manager
-from app.services.camera_manager import camera_manager
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -58,6 +57,27 @@ def _get_first_ready_follower_port() -> str | None:
         if arm.ready and arm.role == "follower":
             return arm.iface
     return None
+
+
+def _clear_arm_errors(label: str, ifaces: list[str] | None = None) -> None:
+    """추론 시작/종료 시 로봇팔 에러 플래그를 조회한 뒤 무조건 클리어한다.
+
+    팔과의 CAN 통신은 백엔드 robot_manager가 직접 보유하므로(추론 subprocess와
+    별개), 시작은 subprocess 기동 전에, 종료는 subprocess 정지 후에 호출하여
+    버스 경합을 피한다. 실패해도 추론 흐름은 막지 않는다(best-effort)."""
+    try:
+        report = robot_manager.clear_arm_errors(ifaces)
+    except Exception as e:
+        logger.warning("[%s] 로봇팔 에러 클리어 실패: %s", label, e)
+        return
+    if not report:
+        logger.info("[%s] 에러 클리어 대상 follower 없음", label)
+        return
+    for r in report:
+        err = r.get("error") or {}
+        logger.info("[%s] %s 에러 클리어: code=0x%04X flags=%s cleared=%s",
+                    label, r["iface"], err.get("err_code", 0),
+                    err.get("flags", []), r["cleared"])
 
 
 def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:

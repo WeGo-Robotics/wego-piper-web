@@ -239,3 +239,21 @@ def test_prepare_is_inverted_between_transports():
     assert "release_all_cameras" in src, "direct 경로에서 해제하지 않는다"
     assert "cam.connect()" in src, "shm 경로에서 붙잡지 않는다"
     assert 'camera_transport != "shm"' in src, "전송 방식을 안 본다"
+
+
+def test_arm_error_clearing_survives_refactors():
+    """**회귀** — 카메라 로직을 걷어낼 때 `_clear_arm_errors` 가 같이 잘려나갔다.
+
+    F821(미정의 이름)로 잡혔지만, 잡히기 전까지 추론 시작이 `NameError` 로 죽는
+    상태였다. 이 함수는 CAN 버스 경합을 피하려고 시작 전/종료 후에 불린다.
+    """
+    import ast
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2]
+           / "backend" / "app" / "routers" / "models.py").read_text()
+    tree = ast.parse(src)
+    names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    assert "_clear_arm_errors" in names, "에러 클리어 함수가 사라졌다"
+    # 호출부가 정의보다 많은데 정의가 없으면 NameError — 정적으로 못 박는다
+    assert src.count("_clear_arm_errors(") >= 4, "정의 1 + 호출 3 이어야 한다"
