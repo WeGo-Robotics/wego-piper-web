@@ -276,7 +276,9 @@ piper.cam.wrist_depth    ← 컬러라이즈드  (h, w, 3) uint8
    실카메라 프레임이 흐르는 것까지 확인**(D435 640×480 15fps, seqlock 재시도 0).
    추론 1회 실기는 남아 있다
 3. camerad 분리 (v4l2 + RealSense 캡처 → 세그먼트 발행)
-4. `_build_cameras_json`을 `type: "shm"`으로 전환. `is_d405` 분기 제거
+4. ☑ `_build_cameras_json`을 `type: "shm"`으로 전환. `is_d405`/`warmup_s` 분기 제거.
+   **`settings.camera_transport`(`direct`|`shm`) 스위치로 넣었다** — 되돌리기가 값 하나다.
+   추론 시작 경로도 뒤바뀐다: `direct` 는 카메라를 **해제**하고 `shm` 은 **붙잡는다**
 5. 컨테이너에서 `privileged`/`/dev` 마운트 제거, `ipc: host` 추가
 
 2단계가 핵심이다 — **데몬을 쪼개기 전에 전송이 되는지부터 확인한다.**

@@ -54,6 +54,41 @@ def _get_first_ready_follower_port() -> str | None:
     return None
 
 
+def _prepare_cameras(camera_mapping: dict[str, str]) -> None:
+    """전송 방식에 맞게 카메라를 준비한다.
+
+    - `direct`: wrapper 가 장치를 직접 여니 **웹이 쥔 것을 해제**해야 한다 (지금까지)
+    - `shm`: 정반대다. 발행자(지금은 게이트웨이)가 장치를 **계속 쥐고** 세그먼트에
+      흘려야 wrapper 가 읽는다. 해제하면 프레임이 끊긴다.
+
+    이 뒤바뀜이 shm 전환의 핵심이다 — "해제 춤"이 사라지는 대신 소유가 명확해진다.
+    """
+    if settings.camera_transport != "shm":
+        _release_all_cameras()
+        return
+
+    from app.services.shm_publisher import sweep_stale_segments
+
+    keys = {name for name, cam_id in camera_mapping.items() if cam_id}
+    # 이번에 쓸 것 외의 남은 세그먼트는 치운다 — 남으면 소비자가 멈춘 화면을 본다
+    sweep_stale_segments(keep=keys)
+
+    for name, cam_id in camera_mapping.items():
+        if not cam_id:
+            continue
+        cam = camera_manager.cameras.get(cam_id)
+        if cam is None:
+            raise HTTPException(400, f"카메라를 찾을 수 없습니다: {cam_id}")
+        cam.shm_key = name                    # 세그먼트 이름 = LeRobot 카메라 키
+        if cam.connected:
+            # 이미 연결돼 있어도 shm_key 가 방금 붙었으니 캡처 루프에 반영시킨다
+            cam.disconnect()
+        ok, msg = cam.connect()
+        if not ok:
+            raise HTTPException(400, f"카메라 연결 실패 ({cam_id}): {msg}")
+        logger.info("shm 발행 준비: %s ← %s", name, cam_id)
+
+
 def _release_all_cameras() -> None:
     """추론 시작 전 웹 프리뷰가 점유한 카메라를 모두 해제.
 
@@ -124,6 +159,17 @@ def _build_cameras_json(camera_mapping: dict[str, str]) -> dict:
     """
     if not camera_mapping:
         return {}
+
+    # shm 전송: wrapper 는 장치를 열지 않고 세그먼트에서 픽셀만 읽는다.
+    # **RealSense 특수사정이 여기서 통째로 사라진다** — D405 의 color-only 0fps 문제도,
+    # OpenCV 백엔드 지정도 발행자 안에 갇힌다 (refactor/camera-transport.md).
+    # 세그먼트 이름 = 카메라 키라 매핑이 그대로 이름이 된다.
+    if settings.camera_transport == "shm":
+        return {
+            name: {"type": "shm", "segment": name}
+            for name, cam_id in camera_mapping.items() if cam_id
+        }
+
     cameras = {}
     for cam_name, cam_id in camera_mapping.items():
         if not cam_id:
@@ -281,7 +327,7 @@ async def start_inference(body: InferenceStartRequest):
 
     args = _build_args_for(body, robot_type, robot_port)
 
-    _release_all_cameras()
+    _prepare_cameras(body.camera_mapping)
 
     # 추론 기동 전 로봇팔 에러 플래그 조회 + 무조건 클리어 (subprocess가 CAN을 쥐기 전)
     follower_ifaces = body.robot_ports if is_bimanual else ([robot_port] if robot_port else None)

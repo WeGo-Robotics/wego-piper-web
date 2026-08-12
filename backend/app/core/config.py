@@ -89,6 +89,18 @@ class Settings(BaseSettings):
         _save_model_paths(self.config_dir, paths)
         return paths
 
+    # 카메라 전송 방식 (refactor/camera-transport.md).
+    #
+    #   "direct" — wrapper 가 v4l2/RealSense 를 **직접 연다** (지금까지의 방식).
+    #              그래서 추론 전에 웹이 쥔 카메라를 해제해야 하고,
+    #              컨테이너는 privileged + /dev 마운트가 필요하다.
+    #   "shm"    — 발행자가 장치를 독점하고 wrapper 는 `/dev/shm` 에서 픽셀만 읽는다.
+    #              해제 춤이 사라지고 JPEG 이중압축도 없다.
+    #
+    # 기본값이 "direct" 인 이유: **실기로 fps·지연을 비교한 뒤에 바꾼다.**
+    # 되돌리기가 이 값 하나로 끝나야 한다.
+    camera_transport: str = "direct"
+
     # 버스 (Redis) — ZMQ 소켓 3개(5555 파라미터 / 5556 프리뷰 / 5557 녹화제어)를
     # 대체한다 (refactor/daemon-split.md 3단계). 주소가 3개에서 1개로 줄었다.
     # 비워두면 `piper_bus` 기본값(`PIPER_REDIS_URL` 또는 localhost:6379/0)을 쓴다.

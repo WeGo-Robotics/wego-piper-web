@@ -41,6 +41,10 @@ class CameraInfo:
     stream_type: str = ""   # realsense 스트림 (color|depth|infrared)
     connected: bool = False
     ready: bool = False
+    # 이 카메라를 흘려보낼 세그먼트 이름 = **LeRobot 카메라 키**(`top`/`wrist`).
+    # 별칭(`탑뷰`)이나 장치 id 가 아니다 — 소비자가 그 키로 세그먼트를 연다.
+    # 비어 있으면 shm 발행을 하지 않는다(= 지금까지의 동작 그대로).
+    shm_key: str = ""
     # 설정값
     width: int | None = None
     height: int | None = None
