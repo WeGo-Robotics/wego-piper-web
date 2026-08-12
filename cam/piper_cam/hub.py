@@ -107,7 +107,7 @@ class _V4l2Camera:
             cap, frame = self._open()
             if cap is None:
                 return False, f"Cannot open {self.id}"
-            self._publish(frame)      # 프리뷰가 바로 보이게 한 장은 남긴다
+            self._publish(frame)      # 스캔 썸네일 — 세그먼트를 지우지 않고 남긴다
             cap.release()
             return True, "OK"
 

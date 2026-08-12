@@ -46,6 +46,14 @@ class Bus:
     ) -> None:
         self.r = client or connect()
         self._rb = binary_client
+        # 블로킹 pop 을 이 한도보다 짧은 조각으로 나눈다 (`_brpop` 참고).
+        # 주입된 클라이언트면 그쪽 설정을 읽고, 없으면 기본값을 쓴다.
+        try:
+            self._socket_timeout = float(
+                self.r.connection_pool.connection_kwargs.get("socket_timeout") or 1.0
+            )
+        except Exception:
+            self._socket_timeout = 1.0
 
     @property
     def rb(self) -> redis.Redis:
@@ -127,16 +135,29 @@ class Bus:
     # ── 큐 공통 ──
 
     def _brpop(self, key: str, timeout: int) -> tuple[str, str] | None:
-        """블로킹 pop. **소켓 타임아웃을 "빈 큐"로 흡수한다.**
+        """블로킹 pop. **요청한 시간을 실제로 다 기다린다.**
 
-        `connect()` 가 건 `socket_timeout` 이 `BRPOP` 대기 시간보다 짧으면
-        redis-py 가 `TimeoutError` 를 던진다. 둘 다 "아직 아무것도 없다"는
-        같은 뜻이므로 여기서 하나로 만든다 — 안 그러면 소비 루프가 예외로 죽는다.
+        ⚠ `connect()` 가 건 `socket_timeout`(1초)이 `BRPOP` 대기보다 짧으면 redis-py 가
+        `TimeoutError` 를 던진다. 예전에는 그걸 그냥 "빈 큐"로 흡수했는데, 그러면
+        **아무리 긴 타임아웃을 줘도 1초 만에 포기한다.** 실제로 `probe` 같은
+        수 초짜리 데몬 RPC 가 40초를 요청하고도 1초에 "응답 없음"으로 실패했다.
+        (소켓 타임아웃을 없애면 안 된다 — 느린 Redis 가 이벤트 루프를 멈추면
+        heartbeat 이 끊겨 E-stop 이 돈다.)
+
+        그래서 소켓 한도보다 짧은 조각으로 나눠 **마감까지 반복**한다.
         """
-        try:
-            return self.r.brpop(key, timeout=timeout)
-        except redis.exceptions.TimeoutError:
-            return None
+        deadline = time.monotonic() + timeout
+        chunk = max(1, int(self._socket_timeout) - 1) or 1
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            try:
+                got = self.r.brpop(key, timeout=min(chunk, int(remaining) or 1))
+            except redis.exceptions.TimeoutError:
+                continue          # 소켓 한도일 뿐 — 마감까지 다시 기다린다
+            if got is not None:
+                return got
 
     # ── 추론 파라미터 큐 (게이트웨이 → wrapper) ──
 

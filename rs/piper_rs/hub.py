@@ -181,7 +181,7 @@ class _RSDevice:
         self._start_thread()
         return True
 
-    def _stop_pipeline(self) -> None:
+    def _stop_pipeline(self, unlink_segments: bool = True) -> None:
         from piper_rs.publish import stop as stop_publish
 
         stopping = set(self._active)
@@ -194,7 +194,7 @@ class _RSDevice:
             t.join(timeout=2)
         self._thread = None
         for stream in stopping:
-            stop_publish(f"rs:{self.serial}:{stream}")
+            stop_publish(f"rs:{self.serial}:{stream}", unlink_segment=unlink_segments)
         if self._pipeline is not None:
             try:
                 self._pipeline.stop()
@@ -287,13 +287,45 @@ class _RSDevice:
             with self._lock:
                 self._latest.clear()
 
-    def probe_stream(self, stream: str, timeout: float = 4.0) -> bool:
-        """스캔용: 임시로 스트림을 켜서 프레임 1장을 확보. 연결 유지 안 함."""
+    # 첫 프레임 뒤 더 기다리는 시간. RealSense 는 파이프라인을 켠 직후 자동노출이
+    # 안 잡혀 **까만 프레임**이 먼저 나온다 — 그걸 썸네일로 남기면 화면이 검다.
+    # 읽기 루프가 그동안 계속 발행하므로, 마지막에 남는 것은 안정화된 프레임이다.
+    SETTLE_S = 1.2
+
+    # 스캔은 스트림마다 probe 를 부른다. 한 번 켤 때 장치의 모든 스트림을 함께
+    # 켜므로, 이 시간 안의 다음 probe 는 **이미 확보한 프레임을 재사용**한다.
+    # 없으면 파이프라인 기동·안정화가 스트림 수만큼 반복된다 (실측 6스트림 14초).
+    PROBE_REUSE_S = 20.0
+
+    def probe_stream(self, stream: str, timeout: float = 8.0) -> bool:
+        """스캔용: 임시로 스트림을 켜서 프레임을 확보. 연결 유지 안 함.
+
+        타임아웃이 넉넉한 이유: 카메라 2대가 USB 대역폭을 나눠 초기화하면
+        첫 프레임까지 수 초가 걸린다 (옛 `warmup_s: 5` 가 있던 이유와 같다).
+        """
         if stream not in self.available:
             return False
+        # 방금 이 장치를 켜서 모든 스트림 프레임을 남겼다면 다시 켜지 않는다
+        if time.time() - getattr(self, "_last_probe_at", 0.0) < self.PROBE_REUSE_S:
+            from piper_shm import Subscriber, SegmentError, segment_for_camera
+
+            try:
+                sub = Subscriber(segment_for_camera(f"rs:{self.serial}:{stream}"))
+            except SegmentError:
+                pass
+            else:
+                try:
+                    if sub.read() is not None:
+                        return True
+                finally:
+                    sub.close()
         with self.op_guard():
             temporary = self._pipeline is None or stream not in self._active
-            if not self._ensure_streams(self._active | {stream}):
+            # ⚠ **장치의 모든 스트림을 한 번에 켠다.** 스캔은 스트림마다 probe 를 부르는데,
+            # 하나씩 켜면 파이프라인 재시작과 안정화 대기가 스트림 수만큼 곱해진다
+            # (실측 6스트림 17초). 어차피 같은 USB 장치라 함께 켜는 게 싸다.
+            want = self._active | self.available if temporary else self._active | {stream}
+            if not self._ensure_streams(want):
                 return False
             deadline = time.time() + timeout
             got = False
@@ -302,9 +334,14 @@ class _RSDevice:
                     got = True
                     break
                 time.sleep(0.1)
-            # refcount 가 0이고 임시로 켠 것이면 정지
+            # 자동노출이 잡힐 때까지 조금 더 흘려보낸다 (마지막 발행분이 썸네일이 된다)
+            if got:
+                time.sleep(self.SETTLE_S)
+                self._last_probe_at = time.time()
+            # refcount 가 0이고 임시로 켠 것이면 정지.
+            # **세그먼트는 남긴다** — 스캔 썸네일이 그 한 장이다.
             if temporary and not any(c > 0 for c in self._refcount.values()):
-                self._stop_pipeline()
+                self._stop_pipeline(unlink_segments=False)
             return got
 
 
@@ -477,7 +514,7 @@ class RealSenseHub:
             return False, f"RealSense {serial} not found (rescan)"
         # 컨트롤 질의(초기화)와 동시에 호출되면 probe_stream 이 op_lock 을 기다리거나
         # 디바이스 충돌로 멈출 수 있으므로 시간 상한을 강제한다.
-        ok = _run_guarded(lambda: dev.probe_stream(stream), 8.0, False, f"probe({cam_id})")
+        ok = _run_guarded(lambda: dev.probe_stream(stream), 20.0, False, f"probe({cam_id})")
         if ok:
             return True, "OK"
         return False, f"No frame from RealSense {serial}/{stream}"

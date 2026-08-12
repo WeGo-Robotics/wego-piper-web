@@ -35,10 +35,19 @@ def publish_frame(cam_id: str, frame: np.ndarray) -> bool:
         return False
 
 
-def stop(cam_id: str) -> None:
+def stop(cam_id: str, unlink_segment: bool = True) -> None:
+    """발행 중지.
+
+    `unlink_segment=False` 는 **스캔 썸네일**용이다 — probe 가 스트림을 잠깐 켜서
+    한 장 얻고 되돌릴 때, 세그먼트를 지우면 화면에 아무것도 안 남는다.
+    마지막 프레임은 남기되 발행은 멈춘다.
+
+    ⚠ 그 세그먼트는 발행자가 없으므로 **정지 화면**이다. 소비자(녹화·추론)는
+    `prepare_cameras` 가 카메라를 연결한 뒤에 붙으므로 그때는 살아 있는 세그먼트를 본다.
+    """
     pub = _pubs.pop(segment_for_camera(cam_id), None)
     if pub is not None:
-        pub.close()
+        pub.close(unlink=unlink_segment)
 
 
 def stop_all() -> None:

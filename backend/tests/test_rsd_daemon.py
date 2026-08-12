@@ -106,3 +106,57 @@ def test_daemon_scans_at_startup():
     src = _DAEMON.read_text()
     main = src.split("def main(", 1)[1]
     assert "hub.scan()" in main.split("serve(bus, hub)", 1)[0], "기동 시 스캔하지 않는다"
+
+
+# ── 스캔 썸네일 ──────────────────────────────────────────────────────────────
+
+def test_blocking_pop_waits_the_full_timeout():
+    """**회귀** — `socket_timeout`(1초) 때문에 모든 블로킹 대기가 1초에 끊겼다.
+
+    `_brpop` 이 소켓 타임아웃을 "빈 큐"로 흡수하면서, 아무리 긴 타임아웃을 줘도
+    1초 만에 포기했다. `probe` 가 40초를 요청하고 1초에 "응답 없음"으로 실패했다.
+    소켓 타임아웃 자체는 없애면 안 된다 — 느린 Redis 가 이벤트 루프를 멈추면
+    heartbeat 이 끊겨 E-stop 이 돈다.
+    """
+    import inspect
+
+    from piper_bus.client import Bus
+
+    src = inspect.getsource(Bus._brpop)
+    assert "deadline" in src, "마감까지 반복하지 않는다"
+    assert "continue" in src, "소켓 타임아웃에서 그냥 포기한다"
+
+
+def test_probe_keeps_the_thumbnail_segment():
+    """probe 가 세그먼트를 지우면 스캔 화면에 아무것도 안 남는다.
+
+    probe 는 스트림을 잠깐 켜서 한 장 얻고 되돌리는데, 그때 세그먼트까지 지우면
+    썸네일이 사라진다. 실제로 6대 전부 프리뷰가 안 보였다.
+    """
+    src = _HUB.read_text()
+    assert "_stop_pipeline(unlink_segments=False)" in src, (
+        "probe 되돌리기가 썸네일 세그먼트를 지운다"
+    )
+    # 반대로 명시적 해제는 지워야 한다 — 안 지우면 "멈춘 화면"이 남는다
+    assert "def _stop_pipeline(self, unlink_segments: bool = True)" in src
+
+
+def test_probe_settles_before_keeping_the_frame():
+    """RealSense 첫 프레임은 자동노출이 안 잡혀 **까맣다.**
+
+    그걸 썸네일로 남기면 화면이 검게 보인다 (실측 평균밝기 0.5 → 안정화 후 13.1).
+    """
+    src = _HUB.read_text()
+    assert "SETTLE_S" in src, "안정화 대기가 없다"
+    body = src.split("def probe_stream", 1)[1].split("\n    def ", 1)[0]
+    assert "time.sleep(self.SETTLE_S)" in body, "첫 프레임을 그대로 쓴다"
+
+
+def test_probe_enables_all_streams_of_a_device_at_once():
+    """스캔은 스트림마다 probe 를 부른다 — 하나씩 켜면 기동·안정화가 곱해진다.
+
+    실측 6스트림 17초 → 장치 단위로 묶고 재사용 창을 두어 6초.
+    """
+    src = _HUB.read_text()
+    assert "self._active | self.available" in src, "장치의 스트림을 함께 켜지 않는다"
+    assert "PROBE_REUSE_S" in src, "최근 probe 결과를 재사용하지 않는다"
