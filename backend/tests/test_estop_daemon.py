@@ -21,6 +21,27 @@ _ESTOPD = _REPO / "daemons" / "estopd.py"
 pytest.importorskip("redis")
 from piper_bus import Bus, contract as C  # noqa: E402
 
+# ⚠ **테스트 전용 Redis DB.** 운영과 같은 DB 를 쓰면 두 방향 모두 사고가 난다:
+#
+#   - 실행 중인 estopd 가 테스트의 heartbeat/PID 를 보고 테스트 victim 을 죽인다
+#   - 더 위험한 쪽: **테스트가 띄운 estopd 가 진짜 추론·녹화 PID 를 SIGKILL 한다.**
+#     학습·녹화 중에 `pytest` 를 돌리면 팔이 멈춘다.
+#
+# DB 번호만 바꾸면 키 공간이 완전히 갈린다.
+_TEST_DB = 15
+
+
+@pytest.fixture(autouse=True)
+def isolated_redis(monkeypatch):
+    """이 모듈의 모든 테스트(와 그 자식 estopd)를 별도 DB 로 격리한다."""
+    from piper_bus import client as bus_client
+
+    url = f"redis://127.0.0.1:6379/{_TEST_DB}"
+    monkeypatch.setenv("PIPER_REDIS_URL", url)
+    # 이미 만들어진 클라이언트가 있어도 새로 붙게 한다
+    monkeypatch.setattr(bus_client, "url", lambda: url)
+    yield
+
 
 @pytest.fixture
 def bus():
@@ -159,9 +180,15 @@ def test_not_armed_means_no_kill(bus, victim, estopd):
 
 def test_gateway_survives_without_bus(monkeypatch):
     """Redis 가 없어도 게이트웨이는 떠야 한다 (bus_available=False 로 알린다)."""
+    from piper_bus import client as bus_client
+
     from app.services.estop_bridge import EstopBridge
 
-    monkeypatch.setenv("PIPER_REDIS_URL", "redis://127.0.0.1:1/0")  # 없는 포트
+    # `isolated_redis` 가 이미 `url()` 을 DB 15 로 고정했으므로 env 만으로는 안 된다.
+    # 같은 지점을 덮어써야 "버스가 없는" 상황이 실제로 재현된다.
+    dead = "redis://127.0.0.1:1/0"  # 없는 포트
+    monkeypatch.setenv("PIPER_REDIS_URL", dead)
+    monkeypatch.setattr(bus_client, "url", lambda: dead)
     b = EstopBridge()
     assert b.connect() is False
     b.heartbeat()          # 예외 없이 no-op
