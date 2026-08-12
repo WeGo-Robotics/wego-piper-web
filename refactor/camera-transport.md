@@ -275,8 +275,10 @@ piper.cam.wrist_depth    ← 컬러라이즈드  (h, w, 3) uint8
    채우고, `PiperShmCamera`로 읽는다. **LeRobot 수정 0으로 `type: "shm"`이 등록되는 것과
    실카메라 프레임이 흐르는 것까지 확인**(D435 640×480 15fps, seqlock 재시도 0).
    추론 1회 실기는 남아 있다
-3. **rsd ☑** (RealSense → [daemons/rsd.py](../daemons/rsd.py), 구현은 [rs/piper_rs/](../rs/piper_rs/)).
-   camerad(v4l2) 는 대기 — **합치지 않기로 했다**(D405 hang 격리)
+3. ☑ **rsd**([daemons/rsd.py](../daemons/rsd.py) · [rs/piper_rs/](../rs/piper_rs/)) 와
+   **camerad**([daemons/camerad.py](../daemons/camerad.py) · [cam/piper_cam/](../cam/piper_cam/)).
+   **합치지 않았다** — D405 hang 이 웹캠까지 죽이지 않게. 소유가 겹치지 않는다:
+   camerad 는 RealSense 노드를 무조건 건너뛰고 rsd 는 v4l2 를 안 본다
 4. ☑ `_build_cameras_json`을 `type: "shm"`으로 전환. `is_d405`/`warmup_s` 분기 제거.
    **`settings.camera_transport`(`direct`|`shm`) 스위치로 넣었다** — 되돌리기가 값 하나다.
    추론 시작 경로도 뒤바뀐다: `direct` 는 카메라를 **해제**하고 `shm` 은 **붙잡는다**

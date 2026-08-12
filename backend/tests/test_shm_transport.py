@@ -276,13 +276,23 @@ def test_segment_name_comes_from_the_device_not_the_lerobot_key():
     assert segment_for_camera("rs:250122070363:color") == "rs_250122070363_color"
     assert segment_for_camera("/dev/video0") == "dev_video0"
 
-    # 발행측이 장치에서 이름을 뽑는지 (키를 쓰면 데몬 이전이 막힌다)
+    # 발행은 이제 **데몬**이 한다. 장치에서 이름을 뽑는지 확인한다 —
+    # 키를 쓰면 데몬이 매핑을 알아야 하고, 그러면 실행과 무관하게 살 수 없다.
     from pathlib import Path
 
-    backend = Path(__file__).resolve().parents[1] / "app" / "services"
-    for f in ("camera_manager.py", "realsense_manager.py"):
-        src = (backend / f).read_text()
-        assert "segment_for_camera" in src, f"{f} 가 장치 기준 이름을 안 쓴다"
-    assert "shm_key" not in (backend / "camera_manager.py").read_text(), (
-        "키 기반 발행이 남아 있다"
-    )
+    repo = Path(__file__).resolve().parents[2]
+    for pkg in ("rs/piper_rs", "cam/piper_cam"):
+        src = (repo / pkg / "publish.py").read_text()
+        assert "segment_for_camera" in src, f"{pkg} 가 장치 기준 이름을 안 쓴다"
+
+    # 게이트웨이에는 장치 코드가 남아 있으면 안 된다.
+    # **주석이 아니라 실제 호출**을 본다 — 설명문에 `VideoCapture` 가 나올 수 있다.
+    import ast
+
+    gw = (repo / "backend" / "app" / "services" / "camera_manager.py").read_text()
+    calls = {
+        ast.unparse(n.func)
+        for n in ast.walk(ast.parse(gw)) if isinstance(n, ast.Call)
+    }
+    assert not any("VideoCapture" in c for c in calls), "게이트웨이가 아직 장치를 연다"
+    assert not any("publish" in c for c in calls), "게이트웨이가 아직 발행한다"

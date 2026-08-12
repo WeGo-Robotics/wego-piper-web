@@ -19,10 +19,14 @@ if redis-cli ping >/dev/null 2>&1; then
   # 안 띄우면 게이트웨이가 RealSense 를 전혀 못 본다 — 이제 장치를 직접 열지 않는다.
   echo "Starting RealSense daemon (rsd)..."
   python3 "$REPO/daemons/rsd.py" &
+  # camerad 는 /dev/video* 를 독점한다. rsd 와 **합치지 않는다** —
+  # RealSense 가 죽어도 웹캠은 살아야 하기 때문이다 (D405 hang 이력).
+  echo "Starting v4l2 daemon (camerad)..."
+  python3 "$REPO/daemons/camerad.py" &
 else
   echo "⚠ Redis 미실행 — 게이트웨이는 뜨지만 다음이 전부 동작하지 않습니다:"
   echo "   · heartbeat 타임아웃 정지(estopd)  · 추론 실시간 파라미터 변경"
-  echo "   · RealSense 카메라 전체(rsd)"
+  echo "   · 카메라 전체 (rsd: RealSense · camerad: 웹캠)"
   echo "   · 녹화 제어(건너뛰기/재녹화/정지)   · 녹화 미리보기"
   echo "   sudo systemctl start redis-server"
 fi

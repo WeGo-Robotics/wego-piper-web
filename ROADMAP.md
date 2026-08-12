@@ -184,7 +184,7 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 | 3 | ☑ 브리지 3개 → Redis | 경계는 그대로, 전송만. 주소 3개 → `PIPER_REDIS_URL` 1개 |
 | **3.5** | cloud-training **3 ☑**(job 레지스트리 · WS `job_id`) / **4 대기**(SSH 러너) | 3 은 클라우드 없이도 값이 난다 — **서버 재시작에도 학습이 보인다.** 4 는 검증할 원격 머신이 필요하다 |
 | 4 | **shm 전송 계층** — 카메라 **1~2 ☑**(포맷·플러그인·발행측, 실카메라 확인) / 3~5 대기 · [로봇](refactor/robot-transport.md) 대기 | 데몬 분리의 전제조건. 깊이맵은 전송 검증 후로 미룸 |
-| 5 | **rsd ☑**(RealSense 데몬 · 버스 RPC · shm 발행) / robotd·camerad 대기 | rsd 를 먼저: D405 hang 이력이 있어 격리 이득이 가장 크다. **camerad 와 합치지 않는다** |
+| 5 | **rsd ☑ · camerad ☑** (버스 RPC · shm 발행) / robotd 대기 | **합치지 않았다** — D405 hang 이력. 게이트웨이는 이제 카메라 장치를 전혀 안 연다 |
 | 6 | `SystemdRunner` 추가 + policysrv·encoderd·xferd 유닛화 | 3.5의 이음매에 붙이는 것뿐 |
 | 7 | infer / record 컨테이너화 | GPU + `ipc: host`만 |
 | 8 | 게이트웨이 정리 (#7 ☑ 완료) | `services/`에 스캐너만 남는다 |

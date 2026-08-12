@@ -40,3 +40,4 @@ backend/outputs/
 # 디버그 캡처 — 추론 debug_mode 산출물(658MB). eval_logs 는 추적 중이라 제외하지 않는다.
 backend/data/debug/
 rs/*.egg-info/
+cam/*.egg-info/
