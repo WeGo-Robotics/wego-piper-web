@@ -13,7 +13,6 @@ gRPC 추론 래퍼 (lerobot 0.5+ / python3.13) — 원격 정책 서버 + 웹 UI
     --actions-per-chunk 50 \
     --task "Pick the car and put in the box" \
     --fps 30 \
-    --zmq-addr tcp://127.0.0.1:5555
 """
 
 import os as _os
@@ -34,7 +33,7 @@ from queue import Queue
 from typing import Any
 
 import numpy as np
-import zmq
+from piper_bus.client import Bus
 
 # root handler 정리 (중복 방지)
 _handler = logging.StreamHandler(sys.stdout)
@@ -43,7 +42,7 @@ logging.root.handlers = [_handler]
 logging.root.setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ── 실시간 제어 (ZMQ) ──
+# ── 실시간 제어 (버스) ──
 _current_task = "do the task"
 _paused = False
 _manual_action: dict | None = None
@@ -61,7 +60,7 @@ _reset_requested: bool = False  # 원위치+리셋 요청 (실제 처리는 제�
 def apply_param(key: str, value) -> bool:
     """파라미터 하나를 적용. 처리했으면 True.
 
-    ZMQ 실시간 변경과 **시작 시 `--config-overrides`** 가 같은 코드를 탄다.
+    버스 실시간 변경과 **시작 시 `--config-overrides`** 가 같은 코드를 탄다.
     두 벌로 나뉘면 반드시 어긋난다 (실제로 시작 경로가 아예 없어서
     UI 슬라이더 값이 전부 유실되고 있었다).
     """
@@ -106,18 +105,21 @@ def apply_param(key: str, value) -> bool:
     return True
 
 
-def zmq_listener(zmq_addr: str) -> None:
-    ctx = zmq.Context()
-    sock = ctx.socket(zmq.PULL)
-    sock.bind(zmq_addr)
-    logger.info("ZMQ listener bound to %s", zmq_addr)
+def param_listener(bus: Bus) -> None:
+    """버스 큐에서 파라미터를 받아 반영 (refactor/daemon-split.md 3단계).
+
+    ZMQ PULL bind 를 대체한다. 큐라서 정책 서버 연결이 늦어도 값이 유실되지 않는다.
+    """
+    logger.info("파라미터 리스너 시작 (Redis 큐)")
     while True:
         try:
-            msg = sock.recv_json()
+            msg = bus.pop_params()
+            if msg is None:      # 타임아웃 — 빈 큐일 뿐이다
+                continue
             for key, value in msg.items():
                 apply_param(key, value)
         except Exception as e:
-            logger.error("ZMQ error: %s", e)
+            logger.error("파라미터 수신 오류: %s", e)
 
 
 def _save_preview(obs: dict) -> None:
@@ -166,9 +168,8 @@ def main() -> None:
                         help="이동평균 윈도우 크기")
     parser.add_argument("--task", default="do the task")
     parser.add_argument("--fps", type=int, default=20)
-    parser.add_argument("--zmq-addr", default="tcp://127.0.0.1:5555")
     parser.add_argument("--config-overrides", default="{}",
-                        help="UI 슬라이더 시작값 JSON (필터·청크·fps). 실시간 ZMQ와 같은 경로로 적용된다")
+                        help="UI 슬라이더 시작값 JSON (필터·청크·fps). 실시간 변경과 같은 경로로 적용된다")
     parser.add_argument("--debug", action="store_true", help="주고받은 모든 데이터를 별도 폴더에 기록")
     args = parser.parse_args()
 
@@ -177,7 +178,7 @@ def main() -> None:
     global _current_task
     _current_task = args.task
 
-    # UI 슬라이더 시작값 적용 (실시간 ZMQ 변경과 동일 경로).
+    # UI 슬라이더 시작값 적용 (실시간 변경과 동일 경로).
     # fps 는 --fps CLI 인자로 따로 오고 제어 루프 진입 시 _target_fps 에 반영된다.
     # 정책 파라미터(RTC/ACT)는 gRPC 모드에서 서버 쪽 소관이라 여기선 무시된다.
     for _k, _v in json.loads(args.config_overrides).items():
@@ -316,8 +317,9 @@ def main() -> None:
     stub.SendPolicyInstructions(services_pb2.PolicySetup(data=pickle.dumps(policy_config)))
     logger.info("Policy server connected")
 
-    # ── 3. ZMQ 리스너 시작 ──
-    threading.Thread(target=zmq_listener, args=(args.zmq_addr,), daemon=True).start()
+    # ── 3. 파라미터 리스너 시작 ──
+    # 주소는 `PIPER_REDIS_URL` 에서 온다 — ZMQ 시절 `--zmq-addr` 가 없어졌다.
+    threading.Thread(target=param_listener, args=(Bus(),), daemon=True).start()
 
     # ── 4. 액션 큐 + aggregate 함수 + 오프셋 보정 + 수신 스레드 ──
     import torch

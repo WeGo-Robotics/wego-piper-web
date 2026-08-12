@@ -89,13 +89,10 @@ class Settings(BaseSettings):
         _save_model_paths(self.config_dir, paths)
         return paths
 
-    # ZMQ
-    zmq_address: str = "tcp://127.0.0.1:5555"
-    # 녹화 중 카메라 프레임 미리보기 전송 채널 (wrapper PUSH → 백엔드 PULL)
-    preview_zmq_address: str = "tcp://127.0.0.1:5556"
-    # 녹화 에피소드 제어 채널 (백엔드 PUSH → wrapper PULL): 건너뛰기/재녹화/정지.
-    # 헤드리스라 pynput 키 주입이 불가하므로 LeRobot events dict 을 직접 set 한다.
-    control_zmq_address: str = "tcp://127.0.0.1:5557"
+    # 버스 (Redis) — ZMQ 소켓 3개(5555 파라미터 / 5556 프리뷰 / 5557 녹화제어)를
+    # 대체한다 (refactor/daemon-split.md 3단계). 주소가 3개에서 1개로 줄었다.
+    # 비워두면 `piper_bus` 기본값(`PIPER_REDIS_URL` 또는 localhost:6379/0)을 쓴다.
+    redis_url: str = ""
 
     # E-stop
     estop_heartbeat_interval_ms: int = 500

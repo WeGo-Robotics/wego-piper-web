@@ -46,15 +46,15 @@ cd frontend && npm run dev
      ↕ WebSocket / REST
 [FastAPI 서버 (backend/)]
      ├→ subprocess.Popen  → LeRobot CLI 실행 (process_manager.py)
-     ├→ ZMQ PUSH          → 실시간 파라미터 변경 (zmq_bridge.py → wrapper/)
+     ├→ Redis 큐          → 실시간 파라미터 변경 (param_bridge.py → wrapper/)
      ├→ stdout 파싱       → WebSocket으로 로그 전송 (ws.py)
      └→ estop_watchdog    → heartbeat 감시, 타임아웃 시 강제 종료
 ```
 
-### subprocess(프로세스 관리)와 ZMQ(파라미터 변경)의 관계
+### subprocess(프로세스 관리)와 버스(파라미터 변경)의 관계
 둘은 대안이 아니라 레이어가 다른 **협력 관계**:
 - subprocess = 프로세스 시작/종료/크래시 감지/stdout 수집
-- ZMQ = 실행 중인 프로세스 내부와 실시간 통신 (policy 객체 속성 변경)
+- 버스(Redis) = 실행 중인 프로세스 내부와 실시간 통신 (policy 객체 속성 변경)
 
 ### 파라미터 안전 분류
 - **Safe (실시간 변경 가능)**: `max_guidance_weight`, `execution_horizon`, `temporal_ensemble_coeff`, `n_action_steps`(chunk_size 이하일 때)
@@ -66,7 +66,7 @@ cd frontend && npm run dev
 |----------|------|
 | 프론트엔드 | React + TypeScript + Vite + Tailwind CSS |
 | 백엔드 | Python 3.11+ / FastAPI + uvicorn |
-| IPC | ZMQ (pyzmq) — tcp://127.0.0.1:5555 |
+| IPC | Redis (piper_bus) — 파라미터·녹화제어 큐, 프리뷰 TTL 키, E-stop heartbeat |
 | 카메라 분배 | v4l2loopback + GStreamer |
 | 키 입력 주입 | evdev UInput |
 | 추론 스무딩 | RTC (flow-matching) / Temporal Ensemble (ACT) |
@@ -79,7 +79,7 @@ cd frontend && npm run dev
 | `WS /ws` | WebSocket (로그 스트리밍, 프로세스 상태) |
 | `POST /api/estop/trigger` | 긴급 정지 |
 | `POST /api/estop/heartbeat` | heartbeat |
-| `POST /api/params` | 실시간 파라미터 변경 (ZMQ) |
+| `POST /api/params` | 실시간 파라미터 변경 (버스) |
 | `GET /api/models` | 로컬 모델 목록 |
 | `POST /api/models/inference/start` | 추론 시작 |
 | `POST /api/models/inference/stop` | 추론 정지 |
@@ -94,7 +94,7 @@ cd frontend && npm run dev
 ## 안전 관련 주의사항
 
 - E-stop은 웹서버와 **반드시 분리된 독립 watchdog 프로세스**로 구현. WebSocket 끊김 = 즉시 안전 정지
-- 웹 슬라이더에 min/max 클램핑 필수 (`backend/app/services/zmq_bridge.py`의 SAFE_PARAMS)
+- 웹 슬라이더에 min/max 클램핑 필수 (`backend/app/services/param_bridge.py`의 SAFE_PARAMS)
 - 녹화 중 브라우저 종료 시 LeRobot 프로세스가 독립적으로 에피소드 완결 (CLI 래핑의 장점)
 - GPU 메모리 경합: 학습과 추론 동시 실행 시 OOM 위험 → 모드를 배타적으로 관리
 
@@ -104,5 +104,5 @@ cd frontend && npm run dev
 - `PIPER_PORT`: 서버 포트 (기본 8000)
 - `PIPER_MODELS_DIR`: 모델 디렉토리
 - `PIPER_DATASETS_DIR`: 데이터셋 디렉토리
-- `PIPER_ZMQ_ADDRESS`: ZMQ 주소 (기본 tcp://127.0.0.1:5555)
+- `PIPER_REDIS_URL`: 버스 주소 (기본 redis://127.0.0.1:6379/0). `ProcessManager` 가 모든 자식에게 넘긴다
 - `PIPER_DISK_WARNING_THRESHOLD_GB`: 디스크 경고 임계치 (기본 10GB)

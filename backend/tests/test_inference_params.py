@@ -11,7 +11,7 @@ from app.core.cli_mapping import (
     build_grpc_client_args,
     build_inference_args,
 )
-from app.services.zmq_bridge import BOOL_PARAMS, SAFE_PARAMS
+from app.services.param_bridge import BOOL_PARAMS, SAFE_PARAMS
 
 # UI 슬라이더가 실제로 보내는 값들 (기본값이 아니라 "사용자가 바꿔둔" 상태)
 UI_PARAMS = {

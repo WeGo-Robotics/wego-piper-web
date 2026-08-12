@@ -41,16 +41,34 @@ export type LogSavedData = {
   debug_dir?: string | null
 }
 
+/** 학습 job — 로컬(`job_id: 'local'`)과 원격이 같은 모양이다. */
+export type JobRecord = {
+  job_id: string
+  runner: string
+  state: ProcessState
+  output_dir: string
+  total_steps: number
+  metrics: TrainMetricsData | Record<string, never>
+  created_at: string
+  updated_at: string
+  provider: string
+  instance_id: string
+}
+
+/** 로컬 학습의 job_id. 백엔드 `piper_bus.contract.LOCAL_JOB_ID` 와 같아야 한다. */
+export const LOCAL_JOB_ID = 'local'
+
 export type WsMessage =
   // 추론
   | { type: 'log'; data: string }
   | { type: 'state'; data: ProcessState }
   | { type: 'telemetry'; data: TelemetryData & { paused?: boolean } }
   | { type: 'log_saved'; data: LogSavedData }
-  // 학습
-  | { type: 'train_log'; data: string }
-  | { type: 'train_state'; data: ProcessState }
-  | { type: 'train_metrics'; data: TrainMetricsData }
+  // 학습 — `job_id` 로 어느 job 것인지 밝힌다. 없으면 클라우드 job 2개가 서로를 덮어쓴다.
+  | { type: 'train_log'; job_id: string; data: string }
+  | { type: 'train_state'; job_id: string; data: ProcessState }
+  | { type: 'train_metrics'; job_id: string; data: TrainMetricsData }
+  | { type: 'job_list'; data: JobRecord[] }
   // 녹화
   | { type: 'record_log'; data: string }
   | { type: 'record_state'; data: ProcessState }

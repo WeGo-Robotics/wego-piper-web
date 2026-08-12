@@ -181,8 +181,8 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 |---|---|---|
 | 1 | ☑ `piper_bus/` 계약 + Redis ([bus/](bus/)) | 데몬 0개 |
 | 2 | ☑ [estopd](daemons/estopd.py) — **게이트웨이를 얼려도 팔이 선다** | 최소 크기, 최대 안전 이득, 시범 케이스 |
-| 3 | 브리지 3개 → Redis | 경계는 그대로, 전송만 |
-| **3.5** | **cloud-training 3~4** — job 레지스트리(Redis 위에) + SSH 러너 | ← **여기서 클라우드 학습이 실제로 돈다.** 데몬 분리를 안 기다린다 |
+| 3 | ☑ 브리지 3개 → Redis | 경계는 그대로, 전송만. 주소 3개 → `PIPER_REDIS_URL` 1개 |
+| **3.5** | cloud-training **3 ☑**(job 레지스트리 · WS `job_id`) / **4 대기**(SSH 러너) | 3 은 클라우드 없이도 값이 난다 — **서버 재시작에도 학습이 보인다.** 4 는 검증할 원격 머신이 필요하다 |
 | 4 | **shm 전송 계층** — [카메라](refactor/camera-transport.md) + [로봇](refactor/robot-transport.md) | 데몬 분리의 전제조건 |
 | 5 | robotd → camerad → rsd | |
 | 6 | `SystemdRunner` 추가 + policysrv·encoderd·xferd 유닛화 | 3.5의 이음매에 붙이는 것뿐 |
@@ -221,7 +221,7 @@ B·C·D·E는 A를 거의 안 막는다. **E의 URDF 확보는 지금 바로 시
 
 | 질문 | 언제까지 | 영향 |
 |---|---|---|
-| 동시 학습 job 수 상한 | 3b-3.5 전 | 1개면 job 레지스트리가 크게 가벼워진다 |
+| 동시 학습 job 수 상한 | ~~3b-3.5 전~~ → **4단계(SSH 러너) 전** | 레지스트리는 N개를 담게 만들고 상한만 `MAX_CONCURRENT_JOBS=1` 로 뒀다 — 클라우드가 붙을 때 상수 하나만 고치면 된다 |
 | E-stop이 무엇을 죽이는가 | 3b-2 전 | #10과 estopd 분리가 같이 걸려 있다 |
 | URDF를 구할 수 있는가 | 트랙 E 시작 전 | 못 구하면 robotd-safety 트랙 자체가 없다 |
 | camerad/rsd 합칠 것인가 | 3b-5 전 | 크래시 격리 vs 단순함 |

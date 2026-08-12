@@ -12,7 +12,6 @@ import 범위를 최소화하되, 실제 추론 루프 전체를 제어.
     --cameras '{"top": {"type": "opencv", "index_or_path": 0, "fps": 30, "width": 640, "height": 480}}' \
     --fps 30 \
     --device cuda \
-    --zmq-addr tcp://127.0.0.1:5555
 """
 
 # ── lerobot.policies.__init__.py 실행 방지 ──
@@ -49,7 +48,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import zmq
+from piper_bus.client import Bus
 
 # root logger에 stdout handler만 설정 (중복 방지)
 _handler = logging.StreamHandler(sys.stdout)
@@ -76,10 +75,10 @@ PARAM_SETTERS = {
     "use_amp": lambda p, v: setattr(p.config, "use_amp", bool(v)),
 }
 
-# task 텍스트 (ZMQ로 실시간 변경 가능)
+# task 텍스트 (버스로 실시간 변경 가능)
 _current_task = "do the task"
 
-# 액션 필터 (ZMQ로 실시간 변경 가능)
+# 액션 필터 (버스로 실시간 변경 가능)
 from action_filter import ActionFilter
 _action_filter = ActionFilter()
 
@@ -90,7 +89,7 @@ from parking_controller import ParkingController
 _paused = False
 _manual_action: dict | None = None  # {"joint1.pos": 0.0, ...}
 
-# 원위치+리셋: ZMQ "reset" 수신 시 True → 메인 루프가 원점 복귀+버퍼/필터 초기화 수행.
+# 원위치+리셋: 버스 "reset" 수신 시 True → 메인 루프가 원점 복귀+버퍼/필터 초기화 수행.
 # _reset_gen은 in-flight 추론 무효화용 세대 카운터 (리셋 시 증가 → 이전 세대 결과 폐기).
 _reset_requested = False
 _reset_gen = 0
@@ -101,7 +100,7 @@ _reset_gen = 0
 _refill_threshold_pct = 20.0
 
 # 추론 1회에서 받아 큐에 넣는 액션 수 (모델 chunk_size 이하로 자동 클램핑).
-# 시작 시 확정하되 ZMQ n_action_steps로 런타임 변경 가능. 0 = 모델 전체 청크.
+# 시작 시 확정하되 버스 n_action_steps로 런타임 변경 가능. 0 = 모델 전체 청크.
 _actions_per_chunk = 0
 
 # 정책 타입별 lazy import (policies/__init__.py 우회)
@@ -125,17 +124,20 @@ POLICY_IMPORTS = {
 }
 
 
-def param_listener(policy: Any, zmq_addr: str) -> None:
-    """ZMQ PULL 소켓에서 파라미터를 수신하여 policy 객체에 실시간 반영."""
+def param_listener(policy: Any, bus: "Bus") -> None:
+    """버스 큐에서 파라미터를 수신하여 policy 객체에 실시간 반영.
+
+    ZMQ PULL bind 를 Redis 큐 소비로 교체했다 (refactor/daemon-split.md 3단계).
+    큐라서 pub/sub 과 달리 **정책 로딩 중에 보낸 값도 유실되지 않는다.**
+    """
     global _current_task, _paused, _manual_action, _refill_threshold_pct, _actions_per_chunk, _reset_requested
-    ctx = zmq.Context()
-    sock = ctx.socket(zmq.PULL)
-    sock.bind(zmq_addr)
-    logger.info("ZMQ param listener bound to %s", zmq_addr)
+    logger.info("파라미터 리스너 시작 (Redis 큐)")
 
     while True:
         try:
-            msg = sock.recv_json()
+            msg = bus.pop_params()
+            if msg is None:      # 타임아웃 — 빈 큐일 뿐이다
+                continue
             for key, value in msg.items():
                 # 일시정지/재개
                 if key == "pause":
@@ -182,7 +184,7 @@ def param_listener(policy: Any, zmq_addr: str) -> None:
                 else:
                     logger.warning("Unknown param: %s", key)
         except Exception as e:
-            logger.error("ZMQ recv error: %s", e)
+            logger.error("파라미터 수신 오류: %s", e)
 
 
 def _resolve_policy_path(policy_path: str) -> str:
@@ -204,7 +206,6 @@ def main() -> None:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--use-amp", action="store_true")
     parser.add_argument("--task", default=None)
-    parser.add_argument("--zmq-addr", default="tcp://127.0.0.1:5555")
     parser.add_argument("--config-overrides", default="{}")
     parser.add_argument("--debug", action="store_true", help="주고받은 모든 데이터를 별도 폴더에 기록")
     args = parser.parse_args()
@@ -304,7 +305,7 @@ def main() -> None:
             _refill_threshold_pct = max(0.0, min(100.0, float(value)))
             logger.info("refill_threshold_pct override: %s", _refill_threshold_pct)
             continue
-        # 액션 필터 시작값 (런타임 ZMQ와 동일 경로로 적용)
+        # 액션 필터 시작값 (런타임 변경과 동일 경로로 적용)
         if _action_filter.update_param(key, value):
             logger.info("Filter override: %s = %s", key, value)
             continue
@@ -353,9 +354,11 @@ def main() -> None:
     except Exception:
         pass
 
-    # ── 4. ZMQ 파라미터 리스너 시작 ──
-    zmq_thread = threading.Thread(target=param_listener, args=(policy, args.zmq_addr), daemon=True)
-    zmq_thread.start()
+    # ── 4. 파라미터 리스너 시작 (Redis 큐) ──
+    # 주소는 `PIPER_REDIS_URL` 에서 온다 — ZMQ 시절 `--zmq-addr` 가 없어졌다.
+    param_thread = threading.Thread(
+        target=param_listener, args=(policy, Bus()), daemon=True)
+    param_thread.start()
 
     # ── 5. 추론 루프 ──
     running = True

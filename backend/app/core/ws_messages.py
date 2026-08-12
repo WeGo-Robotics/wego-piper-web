@@ -21,9 +21,14 @@ TELEMETRY: Final = "telemetry"
 LOG_SAVED: Final = "log_saved"
 
 # ── 학습 ──
+# ⚠ 이 셋은 **`job_id` 를 함께 싣는다** (feature/cloud-training.md 3단계).
+# 단일 job 가정으로 두면 클라우드 job 2개가 서로의 상태를 덮어쓴다.
+# 로컬 학습도 `job_id="local"` 로 같은 경로를 탄다.
 TRAIN_LOG: Final = "train_log"
 TRAIN_STATE: Final = "train_state"
 TRAIN_METRICS: Final = "train_metrics"
+# 실행 중·최근 job 목록. 프론트가 어떤 job 을 볼지 고르는 근거다.
+JOB_LIST: Final = "job_list"
 
 # ── 녹화 ──
 RECORD_LOG: Final = "record_log"
@@ -44,12 +49,15 @@ PONG: Final = "pong"
 
 ALL: Final[frozenset[str]] = frozenset({
     LOG, STATE, TELEMETRY, LOG_SAVED,
-    TRAIN_LOG, TRAIN_STATE, TRAIN_METRICS,
+    TRAIN_LOG, TRAIN_STATE, TRAIN_METRICS, JOB_LIST,
     RECORD_LOG, RECORD_STATE, RECORD_STATUS,
     PS_LOG, PS_STATE,
     UPLOAD_LOG, UPLOAD_STATE,
     PONG,
 })
+
+# 학습 메시지는 어느 job 것인지 반드시 밝혀야 한다 — 테스트가 이 목록을 강제한다
+JOB_SCOPED: Final[frozenset[str]] = frozenset({TRAIN_LOG, TRAIN_STATE, TRAIN_METRICS})
 
 # `*_state` 로 끝나는 것 + `state` — 프론트가 활동 상태 재조회 시점을 이걸로 판단한다
 STATE_TYPES: Final[frozenset[str]] = frozenset(

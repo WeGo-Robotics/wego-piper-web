@@ -32,6 +32,19 @@ async def broadcast(message: dict) -> None:
         except Exception:
             _clients.discard(client)
 
+async def broadcast_job_list() -> None:
+    """학습 job 목록을 민다.
+
+    프론트가 어떤 job 을 보고 있는지 고르는 근거다. 목록이 없으면 `job_id` 를 붙여도
+    프론트가 '내가 볼 job' 을 정할 수 없다 (feature/cloud-training.md 3단계).
+    """
+    from app.services.training.jobs import job_registry
+
+    await broadcast({
+        "type": M.JOB_LIST,
+        "data": [j.to_dict() for j in job_registry.list()],
+    })
+
 
 def _setup_callbacks() -> None:
     loop = asyncio.get_running_loop()
@@ -103,19 +116,35 @@ def _setup_callbacks() -> None:
     process_manager.set_state_callback(on_state_change)
 
     # ── 학습 콜백 ──
+    # 학습 메시지는 **누구 것인지 밝힌다.** 단일 job 가정으로 두면 클라우드 job 2개가
+    # 서로의 상태를 덮어쓴다 (feature/cloud-training.md 3단계).
+    # 로컬도 `job_id="local"` 이라 프론트는 원격과 같은 코드로 처리한다.
     def on_train_log(line: str) -> None:
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": M.TRAIN_LOG, "data": line}), loop
+            broadcast({"type": M.TRAIN_LOG, "job_id": train_manager.job_id, "data": line}),
+            loop,
         )
 
     def on_train_state(state: ProcessState) -> None:
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": M.TRAIN_STATE, "data": state.value}), loop
+            broadcast({
+                "type": M.TRAIN_STATE,
+                "job_id": train_manager.job_id,
+                "data": state.value,
+            }),
+            loop,
         )
+        # 상태가 바뀌면 목록도 바뀐다 — 프론트가 따로 폴링하지 않게 같이 밀어준다.
+        asyncio.run_coroutine_threadsafe(broadcast_job_list(), loop)
 
     def on_train_metrics(metrics: dict) -> None:
         asyncio.run_coroutine_threadsafe(
-            broadcast({"type": M.TRAIN_METRICS, "data": metrics}), loop
+            broadcast({
+                "type": M.TRAIN_METRICS,
+                "job_id": train_manager.job_id,
+                "data": metrics,
+            }),
+            loop,
         )
 
     train_manager.set_log_callback(on_train_log)
@@ -182,8 +211,18 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     await ws.accept()
     _clients.add(ws)
     await ws.send_json({"type": M.STATE, "data": process_manager.state.value})
-    await ws.send_json({"type": M.TRAIN_STATE, "data": train_manager.state.value})
+    await ws.send_json({
+        "type": M.TRAIN_STATE,
+        "job_id": train_manager.job_id,
+        "data": train_manager.state.value,
+    })
     await ws.send_json({"type": M.RECORD_STATE, "data": record_manager.state.value})
+    # 재접속한 브라우저가 곧바로 job 목록을 갖도록 (새로고침해도 학습이 보인다)
+    from app.services.training.jobs import job_registry
+    await ws.send_json({
+        "type": M.JOB_LIST,
+        "data": [j.to_dict() for j in job_registry.list()],
+    })
 
     try:
         while True:

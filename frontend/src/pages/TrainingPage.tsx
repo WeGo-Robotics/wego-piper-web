@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { api } from '../services/api'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
-import type { ProcessState } from '../types/ws'
+import { LOCAL_JOB_ID, type JobRecord, type ProcessState } from '../types/ws'
 import { useActivity, isStateMessage } from '../hooks/useActivity'
 import { usePolicies } from '../hooks/usePolicies'
 import PresetBar from '../components/PresetBar'
@@ -125,6 +125,10 @@ export default function TrainingPage() {
 
   // 실행 상태
   const [trainState, setTrainState] = useState<ProcessState>('idle')
+  // 학습 job 목록 — 로컬도 job 이다(`local`). 원격이 붙으면 여기 함께 뜬다.
+  const [jobs, setJobs] = useState<JobRecord[]>([])
+  // 지금 화면이 보고 있는 job. WS 메시지를 이걸로 걸러야 job 끼리 안 섞인다.
+  const [viewJobId, setViewJobId] = useState<string>(LOCAL_JOB_ID)
   const [metrics, setMetrics] = useState<MetricsData | null>(null)
   const [history, setHistory] = useState<HistoryData>({ steps: [], losses: [], grad_norms: [], lrs: [] })
   const [logs, setLogs] = useState<string[]>([])
@@ -167,6 +171,15 @@ export default function TrainingPage() {
   const { connected } = useWebSocket('/ws', {
     onMessage: useCallback((msg: WsMessage) => {
       if (isStateMessage(msg.type)) refreshActivity()
+      if (msg.type === 'job_list') {
+        setJobs(msg.data as JobRecord[])
+        return
+      }
+      // 학습 메시지는 **보고 있는 job 것만** 반영한다. 이게 없으면 원격 job 이
+      // 붙는 순간 두 job 이 서로의 상태·로그를 덮어쓴다 (cloud-training.md §1-(2)).
+      if (msg.type === 'train_state' || msg.type === 'train_metrics' || msg.type === 'train_log') {
+        if ((msg as { job_id?: string }).job_id !== viewJobId) return
+      }
       if (msg.type === 'train_state') {
         setTrainState(msg.data as ProcessState)
       } else if (msg.type === 'train_metrics') {
@@ -178,7 +191,7 @@ export default function TrainingPage() {
           return next.length > MAX_LOGS ? next.slice(-MAX_LOGS) : next
         })
       }
-    }, [refreshActivity]),
+    }, [refreshActivity, viewJobId]),
   })
 
   // 초기 데이터 로드
@@ -186,7 +199,23 @@ export default function TrainingPage() {
     api.get<Dataset[]>('/datasets').then(setDatasets).catch(() => {})
     api.get<Model[]>('/models').then(setModels).catch(() => {})
     api.get<{ state: string }>('/training/status').then((s) => setTrainState(s.state as ProcessState)).catch(() => {})
+    api.get<{ jobs: JobRecord[] }>('/training/jobs').then((r) => setJobs(r.jobs)).catch(() => {})
   }, [])
+
+  // 보고 있는 job 이 바뀌면 그 job 의 과거 로그를 채운다.
+  // WS 는 신규분만 보내므로(6시간 학습은 수만 줄이라 전부 밀면 브라우저가 죽는다),
+  // 전환 직후 화면이 비지 않게 링버퍼에서 읽어온다.
+  useEffect(() => {
+    let alive = true
+    api.get<{ lines: string[]; dropped: number }>(
+      `/training/jobs/${encodeURIComponent(viewJobId)}/logs?limit=${MAX_LOGS}`
+    ).then((r) => {
+      if (!alive) return
+      const head = r.dropped > 0 ? [`… 이전 ${r.dropped}줄 생략 (버퍼 한도)`] : []
+      setLogs([...head, ...r.lines])
+    }).catch(() => {})
+    return () => { alive = false }
+  }, [viewJobId])
 
   // pretrained 모델 변경 시 rename_map 자동 로드
   useEffect(() => {
@@ -327,6 +356,20 @@ export default function TrainingPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">학습</h1>
         <div className="flex items-center gap-3">
+          {/* job 선택 — 로컬도 job 이다. 원격이 붙으면 같은 자리에 함께 뜬다.
+              2개 이상일 때만 보여준다 (지금은 항상 로컬 1개라 화면이 조용하다). */}
+          {jobs.length > 1 && (
+            <select
+              value={viewJobId}
+              onChange={(e) => { setViewJobId(e.target.value); setLogs([]) }}
+              className="px-2 py-1 text-xs rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
+              {jobs.map((j) => (
+                <option key={j.job_id} value={j.job_id}>
+                  {j.job_id === LOCAL_JOB_ID ? '로컬' : `${j.runner}:${j.job_id}`} ({j.state})
+                </option>
+              ))}
+            </select>
+          )}
           <span className={`inline-block w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
           {isRunning && (
             <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-500/20 text-green-400">{trainState}</span>

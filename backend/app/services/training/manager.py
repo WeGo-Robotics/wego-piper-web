@@ -12,6 +12,12 @@ import logging
 from collections.abc import Callable
 
 from app.services.process_manager import ProcessState
+from app.services.training.jobs import (
+    LOCAL_JOB_ID,
+    JobRecord,
+    JobRegistry,
+    job_registry,
+)
 from app.services.training.metrics import MetricsTracker
 from app.services.training.runners.base import TrainRunner
 from app.services.training.runners.local import LocalRunner
@@ -21,12 +27,22 @@ logger = logging.getLogger(__name__)
 
 
 class TrainManager:
-    def __init__(self, runner: TrainRunner | None = None) -> None:
+    def __init__(
+        self,
+        runner: TrainRunner | None = None,
+        job_id: str = LOCAL_JOB_ID,
+        registry: JobRegistry | None = None,
+    ) -> None:
         self.runner: TrainRunner = runner or LocalRunner()
         self.tracker = MetricsTracker()
         self.output_dir: str = ""
+        # 로컬도 job_id 를 갖는다 — 원격이 붙어도 같은 경로를 타게 하려는 것이다
+        # (feature/cloud-training.md 3단계).
+        self.job_id = job_id
+        self.registry = registry or job_registry
         self._on_metrics: Callable[[dict], None] | None = None
         self._original_log_cb: Callable[[str], None] | None = None
+        self._original_state_cb: Callable[[ProcessState], None] | None = None
         self.tracker.set_update_callback(self._emit_metrics)
 
     # ── 상태 (실행 방식 무관) ──
@@ -57,17 +73,48 @@ class TrainManager:
         self.runner.set_log_callback(self._intercept_log)
 
     def set_state_callback(self, cb: Callable[[ProcessState], None]) -> None:
-        self.runner.set_state_callback(cb)
+        self._original_state_cb = cb
+        self.runner.set_state_callback(self._intercept_state)
 
     def _intercept_log(self, line: str) -> None:
         """로그를 가로채 메트릭을 뽑고 원본 콜백에 그대로 전달."""
         self.tracker.feed(line)
+        # 6시간 학습이면 수만 줄이라 전부 WS 로 밀면 브라우저가 죽는다.
+        # 버스 링버퍼에 남겨 REST 페이지네이션으로 읽게 한다 (WS 로는 신규분만).
+        self.registry.append_log(self.job_id, line)
         if self._original_log_cb:
             self._original_log_cb(line)
 
+    def _intercept_state(self, state: ProcessState) -> None:
+        """상태 변화를 레지스트리에 반영하고 원본 콜백에 전달.
+
+        여기서 쓰지 않으면 **게이트웨이가 재시작할 때 학습 상태가 사라진다** —
+        지금까지의 그 버그다. 레지스트리가 프로세스 밖에 있으니 다시 읽으면 그만이다.
+        """
+        self._sync_record(state=state.value)
+        if self._original_state_cb:
+            self._original_state_cb(state)
+
     def _emit_metrics(self) -> None:
+        status = self.get_status()
+        self._sync_record(metrics=status)
         if self._on_metrics:
-            self._on_metrics(self.get_status())
+            self._on_metrics(status)
+
+    def _sync_record(self, state: str | None = None, metrics: dict | None = None) -> None:
+        record = self.registry.get(self.job_id) or JobRecord(job_id=self.job_id)
+        record.runner = type(self.runner).__name__.replace("Runner", "").lower()
+        record.state = state if state is not None else self.state.value
+        # ⚠ **빈 값으로 덮어쓰지 않는다.** 서버 재시작 직후엔 트래커가 비어 있는데,
+        # 그대로 쓰면 살아남은 레코드의 `total_steps`/`output_dir` 이 0과 ""가 된다 —
+        # 레지스트리를 둔 이유(재시작해도 학습이 보인다)를 스스로 깎는다.
+        if self.output_dir:
+            record.output_dir = self.output_dir
+        if self.tracker.metrics.total_steps:
+            record.total_steps = self.tracker.metrics.total_steps
+        if metrics is not None:
+            record.metrics = metrics
+        self.registry.put(record)
 
     # ── 실행 ──
 
@@ -80,6 +127,10 @@ class TrainManager:
     ) -> None:
         self.tracker.reset(total_steps=total_steps)
         self.output_dir = output_dir
+        # 이전 job 의 로그·레코드를 치운다. 남겨두면 새 학습 로그가 옛 줄 뒤에 붙어
+        # "어디부터 이번 학습인가"를 알 수 없다 — 버스 링버퍼는 세션을 넘어 살아남는다.
+        self.registry.delete(self.job_id)
+        self._sync_record(state=ProcessState.STARTING.value)
         await self.runner.start(
             TrainJobSpec(
                 cmd=cmd,
@@ -93,16 +144,27 @@ class TrainManager:
         await self.runner.stop()
 
     def restore_running_process(self) -> bool:
+        """서버 재시작 후 살아있는 학습에 다시 붙는다.
+
+        레지스트리도 함께 맞춘다. 안 맞추면 프로세스는 죽었는데 레코드만
+        `running` 으로 남아 UI 가 영원히 "학습 중"이라고 말한다.
+        """
         spec = self.runner.restore()
         if spec is None:
+            stale = self.registry.get(self.job_id)
+            if stale and stale.is_active:
+                logger.info("죽은 학습 job 레코드를 정리한다: %s", self.job_id)
+                self._sync_record(state=ProcessState.IDLE.value)
             return False
         self.tracker.reset(total_steps=spec.total_steps)
         self.output_dir = spec.output_dir
+        self._sync_record()
         return True
 
     def get_status(self) -> dict:
         m = self.tracker.metrics
         return {
+            "job_id": self.job_id,
             "state": self.state.value,
             "step": m.step,
             "total_steps": m.total_steps,

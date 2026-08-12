@@ -9,6 +9,7 @@ from app.core.cli_mapping import build_inference_args, build_grpc_client_args
 from app.core.config import settings
 from app.services.exclusivity import Activity, require_idle
 from app.services.model_scanner import scan_models, get_model, delete_model
+from app.services.param_bridge import param_bridge
 from app.services.process_manager import process_manager
 from app.services.robot_manager import robot_manager
 from app.services.camera_manager import camera_manager
@@ -286,6 +287,11 @@ async def start_inference(body: InferenceStartRequest):
     follower_ifaces = body.robot_ports if is_bimanual else ([robot_port] if robot_port else None)
     _clear_arm_errors("inference-start", follower_ifaces)
 
+    # ⚠ 지난 세션의 파라미터를 버린다. ZMQ 는 소켓을 닫으면 큐도 사라졌지만
+    # Redis 리스트는 남아서, 안 비우면 이전 추론 끝에 민 슬라이더 값이
+    # 새 추론 시작 직후에 적용된다 (refactor/daemon-split.md 3단계).
+    await param_bridge.clear()
+
     env_extra = {"PIPER_DEBUG_DIR": settings.debug_dir} if body.debug_mode else None
     try:
         await process_manager.start(args, env_extra=env_extra)
@@ -307,6 +313,8 @@ async def start_inference_custom(body: InferenceStartCustomRequest):
 
     # 추론 기동 전 로봇팔 에러 플래그 조회 + 무조건 클리어 (연결된 모든 follower)
     _clear_arm_errors("inference-start")
+
+    await param_bridge.clear()   # 위와 같은 이유 — 세션 격리
 
     env_extra = {"PIPER_DEBUG_DIR": settings.debug_dir} if "--debug" in body.args else None
     try:

@@ -19,27 +19,26 @@ register_third_party_plugins()
 
 
 # ── 웹 미리보기 탭 (선택) ──
-# PIPER_PREVIEW_ZMQ 가 설정되면, LeRobot 이 매 프레임 호출하는 log_rerun_data 를
-# 가로채 카메라 이미지를 JPEG 로 백엔드에 PUSH 한다. 무거운 Rerun WASM 뷰어 대신
+# PIPER_PREVIEW=1 이면, LeRobot 이 매 프레임 호출하는 log_rerun_data 를 가로채
+# 카메라 이미지를 JPEG 로 버스에 올린다. 무거운 Rerun WASM 뷰어 대신
 # 기존 JPEG 미리보기 UI 로 보내기 위함. record 가 display_data=true 여야 동작한다.
 #
 # 중요: log_rerun_data 는 record 루프 스레드에서 동기 호출된다. 여기서 직접 인코딩하면
 # 루프 FPS 가 절반으로 떨어진다(실측 6.6→3.5Hz, CPU 부족 시 악화). 따라서 탭은 raw
 # 프레임 복사만(수백 µs) 하고 즉시 반환하고, 인코딩/전송은 별도 워커 스레드에서 ~10fps
 # 로 제한해 처리한다 — 녹화 루프에 부하를 주지 않는다.
-def _install_preview_tap(address: str) -> None:
+def _install_preview_tap() -> None:
     import threading
     import time
 
     import numpy as np
-    import zmq
     import cv2
+    from piper_bus.client import Bus
 
-    ctx = zmq.Context.instance()
-    sock = ctx.socket(zmq.PUSH)
-    sock.setsockopt(zmq.SNDHWM, 2)        # 큐를 짧게 — 밀리면 최신만 의미 있음
-    sock.setsockopt(zmq.LINGER, 0)
-    sock.connect(address)
+    # ZMQ PUSH(SNDHWM=2) 를 버스 키 덮어쓰기로 교체 (refactor/daemon-split.md 3단계).
+    # 큐가 아니라 키라서 "밀리면 최신만 의미 있음"이 구조적으로 보장된다 —
+    # HWM 으로 드롭을 유도할 필요가 없어졌다.
+    bus = Bus()
 
     MAX_SIDE = 320  # 긴 변 기준 다운스케일 (인코딩 비용/대역폭 최소화)
     latest: dict = {}              # name -> raw ndarray (최신만, 덮어쓰기로 드롭)
@@ -83,14 +82,12 @@ def _install_preview_tap(address: str) -> None:
                     ok, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
                     if not ok:
                         continue
-                    sock.send_multipart([name.encode(), buf.tobytes()], flags=zmq.NOBLOCK)
+                    bus.put_preview(name, buf.tobytes())
                     if name not in _sent:
                         _sent.add(name)
                         print(f"[start_record] preview frame streaming: {name}", flush=True)
-                except zmq.Again:
-                    pass  # 백엔드가 못 따라오면 드롭
                 except Exception:
-                    pass
+                    pass  # 버스가 느리거나 끊겨도 녹화는 계속된다
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -99,10 +96,10 @@ def _install_preview_tap(address: str) -> None:
     LR.log_rerun_data = _tap
 
 
-_preview_addr = os.environ.get("PIPER_PREVIEW_ZMQ")
-if _preview_addr:
+# 주소는 `PIPER_REDIS_URL` 에서 온다. 게이트웨이가 미리보기를 원할 때만 켠다.
+if os.environ.get("PIPER_PREVIEW") == "1":
     try:
-        _install_preview_tap(_preview_addr)
+        _install_preview_tap()
     except Exception as _e:
         print(f"[start_record] preview tap install failed: {_e}", flush=True)
 
@@ -111,30 +108,32 @@ if _preview_addr:
 # 헤드리스라 LeRobot 의 키보드 리스너가 꺼져 건너뛰기/재녹화/정지가 동작하지 않는다.
 # init_keyboard_listener 를 가로채, 백엔드가 PUSH 하는 명령으로 events dict 를
 # 직접 set 한다(record() 가 이 dict 를 모든 record_loop 에 공유 사용).
-def _install_control(address: str) -> None:
+def _install_control() -> None:
     import threading
-    import zmq
+
+    from piper_bus import contract as C
+    from piper_bus.client import Bus
 
     def _patched_listener():
         events = {"exit_early": False, "rerecord_episode": False, "stop_recording": False}
-        ctx = zmq.Context.instance()
-        sock = ctx.socket(zmq.PULL)
-        sock.setsockopt(zmq.RCVHWM, 8)
-        sock.setsockopt(zmq.LINGER, 0)
-        sock.bind(address)
+        # ZMQ PULL bind 를 버스 큐 소비로 교체 (refactor/daemon-split.md 3단계).
+        # 게이트웨이가 녹화 시작·종료 때 큐를 비우므로 지난 세션의 명령은 오지 않는다.
+        bus = Bus()
 
         def loop():
             while True:
                 try:
-                    cmd = sock.recv_string()
+                    cmd = bus.pop_control()
                 except Exception:
                     break
-                if cmd == "right":
+                if cmd is None:      # 타임아웃 — 빈 큐일 뿐이다
+                    continue
+                if cmd == C.CONTROL_SKIP:
                     events["exit_early"] = True
-                elif cmd == "left":
+                elif cmd == C.CONTROL_RERECORD:
                     events["rerecord_episode"] = True
                     events["exit_early"] = True
-                elif cmd == "escape":
+                elif cmd == C.CONTROL_STOP:
                     events["stop_recording"] = True
                     events["exit_early"] = True
                 print(f"[start_record] control: {cmd}", flush=True)
@@ -146,12 +145,11 @@ def _install_control(address: str) -> None:
     LR.init_keyboard_listener = _patched_listener
 
 
-_control_addr = os.environ.get("PIPER_CONTROL_ZMQ")
-if _control_addr:
-    try:
-        _install_control(_control_addr)
-    except Exception as _e:
-        print(f"[start_record] control install failed: {_e}", flush=True)
+# 주소는 `PIPER_REDIS_URL` 에서 온다. 헤드리스에서 유일한 에피소드 제어 경로다.
+try:
+    _install_control()
+except Exception as _e:
+    print(f"[start_record] control install failed: {_e}", flush=True)
 
 # ── 레코딩 실행 ──
 from lerobot.scripts.lerobot_record import record

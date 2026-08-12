@@ -44,7 +44,7 @@ EDIT_OPERATIONS: dict[str, str] = {
 # CLI 플래그가 아니라 `--config-overrides` JSON으로 실어 보낼 키.
 # **PARAM_SPEC 에서 파생한다** (`send_at_start=True`).
 #
-# 이 값들은 실행 중 ZMQ로도 바꿀 수 있지만, **시작값도 반드시 이 경로로 전달해야 한다** —
+# 이 값들은 실행 중 버스로도 바꿀 수 있지만, **시작값도 반드시 이 경로로 전달해야 한다** —
 # 여기 없으면 wrapper 기본값으로 떨어져 UI에서 맞춘 값이 조용히 유실된다(에러 없음).
 # 로컬 wrapper 와 gRPC wrapper 가 같은 집합을 쓴다.
 OVERRIDE_KEYS: set[str] = inference_params.start_params()

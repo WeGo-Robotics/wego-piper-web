@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -36,7 +37,7 @@ ROUTERS = [
     encoder, activity, policies, presets, phase,
 ]
 from app.services.estop_bridge import estop_bridge
-from app.services.zmq_bridge import zmq_bridge
+from app.services.param_bridge import param_bridge
 from app.services.robot_manager import robot_manager
 from app.services.camera_manager import camera_manager
 
@@ -45,12 +46,16 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 버스 주소를 환경에 심는다. `piper_bus` 는 `PIPER_REDIS_URL` 만 보므로
+    # 여기서 한 번 맞춰두면 게이트웨이·wrapper·estopd 가 같은 곳을 본다.
+    if settings.redis_url:
+        os.environ["PIPER_REDIS_URL"] = settings.redis_url
     # E-stop 감시는 독립 프로세스(daemons/estopd.py)가 한다.
     # 게이트웨이는 heartbeat 와 활동 PID 만 버스에 올린다 —
     # 이벤트 루프가 막혀도 팔이 서야 하기 때문이다.
     estop_bridge.connect()
     estop_bridge.sync_activities()
-    await zmq_bridge.connect()
+    await param_bridge.connect()
     # 프리셋 이관 (이전 형식 → presets/robot/). 한 번만 동작한다.
     try:
         robot_manager.migrate_legacy_presets()
@@ -72,7 +77,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Train process restore failed: %s", e)
     yield
-    await zmq_bridge.close()
+    await param_bridge.close()
 
 
 

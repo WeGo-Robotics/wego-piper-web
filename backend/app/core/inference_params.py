@@ -7,14 +7,14 @@
 |---|---|
 | `InferencePage.tsx` 기본값 dict | default |
 | `InferencePage.tsx` 슬라이더 | min/max/step/label |
-| `zmq_bridge.SAFE_PARAMS` | 런타임 클램프 범위 |
+| `param_bridge.SAFE_PARAMS` | 런타임 클램프 범위 |
 | `cli_mapping.OVERRIDE_KEYS` | 시작 시 전달 여부 |
 
 하나라도 빠지면 **에러 없이 조용히 값이 유실**됐다. 실제로 세 건이 어긋나 있었다.
 
 이제 여기가 정본이고 나머지가 파생한다:
 
-- `zmq_bridge.SAFE_PARAMS` / `BOOL_PARAMS`  → `realtime=True` 인 것
+- `param_bridge.SAFE_PARAMS` / `BOOL_PARAMS`  → `realtime=True` 인 것
 - `cli_mapping.OVERRIDE_KEYS`               → `send_at_start=True` 인 것
 - 프론트 슬라이더                            → `GET /api/params/spec`
 
@@ -33,7 +33,7 @@ class ParamSpec(TypedDict, total=False):
     min: float
     max: float
     step: float
-    # ZMQ 로 실시간 변경 가능 (= 기존 SAFE_PARAMS / BOOL_PARAMS)
+    # 버스로 실시간 변경 가능 (= 기존 SAFE_PARAMS / BOOL_PARAMS)
     realtime: bool
     # 시작 시 --config-overrides 로 전달 (= 기존 OVERRIDE_KEYS)
     send_at_start: bool
@@ -132,7 +132,7 @@ def _names(flag: str) -> set[str]:
 
 
 def realtime_params() -> set[str]:
-    """ZMQ 로 실시간 변경 가능한 파라미터."""
+    """버스로 실시간 변경 가능한 파라미터."""
     return _names("realtime")
 
 

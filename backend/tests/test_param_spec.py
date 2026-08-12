@@ -12,7 +12,7 @@ import pytest
 
 from app.core import inference_params as P
 from app.core.cli_mapping import OVERRIDE_KEYS
-from app.services.zmq_bridge import BOOL_PARAMS, SAFE_PARAMS, UNSAFE_PARAMS
+from app.services.param_bridge import BOOL_PARAMS, SAFE_PARAMS, UNSAFE_PARAMS
 
 _REPO = Path(__file__).resolve().parents[2]
 _INFERENCE_PAGE = _REPO / "frontend" / "src" / "pages" / "InferencePage.tsx"

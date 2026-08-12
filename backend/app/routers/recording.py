@@ -88,7 +88,6 @@ async def start_recording(body: RecordStartRequest):
     if released:
         time.sleep(0.5)
 
-    from app.core.config import settings
     from app.services.control_bridge import control_bridge
     from app.services.preview_bridge import preview_bridge
 
@@ -96,14 +95,15 @@ async def start_recording(body: RecordStartRequest):
     params.pop("web_preview", None)
 
     # 헤드리스 에피소드 제어 채널 (건너뛰기/재녹화/정지)은 미리보기와 무관하게 항상 켠다.
-    env_extra: dict[str, str] = {"PIPER_CONTROL_ZMQ": settings.control_zmq_address}
+    # 버스 주소는 ProcessManager 가 모든 자식에게 넣으므로 여기서 넘기지 않는다.
+    env_extra: dict[str, str] = {}
     control_bridge.start()
 
     # 웹 미리보기: display_data=true 로 log_rerun_data 호출을 켜고, wrapper 가
-    # 그 프레임을 JPEG 로 백엔드에 PUSH 하도록 env 를 주입한다.
+    # 그 프레임을 JPEG 로 버스에 올리도록 켠다.
     if body.web_preview:
         params["display_data"] = True
-        env_extra["PIPER_PREVIEW_ZMQ"] = settings.preview_zmq_address
+        env_extra["PIPER_PREVIEW"] = "1"
         preview_bridge.start()
 
     args = build_record_args(params)

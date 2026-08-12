@@ -1,7 +1,7 @@
 """
 액션 필터링 모듈 (lerobot_wrapper / grpc_wrapper 공유).
 
-ZMQ로 실시간 변경 가능한 파라미터:
+버스로 실시간 변경 가능한 파라미터:
   - lowpass_alpha: 저역 통과 필터 (1.0=OFF, 0.1=강)
   - max_velocity: 관절 최대 속도 (deg/s, 0=무제한)
   - max_gripper_velocity: 그리퍼 최대 속도 (%/s, 0=무제한)
@@ -39,7 +39,7 @@ class ActionFilter:
         self._interp_progress = 0
 
     def update_param(self, key: str, value) -> bool:
-        """ZMQ 파라미터 업데이트. 처리했으면 True 반환."""
+        """버스 파라미터 업데이트. 처리했으면 True 반환."""
         if key == "lowpass_alpha":
             self.lowpass_alpha = max(0.05, min(1.0, float(value)))
             return True

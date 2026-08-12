@@ -85,6 +85,11 @@ class ProcessManager:
             from app.core.config import settings as _settings
             if _settings.hf_endpoint:
                 env["HF_ENDPOINT"] = _settings.hf_endpoint
+            # 버스 주소는 **여기 한 곳에서** 모든 자식에게 준다. 예전에는 ZMQ 주소 3개를
+            # 호출부마다 따로 넘겼는데, 하나를 빠뜨리면 그 채널만 조용히 죽었다
+            # (refactor/daemon-split.md 3단계). 버스를 안 쓰는 자식은 그냥 무시한다.
+            from piper_bus.client import url as _bus_url
+            env["PIPER_REDIS_URL"] = _bus_url()
             # 호출부 지정 추가 환경변수 (예: ACCELERATE_MIXED_PRECISION) 주입
             if env_extra:
                 env.update(env_extra)

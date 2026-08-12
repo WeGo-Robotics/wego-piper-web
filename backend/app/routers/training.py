@@ -11,6 +11,7 @@ from app.core.cli_mapping import apply_dim_overrides, build_train_args, resolve_
 from app.routers.presets import register_domain
 from app.services.exclusivity import Activity, require_idle
 from app.services.training import train_manager
+from app.services.training.jobs import MAX_CONCURRENT_JOBS, job_registry
 
 router = APIRouter(prefix="/api/training", tags=["training"])
 
@@ -194,6 +195,54 @@ async def training_status():
 async def training_metrics():
     """전체 메트릭 히스토리 (loss curve용)."""
     return train_manager.history.to_dict()
+
+
+# ── job 레지스트리 (feature/cloud-training.md 3단계) ──
+#
+# 로컬 학습도 `job_id="local"` 로 여기 들어간다. 원격이 붙어도 UI 가 한 벌로 끝나고,
+# 상태가 프로세스 밖(버스)에 있으므로 **서버가 재시작해도 학습이 계속 보인다.**
+
+
+@router.get("/jobs")
+async def list_jobs():
+    """학습 job 목록 (최근 순). 로컬 + (나중에) 원격."""
+    return {
+        "jobs": [j.to_dict() for j in job_registry.list()],
+        "max_concurrent": MAX_CONCURRENT_JOBS,
+    }
+
+
+@router.get("/jobs/{job_id}")
+async def get_job(job_id: str):
+    job = job_registry.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"job 을 찾을 수 없습니다: {job_id}")
+    return job.to_dict()
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_job(job_id: str):
+    """끝난 job 을 목록에서 지운다. 실행 중이면 거부한다."""
+    job = job_registry.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"job 을 찾을 수 없습니다: {job_id}")
+    if job.is_active:
+        raise HTTPException(409, "실행 중인 job 은 지울 수 없습니다 — 먼저 중지하세요")
+    job_registry.delete(job_id)
+    return {"status": "deleted"}
+
+
+@router.get("/jobs/{job_id}/logs")
+async def job_logs(job_id: str, start: int = 0, limit: int = 500):
+    """job 로그 페이지네이션.
+
+    6시간 학습이면 수만 줄이라 전부 WS 로 밀면 브라우저가 죽는다. WS 로는 신규분만 가고
+    과거는 여기서 읽는다. `dropped` 가 0보다 크면 링버퍼 앞이 잘렸다는 뜻이다 —
+    **조용히 빠뜨리지 않고 몇 줄인지 알려준다.**
+    """
+    if limit < 1 or limit > 2000:
+        raise HTTPException(400, "limit 은 1~2000 이어야 합니다")
+    return {"job_id": job_id, **job_registry.logs(job_id, start, limit)}
 
 
 @router.post("/preview")

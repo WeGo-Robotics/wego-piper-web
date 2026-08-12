@@ -94,7 +94,7 @@ class RecordManager:
     def send_key(self, key: str) -> None:
         """에피소드 제어 명령 전송 (right=건너뛰기, left=재녹화, escape=정지).
 
-        헤드리스라 pynput 키 주입은 불가하므로, ZMQ 제어 채널로 wrapper 에 명령을
+        헤드리스라 pynput 키 주입은 불가하므로, 버스 제어 채널로 wrapper 에 명령을
         보내 LeRobot events dict 를 직접 set 한다."""
         from app.services.control_bridge import control_bridge
         if control_bridge.send(key):
