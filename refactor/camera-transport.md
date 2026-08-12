@@ -282,7 +282,8 @@ piper.cam.wrist_depth    ← 컬러라이즈드  (h, w, 3) uint8
 4. ☑ `_build_cameras_json`을 `type: "shm"`으로 전환. `is_d405`/`warmup_s` 분기 제거.
    **`settings.camera_transport`(`direct`|`shm`) 스위치로 넣었다** — 되돌리기가 값 하나다.
    추론 시작 경로도 뒤바뀐다: `direct` 는 카메라를 **해제**하고 `shm` 은 **붙잡는다**
-5. 컨테이너에서 `privileged`/`/dev` 마운트 제거, `ipc: host` 추가
+5. ☐ 컨테이너에서 `privileged`/`/dev` 마운트 제거, `ipc: host` 추가.
+   Dockerfile/compose 에 `pip install -e bus/ shm/ rs/ cam/ phase/` 도 함께
 
 2단계가 핵심이다 — **데몬을 쪼개기 전에 전송이 되는지부터 확인한다.**
 
@@ -305,4 +306,11 @@ piper.cam.wrist_depth    ← 컬러라이즈드  (h, w, 3) uint8
 
 ## 상태
 
-☐ 미착수 — 설계 확정, 구현 대기
+◐ 진행중 — 1~4 완료(실기 확인: 추론·녹화 모두 shm 경로로 동작). 5(컨테이너) 남음
+
+실기에서 걸린 것 두 가지를 여기 남긴다:
+
+- **세그먼트 소유자는 데몬이다.** 게이트웨이가 "안 쓰는 것 치운다"며 unlink 하면
+  발행 중인 파일이 사라져 발행자는 계속 쓰고 소비자는 못 연다. 조용히 깨진다
+- **요청 프로파일이 데몬까지 가야 한다.** 안 그러면 librealsense 기본값으로 열리고
+  (D405 는 848x480@10) 녹화 루프가 가장 느린 카메라에 묶인다
