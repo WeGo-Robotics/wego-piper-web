@@ -98,8 +98,15 @@ async def start_recording(body: RecordStartRequest):
     if err := check_camera_config(body.robot_cameras):
         raise HTTPException(400, err)
 
+    cam_w = body.camera_width or 0
+    cam_h = body.camera_height or 0
+    cam_fps = body.camera_fps or body.fps
+
+    # ⚠ 요청 프로파일을 **여기서** 넘겨야 장치에 반영된다. 안 넘기면 데몬이
+    # 기본값으로 열고(D405 는 848x480@10), 녹화 루프가 그 10Hz 에 묶인다.
     try:
-        prepare_cameras(body.camera_mapping, purpose="recording")
+        prepare_cameras(body.camera_mapping, purpose="recording",
+                        width=cam_w, height=cam_h, fps=cam_fps)
     except CameraPrepareError as e:
         raise HTTPException(400, str(e))
 
@@ -109,9 +116,9 @@ async def start_recording(body: RecordStartRequest):
     params = body.model_dump()
     params.pop("web_preview", None)
     mapping = params.pop("camera_mapping", None) or {}
-    cam_w = params.pop("camera_width", 0)
-    cam_h = params.pop("camera_height", 0)
-    cam_fps = params.pop("camera_fps", 0) or body.fps
+    params.pop("camera_width", None)
+    params.pop("camera_height", None)
+    params.pop("camera_fps", None)
     if mapping:
         params["robot_cameras"] = build_cameras_json(
             mapping, width=cam_w, height=cam_h, fps=cam_fps

@@ -84,10 +84,19 @@ class CameraInfo:
     def probe(self, timeout: float = 3.0) -> tuple[bool, str]:
         return self._hub.probe(self.id)
 
-    def connect(self) -> tuple[bool, str]:
-        ok, msg = self._hub.connect(self.id)
+    def connect(self, width: int = 0, height: int = 0, fps: int = 0) -> tuple[bool, str]:
+        """셋 다 주면 그 프로파일로 연다. 하나라도 0이면 장치 기본값에 맡긴다.
+
+        장치가 못 내는 조합이면 데몬이 가장 가까운 것으로 낮춰서 연다 —
+        `running_profile()` 로 실제 값을 확인할 수 있다.
+        """
+        ok, msg = self._hub.connect(self.id, width, height, fps)
         self.connected = ok
         return ok, msg
+
+    def running_profile(self) -> dict:
+        """지금 **실제로** 돌고 있는 `width/height/fps`. 요청값이 아니다."""
+        return self._hub.info(self.id) or {}
 
     def disconnect(self) -> None:
         self._hub.disconnect(self.id)

@@ -117,6 +117,11 @@ class _RSDevice:
         self._op_lock = threading.RLock()
         self._thread: threading.Thread | None = None
         self._running = False
+        # 스트림별 요청 프로파일 `(w, h, fps)`. 없으면 장치 기본값.
+        self._want: dict[str, tuple[int, int, int]] = {}
+        self._profiles: dict[str, list[tuple[int, int, int]]] = {}  # supported() 캐시
+        # 지금 파이프라인이 **실제로** 돌리고 있는 프로파일. 요청과 다를 수 있다.
+        self._running_profile: dict[str, tuple[int, int, int] | None] = {}
 
     @contextlib.contextmanager
     def op_guard(self, timeout: float = 6.0):
@@ -137,6 +142,79 @@ class _RSDevice:
     def is_d405(self) -> bool:
         return "405" in (self.model or "")
 
+    def supported(self, stream: str) -> list[tuple[int, int, int]]:
+        """이 스트림이 낼 수 있는 `(w, h, fps)` 목록. 장치가 답한 그대로다.
+
+        캐시한다 — 매번 물으면 USB 왕복이 늘고, 프로파일 목록은 펌웨어 상수다.
+        """
+        cached = self._profiles.get(stream)
+        if cached is not None:
+            return cached
+        target = {"color": rs.stream.color, "depth": rs.stream.depth,
+                  "infrared": rs.stream.infrared}.get(stream)
+        found: set[tuple[int, int, int]] = set()
+        if target is not None:
+            try:
+                for d in rs.context().query_devices():
+                    if d.get_info(rs.camera_info.serial_number) != self.serial:
+                        continue
+                    for sensor in d.query_sensors():
+                        for p in sensor.get_stream_profiles():
+                            if not p.is_video_stream_profile() or p.stream_type() != target:
+                                continue
+                            # color 는 bgr8 로 받는다(발행 포맷). depth/IR 은 포맷이 하나뿐.
+                            if stream == "color" and not str(p.format()).endswith("bgr8"):
+                                continue
+                            v = p.as_video_stream_profile()
+                            found.add((v.width(), v.height(), p.fps()))
+            except Exception as exc:
+                logger.warning("프로파일 조회 실패 (%s/%s): %s", self.serial, stream, exc)
+        out = sorted(found)
+        self._profiles[stream] = out
+        return out
+
+    def resolve(self, stream: str, want: tuple[int, int, int] | None
+                ) -> tuple[int, int, int] | None:
+        """요청 프로파일 → **장치가 실제로 낼 수 있는** 것.
+
+        ⚠ 요청을 그대로 `enable_stream` 에 넘기면 안 된다. 장치에 없는 조합이면
+        `pipeline.start` 가 통째로 실패해 카메라가 아예 안 열린다.
+        실제로 D405 에는 **848x480@15 가 없다**(10 이 상한) — UI 에서 15 를 고르면
+        여기서 걸러내지 않는 한 녹화가 시작조차 못 하거나 조용히 10fps 로 돈다.
+
+        고르는 순서:
+          1. 정확히 같은 것
+          2. 같은 해상도에서 요청 이하의 가장 빠른 fps
+          3. 요청 fps 를 낼 수 있는 해상도 중 요청 화소수에 가장 가까운 것
+          4. 못 찾으면 None → 장치 기본값에 맡긴다
+        """
+        if want is None:
+            return None
+        modes = self.supported(stream)
+        if not modes:
+            return None
+        w, h, fps = want
+        if (w, h, fps) in modes:
+            return (w, h, fps)
+
+        same_res = [m for m in modes if (m[0], m[1]) == (w, h) and m[2] <= fps]
+        if same_res:
+            best = max(same_res, key=lambda m: m[2])
+            logger.info("%s/%s: %dx%d@%d 없음 → %dx%d@%d", self.serial, stream,
+                        w, h, fps, *best)
+            return best
+
+        same_fps = [m for m in modes if m[2] == fps]
+        if same_fps:
+            best = min(same_fps, key=lambda m: abs(m[0] * m[1] - w * h))
+            logger.info("%s/%s: %dx%d@%d 없음 → %dx%d@%d", self.serial, stream,
+                        w, h, fps, *best)
+            return best
+
+        logger.warning("%s/%s: %dx%d@%d 에 맞출 프로파일이 없어 기본값을 쓴다",
+                       self.serial, stream, w, h, fps)
+        return None
+
     def _build_config(self, streams: set[str]):
         cfg = rs.config()
         rs.config.enable_device(cfg, self.serial)
@@ -148,10 +226,19 @@ class _RSDevice:
         if "color" in enable and self.is_d405() and "depth" in self.available:
             enable.add("depth")
         for s in enable:
+            # 요청이 없으면 인자 없이 켠다 = librealsense 기본 프로파일.
+            # ⚠ 기본값은 우리가 고른 값이 아니다. D405 는 848x480@**10** 으로 떨어져
+            # 녹화 루프를 10Hz 에 묶어버렸다. 그래서 요청을 여기까지 끌고 온다.
+            got = self.resolve(s, self._want.get(s))
             try:
                 if s == "color":
-                    cfg.enable_stream(rs.stream.color)
+                    if got:
+                        cfg.enable_stream(rs.stream.color, got[0], got[1],
+                                          rs.format.bgr8, got[2])
+                    else:
+                        cfg.enable_stream(rs.stream.color)
                 elif s == "depth":
+                    # depth 는 color 를 살리려고 곁들이는 것이라 해상도를 맞추지 않는다
                     cfg.enable_stream(rs.stream.depth)
                 elif s == "infrared":
                     # D435 계열은 IR 좌(index 1)를 사용
@@ -165,7 +252,14 @@ class _RSDevice:
         streams = {s for s in streams if s in self.available}
         if not streams:
             return False
-        if self._pipeline is not None and streams.issubset(self._active):
+        # 스트림 집합만이 아니라 **프로파일이 바뀌어도** 재시작해야 한다.
+        # 안 그러면 UI 에서 해상도를 바꿔도 예전 파이프라인이 그대로 돈다.
+        # ⚠ 요청이 없는(None) 스트림은 비교 대상이 아니다 — 장치 기본값과 비교하면
+        # 영원히 "다르다"가 되어 매번 재시작한다.
+        wanted = {s: self.resolve(s, self._want.get(s)) for s in streams}
+        if (self._pipeline is not None and streams.issubset(self._active)
+                and all(p is None or self._running_profile.get(s) == p
+                        for s, p in wanted.items())):
             return True
         # 재구성 필요 → 기존 정지 후 재시작
         self._stop_pipeline()
@@ -178,8 +272,30 @@ class _RSDevice:
             return False
         self._pipeline = pipeline
         self._active = set(streams)
+        # **장치가 실제로 연 값**을 기록한다. 요청 해석값을 그대로 믿으면,
+        # 요청이 없어 기본값으로 열린 스트림의 해상도를 영영 모른다.
+        self._running_profile = self._read_active_profiles(pipeline, streams)
         self._start_thread()
         return True
+
+    @staticmethod
+    def _read_active_profiles(pipeline, streams: set[str]
+                              ) -> dict[str, tuple[int, int, int] | None]:
+        out: dict[str, tuple[int, int, int] | None] = {}
+        try:
+            active = pipeline.get_active_profile()
+        except Exception as exc:
+            logger.warning("활성 프로파일 조회 실패: %s", exc)
+            return dict.fromkeys(streams)
+        for s in streams:
+            target = {"color": rs.stream.color, "depth": rs.stream.depth,
+                      "infrared": rs.stream.infrared}.get(s)
+            try:
+                v = active.get_stream(target).as_video_stream_profile()
+                out[s] = (v.width(), v.height(), v.fps())
+            except Exception:
+                out[s] = None
+        return out
 
     def _stop_pipeline(self, unlink_segments: bool = True) -> None:
         from piper_rs.publish import stop as stop_publish
@@ -202,6 +318,7 @@ class _RSDevice:
                 pass
             self._pipeline = None
         self._active = set()
+        self._running_profile = {}
 
     # ── 프레임 캡처 ──
 
@@ -254,10 +371,12 @@ class _RSDevice:
 
     # ── 연결 수명주기 (스트림 단위 refcount) ──
 
-    def connect_stream(self, stream: str) -> bool:
+    def connect_stream(self, stream: str, want: tuple[int, int, int] | None = None) -> bool:
         if stream not in self.available:
             return False
         with self._op_lock:
+            if want is not None:
+                self._want[stream] = want
             self._refcount[stream] += 1
             ok = self._ensure_streams({s for s, c in self._refcount.items() if c > 0})
             if not ok:
@@ -430,7 +549,13 @@ class RealSenseHub:
         dev = self._device(serial)
         return dev is not None and dev.is_d405()
 
-    def connect(self, cam_id: str) -> tuple[bool, str]:
+    def connect(self, cam_id: str, width: int = 0, height: int = 0,
+                fps: int = 0) -> tuple[bool, str]:
+        """스트림 시작. 셋 다 주면 그 프로파일로 **맞춰서** 연다.
+
+        하나라도 0이면 요청 없음으로 보고 장치 기본값에 맡긴다 — 프리뷰처럼
+        해상도를 따지지 않는 호출부가 그대로 쓰던 방식이다.
+        """
         parsed = parse_id(cam_id)
         if not parsed:
             return False, f"Not a RealSense id: {cam_id}"
@@ -438,9 +563,36 @@ class RealSenseHub:
         dev = self._device(serial)
         if dev is None:
             return False, f"RealSense {serial} not found (rescan)"
-        if dev.connect_stream(stream):
+        want = (int(width), int(height), int(fps)) if width and height and fps else None
+        if dev.connect_stream(stream, want):
             return True, "OK"
         return False, f"Failed to start RealSense {serial}/{stream}"
+
+    def info(self, cam_id: str) -> dict:
+        """지금 **실제로** 돌고 있는 프로파일. 요청값이 아니다.
+
+        요청과 다를 수 있어서(장치에 없는 조합은 근사로 떨어진다) 데이터셋 메타에
+        박을 fps 는 요청이 아니라 이걸 봐야 한다. 안 그러면 15fps 라고 적어놓고
+        10fps 로 채운 데이터셋이 나온다.
+        """
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return {}
+        serial, stream = parsed
+        with self._lock:
+            dev = self._devices.get(serial)
+        if dev is None:
+            return {}
+        got = dev._running_profile.get(stream)
+        out: dict = {
+            "id": cam_id, "model": dev.model, "connected": stream in dev._active,
+            # 이 스트림에 대해 **이미 반영한 요청**. 게이트웨이가 같은 요청을
+            # 또 보내지 않도록(= 불필요한 재연결·refcount 증가) 판단 근거로 쓴다.
+            "want": list(dev._want.get(stream) or ()),
+        }
+        if got:
+            out.update(width=got[0], height=got[1], fps=got[2])
+        return out
 
     def disconnect(self, cam_id: str) -> None:
         parsed = parse_id(cam_id)

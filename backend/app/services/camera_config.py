@@ -148,15 +148,27 @@ def _shm_dims(cam_id: str, width: int | None, height: int | None,
             h, w, _ = sub.shape
         finally:
             sub.close()
+
+    # fps 는 세그먼트 헤더에 없다(발행 주기는 장치가 정한다). 데몬에 물어본다 —
+    # ⚠ **요청값을 그대로 쓰면 데이터셋이 거짓말을 한다.** D405 는 848x480 에서
+    # 10fps 가 상한이라, 15 를 요청해도 실제로는 10 으로 돈다. 그 상태로 15 라고
+    # 적으면 LeRobot 이 매 프레임 "루프가 느리다" 경고를 뱉고 타임스탬프도 어긋난다.
+    actual_fps = 0
+    cam = camera_manager.cameras.get(cam_id)
+    if cam is not None:
+        try:
+            actual_fps = int(cam.running_profile().get("fps") or 0)
+        except Exception as exc:
+            logger.warning("실제 fps 조회 실패 (%s): %s", cam_id, exc)
     return {
         "width": w or 640,
         "height": h or 480,
-        # fps 는 세그먼트에 없다(발행 주기는 장치가 정한다). 요청값을 쓴다.
-        "fps": fps or 30,
+        "fps": actual_fps or fps or 30,
     }
 
 
-def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str) -> None:
+def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str,
+                    width: int = 0, height: int = 0, fps: int = 0) -> None:
     """전송 방식에 맞게 카메라를 준비한다. **두 방식이 정반대다.**
 
     - `direct`: wrapper 가 장치를 직접 여니 **웹이 쥔 것을 해제**해야 한다
@@ -174,19 +186,42 @@ def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str) -> None:
     # 지워버려 발행자는 계속 쓰고 소비자는 열 수 없는 상태가 됐다.
     # 고아 세그먼트는 각 데몬이 기동할 때 스스로 치운다.
 
-    # 쓸 카메라를 붙잡는다. 연결돼 있으면 이미 발행 중이라 건드리지 않는다 —
-    # 끊었다 붙이면 그 사이 소비자가 프레임을 잃는다.
+    # 쓸 카메라를 붙잡는다. 요청 프로파일을 **여기서** 넘긴다 — 데몬이 그걸 받아야
+    # UI 에서 고른 해상도·fps 가 실제 장치에 반영된다. 예전에는 요청이 데몬까지
+    # 가지 않아 librealsense 기본값(D405 는 848x480@10)으로만 돌았고, 녹화 루프가
+    # 그 10Hz 에 묶여 매 프레임 "루프가 느리다" 경고가 떴다.
     for name, cam_id in camera_mapping.items():
         if not cam_id:
             continue
         cam = camera_manager.cameras.get(cam_id)
         if cam is None:
             raise CameraPrepareError(f"카메라를 찾을 수 없습니다: {cam_id}")
-        if not cam.connected:
-            ok, msg = cam.connect()
+        got = cam.running_profile()
+        # 같은 요청을 이미 반영했으면 건드리지 않는다. 끊었다 붙이면 그 사이
+        # 소비자가 프레임을 잃고, rsd 쪽은 refcount 만 늘어난다.
+        # ⚠ 실행 중인 프로파일이 아니라 **요청**을 비교한다 — 장치가 못 내는 조합은
+        # 근사로 열리므로 실행값끼리 비교하면 영원히 "다르다"가 되어 매번 재연결한다.
+        want = [int(width), int(height), int(fps)] if all((width, height, fps)) else []
+        # 요청이 없으면(추론처럼 해상도를 안 따지는 경우) 지금 돌고 있는 무엇이든 좋다.
+        # 여기서 want 까지 비교하면, 녹화가 남긴 요청 때문에 추론이 시작될 때마다
+        # 쓸데없이 재연결한다.
+        satisfied = got.get("connected") and (not want or got.get("want") == want)
+        if not satisfied:
+            ok, msg = cam.connect(width, height, fps)
             if not ok:
                 raise CameraPrepareError(f"카메라 연결 실패 ({cam_id}): {msg}")
-        logger.info("shm 발행 중(%s): %s ← %s", purpose, name, cam_id)
+            got = cam.running_profile()
+        logger.info("shm 발행 중(%s): %s ← %s (%sx%s@%s)", purpose, name, cam_id,
+                    got.get("width"), got.get("height"), got.get("fps"))
+        # 장치가 요청을 못 맞췄으면 **말한다.** 조용히 낮춰 열면 녹화 루프가
+        # 느린 카메라에 묶여 매 프레임 경고를 뱉는데, 원인이 어디인지 안 보인다.
+        if want and [got.get("width"), got.get("height"), got.get("fps")] != want:
+            logger.warning(
+                "%s: %dx%d@%d 를 요청했지만 장치가 %sx%s@%s 로 열렸습니다. "
+                "녹화 루프는 가장 느린 카메라에 맞춰집니다.",
+                cam_id, want[0], want[1], want[2],
+                got.get("width"), got.get("height"), got.get("fps"),
+            )
 
 
 def release_all_cameras(purpose: str = "inference") -> bool:

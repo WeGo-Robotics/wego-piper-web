@@ -30,6 +30,8 @@ class _V4l2Camera:
         self.width: int | None = None
         self.height: int | None = None
         self.fps: int | None = None
+        # 요청 프로파일 `(w, h, fps)`. None 이면 드라이버 기본값.
+        self._want: tuple[int, int, int] | None = None
 
     @property
     def connected(self) -> bool:
@@ -41,6 +43,13 @@ class _V4l2Camera:
         cap = cv2.VideoCapture(self.id, cv2.CAP_V4L2)
         if not cap.isOpened():
             return None, None
+        # 요청 프로파일 적용. **드라이버가 거절해도 조용히 무시한다** — 아래에서
+        # 실제 값을 다시 읽으므로, 못 맞춘 채로 맞췄다고 착각할 일은 없다.
+        if self._want:
+            w, h, fps = self._want
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+            cap.set(cv2.CAP_PROP_FPS, fps)
         ok, frame = cap.read()
         if not ok or frame is None:
             cap.release()
@@ -50,7 +59,13 @@ class _V4l2Camera:
         self.fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
         return cap, frame
 
-    def connect(self) -> tuple[bool, str]:
+    def connect(self, want: tuple[int, int, int] | None = None) -> tuple[bool, str]:
+        # 이미 열려 있는데 다른 프로파일을 요청하면 다시 연다 — 안 그러면
+        # UI 에서 해상도를 바꿔도 예전 설정 그대로 돈다.
+        if self.connected and want is not None and want != self._want:
+            self.disconnect()
+        if want is not None:
+            self._want = want
         if self.connected:
             return True, "OK"
         try:
@@ -137,9 +152,14 @@ class V4l2Hub:
             self.cams[cam_id] = _V4l2Camera(cam_id)
         return self.cams.get(cam_id)
 
-    def connect(self, cam_id: str) -> tuple[bool, str]:
+    def connect(self, cam_id: str, width: int = 0, height: int = 0,
+                fps: int = 0) -> tuple[bool, str]:
+        """셋 다 주면 그 프로파일로 연다. 하나라도 0이면 드라이버 기본값."""
         cam = self._cam(cam_id)
-        return cam.connect() if cam else (False, f"Unknown camera: {cam_id}")
+        if not cam:
+            return False, f"Unknown camera: {cam_id}"
+        want = (int(width), int(height), int(fps)) if width and height and fps else None
+        return cam.connect(want)
 
     def disconnect(self, cam_id: str) -> None:
         cam = self.cams.get(cam_id)
@@ -171,6 +191,9 @@ class V4l2Hub:
         """해상도 등 — 연결 중이면 실제 값, 아니면 스캔 값."""
         cam = self.cams.get(cam_id)
         base = dict(self._info.get(cam_id) or {})
+        base["connected"] = bool(cam and cam.connected)
+        # 이미 반영한 요청 — rsd 와 같은 계약이다(게이트웨이가 둘을 구분 안 한다)
+        base["want"] = list(cam._want or ()) if cam else []
         if cam and cam.connected:
             base.update(width=cam.width, height=cam.height, fps=cam.fps)
         return base

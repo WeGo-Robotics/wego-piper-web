@@ -303,9 +303,14 @@ def test_prepare_is_inverted_between_transports():
 
     from app.services import camera_config
 
+    import ast
+
     src = inspect.getsource(camera_config.prepare_cameras)
-    assert "release_all_cameras" in src, "direct 경로에서 해제하지 않는다"
-    assert "cam.connect()" in src, "shm 경로에서 붙잡지 않는다"
+    # 문자열이 아니라 **호출**을 본다 — 인자가 붙어도 깨지지 않게
+    calls = {ast.unparse(n.func) for n in ast.walk(ast.parse(src.lstrip()))
+             if isinstance(n, ast.Call)}
+    assert "release_all_cameras" in calls, "direct 경로에서 해제하지 않는다"
+    assert "cam.connect" in calls, "shm 경로에서 붙잡지 않는다"
     assert 'camera_transport != "shm"' in src, "전송 방식을 안 본다"
 
 
@@ -399,3 +404,66 @@ def test_recording_start_checks_before_launching():
     assert start.index("check_camera_config") < start.index("record_manager.start"), (
         "프로세스를 띄운 뒤에 검사한다"
     )
+
+
+def test_requested_profile_reaches_the_daemon():
+    """**회귀** — UI 에서 고른 해상도·fps 가 데몬까지 가지 않았다.
+
+    `prepare_cameras` 가 `cam.connect()` 를 인자 없이 불러서, 데몬은 늘
+    librealsense 기본 프로파일로 열었다. D405 는 그게 848x480@**10** 이라
+    녹화 루프가 10Hz 에 묶였고 매 프레임 "루프가 느리다" 경고가 떴다.
+    (D405 에는 848x480@15 자체가 없다 — 10 이 상한이다.)
+    """
+    import ast
+    import inspect
+
+    from app.services import camera_config
+    from app.services.camera_manager import CameraInfo
+
+    sig = inspect.signature(camera_config.prepare_cameras).parameters
+    assert {"width", "height", "fps"} <= set(sig), "요청 프로파일을 받지 않는다"
+    assert {"width", "height", "fps"} <= set(inspect.signature(CameraInfo.connect).parameters)
+
+    # 받기만 하고 안 넘기면 소용없다 — 실제로 인자를 실어 부르는지 본다
+    src = inspect.getsource(camera_config.prepare_cameras)
+    connect_args = [
+        len(n.args) + len(n.keywords)
+        for n in ast.walk(ast.parse(src.lstrip()))
+        if isinstance(n, ast.Call) and ast.unparse(n.func) == "cam.connect"
+    ]
+    assert connect_args and all(a >= 3 for a in connect_args), (
+        f"cam.connect 가 프로파일 없이 불린다: {connect_args}"
+    )
+
+
+def test_dataset_fps_comes_from_the_device_not_the_request():
+    """데이터셋에 박는 fps 는 **장치가 실제로 여는 값**이어야 한다.
+
+    요청값을 그대로 쓰면 15fps 라고 적어놓고 10fps 로 채운 데이터셋이 나온다 —
+    LeRobot 이 매 프레임 경고를 뱉고 타임스탬프도 어긋난다.
+    """
+    from app.core.config import settings
+    from app.services import camera_config
+    from app.services.camera_manager import camera_manager
+
+    from piper_shm import segment_for_camera
+
+    cam_id = "/dev/video-pytest-fps"
+    pub = Publisher(segment_for_camera(cam_id), 640, 480)
+
+    class _FakeCam:
+        connected = True
+
+        def running_profile(self):
+            return {"connected": True, "want": [640, 480, 15],
+                    "width": 640, "height": 480, "fps": 10}   # 장치는 10 밖에 못 낸다
+
+    camera_manager.cameras[cam_id] = _FakeCam()
+    try:
+        settings.camera_transport = "shm"
+        cfg = camera_config.build_cameras_json({"hand": cam_id}, width=640, height=480, fps=15)
+        assert cfg["hand"]["fps"] == 10, "요청값(15)을 그대로 실어 데이터셋이 거짓말한다"
+    finally:
+        settings.camera_transport = "direct"
+        camera_manager.cameras.pop(cam_id, None)
+        pub.close()

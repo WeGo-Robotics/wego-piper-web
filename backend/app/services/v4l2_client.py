@@ -44,8 +44,10 @@ class V4l2Client:
     def scan(self) -> list[dict]:
         return self._call("scan", default=[], timeout=30) or []
 
-    def connect(self, cam_id: str) -> tuple[bool, str]:
-        return _pair(self._call("connect", cam_id, timeout=30), "camerad 연결 실패")
+    def connect(self, cam_id: str, width: int = 0, height: int = 0,
+                fps: int = 0) -> tuple[bool, str]:
+        return _pair(self._call("connect", cam_id, width, height, fps, timeout=30),
+                     "camerad 연결 실패")
 
     def disconnect(self, cam_id: str) -> None:
         self._call("disconnect", cam_id)

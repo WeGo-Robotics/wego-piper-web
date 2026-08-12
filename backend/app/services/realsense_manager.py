@@ -67,9 +67,14 @@ class RealSenseHub:
     def is_d405(self, serial: str) -> bool:
         return bool(self._call("is_d405", serial, default=False))
 
-    def connect(self, cam_id: str) -> tuple[bool, str]:
-        r = self._call("connect", cam_id, timeout=30)
+    def connect(self, cam_id: str, width: int = 0, height: int = 0,
+                fps: int = 0) -> tuple[bool, str]:
+        r = self._call("connect", cam_id, width, height, fps, timeout=30)
         return _pair(r, "rsd 연결 실패")
+
+    def info(self, cam_id: str) -> dict:
+        """지금 돌고 있는 프로파일. 요청값이 아니라 **장치가 연 값**이다."""
+        return self._call("info", cam_id, default={}) or {}
 
     def disconnect(self, cam_id: str) -> None:
         self._call("disconnect", cam_id)
