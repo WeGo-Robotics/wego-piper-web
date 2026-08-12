@@ -80,7 +80,9 @@ export default function CamerasPage() {
 
   const handleDisconnect = async (id: string) => {
     await api.post('/cameras/disconnect', { id })
-    setCams((prev) => prev.map((c) => c.id === id ? { ...c, connected: false, ready: false } : c))
+    // 연결 해제는 `connected` 만 내린다 — 등록(`ready`)은 백엔드가 유지하므로
+    // 여기서 같이 내리면 새로고침 때 값이 되살아나 화면이 어긋난다.
+    setCams((prev) => prev.map((c) => c.id === id ? { ...c, connected: false } : c))
   }
 
   // 설정
@@ -180,9 +182,13 @@ export default function CamerasPage() {
     } catch {}
   }
 
-  const unconnected = cams.filter((c) => !c.connected)
-  const connected = cams.filter((c) => c.connected && !c.ready)
+  // ⚠ 세 그룹은 **배타적이어야 한다.** 등록된 카메라는 프리뷰를 끄면
+  // `ready && !connected` 가 되는데(정상 상태 — 등록은 유지, 장치만 놓아준다),
+  // 예전 `unconnected` 는 `ready` 를 안 봐서 그 카메라가 "사용 가능"과
+  // "미등록"에 **동시에** 떴다. 6대인데 5+2=7 로 보이던 원인.
   const ready = cams.filter((c) => c.ready)
+  const connected = cams.filter((c) => c.connected && !c.ready)
+  const unconnected = cams.filter((c) => !c.connected && !c.ready)
 
   if (loading) {
     return <div className="flex items-center justify-center h-64 gap-2 text-neutral-400"><Spinner /> 로딩 중...</div>
@@ -307,10 +313,15 @@ export default function CamerasPage() {
         </div>
       )}
 
-      {/* 미연결 카메라 */}
+      {/* 미연결 카메라 — 스캔으로 찾기만 했고 아직 열지 않았다 */}
       {unconnected.length > 0 && (
         <div className="space-y-2">
-          <h2 className="text-sm font-semibold text-neutral-400">스캔 완료</h2>
+          <h2 className="text-sm font-semibold text-neutral-400">
+            미등록 ({unconnected.length})
+            <span className="ml-2 font-normal text-neutral-500">
+              — 찾기만 한 상태. 등록해야 녹화·추론에서 씁니다
+            </span>
+          </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {unconnected.map((cam) => (
               <div key={cam.id}
