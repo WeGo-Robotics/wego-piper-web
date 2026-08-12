@@ -137,6 +137,9 @@ class CameraInfo:
     def connect(self) -> tuple[bool, str]:
         """연결 + 백그라운드 캡처 시작. 등록 시 사용."""
         if self.cam_type == "realsense":
+            # 세그먼트 이름을 허브에 넘긴다 — RealSense 는 캡처 루프가 장치 단위라
+            # `CameraInfo` 가 직접 발행할 수 없다.
+            realsense_hub.set_shm_key(self.id, self.shm_key)
             ok, msg = realsense_hub.connect(self.id)
             self.connected = ok
             return ok, msg
@@ -160,7 +163,14 @@ class CameraInfo:
             return False, str(e)
 
     def disconnect(self) -> None:
+        # ⚠ 세그먼트를 반드시 닫는다. 남기면 소비자가 그걸 열고 **멈춘 화면**을 본다 —
+        # 파일이 있으니 연결은 성공하는데 발행자가 없어 프레임이 안 온다.
+        if self.shm_key:
+            from app.services.shm_publisher import shm_publisher
+
+            shm_publisher.stop(self.shm_key)
         if self.cam_type == "realsense":
+            realsense_hub.set_shm_key(self.id, "")
             realsense_hub.disconnect(self.id)
             self.connected = False
             self._last_frame = None
@@ -179,13 +189,23 @@ class CameraInfo:
         self.connected = False
 
     def _capture_loop(self) -> None:
-        """백그라운드에서 계속 프레임을 읽어 _last_frame에 저장."""
+        """백그라운드에서 계속 프레임을 읽어 _last_frame에 저장.
+
+        같은 프레임을 `/dev/shm` 세그먼트에도 흘린다 — camerad 를 분리하기 전에
+        전송 계층만 검증하기 위한 임시 배선이다
+        (refactor/camera-transport.md 착수 순서 2단계).
+        **기존 경로(_last_frame·프리뷰·녹화)는 그대로다.**
+        """
+        from app.services.shm_publisher import shm_publisher
+
         while self._running and self._cap:
             try:
                 ret, frame = self._cap.read()
                 if ret and frame is not None:
                     with self._lock:
                         self._last_frame = frame
+                    if self.shm_key:
+                        shm_publisher.publish(self.shm_key, frame)
             except Exception:
                 break
 

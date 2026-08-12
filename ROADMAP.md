@@ -183,7 +183,7 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 | 2 | ☑ [estopd](daemons/estopd.py) — **게이트웨이를 얼려도 팔이 선다** | 최소 크기, 최대 안전 이득, 시범 케이스 |
 | 3 | ☑ 브리지 3개 → Redis | 경계는 그대로, 전송만. 주소 3개 → `PIPER_REDIS_URL` 1개 |
 | **3.5** | cloud-training **3 ☑**(job 레지스트리 · WS `job_id`) / **4 대기**(SSH 러너) | 3 은 클라우드 없이도 값이 난다 — **서버 재시작에도 학습이 보인다.** 4 는 검증할 원격 머신이 필요하다 |
-| 4 | **shm 전송 계층** — [카메라](refactor/camera-transport.md) + [로봇](refactor/robot-transport.md) | 데몬 분리의 전제조건 |
+| 4 | **shm 전송 계층** — 카메라 **1~2 ☑**(포맷·플러그인·발행측, 실카메라 확인) / 3~5 대기 · [로봇](refactor/robot-transport.md) 대기 | 데몬 분리의 전제조건. 깊이맵은 전송 검증 후로 미룸 |
 | 5 | robotd → camerad → rsd | |
 | 6 | `SystemdRunner` 추가 + policysrv·encoderd·xferd 유닛화 | 3.5의 이음매에 붙이는 것뿐 |
 | 7 | infer / record 컨테이너화 | GPU + `ipc: host`만 |

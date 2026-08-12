@@ -1,0 +1,13 @@
+[project]
+name = "piper-shm"
+version = "0.1.0"
+description = "Piper /dev/shm frame transport contract (gateway ↔ camerad ↔ LeRobot plugin)"
+requires-python = ">=3.11"
+dependencies = ["numpy"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["piper_shm*"]

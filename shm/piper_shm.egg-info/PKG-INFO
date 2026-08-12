@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: piper-shm
+Version: 0.1.0
+Summary: Piper /dev/shm frame transport contract (gateway ↔ camerad ↔ LeRobot plugin)
+Requires-Python: >=3.11
+Requires-Dist: numpy

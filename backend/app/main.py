@@ -53,6 +53,15 @@ async def lifespan(app: FastAPI):
     # E-stop 감시는 독립 프로세스(daemons/estopd.py)가 한다.
     # 게이트웨이는 heartbeat 와 활동 PID 만 버스에 올린다 —
     # 이벤트 루프가 막혀도 팔이 서야 하기 때문이다.
+    # ⚠ 프로세스가 죽으면 `/dev/shm` 세그먼트는 그대로 남는다. 치우지 않으면
+    # 소비자가 옛 세그먼트를 열어 **멈춘 화면**을 본다 — 파일이 있으니 연결은 되는데
+    # 발행자가 없어 프레임이 안 온다.
+    try:
+        from app.services.shm_publisher import sweep_stale_segments
+
+        sweep_stale_segments()
+    except Exception as e:
+        logger.warning("shm 세그먼트 정리 실패: %s", e)
     estop_bridge.connect()
     estop_bridge.sync_activities()
     await param_bridge.connect()

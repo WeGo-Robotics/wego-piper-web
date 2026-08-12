@@ -99,6 +99,9 @@ class _RSDevice:
         self._active: set[str] = set()  # 현재 파이프라인이 스트리밍 중인 스트림
         self._refcount: dict[str, int] = {s: 0 for s in STREAM_TYPES}
         self._latest: dict[str, object] = {}  # stream -> numpy frame (BGR/grey)
+        # stream -> **LeRobot 카메라 키**. 채워져 있으면 그 스트림을 shm 으로 흘린다.
+        # 게이트웨이가 녹화·추론 시작 때 설정한다.
+        self.shm_keys: dict[str, str] = {}
         self._lock = threading.Lock()       # _latest 보호
         # 디바이스 작업 직렬화: 한 디바이스에 동시에 두 파이프라인을 start 할 수
         # 없고, librealsense 는 디바이스 단위로 thread-safe 하지 않다. 따라서
@@ -221,6 +224,15 @@ class _RSDevice:
                 if updates:
                     with self._lock:
                         self._latest.update(updates)
+                    # 같은 프레임을 `/dev/shm` 세그먼트에도 흘린다 (전송 계층 검증용).
+                    # `shm_keys` 는 게이트웨이가 녹화·추론 시작 때 채운다.
+                    if self.shm_keys:
+                        from app.services.shm_publisher import shm_publisher
+
+                        for stream, frame in updates.items():
+                            key = self.shm_keys.get(stream)
+                            if key:
+                                shm_publisher.publish(key, frame)
             except Exception as exc:
                 logger.debug("RealSense %s read error: %s", self.serial, exc)
                 time.sleep(0.1)
@@ -369,6 +381,25 @@ class RealSenseHub:
         카메라 설정에서 이 카메라만 use_depth를 켜기 위해 쓴다."""
         dev = self._device(serial)
         return dev is not None and dev.is_d405()
+
+    def set_shm_key(self, cam_id: str, key: str) -> bool:
+        """이 스트림을 흘려보낼 세그먼트 이름(= LeRobot 카메라 키)을 지정한다.
+
+        RealSense 는 캡처 루프가 장치 단위(`_RealSenseDevice`)라 `CameraInfo` 의
+        `shm_key` 가 여기까지 와야 한다 — v4l2 는 카메라마다 루프가 따로라 필요 없다.
+        """
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return False
+        serial, stream = parsed
+        dev = self._device(serial)
+        if dev is None:
+            return False
+        if key:
+            dev.shm_keys[stream] = key
+        else:
+            dev.shm_keys.pop(stream, None)
+        return True
 
     def connect(self, cam_id: str) -> tuple[bool, str]:
         parsed = parse_id(cam_id)

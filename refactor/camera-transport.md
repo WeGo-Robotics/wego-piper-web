@@ -269,9 +269,12 @@ piper.cam.wrist_depth    ← 컬러라이즈드  (h, w, 3) uint8
 
 ## 착수 순서
 
-1. `vendor/lerobot_camera_pipershm/` 골격 + 세그먼트 포맷 확정
-2. **소비자 먼저** — 기존 `camera_manager`가 임시로 세그먼트를 채우게 하고,
-   `PiperShmCamera`로 추론을 한 번 돌린다. camerad 분리 전에 전송 계층만 검증
+1. ☑ `vendor/lerobot_camera_pipershm/` 골격 + 세그먼트 포맷 확정
+   ([shm/piper_shm/](../shm/piper_shm/) — 게이트웨이·camerad·플러그인이 공유하는 계약)
+2. ☑ **소비자 먼저** — 기존 `camera_manager`/`realsense_manager`가 임시로 세그먼트를
+   채우고, `PiperShmCamera`로 읽는다. **LeRobot 수정 0으로 `type: "shm"`이 등록되는 것과
+   실카메라 프레임이 흐르는 것까지 확인**(D435 640×480 15fps, seqlock 재시도 0).
+   추론 1회 실기는 남아 있다
 3. camerad 분리 (v4l2 + RealSense 캡처 → 세그먼트 발행)
 4. `_build_cameras_json`을 `type: "shm"`으로 전환. `is_d405` 분기 제거
 5. 컨테이너에서 `privileged`/`/dev` 마운트 제거, `ipc: host` 추가
