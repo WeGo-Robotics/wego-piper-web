@@ -249,3 +249,68 @@ def test_frontend_message_uses_the_actual_result():
     handler = src.split("const handlePresetLoad", 1)[1].split("const handlePresetDelete", 1)[0]
     assert "d.applied" in handler or "applied" in handler, "실제 적용 결과를 안 본다"
     assert "d.arms?.length" not in handler, "프리셋에 적힌 팔 수를 세고 있다"
+
+
+# ── 로봇 타입 선택의 수명 ────────────────────────────────────────────────────
+
+def test_select_persists_to_session():
+    """**회귀** — 타입을 메모리에만 두면 리로드마다 날아간다.
+
+    팔은 등록돼 있는데 타입만 비어서 추론 시작이 "로봇이 선택되지 않았습니다"로
+    막혔고, 원인을 찾기 어려웠다.
+    """
+    import ast
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2]
+           / "backend" / "app" / "routers" / "robots.py").read_text()
+    fn = next(
+        n for n in ast.walk(ast.parse(src))
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "select_type"
+    )
+    body = ast.unparse(fn)
+    assert "save_session" in body, "선택을 세션에 저장하지 않는다"
+
+
+def test_preset_does_not_wipe_the_robot_type(monkeypatch, tmp_path):
+    """**회귀** — 프리셋에 값이 없으면 현재 값을 **지우면 안 된다.**
+
+    저장 당시 타입이 비어 있었으면 null 이 저장되는데, 그걸 그대로 대입하면
+    프리셋이 상태를 복원하는 게 아니라 지운다. 실제로 프리셋을 부른 뒤
+    추론 시작이 막혔다.
+    """
+    from app.services import presets as preset_store
+    from app.services.robot_manager import RobotManager
+
+    monkeypatch.setattr(preset_store, "PRESETS_ROOT", tmp_path / "presets")
+    preset_store.save("robot", "빈타입", {
+        "robot_type": None, "config_name": None, "arms": [],
+    })
+
+    rm = RobotManager()
+    rm.selected_type = "piper_follower"
+    rm.config_name = "1 Leader / 1 Follower"
+    monkeypatch.setattr(RobotManager, "scan", lambda self: None)
+
+    rm.load_preset("빈타입")
+    assert rm.selected_type == "piper_follower", "프리셋이 로봇 타입을 지웠다"
+    assert rm.config_name == "1 Leader / 1 Follower"
+
+
+def test_preset_with_a_type_still_applies_it(monkeypatch, tmp_path):
+    """반대 방향 — 값이 있으면 당연히 적용돼야 한다."""
+    from app.services import presets as preset_store
+    from app.services.robot_manager import RobotManager
+
+    monkeypatch.setattr(preset_store, "PRESETS_ROOT", tmp_path / "presets")
+    preset_store.save("robot", "있음", {
+        "robot_type": "so_follower", "config_name": "X", "arms": [],
+    })
+
+    rm = RobotManager()
+    rm.selected_type = "piper_follower"
+    monkeypatch.setattr(RobotManager, "scan", lambda self: None)
+
+    rm.load_preset("있음")
+    assert rm.selected_type == "so_follower"
+    assert rm.config_name == "X"

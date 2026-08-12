@@ -184,3 +184,58 @@ def test_sweep_removes_orphans_but_keeps_the_living():
         assert "pytest_keep" in list_segments(), "살아 있는 세그먼트를 지웠다"
     finally:
         keeper.close()
+
+
+# ── 카메라 JSON 조립은 한 곳에서 ────────────────────────────────────────────
+
+def test_recording_and_inference_share_one_builder():
+    """**회귀** — 프론트가 따로 조립하면 백엔드 설정을 몰라 **녹화만 옛 경로**를 탄다.
+
+    실제로 그랬다: 추론은 shm 으로 전환됐는데 녹화는 `RecordingPage.tsx` 가
+    intelrealsense JSON 을 만들어 보내고 있었다.
+    """
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    page = (repo / "frontend" / "src" / "pages" / "RecordingPage.tsx").read_text()
+    assert "buildCameraConfig" not in page, "프론트가 아직 카메라 JSON 을 조립한다"
+    assert "camera_mapping" in page, "매핑을 보내지 않는다"
+
+    for router in ("models.py", "recording.py"):
+        src = (repo / "backend" / "app" / "routers" / router).read_text()
+        assert "build_cameras_json" in src, f"{router} 가 공용 조립기를 안 쓴다"
+
+
+def test_transport_switch_changes_both_paths(monkeypatch):
+    """스위치 하나로 추론·녹화가 함께 바뀌어야 한다."""
+    from app.core.config import settings
+    from app.services.camera_config import build_cameras_json
+
+    mapping = {"top": "rs:1:color", "wrist": "/dev/video0"}
+
+    monkeypatch.setattr(settings, "camera_transport", "shm")
+    shm = build_cameras_json(mapping, width=640, height=480, fps=15)
+    assert all(v == {"type": "shm", "segment": k} for k, v in shm.items())
+    # 해상도는 발행자가 정한다 — 소비자 설정이 새어들면 안 된다
+    assert not any("width" in v for v in shm.values())
+
+    monkeypatch.setattr(settings, "camera_transport", "direct")
+    direct = build_cameras_json(mapping, width=640, height=480, fps=15)
+    assert direct["top"]["type"] == "intelrealsense"
+    assert direct["wrist"]["type"] == "opencv"
+    assert direct["top"]["width"] == 640, "direct 는 요청 해상도를 실어야 한다"
+
+
+def test_prepare_is_inverted_between_transports():
+    """`direct` 는 카메라를 **해제**하고 `shm` 은 **붙잡는다** — 정반대다.
+
+    이 뒤바뀜을 놓치면 shm 에서 카메라를 해제해 프레임이 끊긴다.
+    """
+    import inspect
+
+    from app.services import camera_config
+
+    src = inspect.getsource(camera_config.prepare_cameras)
+    assert "release_all_cameras" in src, "direct 경로에서 해제하지 않는다"
+    assert "cam.connect()" in src, "shm 경로에서 붙잡지 않는다"
+    assert 'camera_transport != "shm"' in src, "전송 방식을 안 본다"

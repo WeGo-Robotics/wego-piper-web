@@ -194,7 +194,14 @@ class SelectTypeRequest(BaseModel):
 
 @router.post("/select")
 async def select_type(body: SelectTypeRequest):
+    """로봇 타입 선택. **세션에 남긴다.**
+
+    예전에는 메모리에만 두어 서버가 리로드될 때마다 날아갔고, 그때마다
+    추론 시작이 "로봇이 선택되지 않았습니다"로 막혔다 — 팔은 등록돼 있는데
+    타입만 비어 있어서 원인을 찾기 어려웠다.
+    """
     robot_manager.selected_type = body.robot_type
+    robot_manager.save_session()
     return {"status": "ok", "selected_type": body.robot_type}
 
 

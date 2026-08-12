@@ -20,6 +20,13 @@ class RecordStartRequest(BaseModel):
     robot_type: str = "piper_follower"
     robot_port: str = ""
     robot_cameras: dict = {}
+    # `{카메라키: 장치id}`. 주면 백엔드가 `--robot.cameras` JSON 을 조립한다.
+    # 프론트가 조립하면 백엔드 설정(`camera_transport`)을 몰라 **녹화만 옛 경로**를 탄다.
+    camera_mapping: dict[str, str] = {}
+    # 카메라 요청 해상도·fps (`direct` 에서만 쓰인다 — `shm` 은 발행자가 정한다)
+    camera_width: int = 0
+    camera_height: int = 0
+    camera_fps: int = 0
     teleop_type: str = "piper_leader"
     teleop_port: str = ""
     repo_id: str = ""
@@ -42,6 +49,10 @@ class RecordPreviewRequest(BaseModel):
     robot_type: str = "piper_follower"
     robot_port: str = ""
     robot_cameras: dict = {}
+    camera_mapping: dict[str, str] = {}
+    camera_width: int = 0
+    camera_height: int = 0
+    camera_fps: int = 0
     teleop_type: str = "piper_leader"
     teleop_port: str = ""
     repo_id: str = ""
@@ -73,29 +84,32 @@ async def start_recording(body: RecordStartRequest):
     if not body.teleop_port:
         raise HTTPException(400, "Leader 포트가 필요합니다.")
 
-    # 녹화 전 웹이 점유한 카메라 해제 (OpenCV + RealSense 둘 다).
-    # 해제하지 않으면 LeRobot subprocess가 같은 USB 디바이스를 또 열어
-    # 대역폭/디바이스 경합으로 녹화 루프가 목표 FPS 이하로 떨어진다.
-    import time
-    from app.services.camera_manager import camera_manager
-    from app.services.realsense_manager import realsense_hub
-    released = False
-    for cam in camera_manager.cameras.values():
-        if cam.connected:
-            logger.info("Releasing camera %s for recording", cam.id)
-            cam.disconnect()
-            released = True
-    if realsense_hub.release_all():
-        logger.info("Released RealSense streams for recording")
-        released = True
-    if released:
-        time.sleep(0.5)
+    # 전송 방식에 맞게 카메라 준비. `direct` 는 해제하고 `shm` 은 붙잡는다 —
+    # 두 방식이 정반대라 한 곳(`camera_config`)에서 판단한다.
+    from app.services.camera_config import (
+        CameraPrepareError,
+        build_cameras_json,
+        prepare_cameras,
+    )
+
+    try:
+        prepare_cameras(body.camera_mapping, purpose="recording")
+    except CameraPrepareError as e:
+        raise HTTPException(400, str(e))
 
     from app.services.control_bridge import control_bridge
     from app.services.preview_bridge import preview_bridge
 
     params = body.model_dump()
     params.pop("web_preview", None)
+    mapping = params.pop("camera_mapping", None) or {}
+    cam_w = params.pop("camera_width", 0)
+    cam_h = params.pop("camera_height", 0)
+    cam_fps = params.pop("camera_fps", 0) or body.fps
+    if mapping:
+        params["robot_cameras"] = build_cameras_json(
+            mapping, width=cam_w, height=cam_h, fps=cam_fps
+        )
 
     # 헤드리스 에피소드 제어 채널은 미리보기와 무관하게 항상 켠다.
     # 버스 주소는 ProcessManager 가 모든 자식에게 넣으므로 여기서 넘기지 않는다.
@@ -250,7 +264,17 @@ async def delete_dataset_for_recording(repo_id: str):
 
 @router.post("/preview")
 async def preview_record_args(body: RecordPreviewRequest):
-    """녹화 CLI 인자 미리보기."""
+    """녹화 CLI 인자 미리보기. 시작과 **같은 조립기**를 써야 미리보기가 거짓말을 안 한다."""
+    from app.services.camera_config import build_cameras_json
+
     params = body.model_dump()
+    mapping = params.pop("camera_mapping", None) or {}
+    cam_w = params.pop("camera_width", 0)
+    cam_h = params.pop("camera_height", 0)
+    cam_fps = params.pop("camera_fps", 0) or body.fps
+    if mapping:
+        params["robot_cameras"] = build_cameras_json(
+            mapping, width=cam_w, height=cam_h, fps=cam_fps
+        )
     args = build_record_args(params)
     return {"args": args, "command": " ".join(args)}

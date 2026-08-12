@@ -110,34 +110,17 @@ export default function RecordingPage() {
   }
 
   // 카메라 매핑 JSON 빌드 (preview/start 공용)
-  const buildCameraConfig = () => {
-    const camJson: Record<string, unknown> = {}
-    for (const [name, id] of Object.entries(cameraMapping)) {
-      if (!id) continue  // 빈 매핑 스킵
-      if (id.startsWith('rs:')) {
-        // RealSense: 'rs:<serial>:<stream>' → intelrealsense 설정. OpenCV V4L2
-        // 백엔드는 rs: 경로를 못 열기 때문에 별도 카메라 타입으로 빌드해야 한다.
-        const serial = id.split(':')[1]
-        // warmup_s 기본값(1초)은 카메라 2대가 USB 대역폭을 나눠 초기화할 때
-        // 두 번째 카메라의 첫 프레임이 1초를 넘겨 connect가 TimeoutError로 실패한다.
-        const cfg: Record<string, unknown> = { type: 'intelrealsense', serial_number_or_name: serial, width: camWidth, height: camHeight, fps, warmup_s: 5 }
-        // D405는 depth가 함께 켜져야 color 프레임이 나온다(color-only=0fps).
-        // use_depth는 파이프라인만 켤 뿐 기록되는 관측은 color만 → 데이터셋 영향 없음.
-        if (/\b405\b/.test(cameras.find((c) => c.id === id)?.name ?? '')) cfg.use_depth = true
-        camJson[name] = cfg
-      } else {
-        camJson[name] = { type: 'opencv', index_or_path: id, width: camWidth, height: camHeight, fps, backend: 200 }
-      }
-    }
-    return camJson
-  }
+  // 카메라 JSON 조립은 **백엔드가 한다** (`services/camera_config.py`).
+  // 여기서 조립하면 백엔드 설정(`camera_transport`)을 몰라 녹화만 옛 경로를 탄다.
+  // 매핑과 해상도만 보낸다.
 
   // CLI 미리보기
   useEffect(() => {
     if (cliEdited || !repoId) return
     api.post<{ command: string }>('/recording/preview', {
       robot_port: followerPort,
-      robot_cameras: buildCameraConfig(),
+      camera_mapping: cameraMapping,
+      camera_width: camWidth, camera_height: camHeight, camera_fps: fps,
       teleop_port: leaderPort,
       repo_id: repoId, single_task: singleTask,
       num_episodes: numEpisodes, fps, episode_time_s: episodeTime, reset_time_s: resetTime,
@@ -168,7 +151,8 @@ export default function RecordingPage() {
       }
       await api.post('/recording/start', {
         robot_port: followerPort,
-        robot_cameras: buildCameraConfig(),
+        camera_mapping: cameraMapping,
+        camera_width: camWidth, camera_height: camHeight, camera_fps: fps,
         teleop_port: leaderPort,
         repo_id: repoId, single_task: singleTask,
         num_episodes: numEpisodes, fps, episode_time_s: episodeTime, reset_time_s: resetTime,

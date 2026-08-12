@@ -8,6 +8,12 @@ logger = logging.getLogger(__name__)
 from app.core.cli_mapping import build_inference_args, build_grpc_client_args
 from app.core.config import settings
 from app.services.exclusivity import Activity, require_idle
+from app.services.camera_config import (
+    CameraPrepareError,
+    build_cameras_json,
+    prepare_cameras,
+    release_all_cameras,
+)
 from app.services.model_scanner import scan_models, get_model, delete_model
 from app.services.param_bridge import param_bridge
 from app.services.process_manager import process_manager
@@ -54,144 +60,6 @@ def _get_first_ready_follower_port() -> str | None:
     return None
 
 
-def _prepare_cameras(camera_mapping: dict[str, str]) -> None:
-    """전송 방식에 맞게 카메라를 준비한다.
-
-    - `direct`: wrapper 가 장치를 직접 여니 **웹이 쥔 것을 해제**해야 한다 (지금까지)
-    - `shm`: 정반대다. 발행자(지금은 게이트웨이)가 장치를 **계속 쥐고** 세그먼트에
-      흘려야 wrapper 가 읽는다. 해제하면 프레임이 끊긴다.
-
-    이 뒤바뀜이 shm 전환의 핵심이다 — "해제 춤"이 사라지는 대신 소유가 명확해진다.
-    """
-    if settings.camera_transport != "shm":
-        _release_all_cameras()
-        return
-
-    from app.services.shm_publisher import sweep_stale_segments
-
-    keys = {name for name, cam_id in camera_mapping.items() if cam_id}
-    # 이번에 쓸 것 외의 남은 세그먼트는 치운다 — 남으면 소비자가 멈춘 화면을 본다
-    sweep_stale_segments(keep=keys)
-
-    for name, cam_id in camera_mapping.items():
-        if not cam_id:
-            continue
-        cam = camera_manager.cameras.get(cam_id)
-        if cam is None:
-            raise HTTPException(400, f"카메라를 찾을 수 없습니다: {cam_id}")
-        cam.shm_key = name                    # 세그먼트 이름 = LeRobot 카메라 키
-        if cam.connected:
-            # 이미 연결돼 있어도 shm_key 가 방금 붙었으니 캡처 루프에 반영시킨다
-            cam.disconnect()
-        ok, msg = cam.connect()
-        if not ok:
-            raise HTTPException(400, f"카메라 연결 실패 ({cam_id}): {msg}")
-        logger.info("shm 발행 준비: %s ← %s", name, cam_id)
-
-
-def _release_all_cameras() -> None:
-    """추론 시작 전 웹 프리뷰가 점유한 카메라를 모두 해제.
-
-    camera_manager(OpenCV)뿐 아니라 realsense_hub(RealSense 파이프라인)도 강제
-    해제해야 한다. 그렇지 않으면 웹 프리뷰가 RealSense USB 디바이스를 쥔 채로
-    추론 subprocess가 같은 디바이스를 열려다 충돌해 카메라가 먹통이 된다."""
-    from app.services.realsense_manager import realsense_hub
-    released = False
-    for cam in camera_manager.cameras.values():
-        if cam.connected:
-            logger.info("Releasing camera %s for inference", cam.id)
-            cam.disconnect()
-            released = True
-    if realsense_hub.release_all():
-        logger.info("Released RealSense streams for inference")
-        released = True
-    if released:
-        import time
-        time.sleep(0.5)  # 커널이 디바이스를 해제할 시간 확보
-
-
-def _clear_arm_errors(label: str, ifaces: list[str] | None = None) -> None:
-    """추론 시작/종료 시 로봇팔 에러 플래그를 조회한 뒤 무조건 클리어한다.
-
-    팔과의 CAN 통신은 백엔드 robot_manager가 직접 보유하므로(추론 subprocess와
-    별개), 시작은 subprocess 기동 전에, 종료는 subprocess 정지 후에 호출하여
-    버스 경합을 피한다. 실패해도 추론 흐름은 막지 않는다(best-effort)."""
-    try:
-        report = robot_manager.clear_arm_errors(ifaces)
-    except Exception as e:
-        logger.warning("[%s] 로봇팔 에러 클리어 실패: %s", label, e)
-        return
-    if not report:
-        logger.info("[%s] 에러 클리어 대상 follower 없음", label)
-        return
-    for r in report:
-        err = r.get("error") or {}
-        logger.info("[%s] %s 에러 클리어: code=0x%04X flags=%s cleared=%s",
-                    label, r["iface"], err.get("err_code", 0),
-                    err.get("flags", []), r["cleared"])
-
-
-def _build_cameras_draccus(camera_mapping: dict[str, str]) -> str:
-    """카메라 매핑을 draccus 형식 문자열로 변환 (robot_client.py용).
-    {"top": "/dev/video12"} → "{ top: {type: opencv, index_or_path: '/dev/video12', width: 640, height: 480, fps: 30}}"
-    RealSense 경로('rs:<serial>:<stream>')는 OpenCV V4L2 로 열 수 없으므로
-    intelrealsense 타입으로 변환한다.
-    """
-    if not camera_mapping:
-        return ""
-    parts = []
-    for cam_name, cam_id in camera_mapping.items():
-        if cam_id.startswith("rs:"):
-            serial = cam_id.split(":")[1]
-            from app.services.realsense_manager import realsense_hub
-            depth = ", use_depth: true" if realsense_hub.is_d405(serial) else ""
-            parts.append(f"{cam_name}: {{type: intelrealsense, serial_number_or_name: '{serial}', width: 640, height: 480, fps: 30, warmup_s: 5{depth}}}")
-        else:
-            parts.append(f"{cam_name}: {{type: opencv, index_or_path: '{cam_id}', width: 640, height: 480, fps: 30}}")
-    return "{ " + ", ".join(parts) + " }"
-
-
-def _build_cameras_json(camera_mapping: dict[str, str]) -> dict:
-    """카메라 매핑을 wrapper --cameras JSON으로 변환.
-    {"top": "/dev/video0"} → {"top": {"type": "opencv", "index_or_path": "/dev/video0"}}
-    RealSense 경로('rs:<serial>:<stream>')는 OpenCV V4L2 로 열 수 없으므로
-    intelrealsense 타입으로 변환한다.
-    """
-    if not camera_mapping:
-        return {}
-
-    # shm 전송: wrapper 는 장치를 열지 않고 세그먼트에서 픽셀만 읽는다.
-    # **RealSense 특수사정이 여기서 통째로 사라진다** — D405 의 color-only 0fps 문제도,
-    # OpenCV 백엔드 지정도 발행자 안에 갇힌다 (refactor/camera-transport.md).
-    # 세그먼트 이름 = 카메라 키라 매핑이 그대로 이름이 된다.
-    if settings.camera_transport == "shm":
-        return {
-            name: {"type": "shm", "segment": name}
-            for name, cam_id in camera_mapping.items() if cam_id
-        }
-
-    cameras = {}
-    for cam_name, cam_id in camera_mapping.items():
-        if not cam_id:
-            continue
-        if cam_id.startswith("rs:"):
-            serial = cam_id.split(":")[1]
-            # warmup_s 기본값(1초)은 카메라 2대가 USB 대역폭을 나눠 초기화할 때
-            # 두 번째 카메라의 첫 프레임이 1초를 넘겨 connect가 TimeoutError로
-            # 실패한다. 여유를 둬 첫 프레임 대기 상한을 늘린다.
-            cam_cfg = {"type": "intelrealsense", "serial_number_or_name": serial, "warmup_s": 5}
-            # D405는 depth가 함께 켜지지 않으면 color 프레임이 아예 안 나온다
-            # (color-only=0fps → warmup TimeoutError). use_depth는 파이프라인만
-            # 켤 뿐 async_read는 여전히 color만 반환 → 정책/데이터셋 영향 없음.
-            from app.services.realsense_manager import realsense_hub
-            if realsense_hub.is_d405(serial):
-                cam_cfg["use_depth"] = True
-            cameras[cam_name] = cam_cfg
-        else:
-            cameras[cam_name] = {"type": "opencv", "index_or_path": cam_id, "backend": 200}
-    return cameras
-
-
 def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
     """추론 CLI 인자 생성 — `/inference/preview` 와 `/inference/start` 가 함께 쓴다.
 
@@ -202,7 +70,7 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
     이전에 `task` 만 꺼내 쓰고 `fps` 를 20 으로 하드코딩해서 슬라이더 값이 전부 유실됐다.
     실제로 실릴 키는 `cli_mapping.OVERRIDE_KEYS` 와 각 ARGS_MAP 이 정한다.
     """
-    cameras = _build_cameras_json(body.camera_mapping)
+    cameras = build_cameras_json(body.camera_mapping)
     is_bimanual = len(body.robot_ports) >= 2
 
     if body.inference_mode == "server":
@@ -327,7 +195,10 @@ async def start_inference(body: InferenceStartRequest):
 
     args = _build_args_for(body, robot_type, robot_port)
 
-    _prepare_cameras(body.camera_mapping)
+    try:
+        prepare_cameras(body.camera_mapping, purpose="inference")
+    except CameraPrepareError as e:
+        raise HTTPException(400, str(e))
 
     # 추론 기동 전 로봇팔 에러 플래그 조회 + 무조건 클리어 (subprocess가 CAN을 쥐기 전)
     follower_ifaces = body.robot_ports if is_bimanual else ([robot_port] if robot_port else None)
@@ -355,7 +226,7 @@ async def start_inference_custom(body: InferenceStartCustomRequest):
         raise HTTPException(400, "CLI 인자가 비어있습니다")
 
     # 추론 전 연결된 모든 카메라 해제 (wrapper가 카메라를 직접 열므로)
-    _release_all_cameras()
+    release_all_cameras("inference")
 
     # 추론 기동 전 로봇팔 에러 플래그 조회 + 무조건 클리어 (연결된 모든 follower)
     _clear_arm_errors("inference-start")

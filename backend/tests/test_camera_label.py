@@ -93,9 +93,9 @@ def test_label_is_not_the_lerobot_camera_key():
     키는 호출부가 준 `camera_mapping` 에서만 온다. 여기가 흔들리면
     "카메라 이름을 바꿨더니 학습된 정책이 안 열린다"가 된다.
     """
-    from app.routers.models import _build_cameras_json
+    from app.services.camera_config import build_cameras_json
 
-    built = _build_cameras_json({"top": "/dev/video0"})
+    built = build_cameras_json({"top": "/dev/video0"})
     assert list(built) == ["top"]
 
 

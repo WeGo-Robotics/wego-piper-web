@@ -864,8 +864,13 @@ class RobotManager:
         # 사용자가 "스캔 먼저"를 알고 있어야 하는 것은 UI 의 잘못이다.
         self.scan()
 
-        self.selected_type = data.get("robot_type")
-        self.config_name = data.get("config_name")
+        # ⚠ **빈 값으로 덮어쓰지 않는다.** 프리셋을 저장할 때 타입이 비어 있었으면
+        # null 이 저장되는데, 그걸 그대로 대입하면 프리셋이 상태를 복원하는 게 아니라
+        # **지운다.** 실제로 프리셋을 부른 뒤 추론 시작이 막혔다.
+        if data.get("robot_type"):
+            self.selected_type = data["robot_type"]
+        if data.get("config_name"):
+            self.config_name = data["config_name"]
         applied: list[str] = []
         missing: list[str] = []
         failed: list[str] = []
