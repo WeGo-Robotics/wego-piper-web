@@ -213,12 +213,15 @@ async def start_inference(body: InferenceStartRequest):
     if not is_bimanual and not robot_port:
         raise HTTPException(400, "등록된 follower가 없습니다. 로봇 페이지에서 먼저 등록하세요.")
 
-    args = _build_args_for(body, robot_type, robot_port)
-
+    # ⚠ **카메라를 먼저 준비한다.** `shm` 에서는 세그먼트에서 실제 해상도를 읽어
+    # 인자에 싣는데, 연결 전이면 세그먼트가 없어 기본값(640x480)으로 떨어진다 —
+    # D405 처럼 848x480 인 카메라가 어긋난 채로 데이터셋 메타에 박힌다.
     try:
         prepare_cameras(body.camera_mapping, purpose="inference")
     except CameraPrepareError as e:
         raise HTTPException(400, str(e))
+
+    args = _build_args_for(body, robot_type, robot_port)
 
     # 추론 기동 전 로봇팔 에러 플래그 조회 + 무조건 클리어 (subprocess가 CAN을 쥐기 전)
     follower_ifaces = body.robot_ports if is_bimanual else ([robot_port] if robot_port else None)

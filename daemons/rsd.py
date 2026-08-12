@@ -105,6 +105,20 @@ def main() -> int:
     # ⚠ **기동 시 한 번 스캔한다.** 안 하면 장치 목록이 비어 있어 `connect` 가
     # "not found (rescan)" 로 실패한다. 게이트웨이 시절에는 카메라 페이지가
     # 스캔을 먼저 불러서 가려져 있던 순서 의존이다.
+    # ⚠ 지난 프로세스가 죽으면 `/dev/shm` 세그먼트가 남는다. 치우지 않으면 소비자가
+    # 발행자 없는 세그먼트를 열어 **멈춘 화면**을 본다.
+    # **자기 것만** 치운다 — 다른 데몬이 발행 중인 것을 지우면 그쪽이 깨진다.
+    try:
+        from piper_shm import list_segments, unlink
+
+        stale = [n for n in list_segments() if n.startswith("rs_")]
+        for name in stale:
+            unlink(name)
+        if stale:
+            logger.info("남은 세그먼트 %d개 정리: %s", len(stale), stale)
+    except Exception as exc:
+        logger.warning("세그먼트 정리 실패: %s", exc)
+
     try:
         found = hub.scan()
         logger.info("장치 %d개 발견: %s", len(found), [d["id"] for d in found])

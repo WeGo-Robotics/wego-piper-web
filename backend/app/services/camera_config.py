@@ -63,7 +63,15 @@ def build_cameras_json(
         from piper_shm import segment_for_camera
 
         return {
-            name: {"type": "shm", "segment": segment_for_camera(cam_id)}
+            name: {
+                "type": "shm",
+                "segment": segment_for_camera(cam_id),
+                # ⚠ LeRobot 의 `RobotConfig.__post_init__` 이 **모든 카메라에**
+                # width/height/fps 를 요구한다 (없으면 draccus 파싱에서 죽는다).
+                # shm 에서 진짜 해상도는 발행자가 정하므로 세그먼트에서 읽어 채운다 —
+                # 요청값을 그대로 쓰면 실제와 어긋난 채로 데이터셋 메타에 박힌다.
+                **_shm_dims(cam_id, width, height, fps),
+            }
             for name, cam_id in camera_mapping.items() if cam_id
         }
 
@@ -121,6 +129,33 @@ def check_camera_config(cameras: dict) -> str | None:
     )
 
 
+def _shm_dims(cam_id: str, width: int | None, height: int | None,
+              fps: int | None) -> dict:
+    """세그먼트의 **실제** 해상도. 아직 없으면 요청값으로 채운다.
+
+    세그먼트가 없을 수 있는 이유: 카메라를 아직 연결하지 않았거나(미리보기 조회),
+    `prepare_cameras` 보다 먼저 불렸을 때. 그 경우에도 값은 있어야 파싱이 통과한다.
+    """
+    from piper_shm import SegmentError, Subscriber, segment_for_camera
+
+    w, h = width, height
+    try:
+        sub = Subscriber(segment_for_camera(cam_id))
+    except SegmentError:
+        pass
+    else:
+        try:
+            h, w, _ = sub.shape
+        finally:
+            sub.close()
+    return {
+        "width": w or 640,
+        "height": h or 480,
+        # fps 는 세그먼트에 없다(발행 주기는 장치가 정한다). 요청값을 쓴다.
+        "fps": fps or 30,
+    }
+
+
 def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str) -> None:
     """전송 방식에 맞게 카메라를 준비한다. **두 방식이 정반대다.**
 
@@ -134,28 +169,24 @@ def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str) -> None:
         release_all_cameras(purpose)
         return
 
-    from piper_shm import segment_for_camera
-
-    from app.services.shm_publisher import sweep_stale_segments
+    # ⚠ **여기서 세그먼트를 지우지 않는다.** 소유자는 데몬(camerad/rsd)이다.
+    # 예전에는 "쓰지 않는 것을 치운다"며 unlink 했는데, 데몬이 **발행 중인** 파일을
+    # 지워버려 발행자는 계속 쓰고 소비자는 열 수 없는 상태가 됐다.
+    # 고아 세그먼트는 각 데몬이 기동할 때 스스로 치운다.
 
     # 쓸 카메라를 붙잡는다. 연결돼 있으면 이미 발행 중이라 건드리지 않는다 —
     # 끊었다 붙이면 그 사이 소비자가 프레임을 잃는다.
-    keep = set()
     for name, cam_id in camera_mapping.items():
         if not cam_id:
             continue
         cam = camera_manager.cameras.get(cam_id)
         if cam is None:
             raise CameraPrepareError(f"카메라를 찾을 수 없습니다: {cam_id}")
-        keep.add(segment_for_camera(cam_id))
         if not cam.connected:
             ok, msg = cam.connect()
             if not ok:
                 raise CameraPrepareError(f"카메라 연결 실패 ({cam_id}): {msg}")
         logger.info("shm 발행 중(%s): %s ← %s", purpose, name, cam_id)
-
-    # 쓰지 않는 남은 세그먼트만 치운다 — 남으면 소비자가 멈춘 화면을 본다
-    sweep_stale_segments(keep=keep)
 
 
 def release_all_cameras(purpose: str = "inference") -> bool:

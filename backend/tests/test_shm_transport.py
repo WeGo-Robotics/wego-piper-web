@@ -169,21 +169,80 @@ def test_publish_never_raises_into_the_capture_loop():
     pub.stop_all()
 
 
-def test_sweep_removes_orphans_but_keeps_the_living():
-    """프로세스가 죽으면 세그먼트가 남는다 — 기동 시 쓸어낸다."""
-    from app.services.shm_publisher import sweep_stale_segments
+def test_gateway_never_unlinks_daemon_segments():
+    """**회귀** — 게이트웨이가 데몬 소유의 세그먼트를 지우고 있었다.
 
-    # 프로세스가 죽으면 파일만 남는다 — 그 상태를 직접 만든다
-    Publisher(_NAME, 32, 32).close(unlink=False)
-    assert _NAME in list_segments()
+    `prepare_cameras` 가 "안 쓰는 것을 치운다"며 unlink 했는데, rsd 가 **발행 중인**
+    파일을 지워서 발행자는 계속 쓰고 소비자는 열 수 없는 상태가 됐다.
+    증상은 조용했다 — `connect` 는 OK 인데 세그먼트가 없다.
 
-    keeper = Publisher("pytest_keep", 32, 32)
+    소유자는 데몬이다. 고아 정리는 각 데몬이 기동할 때 **자기 것만** 한다.
+    """
+    import inspect
+    from pathlib import Path
+
+    from app.services import camera_config
+
+    # **주석이 아니라 호출**을 본다 — 설명문에 옛 이름이 나온다
+    import ast
+
+    src = inspect.getsource(camera_config.prepare_cameras)
+    calls = {
+        ast.unparse(n.func)
+        for n in ast.walk(ast.parse(src.lstrip())) if isinstance(n, ast.Call)
+    }
+    assert not any("sweep" in c or "unlink" in c for c in calls), (
+        f"게이트웨이가 세그먼트를 지운다: {calls}"
+    )
+
+    repo = Path(__file__).resolve().parents[2]
+    main_calls = {
+        ast.unparse(n.func)
+        for n in ast.walk(ast.parse((repo / "backend" / "app" / "main.py").read_text()))
+        if isinstance(n, ast.Call)
+    }
+    assert "sweep_stale_segments" not in main_calls, "기동 시 데몬 세그먼트를 쓸어버린다"
+
+    # 데몬은 **자기 접두사만** 치운다 — 남의 것을 지우면 그쪽이 깨진다
+    for daemon, prefix in (("rsd.py", "rs_"), ("camerad.py", "dev_")):
+        d = (repo / "daemons" / daemon).read_text()
+        assert f'startswith("{prefix}")' in d, f"{daemon} 이 자기 것만 치우지 않는다"
+
+
+def test_shm_config_carries_real_dimensions():
+    """LeRobot 은 로봇 카메라에 width/height/fps 를 **필수**로 요구한다.
+
+    없으면 draccus 파싱에서 `Specifying 'width' is required` 로 죽는다.
+    요청값을 그대로 쓰면 실제와 어긋난 채 데이터셋 메타에 박히므로
+    세그먼트에서 읽는다 (D405 는 848x480 인데 요청은 보통 640x480 이다).
+    """
+    from app.core.config import settings
+    from app.services.camera_config import build_cameras_json
+
+    from piper_shm import segment_for_camera
+
+    # 세그먼트 이름은 **장치 id 에서 규칙으로** 나온다. 손으로 짓지 않는다 —
+    # 발행자(데몬)와 소비자(게이트웨이)가 같은 함수를 써야 서로를 찾는다.
+    cam_id = "/dev/video-pytest-dims"
+    pub = Publisher(segment_for_camera(cam_id), 848, 480)
     try:
-        removed = sweep_stale_segments(keep={"pytest_keep"})
-        assert _NAME in removed
-        assert "pytest_keep" in list_segments(), "살아 있는 세그먼트를 지웠다"
+        settings.camera_transport = "shm"
+        # **요청은 640x480 인데 발행자는 848x480 이다.** 발행자가 이긴다 —
+        # 요청값을 그대로 실으면 D405 가 어긋난 치수로 데이터셋 메타에 박힌다.
+        cfg = build_cameras_json({"hand": cam_id}, width=640, height=480, fps=15)
+        assert (cfg["hand"]["width"], cfg["hand"]["height"]) == (848, 480)
     finally:
-        keeper.close()
+        pub.close()
+        settings.camera_transport = "direct"
+
+    # 세그먼트가 없으면? 기본값으로라도 **채워야** 한다 (빈 값이면 파싱이 죽는다)
+    try:
+        settings.camera_transport = "shm"
+        gone = build_cameras_json({"hand": "/dev/video-does-not-exist"}, fps=15)
+        v = gone["hand"]
+        assert v["width"] and v["height"] and v["fps"]
+    finally:
+        settings.camera_transport = "direct"
 
 
 # ── 카메라 JSON 조립은 한 곳에서 ────────────────────────────────────────────
@@ -217,12 +276,16 @@ def test_transport_switch_changes_both_paths(monkeypatch):
     shm = build_cameras_json(mapping, width=640, height=480, fps=15)
     # **키는 dict 키로, 세그먼트는 장치로.** 발행자는 매핑을 모른 채 항상 발행하므로
     # 세그먼트 이름이 LeRobot 키면 매핑이 바뀔 때마다 다시 만들어야 한다.
-    assert shm == {
-        "top": {"type": "shm", "segment": "rs_1_color"},
-        "wrist": {"type": "shm", "segment": "dev_video0"},
+    # 치수는 세그먼트에서 읽고, 없으면 요청값으로 떨어진다 — **비어 있으면 안 된다.**
+    # LeRobot `RobotConfig.__post_init__` 이 width/height/fps 를 필수로 요구해서,
+    # 빠지면 `Specifying 'width' is required` 로 녹화가 시작조차 못 한다.
+    assert {k: v["segment"] for k, v in shm.items()} == {
+        "top": "rs_1_color",
+        "wrist": "dev_video0",
     }
-    # 해상도는 발행자가 정한다 — 소비자 설정이 새어들면 안 된다
-    assert not any("width" in v for v in shm.values())
+    for v in shm.values():
+        assert v["type"] == "shm"
+        assert (v["width"], v["height"], v["fps"]) == (640, 480, 15)
 
     monkeypatch.setattr(settings, "camera_transport", "direct")
     direct = build_cameras_json(mapping, width=640, height=480, fps=15)
