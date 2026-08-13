@@ -25,6 +25,8 @@ import re
 import threading
 import time
 
+from piper_rs.depth import DepthEncoding, encode_depth
+
 logger = logging.getLogger(__name__)
 
 # UI/엔트리에서 다루는 스트림 종류
@@ -117,6 +119,9 @@ class _RSDevice:
         self._op_lock = threading.RLock()
         self._thread: threading.Thread | None = None
         self._running = False
+        # 깊이 인코딩 파라미터. **rsd 가 단일 소유자다** — 같은 픽셀값이 실행마다
+        # 다른 거리를 뜻하면 데이터셋이 조용히 오염된다. `info()` 로 내보낸다.
+        self.depth_encoding = DepthEncoding()
         # 스트림별 요청 프로파일 `(w, h, fps)`. 없으면 장치 기본값.
         self._want: dict[str, tuple[int, int, int]] = {}
         self._profiles: dict[str, list[tuple[int, int, int]]] = {}  # supported() 캐시
@@ -395,8 +400,10 @@ class _RSDevice:
                     df = frames.get_depth_frame()
                     if df:
                         depth = np.asanyarray(df.get_data())  # uint16 (mm)
-                        vis = cv2.convertScaleAbs(depth, alpha=0.03)
-                        updates["depth"] = cv2.applyColorMap(vis, cv2.COLORMAP_JET)
+                        # ⚠ 프리뷰용 JET 컬러맵을 쓰지 않는다 — 단조롭지 않아
+                        # 정책 입력으로 최악이고, 무효 픽셀(0)이 "가장 가까움"이
+                        # 된다. `depth.encode_depth` 참고.
+                        updates["depth"] = encode_depth(depth, self.depth_encoding)
                 if "infrared" in self._active:
                     irf = frames.get_infrared_frame(1)
                     if irf:
@@ -690,6 +697,10 @@ class RealSenseHub:
         }
         if got:
             out.update(width=got[0], height=got[1], fps=got[2])
+        if stream == "depth":
+            # 데이터셋 메타에 실려야 하는 값 — 없으면 나중에 같은 픽셀값이
+            # 무슨 거리였는지 알 방법이 없다
+            out["depth_encoding"] = dev.depth_encoding.to_dict()
         return out
 
     def disconnect(self, cam_id: str) -> None:
