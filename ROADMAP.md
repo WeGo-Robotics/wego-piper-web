@@ -1,5 +1,42 @@
 # 구현 순서 — 리팩터링과 신기능을 안 꼬이게
 
+## 현재 위치 (2026-08-13)
+
+**구조 개편 본선 3b-1~5 완료.** 게이트웨이가 CAN 도 카메라도 직접 열지 않고,
+데몬 넷이 장치를 소유하며, 컨테이너에는 GPU + `ipc: host` 만 남았다.
+
+| 단계 | | 상태 |
+|---|---|---|
+| Phase 0 | 배타 모드 가드 · 추론 파라미터 드리프트 | ☑ |
+| Phase 1 | 계약 세우기 (WS·robot_type·관절 수·정책 레지스트리) | ☑ |
+| Phase 2 | 저위험 추출 · cloud-training 0~2 · 프리셋 1~3 | ☑ |
+| Phase 3a | phase-annotation 1~3 | ☑ |
+| **3b-1~3** | 버스 · estopd · 브리지 → Redis | ☑ |
+| **3b-3.5** | job 레지스트리 · WS `job_id` | ☑ (4 = SSH 러너는 원격 머신 필요) |
+| **3b-4** | shm 전송 — 카메라 · 로봇 | ☑ 실기 확인 |
+| **3b-5** | rsd · camerad · robotd | ☑ 실기 확인 |
+| **3b-6** | systemd 유닛화 | ◐ 학습·정책서버 ☑ / encoderd·xferd 남음 |
+| 3b-7 | 실행별 컨테이너 분리 | ◐ 단일 백엔드 컨테이너는 실기 확인 |
+| 3b-8 | 게이트웨이 정리 | ◐ |
+| Phase 4 | 깊이맵 · camera-profiles · phase-annotation 4~8 · cloud-training 5~12 | ☐ |
+
+### 바로 이어서 할 것
+
+1. **encoderd · xferd 를 `SystemdProcess` 로** — 정책 서버가 만든 자리를 그대로 따라간다
+   ([policy_server_manager.py](backend/app/services/policy_server_manager.py) 의 `_make_process`).
+   `encoder_probe.py` 와 `datasets.py` 의 `_upload_pm`·`_edit_pm` 이 아직 `ProcessManager()` 를 직접 만든다
+2. **깊이맵 인코딩** — 대역폭 제약은 USB 3 으로 풀렸다(네 스트림 15fps 동시 확인).
+   남은 것은 클리핑 범위·컬러맵·무효픽셀·메타 기록 설계 ([camera-transport.md](refactor/camera-transport.md))
+3. **실기 체크리스트 B~I** — A(E-stop 일부)·G(카메라)·J(버스)만 닫혔다
+
+### 사람이 해야 하는 것 (sudo·하드웨어)
+
+| | 왜 |
+|---|---|
+| `loginctl enable-linger $USER` | **지금 꺼져 있다.** 로그아웃 시 학습·개발서버가 통째로 죽고, systemd 러너를 켜도 자식 프로세스로 떨어진다 |
+| [udev 규칙 적용](deploy/udev/99-piper-can.rules) + 로봇 재등록 | `can0`/`can1` 이 포트를 바꿔 꽂으면 **뒤바뀐다**. 실제로 겪었고, 등록이 살아 있었으면 leader 팔에 follower 명령이 갔을 것이다 |
+| joint3 캘리브레이션 결정 | raw 2103 인데 범위 최대가 0 — 지금 녹화하는 데이터에서 상단이 잘린다. 넓히면 기존 데이터셋·모델과 어긋난다 |
+
 [refactor/](refactor/) 13개 + 구조 개편 5문서, [feature/](feature/) 3개를 한 순서로 놓는다.
 
 ---
@@ -135,7 +172,7 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 
 ## 4. 순서
 
-### Phase 0 — 지금 위험한 것 (며칠)
+### Phase 0 — 지금 위험한 것 ☑ 완료
 
 | 작업 | 왜 지금 |
 |---|---|
@@ -175,7 +212,7 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 
 > 4~5(UI)는 #12 뒤면 언제든. **6(추론 경로)만 robot-transport 뒤로** — wrapper의 obs 조립 지점이 바뀐다.
 
-### Phase 3b — 구조 개편 본선
+### Phase 3b — 구조 개편 본선 (1~5 ☑ / 6~8 ◐)
 
 | # | 작업 | 비고 |
 |---|---|---|
@@ -185,9 +222,9 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 | **3.5** | cloud-training **3 ☑**(job 레지스트리 · WS `job_id`) / **4 대기**(SSH 러너) | 3 은 클라우드 없이도 값이 난다 — **서버 재시작에도 학습이 보인다.** 4 는 검증할 원격 머신이 필요하다 |
 | 4 | **shm 전송 계층** — 카메라 **1~5 ☑**(추론·녹화 실기 확인) · [로봇](refactor/robot-transport.md) **2~4 ☑**(실기 확인) / 5~6 남음 | 데몬 분리의 전제조건. 깊이맵은 전송 검증 후로 미룸 |
 | 5 | **rsd ☑ · camerad ☑ · robotd ☑** (버스 RPC · shm 발행 · 안전층) | **합치지 않았다** — D405 hang 이력. 게이트웨이는 이제 카메라 장치를 전혀 안 연다 |
-| 6 | `SystemdRunner` 추가 + policysrv·encoderd·xferd 유닛화 | 3.5의 이음매에 붙이는 것뿐 |
+| 6 | ◐ **학습 러너 ☑ · 정책서버 ☑** ([systemd_process.py](backend/app/services/systemd_process.py)) / encoderd·xferd 남음 | 유닛이 소유자라 게이트웨이 재시작에도 산다. journald 로 **로그까지 이어 읽는다** |
 | 7 | ◐ infer / record 컨테이너화 — **단일 백엔드 컨테이너는 실기 확인** (하드웨어 권한·호스트 네트워크 둘 다 제거, GPU + `ipc: host` 만 남음). 실행별로 쪼개는 것은 6단계 이후 | GPU + `ipc: host`만 |
-| 8 | 게이트웨이 정리 (#7 ☑ 완료) | `services/`에 스캐너만 남는다 |
+| 8 | ◐ 게이트웨이 정리 — `robot_manager` 995→248줄, `camera_manager` 685→298줄, `arm_bridge` 삭제 | `services/`에 스캐너만 남는다 |
 
 ### Phase 4 — 기능 완성
 
