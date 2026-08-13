@@ -41,3 +41,5 @@ backend/outputs/
 backend/data/debug/
 rs/*.egg-info/
 cam/*.egg-info/
+shm/*.egg-info/
+robot/*.egg-info/

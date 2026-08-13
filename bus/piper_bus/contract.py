@@ -195,6 +195,7 @@ RPC_REPLY_TTL_MS: Final = 30_000
 
 RSD: Final = "rsd"          # RealSense 데몬
 CAMERAD: Final = "camerad"  # v4l2 데몬
+ROBOTD: Final = "robotd"    # CAN 독점 + 안전층
 
 
 # ── 기본값 ────────────────────────────────────────────────────────────────────

@@ -391,3 +391,61 @@ def test_arms_are_prepared_before_the_args_are_built():
     assert set(lines) == {"prepare_cameras", "prepare_arms", "_build_args_for"}, order
     assert lines["prepare_cameras"] < lines["_build_args_for"], "카메라 준비가 늦다"
     assert lines["prepare_arms"] < lines["_build_args_for"], "팔 준비가 늦다"
+
+
+# ── robotd 데몬 경계 (refactor/robot-transport.md 4단계) ──
+
+def test_daemon_package_never_imports_the_gateway():
+    """데몬이 백엔드에 의존하면 **분리한 의미가 없다.**
+
+    rsd(`piper_rs`)·camerad(`piper_cam`)와 같은 규칙이다. 하나라도 `app.` 을
+    import 하면 robotd 를 게이트웨이 없이 못 띄운다.
+    """
+    import ast
+    import importlib.util
+    from pathlib import Path
+
+    pkg = Path(importlib.util.find_spec("piper_robot").origin).parent
+    for path in sorted(pkg.glob("*.py")):
+        tree = ast.parse(path.read_text())
+        mods = {n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
+        mods |= {a.name for n in ast.walk(tree)
+                 if isinstance(n, ast.Import) for a in n.names}
+        leaked = {m for m in mods if m.split(".")[0] == "app"}
+        assert not leaked, f"{path.name} 이 게이트웨이를 import 한다: {leaked}"
+
+
+def test_device_and_config_stay_on_their_own_side():
+    """장치는 데몬, 설정은 게이트웨이. **같은 사실이 두 프로세스에 있으면 어긋난다.**
+
+    역할(leader/follower)·슬롯·등록 여부는 사람이 정하는 것이고 CAN 과 무관하다.
+    `Arm` 이 그걸 들면 재시작할 때마다 게이트웨이 쪽 값과 갈린다.
+    """
+    from piper_robot.arm import Arm
+
+    fields = set(Arm.__dataclass_fields__)
+    assert not fields & {"role", "slot", "ready", "cameras", "gripper_open_pos"}, (
+        f"장치 계층이 설정을 들고 있다: {fields}"
+    )
+    # 장치가 아는 것은 전부 "팔에 물어봐야 알 수 있는 것"이어야 한다
+    assert {"connected", "ctrl_mode", "is_master", "firmware"} <= fields
+
+
+def test_robotd_exposes_only_what_the_gateway_calls():
+    """RPC 화이트리스트가 허브에 실제로 있는 메서드여야 한다.
+
+    오타가 있으면 게이트웨이가 부를 때까지 모른다 — 그것도 팔을 쓰려는 순간에.
+    """
+    import ast
+    from pathlib import Path
+
+    from piper_robot.hub import RobotHub
+
+    src = (Path(__file__).resolve().parents[2] / "daemons" / "robotd.py").read_text()
+    methods = next(
+        {e.value for e in n.value.elts}
+        for n in ast.walk(ast.parse(src))
+        if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "_METHODS"
+    )
+    missing = {m for m in methods if not hasattr(RobotHub, m)}
+    assert not missing, f"허브에 없는 메서드를 노출한다: {sorted(missing)}"
