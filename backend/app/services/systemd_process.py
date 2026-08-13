@@ -26,6 +26,7 @@
 import asyncio
 import contextlib
 import logging
+import threading
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -79,7 +80,9 @@ class SystemdProcess:
         self._state = ProcessState.IDLE
         self._on_log: Callable[[str], None] | None = None
         self._on_state: Callable[[ProcessState], None] | None = None
-        self._log_task: asyncio.Task | None = None
+        self._log_thread: threading.Thread | None = None
+        self._log_proc: subprocess.Popen | None = None
+        self._log_stop = threading.Event()
 
     # ── 상태 ──
 
@@ -147,9 +150,7 @@ class SystemdProcess:
     async def stop(self) -> None:
         _systemctl("stop", self.unit)
         _systemctl("reset-failed", self.unit)
-        if self._log_task:
-            self._log_task.cancel()
-            self._log_task = None
+        self._stop_log_stream()
         self._set_state(ProcessState.IDLE)
 
     # ── 로그 ──
@@ -159,34 +160,65 @@ class SystemdProcess:
 
         `follow_from_start` 는 **재부착할 때** 쓴다 — 게이트웨이가 없던 동안의
         로그를 처음부터 다시 읽어야 화면의 진행률이 이어진다.
-        stdout 을 못 되돌리던 `LocalRunner` 와 갈리는 지점이다.
+
+        ⚠ **스레드로 돈다. asyncio 가 아니다.** `restore()` 는 `TrainRunner`
+        프로토콜상 **동기** 메서드라 이벤트 루프 밖에서 불릴 수 있는데,
+        `asyncio.create_task` 는 그때 `RuntimeError: no running event loop` 로
+        죽는다 — 실기에서 걸렸다. 콜백도 동기 함수라 루프를 요구할 이유가 없다.
         """
-        if self._log_task and not self._log_task.done():
+        if self._log_thread and self._log_thread.is_alive():
             return
 
-        async def _pump() -> None:
-            args = ["journalctl", "--user", "-u", self.unit, "-f", "-o", "cat"]
-            args += ["--lines=all"] if follow_from_start else ["--lines=0"]
+        def _pump() -> None:
+            args = ["journalctl", "--user", "-f", "-o", "cat"]
+            if follow_from_start:
+                # ⚠ **이번 실행분만 읽는다.** journald 는 같은 유닛 이름의 로그를
+                # 실행이 바뀌어도 계속 쌓는다. `-u <unit> --lines=all` 로 읽으면
+                # **지난 학습의 스텝이 진행률로 들어온다** — 실기에서 확인했다.
+                # 실행마다 바뀌는 InvocationID 로 이번 것만 고른다.
+                inv = _systemctl("show", self.unit,
+                                 "--property=InvocationID").stdout.strip()
+                inv = inv.split("=", 1)[-1] if "=" in inv else ""
+                if inv:
+                    # `--lines=all` 이 없으면 `-f` 가 **마지막 몇 줄만** 보여준다 —
+                    # 재부착의 요점이 처음부터 다시 읽는 것이므로 반드시 준다.
+                    args += ["--lines=all", f"_SYSTEMD_INVOCATION_ID={inv}"]
+                else:
+                    logger.warning("InvocationID 를 못 읽어 이번 실행분만 고를 수 없다 (%s)",
+                                   self.unit)
+                    args += ["-u", self.unit, "--lines=all"]
+            else:
+                args += ["-u", self.unit, "--lines=0"]
             try:
-                proc = await asyncio.create_subprocess_exec(
-                    *args, stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL)
+                proc = subprocess.Popen(args, stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, text=True)
             except Exception as exc:
                 logger.warning("journald 연결 실패 (%s): %s", self.unit, exc)
                 return
+            self._log_proc = proc
             try:
-                assert proc.stdout is not None
-                async for raw in proc.stdout:
-                    line = raw.decode(errors="replace").rstrip("\n")
+                for raw in proc.stdout or ():
+                    if self._log_stop.is_set():
+                        break
+                    line = raw.rstrip("\n")
                     if line and self._on_log:
                         self._on_log(line)
-            except asyncio.CancelledError:
-                raise
             finally:
                 with contextlib.suppress(Exception):
                     proc.terminate()
 
-        self._log_task = asyncio.create_task(_pump())
+        self._log_stop.clear()
+        self._log_thread = threading.Thread(target=_pump, daemon=True,
+                                            name=f"journal-{self.unit}")
+        self._log_thread.start()
+
+    def _stop_log_stream(self) -> None:
+        self._log_stop.set()
+        with contextlib.suppress(Exception):
+            if self._log_proc:
+                self._log_proc.terminate()
+        self._log_proc = None
+        self._log_thread = None
 
     # ── 복원 ──
 

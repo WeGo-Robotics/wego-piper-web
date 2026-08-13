@@ -15,7 +15,15 @@
 `autouse` 인 이유: 버스를 쓰는지 파일마다 판단하게 두면 결국 하나를 빠뜨린다.
 """
 
+import os
+
 import pytest
+
+# ⚠ **러너도 고정한다.** 개발자 `.env` 에 `PIPER_PROCESS_RUNNER=systemd` 가 있으면
+# 학습·업로드 소유자가 `SystemdProcess` 로 만들어져, 내부(`runner.pm`)를 만지는
+# 테스트가 통째로 깨진다 — 실제로 8개가 그렇게 터졌다.
+# 소유자는 **모듈 로드 때** 정해지므로 fixture 로는 늦다. import 전에 박는다.
+os.environ["PIPER_PROCESS_RUNNER"] = "local"
 
 # 운영은 0번을 쓴다. 번호만 바꾸면 키 공간이 완전히 갈린다.
 TEST_REDIS_DB = 15
