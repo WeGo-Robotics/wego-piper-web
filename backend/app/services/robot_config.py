@@ -39,8 +39,6 @@ def prepare_arms(ifaces: list[str] | None, *, purpose: str) -> None:
     if settings.robot_transport != "shm" or not ifaces:
         return
 
-    from app.services.arm_bridge import arm_bridge_manager
-
     for iface in ifaces:
         if not iface:
             continue
@@ -51,24 +49,19 @@ def prepare_arms(ifaces: list[str] | None, *, purpose: str) -> None:
             ok, msg = arm.connect()
             if not ok:
                 raise ArmPrepareError(f"팔 연결 실패 ({iface}): {msg}")
-        bridge = arm_bridge_manager.start(arm)
-        logger.info("팔 shm 발행 중(%s): %s (발행 %d)", purpose, iface, bridge.published)
+        # ⚠ 발행을 여기서 켜지 않는다. robotd 가 **연결과 동시에** 시작한다 —
+        # 게이트웨이가 또 켜면 같은 세그먼트에 발행자가 둘이 되고, 그건
+        # seqlock 이 막지 못하는 종류의 손상이다.
+        logger.info("팔 shm 발행 중(%s): %s", purpose, iface)
 
 
 def release_arms(ifaces: list[str] | None = None) -> None:
-    """추론·녹화가 끝난 뒤 브리지를 내린다.
+    """추론·녹화가 끝나도 **발행은 내리지 않는다.**
 
-    브리지를 켜 둔 채로 두면 게이트웨이가 계속 CAN 으로 명령을 보낼 수 있는 상태가
-    남는다 — 소비자가 떠났으면 그 통로도 닫는 게 맞다.
+    robotd 는 팔에 연결돼 있는 한 계속 발행한다 — 카메라와 같다. 소비자가 떠나면
+    명령 세그먼트가 사라지고 데몬이 그걸 알아채는 것으로 충분하다.
+    끊어야 할 이유가 생기면 `robot_manager.disconnect_arm()` 이 그 일을 한다.
+
+    함수를 남겨두는 이유는 호출부(`direct` 경로 정리)가 대칭을 기대하기 때문이다.
     """
-    if settings.robot_transport != "shm":
-        return
-
-    from app.services.arm_bridge import arm_bridge_manager
-
-    if ifaces is None:
-        arm_bridge_manager.stop_all()
-        return
-    for iface in ifaces:
-        if iface:
-            arm_bridge_manager.stop(iface)
+    return

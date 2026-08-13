@@ -183,6 +183,9 @@ def test_repeated_filtering_converges_to_the_goal():
 
 
 # ── 브리지에 붙은 안전층 (실제 CAN 없이) ──
+#
+# 브리지는 robotd 안에 있다(`piper_robot.publish`). 게이트웨이에도 사본이 있었는데,
+# 같은 로직이 두 벌이면 어느 쪽이 도는지 알 수 없어 지웠다.
 
 def _fake_arm(iface="pytest-can-safety", pose=None):
     """`ArmInfo` 자리에 세우는 가짜. CAN 대신 호출을 기록한다."""
@@ -232,7 +235,7 @@ def test_every_can_command_passes_the_filter():
     import ast
     import inspect
 
-    from app.services import arm_bridge
+    from piper_robot import publish as arm_bridge
 
     src = inspect.getsource(arm_bridge.ArmBridge)
     tree = ast.parse(src.lstrip())
@@ -251,7 +254,7 @@ def test_every_can_command_passes_the_filter():
 
 
 def test_bridge_clamps_a_wild_goal_before_can():
-    from app.services.arm_bridge import ArmBridge
+    from piper_robot.publish import ArmBridge
     from piper_robot import SafetyConfig
 
     arm = _fake_arm()
@@ -274,7 +277,7 @@ def test_deadman_actively_commands_the_current_pose():
     마지막 명령이 먼 목표였으면 팔은 소비자가 죽은 뒤에도 계속 그리로 간다.
     데드맨은 현재 자세를 실제로 **명령해서** 세워야 한다.
     """
-    from app.services.arm_bridge import ArmBridge
+    from piper_robot.publish import ArmBridge
     from piper_robot import JOINT_CALIBRATION, denormalize_joint
 
     here = {**HOME, "joint2": 33.0}

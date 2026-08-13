@@ -23,10 +23,17 @@ if redis-cli ping >/dev/null 2>&1; then
   # RealSense 가 죽어도 웹캠은 살아야 하기 때문이다 (D405 hang 이력).
   echo "Starting v4l2 daemon (camerad)..."
   python3 "$REPO/daemons/camerad.py" &
+  # robotd 는 CAN 을 독점한다 (daemon-inventory.md #2).
+  # 안 띄우면 게이트웨이가 팔을 전혀 못 본다 — 이제 CAN 을 직접 열지 않는다.
+  # 팔에 명령하는 넷(추론·녹화·수동제어·파킹)이 전부 여기를 지나므로
+  # **안전층(하드리밋·데드맨)도 이 프로세스가 없으면 없는 것이다.**
+  echo "Starting robot daemon (robotd)..."
+  python3 "$REPO/daemons/robotd.py" &
 else
   echo "⚠ Redis 미실행 — 게이트웨이는 뜨지만 다음이 전부 동작하지 않습니다:"
   echo "   · heartbeat 타임아웃 정지(estopd)  · 추론 실시간 파라미터 변경"
   echo "   · 카메라 전체 (rsd: RealSense · camerad: 웹캠)"
+  echo "   · 로봇팔 전체 (robotd: CAN·안전층) — 스캔·연결·추론·녹화가 다 막힌다"
   echo "   · 녹화 제어(건너뛰기/재녹화/정지)   · 녹화 미리보기"
   echo "   sudo systemctl start redis-server"
 fi

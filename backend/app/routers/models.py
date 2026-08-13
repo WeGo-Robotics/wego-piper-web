@@ -63,9 +63,18 @@ def _get_first_ready_follower_port() -> str | None:
 def _clear_arm_errors(label: str, ifaces: list[str] | None = None) -> None:
     """추론 시작/종료 시 로봇팔 에러 플래그를 조회한 뒤 무조건 클리어한다.
 
-    팔과의 CAN 통신은 백엔드 robot_manager가 직접 보유하므로(추론 subprocess와
-    별개), 시작은 subprocess 기동 전에, 종료는 subprocess 정지 후에 호출하여
-    버스 경합을 피한다. 실패해도 추론 흐름은 막지 않는다(best-effort)."""
+    실패해도 추론 흐름은 막지 않는다(best-effort).
+
+    ## 호출 순서 — `direct` 에서만 의미가 있다
+
+    `robot_transport="direct"` 면 subprocess 가 CAN 을 직접 여므로, 시작은
+    **기동 전**, 종료는 **정지 후**에 불러야 버스 경합을 피한다.
+
+    `shm` 에서는 robotd 가 CAN 을 영구 소유하고 게이트웨이는 RPC 로만 말하므로
+    **경합 자체가 없다** — 순서가 아무래도 상관없다. 두 방식이 공존하는 동안은
+    `direct` 쪽 제약이 더 강하니 그쪽에 맞춰 둔다. `direct` 를 걷어내는 날
+    이 문단도 같이 지운다 (refactor/robot-transport.md 5단계).
+    """
     try:
         report = robot_manager.clear_arm_errors(ifaces)
     except Exception as e:
@@ -236,9 +245,6 @@ async def start_inference(body: InferenceStartRequest):
 
     args = _build_args_for(body, robot_type, robot_port)
 
-    # 추론 기동 전 로봇팔 에러 플래그 조회 + 무조건 클리어 (subprocess가 CAN을 쥐기 전).
-    # `shm` 에서는 CAN 경합 자체가 없어 이 순서 프로토콜이 의미를 잃는다 —
-    # 5단계에서 걷어낸다 (refactor/robot-transport.md).
     _clear_arm_errors("inference-start", follower_ifaces)
 
     # ⚠ 지난 세션의 파라미터를 버린다. ZMQ 는 소켓을 닫으면 큐도 사라졌지만
