@@ -467,3 +467,53 @@ def test_dataset_fps_comes_from_the_device_not_the_request():
         settings.camera_transport = "direct"
         camera_manager.cameras.pop(cam_id, None)
         pub.close()
+
+
+def test_publisher_notices_its_segment_was_deleted():
+    """**회귀** — 발행자가 unlink 된 파일에 계속 쓰고 있었다.
+
+    실기 증상: D435 가 `connect` 에 `(True, "OK")` 를 돌려주고 `info` 도
+    `connected: True` 인데 세그먼트가 없어서, 추론이 시작 직후
+    `SegmentError: 세그먼트가 없습니다` 로 죽었다.
+
+    원인은 unlink 된 뒤에도 **열린 fd 로는 계속 써진다**는 것이다. 발행자는 멀쩡히
+    돌고 에러도 로그도 안 남는다. 누가 지웠는지와 무관하게 살아나야 한다.
+    """
+    import numpy as np
+
+    pub = Publisher(_NAME, 8, 8)
+    try:
+        pub.publish(np.zeros((8, 8, 3), dtype=np.uint8))
+        assert not pub.orphaned
+
+        unlink(_NAME)                      # 누군가 지운다
+        assert pub.orphaned, "지워진 것을 모른다 — 조용히 깨지는 상태다"
+        # 지워졌어도 쓰기는 여전히 성공한다. 그래서 예외로는 못 잡는다.
+        pub.publish(np.zeros((8, 8, 3), dtype=np.uint8))
+    finally:
+        pub.close()
+
+
+def test_publish_frame_recreates_an_orphaned_segment():
+    """발행 경로가 스스로 되살려야 한다 — 재시작 없이."""
+    import numpy as np
+
+    pytest.importorskip("piper_rs")
+    from piper_rs import publish as P
+    from piper_shm import segment_for_camera
+
+    cam_id = "/dev/video-pytest-orphan"
+    name = segment_for_camera(cam_id)
+    frame = np.zeros((8, 8, 3), dtype=np.uint8)
+    try:
+        assert P.publish_frame(cam_id, frame)
+        assert name in list_segments()
+
+        unlink(name)                       # 누군가 지운다
+        assert name not in list_segments()
+
+        assert P.publish_frame(cam_id, frame), "발행이 실패했다"
+        assert name in list_segments(), "지워진 세그먼트를 다시 만들지 않는다"
+    finally:
+        P.stop(cam_id)
+        pass

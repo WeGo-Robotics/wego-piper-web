@@ -76,6 +76,24 @@ class Publisher:
         self._seq = nxt
         return nxt
 
+    @property
+    def orphaned(self) -> bool:
+        """세그먼트 파일이 사라졌는가 (누가 unlink 했는가).
+
+        ⚠ **이걸 안 보면 조용히 깨진다.** unlink 된 뒤에도 열린 fd 로는 계속 쓸 수
+        있으므로, 발행자는 멀쩡히 도는데 소비자는 열 수 없는 상태가 된다.
+        에러도 안 나고 로그도 안 남는다 — 실제로 겪었다.
+
+        경로를 stat 하지 않고 **이미 열린 fd 의 링크 수**를 본다. 이름 조회가 없어
+        캡처 루프에서 매 프레임 불러도 부담이 없다.
+        """
+        import os
+
+        try:
+            return os.fstat(self._fd).st_nlink == 0
+        except OSError:
+            return True
+
     def close(self, unlink: bool = True) -> None:
         """⚠ `unlink=False` 로 두면 `/dev/shm` 에 누수가 남는다."""
         self._slots.clear()

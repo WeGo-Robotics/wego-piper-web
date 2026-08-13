@@ -167,6 +167,37 @@ def _shm_dims(cam_id: str, width: int | None, height: int | None,
     }
 
 
+# 첫 프레임 대기 상한. 파이프라인 재시작 + RealSense 안정화(SETTLE_S)를 덮어야 한다.
+FIRST_FRAME_TIMEOUT_S = 10.0
+
+
+def _wait_for_frame(cam_id: str, timeout_s: float = FIRST_FRAME_TIMEOUT_S) -> bool:
+    """세그먼트가 생기고 **프레임이 들어올 때까지** 기다린다.
+
+    세그먼트 파일이 생기는 것과 프레임이 담기는 것은 다르다 — 파일만 보고 넘기면
+    소비자가 빈 세그먼트를 읽어 `None` 을 받는다.
+    """
+    import time
+
+    from piper_shm import SegmentError, Subscriber, segment_for_camera
+
+    name = segment_for_camera(cam_id)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            sub = Subscriber(name)
+        except SegmentError:
+            time.sleep(0.05)
+            continue
+        try:
+            if sub.read() is not None:
+                return True
+        finally:
+            sub.close()
+        time.sleep(0.05)
+    return False
+
+
 def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str,
                     width: int = 0, height: int = 0, fps: int = 0) -> None:
     """전송 방식에 맞게 카메라를 준비한다. **두 방식이 정반대다.**
@@ -211,6 +242,15 @@ def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str,
             if not ok:
                 raise CameraPrepareError(f"카메라 연결 실패 ({cam_id}): {msg}")
             got = cam.running_profile()
+        # ⚠ **첫 프레임까지 기다린다.** `connect` 는 파이프라인을 시작시킬 뿐이고,
+        # 세그먼트는 첫 프레임이 발행될 때 생긴다. 여기서 안 기다리면 곧바로 뜨는
+        # subprocess 가 아직 없는 세그먼트를 열어 `SegmentError` 로 죽는다 —
+        # 실제로 파이프라인을 다시 세워야 했던 D435 만 이 경합에 걸렸다.
+        if not _wait_for_frame(cam_id):
+            raise CameraPrepareError(
+                f"카메라가 프레임을 내지 않습니다 ({cam_id}): "
+                f"{FIRST_FRAME_TIMEOUT_S}초 안에 세그먼트가 채워지지 않았습니다"
+            )
         logger.info("shm 발행 중(%s): %s ← %s (%sx%s@%s)", purpose, name, cam_id,
                     got.get("width"), got.get("height"), got.get("fps"))
         # 장치가 요청을 못 맞췄으면 **말한다.** 조용히 낮춰 열면 녹화 루프가

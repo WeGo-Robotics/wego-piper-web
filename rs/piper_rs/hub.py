@@ -259,7 +259,8 @@ class _RSDevice:
         wanted = {s: self.resolve(s, self._want.get(s)) for s in streams}
         if (self._pipeline is not None and streams.issubset(self._active)
                 and all(p is None or self._running_profile.get(s) == p
-                        for s, p in wanted.items())):
+                        for s, p in wanted.items())
+                and self._segments_alive(streams)):
             return True
         # 재구성 필요 → 기존 정지 후 재시작
         self._stop_pipeline()
@@ -296,6 +297,20 @@ class _RSDevice:
             except Exception:
                 out[s] = None
         return out
+
+    def _segments_alive(self, streams: set[str]) -> bool:
+        """스트리밍 중이라는 말이 참이려면 **세그먼트가 있어야 한다.**
+
+        ⚠ 세그먼트의 존재 자체가 lease 다. 누가 지우면 발행자는 열린 fd 로 계속
+        쓰지만 소비자는 열 수 없다 — 그런데 `_active` 는 여전히 "스트리밍 중"이라
+        `connect` 가 0초에 OK 를 돌려준다. 그래서 추론이 시작 직후
+        `SegmentError` 로 죽는다(실제로 D435 가 이랬다).
+
+        여기서 걸러내면 파이프라인을 다시 세워 세그먼트가 되살아난다.
+        """
+        from piper_shm import segment_path
+
+        return all(segment_path(f"rs_{self.serial}_{s}").exists() for s in streams)
 
     def _stop_pipeline(self, unlink_segments: bool = True) -> None:
         from piper_rs.publish import stop as stop_publish
@@ -584,8 +599,13 @@ class RealSenseHub:
         if dev is None:
             return {}
         got = dev._running_profile.get(stream)
+        # ⚠ **세그먼트가 곧 lease 다.** 파이프라인이 돌아도 세그먼트가 없으면
+        # 소비자는 못 연다 — 그 상태로 `connected: True` 를 돌려주면 게이트웨이가
+        # 재연결을 건너뛰고, 추론이 시작 직후 `SegmentError` 로 죽는다.
+        # (실제로 D435 가 이랬다: `connect` 0초에 OK, 그런데 세그먼트 없음.)
+        alive = stream in dev._active and dev._segments_alive({stream})
         out: dict = {
-            "id": cam_id, "model": dev.model, "connected": stream in dev._active,
+            "id": cam_id, "model": dev.model, "connected": alive,
             # 이 스트림에 대해 **이미 반영한 요청**. 게이트웨이가 같은 요청을
             # 또 보내지 않도록(= 불필요한 재연결·refcount 증가) 판단 근거로 쓴다.
             "want": list(dev._want.get(stream) or ()),

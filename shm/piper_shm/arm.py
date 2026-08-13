@@ -178,6 +178,15 @@ class _Writer:
         return nxt
 
     @property
+    def orphaned(self) -> bool:
+        """세그먼트 파일이 사라졌는가. 카메라 발행자와 **같은 함정**이다 —
+        unlink 된 뒤에도 열린 fd 로는 계속 쓸 수 있어서 조용히 깨진다."""
+        try:
+            return os.fstat(self._fd).st_nlink == 0
+        except OSError:
+            return True
+
+    @property
     def seq(self) -> int:
         return self._seq
 

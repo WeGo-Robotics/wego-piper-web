@@ -22,6 +22,13 @@ def publish_frame(cam_id: str, frame: np.ndarray) -> bool:
     h, w, ch = frame.shape
     try:
         pub = _pubs.get(name)
+        # ⚠ 치수뿐 아니라 **파일이 살아 있는지**도 본다. 누가 세그먼트를 지우면
+        # 열린 fd 로는 계속 써져서, 발행자는 멀쩡한데 소비자는 열 수 없는 상태가
+        # 조용히 이어진다 (실제로 D435 가 이 상태로 며칠 갔다).
+        if pub is not None and pub.orphaned:
+            logger.warning("세그먼트가 사라져 다시 만든다: %s", name)
+            pub.close(unlink=False)
+            pub = None
         if pub is None or pub.layout.height != h or pub.layout.width != w:
             if pub is not None:
                 logger.info("세그먼트 재생성 %s: %dx%d", name, w, h)
