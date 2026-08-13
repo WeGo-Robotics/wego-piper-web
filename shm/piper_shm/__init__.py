@@ -4,6 +4,14 @@
 (refactor/camera-transport.md "버스와의 역할 분담").
 """
 
+from piper_shm.arm import (
+    JOINTS,
+    ActionReader,
+    ActionWriter,
+    ArmSegmentError,
+    StateReader,
+    StateWriter,
+)
 from piper_shm.frames import Publisher, Subscriber
 from piper_shm.segment import (
     Layout,
@@ -18,4 +26,7 @@ from piper_shm.segment import (
 __all__ = [
     "Publisher", "Subscriber", "Layout", "SegmentError",
     "list_segments", "segment_for_camera", "segment_name", "segment_path", "unlink",
+    # 팔 — 카메라와 달리 **양방향**이라 이름이 방향을 말한다
+    "StateWriter", "StateReader", "ActionWriter", "ActionReader",
+    "ArmSegmentError", "JOINTS",
 ]

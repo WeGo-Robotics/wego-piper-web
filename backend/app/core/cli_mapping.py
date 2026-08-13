@@ -18,6 +18,24 @@ RECORD_CMD = "lerobot-record"
 # 데이터셋 편집 CLI 명령어
 EDIT_DATASET_CMD = "lerobot-edit-dataset"
 
+# `direct` 타입 → `shm` 프록시 타입 (refactor/robot-transport.md).
+# 프록시는 `PiperFollower` 를 상속해 `__init__` 만 바꾸므로 관측·행동 계약이 같다.
+# 여기 없는 타입(leader 등)은 **그대로 둔다** — 조용히 바꾸면 있지도 않은
+# `robot.type` 으로 subprocess 가 죽는다.
+SHM_ROBOT_TYPES: dict[str, str] = {"piper_follower": "piper_follower_shm"}
+
+
+def resolve_robot_type(robot_type: str) -> str:
+    """전송 방식에 맞는 `robot.type`.
+
+    ⚠ **인자를 만드는 쪽에서 부른다.** 라우터마다 분기하면 미리보기와 실행이
+    갈리고, 더 나쁘게는 추론과 녹화가 서로 다른 드라이버로 도는 순간이 생긴다 —
+    그러면 같은 팔에 두 프로세스가 CAN 을 연다.
+    """
+    if settings.robot_transport != "shm":
+        return robot_type
+    return SHM_ROBOT_TYPES.get(robot_type, robot_type)
+
 # wrapper 인자 매핑 (lerobot_wrapper.py 기준)
 INFERENCE_ARGS_MAP: dict[str, str] = {
     "checkpoint_path": "--policy-path",
@@ -372,6 +390,8 @@ RECORD_WRAPPER_PATH = str(Path(__file__).resolve().parents[3] / "wrapper" / "sta
 def build_record_args(params: dict) -> list[str]:
     """레코딩 CLI 인자 빌더."""
     args = [settings.grpc_python, "-u", RECORD_WRAPPER_PATH]
+    # 미리보기와 실행이 같은 조립기를 쓰므로 여기서 한 번만 바꾸면 둘 다 맞는다
+    params = {**params, "robot_type": resolve_robot_type(params.get("robot_type", ""))}
 
     for key, value in params.items():
         cli_flag = RECORD_ARGS_MAP.get(key)

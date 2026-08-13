@@ -194,16 +194,31 @@ CAN 경로에 홉이 하나 추가된다. 그만큼 실패 지점도 하나 는�
 
 ## 착수 순서
 
-1. **[09-robot-type.md](09-robot-type.md) 먼저 정리** — `robot_type` 값이 5곳에 흩어져 있어서
+1. ☑ **[09-robot-type.md](09-robot-type.md) 먼저 정리** — `robot_type` 값이 5곳에 흩어져 있어서
    새 타입을 추가하면 5곳을 고쳐야 한다
-2. 세그먼트 포맷 확정 (state/action, seqlock, 데드맨 필드)
-3. `PiperShmMotorsBus` 구현 + **기존 `robot_manager`가 임시로 세그먼트를 채우게** 해서
-   추론을 한 번 돌린다 — robotd 분리 전에 전송 계층만 검증
-4. robotd 분리 (CAN 독점 + 상태 발행 + 명령 소비 + **데드맨** + 하드 리밋)
+2. ☑ 세그먼트 포맷 확정 ([shm/piper_shm/arm.py](../shm/piper_shm/arm.py)).
+   상태 40B / 명령 36B, seqlock 슬롯 3개, `deadman_ms` 는 **소비자가 선언**한다
+3. ☑ [`PiperShmMotorsBus`](../vendor/lerobot_robot_pipershm/) + 임시 발행
+   ([arm_bridge.py](../backend/app/services/arm_bridge.py)). `settings.robot_transport`
+   스위치로 넣었다 — 되돌리기가 값 하나다. **실기 확인**: 상태가 직접 읽기와 9e-7 차이,
+   `set_action` 지연 중앙 0.058ms, 프록시 60발행 → CAN 60송신, seqlock 재시도 0
+4. robotd 분리 (CAN 독점 + 상태 발행 + 명령 소비 + **데드맨** + 하드 리밋).
+   `arm_bridge.py` 의 내용이 그대로 이사한다
 5. `_clear_arm_errors` 타이밍 춤 제거, `robot_type`을 프록시로 전환
 6. 컨테이너에서 `network_mode: host` 제거
 
 3단계가 핵심이다 — 카메라와 같은 이유로 **데몬 분리와 전송 변경을 동시에 하지 않는다.**
+
+## 실기에서 걸린 것
+
+- **`read_new` 를 `StateReader` 에만 달았다.** 명령을 소비하는 쪽이 `AttributeError` 로
+  매번 재접속했는데 상태 경로만 테스트해서 못 잡았다 → 방향이 둘인 세그먼트는
+  **양쪽 표면이 같아야 한다** (테스트로 강제).
+- **소비자 접속 폴링이 0.2초였다.** 30fps 기준 첫 4개 명령이 통째로 날아갔다.
+  `/dev/shm` stat 한 번이라 촘촘해도 공짜다 → 20ms.
+- `vendor/lerobot_robot_piper/` 는 **설치되지 않는 사본**이다. 상류는 별도 저장소
+  (`WeGo-Robotics/lerobot_robot_piper`)라 상수를 공유할 수 없어, 모터·캘리브레이션은
+  프록시 쪽에 복사하고 **테스트가 상류 소스와 대조**한다.
 
 ## 검증
 
@@ -212,7 +227,7 @@ CAN 경로에 홉이 하나 추가된다. 그만큼 실패 지점도 하나 는�
 - `observation_features`/`action_features` dict가 기존과 완전히 같은지 (키 이름·순서·타입)
 - 추론 1회 / 녹화 1 에피소드 / 텔레오퍼레이션 정상 동작
 - **제어 루프 지연 실측** — 기존 대비 사이클 시간, 특히 `send_action` 경로
-- **데드맨**: 추론 프로세스를 `SIGKILL` → 팔이 정지하는지, 몇 ms 안에 서는지
+- **데드맨**: 추론 프로세스를 `SIGKILL` → 팔이 정지하는지, 몇 ms 안에 서는지 (4단계)
 - **하드 리밋**: 프록시를 우회해 범위 밖 목표를 shm에 직접 써 넣고 robotd가 거부하는지
 - robotd 재시작 후 소비자가 재접속하는지 / 소비자 재시작 후 robotd가 살아있는지
 - 세그먼트 누수 없는지 (`ls /dev/shm/piper.arm.*`)

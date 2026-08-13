@@ -1,0 +1,13 @@
+[project]
+name = "lerobot_robot_pipershm"
+version = "0.1.0"
+description = "LeRobot robot plugin talking to piper-robotd over /dev/shm"
+requires-python = ">=3.11"
+dependencies = ["piper-shm", "lerobot_robot_piper"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["lerobot_robot_pipershm*"]

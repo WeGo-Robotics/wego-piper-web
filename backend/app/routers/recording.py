@@ -110,6 +110,15 @@ async def start_recording(body: RecordStartRequest):
     except CameraPrepareError as e:
         raise HTTPException(400, str(e))
 
+    # 팔도 같은 순서로 준비한다. `shm` 에서는 게이트웨이가 CAN 을 쥔 채로
+    # 상태를 발행해야 프록시 드라이버가 붙는다.
+    from app.services.robot_config import ArmPrepareError, prepare_arms
+
+    try:
+        prepare_arms([body.robot_port], purpose="recording")
+    except ArmPrepareError as e:
+        raise HTTPException(400, str(e))
+
     from app.services.control_bridge import control_bridge
     from app.services.preview_bridge import preview_bridge
 

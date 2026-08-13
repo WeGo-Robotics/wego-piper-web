@@ -101,6 +101,19 @@ class Settings(BaseSettings):
     # 되돌리기가 이 값 하나로 끝나야 한다.
     camera_transport: str = "direct"
 
+    # 로봇 전송 방식 (refactor/robot-transport.md). 카메라와 **같은 모양의 스위치**다.
+    #
+    #   "direct" — wrapper 가 CAN 을 **직접 연다** (`robot.type=piper_follower`).
+    #              그래서 게이트웨이의 `robot_manager` 와 CAN 버스를 나눠 쓰고,
+    #              `_clear_arm_errors` 를 "subprocess 기동 전 / 정지 후"에 부르는
+    #              암묵적 순서 프로토콜이 필요하다.
+    #   "shm"    — CAN 소유자가 상태를 발행하고 wrapper 는 프록시 드라이버로
+    #              `/dev/shm` 만 만진다 (`robot.type=piper_follower_shm`).
+    #              CAN 경합이 사라지고 컨테이너에서 `network_mode: host` 도 빠진다.
+    #
+    # 기본값이 "direct" 인 이유는 카메라와 같다: **실기로 제어 지연을 비교한 뒤에 바꾼다.**
+    robot_transport: str = "direct"
+
     # 버스 (Redis) — ZMQ 소켓 3개(5555 파라미터 / 5556 프리뷰 / 5557 녹화제어)를
     # 대체한다 (refactor/daemon-split.md 3단계). 주소가 3개에서 1개로 줄었다.
     # 비워두면 `piper_bus` 기본값(`PIPER_REDIS_URL` 또는 localhost:6379/0)을 쓴다.

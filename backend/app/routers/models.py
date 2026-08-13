@@ -15,6 +15,7 @@ from app.services.camera_config import (
     release_all_cameras,
 )
 from app.services.model_scanner import scan_models, get_model, delete_model
+from app.services.robot_config import ArmPrepareError, prepare_arms, resolve_robot_type
 from app.services.param_bridge import param_bridge
 from app.services.process_manager import process_manager
 from app.services.robot_manager import robot_manager
@@ -90,6 +91,9 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
     이전에 `task` 만 꺼내 쓰고 `fps` 를 20 으로 하드코딩해서 슬라이더 값이 전부 유실됐다.
     실제로 실릴 키는 `cli_mapping.OVERRIDE_KEYS` 와 각 ARGS_MAP 이 정한다.
     """
+    # 전송 방식에 맞는 드라이버로 바꾼다. **여기서 바꿔야** 미리보기와 실행이 같다 —
+    # 한쪽에만 걸면 화면에 보이는 명령이 실제로 도는 것과 달라진다.
+    robot_type = resolve_robot_type(robot_type)
     cameras = build_cameras_json(body.camera_mapping)
     is_bimanual = len(body.robot_ports) >= 2
 
@@ -221,10 +225,20 @@ async def start_inference(body: InferenceStartRequest):
     except CameraPrepareError as e:
         raise HTTPException(400, str(e))
 
+    follower_ifaces = body.robot_ports if is_bimanual else ([robot_port] if robot_port else None)
+
+    # ⚠ **팔도 카메라와 같은 순서다** — 인자를 만들기 전에 준비한다.
+    # `shm` 에서는 게이트웨이가 CAN 을 쥔 채로 상태를 발행해야 프록시가 붙는다.
+    try:
+        prepare_arms(follower_ifaces, purpose="inference")
+    except ArmPrepareError as e:
+        raise HTTPException(400, str(e))
+
     args = _build_args_for(body, robot_type, robot_port)
 
-    # 추론 기동 전 로봇팔 에러 플래그 조회 + 무조건 클리어 (subprocess가 CAN을 쥐기 전)
-    follower_ifaces = body.robot_ports if is_bimanual else ([robot_port] if robot_port else None)
+    # 추론 기동 전 로봇팔 에러 플래그 조회 + 무조건 클리어 (subprocess가 CAN을 쥐기 전).
+    # `shm` 에서는 CAN 경합 자체가 없어 이 순서 프로토콜이 의미를 잃는다 —
+    # 5단계에서 걷어낸다 (refactor/robot-transport.md).
     _clear_arm_errors("inference-start", follower_ifaces)
 
     # ⚠ 지난 세션의 파라미터를 버린다. ZMQ 는 소켓을 닫으면 큐도 사라졌지만
