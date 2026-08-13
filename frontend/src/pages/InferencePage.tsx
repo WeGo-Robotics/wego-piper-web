@@ -523,13 +523,16 @@ export default function InferencePage() {
               )}
             </div>
 
-            {/* Task (시작 전 설정) */}
+            {/* Task (시작 전 설정) — 디버그 체크박스와 한 카드라 **입력만** 감춘다.
+                카드째 숨기면 디버그 모드가 같이 사라진다. */}
             <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-              <h3 className="text-sm font-semibold">Task</h3>
-              <input type="text" value={taskText}
-                onChange={(e) => { setTaskText(e.target.value); localStorage.setItem('piper_task', e.target.value) }}
-                placeholder="언어 명령어 입력..."
-                className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
+              {takesLanguage(activePolicy) && (<>
+                <h3 className="text-sm font-semibold">Task</h3>
+                <input type="text" value={taskText}
+                  onChange={(e) => { setTaskText(e.target.value); localStorage.setItem('piper_task', e.target.value) }}
+                  placeholder="언어 명령어 입력..."
+                  className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
+              </>)}
               <label className="flex items-center gap-2 text-xs cursor-pointer">
                 <input type="checkbox" checked={debugMode}
                   onChange={(e) => { setDebugMode(e.target.checked); setCliEdited(false) }}

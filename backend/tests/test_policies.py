@@ -109,3 +109,26 @@ def test_frontend_gets_the_language_flag():
     specs = {p["type"]: p for p in spec_for_frontend()}
     assert specs["act"]["language"] is False, "ACT 에 task 입력이 뜬다"
     assert specs["smolvla"]["language"] is True
+
+
+def test_every_task_input_is_gated_on_the_policy():
+    """**회귀** — 추론 화면에 task 입력이 두 군데 있었고 하나만 막았다.
+
+    ACT 를 골라도 "시작 전 설정" 쪽 입력이 남아 있었다. 입력해도 쓰이지 않는데
+    화면은 쓰이는 것처럼 보인다. 세 번째가 생겨도 여기서 잡힌다.
+    """
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+           / "InferencePage.tsx").read_text()
+
+    inputs = [m.start() for m in re.finditer(r"<input[^>]*value=\{taskText\}", src)]
+    guards = [m.start() for m in re.finditer(r"takesLanguage\(activePolicy\)", src)]
+    assert inputs, "task 입력을 못 찾았다 — 검사가 무의미해졌다"
+
+    for pos in inputs:
+        before = [g for g in guards if g < pos]
+        assert before and (pos - before[-1]) < 600, (
+            f"가드 밖에 있는 task 입력이 있다 (offset {pos})"
+        )
