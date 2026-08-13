@@ -1,6 +1,24 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 
+/**
+ * USB 2.0 경고 배지.
+ *
+ * 왜 문구를 프론트에서 안 만드나: 임계값(USB3 = 5000Mbps)과 판정을 백엔드가
+ * 갖고 있다. 화면이 그걸 다시 적으면 한쪽만 고쳐져 어긋난다 —
+ * `camera_manager._usb_warning` 이 정본이다.
+ */
+function UsbWarning({ reason }: { reason: string }) {
+  return (
+    <span
+      title={reason}
+      className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-500"
+    >
+      USB 2.0
+    </span>
+  )
+}
+
 function Spinner({ className = '' }: { className?: string }) {
   return (
     <svg className={`animate-spin h-4 w-4 ${className}`} viewBox="0 0 24 24" fill="none">
@@ -12,6 +30,8 @@ function Spinner({ className = '' }: { className?: string }) {
 
 type CamInfo = {
   id: string; name: string; usb_port?: string; cam_type: string
+  /** 백엔드가 판정해서 준다 — 화면이 임계값을 따로 적으면 한쪽만 고쳐져 어긋난다. */
+  usb_warning?: string | null
   /** 사람이 붙인 별칭("탑뷰"). LeRobot 카메라 키와는 별개 — 화면 표시용이다. */
   label?: string
   /** `label || name`. 각 화면이 따로 계산하지 않도록 백엔드가 준다. */
@@ -283,6 +303,7 @@ export default function CamerasPage() {
                         title="표시 이름 — 데이터셋 피처 이름은 바뀌지 않습니다"
                         className="flex-1 min-w-0 px-1.5 py-0.5 text-sm rounded bg-transparent border border-transparent hover:border-neutral-700 focus:bg-neutral-900 focus:border-blue-500 text-neutral-100 placeholder:text-neutral-600 focus:outline-none" />
                       {cam.usb_port && <span className="font-mono text-[10px] text-neutral-500" title="USB 포트">{cam.usb_port}</span>}
+                      {cam.usb_warning && <UsbWarning reason={cam.usb_warning} />}
                     </div>
                     <div className="text-xs text-neutral-400">
                       <span className="font-mono text-[10px] text-neutral-500">{cam.id}</span>
@@ -358,6 +379,7 @@ export default function CamerasPage() {
                     <span className="inline-block w-2 h-2 rounded-full bg-neutral-500" />
                     <span className="font-mono text-sm">{cam.id}</span>
                       {cam.usb_port && <span className="ml-auto font-mono text-[10px] text-neutral-500" title="USB 포트">{cam.usb_port}</span>}
+                      {cam.usb_warning && <UsbWarning reason={cam.usb_warning} />}
                   </div>
                   <p className="text-xs text-neutral-400">{cam.name}
                     {cam.config.width && <span className="ml-2">{cam.config.width}x{cam.config.height}</span>}
@@ -405,6 +427,7 @@ export default function CamerasPage() {
                       <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
                       <span className="font-mono text-sm">{cam.id}</span>
                       {cam.usb_port && <span className="ml-auto font-mono text-[10px] text-neutral-500" title="USB 포트">{cam.usb_port}</span>}
+                      {cam.usb_warning && <UsbWarning reason={cam.usb_warning} />}
                     </div>
                     <div className="text-xs text-neutral-400">
                       {cam.name}

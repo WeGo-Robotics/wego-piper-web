@@ -13,6 +13,25 @@ from app.services.v4l2_client import v4l2_hub
 logger = logging.getLogger(__name__)
 
 
+# USB 3.0 = 5000Mbps. 그 미만이면 RealSense 두 대나 color+depth 를 감당 못 한다.
+USB3_MBPS = 5000
+
+
+def _usb_warning(speed_mbps: int) -> str | None:
+    """USB 대역폭 경고. 없으면 `None`.
+
+    ⚠ **여기 한 곳에서만 판정한다.** 화면이 임계값을 따로 적으면 한쪽만 고쳐져
+    어긋난다. 속도를 못 읽었으면(0) 경고하지 않는다 — 모르는 것과 느린 것은 다르다.
+    """
+    if not speed_mbps or speed_mbps >= USB3_MBPS:
+        return None
+    return (
+        f"USB {speed_mbps}Mbps (2.0) 로 연결돼 있습니다. 대역폭이 모자라 "
+        "카메라를 여러 대 쓰거나 depth 를 켜면 프레임이 끊깁니다 — "
+        "USB 3 포트로 옮기세요."
+    )
+
+
 @dataclass
 class CameraInfo:
     """카메라 **기록**. 장치 I/O 는 데몬이 한다.
@@ -33,6 +52,9 @@ class CameraInfo:
     # 바꾸면 학습된 정책이 안 열린다. 별칭은 화면 표시 전용이다.
     label: str = ""
     usb_port: str = ""
+    # USB 링크 속도(Mbps). 0 이면 못 읽은 것 — **빠르다고 가정하지 않는다.**
+    # 480 이면 USB 2.0 이고, 카메라 두 대나 depth 를 같이 쓰기엔 대역폭이 모자란다.
+    usb_speed_mbps: int = 0
     cam_type: str = "opencv"  # opencv | realsense
     serial: str = ""
     stream_type: str = ""
@@ -60,6 +82,10 @@ class CameraInfo:
             # 따로 적으면 규칙이 갈린다.
             "display_name": self.label or self.name,
             "usb_port": self.usb_port,
+            "usb_speed_mbps": self.usb_speed_mbps,
+            # 화면이 임계값을 따로 적지 않게 판정까지 여기서 한다 —
+            # 두 곳에 적으면 한쪽만 고쳐져 어긋난다.
+            "usb_warning": _usb_warning(self.usb_speed_mbps),
             "cam_type": self.cam_type,
             "serial": self.serial,
             "stream_type": self.stream_type,
@@ -128,11 +154,13 @@ class CameraManager:
             cam_id = d["id"]
             if cam_id not in self.cameras:
                 self.cameras[cam_id] = CameraInfo(
-                    id=cam_id, name=d["name"], usb_port=d.get("usb_port", "")
+                    id=cam_id, name=d["name"], usb_port=d.get("usb_port", ""),
+                    usb_speed_mbps=int(d.get("usb_speed_mbps") or 0),
                 )
             else:
                 self.cameras[cam_id].name = d["name"]
                 self.cameras[cam_id].usb_port = d.get("usb_port", "")
+                self.cameras[cam_id].usb_speed_mbps = int(d.get("usb_speed_mbps") or 0)
 
         # RealSense — rsd. 디바이스당 color/depth/infrared 스트림 엔트리
         for d in realsense_hub.scan():
@@ -140,6 +168,7 @@ class CameraManager:
             if cam_id not in self.cameras:
                 self.cameras[cam_id] = CameraInfo(
                     id=cam_id, name=d["name"], usb_port=d.get("usb_port", ""),
+                    usb_speed_mbps=int(d.get("usb_speed_mbps") or 0),
                     cam_type="realsense", serial=d["serial"], stream_type=d["stream_type"],
                 )
             else:

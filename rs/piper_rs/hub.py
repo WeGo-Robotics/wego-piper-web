@@ -620,6 +620,10 @@ class RealSenseHub:
                     "id": make_id(serial, stream),
                     "name": f"{model} {stream.capitalize()}",
                     "usb_port": usb_port,
+                    # ⚠ **USB 2.0 이면 대역폭이 모자란다.** 두 대를 같이 쓰거나
+                    # depth 를 켜면 프레임이 끊기고 장치가 물린다. 사용자가
+                    # 화면에서 바로 알아야 하므로 스캔 결과에 싣는다.
+                    "usb_speed_mbps": dev.usb_speed_mbps() if dev else 0,
                     "cam_type": "realsense",
                     "serial": serial,
                     "stream_type": stream,
