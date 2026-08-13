@@ -27,6 +27,7 @@ import time
 
 import numpy as np
 
+from piper_cam import controls as controls_mod
 from piper_rs.depth import DepthEncoding, encode_depth
 
 logger = logging.getLogger(__name__)
@@ -566,6 +567,8 @@ class RealSenseHub:
     def __init__(self) -> None:
         self._devices: dict[str, _RSDevice] = {}
         self._lock = threading.Lock()
+        # 마지막 프로파일 적용 결과 — 연결 안에서 적용하므로 응답에 실을 수 없다.
+        self._last_apply: dict[str, dict] = {}
 
     def _available_streams(self, device) -> set[str]:
         """디바이스 센서 프로파일에서 제공 가능한 스트림 종류 추출."""
@@ -652,11 +655,15 @@ class RealSenseHub:
         return dev is not None and dev.is_d405()
 
     def connect(self, cam_id: str, width: int = 0, height: int = 0,
-                fps: int = 0) -> tuple[bool, str]:
+                fps: int = 0, controls: dict | None = None) -> tuple[bool, str]:
         """스트림 시작. 셋 다 주면 그 프로파일로 **맞춰서** 연다.
 
         하나라도 0이면 요청 없음으로 보고 장치 기본값에 맡긴다 — 프리뷰처럼
         해상도를 따지지 않는 호출부가 그대로 쓰던 방식이다.
+
+        `controls` 를 주면 스트림이 뜬 뒤 적용한다. RealSense 는 파이프라인
+        재시작에서 옵션이 기본값으로 돌아가는 경우가 있어, **여기가 유일하게
+        확실한 지점**이다. 적용 실패는 연결 실패로 만들지 않는다.
         """
         parsed = parse_id(cam_id)
         if not parsed:
@@ -667,6 +674,8 @@ class RealSenseHub:
             return False, f"RealSense {serial} not found (rescan)"
         want = (int(width), int(height), int(fps)) if width and height and fps else None
         if dev.connect_stream(stream, want):
+            if controls:
+                self.apply_controls(cam_id, controls)
             return True, "OK"
         return False, f"Failed to start RealSense {serial}/{stream}"
 
@@ -931,6 +940,38 @@ class RealSenseHub:
         except Exception as exc:
             logger.warning("RealSense set_option %s=%s failed: %s", name, value, exc)
         return False
+
+    def apply_controls(self, cam_id: str, wanted: dict,
+                       budget_s: float = 2.0) -> dict:
+        """프로파일 컨트롤을 순서대로 적용하고 read-back 으로 검증한다.
+
+        ⚠ **op_guard 를 한 번만 잡는다.** 컨트롤마다 `set_control` 을 부르면
+        락을 N 번 잡고 놓는데, `op_lock` 은 재진입이 아니고 획득마다 2.5s 상한이
+        붙어 있어 항목이 늘수록 최악 지연이 곱해진다. 여기서 한 번 잡고
+        `*_locked` 를 직접 쓴다 — v4l2 쪽과 계획 로직은 그대로 공유한다.
+        """
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return {}
+        serial, stream = parsed
+
+        def _do() -> dict:
+            dev = self._device(serial)
+            guard = dev.op_guard(timeout=3.0) if dev else contextlib.nullcontext()
+            with guard:
+                return controls_mod.apply_controls(
+                    lambda: self._list_controls_locked(serial, stream),
+                    lambda n, v: self._set_control_locked(serial, stream, n, v),
+                    wanted, budget_s=budget_s, label=cam_id,
+                )
+
+        # 예산 + 락 획득 + 여유. D405 가 물리면 이 스레드는 고아가 되지만 데몬은 산다.
+        report = _run_guarded(_do, budget_s + 6.0, {}, f"apply_controls({cam_id})")
+        self._last_apply[cam_id] = report
+        return report
+
+    def last_apply_report(self, cam_id: str) -> dict:
+        return self._last_apply.get(cam_id, {})
 
     def has_frame(self, cam_id: str) -> bool:
         parsed = parse_id(cam_id)

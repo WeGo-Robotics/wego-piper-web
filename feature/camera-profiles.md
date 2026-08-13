@@ -438,6 +438,34 @@ cd frontend && npm run build     # 타입 검증은 반드시 build (tsc --noEmi
 
 ## 상태
 
-설계안. 구현 착수 전. **단, 데몬 분리(3b-5) 이후 범위가 크게 줄었다** — 문서 머리의
-상태표 참조. 남은 것은 (1) 컨트롤 값 저장, (2) v4l2 안정 키, (7) 자동 모드 순서 셋뿐이고,
-적용 지점은 데몬의 `connect()` 한 곳이다.
+☑ **구현 완료.** 데몬 분리 이후 남았던 셋을 전부 닫았다.
+
+| | 어디 |
+|---|---|
+| (7) 자동 모드 순서 + read-back | [`cam/piper_cam/controls.py`](../cam/piper_cam/controls.py) — 순수 `plan()` + 범용 `apply_controls()`. **rsd 도 이 한 벌을 쓴다** |
+| (1) 컨트롤 값 저장 | [`camera_profiles.py`](../backend/app/services/camera_profiles.py) — `presets` domain=`camera`, scope=`device` |
+| (2) v4l2 안정 키 | `CameraInfo.profile_key` + `CameraManager.match_saved` — 세션 복원도 키로 매칭 |
+| 적용 지점 | 두 허브의 `connect()` **안** — 게이트웨이 훅 0개 |
+
+### 실기로 확인한 것 (D405, 2026-08-14)
+
+1. 노출·WB 를 수동으로 맞추고 캡처 → 프리셋 파일에 값이 남는다
+2. `controls/reset` 으로 전부 기본값으로 되돌린 뒤 수동 적용 → **적용 4 / 잠김 0 / 실패 0**,
+   장치 값이 그대로 돌아왔다
+3. 되돌린 뒤 **연결만 했는데** 값이 복원됐다 — 트리거 없이 `connect()` 하나로 끝난다
+
+### 실기가 잡은 버그
+
+**`depth_units` 가 `0` 으로 저장됐다.** RealSense 옵션에는 실수가 있고
+(`depth_units` = 1e-4), 캡처가 `int()` 를 씌우고 있었다. 그 0 을 다시 밀어 넣었으면
+**깊이 스케일이 0** 이 됐을 것이다. 두 가지를 고쳤다:
+
+- 값 변환을 정수/실수 보존으로 (`_num`), 비교도 상대 오차로 (`_same`)
+- **`depth_units` 는 아예 저장하지 않는다** — 픽셀값의 뜻을 정하는 **데이터셋 계약**이지
+  조명 설정이 아니다. 깊이 인코딩은 rsd 가 소유하고 `meta/piper_cameras.json` 에 기록된다
+
+### 아직 안 해본 것
+
+**v4l2 웹캠에서의 확인.** 지금 이 기계에 물려 있는 게 RealSense 둘뿐이라
+`auto_exposure` 가 menu(1=Manual, 3=자동)인 그 반직관적 경로는 단위 테스트로만 덮여 있다.
+웹캠을 물리면 시나리오 1·2 를 그대로 돌려보면 된다.

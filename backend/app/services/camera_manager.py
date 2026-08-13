@@ -32,6 +32,22 @@ def _usb_warning(speed_mbps: int) -> str | None:
     )
 
 
+def _active_controls(cam) -> dict:
+    """활성 프로파일에서 이 카메라의 컨트롤 값. 없으면 빈 dict.
+
+    지연 import 다 — `camera_profiles` 는 카메라 목록이 필요할 때 인자로 받으므로
+    이쪽을 import 하지 않지만, 순환의 씨앗을 아예 두지 않는다.
+    실패해도 연결을 막지 않는다: 프로파일 때문에 카메라가 안 열리면 본말전도다.
+    """
+    try:
+        from app.services import camera_profiles
+
+        return camera_profiles.controls_for(cam)
+    except Exception as exc:
+        logger.warning("프로파일 조회 실패 (%s): %s", getattr(cam, "id", "?"), exc)
+        return {}
+
+
 @dataclass
 class CameraInfo:
     """카메라 **기록**. 장치 I/O 는 데몬이 한다.
@@ -73,6 +89,29 @@ class CameraInfo:
         """장치를 소유한 데몬의 클라이언트. **이 한 줄이 유일한 분기다.**"""
         return realsense_hub if self.cam_type == "realsense" else v4l2_hub
 
+    @property
+    def profile_key(self) -> str:
+        """재열거·리셋에도 안 바뀌는 식별자. 설정을 이 키에 매단다.
+
+        `/dev/videoN` 은 **키가 아니다.** USB 컨트롤러가 죽어 리바인딩하면
+        (이 저장소에서 실제로 겪었다) 번호가 바뀌고, id 로 매칭하던 설정은
+        "스캔에 없다"며 조용히 버려진다.
+
+        - RealSense: `rs:<시리얼>:<스트림>` 인 `id` 가 이미 안정적이다 —
+          별도 키를 만들면 같은 사실을 두 벌 갖게 된다
+        - v4l2: 물리 포트(`usb:4-3:1.0`). 같은 모델 두 대도 구분된다
+        - 포트를 못 읽으면 이름 폴백 — 후보가 하나일 때만 쓴다(아래 `match_saved`)
+
+        ⚠ `cam_type` 으로 갈라 묻지 않는다. 장치 종류 분기는 `_hub` 한 곳뿐이라는
+        규칙이 있고(테스트가 강제한다), 여기서 물어야 하는 건 종류가 아니라
+        **"이 id 가 재열거로 바뀌는 종류인가"** 다. 바뀌는 건 `/dev/videoN` 뿐이다.
+        """
+        if not self.id.startswith("/dev/"):
+            return self.id
+        if self.usb_port:
+            return f"usb:{self.usb_port}"
+        return f"name:{self.name}"
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -82,6 +121,9 @@ class CameraInfo:
             # 따로 적으면 규칙이 갈린다.
             "display_name": self.label or self.name,
             "usb_port": self.usb_port,
+            # 설정이 매달리는 안정 키. 화면이 "이 카메라가 프로파일에 있나"를
+            # 판단하려면 id 가 아니라 이걸 봐야 한다.
+            "profile_key": self.profile_key,
             "usb_speed_mbps": self.usb_speed_mbps,
             # 화면이 임계값을 따로 적지 않게 판정까지 여기서 한다 —
             # 두 곳에 적으면 한쪽만 고쳐져 어긋난다.
@@ -121,8 +163,13 @@ class CameraInfo:
 
         장치가 못 내는 조합이면 데몬이 가장 가까운 것으로 낮춰서 연다 —
         `running_profile()` 로 실제 값을 확인할 수 있다.
+
+        ⚠ **활성 프로파일의 컨트롤을 여기서 함께 넘긴다.** 장치가 열리는 순간은
+        이 한 곳뿐이라(데몬이 유일한 소유자다) 트리거를 여기저기 배선할 필요가 없다.
+        노출·화이트밸런스가 초기화되는 경로가 여럿이었던 건 여는 주체가 여럿이라서다.
         """
-        ok, msg = self._hub.connect(self.id, width, height, fps)
+        ok, msg = self._hub.connect(self.id, width, height, fps,
+                                    _active_controls(self))
         self.connected = ok
         return ok, msg
 
@@ -139,6 +186,14 @@ class CameraInfo:
 
     def set_control(self, name: str, value: int) -> bool:
         return self._hub.set_control(self.id, name, value)
+
+    def apply_controls(self, wanted: dict) -> dict:
+        """프로파일 컨트롤 적용. **순서와 검증은 데몬이 한다** — 자동 모드
+        종속성 때문에 dict 순회로는 조용히 실패한다."""
+        return self._hub.apply_controls(self.id, wanted)
+
+    def last_apply_report(self) -> dict:
+        return self._hub.last_apply_report(self.id)
 
     def capture_preview(self) -> bytes | None:
         """최신 프레임 JPEG. 세그먼트에서 직접 읽는다 — RPC 가 아니다."""
@@ -288,6 +343,9 @@ class CameraManager:
             if cam.ready:
                 data.append({
                     "id": cam.id,
+                    # 복원 매칭의 **진짜 키**. `id` 는 참고용으로만 남긴다 —
+                    # v4l2 는 재열거로 번호가 바뀐다.
+                    "key": cam.profile_key,
                     "name": cam.name,
                     "label": cam.label,
                     "cam_type": cam.cam_type,
@@ -298,6 +356,28 @@ class CameraManager:
                 })
         self.CAMERA_SESSION_PATH.write_text(json.dumps(data, indent=2))
         logger.info("Camera session saved (%d cameras)", len(data))
+
+    def match_saved(self, saved: dict):
+        """저장된 항목을 지금 보이는 카메라에 맞춘다. **키 → id → 이름** 순.
+
+        이름 폴백은 **후보가 하나일 때만** 쓴다. 같은 모델 두 대를 서로 다른 포트에
+        꽂아 뒀는데 이름으로 맞추면 설정이 엉뚱한 카메라에 붙는다 —
+        틀리게 복원하느니 복원 안 하는 게 낫다.
+        """
+        key = saved.get("key") or ""
+        if key:
+            for cam in self.cameras.values():
+                if cam.profile_key == key:
+                    return cam
+        cam_id = saved.get("id") or ""
+        if cam_id in self.cameras:
+            return self.cameras[cam_id]
+        name = saved.get("name") or ""
+        if name:
+            hits = [c for c in self.cameras.values() if c.name == name]
+            if len(hits) == 1:
+                return hits[0]
+        return None
 
     def restore_session(self) -> bool:
         """세션 파일에서 카메라 상태 복원."""
@@ -318,11 +398,12 @@ class CameraManager:
 
         restored = 0
         for cam_data in data:
-            cam_id = cam_data.get("id", "")
-            if cam_id not in self.cameras:
-                logger.warning("  Session camera %s not found in scan, skipping", cam_id)
+            cam = self.match_saved(cam_data)
+            if cam is None:
+                logger.warning("  Session camera %s(%s) not found in scan, skipping",
+                               cam_data.get("id", ""), cam_data.get("key", ""))
                 continue
-            cam = self.cameras[cam_id]
+            cam_id = cam.id
             cam.cam_type = cam_data.get("cam_type", "opencv")
             cam.label = cam_data.get("label", "")
             cam.update_config(cam_data.get("config", {}))

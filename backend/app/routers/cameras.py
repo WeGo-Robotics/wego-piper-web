@@ -157,6 +157,85 @@ async def get_current():
     return camera_manager.get_current()
 
 
+# ── 프로파일 ──
+#
+# CRUD 는 공통 프리셋 API(`/api/presets/camera`)를 그대로 쓴다. 여기에는
+# **장치를 읽거나 만져야 하는 것**만 둔다 — 그게 공통 스토어로는 안 되는 부분이다.
+
+class ProfileCaptureRequest(BaseModel):
+    name: str
+    note: str = ""
+    # 비우면 등록된 카메라 전부
+    camera_ids: list[str] = []
+
+
+def _cams(camera_ids: list[str]) -> list:
+    if camera_ids:
+        return [c for cid in camera_ids if (c := camera_manager.cameras.get(cid))]
+    return [c for c in camera_manager.cameras.values() if c.ready]
+
+
+@router.post("/profiles/capture")
+async def capture_profile(body: ProfileCaptureRequest):
+    """현재 장치 값을 읽어 프로파일로 저장한다.
+
+    값의 출처가 디스크가 아니라 **장치**라, 공통 프리셋 저장 API 로는 안 된다.
+    """
+    from app.services import camera_profiles, presets
+
+    _guard_device_access()
+    cams = _cams(body.camera_ids)
+    if not cams:
+        raise HTTPException(400, "저장할 카메라가 없습니다 (등록된 카메라가 없음)")
+    loop = asyncio.get_event_loop()
+    values = await loop.run_in_executor(_executor, camera_profiles.capture, cams)
+    try:
+        preset = presets.save(camera_profiles.DOMAIN, body.name, values,
+                              scope="device", note=body.note)
+    except presets.PresetError as e:
+        raise HTTPException(400, str(e))
+    camera_profiles.set_active(body.name)
+    return preset.to_dict()
+
+
+class ProfileApplyRequest(BaseModel):
+    name: str = ""
+    camera_ids: list[str] = []
+
+
+@router.post("/profiles/apply")
+async def apply_profile(body: ProfileApplyRequest):
+    """수동 적용. 연결 시 자동 적용과 **같은 데몬 함수**를 탄다."""
+    from app.services import camera_profiles
+
+    _guard_device_access()
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        _executor, camera_profiles.apply, _cams(body.camera_ids), body.name
+    )
+
+
+class ProfileActiveRequest(BaseModel):
+    name: str = ""
+
+
+@router.post("/profiles/active")
+async def set_active_profile(body: ProfileActiveRequest):
+    """연결 시 자동 적용할 프로파일. 빈 이름이면 자동 적용을 끈다."""
+    from app.services import camera_profiles
+
+    camera_profiles.set_active(body.name)
+    return {"active": camera_profiles.active_name()}
+
+
+@router.get("/profiles/report")
+async def profile_report():
+    """마지막 적용 결과. 연결 안에서 적용하므로 응답에 실을 수 없어 따로 묻는다."""
+    from app.services import camera_profiles
+
+    return camera_profiles.report(list(camera_manager.cameras.values()))
+
+
 class CameraControlRequest(BaseModel):
     id: str
     name: str

@@ -185,7 +185,7 @@ class Preset:
 | 3 | ☑ 학습 프리셋 — 키를 `TrainStartRequest` 에서 파생 + [PresetBar](../frontend/src/components/PresetBar.tsx) | 1 |
 | 4 | ☑ 추론 프리셋 — 키·범위 모두 `PARAM_SPEC` 파생, 범위 밖 값 클램프 | ☑ #1 단계 2 완료 |
 | 5 | ☑ `eval_log` 에 `preset`·`params`·`robot_id` + 프리셋/체크포인트별 성공률 | 4 |
-| 6 | 카메라 프로파일을 이 스토어로 흡수 | 1, [camera-profiles](camera-profiles.md) |
+| 6 | ☑ 카메라 프로파일을 이 스토어로 흡수 (`domain="camera"`, `scope="device"`) | 1, [camera-profiles](camera-profiles.md) |
 
 2번을 초반에 하는 이유: **기존 것을 흡수하지 않으면 프리셋 시스템이 두 개가 된다.**
 새 도메인만 새 스토어에 넣고 로봇은 그대로 두면 정확히 그 상태가 된다.
@@ -219,6 +219,10 @@ class Preset:
 
 ## 상태
 
-◐ 1~5단계 완료 — 6(카메라 프로파일 흡수)만 남음.
-[camera-profiles](camera-profiles.md)가 데몬 분리로 범위가 줄어 **착수 가능해졌고**,
-그 문서도 저장층을 이 스토어(`domain="camera"`, `scope="device"`)로 확정했다.
+☑ **1~6단계 완료.** 6(카메라 프로파일 흡수)도 닫혔다 —
+[camera-profiles](camera-profiles.md)가 `domain="camera"`, `scope="device"` 로 이 스토어에
+들어왔고, 목록·선택·삭제 UI 는 `PresetBar` 를 그대로 쓴다.
+
+저장·적용만 도메인이 가로챈다(`onSaveAs`/`onApplyName`): 카메라는 저장할 값이 화면이 아니라
+**장치**에 있고, 적용도 게이트웨이가 아니라 데몬이 순서대로 해야 하기 때문이다.
+그 두 훅이 다른 도메인이 프리셋 스토어를 재사용하는 표준 방법이 됐다.

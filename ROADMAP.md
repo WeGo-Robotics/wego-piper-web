@@ -22,7 +22,7 @@
 | **3b-6** | systemd 유닛화 | ☑ 학습·정책서버·xferd — **실제 학습으로 재부착 확인** |
 | 3b-7 | 실행별 컨테이너 분리 + **encoderd** | ◐ 단일 백엔드 컨테이너는 실기 확인 |
 | 3b-8 | 게이트웨이 정리 | ◐ |
-| Phase 4 | 깊이맵(인코딩 ☑ / 정책 입력 ☐) · camera-profiles · phase-annotation 4~8 · cloud-training 5~12 | ☐ |
+| Phase 4 | 깊이맵(인코딩 ☑ / 정책 입력 ☐) · camera-profiles ☑ · phase-annotation 4~8 · cloud-training 5~12 | ◐ |
 
 ### 바로 이어서 할 것
 
@@ -108,7 +108,7 @@ HF 저장소가 git + LFS인 건 맞지만 **클라이언트가 git으로 말하
 
 | 기능 | 구조 개편과의 관계 | 결론 |
 |---|---|---|
-| [camera-profiles](feature/camera-profiles.md) | 구조 개편이 **이 기능의 절반을 삭제한다** | **뒤로** → ☑ 실제로 삭제됨. 이제 착수 가능 |
+| [camera-profiles](feature/camera-profiles.md) | 구조 개편이 **이 기능의 절반을 삭제한다** | **뒤로** → ☑ 실제로 삭제됐고, 남은 절반도 완료 |
 | [cloud-training](feature/cloud-training.md) | 0~2는 **독립 리팩터**, 3~4는 Redis 이후 | **쪼개서 앞당김** |
 | [phase-annotation](feature/01-phase-annotation.md) 1~3 | 거의 **안 겹친다** | **지금** |
 | [parameter-presets](feature/parameter-presets.md) | 학습은 독립 · 추론은 **#1 단계 2에 의존** | **쪼갬** |
@@ -155,7 +155,7 @@ daemon-split 6의 systemd 유닛화는 그 이음매에 **`SystemdRunner`를 하
 ### WS 계약 — 4중 충돌
 
 [#12](refactor/12-ws-message-contract.md)가 계약을 세우기 전에 cloud-training(`job_id`),
-camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레메트리)이 각자 추가하면
+~~camera-profiles~~(WS 이벤트 없이 폴링으로 끝냈다), phase-annotation(페이즈 텔레메트리)이 각자 추가하면
 **16종이 20종 되고 타입은 여전히 없다.**
 
 ### 나머지
@@ -243,12 +243,13 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 | 기능 | 상태 |
 |---|---|
 | ~~parameter-presets 4~5~~ | ☑ 완료 — 추론 프리셋 + 프리셋별 성공률 |
-| **camera-profiles** | ☑ 전제 충족 — 트리거 배선(4단계)·해상도 전달이 통째로 빠졌다. 남은 것은 **컨트롤 값 저장(`presets` domain=camera) · v4l2 안정 키 · 자동 모드 순서** 셋, 적용은 데몬 `connect()` 한 곳 |
+| ~~camera-profiles~~ | ☑ **완료** — 컨트롤 값 저장(`presets` domain=camera) · v4l2 안정 키 · 자동 모드 순서. 적용은 데몬 `connect()` 한 곳. D405 로 확인(되돌린 뒤 연결만으로 복원) |
 | **phase-annotation 4~8** | UI · 굽기 · 추론 경로 |
 | **cloud-training 5~12** | 데이터 전송 · 체크포인트 회수 · 비용 가드 · 유료 프로바이더 |
 | **[robotd-safety](refactor/robotd-safety.md)** | **별도 트랙.** URDF 확보라는 독립 선결 조건. robotd(3b-5)가 서면 언제든 |
 | **[manual-control](feature/manual-control.md)** | 웹 조그(1)·MIT 스파이크(2)는 robotd 위에서 **지금 가능**, 병렬 트랙. 중력 보상(3~4)은 **트랙 E(URDF) 의존**, 키네스테틱 녹화(5)는 그 뒤 |
 | **[bimanual](feature/bimanual.md)** | G4 구현 — bi 클래스 3개(WeGo repo)로 녹화·추론·파킹 단일화. robotd 변경 0이라 구조 개편과 **안 겹침.** 전제는 하드웨어뿐(팔 4대 + udev 4개 확장) |
+| **[llm-integration](feature/llm-integration.md)** | 분리수거 판단·플래너용 구조화 출력 클라이언트. 백엔드 서비스뿐이라 **아예 안 겹침** — 1단계는 지금 가능, 스텝 합류는 episode-orchestrator 뒤 |
 | 자체 Hub 서버 | 여기까지 온 뒤 판단 |
 
 ---

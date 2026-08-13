@@ -68,9 +68,16 @@ class RealSenseHub:
         return bool(self._call("is_d405", serial, default=False))
 
     def connect(self, cam_id: str, width: int = 0, height: int = 0,
-                fps: int = 0) -> tuple[bool, str]:
-        r = self._call("connect", cam_id, width, height, fps, timeout=30)
+                fps: int = 0, controls: dict | None = None) -> tuple[bool, str]:
+        r = self._call("connect", cam_id, width, height, fps, controls or {}, timeout=30)
         return _pair(r, "rsd 연결 실패")
+
+    def apply_controls(self, cam_id: str, wanted: dict) -> dict:
+        """프로파일 컨트롤 적용. 순서·검증은 데몬이 한다."""
+        return self._call("apply_controls", cam_id, wanted, default={}, timeout=30) or {}
+
+    def last_apply_report(self, cam_id: str) -> dict:
+        return self._call("last_apply_report", cam_id, default={}) or {}
 
     def set_depth_encoding(self, cam_id: str, near_mm: int, far_mm: int) -> tuple[bool, str]:
         """깊이 인코딩 범위 변경. 작업 공간에 맞춰 좁힐수록 해상도가 오른다."""

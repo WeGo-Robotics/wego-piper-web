@@ -39,11 +39,20 @@ type Props = {
   disabled?: boolean
   /** 선택된 프리셋 이름 알림 — 평가 기록에 남긴다 */
   onSelect?: (name: string) => void
+  /**
+   * 저장·적용을 도메인이 가로챈다. 돌려준 문자열이 그대로 상태줄에 뜬다.
+   *
+   * 카메라 프로파일이 이걸 쓴다: 저장할 값이 화면이 아니라 **장치**에 있고,
+   * 적용도 게이트웨이가 아니라 데몬이 순서대로 해야 한다. 목록·선택·삭제는
+   * 다른 도메인과 똑같아서 그대로 공유한다.
+   */
+  onSaveAs?: (name: string) => Promise<string>
+  onApplyName?: (name: string) => Promise<string>
 }
 
 export default function PresetBar({
   domain, values, onApply, policyType = '', defaults = {},
-  scope = 'device', disabled = false, onSelect,
+  scope = 'device', disabled = false, onSelect, onSaveAs, onApplyName,
 }: Props) {
   const [list, setList] = useState<PresetMeta[]>([])
   const [selected, setSelected] = useState('')
@@ -59,12 +68,16 @@ export default function PresetBar({
     const name = window.prompt('프리셋 이름', selected || '')
     if (!name) return
     try {
-      await api.post(`/presets/${domain}`, {
-        name, values: values(), scope, policy_type: policyType,
-      })
+      if (onSaveAs) {
+        setMsg(await onSaveAs(name))
+      } else {
+        await api.post(`/presets/${domain}`, {
+          name, values: values(), scope, policy_type: policyType,
+        })
+        setMsg(`"${name}" 저장됨`)
+      }
       setSelected(name)
       onSelect?.(name)
-      setMsg(`"${name}" 저장됨`)
       refresh()
     } catch (e) {
       setMsg(`저장 실패: ${(e as Error).message}`)
@@ -73,6 +86,15 @@ export default function PresetBar({
 
   const handleApply = async (name: string) => {
     if (!name) return
+    if (onApplyName) {
+      try {
+        onSelect?.(name)
+        setMsg(await onApplyName(name))
+      } catch (e) {
+        setMsg(`적용 실패: ${(e as Error).message}`)
+      }
+      return
+    }
     try {
       const r = await api.post<ApplyReport>(`/presets/${domain}/${name}/apply`, {
         policy_type: policyType, defaults,

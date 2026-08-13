@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import PresetBar from '../components/PresetBar'
 import { api } from '../services/api'
 
 /**
@@ -15,6 +16,26 @@ function UsbWarning({ reason }: { reason: string }) {
       className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-500"
     >
       USB 2.0
+    </span>
+  )
+}
+
+/** 프로파일 적용 결과 한 줄. 데몬이 세어 준 것을 그대로 보여준다.
+ *
+ *  `잠김`은 실패가 아니다 — 자동 노출이 켜져 있어 그 값이 지금 안 쓰이는 상태다.
+ *  실패로 칠하면 사용자가 고칠 수 없는 빨간 배지를 계속 보게 된다. */
+function ApplyBadge({ r }: { r: CamApplyResult }) {
+  const bad = r.failed > 0
+  return (
+    <span
+      title={(r.details ?? []).map((d) => `${d.name}: ${d.want} → ${d.got ?? '—'} (${d.status})`).join('\n')}
+      className={`rounded px-1.5 py-0.5 text-[10px] ${bad
+        ? 'bg-red-500/15 text-red-400' : 'bg-neutral-700/60 text-neutral-300'}`}
+    >
+      {r.display_name}: 적용 {r.applied}
+      {r.locked ? ` / 잠김 ${r.locked}` : ''}
+      {r.failed ? ` / 실패 ${r.failed}` : ''}
+      {r.truncated ? ' / 시간초과' : ''}
     </span>
   )
 }
@@ -50,6 +71,22 @@ type CamControl = {
   inactive?: boolean; readonly?: boolean
 }
 
+/** 카메라 한 대의 프로파일 적용 결과. **집계는 데몬이 한다** —
+ *  `locked`(자동 모드가 잠금)와 `failed`(진짜 실패)의 구분이 거기 있다. */
+type CamApplyResult = {
+  cam_id: string; display_name: string
+  applied: number; locked: number; failed: number; skipped: number
+  truncated?: boolean
+  details?: { name: string; want: number; got: number | null; status: string }[]
+}
+
+type ProfileReport = {
+  profile: string
+  cameras: CamApplyResult[]
+  unmatched?: string[]
+  error?: string
+}
+
 export default function CamerasPage() {
   const [loading, setLoading] = useState(true)
   const [cams, setCams] = useState<CamInfo[]>([])
@@ -61,6 +98,32 @@ export default function CamerasPage() {
   // 같은 줄의 다른 카드까지 함께 커진다.
   const [settingsCam, setSettingsCam] = useState<string | null>(null)
   const [depthEnc, setDepthEnc] = useState<{ near_mm: number; far_mm: number } | null>(null)
+  // 프로파일 — 노출·화이트밸런스 같은 컨트롤 값을 이름 붙여 저장한다.
+  // 적용 자체는 **데몬이 카메라를 열 때** 하므로 여기는 저장·수동적용·결과 표시만 한다.
+  const [profileReport, setProfileReport] = useState<ProfileReport | null>(null)
+
+  /** 지금 장치에 들어 있는 값을 읽어 저장한다. 화면 상태가 아니라 **장치**가 출처다 —
+   *  그래서 공통 프리셋 저장 API 를 그대로 못 쓰고 전용 엔드포인트를 탄다. */
+  const captureProfile = async (name: string) => {
+    const r = await api.post<{ values: { cameras: unknown[] } }>(
+      '/cameras/profiles/capture', { name })
+    const n = r.values?.cameras?.length ?? 0
+    return `"${name}" 저장 — 카메라 ${n}대의 현재 값 (이제부터 연결할 때 자동 적용)`
+  }
+
+  /** 수동 적용. 연결 시 자동 적용과 **같은 데몬 함수**를 탄다 —
+   *  경로가 갈리면 "수동으로는 되는데 자동으로는 안 된다"가 생긴다. */
+  const applyProfile = async (name: string) => {
+    const r = await api.post<ProfileReport>('/cameras/profiles/apply', { name })
+    await api.post('/cameras/profiles/active', { name })
+    setProfileReport(r)
+    if (r.error) return r.error
+    const sum = r.cameras.reduce((a, c) => ({
+      applied: a.applied + c.applied, locked: a.locked + c.locked, failed: a.failed + c.failed,
+    }), { applied: 0, locked: 0, failed: 0 })
+    const miss = r.unmatched?.length ? ` / 못 찾음 ${r.unmatched.length}대` : ''
+    return `"${name}" 적용 — ${sum.applied} 적용 / ${sum.locked} 잠김 / ${sum.failed} 실패${miss}`
+  }
 
   /** 깊이 범위 변경. **한쪽만 바꿔도 다른 쪽 값을 함께 보낸다** —
    *  백엔드는 구간을 한 벌로 검증하므로(far > near) 절반만 보내면 거부된다. */
@@ -293,6 +356,29 @@ export default function CamerasPage() {
           className="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
           {scanning ? <><Spinner className="inline" /> 스캔 중...</> : '스캔'}
         </button>
+      </div>
+
+      {/* 프로파일 — 조명 조건별로 여러 개 두는 게 실사용에 맞다(주간/야간/형광등).
+          저장하면 그 프로파일이 활성이 되고, 이후 **카메라를 열 때마다** 데몬이
+          순서대로(자동 스위치 → 종속 값 → 독립 값) 밀어 넣는다. */}
+      <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3 space-y-2">
+        <PresetBar
+          domain="camera"
+          values={() => ({})}
+          onApply={() => {}}
+          onSaveAs={captureProfile}
+          onApplyName={applyProfile}
+          disabled={scanning}
+        />
+        <p className="text-[10px] text-neutral-500">
+          저장은 <b>지금 장치에 들어 있는 값</b>을 읽어 담는다 — 노출·화이트밸런스를
+          맞춘 뒤 저장하면 서버 재시작·USB 재열거·하드웨어 리셋 뒤에도 되돌아온다.
+        </p>
+        {profileReport && profileReport.cameras.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {profileReport.cameras.map((r) => <ApplyBadge key={r.cam_id} r={r} />)}
+          </div>
+        )}
       </div>
 
       {/* 등록됨 (최상단) */}

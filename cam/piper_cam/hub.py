@@ -13,6 +13,7 @@
 import logging
 import threading
 
+from piper_cam import controls as controls_mod
 from piper_cam import v4l2
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,9 @@ class V4l2Hub:
     def __init__(self) -> None:
         self.cams: dict[str, _V4l2Camera] = {}
         self._info: dict[str, dict] = {}
+        # 마지막 프로파일 적용 결과 — 연결 안에서 적용하므로 응답에 실을 수 없다.
+        # 화면이 "몇 개 적용/잠김/실패"를 보려면 여기서 가져가야 한다.
+        self._last_apply: dict[str, dict] = {}
 
     def scan(self) -> list[dict]:
         found = v4l2.scan_cameras()
@@ -153,13 +157,24 @@ class V4l2Hub:
         return self.cams.get(cam_id)
 
     def connect(self, cam_id: str, width: int = 0, height: int = 0,
-                fps: int = 0) -> tuple[bool, str]:
-        """셋 다 주면 그 프로파일로 연다. 하나라도 0이면 드라이버 기본값."""
+                fps: int = 0, controls: dict | None = None) -> tuple[bool, str]:
+        """셋 다 주면 그 프로파일로 연다. 하나라도 0이면 드라이버 기본값.
+
+        `controls` 를 주면 **스트림을 연 뒤** 밀어 넣는다. 순서가 그래야 하는 이유:
+        일부 UVC 웹캠은 `STREAMON` 에서 자동 노출을 다시 켠다. 열기 전에 넣으면
+        그 순간 되돌아가고, 사용자는 "저장했는데 왜 또 초기화되나"를 다시 겪는다.
+
+        적용이 실패해도 연결은 성공으로 돌려준다 — 조명이 틀린 영상이
+        안 나오는 영상보다 낫다. 결과는 `last_apply_report()` 로 확인한다.
+        """
         cam = self._cam(cam_id)
         if not cam:
             return False, f"Unknown camera: {cam_id}"
         want = (int(width), int(height), int(fps)) if width and height and fps else None
-        return cam.connect(want)
+        ok, msg = cam.connect(want)
+        if ok and controls:
+            self.apply_controls(cam_id, controls)
+        return ok, msg
 
     def disconnect(self, cam_id: str) -> None:
         cam = self.cams.get(cam_id)
@@ -186,6 +201,31 @@ class V4l2Hub:
             if ctrl["name"] == name:
                 return v4l2.v4l2_set_control(cam_id, ctrl["cid"], int(value))
         return False
+
+    def apply_controls(self, cam_id: str, wanted: dict,
+                       budget_s: float = 2.0) -> dict:
+        """프로파일 컨트롤을 순서대로 적용하고 read-back 으로 검증한다.
+
+        순서 규칙은 rsd 와 **한 벌을 공유한다**(`piper_cam.controls`) — 자동 모드
+        종속성은 v4l2 든 RealSense 든 같은 함정이라, 두 벌이면 한쪽만 고쳐진다.
+        """
+        cids = {c["name"]: c["cid"] for c in v4l2.v4l2_list_controls(cam_id)}
+
+        def _set(name: str, value) -> bool:
+            # v4l2 컨트롤은 정수다. 실수를 받는 건 RealSense 쪽뿐이라
+            # 계약(`piper_cam.controls`)은 실수를 통과시키고 여기서 좁힌다.
+            cid = cids.get(name)
+            return v4l2.v4l2_set_control(cam_id, cid, int(value)) if cid is not None else False
+
+        report = controls_mod.apply_controls(
+            lambda: v4l2.v4l2_list_controls(cam_id), _set, wanted,
+            budget_s=budget_s, label=cam_id,
+        )
+        self._last_apply[cam_id] = report
+        return report
+
+    def last_apply_report(self, cam_id: str) -> dict:
+        return self._last_apply.get(cam_id, {})
 
     def info(self, cam_id: str) -> dict:
         """해상도 등 — 연결 중이면 실제 값, 아니면 스캔 값."""
