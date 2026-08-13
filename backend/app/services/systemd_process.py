@@ -202,3 +202,32 @@ class SystemdProcess:
         self._start_log_stream(follow_from_start=True)
         logger.info("유닛 재부착: %s", self.unit)
         return True
+
+
+_availability: tuple[bool, str] | None = None
+
+
+def make_process(unit: str):
+    """설정이 고른 프로세스 소유자. `ProcessManager` 자리에 그대로 들어간다.
+
+    ⚠ **못 쓰면 조용히 떨어지지 않고 말한다.** 조용히 자식 프로세스로 가면
+    "재시작해도 살아있다"고 믿는데 실제로는 아닌 상태가 된다 — 그게 가장 나쁘다.
+
+    가용성 판정은 한 번만 한다. 모듈 로드 때 여러 소유자가 만들어지는데
+    그때마다 `systemctl`·`loginctl` 을 부르면 기동이 그만큼 느려진다.
+    """
+    global _availability
+    from app.core.config import settings
+    from app.services.process_manager import ProcessManager
+
+    if settings.process_runner != "systemd":
+        return ProcessManager()
+
+    if _availability is None:
+        _availability = available()
+    ok, why = _availability
+    if not ok:
+        logger.warning("systemd 를 쓸 수 없어 자식 프로세스로 돕니다 (%s) — %s "
+                       "(게이트웨이를 재시작하면 화면에서 사라집니다)", unit, why)
+        return ProcessManager()
+    return SystemdProcess(unit)

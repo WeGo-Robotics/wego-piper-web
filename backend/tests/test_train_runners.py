@@ -108,16 +108,36 @@ def test_systemd_process_matches_the_process_manager_surface():
         assert not missing, f"{owner.__name__} 에 없는 것: {sorted(missing)}"
 
 
-def test_policy_server_picks_its_owner_from_the_setting():
+def test_long_running_processes_pick_their_owner_from_one_place():
     """하나는 유닛이고 하나는 자식이면 재시작 동작이 갈려 더 헷갈린다 —
-    학습과 같은 스위치를 따른다."""
+    오래 도는 것들이 **같은 스위치, 같은 함수**를 따른다."""
     import ast
 
-    from app.services import policy_server_manager as psm
+    from app.services import systemd_process as sp
 
-    src = inspect.getsource(psm._make_process)
+    src = inspect.getsource(sp.make_process)
     names = {ast.unparse(n) for n in ast.walk(ast.parse(src.lstrip()))
              if isinstance(n, ast.Attribute)}
-    assert "settings.process_runner" in names, "정책 서버가 스위치를 안 본다"
+    assert "settings.process_runner" in names, "스위치를 안 본다"
     assert "raise" not in src, "시작을 막지 않는다 — 못 쓰면 자식으로 떨어진다"
     assert "logger.warning" in src, "조용히 떨어지면 재시작 생존을 오해한다"
+
+
+def test_every_long_running_owner_goes_through_make_process():
+    """직접 `ProcessManager()` 를 만들면 그 프로세스만 재시작에 사라진다.
+
+    녹화·추론은 예외다 — 3b-7 에서 컨테이너로 가는 쪽이라 성격이 다르다.
+    `LocalRunner` 도 예외다: systemd 의 **대안**이라 직접 만드는 게 맞다.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "app" / "services"
+    allowed = {"local.py", "record_manager.py", "process_manager.py", "systemd_process.py"}
+    offenders = []
+    for f in root.rglob("*.py"):
+        if f.name in allowed:
+            continue
+        if re.search(r"(?<!def )ProcessManager\(\)", f.read_text()):
+            offenders.append(f.name)
+    assert not offenders, f"make_process 를 안 거치는 곳: {offenders}"
