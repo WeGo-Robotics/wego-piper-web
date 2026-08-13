@@ -22,12 +22,14 @@
 | **3b-6** | systemd 유닛화 | ☑ 학습·정책서버·xferd — **실제 학습으로 재부착 확인** |
 | 3b-7 | 실행별 컨테이너 분리 + **encoderd** | ◐ 단일 백엔드 컨테이너는 실기 확인 |
 | 3b-8 | 게이트웨이 정리 | ◐ |
-| Phase 4 | 깊이맵 · camera-profiles · phase-annotation 4~8 · cloud-training 5~12 | ☐ |
+| Phase 4 | 깊이맵(인코딩 ☑ / 정책 입력 ☐) · camera-profiles · phase-annotation 4~8 · cloud-training 5~12 | ☐ |
 
 ### 바로 이어서 할 것
 
-1. **깊이맵 인코딩** — 대역폭 제약은 USB 3 으로 풀렸다(네 스트림 15fps 동시 확인).
-   남은 것은 클리핑 범위·컬러맵·무효픽셀·메타 기록 설계 ([camera-transport.md](refactor/camera-transport.md))
+1. **깊이맵을 실제 정책 입력으로** — 인코딩·메타 기록·범위 조절은 ☑ 다
+   (`rs/piper_rs/depth.py`, `meta/piper_cameras.json`, 카메라 설정 모달).
+   남은 것은 **녹화 → 학습 → 추론을 한 바퀴 돌려 fps 를 재는 것** — 인코더 입력이
+   하나 늘면 얼마나 느려지는지는 돌려봐야 안다
 2. **실기 체크리스트 B~I** — A(E-stop 일부)·F(학습)·G(카메라)·J(버스)만 닫혔다
 3. **데이터셋 경로가 둘로 갈린다** — 목록에 뜨는 이름이 학습에 그대로 안 먹힌다.
    로컬 데이터셋은 `~/.cache/huggingface/lerobot/` 인데 `settings.datasets_dir` 는
@@ -240,6 +242,8 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 | **phase-annotation 4~8** | UI · 굽기 · 추론 경로 |
 | **cloud-training 5~12** | 데이터 전송 · 체크포인트 회수 · 비용 가드 · 유료 프로바이더 |
 | **[robotd-safety](refactor/robotd-safety.md)** | **별도 트랙.** URDF 확보라는 독립 선결 조건. robotd(3b-5)가 서면 언제든 |
+| **[manual-control](feature/manual-control.md)** | 웹 조그(1)·MIT 스파이크(2)는 robotd 위에서 **지금 가능**, 병렬 트랙. 중력 보상(3~4)은 **트랙 E(URDF) 의존**, 키네스테틱 녹화(5)는 그 뒤 |
+| **[bimanual](feature/bimanual.md)** | G4 구현 — bi 클래스 3개(WeGo repo)로 녹화·추론·파킹 단일화. robotd 변경 0이라 구조 개편과 **안 겹침.** 전제는 하드웨어뿐(팔 4대 + udev 4개 확장) |
 | 자체 Hub 서버 | 여기까지 온 뒤 판단 |
 
 ---
@@ -252,10 +256,12 @@ B (데이터)       phase-annotation 1~3 ──→ 4~5 ────────�
 C (잡일)         Phase 2 (#3~#6, #11) 아무때나
 D (학습)         cloud-training 0~2 ──────→ 3~4 (3b-3 이후) ──→ 5~12
 E (기구학)          URDF 확보 ─────────────────────────→ robotd-safety (3b-5 이후)
+                                                      └→ manual-control 3~5 (중력 보상·키네스테틱 녹화)
 ```
 
 B·C·D·E는 A를 거의 안 막는다. **E의 URDF 확보는 지금 바로 시작한다** —
-외부 자산이라 리드타임이 있고 코드 의존이 없다.
+외부 자산이라 리드타임이 있고 코드 의존이 없다. 수혜자가 둘로 늘었다
+(안전 필터 + [중력 보상](feature/manual-control.md) — 후자는 질량·관성 파라미터까지 필요).
 
 ---
 
@@ -265,7 +271,7 @@ B·C·D·E는 A를 거의 안 막는다. **E의 URDF 확보는 지금 바로 시
 |---|---|---|
 | 동시 학습 job 수 상한 | ~~3b-3.5 전~~ → **4단계(SSH 러너) 전** | 레지스트리는 N개를 담게 만들고 상한만 `MAX_CONCURRENT_JOBS=1` 로 뒀다 — 클라우드가 붙을 때 상수 하나만 고치면 된다 |
 | E-stop이 무엇을 죽이는가 | 3b-2 전 | #10과 estopd 분리가 같이 걸려 있다 |
-| URDF를 구할 수 있는가 | 트랙 E 시작 전 | 못 구하면 robotd-safety 트랙 자체가 없다 |
+| URDF를 구할 수 있는가 | 트랙 E 시작 전 | 못 구하면 robotd-safety 트랙 자체가 없다. [manual-control](feature/manual-control.md)의 중력 보상도 같이 막힌다 (관성 파라미터까지 필요) |
 | camerad/rsd 합칠 것인가 | 3b-5 전 | 크래시 격리 vs 단순함 |
 
 **Phase 0~2 착수를 막는 질문은 없다.**
