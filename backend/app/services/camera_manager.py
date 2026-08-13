@@ -151,34 +151,38 @@ class CameraManager:
         """
         # 일반 웹캠 — camerad
         for d in v4l2_hub.scan():
-            cam_id = d["id"]
-            if cam_id not in self.cameras:
-                self.cameras[cam_id] = CameraInfo(
-                    id=cam_id, name=d["name"], usb_port=d.get("usb_port", ""),
-                    usb_speed_mbps=int(d.get("usb_speed_mbps") or 0),
-                )
-            else:
-                self.cameras[cam_id].name = d["name"]
-                self.cameras[cam_id].usb_port = d.get("usb_port", "")
-                self.cameras[cam_id].usb_speed_mbps = int(d.get("usb_speed_mbps") or 0)
+            self._absorb(d)
 
         # RealSense — rsd. 디바이스당 color/depth/infrared 스트림 엔트리
         for d in realsense_hub.scan():
-            cam_id = d["id"]
-            if cam_id not in self.cameras:
-                self.cameras[cam_id] = CameraInfo(
-                    id=cam_id, name=d["name"], usb_port=d.get("usb_port", ""),
-                    usb_speed_mbps=int(d.get("usb_speed_mbps") or 0),
-                    cam_type="realsense", serial=d["serial"], stream_type=d["stream_type"],
-                )
-            else:
-                cam = self.cameras[cam_id]
-                cam.name = d["name"]
-                cam.usb_port = d.get("usb_port", "")
-                cam.serial = d["serial"]
-                cam.stream_type = d["stream_type"]
+            self._absorb(d, cam_type="realsense")
 
         return [c.to_dict() for c in self.cameras.values()]
+
+    def _absorb(self, d: dict, cam_type: str = "opencv") -> None:
+        """스캔 엔트리를 흡수한다. **두 데몬이 같은 경로를 탄다.**
+
+        ⚠ 예전에는 v4l2 와 RealSense 가 각자 갱신했고, 한쪽은
+        `self.cameras[id].x = ...`, 다른 쪽은 `cam.x = ...` 모양이었다.
+        필드를 하나 추가하면서 한쪽만 고쳐져, USB 3 으로 바꿔 꽂아도
+        **RealSense 쪽 속도만 옛 값에 머물렀다.** 같은 사실은 한 곳에서 갱신한다.
+
+        등록 정보(label·ready·config)는 건드리지 않는다 — 그건 사람이 정한 것이고
+        스캔은 장치가 말해주는 것만 가져온다.
+        """
+        cam_id = d["id"]
+        cam = self.cameras.get(cam_id)
+        if cam is None:
+            cam = self.cameras[cam_id] = CameraInfo(id=cam_id, name=d["name"],
+                                                    cam_type=cam_type)
+        cam.name = d["name"]
+        cam.usb_port = d.get("usb_port", "")
+        cam.usb_speed_mbps = int(d.get("usb_speed_mbps") or 0)
+        # ⚠ `cam_type` 으로 분기하지 않는다 — "어느 데몬 소유인가"는 `_hub` 한 곳에서만
+        # 판단한다(테스트가 강제한다). 여기서는 **엔트리에 있는 것만** 가져오면 된다:
+        # v4l2 엔트리에는 serial/stream_type 이 없으므로 자연히 건너뛴다.
+        cam.serial = d.get("serial", cam.serial)
+        cam.stream_type = d.get("stream_type", cam.stream_type)
 
     def probe_camera(self, cam_id: str) -> tuple[bool, str]:
         """연결 테스트 + 프리뷰 1장 → 즉시 해제."""

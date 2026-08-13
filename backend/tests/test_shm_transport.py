@@ -606,3 +606,46 @@ def test_container_networking_is_self_consistent():
         "nginx 가 아직 127.0.0.1 을 본다 — 브리지에서는 서비스 이름으로 가야 한다"
     )
     assert "networks:" in compose and "driver: bridge" in compose
+
+
+def test_scan_refreshes_every_device_field_for_both_daemons():
+    """**회귀** — USB 3 으로 바꿔 꽂아도 RealSense 쪽 속도만 옛 값에 머물렀다.
+
+    v4l2 와 RealSense 가 각자 갱신했고 한쪽은 `self.cameras[id].x = ...`,
+    다른 쪽은 `cam.x = ...` 모양이었다. 필드를 하나 추가하면서 한쪽만 고쳐졌다.
+    같은 사실은 한 곳에서 갱신해야 한다.
+    """
+    import ast
+    import inspect
+
+    from app.services import camera_manager as cm
+
+    # 두 데몬이 같은 흡수 경로를 타는가
+    src = inspect.getsource(cm.CameraManager.scan)
+    calls = {ast.unparse(n.func) for n in ast.walk(ast.parse(src.lstrip()))
+             if isinstance(n, ast.Call)}
+    assert "self._absorb" in calls, "스캔이 공통 경로를 안 쓴다"
+
+    # 장치가 말해주는 필드는 전부 갱신되는가
+    absorbed = {
+        n.targets[0].attr
+        for n in ast.walk(ast.parse(inspect.getsource(cm.CameraManager._absorb).lstrip()))
+        if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Attribute)
+    }
+    assert {"name", "usb_port", "usb_speed_mbps", "serial", "stream_type"} <= absorbed, (
+        f"스캔이 갱신하지 않는 장치 필드가 있다: {absorbed}"
+    )
+    # 사람이 정한 값은 건드리지 않는다
+    assert not absorbed & {"label", "ready", "width", "height", "fps"}, (
+        f"스캔이 사용자 설정을 덮는다: {absorbed}"
+    )
+
+
+def test_usb_warning_is_judged_in_one_place():
+    """임계값을 화면이 따로 적으면 한쪽만 고쳐져 어긋난다."""
+    from app.services.camera_manager import USB3_MBPS, _usb_warning
+
+    assert _usb_warning(480) and "USB 3" in _usb_warning(480)
+    assert _usb_warning(USB3_MBPS) is None
+    # 모르는 것(0)과 느린 것은 다르다 — 모르면 경고하지 않는다
+    assert _usb_warning(0) is None
