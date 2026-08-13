@@ -124,7 +124,9 @@ class Settings(BaseSettings):
     # 기본값이 "local" 인 이유는 카메라·로봇 전송과 같다: **실기로 확인한 뒤 바꾼다.**
     # ⚠ `systemd` 는 `loginctl enable-linger` 가 켜져 있어야 의미가 있다 —
     # 안 켜져 있으면 로그아웃 시 학습이 함께 죽는다(이 프로젝트가 이미 겪었다).
-    train_runner: str = "local"
+    # ⚠ 학습만이 아니다. 정책 서버처럼 **오래 도는 보조 프로세스**도 같이 따른다 —
+    # 하나는 유닛이고 하나는 자식이면 재시작 동작이 갈려서 더 헷갈린다.
+    process_runner: str = "local"
 
     # 버스 (Redis) — ZMQ 소켓 3개(5555 파라미터 / 5556 프리뷰 / 5557 녹화제어)를
     # 대체한다 (refactor/daemon-split.md 3단계). 주소가 3개에서 1개로 줄었다.

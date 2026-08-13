@@ -35,7 +35,7 @@ def _default_runner() -> "TrainRunner":
     """
     from app.core.config import settings
 
-    if settings.train_runner != "systemd":
+    if settings.process_runner != "systemd":
         return LocalRunner()
 
     from app.services.training.runners.systemd import SystemdRunner, available
