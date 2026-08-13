@@ -1,9 +1,0 @@
-pyproject.toml
-piper_bus/__init__.py
-piper_bus/client.py
-piper_bus/contract.py
-piper_bus.egg-info/PKG-INFO
-piper_bus.egg-info/SOURCES.txt
-piper_bus.egg-info/dependency_links.txt
-piper_bus.egg-info/requires.txt
-piper_bus.egg-info/top_level.txt
