@@ -6,7 +6,7 @@
 | 기능 | 요지 | 구조 개편과의 관계 | 문서 |
 |---|---|---|---|
 | 작업 단계 라벨 | `observation.state`에 페이즈 슬롯 추가 + 자동 라벨러 + 편집 UI | 거의 안 겹침 → **지금 착수 가능** | [01-phase-annotation.md](01-phase-annotation.md) |
-| 카메라 프로파일 | 노출·WB 등을 이름 붙인 프로파일로 저장, 실행 전 자동 재적용 | 구조 개편이 **절반을 삭제한다** → **뒤로** | [camera-profiles.md](camera-profiles.md) |
+| 카메라 프로파일 | 노출·WB 등을 이름 붙인 프로파일로 저장, **연결 시** 자동 적용 | ☑ 개편이 **원인 7개 중 4개를 삭제했다.** 남은 것은 컨트롤 값 저장·v4l2 안정 키·자동 모드 순서 셋 → **지금 착수 가능** | [camera-profiles.md](camera-profiles.md) |
 | 클라우드 학습 | 외부 GPU에서 `lerobot-train`, 웹에서 동일하게 제어 | 0~2는 독립 리팩터, 3~4는 Redis만 필요 → **쪼개서 앞당김** | [cloud-training.md](cloud-training.md) |
 | 파라미터 프리셋 | 추론·학습 설정을 이름 붙여 저장·재사용 | 추론 부분이 **#1 단계 2(PARAM_SPEC)에 의존** | [parameter-presets.md](parameter-presets.md) |
 | 데모 시나리오 격차 | [데모 시나리오](../PiPER_AI_데모_시나리오_정리.md) 수행에 필요한 공통 격차 4개(뎁스 경로·에피소드 루프·센서 입력·양팔 수집) 분석 | camerad 없이 가능한 지름길과 미룰 것을 구분 | [demo-scenario-gaps.md](demo-scenario-gaps.md) |
@@ -16,9 +16,10 @@
 
 ## 왜 순서가 중요한가 (요약)
 
-- **camera-profiles**의 핵심 트리거 지점인 `_release_all_cameras()`를
-  [camera-transport](../refactor/camera-transport.md)가 **통째로 삭제한다.**
-  먼저 하면 삭제될 코드 위에 기능을 짓는 셈이다.
+- **camera-profiles** ☑ — 핵심 트리거 지점이던 `_release_all_cameras()`를
+  [camera-transport](../refactor/camera-transport.md)가 **통째로 삭제했다.**
+  뒤로 미룬 판단이 맞았다: 트리거 6개 배선과 해상도 전달 작업이 그대로 증발했고,
+  적용 지점은 데몬 `connect()` 한 곳으로 모였다.
 - **cloud-training** 0~2단계가 `TrainRunner` **이음매를 만들고**,
   [daemon-split](../refactor/daemon-split.md) 6단계는 거기에 `SystemdRunner`를 하나 더 붙이는 일이다.
   동시가 아니라 **순차**라서 0~2를 앞당길 수 있다.

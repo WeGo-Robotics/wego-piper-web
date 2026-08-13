@@ -108,7 +108,7 @@ HF 저장소가 git + LFS인 건 맞지만 **클라이언트가 git으로 말하
 
 | 기능 | 구조 개편과의 관계 | 결론 |
 |---|---|---|
-| [camera-profiles](feature/camera-profiles.md) | 구조 개편이 **이 기능의 절반을 삭제한다** | **뒤로** |
+| [camera-profiles](feature/camera-profiles.md) | 구조 개편이 **이 기능의 절반을 삭제한다** | **뒤로** → ☑ 실제로 삭제됨. 이제 착수 가능 |
 | [cloud-training](feature/cloud-training.md) | 0~2는 **독립 리팩터**, 3~4는 Redis 이후 | **쪼개서 앞당김** |
 | [phase-annotation](feature/01-phase-annotation.md) 1~3 | 거의 **안 겹친다** | **지금** |
 | [parameter-presets](feature/parameter-presets.md) | 학습은 독립 · 추론은 **#1 단계 2에 의존** | **쪼갬** |
@@ -131,7 +131,12 @@ camera-profiles는 트리거 4·5·6단계를 **이 함수 직후**에 배선한
 | (6) 해제 후 다시 맞춰주는 단계가 없다 | **해제를 안 하므로 소멸** |
 | RealSense 실행 중 컨트롤 접근 금지 | camerad만 접근 → 경합 자체가 없음 |
 | 트리거 6개 배선 | camerad 기동 시 1회 |
-| (1)(2)(4)(5)(7) 저장·매칭·적용 순서 | **남는다** — 다만 camerad 안의 코드로 |
+| (4)(5) 해상도·FPS가 장치에 안 간다 | ☑ **해결됨** — `prepare_cameras(w,h,fps)` → 데몬 `connect()` → `resolve()` |
+| (1)(2)(7) 저장·매칭·적용 순서 | **남는다** — 다만 camerad 안의 코드로 |
+
+**실제로 그렇게 됐다.** 위는 예측이었고, 3b-4/3b-5 이후 확인한 결과가 같다 —
+7개 중 4개(4·5·6 + 트리거 배선)가 사라졌다. 상세는
+[feature/camera-profiles.md](feature/camera-profiles.md) 머리의 상태표.
 
 ### `_build_cameras_json` — 3중 충돌
 
@@ -168,7 +173,7 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 
 | 금지 | 이유 |
 |---|---|
-| camera-profiles 트리거 배선 **before** camera-transport | 삭제될 코드 위에 짓는다 |
+| ~~camera-profiles 트리거 배선 **before** camera-transport~~ | ☑ 지켜짐 — 트리거는 배선하지 않았고, camera-transport가 그 자리를 없앴다 |
 | cloud-training 3 **before** #12 · Redis | WS 문자열이 늘고, `jobs.json`을 다시 옮긴다 |
 | phase-annotation 굽기(6) **before** #8 | "7"이 박힌 자리가 늘어난다 |
 | robot-transport **before** #9 | 새 타입 추가에 5곳 수정 |
@@ -238,7 +243,7 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 | 기능 | 상태 |
 |---|---|
 | ~~parameter-presets 4~5~~ | ☑ 완료 — 추론 프리셋 + 프리셋별 성공률 |
-| **camera-profiles** | camerad 위에서. 트리거 배선(4단계)이 통째로 빠지고 나머지도 한 프로세스 안에 모인다. **프리셋 스토어 공유** |
+| **camera-profiles** | ☑ 전제 충족 — 트리거 배선(4단계)·해상도 전달이 통째로 빠졌다. 남은 것은 **컨트롤 값 저장(`presets` domain=camera) · v4l2 안정 키 · 자동 모드 순서** 셋, 적용은 데몬 `connect()` 한 곳 |
 | **phase-annotation 4~8** | UI · 굽기 · 추론 경로 |
 | **cloud-training 5~12** | 데이터 전송 · 체크포인트 회수 · 비용 가드 · 유료 프로바이더 |
 | **[robotd-safety](refactor/robotd-safety.md)** | **별도 트랙.** URDF 확보라는 독립 선결 조건. robotd(3b-5)가 서면 언제든 |

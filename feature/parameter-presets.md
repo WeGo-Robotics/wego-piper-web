@@ -219,4 +219,6 @@ class Preset:
 
 ## 상태
 
-◐ 1~5단계 완료 — 6(카메라 프로파일 흡수)만 남음 (camera-profiles 착수 시)
+◐ 1~5단계 완료 — 6(카메라 프로파일 흡수)만 남음.
+[camera-profiles](camera-profiles.md)가 데몬 분리로 범위가 줄어 **착수 가능해졌고**,
+그 문서도 저장층을 이 스토어(`domain="camera"`, `scope="device"`)로 확정했다.
