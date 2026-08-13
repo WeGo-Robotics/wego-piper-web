@@ -262,8 +262,15 @@ class _RSDevice:
                         for s, p in wanted.items())
                 and self._segments_alive(streams)):
             return True
-        # 재구성 필요 → 기존 정지 후 재시작
-        self._stop_pipeline()
+        # 재구성 필요 → 기존 정지 후 재시작.
+        # ⚠ **세그먼트는 남긴다.** 이건 장치를 놓는 게 아니라 잠깐 접었다 펴는 것이다.
+        # 지우면 두 가지가 깨진다:
+        #   1. 아직 쓰고 있는 소비자가 그 순간 `SegmentError` 로 죽는다
+        #   2. 이어지는 `pipeline.start` 가 실패하면(카메라 2대가 USB 대역폭을
+        #      나눠 쓸 때 실제로 일어난다) 세그먼트가 **지워진 채로 남는다** —
+        #      D435 가 이렇게 조용히 사라졌다.
+        # 진짜로 놓을 때(`disconnect_stream` 이 refcount 0 을 보고 부를 때)만 지운다.
+        self._stop_pipeline(unlink_segments=False)
         pipeline = rs.pipeline()
         cfg = self._build_config(streams)
         try:

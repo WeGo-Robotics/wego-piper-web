@@ -543,3 +543,42 @@ def test_container_privileges_and_transport_stay_in_sync():
     # 세그먼트를 호스트 데몬과 공유하지 못하면 shm 전송 자체가 성립하지 않는다
     if shm_cams or shm_robot:
         assert "ipc: host" in backend, "ipc: host 없이는 /dev/shm 이 컨테이너마다 격리된다"
+
+
+def test_reconfiguring_a_pipeline_keeps_the_segments():
+    """**회귀** — 스캔이 살아 있는 카메라의 세그먼트를 지웠다.
+
+    스캔은 스트림마다 probe 를 부른다. `color` 가 연결된 상태에서 `depth` 를
+    probe 하면 스트림 집합이 바뀌어 파이프라인을 접는데, 그때 살아 있던 color
+    세그먼트까지 지웠다. 이어지는 `pipeline.start` 가 실패하면(카메라 2대가 USB
+    대역폭을 나눠 쓸 때 일어난다) **지워진 채로 남는다** — D435 가 이렇게 사라졌다.
+
+    잠깐 접었다 펴는 것과 장치를 놓는 것은 다르다. 놓을 때만 지워야 한다.
+    """
+    import ast
+    import importlib.util
+    from pathlib import Path
+
+    pytest.importorskip("piper_rs")
+    src = Path(importlib.util.find_spec("piper_rs.hub").origin).read_text()
+    tree = ast.parse(src)
+
+    def stop_calls(fn_name):
+        fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef) and n.name == fn_name)
+        return [n for n in ast.walk(fn) if isinstance(n, ast.Call)
+                and ast.unparse(n.func).endswith("_stop_pipeline")]
+
+    # 재구성 — 세그먼트를 남겨야 한다
+    for call in stop_calls("_ensure_streams"):
+        kw = {k.arg: ast.unparse(k.value) for k in call.keywords}
+        assert kw.get("unlink_segments") == "False", (
+            "재구성이 세그먼트를 지운다 — 소비자가 그 순간 죽고, "
+            "start 가 실패하면 지워진 채로 남는다"
+        )
+
+    # 진짜로 놓는 자리 — 여기서는 지워야 한다 (안 지우면 /dev/shm 누수)
+    for fn in ("disconnect_stream", "force_release"):
+        calls = stop_calls(fn)
+        assert calls, f"{fn} 이 파이프라인을 안 멈춘다"
+        assert any(not c.keywords for c in calls), f"{fn} 이 세그먼트를 안 치운다"
