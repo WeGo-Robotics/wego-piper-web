@@ -114,6 +114,18 @@ class Settings(BaseSettings):
     # 기본값이 "direct" 인 이유는 카메라와 같다: **실기로 제어 지연을 비교한 뒤에 바꾼다.**
     robot_transport: str = "direct"
 
+    # 학습 러너 (ROADMAP 3b-6).
+    #
+    #   "local"   — subprocess 를 게이트웨이 자식으로 띄운다 (지금까지의 방식).
+    #               게이트웨이가 죽으면 학습은 계속 도는데 **화면에서 사라진다.**
+    #   "systemd" — 사용자 유닛으로 띄운다. 재시작해도 살아있고 journald 로
+    #               로그까지 이어 읽는다.
+    #
+    # 기본값이 "local" 인 이유는 카메라·로봇 전송과 같다: **실기로 확인한 뒤 바꾼다.**
+    # ⚠ `systemd` 는 `loginctl enable-linger` 가 켜져 있어야 의미가 있다 —
+    # 안 켜져 있으면 로그아웃 시 학습이 함께 죽는다(이 프로젝트가 이미 겪었다).
+    train_runner: str = "local"
+
     # 버스 (Redis) — ZMQ 소켓 3개(5555 파라미터 / 5556 프리뷰 / 5557 녹화제어)를
     # 대체한다 (refactor/daemon-split.md 3단계). 주소가 3개에서 1개로 줄었다.
     # 비워두면 `piper_bus` 기본값(`PIPER_REDIS_URL` 또는 localhost:6379/0)을 쓴다.

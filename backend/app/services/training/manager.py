@@ -21,9 +21,31 @@ from app.services.training.jobs import (
 from app.services.training.metrics import MetricsTracker
 from app.services.training.runners.base import TrainRunner
 from app.services.training.runners.local import LocalRunner
+
 from app.services.training.spec import TrainJobSpec
 
 logger = logging.getLogger(__name__)
+
+
+def _default_runner() -> "TrainRunner":
+    """설정이 고른 러너. **못 쓰면 조용히 떨어지지 않고 말한다.**
+
+    조용히 `LocalRunner` 로 폴백하면 "재시작해도 학습이 살아있다"고 믿는데
+    실제로는 아닌 상태가 된다 — 그게 가장 나쁜 결과다.
+    """
+    from app.core.config import settings
+
+    if settings.train_runner != "systemd":
+        return LocalRunner()
+
+    from app.services.training.runners.systemd import SystemdRunner, available
+
+    ok, why = available()
+    if not ok:
+        logger.warning("systemd 러너를 쓸 수 없어 local 로 돕니다 — %s "
+                       "(재시작하면 학습이 화면에서 사라집니다)", why)
+        return LocalRunner()
+    return SystemdRunner()
 
 
 class TrainManager:
@@ -33,7 +55,7 @@ class TrainManager:
         job_id: str = LOCAL_JOB_ID,
         registry: JobRegistry | None = None,
     ) -> None:
-        self.runner: TrainRunner = runner or LocalRunner()
+        self.runner: TrainRunner = runner or _default_runner()
         self.tracker = MetricsTracker()
         self.output_dir: str = ""
         # 로컬도 job_id 를 갖는다 — 원격이 붙어도 같은 경로를 타게 하려는 것이다
