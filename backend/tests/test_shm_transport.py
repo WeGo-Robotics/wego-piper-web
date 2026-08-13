@@ -582,3 +582,27 @@ def test_reconfiguring_a_pipeline_keeps_the_segments():
         calls = stop_calls(fn)
         assert calls, f"{fn} 이 파이프라인을 안 멈춘다"
         assert any(not c.keywords for c in calls), f"{fn} 이 세그먼트를 안 치운다"
+
+
+def test_container_networking_is_self_consistent():
+    """`network_mode: host` 를 뺐으면 **그 자리에 있던 두 이유**가 해결돼 있어야 한다.
+
+    호스트 네트워크는 세 가지를 동시에 해주고 있었다: raw CAN, Redis 를 127.0.0.1
+    로 보는 것, nginx→backend 도달. CAN 은 shm 프록시로 사라졌지만 나머지 둘은
+    각각 처리해야 한다 — 안 하면 컨테이너가 뜨고도 버스에 못 붙거나 502 가 난다.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    compose = (root / "docker-compose.yml").read_text()
+    nginx = (root / "frontend" / "nginx.conf").read_text()
+
+    if "network_mode: host" in compose:
+        return  # 되돌린 상태 — 그때는 127.0.0.1 이 맞다
+
+    assert "unix://" in compose, "Redis 를 유닉스 소켓으로 보지 않는다"
+    assert "/run/redis:/run/redis" in compose, "Redis 소켓을 마운트하지 않는다"
+    assert "server backend:8000" in nginx, (
+        "nginx 가 아직 127.0.0.1 을 본다 — 브리지에서는 서비스 이름으로 가야 한다"
+    )
+    assert "networks:" in compose and "driver: bridge" in compose

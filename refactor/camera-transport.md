@@ -286,7 +286,9 @@ piper.cam.wrist_depth    ← 컬러라이즈드  (h, w, 3) uint8
    Dockerfile 에 계약 패키지(bus·shm·robot·phase)와 shm 플러그인 둘을 넣었다.
    ⚠ **권한 제거와 `PIPER_*_TRANSPORT=shm` 은 한 묶음이다** — 하나만 바꾸면
    컨테이너가 장치를 열려다 죽는다 (테스트가 강제한다).
-   `network_mode: host` 는 남았다: CAN 이 아니라 **Redis·nginx** 때문이다
+   `network_mode: host` 도 뺐다 — Redis 는 호스트 유닉스 소켓 마운트로,
+   nginx 는 브리지의 서비스 이름(`backend:8000`)으로 해결했다.
+   **남은 것은 GPU + `ipc: host` 뿐이다** (문서 "얻는 것" #2 의 목표 상태)
 
 2단계가 핵심이다 — **데몬을 쪼개기 전에 전송이 되는지부터 확인한다.**
 
