@@ -517,3 +517,29 @@ def test_publish_frame_recreates_an_orphaned_segment():
     finally:
         P.stop(cam_id)
         pass
+
+
+def test_container_privileges_and_transport_stay_in_sync():
+    """**둘 중 하나만 바꾸면 조용히 안 되는 조합이 된다.**
+
+    컨테이너에서 `privileged`/`/dev` 를 뺀 근거는 "이 프로세스가 장치를 안 연다"이고,
+    그건 두 전송이 `shm` 일 때만 참이다. `direct` 로 되돌리면 장치를 열려다
+    권한이 없어 죽는데, 원인이 compose 파일에 있어 찾기 어렵다.
+    """
+    from pathlib import Path
+
+    compose = (Path(__file__).resolve().parents[2] / "docker-compose.yml").read_text()
+    backend = compose.split("frontend:")[0]
+
+    privileged = "privileged: true" in backend
+    devices = "- /dev:/dev" in backend
+    shm_cams = "PIPER_CAMERA_TRANSPORT=shm" in backend
+    shm_robot = "PIPER_ROBOT_TRANSPORT=shm" in backend
+
+    assert not (privileged or devices) == (shm_cams and shm_robot), (
+        f"권한(privileged={privileged}, /dev={devices})과 "
+        f"전송(camera={shm_cams}, robot={shm_robot})이 어긋난다"
+    )
+    # 세그먼트를 호스트 데몬과 공유하지 못하면 shm 전송 자체가 성립하지 않는다
+    if shm_cams or shm_robot:
+        assert "ipc: host" in backend, "ipc: host 없이는 /dev/shm 이 컨테이너마다 격리된다"

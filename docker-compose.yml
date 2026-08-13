@@ -6,6 +6,9 @@
 #   - CAN 인터페이스(can_follower1 등) 호스트에서 구성/기동
 #   - v4l2loopback 커널 모듈 호스트에 로드 (커널 모듈은 컨테이너에서 삽입 불가)
 #   - RealSense udev 규칙(backend/udev/99-realsense-libusb.rules)을 호스트 /etc/udev/rules.d/ 에 설치
+#   - **하드웨어 데몬을 호스트에서 기동** (deploy/systemd/piper-{estopd,rsd,camerad,robotd}.service)
+#     이 컨테이너는 장치를 전혀 열지 않는다 — 카메라는 `/dev/shm` 세그먼트로,
+#     로봇은 프록시 드라이버로 데몬을 거친다. 데몬이 안 뜨면 카메라도 팔도 안 보인다.
 #   - 데이터 루트 생성:  sudo mkdir -p /srv/piper-data
 #     (경로 변경은 PIPER_DATA_ROOT 로. 컨테이너는 항상 /data 로 본다)
 #
@@ -19,20 +22,31 @@ services:
       dockerfile: backend/Dockerfile
     image: piper-web-backend
     container_name: piper-web-backend
-    # CAN 넷디바이스 접근 + ZMQ localhost + nginx→backend 도달을 위해 호스트 네트워크
+    # ⚠ **CAN 때문이 아니다.** 로봇이 shm 프록시로 바뀌어 raw CAN 은 더 이상 안 쓴다.
+    # 남은 이유는 둘: Redis 를 127.0.0.1 로 보는 것, nginx→backend 도달.
+    # 유닉스 소켓 마운트 + 브리지 네트워크로 옮기면 이것도 뺄 수 있다 (남은 정리).
     network_mode: host
-    # 하드웨어: raw CAN 소켓, /dev/video*, RealSense libusb, USB 리바인딩 복구(/sys 쓰기) 모두 필요
-    privileged: true
+    # 세그먼트를 호스트 데몬과 공유한다 — 이게 없으면 카메라·로봇 프레임이 안 보인다.
+    # `/dev/shm` 은 기본적으로 컨테이너마다 격리되기 때문이다.
+    ipc: host
+    # ⚠ `privileged` 와 `/dev` 마운트를 **뺐다.** 이 컨테이너는 장치를 안 연다:
+    # 카메라는 rsd/camerad 가, CAN 은 robotd 가 호스트에서 독점하고 여기로는
+    # shm 세그먼트만 온다 (refactor/camera-transport.md · robot-transport.md).
+    # 되돌려야 한다면 그건 무언가가 아직 장치를 직접 열고 있다는 뜻이다 — 그걸 찾아라.
     volumes:
-      - /dev:/dev                                             # 카메라/USB 장치 노드 (핫플러그 포함)
-      - /run/udev:/run/udev:ro                                # libusb/RealSense udev 조회
-      - /lib/modules:/lib/modules:ro                          # modprobe gs_usb (USB-CAN 어댑터 드라이버)
       # 데이터는 이 하나로 끝. 내부 레이아웃(/data/hf, outputs, logs, config)과
       # 각 PIPER_* 경로는 backend/Dockerfile 의 "데이터 경로 계약" ENV 에 정의돼 있다.
       # 호스트 절대경로가 컨테이너로 새어 들어가지 않도록 호스트의 ~/.cache/huggingface
       # 나 ~/.config/piper-web 은 일부러 마운트하지 않는다 (환경별 경로 오염 방지).
       - ${PIPER_DATA_ROOT:-/srv/piper-data}:/data
     environment:
+      # ⚠ **권한을 뺀 것과 한 묶음이다.** `direct` 로 두면 컨테이너가 장치를 직접
+      # 열려다 죽는다 — 열 권한이 없기 때문이다. 되돌리려면 위의 privileged/dev 도
+      # 같이 되돌려야 한다. 둘 중 하나만 바꾸면 조용히 안 되는 조합이 된다.
+      - PIPER_CAMERA_TRANSPORT=shm
+      - PIPER_ROBOT_TRANSPORT=shm
+      # 호스트 데몬(rsd/camerad/robotd/estopd)과 같은 버스를 봐야 한다
+      - PIPER_REDIS_URL=redis://127.0.0.1:6379/0
       - PIPER_LOCAL_PYTHON=/opt/venv/bin/python
       - PIPER_GRPC_PYTHON=/opt/venv/bin/python
       - NVIDIA_VISIBLE_DEVICES=all

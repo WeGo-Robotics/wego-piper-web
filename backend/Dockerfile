@@ -56,10 +56,26 @@ RUN pip install "lerobot[smolvla]==0.5.0" "transformers==5.3.0" \
 # ── Piper 하드웨어 스택 ──
 RUN pip install piper_sdk==0.6.1 python-can==4.6.1
 
+# ── 버스·shm 계약 패키지 ──
+# 게이트웨이와 데몬이 **공유하는 계약**이다. 데몬 자체(rsd/camerad/robotd)는
+# 호스트 systemd 로 뜨지만, 이 컨테이너 안의 LeRobot 프로세스가 같은 포맷으로
+# 세그먼트를 읽고 같은 큐로 말해야 하므로 계약 패키지는 여기에도 들어간다.
+COPY bus/ /tmp/pkg/bus/
+COPY shm/ /tmp/pkg/shm/
+COPY robot/ /tmp/pkg/robot/
+COPY phase/ /tmp/pkg/phase/
+RUN pip install --no-deps /tmp/pkg/bus /tmp/pkg/shm /tmp/pkg/robot /tmp/pkg/phase \
+    && pip install redis \
+    && rm -rf /tmp/pkg
+
 # ── 내부 패키지 (vendor/) : 이미 설치된 의존성 재해석 방지로 --no-deps ──
+# ⚠ **shm 플러그인 둘이 빠지면 `type: "shm"` 카메라·`piper_follower_shm` 로봇이
+# 등록되지 않아** draccus 가 "unrecognized robot.type" 으로 죽는다.
 COPY vendor/ /tmp/vendor/
 RUN pip install --no-deps /tmp/vendor/wego_piper \
     && pip install --no-deps /tmp/vendor/lerobot_robot_piper \
+    && pip install --no-deps /tmp/vendor/lerobot_camera_pipershm \
+    && pip install --no-deps /tmp/vendor/lerobot_robot_pipershm \
     && rm -rf /tmp/vendor
 
 # ── 앱 소스: cli_mapping 의 parents[3] 상대경로(/app/backend ↔ /app/wrapper) 유지 ──
