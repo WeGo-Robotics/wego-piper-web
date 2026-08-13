@@ -139,6 +139,34 @@ class _RSDevice:
 
     # ── 파이프라인 구성 ──
 
+    def _can_widen(self) -> bool:
+        """스캔 최적화(전 스트림 한 번에 켜기)를 써도 되는가.
+
+        USB 2.0 이면 안 된다 — 대역폭이 모자라 실패하고, 그 실패가 장치를 물린다.
+        이미 누가 스트림을 쥐고 있어도 안 된다 — 그 스트림을 굶길 수 있다.
+        """
+        if any(c > 0 for c in self._refcount.values()):
+            return False
+        return self.usb_speed_mbps() >= 5000
+
+    def usb_speed_mbps(self) -> int:
+        """USB 링크 속도(Mbps). 못 읽으면 **넉넉한 쪽으로 가정하지 않는다**(0 을 준다) —
+        모르는 채로 대역폭을 밀어붙이면 장치가 물린다.
+
+        ⚠ 시리얼로 찾지 않는다. RealSense 는 sysfs 에 `serial` 파일을 노출하지 않아
+        늘 못 찾았다(그래서 로그가 "0 Mbps" 라고 거짓말했다).
+        librealsense 가 준 `physical_port` 에서 뽑아둔 `usb_port`(`3-11.1`)로 찾는다.
+        """
+        from pathlib import Path
+
+        node = (self.usb_port or "").split(":")[0]
+        if not node:
+            return 0
+        try:
+            return int(float(Path(f"/sys/bus/usb/devices/{node}/speed").read_text().strip()))
+        except Exception:
+            return 0
+
     def is_d405(self) -> bool:
         return "405" in (self.model or "")
 
@@ -462,10 +490,35 @@ class _RSDevice:
                     sub.close()
         with self.op_guard():
             temporary = self._pipeline is None or stream not in self._active
-            # ⚠ **장치의 모든 스트림을 한 번에 켠다.** 스캔은 스트림마다 probe 를 부르는데,
+            # **장치의 모든 스트림을 한 번에 켠다.** 스캔은 스트림마다 probe 를 부르는데,
             # 하나씩 켜면 파이프라인 재시작과 안정화 대기가 스트림 수만큼 곱해진다
             # (실측 6스트림 17초). 어차피 같은 USB 장치라 함께 켜는 게 싸다.
-            want = self._active | self.available if temporary else self._active | {stream}
+            #
+            # ⚠ **단, 대역폭이 남을 때만이다.** 실측: D435/D405 가 USB 2.0(480Mbps)
+            # 허브 하나를 나눠 쓰는 구성에서, color 가 이미 돌 때 depth+IR 을 더
+            # 켜면 depth 가 프레임을 못 내고(`No frame`) **그 실패가 장치를 물려
+            # color 가 15fps → 0.3fps 로 주저앉는다.** 파이프라인을 되돌려도 안 돌아온다.
+            # 그래서 USB2 이거나 이미 쓰는 스트림이 있으면 요청한 것만 켠다.
+            # ⚠ **USB 2.0 에서는 쓰는 중인 스트림에 다른 스트림을 더하지 않는다.**
+            # 실측: D435 가 color 를 돌리는 중에 depth 를 켜면 depth 는 프레임을 못
+            # 내고(`No frame`), **그 실패가 장치를 물려 color 가 15fps → 0.3fps 로
+            # 주저앉는다.** 파이프라인을 되돌려도, 스트림을 하나만 더해도 마찬가지다.
+            # 즉 USB2 대역폭에서 둘은 공존할 수 없다 — 시도 자체가 손해다.
+            #
+            # 썸네일 한 장 얻자고 돌아가는 카메라를 죽이지 않는다. 조용히 실패하지도
+            # 않는다: 사유를 돌려줘 사용자가 USB3 로 옮길 판단을 할 수 있게 한다.
+            held = {s for s, c in self._refcount.items() if c > 0}
+            if held and stream not in held and self.usb_speed_mbps() < 5000:
+                speed = self.usb_speed_mbps()
+                logger.warning(
+                    "%s/%s probe 생략: USB %s 에서 %s 와 공존할 수 없다 "
+                    "(USB 3 포트로 옮기면 해결된다)",
+                    self.serial, stream,
+                    f"{speed} Mbps" if speed else "속도 미상",
+                    sorted(held),
+                )
+                return False
+            want = self._active | self.available if self._can_widen() else self._active | {stream}
             if not self._ensure_streams(want):
                 return False
             deadline = time.time() + timeout
