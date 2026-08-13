@@ -3,7 +3,10 @@ import { JOINT_NAMES, JOINT_RANGE } from '../config/joints'
 
 export type TelemetryData = {
   step: number
+  /** 실제 제어 주기 (슬립 포함) — 팔이 이 속도로 움직인다. */
   fps: number
+  /** 한 스텝 처리 시간(ms, 슬립 제외) — 목표 주기 대비 여유. 카메라 대기가 여기 들어간다. */
+  step_ms?: number
   inference_ms: number
   joints: number[]
   action: number[]
@@ -74,10 +77,23 @@ export default function TelemetryPanel({ data, targetFps, cameraNames }: Props) 
     <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-4">
       {/* 상단: FPS + 지연 + GPU */}
       <div className="flex items-center gap-4 flex-wrap">
-        <div className="text-center">
+        <div className="text-center" title="실제 제어 주기 — 팔이 이 속도로 움직입니다">
           <div className="text-2xl font-bold text-blue-400">{data.fps}</div>
           <div className="text-[10px] text-neutral-400">FPS</div>
         </div>
+        {data.step_ms !== undefined && (
+          <div
+            className="text-center"
+            title={`한 스텝 처리에 쓴 시간입니다 (목표 주기 ${Math.round(1000 / targetFps)}ms). `
+              + '카메라 대기가 여기 포함됩니다 — 목표에 가까워지면 여유가 없다는 뜻입니다.'}
+          >
+            <div className={`text-2xl font-bold ${
+              data.step_ms > 1000 / targetFps ? 'text-red-400'
+                : data.step_ms > 700 / targetFps ? 'text-amber-400' : 'text-neutral-300'
+            }`}>{data.step_ms}<span className="text-sm font-normal">ms</span></div>
+            <div className="text-[10px] text-neutral-400">처리 시간</div>
+          </div>
+        )}
         <div className="flex-1 space-y-1">
           <div className="flex justify-between text-[10px] text-neutral-400">
             <span>FPS ({data.fps}/{targetFps})</span>

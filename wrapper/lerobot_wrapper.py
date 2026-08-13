@@ -373,7 +373,9 @@ def main() -> None:
 
     target_dt = 1.0 / args.fps
     step = 0
-    _fps_history: list[float] = []
+    _fps_history: list[float] = []       # 스텝 처리 시간 (슬립 제외)
+    _loop_history: list[float] = []      # 스텝 시작 간격 = 실제 제어 주기
+    _loop_prev: list[float | None] = [None]
     _action_filter.fps = args.fps
 
     # 토크나이저 + 인코딩 캐시 (매 스텝 재호출 방지)
@@ -699,17 +701,36 @@ def main() -> None:
 
             step += 1
             elapsed = time.monotonic() - start_time
-            # FPS: 최근 20스텝 이동평균
+            # ⚠ **두 값은 다른 것을 잰다. 섞으면 오해한다.**
+            #
+            #   step_ms  — 한 스텝 **처리**에 쓴 시간(슬립 제외). 목표 주기 대비
+            #              얼마나 여유가 있는지. 카메라 대기가 여기 들어간다.
+            #   loop_fps — 슬립까지 포함한 **실제 제어 주기**. 팔이 실제로 이 속도로
+            #              움직인다. 목표에 못 미치면 그때가 진짜 경고다.
+            #
+            # 예전에는 처리 시간의 역수를 `fps` 라고 불러서, 카메라를 USB 3 으로
+            # 옮겨 대기가 사라지자 1000 이 떴다 — 루프는 그대로 20Hz 인데.
             _fps_history.append(elapsed)
             if len(_fps_history) > 20:
                 _fps_history.pop(0)
-            current_fps = round(len(_fps_history) / max(sum(_fps_history), 1e-6), 1)
+            step_ms = round(1000 * sum(_fps_history) / len(_fps_history), 1)
+
+            now = time.monotonic()
+            if _loop_prev[0] is not None:
+                _loop_history.append(now - _loop_prev[0])
+                if len(_loop_history) > 20:
+                    _loop_history.pop(0)
+            _loop_prev[0] = now
+            current_fps = round(
+                len(_loop_history) / max(sum(_loop_history), 1e-6), 1
+            ) if _loop_history else 0.0
 
             # 텔레메트리
             telemetry = {
                 "t": "telemetry",
                 "step": step,
-                "fps": current_fps,
+                "fps": current_fps,          # 실제 제어 주기 (슬립 포함)
+                "step_ms": step_ms,          # 한 스텝 처리 시간 — 목표 대비 여유
                 "inference_ms": _inference_ms_shared,
                 "joints": [round(v, 2) for v in state_values],
                 "action": [round(float(action_np[i]), 2) for i in range(len(action_np))] if action_np is not None else [],
