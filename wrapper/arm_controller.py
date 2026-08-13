@@ -65,8 +65,13 @@ class ArmController:
         }
         일부 필드 읽기 실패는 무시한다(best-effort).
         """
-        piper = self.bus.piper
+        # ⚠ shm 프록시 버스에는 SDK 핸들이 없다 — CAN 은 robotd 가 쥔다.
+        # 원래 best-effort 진단이므로 없으면 빈 결과로 넘어간다.
+        # 이게 없으면 파킹이 `AttributeError` 로 죽는다(실제로 겪었다).
+        piper = getattr(self.bus, "piper", None)
         diag: dict = {"err_code": 0, "err_flags": [], "motors": {}}
+        if piper is None:
+            return diag
 
         try:
             err_code = int(piper.GetArmStatus().arm_status.err_code)

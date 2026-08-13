@@ -479,10 +479,24 @@ class _RSDevice:
             if got:
                 time.sleep(self.SETTLE_S)
                 self._last_probe_at = time.time()
-            # refcount 가 0이고 임시로 켠 것이면 정지.
-            # **세그먼트는 남긴다** — 스캔 썸네일이 그 한 장이다.
-            if temporary and not any(c > 0 for c in self._refcount.values()):
-                self._stop_pipeline(unlink_segments=False)
+            # ⚠ **probe 로 켠 여분 스트림을 반드시 내린다.**
+            # 스캔은 장치의 모든 스트림을 한 번에 켜는데(그게 빠르다), 끝나고
+            # 그대로 두면 아무도 안 쓰는 depth/IR 이 USB 대역폭을 계속 먹는다.
+            # 실측: 그 상태에서 D435 color 가 15fps → **0.3fps** 로 떨어져
+            # 추론이 `200ms 안에 새 프레임이 없습니다` 로 죽었다.
+            if temporary:
+                held = {s for s, c in self._refcount.items() if c > 0}
+                if held:
+                    # ⚠ `_ensure_streams(held)` 만으로는 **안 줄어든다.**
+                    # 그 함수의 조기 반환이 `issubset` 이라 "이미 그 이상을 켜고
+                    # 있으면 그대로"가 되기 때문이다. 늘릴 때만 재구성한다.
+                    # 그래서 여기서는 명시적으로 접었다 편다 (세그먼트는 유지).
+                    self._stop_pipeline(unlink_segments=False)
+                    self._ensure_streams(held)
+                else:
+                    # 아무도 안 쥐면 통째로 정지.
+                    # **세그먼트는 남긴다** — 스캔 썸네일이 그 한 장이다.
+                    self._stop_pipeline(unlink_segments=False)
             return got
 
 

@@ -143,11 +143,21 @@ class PiperShmMotorsBus(MotorsBusBase):
         logger.debug("%s: clear_gripper 는 robotd 소관이라 건너뛴다", self)
 
     def parking(self) -> None:
-        """파킹은 robotd 의 일이다 — 완료까지 CAN 상태를 폴링해야 한다.
+        """파킹을 **robotd 에 시킨다.**
 
-        프록시가 흉내내면 "다 왔는지"를 모르는 채 명령만 반복하게 된다.
+        프록시가 흉내내면 "다 왔는지"를 모르는 채 명령만 반복하게 된다 —
+        완료 판정에 CAN 상태 폴링이 필요하고 그건 CAN 을 쥔 쪽만 할 수 있다.
+
+        실패해도 예외를 올리지 않는다: 추론 종료 경로에서 불리는데, 여기서 죽으면
+        토크 해제·정리가 통째로 건너뛰어진다.
         """
-        logger.debug("%s: parking 은 robotd 소관이라 건너뛴다", self)
+        try:
+            from piper_bus import contract as C
+            from piper_bus.client import Bus
+
+            Bus().rpc_call(C.ROBOTD, "go_parking", [self.iface], timeout=30)
+        except Exception as exc:
+            logger.warning("%s: robotd 파킹 실패 — %s", self, exc)
 
     def set_slave(self) -> None:
         logger.debug("%s: set_slave 는 robotd 소관이라 건너뛴다", self)
