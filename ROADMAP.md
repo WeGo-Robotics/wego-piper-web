@@ -15,16 +15,16 @@
 | **3b-3.5** | job 레지스트리 · WS `job_id` | ☑ (4 = SSH 러너는 원격 머신 필요) |
 | **3b-4** | shm 전송 — 카메라 · 로봇 | ☑ 실기 확인 |
 | **3b-5** | rsd · camerad · robotd | ☑ 실기 확인 |
-| **3b-6** | systemd 유닛화 | ◐ 학습·정책서버 ☑ / encoderd·xferd 남음 |
-| 3b-7 | 실행별 컨테이너 분리 | ◐ 단일 백엔드 컨테이너는 실기 확인 |
+| **3b-6** | systemd 유닛화 | ☑ 학습·정책서버·업로드·편집·페이즈 (실기 검증은 linger 필요) |
+| 3b-7 | 실행별 컨테이너 분리 + **encoderd** | ◐ 단일 백엔드 컨테이너는 실기 확인 |
 | 3b-8 | 게이트웨이 정리 | ◐ |
 | Phase 4 | 깊이맵 · camera-profiles · phase-annotation 4~8 · cloud-training 5~12 | ☐ |
 
 ### 바로 이어서 할 것
 
-1. **encoderd · xferd 를 `SystemdProcess` 로** — 정책 서버가 만든 자리를 그대로 따라간다
-   ([policy_server_manager.py](backend/app/services/policy_server_manager.py) 의 `_make_process`).
-   `encoder_probe.py` 와 `datasets.py` 의 `_upload_pm`·`_edit_pm` 이 아직 `ProcessManager()` 를 직접 만든다
+1. **systemd 경로 실기 검증** — 코드는 다 있는데 **한 번도 안 띄워봤다.** `loginctl enable-linger`
+   가 꺼져 있어 다섯 소유자가 전부 자식 프로세스로 폴백 중이다. `systemd-run` 인자·journald
+   재부착·`reset-failed` 는 실제로 돌려봐야 안다
 2. **깊이맵 인코딩** — 대역폭 제약은 USB 3 으로 풀렸다(네 스트림 15fps 동시 확인).
    남은 것은 클리핑 범위·컬러맵·무효픽셀·메타 기록 설계 ([camera-transport.md](refactor/camera-transport.md))
 3. **실기 체크리스트 B~I** — A(E-stop 일부)·G(카메라)·J(버스)만 닫혔다
@@ -222,8 +222,8 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 | **3.5** | cloud-training **3 ☑**(job 레지스트리 · WS `job_id`) / **4 대기**(SSH 러너) | 3 은 클라우드 없이도 값이 난다 — **서버 재시작에도 학습이 보인다.** 4 는 검증할 원격 머신이 필요하다 |
 | 4 | **shm 전송 계층** — 카메라 **1~5 ☑**(추론·녹화 실기 확인) · [로봇](refactor/robot-transport.md) **2~4 ☑**(실기 확인) / 5~6 남음 | 데몬 분리의 전제조건. 깊이맵은 전송 검증 후로 미룸 |
 | 5 | **rsd ☑ · camerad ☑ · robotd ☑** (버스 RPC · shm 발행 · 안전층) | **합치지 않았다** — D405 hang 이력. 게이트웨이는 이제 카메라 장치를 전혀 안 연다 |
-| 6 | ◐ **학습 러너 ☑ · 정책서버 ☑** ([systemd_process.py](backend/app/services/systemd_process.py)) / encoderd·xferd 남음 | 유닛이 소유자라 게이트웨이 재시작에도 산다. journald 로 **로그까지 이어 읽는다** |
-| 7 | ◐ infer / record 컨테이너화 — **단일 백엔드 컨테이너는 실기 확인** (하드웨어 권한·호스트 네트워크 둘 다 제거, GPU + `ipc: host` 만 남음). 실행별로 쪼개는 것은 6단계 이후 | GPU + `ipc: host`만 |
+| 6 | ☑ 학습 러너 · 정책서버 · xferd(업로드·편집·페이즈) — 선택은 [`make_process()`](backend/app/services/systemd_process.py) 한 곳 | 유닛이 소유자라 게이트웨이 재시작에도 산다. journald 로 **로그까지 이어 읽는다** |
+| 7 | ◐ infer / record / **encoderd** 컨테이너화 — **단일 백엔드 컨테이너는 실기 확인** (하드웨어 권한·호스트 네트워크 둘 다 제거, GPU + `ipc: host` 만 남음). 실행별로 쪼개는 것은 6단계 이후 | GPU + `ipc: host`만 |
 | 8 | ◐ 게이트웨이 정리 — `robot_manager` 995→248줄, `camera_manager` 685→298줄, `arm_bridge` 삭제 | `services/`에 스캐너만 남는다 |
 
 ### Phase 4 — 기능 완성

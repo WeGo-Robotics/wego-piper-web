@@ -27,6 +27,12 @@
 | 7 | `piper-train@<job>` | 학습 프로세스, GPU | 컨테이너 (GPU만) | [train_manager.py](../backend/app/services/train_manager.py) (216) |
 | 8 | `piper-policysrv` | gRPC 정책 서버, GPU | 컨테이너 (GPU만) | [policy_server_manager.py](../backend/app/services/policy_server_manager.py) (62) |
 | 9 | `piper-encoderd` | 인코더 프로브 세션(최대 8), GPU | 컨테이너 (GPU만) | [encoder_probe.py](../backend/app/services/encoder_probe.py) (281) |
+
+> ⚠ **encoderd 는 유닛으로 감싸는 일이 아니다.** 지금 프로브는 `subprocess.run` 으로
+> 블로킹 1회 실행이고 결과를 그 자리에서 읽는다. 유닛으로 바꾸면 "시작 → 완료 폴링 →
+> 산출물 읽기 → 정리"가 되는데, 몇 초짜리라 재시작 생존의 이득이 없고 복잡도만 는다.
+> 여기서 얻을 것은 **세션을 들고 있는 상시 서버**로 떼는 것이고, GPU 를 쥐므로
+> 3b-7(컨테이너화)에 붙는다 — xferd 처럼 `make_process()` 한 줄로 끝나지 않는다.
 | 10 | `piper-xferd` | Hub 업로드/다운로드, 데이터셋 편집 | 호스트 | [`_upload_pm`](../backend/app/routers/datasets.py#L21), [hub_client.py](../backend/app/services/hub_client.py) |
 
 **인프라**(상시, 호스트)
