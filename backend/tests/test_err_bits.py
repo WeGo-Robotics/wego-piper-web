@@ -16,7 +16,14 @@ Piper `err_code` 비트 → 의미 매핑이 백엔드와 wrapper 에 각각 있
 import re
 from pathlib import Path
 
-from app.services.robot_manager import ArmInfo
+import pytest
+
+pytest.importorskip("piper_robot")
+from piper_robot.arm import Arm  # noqa: E402
+
+# robotd 분리로 `_ERR_BITS` 가 게이트웨이에서 데몬으로 옮겨갔다.
+# **경계를 넘는 복붙이라는 사실은 그대로다** — wrapper 는 별도 프로세스라
+# import 로 공유할 수 없고, 어긋나면 에러 플래그가 조용히 잘못 표시된다.
 
 _REPO = Path(__file__).resolve().parents[2]
 _ARM_CONTROLLER = _REPO / "wrapper" / "arm_controller.py"
@@ -35,14 +42,14 @@ def test_err_bits_match_across_process_boundary():
     wrapper 주석이 이미 *"백엔드 robot_manager._ERR_BITS와 동일"* 이라고 적고 있다 —
     복제라는 것을 알면서 둔 상태였다.
     """
-    assert ArmInfo._ERR_BITS == _wrapper_err_bits(), (
-        "백엔드와 wrapper 의 _ERR_BITS 가 다르다 — 에러 플래그가 조용히 잘못 표시된다"
+    assert Arm._ERR_BITS == _wrapper_err_bits(), (
+        "robotd 와 wrapper 의 _ERR_BITS 가 다르다 — 에러 플래그가 조용히 잘못 표시된다"
     )
 
 
 def test_err_bits_cover_all_six_joints():
     """관절 6개 × (통신 / 각도 한계) 가 빠짐없이 있어야 한다."""
-    names = set(ArmInfo._ERR_BITS.values())
+    names = set(Arm._ERR_BITS.values())
     for i in range(1, 7):
         assert f"joint{i}_comm" in names, f"joint{i}_comm 누락"
         assert f"joint{i}_angle_limit" in names, f"joint{i}_angle_limit 누락"

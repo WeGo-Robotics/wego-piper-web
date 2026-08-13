@@ -18,27 +18,40 @@ import pytest
 
 from app.services.robot_manager import ArmInfo
 
+pytest.importorskip("piper_robot")
+from piper_robot.arm import Arm  # noqa: E402
 
-def _arm(monkeypatch, *, mode_int, rx_changes: bool) -> ArmInfo:
-    """가짜 팔 — piper SDK 없이 판별 로직만 돌린다."""
-    arm = ArmInfo(iface="can0", bus_info="1-1:1.0")
+# robotd 분리 후 판별이 **두 쪽으로 갈렸다.**
+#   - `is_master` = 팔에 물어본 **사실** → 데몬(`piper_robot.arm.Arm`)
+#   - leader/follower = 그 사실의 **해석** → 게이트웨이(`ArmInfo`)
+# 그래서 아래 헬퍼도 둘로 나뉜다. 경계가 흐려지면 같은 값이 두 프로세스에 생긴다.
+
+
+def _device_arm(monkeypatch, *, mode_int, rx_changes: bool) -> Arm:
+    """데몬 쪽 가짜 팔 — piper SDK 없이 판별 로직만 돌린다."""
+    arm = Arm(iface="can0", bus_info="1-1:1.0")
     arm._piper = object()          # connect 검사 통과용
 
-    monkeypatch.setattr(ArmInfo, "refresh_ctrl_mode", lambda self: mode_int)
+    monkeypatch.setattr(Arm, "refresh_ctrl_mode", lambda self: mode_int)
 
     # RX 가 변하면 슬레이브(피드백 송신 중), 안 변하면 마스터
     seq = iter([100, 200] if rx_changes else [100, 100])
-    monkeypatch.setattr(
-        "app.services.robot_manager._read_can_rx", lambda _iface: next(seq)
-    )
-    monkeypatch.setattr("app.services.robot_manager.time.sleep", lambda _s: None)
+    monkeypatch.setattr("piper_robot.arm._read_can_rx", lambda _iface: next(seq))
+    monkeypatch.setattr("piper_robot.arm.time.sleep", lambda _s: None)
     return arm
 
 
-def _detect(arm: ArmInfo, mode_int) -> None:
-    """`connect()` 안의 판별 부분과 같은 순서."""
-    arm._classify_master(mode_int)
-    arm.role = "leader" if arm.is_master else "follower"
+def _detect(monkeypatch, mode_int, rx_changes: bool) -> ArmInfo:
+    """데몬이 판별하고 게이트웨이가 해석하는 **실제 순서** 그대로."""
+    device = _device_arm(monkeypatch, mode_int=mode_int, rx_changes=rx_changes)
+    device._classify_master(mode_int)
+
+    gw = ArmInfo(iface="can0", bus_info="1-1:1.0")
+    gw.absorb(device.to_dict())
+    # `ArmInfo.connect()` 가 하는 해석과 같다
+    if gw.role == "unknown" and gw.is_master is not None:
+        gw.role = "leader" if gw.is_master else "follower"
+    return gw
 
 
 @pytest.mark.parametrize(
@@ -59,8 +72,7 @@ def _detect(arm: ArmInfo, mode_int) -> None:
 def test_role_follows_master_detection(
     monkeypatch, mode_int, rx_changes, expect_master, expect_role
 ):
-    arm = _arm(monkeypatch, mode_int=mode_int, rx_changes=rx_changes)
-    _detect(arm, mode_int)
+    arm = _detect(monkeypatch, mode_int, rx_changes)
     assert arm.is_master is expect_master
     assert arm.role == expect_role
     # 화면에 나가는 두 값이 서로 모순되지 않아야 한다 — 이게 사용자가 본 증상이다
@@ -71,12 +83,19 @@ def test_role_follows_master_detection(
 
 
 def test_refresh_mode_does_not_clobber_manual_role(monkeypatch):
-    """`/robots/current` 폴링이 사용자가 고른 역할을 되돌리면 안 된다."""
-    arm = _arm(monkeypatch, mode_int=0x00, rx_changes=False)   # RX 없음 → 마스터로 잡힘
-    arm.role = "follower"                                       # 사용자가 직접 지정
-    arm.refresh_mode()
-    assert arm.is_master is True          # 하드웨어 판별은 갱신되지만
-    assert arm.role == "follower"         # 사용자의 선택은 남는다
+    """`/robots/current` 폴링이 사용자가 고른 역할을 되돌리면 안 된다.
+
+    데몬이 `is_master` 를 갱신해 보내도, 게이트웨이가 `absorb()` 에서 **역할은
+    건드리지 않아야** 한다 — 그게 사실과 해석을 나눈 이유다.
+    """
+    device = _device_arm(monkeypatch, mode_int=0x00, rx_changes=False)  # RX 없음 → 마스터
+    device._classify_master(0x00)
+
+    gw = ArmInfo(iface="can0", bus_info="1-1:1.0")
+    gw.role = "follower"                  # 사용자가 직접 지정
+    gw.absorb(device.to_dict())
+    assert gw.is_master is True           # 하드웨어 판별은 갱신되지만
+    assert gw.role == "follower"          # 사용자의 선택은 남는다
 
 
 # ── 프리셋이 담는 범위 ──────────────────────────────────────────────────────
