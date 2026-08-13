@@ -158,3 +158,30 @@ def test_encoder_overlay_never_renders_at_a_mismatched_size():
     assert "setOverlays({ A: null, B: null })" in build[-600:], (
         "슬롯이 바뀌어도 옛 오버레이를 들고 있는다"
     )
+
+
+def test_every_page_renders_inside_an_error_boundary():
+    """렌더 중 예외 하나가 **앱 전체를 흰 화면으로** 만들지 않게 한다.
+
+    React 는 렌더 중 예외가 나면 트리를 통째로 버린다. 인코더 페이지의
+    `ImageData` 크기 불일치가 그렇게 나타났다 — 새로고침 전까지 아무것도 못 한다.
+
+    페이지를 만드는 지점이 세 군데였는데, 각자 감싸면 한 곳을 빠뜨리기 쉽다.
+    빠진 페이지만 여전히 흰 화면이 되고, 그건 붙였다고 믿는 만큼 더 나쁘다.
+    """
+    import re
+    from pathlib import Path
+
+    main = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "main.tsx").read_text()
+
+    # **주석을 세지 않는다** — 설명문에 같은 표현이 나온다
+    code = "\n".join(ln for ln in main.splitlines()
+                     if not ln.lstrip().startswith(("*", "/*", "//", "*/")))
+    creates = re.findall(r"createElement\(page\.component\)", code)
+    assert len(creates) == 1, f"페이지를 만드는 지점이 {len(creates)}곳이다 — 하나로 모아라"
+
+    helper = main.split("function renderPage(")[1].split("\n}")[0]
+    assert "ErrorBoundary" in helper, "renderPage 가 경계로 감싸지 않는다"
+
+    # 라우트는 전부 그 헬퍼를 거치는가
+    assert "element={createElement(" not in main, "경계를 우회하는 라우트가 있다"

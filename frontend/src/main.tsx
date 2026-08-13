@@ -2,8 +2,25 @@ import { StrictMode, Suspense, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import './index.css'
+import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/Layout'
 import { layoutPages, standalonePages } from './config/pages'
+import type { PageEntry } from './config/pages'
+
+/**
+ * 페이지를 렌더하는 **유일한 지점.**
+ *
+ * 세 군데서 각자 `createElement(page.component)` 를 하고 있었는데, 그러면
+ * 에러 경계를 붙일 때 한 곳을 빠뜨리기 쉽다 — 빠진 페이지만 여전히 흰 화면이 되고
+ * 그건 붙였다고 믿는 만큼 더 나쁘다.
+ */
+function renderPage(page: PageEntry) {
+  return (
+    <ErrorBoundary label={page.label}>
+      {createElement(page.component)}
+    </ErrorBoundary>
+  )
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -12,9 +29,9 @@ createRoot(document.getElementById('root')!).render(
         <Route element={<Layout />}>
           {layoutPages.map((page) =>
             page.path === '/' ? (
-              <Route key={page.path} index element={createElement(page.component)} />
+              <Route key={page.path} index element={renderPage(page)} />
             ) : (
-              <Route key={page.path} path={page.path.slice(1)} element={createElement(page.component)} />
+              <Route key={page.path} path={page.path.slice(1)} element={renderPage(page)} />
             )
           )}
         </Route>
@@ -31,7 +48,7 @@ createRoot(document.getElementById('root')!).render(
                   </div>
                 }
               >
-                {createElement(page.component)}
+                {renderPage(page)}
               </Suspense>
             }
           />
