@@ -1,0 +1,13 @@
+[project]
+name = "piper-robot"
+version = "0.1.0"
+description = "Piper arm CAN ownership, safety filter, shm publishing (robotd body)"
+requires-python = ">=3.11"
+dependencies = ["piper-shm", "piper-bus"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["piper_robot*"]

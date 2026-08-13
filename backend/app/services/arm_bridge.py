@@ -13,19 +13,22 @@
         └◄───────── piper.arm.<iface>.action ◄────┘
 ```
 
-## 여기에 데드맨이 없는 이유
+## 안전층은 여기 있다
 
-데드맨(소비자가 죽으면 팔을 **적극적으로** 세운다)은 4단계 robotd 의 몫이다.
-다만 지금도 **소비자가 죽으면 명령이 끊긴다** — 이 브리지는 새 레코드가 올 때만
-CAN 으로 보내므로, 마지막 명령을 반복하지 않는다. 직접 드라이버와 같은 수준이고
-그 이상은 CAN 을 영구 소유하는 프로세스에서 해야 의미가 있다.
+CAN 으로 나가는 **모든** 명령이 `piper_robot.safety.filter_goal` 을 통과한다.
+필터를 프록시 드라이버에 두면 LeRobot 경로만 보호되고 나머지 셋(웹 수동 제어,
+파킹, 텔레오퍼레이션)은 무방비다 — 그래서 CAN 을 쥔 쪽에 둔다.
+
+데드맨은 **소비자가 선언한 `deadman_ms`** 로 판정한다. 걸리면 명령을 버리고
+현재 자세를 유지한다. 토크를 끊지 않는 이유는 그게 더 위험하기 때문이다 —
+팔이 중력으로 떨어진다. 정지 = 그 자리에 서기다.
 """
 
 import logging
 import threading
 import time
 
-from app.core.joints import denormalize_all
+from piper_robot import Reason, SafetyConfig, denormalize_all, filter_goal
 from piper_shm import ActionReader, ArmSegmentError, StateWriter
 from piper_shm import arm as A
 
@@ -47,18 +50,27 @@ DIAG_PERIOD_S = 0.1
 # 0.2s 였을 때 30fps 기준 첫 4개가 통째로 날아갔다.
 ATTACH_POLL_S = 0.02
 
+# 명령이 없을 때 데드맨을 확인하는 주기. **이만큼이 정지까지의 추가 지연이다** —
+# `deadman_ms` 300 에 이 값이 더해져 최악 350ms 안에 팔이 선다.
+DEADMAN_CHECK_S = 0.05
+
 
 class ArmBridge:
     """팔 하나. 상태를 흘리고 명령을 받아 CAN 으로 보낸다."""
 
-    def __init__(self, arm) -> None:
+    def __init__(self, arm, safety: SafetyConfig | None = None) -> None:
         self.arm = arm                    # robot_manager 의 `ArmInfo`
         self.iface = arm.iface
+        self.safety = safety or SafetyConfig()
         self._state: StateWriter | None = None
         self._running = False
         self._threads: list[threading.Thread] = []
         self.sent = 0                     # 진단용 — CAN 으로 보낸 명령 수
         self.published = 0
+        self.filtered = 0                 # 안전층이 명령을 바꾼 횟수
+        self.last_reason = Reason.OK
+        self._deadman_held = False
+        self._last_logged = Reason.OK
 
     @property
     def running(self) -> bool:
@@ -138,27 +150,77 @@ class ArmBridge:
                     time.sleep(ATTACH_POLL_S)
                     continue
             try:
-                got = reader.read_new(timeout_s=0.2, poll_s=ACTION_POLL_S)
+                got = reader.read_new(timeout_s=DEADMAN_CHECK_S, poll_s=ACTION_POLL_S)
             except Exception as exc:
                 logger.warning("명령 읽기 실패 (%s): %s", self.iface, exc)
                 reader.close()
                 reader = None
                 continue
             if got is None:
-                # 세그먼트가 사라졌으면 소비자가 떠난 것이다
+                # 세그먼트가 사라졌으면 소비자가 **깨끗이** 떠난 것이다 (disconnect).
                 if not A.segment_path(A.segment_name(self.iface, A.KIND_ACTION)).exists():
                     logger.info("소비자 종료 (%s)", self.iface)
                     reader.close()
                     reader = None
+                    self._deadman_held = False
+                    continue
+                # ⚠ 세그먼트는 있는데 새 명령이 없다 = **소비자가 살아있지만 멈췄다.**
+                # hang·GIL 잠김·OOM 직전이 여기로 온다. 데드맨이 잡아야 할 경우다.
+                if reader.is_stale():
+                    self._hold(first=not self._deadman_held, deadman_ms=reader.deadman_ms)
                 continue
+            if self._deadman_held:
+                logger.info("데드맨 해제 (%s)", self.iface)
+                self._deadman_held = False
             # 목표는 **절대 위치**라 중간 것을 건너뛰어도 무해하다 — 최신이 이긴다.
             # (누적 증분이었다면 건너뛴 만큼 팔이 덜 움직였을 것이다.)
             self._send(got["values"])
         if reader is not None:
             reader.close()
 
+    def _hold(self, *, first: bool, deadman_ms: int) -> None:
+        """데드맨 — 팔을 **지금 자리에 세운다.**
+
+        ⚠ **명령을 멈추는 것과 팔을 세우는 것은 다르다.** 마지막 명령이 먼 목표였으면
+        팔은 소비자가 죽은 뒤에도 계속 그리로 간다. 현재 자세를 실제로 명령해야 선다.
+
+        토크는 끊지 않는다 — 끊으면 팔이 중력으로 떨어진다. 정지 = 그 자리에 서기다.
+        멈춰 있는 동안 계속 보내는 이유는, 한 번만 보내면 그 사이 관성으로 밀린 만큼
+        되돌아오지 않기 때문이다.
+        """
+        self._deadman_held = True
+        if first:
+            logger.warning("데드맨 (%s): %dms 동안 명령 없음 — 현재 자세로 정지",
+                           self.iface, deadman_ms)
+        # 목표는 안 넘긴다 — `_deadman_held` 라 필터가 현재 자세를 돌려준다
+        self._send({})
+
     def _send(self, values: dict[str, float]) -> None:
-        """정규화 목표 → CAN. `PiperMotorsBus.set_action` 과 **같은 순서**로 보낸다."""
+        """정규화 목표 → **안전층** → CAN.
+
+        `PiperMotorsBus.set_action` 과 같은 순서로 보내되, 그 앞에 필터가 있다.
+        여기를 통과하지 않고 CAN 으로 나가는 경로가 있으면 그게 구멍이다.
+        """
+        now = self.arm.read_joints_normalized()
+        values, reason = filter_goal(now or {}, values, self.safety,
+                                     deadman_tripped=self._deadman_held)
+        self.last_reason = reason
+        if reason is not Reason.OK:
+            self.filtered += 1
+            # 매 프레임 로그를 뱉으면 30fps 로 로그가 묻힌다 — 바뀔 때만 남긴다
+            if reason is not self._last_logged:
+                if reason is Reason.STATE_OUT_OF_RANGE:
+                    # 정책이 아니라 **캘리브레이션**을 의심해야 하는 경우다
+                    logger.warning(
+                        "현재 자세가 캘리브레이션 범위 밖입니다 (%s): %s. "
+                        "필터가 아니라 캘리브레이션을 확인하세요.",
+                        self.iface, _out_of_range(now or {}),
+                    )
+                else:
+                    logger.warning("안전층이 명령을 바꿨다 (%s): %s",
+                                   self.iface, reason.value)
+        self._last_logged = reason
+
         raw = denormalize_all(values)
         piper = getattr(self.arm, "_piper", None)
         if piper is None:
@@ -214,6 +276,13 @@ class ArmBridgeManager:
             for iface, b in self.bridges.items() if b.running
             for kind in (A.KIND_STATE, A.KIND_ACTION)
         }
+
+
+def _out_of_range(q: dict[str, float]) -> dict[str, float]:
+    """범위를 벗어난 관절만. 어느 관절이 문제인지 로그에 남긴다."""
+    from piper_robot.safety import clamp_range
+
+    return {j: round(v, 2) for j, v in q.items() if clamp_range(j, v)[1]}
 
 
 arm_bridge_manager = ArmBridgeManager()
