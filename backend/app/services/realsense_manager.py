@@ -72,6 +72,11 @@ class RealSenseHub:
         r = self._call("connect", cam_id, width, height, fps, timeout=30)
         return _pair(r, "rsd 연결 실패")
 
+    def set_depth_encoding(self, cam_id: str, near_mm: int, far_mm: int) -> tuple[bool, str]:
+        """깊이 인코딩 범위 변경. 작업 공간에 맞춰 좁힐수록 해상도가 오른다."""
+        return _pair(self._call("set_depth_encoding", cam_id, near_mm, far_mm),
+                     "인코딩 변경 실패")
+
     def info(self, cam_id: str) -> dict:
         """지금 돌고 있는 프로파일. 요청값이 아니라 **장치가 연 값**이다."""
         return self._call("info", cam_id, default={}) or {}

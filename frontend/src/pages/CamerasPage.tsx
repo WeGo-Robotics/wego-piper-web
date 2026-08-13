@@ -37,6 +37,10 @@ type CamInfo = {
   /** `label || name`. 각 화면이 따로 계산하지 않도록 백엔드가 준다. */
   display_name?: string
   connected: boolean; ready: boolean; has_preview: boolean
+  /** RealSense 스트림 종류. depth 일 때만 깊이 인코딩 설정이 뜬다. */
+  stream_type?: string
+  /** rsd 가 소유하는 깊이 인코딩 파라미터 — 데이터셋 해석의 근거다. */
+  depth_encoding?: { near_mm: number; far_mm: number; mode: string } | null
   config: { width: number | null; height: number | null; fps: number | null; color_mode: string; rotation: number; fourcc: string | null }
 }
 
@@ -56,6 +60,25 @@ export default function CamerasPage() {
   // 설정은 **모달로 띄운다.** 카드 안에서 펼치면 그리드 행 높이가 늘어나
   // 같은 줄의 다른 카드까지 함께 커진다.
   const [settingsCam, setSettingsCam] = useState<string | null>(null)
+  const [depthEnc, setDepthEnc] = useState<{ near_mm: number; far_mm: number } | null>(null)
+
+  /** 깊이 범위 변경. **한쪽만 바꿔도 다른 쪽 값을 함께 보낸다** —
+   *  백엔드는 구간을 한 벌로 검증하므로(far > near) 절반만 보내면 거부된다. */
+  const setDepthRange = async (id: string, near: number | null, far: number | null) => {
+    const cur = depthEnc ?? { near_mm: 150, far_mm: 1200 }
+    const body = { near_mm: near ?? cur.near_mm, far_mm: far ?? cur.far_mm }
+    if (body.near_mm === cur.near_mm && body.far_mm === cur.far_mm) return
+    try {
+      const r = await api.post<{ encoding: { near_mm: number; far_mm: number } }>(
+        `/cameras/${encodeURIComponent(id)}/depth-encoding`, body)
+      setDepthEnc(r.encoding)
+      bumpPreview([id])
+    } catch (e) {
+      // 거부 사유(far <= near, 녹화 중)는 백엔드가 문장으로 준다
+      alert(e instanceof Error ? e.message : '깊이 범위를 바꾸지 못했습니다')
+      setDepthEnc({ ...cur })
+    }
+  }
   // 프리뷰 캐시버스팅 타임스탬프 — 카메라별로 따로 관리해야 한 카메라 동작이
   // 다른 타일까지 새로고침시키지 않는다.
   const [previewTs, setPreviewTs] = useState<Record<string, number>>({})
@@ -97,7 +120,10 @@ export default function CamerasPage() {
 
   // 모달은 Esc 로도 닫힌다
   useEffect(() => {
-    if (!settingsCam) return
+    if (!settingsCam) { setDepthEnc(null); return }
+    // 현재 값을 먼저 채운다 — 기본값을 보여주면 사용자가 "그 값이다"라고 믿는다
+    const c = cams.find((x) => x.id === settingsCam)
+    if (c?.depth_encoding) setDepthEnc(c.depth_encoding)
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeSettings() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -520,6 +546,32 @@ export default function CamerasPage() {
                 화면에서 알아보기 위한 이름입니다. 데이터셋 피처 이름은 바뀌지 않습니다.
               </p>
             </div>
+
+            {/* 깊이 인코딩 — depth 스트림에만 뜬다.
+                작업 공간에 맞춰 좁힐수록 해상도가 오른다. 기본 150~1200mm 는
+                넓게 잡은 값이라, 1m 안쪽 작업이면 절반을 버리는 셈이다. */}
+            {settingsCamera.stream_type === 'depth' && (
+              <div className="space-y-1.5">
+                <label className="text-xs text-neutral-400">깊이 범위 (mm)</label>
+                <div className="flex items-center gap-2">
+                  <input type="number" defaultValue={depthEnc?.near_mm ?? 150}
+                    key={`near-${settingsCamera.id}`}
+                    onBlur={(e) => setDepthRange(settingsCamera.id, +e.target.value, null)}
+                    className="w-24 px-2 py-1 text-sm rounded bg-neutral-900 border border-neutral-700 text-neutral-100" />
+                  <span className="text-xs text-neutral-500">~</span>
+                  <input type="number" defaultValue={depthEnc?.far_mm ?? 1200}
+                    key={`far-${settingsCamera.id}`}
+                    onBlur={(e) => setDepthRange(settingsCamera.id, null, +e.target.value)}
+                    className="w-24 px-2 py-1 text-sm rounded bg-neutral-900 border border-neutral-700 text-neutral-100" />
+                </div>
+                <p className="text-[10px] text-neutral-500">
+                  이 구간이 0~254 로 매핑됩니다(가까울수록 어둡게). 범위 밖은 잘리고,
+                  카메라가 못 읽은 픽셀은 255(가장 멂)입니다.
+                  <b className="text-amber-500"> 녹화한 데이터의 해석이 이 값에 달려 있습니다</b> —
+                  바꾸면 이전 데이터와 픽셀값의 뜻이 달라집니다.
+                </p>
+              </div>
+            )}
 
             {/* 해상도·FPS·회전 */}
             <div className="grid grid-cols-2 gap-2 text-xs">

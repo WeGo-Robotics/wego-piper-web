@@ -91,3 +91,61 @@ def test_params_travel_with_the_stream():
             if isinstance(n, ast.Constant) and isinstance(n.value, str)}
     assert "depth_encoding" in keys, "info() 가 인코딩 파라미터를 안 내보낸다"
     assert set(DepthEncoding().to_dict()) == {"near_mm", "far_mm", "mode"}
+
+
+# ── 데이터셋 사이드카 (LeRobot 은 카메라 설정을 안 적는다) ──
+
+def test_sidecar_carries_what_the_frames_cannot_tell():
+    """해상도는 비디오에 있지만 **깊이 인코딩 범위는 어디에도 없다.**
+
+    없으면 나중에 클리핑을 바꿔 녹화한 데이터와 섞였을 때 구별할 방법이 없다 —
+    에러 없이 정책만 나빠지는 종류의 오염이다.
+    """
+    from app.services import camera_config as cc
+    from app.services.camera_manager import camera_manager
+
+    class _Cam:
+        def running_profile(self):
+            return {"width": 848, "height": 480, "fps": 30,
+                    "depth_encoding": {"near_mm": 300, "far_mm": 700, "mode": "gray_linear"}}
+
+    cam_id = "rs:pytest:depth"
+    camera_manager.cameras[cam_id] = _Cam()
+    try:
+        out = cc.camera_sidecar({"d": cam_id})["cameras"]["d"]
+        assert out["depth_encoding"]["near_mm"] == 300
+        assert out["id"] == cam_id and out["fps"] == 30
+    finally:
+        camera_manager.cameras.pop(cam_id, None)
+
+
+def test_recording_writes_the_sidecar_on_stop():
+    """사이드카는 데이터셋이 **만들어진 뒤**에야 쓸 수 있다 — 시작 때는 못 남긴다.
+
+    그래서 시작 시점의 매핑을 붙잡아 뒀다가 정지 후에 쓴다.
+    """
+    import ast
+    import inspect
+
+    from app.routers import recording
+
+    stop = inspect.getsource(recording.stop_recording)
+    calls = {ast.unparse(n.func) for n in ast.walk(ast.parse(stop.lstrip()))
+             if isinstance(n, ast.Call)}
+    assert "write_camera_sidecar" in calls, "정지 때 사이드카를 안 쓴다"
+
+    start = inspect.getsource(recording.start_recording)
+    assert "_last_recording" in start, "시작 때 매핑을 안 붙잡는다"
+
+
+def test_changing_the_range_is_blocked_while_recording():
+    """녹화 중에 바꾸면 **한 데이터셋 안에서 픽셀값의 뜻이 달라진다.**
+
+    사이드카에는 정지 시점의 값 하나만 남아 거짓이 된다.
+    """
+    import inspect
+
+    from app.routers import cameras
+
+    src = inspect.getsource(cameras.set_depth_encoding)
+    assert "require_idle" in src, "녹화 중 변경을 안 막는다"

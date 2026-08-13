@@ -227,3 +227,25 @@ async def get_controls(cam_id: str):
     _guard_device_access()
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, camera_manager.get_controls, cam_id)
+
+
+class DepthEncodingRequest(BaseModel):
+    near_mm: int
+    far_mm: int
+
+
+@router.post("/{cam_id:path}/depth-encoding")
+async def set_depth_encoding(cam_id: str, body: DepthEncodingRequest):
+    """깊이 인코딩 범위 변경.
+
+    ⚠ **녹화 중에는 막는다.** 도중에 바꾸면 한 데이터셋 안에서 픽셀값의 뜻이
+    달라지는데, 사이드카에는 정지 시점의 값 하나만 남아 거짓이 된다.
+    """
+    from app.services.exclusivity import Activity, require_idle
+    from app.services.realsense_manager import realsense_hub
+
+    require_idle(Activity.CAMERA_ACCESS)
+    ok, msg = realsense_hub.set_depth_encoding(cam_id, body.near_mm, body.far_mm)
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"status": "ok", "encoding": realsense_hub.info(cam_id).get("depth_encoding")}

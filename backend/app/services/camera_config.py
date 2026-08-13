@@ -287,3 +287,54 @@ def release_all_cameras(purpose: str = "inference") -> bool:
     if released:
         time.sleep(0.5)  # 커널이 디바이스를 해제할 시간 확보
     return released
+
+
+# ── 데이터셋 사이드카 ──
+#
+# ⚠ **LeRobot 은 카메라 설정을 `meta/info.json` 에 안 적는다.** 거기엔 feature 모양만
+# 있고, 깊이 인코딩 파라미터처럼 "이 픽셀값이 무슨 거리였나"를 아는 데 필요한 값은
+# 어디에도 안 남는다. 그러면 나중에 클리핑을 바꿔 녹화한 데이터와 섞였을 때
+# 구별할 방법이 없다 — 에러 없이 정책만 나빠지는 종류의 오염이다.
+#
+# LeRobot 을 고치지 않는다는 원칙이 있으므로, 우리가 아는 것을 옆에 적는다.
+SIDECAR_NAME = "piper_cameras.json"
+
+
+def camera_sidecar(camera_mapping: dict[str, str]) -> dict:
+    """녹화에 쓴 카메라의 **해석에 필요한 값**. 데이터셋 옆에 남긴다.
+
+    프레임 자체로는 알 수 없는 것만 담는다 — 해상도는 비디오에 있지만
+    깊이 인코딩 범위는 어디에도 없다.
+    """
+    out: dict = {"cameras": {}}
+    for name, cam_id in camera_mapping.items():
+        if not cam_id:
+            continue
+        cam = camera_manager.cameras.get(cam_id)
+        info = cam.running_profile() if cam else {}
+        entry = {k: info.get(k) for k in ("width", "height", "fps") if info.get(k)}
+        entry["id"] = cam_id
+        if info.get("depth_encoding"):
+            entry["depth_encoding"] = info["depth_encoding"]
+        out["cameras"][name] = entry
+    return out
+
+
+def write_camera_sidecar(dataset_root, camera_mapping: dict[str, str]) -> bool:
+    """`meta/piper_cameras.json` 을 쓴다. 실패해도 녹화 흐름을 막지 않는다."""
+    import json
+    from pathlib import Path
+
+    try:
+        meta = Path(dataset_root) / "meta"
+        if not meta.exists():
+            logger.warning("데이터셋 meta 가 없어 카메라 정보를 못 남깁니다: %s", meta)
+            return False
+        (meta / SIDECAR_NAME).write_text(
+            json.dumps(camera_sidecar(camera_mapping), indent=2, ensure_ascii=False)
+        )
+        logger.info("카메라 정보 기록: %s", meta / SIDECAR_NAME)
+        return True
+    except Exception as exc:
+        logger.warning("카메라 정보 기록 실패: %s", exc)
+        return False

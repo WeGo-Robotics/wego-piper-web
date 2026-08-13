@@ -25,6 +25,8 @@ import re
 import threading
 import time
 
+import numpy as np
+
 from piper_rs.depth import DepthEncoding, encode_depth
 
 logger = logging.getLogger(__name__)
@@ -667,6 +669,30 @@ class RealSenseHub:
         if dev.connect_stream(stream, want):
             return True, "OK"
         return False, f"Failed to start RealSense {serial}/{stream}"
+
+    def set_depth_encoding(self, cam_id: str, near_mm: int, far_mm: int) -> tuple[bool, str]:
+        """깊이 인코딩 범위를 바꾼다. **다음 프레임부터 바로 적용된다.**
+
+        ⚠ 녹화 중에 바꾸면 **한 데이터셋 안에서 픽셀값의 뜻이 달라진다.**
+        여기서 막지는 않는다 — 녹화 중인지는 게이트웨이가 안다(배타 가드).
+        """
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return False, f"Not a RealSense id: {cam_id}"
+        serial, _ = parsed
+        with self._lock:
+            dev = self._devices.get(serial)
+        if dev is None:
+            return False, f"RealSense {serial} not found"
+        try:
+            enc = DepthEncoding(near_mm=int(near_mm), far_mm=int(far_mm))
+            # 만들어보고 검증한다 — 잘못된 범위를 넣어두면 다음 프레임에서 터진다
+            encode_depth(np.zeros((1, 1), dtype=np.uint16), enc)
+        except (ValueError, TypeError) as exc:
+            return False, str(exc)
+        dev.depth_encoding = enc
+        logger.info("깊이 인코딩 변경 %s: %s", serial, enc.to_dict())
+        return True, "OK"
 
     def info(self, cam_id: str) -> dict:
         """지금 **실제로** 돌고 있는 프로파일. 요청값이 아니다.

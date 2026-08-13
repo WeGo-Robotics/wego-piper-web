@@ -49,7 +49,7 @@ _running = True
 _METHODS = {
     "scan", "connect", "disconnect", "release_all", "is_d405",
     "probe", "hardware_reset", "list_controls", "set_control",
-    "info",
+    "info", "set_depth_encoding",
 }
 
 

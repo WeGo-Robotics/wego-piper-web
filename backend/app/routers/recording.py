@@ -12,6 +12,10 @@ from app.core.config import settings
 from app.services.exclusivity import Activity, require_idle
 from app.services.record_manager import record_manager
 
+# 정지 시점에 사이드카를 쓰려면 시작 때의 매핑이 필요하다.
+# 재시작하면 비지만, 그때는 녹화도 없으므로 남길 것도 없다.
+_last_recording: dict = {}
+
 router = APIRouter(prefix="/api/recording", tags=["recording"])
 logger = logging.getLogger(__name__)
 
@@ -147,6 +151,11 @@ async def start_recording(body: RecordStartRequest):
 
     args = build_record_args(params)
 
+    # ⚠ 정지 시점에는 매핑이 없다 — 지금 붙잡아 둔다. 사이드카는 데이터셋이
+    # 만들어진 **뒤**에야 쓸 수 있어서 시작 때 바로 못 남긴다.
+    _last_recording["repo_id"] = body.repo_id
+    _last_recording["camera_mapping"] = dict(body.camera_mapping or {})
+
     try:
         await record_manager.start(args, total_episodes=body.num_episodes, env_extra=env_extra)
     except Exception as e:
@@ -191,6 +200,16 @@ async def stop_recording():
     from app.services.preview_bridge import preview_bridge
     control_bridge.stop()
     preview_bridge.stop()
+
+    # 카메라 해석에 필요한 값을 데이터셋 옆에 남긴다. LeRobot 은 `meta/info.json` 에
+    # 카메라 설정을 안 적어서, 깊이 인코딩 범위 같은 건 여기 없으면 영영 모른다.
+    from app.services.camera_config import write_camera_sidecar
+
+    repo_id = _last_recording.get("repo_id") or ""
+    mapping = _last_recording.get("camera_mapping") or {}
+    if repo_id and mapping:
+        write_camera_sidecar(settings.lerobot_dir / repo_id, mapping)
+
     return {"status": "stopped", "graceful": graceful}
 
 

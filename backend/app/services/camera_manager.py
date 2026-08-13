@@ -92,6 +92,12 @@ class CameraInfo:
             "connected": self.connected,
             "ready": self.ready,
             "has_preview": self._hub.has_frame(self.id),
+            # 깊이 인코딩은 **데이터셋 해석의 근거**다 — 화면에서 현재 값을 보고
+            # 고칠 수 있어야 한다.
+            # ⚠ depth 일 때만 묻는다. `to_dict` 는 스캔에서 카메라마다 불리므로
+            # 무조건 물으면 RPC 가 카메라 수만큼 늘어 스캔이 그만큼 느려진다.
+            "depth_encoding": (self.running_profile().get("depth_encoding")
+                               if self.stream_type == "depth" else None),
             "config": {
                 "width": self.width,
                 "height": self.height,
