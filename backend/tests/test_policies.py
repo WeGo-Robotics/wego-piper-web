@@ -132,3 +132,29 @@ def test_every_task_input_is_gated_on_the_policy():
         assert before and (pos - before[-1]) < 600, (
             f"가드 밖에 있는 task 입력이 있다 (offset {pos})"
         )
+
+
+def test_encoder_overlay_never_renders_at_a_mismatched_size():
+    """**회귀** — 추출지점을 바꿔 다시 인코딩하면 화면이 하얘졌다.
+
+    `new ImageData(data, w, h)` 는 길이가 `w*h*4` 와 다르면 RangeError 를 던진다.
+    렌더 중 예외라 React 가 트리를 통째로 버린다 — 새로고침 전까지 흰 화면이다.
+    추출지점이 바뀌면 격자 크기가 달라지는데, 그 사이 오버레이는 옛 크기다.
+
+    두 겹으로 막는다: 슬롯이 바뀌면 오버레이를 **먼저 버리고**(비동기 재계산을
+    기다리지 않는다), 그래도 어긋나면 **안 그린다**.
+    """
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+           / "EncoderProbePage.tsx").read_text()
+
+    assert "new ImageData(" in src, "검사 대상이 사라졌다 — 이 테스트가 무의미해졌다"
+    assert "overlay.data.length === meta.grid_w * meta.grid_h * 4" in src, (
+        "크기를 확인하지 않고 ImageData 를 만든다"
+    )
+    # 오버레이 재계산 effect 가 시작할 때 옛 것을 버리는가
+    build = src.split("Promise.all([build('A'), build('B')])")[0]
+    assert "setOverlays({ A: null, B: null })" in build[-600:], (
+        "슬롯이 바뀌어도 옛 오버레이를 들고 있는다"
+    )

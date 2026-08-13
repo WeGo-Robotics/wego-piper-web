@@ -97,7 +97,13 @@ function ProbeCanvas({ slot, overlay, alpha, showGrid, smooth, selected, onPick 
       off.width = meta.grid_w
       off.height = meta.grid_h
       const offCtx = off.getContext('2d')
-      if (offCtx) {
+      // ⚠ `ImageData` 는 길이가 `w*h*4` 와 다르면 **RangeError 를 던진다.**
+      // 렌더 중 예외라 화면이 통째로 하얘진다 — 실제로 겪었다: 추출지점을 바꿔
+      // 다시 인코딩하면 격자 크기가 달라지는데, 그 사이 오버레이는 옛 크기다.
+      // 아래 effect 가 슬롯이 바뀔 때 오버레이를 비우지만, 비동기라 한 프레임
+      // 어긋날 수 있다. 그때는 **안 그린다** — 오버레이 없는 그림이 흰 화면보다 낫다.
+      const fits = overlay.data.length === meta.grid_w * meta.grid_h * 4
+      if (offCtx && fits) {
         offCtx.putImageData(new ImageData(overlay.data, meta.grid_w, meta.grid_h), 0, 0)
         ctx.save()
         ctx.imageSmoothingEnabled = smooth
@@ -339,6 +345,10 @@ export default function EncoderProbePage() {
       }
       return { data, info: `${res.k}개 클러스터` }
     }
+
+    // 슬롯이 바뀌었으면 **먼저 버린다.** 새 격자에 옛 오버레이를 물리면
+    // `ImageData` 가 던지고, 그건 렌더 중이라 화면이 하얘진다.
+    setOverlays({ A: null, B: null })
 
     Promise.all([build('A'), build('B')])
       .then(([a, b]) => { if (alive) setOverlays({ A: a, B: b }) })
