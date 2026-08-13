@@ -141,3 +141,60 @@ def test_every_long_running_owner_goes_through_make_process():
         if re.search(r"(?<!def )ProcessManager\(\)", f.read_text()):
             offenders.append(f.name)
     assert not offenders, f"make_process 를 안 거치는 곳: {offenders}"
+
+
+def test_setenv_goes_to_systemd_run_not_the_command():
+    """**회귀** — `--setenv` 를 실행할 명령 쪽에 쌓아 학습이 즉시 죽었다.
+
+        lerobot_train.py: error: unrecognized arguments: --setenv=ACCELERATE_...
+
+    `systemd-run` 인자는 `--` **앞**에 와야 한다. 뒤에 붙으면 그대로 자식에게 간다.
+    """
+    import ast
+
+    tree = ast.parse(inspect.getsource(SystemdProcess.start).lstrip())
+    # `--setenv` 를 만드는 f-string 이 어느 리스트에 더해지는가
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AugAssign):
+            continue
+        src = ast.unparse(node)
+        if "--setenv" in src:
+            assert ast.unparse(node.target) == "argv", (
+                f"--setenv 가 명령 쪽에 쌓인다: {src}"
+            )
+            break
+    else:
+        raise AssertionError("--setenv 를 만드는 곳을 못 찾았다")
+
+
+def test_state_asks_systemd_instead_of_trusting_its_cache():
+    """**회귀** — 유닛이 끝나도 `running` 으로 남아 다음 학습이 막혔다.
+
+    `ProcessManager` 는 자식이라 종료를 즉시 알지만, 유닛은 스스로 끝나도
+    아무도 안 알려준다. 물어보지 않으면 캐시가 영원히 거짓말한다.
+    """
+    src = inspect.getsource(SystemdProcess.state.fget)
+    assert "is-active" in src, "state 가 systemd 에 안 물어본다"
+    assert "failed" in src, "실패와 정상 종료를 구분하지 않는다"
+
+
+def test_reattach_recovers_the_total_step_count():
+    """**회귀** — 재부착 후 화면이 "4000 / 0" 이었다. 진행률 바가 안 뜬다.
+
+    스텝 수는 파서가 journald 로 채우지만 **총계는 로그에 안 나온다.**
+    유닛의 `ExecStart` 가 사실을 갖고 있다 — 로그 형식에 기대지 않는다.
+    """
+    import ast
+
+    src = inspect.getsource(SystemdRunner.restore)
+    calls = {ast.unparse(n.func) for n in ast.walk(ast.parse(src.lstrip()))
+             if isinstance(n, ast.Call)}
+    assert "self.proc.exec_argv" in calls, "ExecStart 를 안 읽는다"
+    assert "--steps=" in src and "total_steps=total" in src, "총 스텝을 안 채운다"
+
+
+def test_exec_argv_parses_systemd_show_output():
+    """`systemctl show` 의 `ExecStart` 는 `{ path=… ; argv[]=… ; … }` 형태다."""
+    src = inspect.getsource(SystemdProcess.exec_argv)
+    assert "argv[]=" in src, "argv 를 안 꺼낸다"
+    assert '" ; "' in src or "' ; '" in src, "필드 구분을 안 한다"

@@ -88,6 +88,19 @@ class SystemdProcess:
 
     @property
     def state(self) -> ProcessState:
+        """유닛에게 **물어본다.** 캐시를 돌려주면 안 된다.
+
+        ⚠ `ProcessManager` 는 자식이라 종료를 즉시 알지만, 유닛은 스스로 끝나도
+        아무도 안 알려준다. 캐시만 보면 학습이 끝난 뒤에도 `running` 으로 남아
+        **다음 학습이 "이미 실행 중입니다" 로 막힌다** — 실기에서 걸렸다.
+        """
+        if self._state in (ProcessState.RUNNING, ProcessState.STARTING):
+            active = _systemctl("is-active", self.unit).stdout.strip()
+            if active != "active":
+                # `failed` 는 에러, 그 밖(inactive)은 정상 종료로 본다
+                self._set_state(ProcessState.ERROR if active == "failed"
+                                else ProcessState.IDLE)
+                self._stop_log_stream()
         return self._state
 
     @property
@@ -131,8 +144,12 @@ class SystemdProcess:
             #   `--scope` 를 쓰면 호출자의 cgroup 에 들어가 함께 죽는다.
             "--collect",
         ]
+        # ⚠ **`--setenv` 는 `systemd-run` 인자다 — `--` 앞에 와야 한다.**
+        # `cmd`(실행할 명령)에 쌓으면 학습 스크립트가 받아 파싱하다 죽는다:
+        #   `lerobot_train.py: error: unrecognized arguments: --setenv=...`
+        # 실기에서 이렇게 터졌다.
         for k, v in (env or {}).items():
-            cmd += [f"--setenv={k}={v}"]
+            argv += [f"--setenv={k}={v}"]
         argv += ["--"] + list(cmd)
 
         self._set_state(ProcessState.STARTING)
@@ -219,6 +236,19 @@ class SystemdProcess:
                 self._log_proc.terminate()
         self._log_proc = None
         self._log_thread = None
+
+    def exec_argv(self) -> list[str]:
+        """유닛이 실제로 돌리는 명령. **재부착 때 인자를 되찾는 유일한 경로다.**
+
+        journald 로그에서 긁을 수도 있지만 그건 출력 형식에 기대는 것이고,
+        `ExecStart` 는 systemd 가 들고 있는 사실이다.
+        """
+        out = _systemctl("show", self.unit, "--property=ExecStart").stdout
+        # `{ path=... ; argv[]=python -m ... ; ... }` 형태에서 argv 만 꺼낸다
+        if "argv[]=" not in out:
+            return []
+        tail = out.split("argv[]=", 1)[1]
+        return tail.split(" ; ", 1)[0].strip().split()
 
     # ── 복원 ──
 
