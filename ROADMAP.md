@@ -186,7 +186,7 @@ camera-profiles(`camera_profile` 이벤트), phase-annotation(페이즈 텔레�
 | 4 | **shm 전송 계층** — 카메라 **1~5 ☑**(추론·녹화 실기 확인) · [로봇](refactor/robot-transport.md) **2~4 ☑**(실기 확인) / 5~6 남음 | 데몬 분리의 전제조건. 깊이맵은 전송 검증 후로 미룸 |
 | 5 | **rsd ☑ · camerad ☑ · robotd ☑** (버스 RPC · shm 발행 · 안전층) | **합치지 않았다** — D405 hang 이력. 게이트웨이는 이제 카메라 장치를 전혀 안 연다 |
 | 6 | `SystemdRunner` 추가 + policysrv·encoderd·xferd 유닛화 | 3.5의 이음매에 붙이는 것뿐 |
-| 7 | infer / record 컨테이너화 | GPU + `ipc: host`만 |
+| 7 | ◐ infer / record 컨테이너화 — **단일 백엔드 컨테이너는 실기 확인** (하드웨어 권한·호스트 네트워크 둘 다 제거, GPU + `ipc: host` 만 남음). 실행별로 쪼개는 것은 6단계 이후 | GPU + `ipc: host`만 |
 | 8 | 게이트웨이 정리 (#7 ☑ 완료) | `services/`에 스캐너만 남는다 |
 
 ### Phase 4 — 기능 완성
