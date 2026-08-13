@@ -400,8 +400,10 @@ export default function EncoderProbePage() {
             <span className="text-xs text-neutral-400">체크포인트</span>
             <select value={checkpoint} onChange={(e) => setCheckpoint(e.target.value)}
               className="px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-xs text-neutral-100 max-w-[22rem]">
+              {/* 두 정책 다 **학습 전 시작점**을 볼 수 있어야 비교가 성립한다.
+                  ACT 의 백본은 무작위가 아니라 ImageNet ResNet-18 로 시작한다. */}
               {policyType === 'smolvla' && <option value="">베이스 SigLIP (체크포인트 없이)</option>}
-              {policyType === 'act' && !checkpoint && <option value="">선택하세요</option>}
+              {policyType === 'act' && <option value="">베이스 ResNet-18 / ImageNet (학습 전)</option>}
               {candidates.map((m) => <option key={m.path} value={m.path}>{m.id}</option>)}
             </select>
           </div>

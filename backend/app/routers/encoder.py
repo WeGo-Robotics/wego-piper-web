@@ -93,8 +93,9 @@ def _decode_upload(raw: str) -> bytes:
 async def encode(body: EncodeRequest):
     if body.policy_type not in SUPPORTED:
         raise HTTPException(400, f"지원하지 않는 정책: {body.policy_type}")
-    if body.policy_type == "act" and not body.checkpoint_path:
-        raise HTTPException(400, "ACT는 백본이 학습된 가중치라 체크포인트가 필요합니다")
+    # ⚠ ACT 도 체크포인트 없이 돌 수 있다. 백본이 **무작위에서 시작하지 않고**
+    # ImageNet 사전학습 ResNet-18 로 초기화되기 때문이다(`ACTConfig` 기본값).
+    # 그 시작점을 못 보면 "학습이 엔코더를 좋게 만들었나"를 잴 기준이 없다.
 
     if body.source == "camera":
         if not body.camera_id:

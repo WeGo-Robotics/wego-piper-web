@@ -219,31 +219,73 @@ def _act_image_stats(checkpoint: str, full_key: str):
     )
 
 
+def _act_base_backbone():
+    """ACT 의 **학습 전 백본**. LeRobot 이 만드는 것과 같은 방식이어야 한다.
+
+    다르게 만들면 비교가 성립하지 않는다 — `FrozenBatchNorm2d` 하나만 빠져도
+    통계가 달라진다. `modeling_act.ACT.__init__` 의 구성을 그대로 따른다.
+    """
+    import torchvision
+    from torchvision.models._utils import IntermediateLayerGetter
+
+    from lerobot.policies.act.configuration_act import ACTConfig
+    from lerobot.policies.act.modeling_act import FrozenBatchNorm2d
+
+    c = ACTConfig()
+    _log(f"ACT 베이스 백본: {c.vision_backbone} / {c.pretrained_backbone_weights}")
+    model = getattr(torchvision.models, c.vision_backbone)(
+        replace_stride_with_dilation=[False, False, c.replace_final_stride_with_dilation],
+        weights=c.pretrained_backbone_weights,
+        norm_layer=FrozenBatchNorm2d,
+    )
+    model.eval()
+    backbone = IntermediateLayerGetter(model, return_layers={"layer4": "feature_map"})
+    return backbone, {
+        "vision_backbone": c.vision_backbone,
+        "pretrained_backbone_weights": c.pretrained_backbone_weights,
+    }
+
+
 def run_act(args, rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, dict]:
     import torch
 
     from lerobot.policies.act.modeling_act import ACTPolicy
 
-    if not args.checkpoint:
-        raise SystemExit("ACT는 --checkpoint 가 필요합니다 (백본이 학습된 가중치라서)")
+    # ⚠ **체크포인트 없이도 돌아야 한다.** ACT 의 백본은 무작위에서 시작하지 않고
+    # ImageNet 사전학습 ResNet-18 로 초기화된다(`ACTConfig` 기본값). 그 시작점을
+    # 못 보면 "학습이 엔코더를 좋게 만들었나"를 판단할 기준이 없다 —
+    # 비교 대상 없이 체크포인트만 들여다보는 셈이다.
+    if args.checkpoint:
+        _log(f"ACT 로드: {args.checkpoint}")
+        policy = ACTPolicy.from_pretrained(args.checkpoint)
+        policy.eval()
+        backbone = policy.model.backbone
+        image_keys = [
+            k.split("observation.images.", 1)[1]
+            for k in policy.config.input_features
+            if k.startswith("observation.images.")
+        ]
+        key = args.image_key or (image_keys[0] if image_keys else "")
+        if not key:
+            raise SystemExit("모델에 카메라 입력이 없습니다")
+        cfg = json.loads((Path(args.checkpoint) / "config.json").read_text())
+        mean, std = _act_image_stats(args.checkpoint, f"observation.images.{key}")
+        encoder_source = "checkpoint"
+    else:
+        backbone, cfg = _act_base_backbone()
+        # 베이스에는 모델이 없으니 카메라 키 목록도 없다 — **빈 목록이 사실이다.**
+        # UI 의 "카메라 키" 드롭다운은 그때 자동만 남는다.
+        image_keys, key = [], args.image_key or ""
+        # 데이터셋 통계가 없다 — ImageNet 표준값을 쓴다. 체크포인트 쪽과 정규화가
+        # 달라지지만, **그게 사실이다**: 학습 전에는 데이터셋 통계가 존재하지 않는다.
+        import torch as _t
 
-    _log(f"ACT 로드: {args.checkpoint}")
-    policy = ACTPolicy.from_pretrained(args.checkpoint)
-    policy.eval()
-
-    image_keys = [
-        k.split("observation.images.", 1)[1]
-        for k in policy.config.input_features
-        if k.startswith("observation.images.")
-    ]
-    key = args.image_key or (image_keys[0] if image_keys else "")
-    if not key:
-        raise SystemExit("모델에 카메라 입력이 없습니다")
-    full_key = f"observation.images.{key}"
+        mean = _t.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+        std = _t.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        encoder_source = "base"
 
     device = _pick_device(args.device)
-    policy.to(device)
-    mean, std = _act_image_stats(args.checkpoint, full_key)
+    backbone.to(device)
 
     h, w = rgb.shape[:2]
     x = torch.from_numpy(rgb.copy()).permute(2, 0, 1).float().div(255.0).unsqueeze(0)
@@ -252,14 +294,13 @@ def run_act(args, rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, dict]:
 
     t0 = time.monotonic()
     with torch.inference_mode():
-        fmap = policy.model.backbone(x.to(device))["feature_map"]  # (1, C, h', w')
+        fmap = backbone(x.to(device))["feature_map"]  # (1, C, h', w')
     elapsed = (time.monotonic() - t0) * 1000
 
     _, c, gh, gw = fmap.shape
     # ACT 본체와 동일한 순서: (h w) 로 평탄화 → index = row * gw + col
     feat = fmap[0].reshape(c, gh * gw).T.float().cpu().numpy()
 
-    cfg = json.loads((Path(args.checkpoint) / "config.json").read_text())
     meta = {
         "grid_h": gh,
         "grid_w": gw,
@@ -270,7 +311,7 @@ def run_act(args, rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, dict]:
         "patch_px_model": round(w / gw, 2),
         "patch_px_orig_x": round(w / gw, 2),
         "patch_px_orig_y": round(h / gh, 2),
-        "encoder_source": "checkpoint",
+        "encoder_source": encoder_source,
         "encoder_stats": {
             "vision_backbone": cfg.get("vision_backbone"),
             "pretrained_backbone_weights": cfg.get("pretrained_backbone_weights"),
