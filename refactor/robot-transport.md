@@ -202,8 +202,10 @@ CAN 경로에 홉이 하나 추가된다. 그만큼 실패 지점도 하나 는�
    ([arm_bridge.py](../backend/app/services/arm_bridge.py)). `settings.robot_transport`
    스위치로 넣었다 — 되돌리기가 값 하나다. **실기 확인**: 상태가 직접 읽기와 9e-7 차이,
    `set_action` 지연 중앙 0.058ms, 프록시 60발행 → CAN 60송신, seqlock 재시도 0
-4. robotd 분리 (CAN 독점 + 상태 발행 + 명령 소비 + **데드맨** + 하드 리밋).
-   `arm_bridge.py` 의 내용이 그대로 이사한다
+4. ☑ robotd 분리 ([daemons/robotd.py](../daemons/robotd.py) · [robot/piper_robot/](../robot/piper_robot/)).
+   경계는 **"팔에 물어봐야 아는가"**로 그었다 — 역할·슬롯·등록·프리셋·세션은
+   게이트웨이에 남는다. `is_master` 는 사실이고 leader/follower 는 해석이다.
+   **실기**: 상태 발행 98.9Hz, `set_action` 지연 중앙 0.089ms, 데드맨 300ms 후 정지
 5. `_clear_arm_errors` 타이밍 춤 제거, `robot_type`을 프록시로 전환
 6. 컨테이너에서 `network_mode: host` 제거
 
