@@ -15,6 +15,8 @@ export type PolicyInfo = {
   train: boolean
   infer: boolean
   rtc: boolean
+  /** 언어 지시(task)를 받는가. ACT 처럼 안 받는 정책엔 입력을 띄우지 않는다. */
+  language: boolean
   encoder_probe: boolean
   /** 처음부터 학습이 무의미한 정책의 권장 시작점 (없으면 빈 문자열). */
   policy_base: string
@@ -33,6 +35,18 @@ export function usePolicies() {
     [policies],
   )
 
+  /** 언어 지시(task)를 받는 정책인가.
+   *
+   * ⚠ 목록이 비어 있는 동안(로딩 중)에는 **true 로 본다.** 받는 정책인데 입력을
+   * 감췄다가 뒤늦게 띄우면 사용자가 이미 시작 버튼을 눌렀을 수 있다 —
+   * 안 쓰이는 입력이 잠깐 보이는 쪽이 낫다.
+   */
+  const takesLanguage = useCallback(
+    (type: string) =>
+      policies.length === 0 || policies.some((p) => p.type === type && p.language),
+    [policies],
+  )
+
   /** 권장 베이스 체크포인트 — 프론트가 목록을 또 만들면 백엔드와 갈라진다. */
   const policyBase = useCallback(
     (type: string) => policies.find((p) => p.type === type)?.policy_base || '',
@@ -40,6 +54,7 @@ export function usePolicies() {
   )
 
   return {
+    takesLanguage,
     policies,
     policyBase,
     trainable: policies.filter((p) => p.train),

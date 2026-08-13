@@ -24,6 +24,10 @@ class Policy(TypedDict, total=False):
     train: bool           # 학습 화면에서 고를 수 있는가
     infer: bool           # 추론 화면에서 고를 수 있는가 (= wrapper POLICY_IMPORTS 에 있어야 함)
     rtc: bool             # flow-matching → RTC 가이던스 파라미터 노출
+    # 언어 지시(task)를 입력으로 받는가. **VLA 만 받는다.**
+    # ⚠ `vlm_base` 유무로 유추하지 않는다 — 둘은 다른 사실이고, VLM 백본 없이
+    # 언어를 받는 정책이 나오면 그 순간 유추가 거짓말을 한다.
+    language: bool
     encoder_probe: bool   # 이미지 엔코더 프로브 지원
     policy_base: str      # Hub 베이스 체크포인트
     vlm_base: str         # VLM 백본
@@ -34,6 +38,7 @@ POLICIES: dict[str, Policy] = {
         "label": "SmolVLA",
         "supported": True,
         "train": True, "infer": True, "rtc": True, "encoder_probe": True,
+        "language": True,
         "policy_base": "lerobot/smolvla_base",
         "vlm_base": "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
     },
@@ -41,34 +46,41 @@ POLICIES: dict[str, Policy] = {
         "label": "ACT",
         "supported": True,
         "train": True, "infer": True, "rtc": False, "encoder_probe": True,
+        "language": False,      # ACT 는 관측→행동만. task 를 줘도 쓰이지 않는다
     },
     "diffusion": {
         "label": "Diffusion",
         "train": True, "infer": True, "rtc": False, "encoder_probe": False,
+        "language": False,
     },
     "pi0": {
         "label": "π0",
         "train": True, "infer": True, "rtc": True, "encoder_probe": False,
+        "language": True,
         "policy_base": "lerobot/pi0_base",
         "vlm_base": "google/paligemma-3b-pt-224",
     },
     "pi05": {
         "label": "π0.5",
         "train": True, "infer": True, "rtc": True, "encoder_probe": False,
+        "language": True,
         "policy_base": "lerobot/pi05_base",
         "vlm_base": "google/paligemma-3b-pt-224",
     },
     "pi0_fast": {
         "label": "π0-FAST",
         "train": True, "infer": True, "rtc": False, "encoder_probe": False,
+        "language": True,       # π0 계열 — RTC 는 안 쓰지만 언어는 받는다
     },
     "vqbet": {
         "label": "VQ-BeT",
         "train": True, "infer": True, "rtc": False, "encoder_probe": False,
+        "language": False,
     },
     "tdmpc": {
         "label": "TD-MPC",
         "train": True, "infer": True, "rtc": False, "encoder_probe": False,
+        "language": False,
     },
     # `sac` 는 의도적으로 없다 — 강화학습(보상·환경·리플레이 버퍼)이라
     # 이 프로젝트의 수집→학습→추론 흐름과 맞지 않는다.
@@ -129,6 +141,7 @@ def spec_for_frontend() -> list[dict]:
             "train": bool(spec.get("train")),
             "infer": bool(spec.get("infer")),
             "rtc": bool(spec.get("rtc")),
+            "language": bool(spec.get("language")),
             "encoder_probe": bool(spec.get("encoder_probe")),
             # 처음부터 학습이 무의미한 정책의 권장 시작점.
             # 프론트가 따로 목록을 만들면 또 갈라진다.

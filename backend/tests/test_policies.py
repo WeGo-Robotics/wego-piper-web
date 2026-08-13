@@ -78,3 +78,34 @@ def test_sac_is_not_offered():
     """강화학습이라 이 프로젝트의 수집→학습→추론 흐름과 맞지 않는다.
     되살리려면 wrapper POLICY_IMPORTS 에도 함께 넣어야 한다."""
     assert "sac" not in policies.POLICIES
+
+
+def test_language_flag_is_explicit_for_every_policy():
+    """언어 지시(task)를 받는가는 **정책마다 명시**해야 한다.
+
+    `vlm_base` 유무로 유추하면 안 된다 — 둘은 다른 사실이고, VLM 백본 없이
+    언어를 받는 정책이 나오면 그 순간 유추가 거짓말을 한다.
+    빠뜨리면 `.get()` 이 조용히 False 로 떨어져 VLA 인데 task 입력이 사라진다.
+    """
+    from app.core.policies import POLICIES
+
+    missing = [n for n, spec in POLICIES.items() if "language" not in spec]
+    assert not missing, f"language 를 안 정한 정책: {missing}"
+
+
+def test_vla_policies_take_language():
+    """VLM 백본이 있으면 언어를 받는 게 정상이다 — 어긋나면 둘 중 하나가 틀렸다."""
+    from app.core.policies import POLICIES
+
+    for name, spec in POLICIES.items():
+        if spec.get("vlm_base"):
+            assert spec["language"], f"{name} 은 VLM 백본이 있는데 language=False 다"
+
+
+def test_frontend_gets_the_language_flag():
+    """화면이 임계 판정을 따로 하지 않게 백엔드가 사실을 내보낸다."""
+    from app.core.policies import spec_for_frontend
+
+    specs = {p["type"]: p for p in spec_for_frontend()}
+    assert specs["act"]["language"] is False, "ACT 에 task 입력이 뜬다"
+    assert specs["smolvla"]["language"] is True

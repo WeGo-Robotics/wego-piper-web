@@ -130,7 +130,7 @@ export default function InferencePage() {
   // 배타 규칙은 백엔드 exclusivity.py 한 곳에만 있다
   const { isBlocked, blockedBy, refresh: refreshActivity } = useActivity()
   // 정책 목록·RTC 여부는 백엔드 core/policies.py 한 곳에서 온다
-  const { inferable, isRtc } = usePolicies()
+  const { inferable, isRtc, takesLanguage } = usePolicies()
   const [activePreset, setActivePreset] = useState('')
   // 파라미터 범위·기본값은 백엔드 core/inference_params.py 에서 온다
   const { rangeOf, defaults: specDefaults } = useParamSpec()
@@ -649,6 +649,9 @@ export default function InferencePage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {/* 1열: Task + 실행 속도 */}
         <div className="space-y-4">
+          {/* ACT 처럼 언어를 안 받는 정책엔 띄우지 않는다 — 입력해도 안 쓰인다.
+              판정은 백엔드 레지스트리(`policies.language`)가 갖는다. */}
+          {takesLanguage(activePolicy) && (
           <CollapsibleCard title="Task" storageKey="piper_fold_task">
             <input type="text" value={taskText}
               onChange={(e) => {
@@ -662,6 +665,7 @@ export default function InferencePage() {
               placeholder="언어 명령어 입력..."
               className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
           </CollapsibleCard>
+          )}
           {/* 프리셋 — 속도·필터는 팔마다 다르므로 device scope */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
             <PresetBar domain="inference" scope="device" policyType={activePolicy}
