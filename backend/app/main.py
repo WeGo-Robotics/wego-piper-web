@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -21,9 +22,9 @@ logging.getLogger("uvicorn.access").addFilter(_QuietAccessFilter())
 # ⚠ 이 import 는 위 로깅 필터 설정 **뒤에** 있어야 한다 —
 # uvicorn.access 필터가 라우터 import 보다 먼저 붙어야 한다.
 from app.routers import (
-    activity, cameras, datasets, debug_logs, encoder, estop, eval_log, health,
-    hub, inference, logs, models, params, phase, policies, policy_server, presets,
-    recording, robots, training, ws,
+    activity, cameras, datasets, debug_logs, devices, encoder, estop, eval_log,
+    health, hub, inference, logs, models, params, phase, policies, policy_server,
+    presets, recording, robots, training, ws,
 )
 
 # 라우터 목록 — 등록 누락을 구조적으로 막는다.
@@ -34,7 +35,7 @@ from app.routers import (
 ROUTERS = [
     health, ws, estop, params, models, datasets, hub, inference, eval_log,
     robots, cameras, logs, debug_logs, training, recording, policy_server,
-    encoder, activity, policies, presets, phase,
+    encoder, activity, policies, presets, phase, devices,
 ]
 from app.services.estop_bridge import estop_bridge
 from app.services.param_bridge import param_bridge
@@ -42,6 +43,33 @@ from app.services.robot_manager import robot_manager
 from app.services.camera_manager import camera_manager
 
 logger = logging.getLogger(__name__)
+
+
+# 장치가 사라졌는지 보는 주기. E-stop heartbeat(2초 타임아웃)보다 느슨해도 된다 —
+# 이건 안전 경로가 아니라 **알림**이다. 안전 정지는 estopd 가 따로 한다.
+_DEVICE_WATCH_S = 2.0
+
+
+async def _watch_devices() -> None:
+    """전이가 있을 때만 방송한다. 실패해도 게이트웨이를 죽이지 않는다."""
+    from app.routers.ws import broadcast_device_alert
+    from app.services.device_watch import device_watch
+
+    while True:
+        try:
+            await asyncio.sleep(_DEVICE_WATCH_S)
+            added, cleared = await asyncio.to_thread(device_watch.check)
+            if not added and not cleared:
+                continue
+            for a in added:
+                logger.warning("장치 경보: %s", a.text)
+            for a in cleared:
+                logger.info("장치 복구: %s (%s)", a.name, a.ident)
+            await broadcast_device_alert(added, cleared)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("장치 감시 실패: %s", exc)
 
 
 @asynccontextmanager
@@ -80,7 +108,11 @@ async def lifespan(app: FastAPI):
         train_manager.restore_running_process()
     except Exception as e:
         logger.warning("Train process restore failed: %s", e)
+    # 장치 사라짐 감시. **주기적으로 장치를 열거하지 않는다** — `/dev/shm` 을
+    # 훑어 발행이 끊겼는지만 본다(세그먼트 = 임대권). RPC 도 안 타므로 2초 주기가 싸다.
+    watch_task = asyncio.create_task(_watch_devices())
     yield
+    watch_task.cancel()
     await param_bridge.close()
 
 

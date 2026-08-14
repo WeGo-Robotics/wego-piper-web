@@ -46,6 +46,24 @@ async def broadcast_job_list() -> None:
     })
 
 
+async def broadcast_device_alert(added: list, cleared: list) -> None:
+    """장치가 사라졌다/돌아왔다 — **전이에서만** 부른다.
+
+    같은 사실을 2초마다 반복해 띄우면 아무도 안 읽는다. 지금 목록 전체를 함께
+    싣는 이유는 화면이 배너를 갈아끼우기 쉬워서다 (`job_list` 와 같은 형태).
+    """
+    from app.services.device_watch import device_watch
+
+    await broadcast({
+        "type": M.DEVICE_ALERT,
+        "data": {
+            "alerts": device_watch.alerts(),
+            "added": [a.to_dict() for a in added],
+            "cleared": [a.to_dict() for a in cleared],
+        },
+    })
+
+
 def _setup_callbacks() -> None:
     loop = asyncio.get_running_loop()
 

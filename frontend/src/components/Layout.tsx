@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom'
+import DeviceAlerts from './DeviceAlerts'
 import EStopButton from './EStopButton'
 import { navPages } from '../config/pages'
 
@@ -40,6 +41,9 @@ export default function Layout() {
           </div>
         </div>
       </nav>
+      {/* 장치 경보는 **어느 페이지에 있든** 보여야 한다 — USB 가 빠지는 순간
+          사용자가 카메라 페이지에 있으리라는 보장이 없다. */}
+      <DeviceAlerts />
       <main className="max-w-7xl mx-auto px-4 py-6">
         <Outlet />
       </main>

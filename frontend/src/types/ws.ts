@@ -58,6 +58,21 @@ export type JobRecord = {
 /** 로컬 학습의 job_id. 백엔드 `piper_bus.contract.LOCAL_JOB_ID` 와 같아야 한다. */
 export const LOCAL_JOB_ID = 'local'
 
+/** 장치가 사라졌다/돌아왔다. 문구는 **백엔드가 만든다** — 화면이 문장을 조립하면
+ *  한쪽만 고쳐져 어긋난다 (`usb_warning` 과 같은 규칙). */
+export type DeviceAlert = {
+  kind: 'robot' | 'camera'
+  id: string
+  name: string
+  /** `device_gone` = 그 장치의 USB / `daemon_down` = 데몬이 내려갔다 /
+   *  `all_gone` = 한꺼번에 전부 (데몬 또는 USB 컨트롤러 — 확인법이 다르다).
+   *  안 가르면 데몬이 죽었을 때 USB 를 확인하러 가게 만든다. */
+  reason: 'device_gone' | 'daemon_down' | 'all_gone'
+  text: string
+}
+
+export type DeviceAlertData = { alerts: DeviceAlert[]; added: DeviceAlert[]; cleared: DeviceAlert[] }
+
 export type WsMessage =
   // 추론
   | { type: 'log'; data: string }
@@ -79,6 +94,8 @@ export type WsMessage =
   // Hub 업로드
   | { type: 'upload_log'; data: string }
   | { type: 'upload_state'; data: ProcessState }
+  // 장치 사라짐 (CAN·카메라). **전이에서만** 온다 — 현재 목록은 /api/devices/alerts
+  | { type: 'device_alert'; data: DeviceAlertData }
   // 연결 유지
   | { type: 'pong'; data?: undefined }
 

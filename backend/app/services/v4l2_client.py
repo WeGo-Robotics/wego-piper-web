@@ -26,6 +26,16 @@ def _bus() -> Bus:
 class V4l2Client:
     def _call(self, method: str, *args, default=None, timeout: int = C.RPC_TIMEOUT_S):
         """**실패해도 게이트웨이를 죽이지 않는다** — 카메라만 안 보이는 것으로 격리된다."""
+        # ⚠ **죽은 데몬을 기다리지 않는다.** 생존 표시가 없으면 즉시 포기한다 —
+        # 안 그러면 호출마다 RPC 타임아웃(스캔은 30초)을 통째로 기다린다.
+        # 카메라 하나당 `has_frame`·`info` 까지 도니 스캔 한 번이 분 단위로 멈췄다
+        # (실제로 그랬다). 격리하려고 프로세스를 나눈 건데 그러면 의미가 없다 —
+        # `robot_manager._call` 이 같은 이유로 먼저 이 단축을 갖고 있다.
+        try:
+            if not _bus().is_alive(C.CAMERAD):
+                return default
+        except Exception:
+            return default
         try:
             return _bus().rpc_call(C.CAMERAD, method, list(args), timeout=timeout)
         except TimeoutError:

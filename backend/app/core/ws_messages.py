@@ -43,6 +43,11 @@ PS_STATE: Final = "ps_state"
 UPLOAD_LOG: Final = "upload_log"
 UPLOAD_STATE: Final = "upload_state"
 
+# ── 장치 사라짐 (CAN·카메라) ──
+# USB 가 빠지거나 컨트롤러가 죽으면 화면이 마지막 상태에 머물렀다.
+# **전이에서만** 온다 — 같은 사실을 반복해 띄우면 아무도 안 읽는다.
+DEVICE_ALERT: Final = "device_alert"
+
 # ── 연결 유지 ──
 PONG: Final = "pong"
 
@@ -53,6 +58,7 @@ ALL: Final[frozenset[str]] = frozenset({
     RECORD_LOG, RECORD_STATE, RECORD_STATUS,
     PS_LOG, PS_STATE,
     UPLOAD_LOG, UPLOAD_STATE,
+    DEVICE_ALERT,
     PONG,
 })
 

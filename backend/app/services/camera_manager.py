@@ -48,6 +48,20 @@ def _active_controls(cam) -> dict:
         return {}
 
 
+
+def _forget(kind: str, ident: str) -> None:
+    """사용자가 **일부러** 끊었다 — 사라진 것이 아니므로 감시 기억에서 지운다.
+
+    안 지우면 끊을 때마다 "사라졌습니다" 경보가 뜬다.
+    """
+    try:
+        from app.services.device_watch import device_watch
+
+        device_watch.forget(kind, ident)
+    except Exception:
+        pass
+
+
 @dataclass
 class CameraInfo:
     """카메라 **기록**. 장치 I/O 는 데몬이 한다.
@@ -180,12 +194,23 @@ class CameraInfo:
     def disconnect(self) -> None:
         self._hub.disconnect(self.id)
         self.connected = False
+        _forget("camera", self.id)
 
     def get_controls(self) -> list[dict]:
         return self._hub.list_controls(self.id)
 
     def set_control(self, name: str, value: int) -> bool:
         return self._hub.set_control(self.id, name, value)
+
+    def mark_absent(self) -> None:
+        """데몬이 이 카메라를 모른다 — **장치 사실만** 지운다.
+
+        등록(`ready`)·별칭·요청 해상도는 사람이 정한 것이라 남긴다. 하지만
+        `connected` 는 장치 사실이고, USB 가 빠진 동안 살아남으면 **화면은
+        "연결됨"인데 세그먼트가 없어 녹화·추론이 죽는다.** 팔에서 똑같은 구멍을
+        먼저 겪었다 (robot_manager.ArmInfo.mark_absent).
+        """
+        self.connected = False
 
     def apply_controls(self, wanted: dict) -> dict:
         """프로파일 컨트롤 적용. **순서와 검증은 데몬이 한다** — 자동 모드
@@ -210,13 +235,23 @@ class CameraManager:
         **소유가 겹치지 않는다** — camerad 는 RealSense 노드를 건너뛰고
         rsd 는 v4l2 를 안 본다. 데몬이 죽어 있으면 그쪽만 빠지고 나머지는 보인다.
         """
+        seen: set[str] = set()
         # 일반 웹캠 — camerad
         for d in v4l2_hub.scan():
+            seen.add(d["id"])
             self._absorb(d)
 
         # RealSense — rsd. 디바이스당 color/depth/infrared 스트림 엔트리
         for d in realsense_hub.scan():
+            seen.add(d["id"])
             self._absorb(d, cam_type="realsense")
+
+        # ⚠ **안 보인 카메라는 연결 해제로 내린다.** 예전에는 보고된 것만 순회해서,
+        # USB 가 빠져도 목록이 마지막 상태에 머물렀다 — 사용자가 스캔을 눌러도
+        # 아무것도 안 바뀌었다. 등록·별칭은 사람이 정한 것이라 남긴다.
+        for cam_id, cam in self.cameras.items():
+            if cam_id not in seen:
+                cam.mark_absent()
 
         return [c.to_dict() for c in self.cameras.values()]
 
