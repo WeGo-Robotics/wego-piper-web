@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { api } from '../services/api'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import type { ProcessState } from '../types/ws'
@@ -28,6 +28,13 @@ function extractSpeech(line: string): string | null {
     if (m) return m[0]
   }
   return null
+}
+
+function formatElapsed(ms: number): string {
+  const totalSec = Math.floor(ms / 1000)
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return `${m}:${String(s).padStart(2, '0')}`
 }
 
 export default function RecordingPage() {
@@ -72,6 +79,33 @@ export default function RecordingPage() {
   const MAX_LOGS = 500
 
   const isRunning = recordState === 'running' || recordState === 'starting' || recordState === 'stopping'
+
+  // 현재 에피소드 경과 시간 — 백엔드가 episode_N 시작 시각을 안 주므로
+  // "Recording episode N" 로그로 phase가 recording 되는 순간을 여기서 기준삼는다
+  const [episodeElapsedMs, setEpisodeElapsedMs] = useState(0)
+  const episodeStartRef = useRef<number | null>(null)
+  const episodeSeenRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (status?.phase === 'recording') {
+      if (episodeSeenRef.current !== status.current_episode) {
+        episodeSeenRef.current = status.current_episode
+        episodeStartRef.current = Date.now()
+        setEpisodeElapsedMs(0)
+      }
+    } else {
+      episodeStartRef.current = null
+      episodeSeenRef.current = null
+    }
+  }, [status?.phase, status?.current_episode])
+
+  useEffect(() => {
+    if (status?.phase !== 'recording') return
+    const id = setInterval(() => {
+      if (episodeStartRef.current !== null) setEpisodeElapsedMs(Date.now() - episodeStartRef.current)
+    }, 250)
+    return () => clearInterval(id)
+  }, [status?.phase])
 
   // 배타 규칙은 백엔드 exclusivity.py 한 곳에만 있다
   const { isBlocked, blockedBy, refresh: refreshActivity } = useActivity()
@@ -475,6 +509,15 @@ export default function RecordingPage() {
           <div className="grid gap-6 grid-cols-1 lg:grid-cols-[2fr_1fr] items-start">
             <div className="space-y-4">
               {webPreview && <RecordPreview />}
+              {status?.phase === 'recording' && (
+                <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
+                  <div className="text-xs text-neutral-400 mb-1">현재 에피소드 경과 시간</div>
+                  <div className="text-2xl font-mono text-neutral-100">
+                    {formatElapsed(episodeElapsedMs)}
+                    <span className="text-sm text-neutral-500 ml-1">/ {formatElapsed(episodeTime * 1000)}</span>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="space-y-4">
               {/* 녹화 중: 상태 + 제어 */}
