@@ -178,6 +178,25 @@ git tag --sort=-v:refname | head -1     # 예: v0.3.1 → 다음은 v0.3.2
 | v0.3.4 | 08-15 00:52 | wheel(cam·rs) + backend | rsd 결정적 신호 추가 · 꽂힌 장치를 케이블 탓으로 안 함 · camerad 폭주 수정 |
 | v0.3.5 | 08-15 01:14 | **frontend 이미지만** (27MB) | 시스템 메시지 인터페이스 — `alert`/`confirm` 30곳 제거 |
 | v0.3.6 | 08-15 02:16 | 이미지 (backend+frontend) | 멈춘 영상을 정상처럼 안 보이게 (`streaming`) · 스캔 썸네일 오보 제거 |
+| v0.3.7 | 08-15 02:38 | **backend 이미지만** | 원격 추론 — 이미지에 `grpcio`, `grpc_python` 을 `sys.executable` 로 |
+
+### 원격 추론 (.42 서버 ↔ .120 클라이언트)
+
+```bash
+# .42 — 정책 서버. **0.0.0.0 으로 열어야** 원격에서 붙는다 (기본은 127.0.0.1)
+curl -X POST localhost:8000/api/policy-server/start \
+     -H 'content-type: application/json' -d '{"host":"0.0.0.0","port":8088,"fps":30}'
+
+# .120 — 닿는지 먼저 본다. TCP 만 열려도 gRPC 가 안 될 수 있다(모듈 없음)
+curl -X POST http://localhost:8081/api/policy-server/check-remote \
+     -H 'content-type: application/json' -d '{"address":"192.168.0.42:8088"}'
+```
+
+⚠ **모델은 서버가 로드한다** — 체크포인트 경로는 **.42 기준**이어야 한다.
+클라이언트(.120)에 모델이 0개인 것은 정상이다.
+
+⚠ **카메라는 클라이언트 것이다.** 정책이 기대하는 키(`top`·`hand` 등)를 .120 이
+전부 갖고 있어야 한다 — 서버에 있어도 소용없다.
 
 > ⚠ **배포로 백엔드를 재시작하면 장치 감시 기억이 비워진다.** v0.2.8 배포 직후
 > 이미 뽑혀 있던 RealSense 가 조용했던 이유가 이것이었다. v0.2.9 에서 "남아 있는데
