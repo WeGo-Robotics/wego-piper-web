@@ -70,11 +70,11 @@ STALE_S = 5.0
 # 화면이 문장을 따로 조립하면 한쪽만 고쳐져 어긋난다 (`_usb_warning` 과 같은 규칙).
 
 
-def _fresh_arms() -> set[str]:
-    """지금 **발행 중인** 팔. 세그먼트가 있어도 오래됐으면 뺀다."""
+def _survey_arms() -> tuple[set[str], set[str]]:
+    """`(발행 중, 멈춘 채 남아 있는)` 팔."""
     from piper_shm.arm import StateReader, list_segments
 
-    out: set[str] = set()
+    fresh, stale = set(), set()
     for name in list_segments():
         if not name.endswith(".state"):
             # `.action` 은 소비자가 쓰는 것 — 팔이 살아 있다는 증거가 아니다
@@ -85,23 +85,22 @@ def _fresh_arms() -> set[str]:
         except Exception:
             continue
         try:
-            if reader.age_s() <= STALE_S:
-                out.add(iface)
+            (fresh if reader.age_s() <= STALE_S else stale).add(iface)
         finally:
             close = getattr(reader, "close", None)
             if close:
                 close()
-    return out
+    return fresh, stale
 
 
-def _fresh_cameras() -> set[str]:
-    """지금 **발행 중인** 카메라 세그먼트 이름."""
+def _survey_cameras() -> tuple[set[str], set[str]]:
+    """`(발행 중, 멈춘 채 남아 있는)` 카메라 세그먼트."""
     import time
 
     from piper_shm import Subscriber, list_segments
 
     now = time.time_ns()
-    out: set[str] = set()
+    fresh, stale = set(), set()
     for name in list_segments():
         try:
             sub = Subscriber(name)
@@ -109,13 +108,13 @@ def _fresh_cameras() -> set[str]:
             continue
         try:
             wall = sub.wall_ns()
-            if wall and (now - wall) / 1e9 <= STALE_S:
-                out.add(name)
+            age = (now - wall) / 1e9 if wall else float("inf")
+            (fresh if age <= STALE_S else stale).add(name)
         except Exception:
             pass
         finally:
             sub.close()
-    return out
+    return fresh, stale
 
 
 @dataclass(frozen=True)
@@ -207,13 +206,18 @@ class DeviceWatch:
         from app.services.robot_manager import robot_manager, robotd_available
 
         try:
-            alive = _fresh_arms()
+            alive, stopped = _survey_arms()
         except Exception as exc:
             logger.debug("팔 신선도 조회 실패: %s", exc)
             return []
 
+        # ⚠ **멈춘 채 남아 있는 세그먼트도 아는 것으로 친다.** 발행을 본 적이 있는지만
+        # 따지면, 게이트웨이가 재시작될 때 이미 멈춰 있던 장치는 영영 기억에 안 들어가
+        # 조용해진다 — 배포로 백엔드를 재시작한 직후 실기에서 정확히 그랬다.
+        # 남아 있는데 멈춘 세그먼트는 **그 자체가 비정상**이다: 정상 해제는 파일을
+        # 지우고(`stop_publish`), 데몬은 기동할 때 남은 것을 치운다.
         known = self._published["robot"]
-        known |= alive
+        known |= alive | stopped
         missing = sorted(known - alive)
         if not missing:
             return []
@@ -238,7 +242,7 @@ class DeviceWatch:
 
         try:
             from piper_shm import segment_for_camera
-            alive = _fresh_cameras()
+            alive, stopped = _survey_cameras()
         except Exception as exc:
             logger.debug("카메라 신선도 조회 실패: %s", exc)
             return []
@@ -249,8 +253,13 @@ class DeviceWatch:
         seg_of = {c.id: segment_for_camera(c.id) for c in cams.values()}
         id_of = {seg: cid for cid, seg in seg_of.items()}
 
+        # ⚠ **멈춘 채 남아 있는 세그먼트도 아는 것으로 친다.** 발행을 본 적이 있는지만
+        # 따지면, 게이트웨이가 재시작될 때 이미 멈춰 있던 장치는 영영 기억에 안 들어가
+        # 조용해진다 — 배포로 백엔드를 재시작한 직후 실기에서 정확히 그랬다.
+        # 남아 있는데 멈춘 세그먼트는 **그 자체가 비정상**이다: 정상 해제는 파일을
+        # 지우고(`stop_publish`), 데몬은 기동할 때 남은 것을 치운다.
         known = self._published["camera"]
-        known |= alive
+        known |= alive | stopped
         missing = sorted(known - alive)
         if not missing:
             return []

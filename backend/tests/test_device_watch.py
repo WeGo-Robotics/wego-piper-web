@@ -33,7 +33,7 @@ class _Cam:
 def world(monkeypatch):
     """장치·데몬·세그먼트를 통째로 가짜로. 하드웨어 없이 모든 갈래를 만든다."""
     state = {"arms": [], "cams": [], "robotd": True, "rsd": True, "camerad": True,
-             "arm_segs": [], "cam_segs": []}
+             "arm_segs": [], "cam_segs": [], "arm_stale": [], "cam_stale": []}
 
     class _RM:
         arms = {}
@@ -54,8 +54,12 @@ def world(monkeypatch):
     monkeypatch.setattr("app.services.camera_manager.camera_manager", cm)
     # ⚠ **발행 중인 것**을 흉내낸다 — 세그먼트 존재가 아니다. USB 를 뽑아도 파일은
     # 남고 발행만 멈추는데, 처음엔 존재로 판정해서 실기에서 아무 반응이 없었다.
-    monkeypatch.setattr(W, "_fresh_arms", lambda: set(state["arm_segs"]))
-    monkeypatch.setattr(W, "_fresh_cameras", lambda: set(state["cam_segs"]))
+    # `(발행 중, 멈춘 채 남아 있는)` — 둘을 나눠 흉내낸다. 멈춘 세그먼트도 "아는 것"이라
+    # 게이트웨이 재시작 뒤에도 보이는지가 여기 걸려 있다.
+    monkeypatch.setattr(W, "_survey_arms",
+                        lambda: (set(state["arm_segs"]), set(state.get("arm_stale", []))))
+    monkeypatch.setattr(W, "_survey_cameras",
+                        lambda: (set(state["cam_segs"]), set(state.get("cam_stale", []))))
 
     def _apply():
         rm.arms = {a.iface: a for a in state["arms"]}
@@ -252,12 +256,14 @@ def test_a_stale_segment_counts_as_gone(tmp_path):
     pub = Publisher(name, height=4, width=4, channels=3)
     try:
         pub.publish(np.zeros((4, 4, 3), dtype=np.uint8))
-        assert name in W._fresh_cameras(), "방금 발행했는데 신선하지 않다고 한다"
+        fresh, stale = W._survey_cameras()
+        assert name in fresh, "방금 발행했는데 신선하지 않다고 한다"
 
         # 시간이 흐른 것으로 친다 — 파일은 **그대로 있다**
         old, W.STALE_S = W.STALE_S, -1.0
         try:
-            assert name not in W._fresh_cameras(), (
+            fresh, stale = W._survey_cameras()
+            assert name not in fresh and name in stale, (
                 "세그먼트가 남아 있으면 살아 있다고 판정한다 — 그게 원래 버그다")
         finally:
             W.STALE_S = old
@@ -268,3 +274,18 @@ def test_a_stale_segment_counts_as_gone(tmp_path):
             unlink(name)
         except Exception:
             pass
+
+
+def test_a_device_already_broken_at_startup_is_still_reported(world):
+    """**회귀** — 배포로 백엔드를 재시작했더니 이미 뽑혀 있던 RealSense 가 조용해졌다.
+
+    "발행을 본 적이 있는지"만 따지면, 재시작 시점에 이미 멈춰 있던 장치는 영영
+    기억에 안 들어간다. 남아 있는데 멈춘 세그먼트는 **그 자체가 비정상**이다 —
+    정상 해제는 파일을 지우고, 데몬은 기동할 때 남은 것을 치운다.
+    """
+    world["cams"] = [_Cam("rs:1:color")]
+    world["cam_segs"] = []                       # 발행 중인 것 없음
+    world["cam_stale"] = ["rs_1_color"]          # 멈춘 채 남아 있음
+    world["apply"]()
+    new, _ = W.DeviceWatch().check()             # 갓 뜬 감시자 — 기억이 비어 있다
+    assert [a.reason for a in new] == ["device_gone"]
