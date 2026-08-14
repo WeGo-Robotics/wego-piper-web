@@ -31,7 +31,7 @@ import shutil
 import subprocess
 from collections.abc import Callable
 
-from app.services.process_manager import ProcessState
+from app.services.process_manager import ProcessState, injected_env
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,7 @@ class SystemdProcess:
 
     # ── 실행 ──
 
-    async def start(self, cmd: list[str], env: dict[str, str] | None = None) -> None:
+    async def start(self, cmd: list[str], env_extra: dict[str, str] | None = None) -> None:
         ok, why = available()
         if not ok:
             raise RuntimeError(f"systemd 러너를 쓸 수 없습니다: {why}")
@@ -148,7 +148,11 @@ class SystemdProcess:
         # `cmd`(실행할 명령)에 쌓으면 학습 스크립트가 받아 파싱하다 죽는다:
         #   `lerobot_train.py: error: unrecognized arguments: --setenv=...`
         # 실기에서 이렇게 터졌다.
-        for k, v in (env or {}).items():
+        #
+        # ⚠ 유닛은 **게이트웨이의 환경을 물려받지 않는다** — 사용자 systemd 의
+        # 환경으로 뜬다. 버스 주소·HF 엔드포인트처럼 우리가 넣어주는 것은
+        # `injected_env()` 가 한 벌로 갖고 있으므로 자식 소유자가 둘이어도 같다.
+        for k, v in injected_env(env_extra).items():
             argv += [f"--setenv={k}={v}"]
         argv += ["--"] + list(cmd)
 
@@ -162,7 +166,7 @@ class SystemdProcess:
 
         self._set_state(ProcessState.RUNNING)
         self._start_log_stream()
-        logger.info("학습 유닛 시작: %s", self.unit)
+        logger.info("유닛 시작: %s", self.unit)
 
     async def stop(self) -> None:
         _systemctl("stop", self.unit)

@@ -17,6 +17,9 @@ __all__ = ["SystemdRunner", "available"]
 
 class SystemdRunner:
     """`TrainRunner` 구현. 인터페이스는 `LocalRunner` 와 같다."""
+    # 이 기계의 GPU 를 쓴다.
+    occupies_local_gpu = True
+
 
     def __init__(self, job_id: str = "local") -> None:
         self.proc = SystemdProcess(f"piper-train-{job_id}")

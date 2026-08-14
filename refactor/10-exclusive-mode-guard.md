@@ -154,8 +154,12 @@ E-stop의 사정도 같다 — daemon-split.md 미결정 #2("E-stop이 무엇을
 
 ## 남은 것
 
-- **클라우드 학습 예외** — cloud-training 은 GPU 가드에서 빠져야 한다.
-  `BLOCKED_BY` 에 러너별 분기가 필요하다 ([../ROADMAP.md](../ROADMAP.md) 트랙 D)
+- ~~**클라우드 학습 예외**~~ — ☑ 붙었다. 다만 `BLOCKED_BY` 에 분기를 넣지 **않았다**.
+  표는 "다툴 수 있다"까지만 말하게 두고, 실제로 다투는지는
+  [`_contends()`](../backend/app/services/exclusivity.py) 가 판정한다 —
+  학습이 낀 관계는 전부 GPU 라서 러너의 `occupies_local_gpu` 하나로 통째로 꺼진다.
+  표에 러너별 항목을 넣었으면 대칭성 테스트가 깨졌을 것이고, 무엇보다
+  **"무엇이 무엇을 막는가"와 "지금 그게 참인가"는 다른 질문**이다.
 - **데몬 분리 후** `STATE_PROVIDERS` 가 버스 상태 조회로 바뀐다.
   한 곳에 모아뒀으므로 한 파일 수정으로 끝난다 ([daemon-split.md](daemon-split.md))
 

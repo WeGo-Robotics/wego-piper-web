@@ -95,7 +95,11 @@ cd frontend && npm run dev
 
 - E-stop은 웹서버와 **반드시 분리된 독립 watchdog 프로세스**로 구현. WebSocket 끊김 = 즉시 안전 정지
 - 웹 슬라이더에 min/max 클램핑 필수 (`backend/app/services/param_bridge.py`의 SAFE_PARAMS)
-- 녹화 중 브라우저 종료 시 LeRobot 프로세스가 독립적으로 에피소드 완결 (CLI 래핑의 장점)
+- ⚠ **녹화는 브라우저가 닫히면 죽는다.** CLI 래핑 자체는 에피소드를 독립적으로 완결할 수
+  있지만, refactor #10 이 E-stop 대상에 녹화를 넣은 뒤로는 heartbeat 가 끊기면 estopd 가
+  **SIGKILL** 한다 (실측 2.5초, `reason=heartbeat_timeout`). 인코딩 도중에 끊기면 그
+  에피소드는 잃는다. 의도한 안전 동작인지 재검토 대상인지는 아직 결정 안 됨 —
+  `exclusivity.ESTOP_TARGETS` 가 그 결정의 자리다
 - GPU 메모리 경합: 학습과 추론 동시 실행 시 OOM 위험 → 모드를 배타적으로 관리
 
 ## 환경 변수

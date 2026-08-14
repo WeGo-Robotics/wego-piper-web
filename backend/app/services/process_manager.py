@@ -20,6 +20,43 @@ class ProcessState(str, enum.Enum):
     ERROR = "error"
 
 
+def injected_env(env_extra: dict[str, str] | None = None) -> dict[str, str]:
+    """자식이 **우리 것이라서** 받아야 하는 환경변수. 상속분 위에 얹는다.
+
+    ⚠ 소유자가 둘이라 여기 모은다. `ProcessManager` 는 `os.environ` 사본에
+    update 하고, `SystemdProcess` 는 같은 dict 를 `--setenv` 로 넘긴다.
+    `ProcessManager` 안에만 두면 **유닛으로 띄운 자식만 조용히 이걸 못 받는다** —
+    버스 주소가 그중 하나라, 못 받은 채널이 조용히 죽는 게 정확히 아래 3단계에서
+    겪은 실패다.
+
+    `os.environ` 전체를 반환하지 않는다. 유닛에 `--setenv` 로 수백 개를 넘기는
+    꼴이 되고, 상속으로 이미 오는 것을 덮어쓸 이유도 없다.
+    """
+    import os as _os
+    from pathlib import Path as _Path
+
+    env: dict[str, str] = {}
+    # logfix 디렉토리를 PYTHONPATH 에 넣어 sitecustomize.py 가 자동 import 되게 한다
+    # (라이브러리 로거 이중 출력 차단). 덮어쓰는 것은 PYTHONPATH 오염 방지도 겸한다.
+    env["PYTHONPATH"] = str(_Path(__file__).resolve().parent.parent / "core" / "logfix")
+    # pynput 이 X server 에 연결할 수 있도록 DISPLAY 보장
+    env["DISPLAY"] = _os.environ.get("DISPLAY") or ":0"
+    # LeRobot 내부가 huggingface_hub 를 직접 부른다 — 우리 코드를 안 거치므로
+    # 자체 Hub 로 방향을 바꾸는 레버는 이 환경변수 하나뿐이다.
+    from app.core.config import settings as _settings
+    if _settings.hf_endpoint:
+        env["HF_ENDPOINT"] = _settings.hf_endpoint
+    # 버스 주소는 **여기 한 곳에서** 모든 자식에게 준다. 예전에는 ZMQ 주소 3개를
+    # 호출부마다 따로 넘겼는데, 하나를 빠뜨리면 그 채널만 조용히 죽었다
+    # (refactor/daemon-split.md 3단계). 버스를 안 쓰는 자식은 그냥 무시한다.
+    from piper_bus.client import url as _bus_url
+    env["PIPER_REDIS_URL"] = _bus_url()
+    # 호출부 지정 추가 환경변수 (예: ACCELERATE_MIXED_PRECISION)
+    if env_extra:
+        env.update(env_extra)
+    return env
+
+
 class ProcessManager:
     def __init__(self) -> None:
         self._process: asyncio.subprocess.Process | None = None
@@ -69,30 +106,9 @@ class ProcessManager:
         logger.info("Starting process: %s", " ".join(cmd))
 
         try:
-            # subprocess에 깨끗한 환경 전달 (PYTHONPATH 오염 방지).
-            # 단, logfix 디렉토리만 PYTHONPATH에 넣어 sitecustomize.py가
-            # 자동 import되도록 한다 (라이브러리 로거 이중 출력 차단).
             import os as _os
-            from pathlib import Path as _Path
             env = _os.environ.copy()
-            _logfix_dir = str(_Path(__file__).resolve().parent.parent / "core" / "logfix")
-            env["PYTHONPATH"] = _logfix_dir
-            # pynput이 X server에 연결할 수 있도록 DISPLAY 보장
-            if "DISPLAY" not in env:
-                env["DISPLAY"] = ":0"
-            # LeRobot 내부가 huggingface_hub 를 직접 부른다 — 우리 코드를 안 거치므로
-            # 자체 Hub 로 방향을 바꾸는 레버는 이 환경변수 하나뿐이다.
-            from app.core.config import settings as _settings
-            if _settings.hf_endpoint:
-                env["HF_ENDPOINT"] = _settings.hf_endpoint
-            # 버스 주소는 **여기 한 곳에서** 모든 자식에게 준다. 예전에는 ZMQ 주소 3개를
-            # 호출부마다 따로 넘겼는데, 하나를 빠뜨리면 그 채널만 조용히 죽었다
-            # (refactor/daemon-split.md 3단계). 버스를 안 쓰는 자식은 그냥 무시한다.
-            from piper_bus.client import url as _bus_url
-            env["PIPER_REDIS_URL"] = _bus_url()
-            # 호출부 지정 추가 환경변수 (예: ACCELERATE_MIXED_PRECISION) 주입
-            if env_extra:
-                env.update(env_extra)
+            env.update(injected_env(env_extra))
 
             self._process = await asyncio.create_subprocess_exec(
                 *cmd,

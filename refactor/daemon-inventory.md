@@ -31,17 +31,26 @@
 
 | # | 데몬 | 소유 | 배포 | 현재 코드 |
 |---|---|---|---|---|
-| 5 | `piper-infer@<run>` | 추론 프로세스, GPU | 컨테이너 (GPU + `ipc: host`) | [process_manager.py](../backend/app/services/process_manager.py) 전역 인스턴스 |
-| 6 | `piper-record@<sess>` | 녹화 프로세스 | 컨테이너 (GPU + `ipc: host`) | [record_manager.py](../backend/app/services/record_manager.py) (118) |
-| 7 | `piper-train@<job>` | 학습 프로세스, GPU | 컨테이너 (GPU만) | [train_manager.py](../backend/app/services/train_manager.py) (216) |
-| 8 | `piper-policysrv` | gRPC 정책 서버, GPU | 컨테이너 (GPU만) | [policy_server_manager.py](../backend/app/services/policy_server_manager.py) (62) |
-| 9 | `piper-encoderd` | 인코더 프로브 세션(최대 8), GPU | 컨테이너 (GPU만) | [encoder_probe.py](../backend/app/services/encoder_probe.py) (281) |
+| # | 데몬 | 소유 | 결론 |
+|---|---|---|---|
+| 5 | ~~`piper-infer@<run>`~~ | 추론 프로세스, GPU | ✗ **안 쪼갠다** — 게이트웨이 자식으로 남는다 (아래) |
+| 6 | ~~`piper-record@<sess>`~~ | 녹화 프로세스 | ✗ **안 쪼갠다** (아래) |
+| 7 | `piper-train@<job>` | 학습 프로세스, GPU | ☑ 유닛 + **원격 SSH 도 됨** ([ssh.py](../backend/app/services/training/runners/ssh.py)) |
+| 8 | `piper-policysrv` | gRPC 정책 서버, GPU | ☑ 유닛 ([policy_server_manager.py](../backend/app/services/policy_server_manager.py)) |
+| 9 | ~~`piper-encoderd`~~ | 인코더 프로브 세션(최대 8), GPU | ✗ **안 만든다** (아래) |
 
 > ⚠ **encoderd 는 유닛으로 감싸는 일이 아니다.** 지금 프로브는 `subprocess.run` 으로
 > 블로킹 1회 실행이고 결과를 그 자리에서 읽는다. 유닛으로 바꾸면 "시작 → 완료 폴링 →
 > 산출물 읽기 → 정리"가 되는데, 몇 초짜리라 재시작 생존의 이득이 없고 복잡도만 는다.
-> 여기서 얻을 것은 **세션을 들고 있는 상시 서버**로 떼는 것이고, GPU 를 쥐므로
-> 3b-7(컨테이너화)에 붙는다 — xferd 처럼 `make_process()` 한 줄로 끝나지 않는다.
+> 여기서 얻을 것은 **세션을 들고 있는 상시 서버**로 떼는 것인데, 그 이득이
+> "게이트웨이 재시작 때 세션 8개가 안 날아간다" 하나뿐이다 — 몇 초짜리 프로브를
+> 다시 돌리면 되는 것이라 **안 만들기로 했다** (ROADMAP 3b-7).
+
+> ⚠ **5·6 을 쪼개지 않는 이유 — 수명이 안 늘어난다.** 유닛/컨테이너의 값은
+> "게이트웨이가 죽어도 산다"인데, 추론과 녹화는 **게이트웨이가 죽으면 죽는 게 설계된
+> 동작이다.** heartbeat 가 끊기면 estopd 가 버스의 활동 PID 를 SIGKILL 한다 —
+> 실측 2.5초, `reason=heartbeat_timeout`. 유닛으로 감싸도 MainPID 가 죽는다.
+> 이 판단은 `ESTOP_TARGETS` 에 매여 있으므로, 그 표가 바뀌면 여기도 다시 본다.
 | 10 | `piper-xferd` | Hub 업로드/다운로드, 데이터셋 편집 | 호스트 | [`_upload_pm`](../backend/app/routers/datasets.py#L21), [hub_client.py](../backend/app/services/hub_client.py) |
 
 **인프라**(상시, 호스트)
@@ -136,8 +145,13 @@ LeRobot+CUDA 전체를 호스트에 설치해야 했다.
 train / policy server / encoder probe 셋 다 GPU만 쓰고 하드웨어를 안 만진다.
 의존성 지옥(CUDA·torch·torchcodec)이 여기 살고, 컨테이너가 정확히 이걸 위해 있다.
 
-`piper-encoderd`가 데몬인 이유: [세션을 8개까지 메모리에 유지](../backend/app/services/encoder_probe.py#L30)한다.
-게이트웨이에 두면 재시작 때마다 날아간다.
+`piper-encoderd`가 데몬인 이유는 [세션을 8개까지 메모리에 유지](../backend/app/services/encoder_probe.py#L30)한다는
+것이었다. **그 이득만으로는 안 만드는 게 낫다고 결론냈다** — 위 경고 참고.
+
+> **7 은 여기서 한 걸음 더 갔다.** 학습은 이제 이 기계의 컨테이너에만 갇히지
+> 않는다 — [`SSHRunner`](../backend/app/services/training/runners/ssh.py) 가
+> 원격 GPU 박스의 tmux 세션에 같은 job 을 던진다. "GPU 를 쥔 것을 게이트웨이에서
+> 떼어낸다"는 목적을 컨테이너 대신 **기계 경계**로 달성한 셈이다.
 
 ### 10. `piper-xferd` — 잡다한 파일 작업 한 곳
 

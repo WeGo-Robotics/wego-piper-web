@@ -247,3 +247,51 @@ def test_snapshot_shape(idle):
     assert snap["blocked"]["inference"] == ["inference"]  # 자기 자신
     assert snap["blocked"]["upload"] == []
     assert snap["labels"]["recording"] == "녹화"
+
+
+# ── 원격 학습은 로컬 GPU 를 안 먹는다 (ROADMAP 3b-3.5-4) ──
+
+
+class _Runner:
+    """러너를 갈아끼운다 — `uses_local_gpu` 는 러너에게 물어보는 값이다."""
+
+    def __init__(self, local_gpu: bool) -> None:
+        self.occupies_local_gpu = local_gpu
+
+def test_remote_training_does_not_block_local_inference(monkeypatch):
+    """원격 학습이 추론을 막으면 **원격으로 보낸 값이 하나도 안 난다.**
+
+    표의 "학습 ↔ 추론"은 GPU 경합이 이유다. 학습이 다른 기계에 있으면 그 이유가
+    사라진다 (feature/cloud-training.md 첫 표).
+    """
+    monkeypatch.setitem(ex.STATE_PROVIDERS, ex.Activity.TRAINING, lambda: True)
+    monkeypatch.setattr(ex.train_manager, "runner", _Runner(local_gpu=False))
+
+    assert ex.blocking(ex.Activity.INFERENCE) == []
+    assert ex.blocking(ex.Activity.RECORDING) == []
+    assert ex.blocked_reason(ex.Activity.ENCODER_PROBE) is None
+    # 학습은 여전히 "실행 중"으로 보인다 — 화면에서 사라지면 안 된다
+    assert ex.Activity.TRAINING in ex.running()
+
+
+def test_local_training_still_blocks_inference(monkeypatch):
+    """기본은 막는 쪽이다. 원격이 아니면 아무것도 안 바뀐다."""
+    monkeypatch.setitem(ex.STATE_PROVIDERS, ex.Activity.TRAINING, lambda: True)
+    monkeypatch.setattr(ex.train_manager, "runner", _Runner(local_gpu=True))
+
+    assert ex.Activity.TRAINING in ex.blocking(ex.Activity.INFERENCE)
+
+
+def test_remote_training_still_blocks_a_second_training(monkeypatch):
+    """GPU 문제가 아니다 — 둘이 같은 출력 디렉토리를 밟는다."""
+    monkeypatch.setitem(ex.STATE_PROVIDERS, ex.Activity.TRAINING, lambda: True)
+    monkeypatch.setattr(ex.train_manager, "runner", _Runner(local_gpu=False))
+
+    assert ex.blocking(ex.Activity.TRAINING) == [ex.Activity.TRAINING]
+
+
+def test_unknown_runner_is_assumed_to_use_the_local_gpu():
+    """모르면 막는다. 반대로 틀리면 OOM 이다."""
+    import inspect
+
+    assert 'getattr(train_manager, "uses_local_gpu", True)' in inspect.getsource(ex._contends)

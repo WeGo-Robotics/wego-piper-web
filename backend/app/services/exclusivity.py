@@ -121,9 +121,28 @@ def running() -> list[Activity]:
     return [a for a in STATE_PROVIDERS if is_running(a)]
 
 
+def _contends(target: Activity, blocker: Activity) -> bool:
+    """둘이 **실제로** 자원을 다투는가. 표는 "다툴 수 있다"까지만 말한다.
+
+    학습이 낀 관계는 전부 GPU 다 (표의 넷을 보면 그렇다). 그래서 학습이 **원격에서**
+    돌면 그 관계들이 통째로 사라진다 — 다른 기계의 GPU 는 이 기계의 추론을 안 막는다.
+
+    이게 원격으로 보내는 **이유**다. 여기서 안 풀면 원격 학습을 켜도 여전히
+    추론이 409 로 막혀서, 기능을 켠 값이 하나도 안 난다
+    (feature/cloud-training.md 첫 표: "학습은 원격, 로컬 GPU 는 수집/추론 전용").
+
+    ⚠ 학습 **자기 자신**은 여전히 자기를 막는다 — 원격이든 아니든 두 개를 동시에
+    시작하면 같은 출력 디렉토리를 밟는다. 그건 GPU 문제가 아니라서 여기 안 걸린다.
+    """
+    if Activity.TRAINING not in (target, blocker):
+        return True
+    return getattr(train_manager, "uses_local_gpu", True)
+
+
 def blocking(target: Activity) -> list[Activity]:
     """`target` 을 지금 막고 있는 활동들. 자기 자신도 포함한다(이미 실행 중이면)."""
-    blockers = [a for a in BLOCKED_BY.get(target, []) if is_running(a)]
+    blockers = [a for a in BLOCKED_BY.get(target, [])
+                if is_running(a) and _contends(target, a)]
     if is_running(target):
         blockers.insert(0, target)
     return blockers

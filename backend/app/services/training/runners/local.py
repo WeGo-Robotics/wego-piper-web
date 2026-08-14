@@ -20,6 +20,9 @@ _PID_FILE = "/tmp/piper_train_pid"  # nosec B108
 
 
 class LocalRunner:
+    # 이 기계의 GPU 를 쓴다.
+    occupies_local_gpu = True
+
     def __init__(self) -> None:
         self.pm = ProcessManager()
 

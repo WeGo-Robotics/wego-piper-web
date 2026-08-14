@@ -18,6 +18,13 @@ from app.services.training.spec import TrainJobSpec
 
 
 class TrainRunner(Protocol):
+    #: 이 러너로 도는 학습이 **이 기계의 GPU** 를 쓰는가.
+    #:
+    #: 배타 가드가 이걸 본다. 원격 학습은 로컬 GPU 를 안 쓰므로 추론·녹화를 막을
+    #: 이유가 없다 — 오히려 그게 원격으로 보내는 **이유다**
+    #: (feature/cloud-training.md 첫 표: "학습은 원격, 로컬 GPU 는 수집/추론 전용").
+    occupies_local_gpu: bool
+
     @property
     def state(self) -> ProcessState: ...
 

@@ -1,6 +1,16 @@
 """
 레코딩 프로세스 관리.
 lerobot-record subprocess + 에피소드 상태 파싱 + 키 주입.
+
+## 왜 systemd 유닛이 **아닌가** (ROADMAP 3b-7)
+
+학습·정책서버·xferd 는 유닛으로 갔는데(3b-6) 녹화와 추론은 자식 프로세스로 남는다.
+유닛의 값은 "게이트웨이가 죽어도 산다"인데, **이 둘은 게이트웨이가 죽으면 죽는 게
+설계된 동작이다** — heartbeat 가 끊기면 estopd 가 SIGKILL 한다(실측 2.5초,
+`stopped: ['recording']`). 유닛으로 감싸도 estopd 가 MainPID 를 죽이므로 결과가 같다.
+
+즉 유닛화는 복잡도만 늘리고 수명은 하나도 안 늘린다. `ESTOP_TARGETS` 에서 녹화를
+빼기로 결정한다면 그때 다시 볼 일이다 — 그 결정이 먼저다.
 """
 
 import logging

@@ -32,8 +32,25 @@ def _default_runner() -> "TrainRunner":
 
     조용히 `LocalRunner` 로 폴백하면 "재시작해도 학습이 살아있다"고 믿는데
     실제로는 아닌 상태가 된다 — 그게 가장 나쁜 결과다.
+
+    원격이 로컬보다 먼저다. 둘 다 설정돼 있으면 원격이 이긴다 — `process_runner`
+    는 "이 기계에서 어떻게 띄우나"이고 `train_ssh_host` 는 "어느 기계에서 도나"라
+    층이 다르다.
     """
     from app.core.config import settings
+
+    if settings.train_ssh_host:
+        from app.services.training.runners.ssh import SSHRunner
+        from app.services.training.runners.ssh import available as ssh_available
+
+        ok, why = ssh_available()
+        if ok:
+            return SSHRunner()
+        # ⚠ 여기서 조용히 로컬로 떨어지면 **이 기계의 GPU 를 먹는다.** 원격에서
+        #   돈다고 믿고 추론을 같이 걸면 OOM 이다 — 그래서 크게 남긴다.
+        logger.warning("원격 학습 러너를 쓸 수 없어 local 로 돕니다 — %s "
+                       "(학습이 이 기계의 GPU 를 씁니다)", why)
+        return LocalRunner()
 
     if settings.process_runner != "systemd":
         return LocalRunner()
@@ -76,6 +93,14 @@ class TrainManager:
     @property
     def is_running(self) -> bool:
         return self.runner.is_running
+
+    @property
+    def uses_local_gpu(self) -> bool:
+        """이 학습이 **이 기계의** GPU 를 쓰는가. 배타 가드가 본다.
+
+        기본은 True 다 — 모르면 막는 쪽이 안전하다. 원격 러너만 False 로 답한다.
+        """
+        return getattr(self.runner, "occupies_local_gpu", True)
 
     @property
     def metrics(self):

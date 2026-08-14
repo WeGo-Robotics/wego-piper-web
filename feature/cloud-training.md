@@ -7,7 +7,7 @@
 
 | 지금 | 클라우드 이후 |
 |---|---|
-| 학습 중 GPU 점유 → 추론 시작 시 409 ([training.py:112-116](../backend/app/routers/training.py#L112-L116)) | 학습은 원격, 로컬 GPU는 수집/추론 전용 |
+| 학습 중 GPU 점유 → 추론 시작 시 409 | ☑ **된다.** 원격 학습이면 배타 가드가 비켜준다 — 러너의 `occupies_local_gpu` 를 [`exclusivity._contends()`](../backend/app/services/exclusivity.py) 가 본다. 학습은 여전히 "실행 중"으로 보이되 추론을 안 막는다 |
 | 로컬 GPU 1장 = 실험 1개 직렬 | 실험 N개 병렬 |
 | SSH 세션 종료 시 학습이 같이 죽음 (linger 문제) | 원격 job은 로컬 세션과 무관 |
 | 서버 리로드 시 상태만 복원, stdout 재연결 불가 ([train_manager.py:172-195](../backend/app/services/train_manager.py#L172-L195)) | 로그를 원격에서 커서로 다시 읽으면 됨 |
@@ -120,6 +120,18 @@ class CloudProvider(Protocol):     # SSH 계열만 사용
 핵심은 `logs()`가 **커서 기반 pull**이라는 점이다. 로컬의 push(stdout 콜백)와 원격의 pull을
 레지스트리 폴링 루프가 흡수해서, 그 위쪽(메트릭 파서 → WS 브로드캐스트)은 **완전히 동일한
 코드를 탄다**. 로그 한 줄이 어디서 왔든 `_METRIC_RE`는 신경 쓰지 않는다.
+
+> ☑ **4단계는 이 프로토콜을 기다리지 않고 먼저 붙었다.** 지금
+> [`SSHRunner`](../backend/app/services/training/runners/ssh.py) 는 위의 job_id 기반
+> 프로토콜이 아니라 **지금 있는 `TrainRunner`**(push 콜백)를 구현한다. 원격 pull 을
+> push 로 바꾸는 자리는 `ssh -t tail -f` 를 읽는 스레드 하나다 — `SystemdProcess` 가
+> journald 를 그렇게 읽는 것과 같은 모양이라, 이음매를 새로 만들 필요가 없었다.
+> 위 프로토콜(=job_id·poll·cursor)은 **프로바이더가 여럿이 될 때** 필요하다.
+> 지금은 "이미 켜져 있는 SSH 박스" 하나뿐이라 인스턴스 수명 자체가 없다.
+>
+> 실기 확인에서 **정확히 이 점이 값을 했다**: 원격에서 온 로그 280줄이 로컬과 같은
+> 파서를 지나 `step=300 / progress 1.0` 까지 그대로 올라왔다. 위쪽 코드는 한 줄도
+> 안 고쳤다.
 
 ### `TrainJobSpec` — 경로가 아니라 의미를 담는다
 
@@ -406,8 +418,8 @@ PROVIDERS = {
 | 1 | `TrainRunner` Protocol + `LocalRunner`로 현 동작 이식 | ☑ 완료 | 중 | 0 |
 | 2 | `build_train_args`에서 인터프리터/파일시스템 의존 분리 | ☑ 완료 (**미리보기 부작용 버그도 수정**) | 중 | — |
 | 3 | ☑ job 레지스트리 + 다중 job + WS `job_id` | 로컬도 job 목록으로 보임. **버스 위**(파일 아님)라 서버 재시작에도 남는다 | **높음** (WS 계약 변경) | 1 |
-| 4 | `static_ssh` 프로바이더 + `SSHRunner` | 사내 서버로 학습 | 높음 | 1,2,3 |
-| 5 | 데이터셋 업로드 연동 + 사전 검증 | 원격이 데이터를 봄 | 중 | 4 |
+| 4 | ☑ [`SSHRunner`](../backend/app/services/training/runners/ssh.py) — 원격 tmux 세션 | 사내 서버로 학습. **실기 확인**: 300스텝 완주 · 재부착 시 로그 138줄 되읽기 | 높음 | 1,2,3 |
+| 5 | 데이터셋 업로드 연동 + 사전 검증 | 원격이 데이터를 봄. **4 가 지금 가정하는 것이 이것이다** | 중 | 4 |
 | 6 | 체크포인트 회수 + `models_dir` 안착 | 모델이 돌아옴 | 중 | 4 |
 | 7 | 비용 가드 (max_runtime 자폭 · 예산 · 고아 스캐너) | 돈 안 샘 | 중 | 4 |
 | 8 | 유료 프로바이더 1개 (Vast.ai 또는 RunPod) | 실제 클라우드 | 중 | 4~7 |

@@ -1,7 +1,8 @@
-"""학습 러너 — `LocalRunner` / `SystemdRunner` 계약 (ROADMAP 3b-6).
+"""학습 러너 — `LocalRunner` / `SystemdRunner` / `SSHRunner` 계약
+(ROADMAP 3b-6 · 3b-3.5-4).
 
-두 러너는 `TrainRunner` 이음매를 통해 서로 갈아끼워진다. **표면이 갈리면
-설정을 바꾼 순간 런타임에 터진다** — 그것도 학습을 시작하려는 순간에.
+셋은 `TrainRunner` 이음매를 통해 서로 갈아끼워진다. **표면이 갈리면 설정을 바꾼
+순간 런타임에 터진다** — 그것도 학습을 시작하려는 순간에.
 """
 
 import inspect
@@ -10,30 +11,33 @@ from app.services.training.runners.base import TrainRunner
 from app.services.training.runners.local import LocalRunner
 from app.services.systemd_process import SystemdProcess
 from app.services.training.runners.systemd import SystemdRunner
+from app.services.training.runners.ssh import SSHRunner
 
 # 유닛 기계장치는 `SystemdProcess` 가 갖고, 러너는 학습 고유의 것만 갖는다.
 # 그래서 "유닛을 어떻게 띄우는가" 검사는 그쪽을 본다.
+
+RUNNERS = (LocalRunner, SystemdRunner, SSHRunner)
 
 
 def _surface(cls) -> set[str]:
     return {n for n in dir(cls) if not n.startswith("_")}
 
 
-def test_both_runners_implement_the_same_seam():
-    """프로토콜이 요구하는 것을 둘 다 가져야 한다."""
+def test_every_runner_implements_the_same_seam():
+    """프로토콜이 요구하는 것을 셋 다 가져야 한다."""
     required = {n for n in dir(TrainRunner) if not n.startswith("_")}
-    for runner in (LocalRunner, SystemdRunner):
+    for runner in RUNNERS:
         missing = required - _surface(runner)
         assert not missing, f"{runner.__name__} 에 없는 것: {sorted(missing)}"
 
 
-def test_async_methods_stay_async_on_both():
+def test_async_methods_stay_async_on_every_runner():
     """한쪽만 동기면 `await` 하는 호출부가 깨진다."""
     for name in ("start", "stop"):
-        assert inspect.iscoroutinefunction(getattr(LocalRunner, name))
-        assert inspect.iscoroutinefunction(getattr(SystemdRunner, name)), (
-            f"SystemdRunner.{name} 이 async 가 아니다"
-        )
+        for runner in RUNNERS:
+            assert inspect.iscoroutinefunction(getattr(runner, name)), (
+                f"{runner.__name__}.{name} 이 async 가 아니다"
+            )
 
 
 def test_systemd_runner_never_uses_scope():
@@ -198,3 +202,195 @@ def test_exec_argv_parses_systemd_show_output():
     src = inspect.getsource(SystemdProcess.exec_argv)
     assert "argv[]=" in src, "argv 를 안 꺼낸다"
     assert '" ; "' in src or "' ; '" in src, "필드 구분을 안 한다"
+
+
+# ── SSH 러너 (ROADMAP 3b-3.5-4) ──
+
+def _ssh_runner(monkeypatch, *, calls=None, alive=False):
+    """`_run` 을 가로챈 `SSHRunner`. 실제 SSH 는 안 탄다."""
+    from app.services.training.runners import ssh as S
+
+    seen = calls if calls is not None else []
+
+    class _R:
+        def __init__(self, rc=0, out=""):
+            self.returncode, self.stdout, self.stderr = rc, out, ""
+
+    def fake_run(host, remote, timeout=15.0, stdin=None):
+        seen.append((remote, stdin))
+        if "has-session" in remote:
+            return _R(0 if alive else 1)
+        return _R(0)
+
+    monkeypatch.setattr(S, "_run", fake_run)
+    return S.SSHRunner(job_id="t1", host="u@h", workdir=".piper/train"), seen
+
+
+def test_ssh_runner_never_reports_a_local_pid():
+    """원격 PID 는 이 기계에서 **남의 프로세스 번호**다.
+
+    estopd 는 버스에 올라온 PID 를 그대로 SIGKILL 한다 — 원격 번호를 올리면
+    같은 번호를 쓰는 로컬 프로세스가 죽는다.
+    """
+    assert SSHRunner(job_id="t", host="u@h").pid is None
+    src = inspect.getsource(SSHRunner.pid.fget)
+    assert "return None" in src
+
+
+def test_ssh_runner_does_not_inject_local_environment():
+    """버스 주소·logfix 경로는 **이 기계의 사실**이다.
+
+    원격에 넘기면 버스가 원격의 localhost 를 가리키고 logfix 경로는 없다.
+    """
+    src = inspect.getsource(SSHRunner)
+    assert "injected_env" not in src, "로컬 환경을 원격에 넘긴다"
+
+
+def test_ssh_script_carries_the_total_step_count(monkeypatch):
+    """**회귀 방지** — systemd 쪽이 겪은 "4000 / 0" 을 여기서 미리 막는다.
+
+    총 스텝은 로그에 안 나온다. 원격에는 `ExecStart` 가 없으므로 스크립트가
+    그 자리를 대신한다.
+    """
+    r, _ = _ssh_runner(monkeypatch)
+    from app.services.training.spec import TrainJobSpec
+
+    script = r._build_script(TrainJobSpec(
+        cmd=["python", "train.py", "--steps=4000"], total_steps=4000,
+        output_dir="/out/x", env={"ACCELERATE_MIXED_PRECISION": "bf16"}))
+    assert "# piper-total-steps: 4000" in script
+    assert "# piper-output-dir: /out/x" in script
+    assert "export ACCELERATE_MIXED_PRECISION=bf16" in script
+
+
+def test_ssh_script_reports_its_exit_code(monkeypatch):
+    """끝났다는 것을 **원격이 밀어준다.**
+
+    이 줄이 없으면 학습이 끝나도 화면은 계속 "실행 중"이고 다음 학습이 막힌다 —
+    systemd 러너가 캐시를 믿다가 겪은 것과 같은 증상이다.
+    """
+    r, _ = _ssh_runner(monkeypatch)
+    from app.services.training.runners.ssh import _EXIT_MARK
+    from app.services.training.spec import TrainJobSpec
+
+    script = r._build_script(TrainJobSpec(cmd=["python", "train.py"]))
+    assert script.rstrip().endswith(f'echo "{_EXIT_MARK} $?"')
+
+
+def test_ssh_restore_reads_the_script_not_a_pid_file(monkeypatch):
+    """원격 tmux 가 진실이다. PID 파일은 원격에 적용할 수도 없다."""
+    from app.services.training.runners import ssh as S
+
+    class _R:
+        def __init__(self, rc=0, out=""):
+            self.returncode, self.stdout, self.stderr = rc, out, ""
+
+    script = (
+        "#!/usr/bin/env bash\nset -o pipefail\n"
+        "export ACCELERATE_MIXED_PRECISION=bf16\n"
+        "# piper-total-steps: 4000\n# piper-output-dir: /out/x\n"
+        "python train.py --steps=4000\n"
+    )
+
+    def fake_run(host, remote, timeout=15.0, stdin=None):
+        if "has-session" in remote:
+            return _R(0)
+        return _R(0, script)
+
+    monkeypatch.setattr(S, "_run", fake_run)
+    monkeypatch.setattr(S.SSHRunner, "_start_log_stream", lambda self, **kw: None)
+
+    r = S.SSHRunner(job_id="t1", host="u@h")
+    spec = r.restore()
+    assert spec is not None
+    assert spec.total_steps == 4000, "총 스텝을 못 되찾으면 진행률 바가 안 뜬다"
+    assert spec.output_dir == "/out/x"
+    assert spec.cmd == ["python", "train.py", "--steps=4000"]
+
+
+def test_ssh_restore_replays_the_log(monkeypatch):
+    """게이트웨이가 없던 동안의 로그를 다시 읽어야 진행률이 이어진다."""
+    src = inspect.getsource(SSHRunner.restore)
+    assert "from_start=True" in src
+
+
+def test_ssh_start_refuses_when_a_session_is_already_running(monkeypatch):
+    """같은 이름으로 두 번 띄우면 두 학습이 같은 출력 디렉토리를 밟는다."""
+    import asyncio
+
+    r, _ = _ssh_runner(monkeypatch, alive=True)
+    from app.services.training.spec import TrainJobSpec
+
+    with __import__("pytest").raises(RuntimeError, match="이미 실행"):
+        asyncio.run(r.start(TrainJobSpec(cmd=["python", "train.py"])))
+
+
+def test_ssh_paths_are_quoted(monkeypatch):
+    """원격 명령은 셸을 두 겹(ssh → bash) 지난다 — 공백 하나가 명령을 가른다."""
+    import asyncio
+
+    r, seen = _ssh_runner(monkeypatch)
+    r.workdir = "my dir/train"
+    monkeypatch.setattr(r, "_start_log_stream", lambda **kw: None)
+    from app.services.training.runners import ssh as S
+    from app.services.training.spec import TrainJobSpec
+
+    monkeypatch.setattr(S, "available", lambda *a, **k: (True, "OK"))
+    asyncio.run(r.start(TrainJobSpec(cmd=["python", "train.py"])))
+    joined = " ".join(remote for remote, _ in seen)
+    # 따옴표 없이 나가면 `bash my` 와 `dir/train/...sh` 두 인자로 쪼개진다
+    assert "'my dir/train/piper-train-t1.sh'" in joined, joined
+    assert "'my dir/train/piper-train-t1.log'" in joined, joined
+
+
+def test_unavailable_ssh_is_loud_not_silent():
+    """조용히 local 로 떨어지면 **이 기계의 GPU 를 먹는다** —
+    원격에서 돈다고 믿고 추론을 같이 걸면 OOM 이다."""
+    from app.services.training.runners import ssh as S
+    from app.services.training import manager as M
+
+    ok, why = S.available(host="")
+    assert ok is False and why, "사유 없이 판정만 돌려준다"
+    assert "raise RuntimeError" in inspect.getsource(S.SSHRunner.start)
+    assert "logger.warning" in inspect.getsource(M._default_runner)
+
+
+def test_remote_host_wins_over_process_runner():
+    """`process_runner` 는 "이 기계에서 어떻게", `train_ssh_host` 는 "어느 기계에서" —
+    층이 다르므로 원격이 먼저다."""
+    import ast
+
+    from app.services.training import manager as M
+
+    tree = ast.parse(inspect.getsource(M._default_runner).lstrip())
+    tests = [ast.unparse(n.test) for n in ast.walk(tree) if isinstance(n, ast.If)]
+    assert tests and "train_ssh_host" in tests[0], (
+        f"원격 판정이 먼저가 아니다: {tests}"
+    )
+
+
+def test_ssh_redirection_is_inside_the_tmux_command(monkeypatch):
+    """**회귀** — 리다이렉션이 tmux 밖에 있어 로그가 0바이트로 남았다.
+
+    `tmux new-session -d -s S bash x.sh > log` 는 `> log` 가 tmux **클라이언트**에
+    걸린다. 클라이언트는 즉시 끝나고 아무것도 안 찍으므로 로그가 빈 채로 남고,
+    학습 출력은 세션의 pty 로 사라진다 — 화면에 한 줄도 안 온다.
+    """
+    import asyncio
+
+    r, seen = _ssh_runner(monkeypatch)
+    monkeypatch.setattr(r, "_start_log_stream", lambda **kw: None)
+    from app.services.training.runners import ssh as S
+    from app.services.training.spec import TrainJobSpec
+
+    monkeypatch.setattr(S, "available", lambda *a, **k: (True, "OK"))
+    asyncio.run(r.start(TrainJobSpec(cmd=["python", "train.py"])))
+
+    launch = next(c for c, _ in seen if "new-session" in c)
+    head, _, tail = launch.partition("new-session")
+    # `> log` 는 tmux 에 넘기는 **한 인자 안**에 있어야 한다
+    assert ">" in tail, launch
+    quoted = tail[tail.index("'"):] if "'" in tail else ""
+    assert ">" in quoted and quoted.count("'") >= 2, (
+        f"리다이렉션이 tmux 인자 밖에 있다: {launch}"
+    )

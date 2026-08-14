@@ -129,6 +129,24 @@ class Settings(BaseSettings):
     # 하나는 유닛이고 하나는 자식이면 재시작 동작이 갈려서 더 헷갈린다.
     process_runner: str = "local"
 
+    # 원격 학습 (ROADMAP 3b-3.5-4 / feature/cloud-training.md 4단계).
+    #
+    # 비면 로컬. 채우면 **학습만** 그 호스트의 tmux 세션에서 돈다 — 추론·녹화는
+    # 하드웨어가 여기 있으므로 따라가지 않는다. `process_runner` 와 별개의 레버인
+    # 이유가 이것이다.
+    #
+    #   PIPER_TRAIN_SSH_HOST=sw-han@192.168.0.120
+    #
+    # ⚠ 데이터셋을 옮기지 않는다. 원격이 데이터셋을 **이미 볼 수 있어야** 한다
+    # (사내 GPU 서버·NFS·미리 복사). 전송은 cloud-training 5~7단계다.
+    # ⚠ 키 인증이 전제다 — `BatchMode=yes` 라 암호를 물으면 그 자리에서 실패한다.
+    train_ssh_host: str = ""
+    # 원격에 스크립트와 로그를 두는 자리. tmux 세션 이름과 짝이다.
+    # ⚠ 기본값에 `~` 를 쓰지 않는다. 경로를 `shlex.quote` 로 감싸 보내므로
+    # `'~/.piper'` 가 되어 **틸데가 안 펼쳐진다.** ssh 명령은 홈에서 시작하니
+    # 상대경로면 같은 자리를 가리킨다.
+    train_ssh_workdir: str = ".piper/train"
+
     # 버스 (Redis) — ZMQ 소켓 3개(5555 파라미터 / 5556 프리뷰 / 5557 녹화제어)를
     # 대체한다 (refactor/daemon-split.md 3단계). 주소가 3개에서 1개로 줄었다.
     # 비워두면 `piper_bus` 기본값(`PIPER_REDIS_URL` 또는 localhost:6379/0)을 쓴다.
