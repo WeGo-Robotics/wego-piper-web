@@ -1,21 +1,31 @@
+# rsd — RealSense 파이프라인을 독점하는 데몬 (refactor/daemon-inventory.md #4).
+#
+# 설치: deploy/install-daemons.sh
+#
+# ⚠ D405 의 UVC 컨트롤 질의는 커널 D-state 로 프로세스를 물리게 할 수 있다.
+# 그때 죽는 것이 **이 유닛 하나**여야 한다 — 웹캠(camerad)도 게이트웨이도 살아야 한다.
+#
+# ⚠ D-state 로 물린 프로세스는 SIGKILL 로도 안 죽는다. systemd 가 재시작을
+# 시도해도 옛 프로세스가 장치를 쥔 채 남을 수 있고, 그때는 USB 리바인딩이 필요하다
+# (project 메모: xHCI HC died). 자동 재시작이 그 경우까지 낫게 하지는 못한다.
+
 [Unit]
 Description=Piper RealSense daemon (owns pyrealsense2 pipelines)
-Documentation=file:///opt/piper/refactor/daemon-inventory.md
-After=network.target redis-server.service
-Wants=redis-server.service
+Documentation=file://@REPO@/refactor/daemon-inventory.md
+
+# ⚠ `StartLimitIntervalSec` 은 **`[Unit]` 에 둔다.** `[Service]` 에 쓰면 이 systemd
+# 버전은 "Unknown key name" 으로 **조용히 무시한다** — 기존 estopd 유닛이 그랬고,
+# 그래서 재시작 한도가 걸려 있는 줄 알았지만 기본값(10초에 5번)이 그대로였다.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-# RealSense 가 죽어도 게이트웨이·웹캠은 산다 — 그래서 camerad 와 따로 둔다.
-# 죽으면 되살린다: 장치를 독점하므로 없는 동안 카메라가 전혀 안 보인다.
+WorkingDirectory=@REPO@
+ExecStart=@PY@ @REPO@/daemons/rsd.py
+Environment=PIPER_REDIS_URL=redis://127.0.0.1:6379/0
+
 Restart=always
 RestartSec=2
-ExecStart=/usr/bin/python3 /opt/piper/daemons/rsd.py
-Environment=PIPER_REDIS_URL=redis://127.0.0.1:6379/0
-# USB 장치 접근
-SupplementaryGroups=video plugdev
-# 세그먼트를 소비자(컨테이너 포함)와 공유해야 한다
-PrivateTmp=no
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

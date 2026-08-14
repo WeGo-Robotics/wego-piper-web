@@ -1,28 +1,27 @@
-# E-stop 워치독 — 웹서버와 독립된 프로세스.
+# estopd — E-stop 워치독. 웹서버와 **독립된 프로세스**다.
 #
-# 설치:
-#   mkdir -p ~/.config/systemd/user
-#   sed "s|@REPO@|$PWD|g; s|@PY@|$(which python3)|g" \
-#     deploy/systemd/piper-estopd.service > ~/.config/systemd/user/piper-estopd.service
-#   systemctl --user daemon-reload && systemctl --user enable --now piper-estopd
+# 설치: deploy/install-daemons.sh
 #
 # ⚠ 로그아웃해도 살아있게 하려면 linger 를 켜야 한다:
 #   sudo loginctl enable-linger $USER
-# (안 켜면 세션 종료 시 함께 죽는다 — 지금 tmux/학습이 통째로 죽는 것과 같은 원인)
+# (안 켜면 세션 종료 시 함께 죽는다 — tmux/학습이 통째로 죽던 것과 같은 원인)
 
 [Unit]
 Description=Piper E-stop watchdog
-After=redis-server.service
-Wants=redis-server.service
+Documentation=file://@REPO@/refactor/daemon-inventory.md
+
+# ⚠ `StartLimitIntervalSec` 은 **`[Unit]` 에 둔다.** `[Service]` 에 쓰면 이 systemd
+# 버전은 "Unknown key name" 으로 **조용히 무시한다** — 기존 estopd 유닛이 그랬고,
+# 그래서 재시작 한도가 걸려 있는 줄 알았지만 기본값(10초에 5번)이 그대로였다.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 WorkingDirectory=@REPO@
 ExecStart=@PY@ @REPO@/daemons/estopd.py
+Environment=PIPER_REDIS_URL=redis://127.0.0.1:6379/0
 Restart=always
 RestartSec=1
-# 워치독이 죽어 있으면 안 되므로 재시작 실패로 유닛을 포기하지 않는다
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=default.target

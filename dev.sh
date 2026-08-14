@@ -10,25 +10,33 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #   E-stop heartbeat/PID · 추론 실시간 파라미터 · 녹화 제어 · 녹화 미리보기
 # ZMQ 소켓 3개(5555/5556/5557)를 대체했으므로, 없으면 위 네 가지가 전부 안 된다.
 #
-# E-stop 워치독은 **독립 프로세스**다 (daemons/estopd.py).
-# 배포에서는 systemd 유닛으로 뜬다 — deploy/install-estopd.sh 참고.
+# 데몬 넷은 **독립 프로세스**다. 배포에서는 systemd 유닛으로 뜬다 —
+# deploy/install-daemons.sh 참고. 유닛으로 깔면 죽어도 되살아나고
+# journald 에 이유가 남는다 (수동 실행은 조용히 죽는다 — 실제로 겪었다).
+#
+# ⚠ **이미 유닛으로 돌고 있으면 여기서 또 띄우면 안 된다.** 같은 장치를 두
+# 프로세스가 다투게 되고, 소유가 하나라는 게 데몬을 나눈 전제다.
+start_daemon() {  # $1 = 데몬 이름, $2 = 한 줄 설명
+  if systemctl --user is-active --quiet "piper-$1" 2>/dev/null; then
+    echo "· $1 은 systemd 유닛으로 이미 실행 중 — 건너뜀"
+    return
+  fi
+  echo "Starting $2 ($1)..."
+  python3 "$REPO/daemons/$1.py" &
+}
+
 if redis-cli ping >/dev/null 2>&1; then
-  echo "Starting E-stop watchdog (estopd)..."
-  python3 "$REPO/daemons/estopd.py" &
-  # rsd 는 RealSense 를 독점하는 데몬이다 (daemon-inventory.md #4).
+  start_daemon estopd  "E-stop watchdog"
+  # rsd 는 RealSense 를 독점한다 (daemon-inventory.md #4).
   # 안 띄우면 게이트웨이가 RealSense 를 전혀 못 본다 — 이제 장치를 직접 열지 않는다.
-  echo "Starting RealSense daemon (rsd)..."
-  python3 "$REPO/daemons/rsd.py" &
+  start_daemon rsd     "RealSense daemon"
   # camerad 는 /dev/video* 를 독점한다. rsd 와 **합치지 않는다** —
   # RealSense 가 죽어도 웹캠은 살아야 하기 때문이다 (D405 hang 이력).
-  echo "Starting v4l2 daemon (camerad)..."
-  python3 "$REPO/daemons/camerad.py" &
+  start_daemon camerad "v4l2 daemon"
   # robotd 는 CAN 을 독점한다 (daemon-inventory.md #2).
-  # 안 띄우면 게이트웨이가 팔을 전혀 못 본다 — 이제 CAN 을 직접 열지 않는다.
   # 팔에 명령하는 넷(추론·녹화·수동제어·파킹)이 전부 여기를 지나므로
   # **안전층(하드리밋·데드맨)도 이 프로세스가 없으면 없는 것이다.**
-  echo "Starting robot daemon (robotd)..."
-  python3 "$REPO/daemons/robotd.py" &
+  start_daemon robotd  "robot daemon"
 else
   echo "⚠ Redis 미실행 — 게이트웨이는 뜨지만 다음이 전부 동작하지 않습니다:"
   echo "   · heartbeat 타임아웃 정지(estopd)  · 추론 실시간 파라미터 변경"

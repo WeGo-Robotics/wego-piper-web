@@ -1,26 +1,35 @@
+# robotd — CAN 을 독점하는 데몬 (refactor/daemon-inventory.md #2).
+#
+# 설치: deploy/install-daemons.sh  (`@REPO@`·`@PY@` 를 치환해 사용자 유닛으로 깐다)
+#
+# ⚠ **사용자 유닛이다.** 시스템 유닛으로 올리면 `/dev/shm` 세그먼트의 소유자가
+# root 가 되어 게이트웨이(사용자 권한)가 못 읽는다. 그리고 CAN·USB 접근 권한은
+# 이미 사용자 그룹(dialout·plugdev)으로 풀어둔 상태다.
+
 [Unit]
 Description=Piper robot daemon (owns CAN, safety layer)
-Documentation=file:///opt/piper/refactor/robotd-safety.md
-After=network.target redis-server.service
-Wants=redis-server.service
+Documentation=file://@REPO@/refactor/daemon-inventory.md
+
+# ⚠ `After=redis-server.service` 를 쓰지 않는다 — **사용자 유닛은 시스템 유닛에
+# 순서를 걸 수 없다.** 대신 데몬이 Redis 없으면 코드 1 로 죽고, 아래 Restart 가
+# 될 때까지 다시 띄운다. 결과가 같고 거짓말을 안 한다.
+
+# ⚠ `StartLimitIntervalSec` 은 **`[Unit]` 에 둔다.** `[Service]` 에 쓰면 이 systemd
+# 버전은 "Unknown key name" 으로 **조용히 무시한다** — 기존 estopd 유닛이 그랬고,
+# 그래서 재시작 한도가 걸려 있는 줄 알았지만 기본값(10초에 5번)이 그대로였다.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
+WorkingDirectory=@REPO@
+ExecStart=@PY@ @REPO@/daemons/robotd.py
+Environment=PIPER_REDIS_URL=redis://127.0.0.1:6379/0
+
 # ⚠ **팔에 명령하는 넷(추론·녹화·수동제어·파킹)이 전부 여기를 지난다.**
-# 하드리밋·데드맨이 이 프로세스 안에 있으므로, 없는 동안은 안전층도 없다.
-# 그래서 되살린다 — 다만 되살아나도 팔은 스스로 움직이지 않는다(명령이 없으면 정지).
+# 하드리밋·데드맨이 이 프로세스 안에 있으므로 없는 동안은 안전층도 없다.
+# 되살아나도 팔은 스스로 안 움직인다 — 명령이 없으면 정지 상태다.
 Restart=always
 RestartSec=2
-ExecStart=/usr/bin/python3 /opt/piper/daemons/robotd.py
-Environment=PIPER_REDIS_URL=redis://127.0.0.1:6379/0
-# 커스텀 파킹 위치를 게이트웨이와 같은 곳에서 읽는다 (정본은 하나다)
-Environment=PIPER_CONFIG_DIR=/opt/piper/config
-# ⚠ **컨테이너로 못 보낸다.** xHCI 리바인딩이 /sys/bus/pci/drivers/xhci_hcd 에
-# 쓰는데, 컨테이너에서 하려면 호스트 권한을 사실상 다 줘야 한다.
-# CAN(SocketCAN) + USB 시리얼 접근
-SupplementaryGroups=dialout plugdev
-# 세그먼트를 소비자(컨테이너 포함)와 공유해야 한다
-PrivateTmp=no
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

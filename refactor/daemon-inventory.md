@@ -13,10 +13,19 @@
 
 | # | 데몬 | 소유 | 현재 코드 |
 |---|---|---|---|
-| 1 | `piper-estopd` ☑ | heartbeat 시계 | [daemons/estopd.py](../daemons/estopd.py) — **분리 완료** |
-| 2 | `piper-robotd` | CAN 소켓, 팔 상태, 프리셋/파킹, **기구학 안전 필터** | [robot_manager.py](../backend/app/services/robot_manager.py) (922) |
-| 3 | `piper-camerad` | `/dev/video*` (v4l2) | [camera_manager.py](../backend/app/services/camera_manager.py) (637) |
-| 4 | `piper-rsd` | RealSense USB 파이프라인 | [realsense_manager.py](../backend/app/services/realsense_manager.py) (615) |
+| 1 | `piper-estopd` ☑ | heartbeat 시계 | [daemons/estopd.py](../daemons/estopd.py) |
+| 2 | `piper-robotd` ☑ | CAN 소켓, 팔 상태, 프리셋/파킹, **기구학 안전 필터** | [daemons/robotd.py](../daemons/robotd.py) + [robot/](../robot/) |
+| 3 | `piper-camerad` ☑ | `/dev/video*` (v4l2) | [daemons/camerad.py](../daemons/camerad.py) + [cam/](../cam/) |
+| 4 | `piper-rsd` ☑ | RealSense USB 파이프라인 | [daemons/rsd.py](../daemons/rsd.py) + [rs/](../rs/) |
+
+> **넷 다 systemd 사용자 유닛이다** — `deploy/install-daemons.sh`.
+> 수동으로 띄우면 **죽어도 아무도 모른다.** robotd 가 조용히 죽은 적이 있는데,
+> 화면은 팔이 연결됐다고 하고 추론만 "세그먼트가 없습니다"로 죽었으며
+> 로그가 없어 원인을 끝내 못 찾았다. 유닛이면 `Restart=always` 로 되살아나고
+> journald 에 `code=killed, status=9/KILL` 같은 사유가 남는다.
+>
+> 유닛을 **넷으로 나눠 둔 것도 격리의 일부다** — rsd 가 D-state 로 물려도
+> camerad 는 그대로 돈다. 하나로 합치면 systemd 수준에서 그 격리가 사라진다.
 
 **작업 데몬**(요청 시) — 하드웨어를 **직접 열지 않는다**. shm으로 읽고 쓴다.
 
