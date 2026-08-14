@@ -25,7 +25,7 @@
 | **3b-3.5** | job 레지스트리 · WS `job_id` | ☑ (4 = SSH 러너는 원격 머신 필요) |
 | **3b-4** | shm 전송 — 카메라 · 로봇 | ☑ 실기 확인 |
 | **3b-5** | rsd · camerad · robotd | ☑ 실기 확인 |
-| **3b-6** | systemd 유닛화 | ☑ 학습·정책서버·xferd — **실제 학습으로 재부착 확인** |
+| **3b-6** | systemd 유닛화 | ☑ 학습·정책서버·xferd(재부착 실기 확인) **+ 장치 데몬 넷** (`deploy/install-daemons.sh`) |
 | 3b-7 | 실행별 컨테이너 분리 + **encoderd** | ◐ 단일 백엔드 컨테이너는 실기 확인 |
 | 3b-8 | 게이트웨이 정리 | ◐ |
 | Phase 4 | 깊이맵(인코딩 ☑ / 정책 입력 ☐) · **camera-profiles ☑** · phase-annotation 4~8 · cloud-training 5~12 | ◐ |
@@ -56,6 +56,7 @@
 | | 왜 |
 |---|---|
 | ~~`loginctl enable-linger`~~ | ☑ 켜짐. `PIPER_PROCESS_RUNNER=systemd` 로 다섯 소유자가 유닛으로 뜬다 |
+| ~~데몬 넷을 유닛으로~~ | ☑ `deploy/install-daemons.sh`. 수동 실행은 **죽어도 아무도 모른다** — robotd 가 조용히 죽어 추론이 세그먼트 없다고 죽은 적이 있다 |
 | [udev 규칙 적용](deploy/udev/99-piper-can.rules) + 로봇 재등록 | `can0`/`can1` 이 포트를 바꿔 꽂으면 **뒤바뀐다**. 실제로 겪었고, 등록이 살아 있었으면 leader 팔에 follower 명령이 갔을 것이다 |
 | joint3 캘리브레이션 결정 | raw 2103 인데 범위 최대가 0 — 지금 녹화하는 데이터에서 상단이 잘린다. 넓히면 기존 데이터셋·모델과 어긋난다 |
 
