@@ -146,6 +146,42 @@
 
 ---
 
+## 배포 이력
+
+| 버전 | 시각 | 올린 레이어 | 내용 |
+|---|---|---|---|
+| v0.2.0 | 08-14 15:17 | 이미지 + 데몬 wheel + 데몬 소스 | 최초 전체 배포 |
+| v0.2.1~v0.2.5 | 08-14 저녁 | 이미지 | 리더 shm 텔레오퍼레이터, CAN RPC, 사운드 |
+| v0.2.6 | 08-14 22:02 | **frontend 이미지만** (27MB) | 에피소드 경과 시간 |
+| v0.2.7 | 08-14 22:36 | 이미지 (backend+frontend) | 장치 사라짐 경보 |
+
+### 두 번째 배포부터는 레이어를 **먼저 재보고** 정한다
+
+v0.2.7 때 세 레이어를 다 올릴 뻔했는데, 확인해보니 데몬 레이어는 이미 같았다:
+
+```bash
+# 로컬과 타겟의 실제 내용을 비교한다 — 타임스탬프는 믿지 않는다
+ssh <host> md5sum ~/.venvs/piper-daemons/lib/python3*/site-packages/piper_robot/hub.py \
+                  ~/piper-web-deploy/current/daemons/robotd.py
+md5sum robot/piper_robot/hub.py daemons/robotd.py
+```
+
+레이어별로 무엇이 바뀌었는지는 이렇게 본다:
+
+```bash
+git diff --name-only <이전태그>..HEAD -- backend/ frontend/ wrapper/ policies/ vendor/  # 이미지
+git diff --name-only <이전태그>..HEAD -- bus/ shm/ cam/ rs/ robot/                      # wheel
+git diff --name-only <이전태그>..HEAD -- daemons/ deploy/                               # 데몬 소스
+```
+
+### frontend 만 바뀌었으면 3.4GB 를 보내지 않는다
+
+v0.2.6 이 그렇게 했다 — `docker save piper-web-frontend:<ver>` 만 하면 **27MB** 다.
+backend 이미지가 11.2GB(압축 3.4GB)라 둘을 묶으면 매번 3.4GB 를 보내게 된다.
+`docker load` 가 이미 있는 레이어는 건너뛰지만 **전송량은 안 줄어든다.**
+
+---
+
 ## 미결정
 
 - compose 파일을 `build:` → `image:` 참조로 바꿀지, 아니면 배포용으로 별도
