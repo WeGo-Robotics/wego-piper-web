@@ -204,6 +204,18 @@ export default function InferencePage() {
   // 파라미터 패널/정책 표시 기준: 선택 모델의 policy_type 우선, 없으면 수동 선택값
   const activePolicy = selectedModelData?.policy_type ?? policyType
 
+  /** 시작·미리보기에 실을 파라미터. **ACT 같은 정책엔 `task` 를 빼고 보낸다.**
+   *
+   *  입력란을 감추는 것만으로는 부족했다 — `taskText` 는 localStorage 에서 살아나
+   *  계속 실려 갔고, 입력한 적 없는 옛 문장이 CLI 미리보기와 로그에 떴다.
+   *  백엔드도 같은 판정을 하지만(`policies.takes_language`) 화면에 보이는 명령이
+   *  실제와 같으려면 **여기서도** 빼야 한다.
+   *
+   *  ⚠ 입력란을 감추는 조건과 **같은 값**(`activePolicy`)으로 판단한다 —
+   *  갈리면 "안 보이는데 실려 가는" 지금 이 버그가 그대로 돌아온다. */
+  const taskParams = () =>
+    takesLanguage(activePolicy) ? { ...params, task: taskText } : params
+
   // 선택한 체크포인트의 policy_type을 정책 선택값에 자동 반영 (서버 모드 드롭다운 기본값)
   useEffect(() => {
     const pt = selectedModelData?.policy_type
@@ -233,7 +245,7 @@ export default function InferencePage() {
           api.post<{ command: string }>('/models/inference/preview', {
             checkpoint_path: model.path,
             robot_port: selectedFollower, camera_mapping: cameraMapping,
-            params: { ...params, task: taskText },
+            params: taskParams(),
             inference_mode: inferenceMode, server_address: serverAddress,
             policy_type: policyType, actions_per_chunk: actionsPerChunk,
             aggregate_fn: aggregateFn, offset_correction: offsetCorrection,
@@ -264,7 +276,7 @@ export default function InferencePage() {
         robot_port: robotMode === 'single' ? selectedFollower : leftFollower,
         robot_ports: robotMode === 'bimanual' ? [leftFollower, rightFollower] : [],
         camera_mapping: cameraMapping,
-        params: { ...params, task: taskText },
+        params: taskParams(),
         inference_mode: inferenceMode,
         server_address: serverAddress,
         policy_type: policyType,
@@ -752,6 +764,7 @@ export default function InferencePage() {
             data={telemetry}
             targetFps={20}
             cameraNames={[]}
+            showTask={takesLanguage(activePolicy)}
           />
           <ManualControlPanel
             currentJoints={telemetry?.joints ?? []}

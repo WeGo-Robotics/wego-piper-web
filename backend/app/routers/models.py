@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 from app.core.cli_mapping import build_inference_args, build_grpc_client_args
 from app.core.config import settings
+from app.core.policies import takes_language
 from app.services.exclusivity import Activity, require_idle
 from app.services.camera_config import (
     CameraPrepareError,
@@ -99,12 +100,22 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
     `body.params`(UI 슬라이더 값)는 두 모드 모두 그대로 넘긴다 — gRPC 모드는
     이전에 `task` 만 꺼내 쓰고 `fps` 를 20 으로 하드코딩해서 슬라이더 값이 전부 유실됐다.
     실제로 실릴 키는 `cli_mapping.OVERRIDE_KEYS` 와 각 ARGS_MAP 이 정한다.
+    예외는 `task` 하나 — 아래 참고.
     """
     # 전송 방식에 맞는 드라이버로 바꾼다. **여기서 바꿔야** 미리보기와 실행이 같다 —
     # 한쪽에만 걸면 화면에 보이는 명령이 실제로 도는 것과 달라진다.
     robot_type = resolve_robot_type(robot_type)
     cameras = build_cameras_json(body.camera_mapping)
     is_bimanual = len(body.robot_ports) >= 2
+
+    # ⚠ **언어를 안 받는 정책에는 `task` 를 아예 안 싣는다.**
+    # 화면은 ACT 일 때 입력란을 감추지만 값은 localStorage 에 남아 계속 실려 왔다.
+    # 그래서 입력한 적 없는 옛 문장이 CLI 미리보기와 wrapper 로그에 떴다.
+    # 감추는 것과 안 보내는 것은 다르고, **판정은 여기 한 곳**이다 —
+    # 화면이 따로 판단하면 프리셋·CLI 직접 편집 같은 다른 경로가 새어 나간다.
+    user_params = dict(body.params)
+    if not takes_language(body.policy_type):
+        user_params.pop("task", None)
 
     if body.inference_mode == "server":
         params = {
@@ -121,9 +132,11 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
             "smoothing": body.smoothing,
             "smoothing_window": body.smoothing_window,
             "debug": body.debug_mode,
-            **body.params,
-            "task": body.params.get("task", "do the task"),
+            **user_params,
         }
+        # gRPC 정책 서버는 `task` 키를 요구한다 — 언어를 쓰는 정책일 때만 채운다.
+        if takes_language(body.policy_type):
+            params["task"] = body.params.get("task", "do the task")
         if cameras:
             params["cameras"] = cameras
         if is_bimanual:
@@ -137,7 +150,7 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
         "device": "cuda",
         "use_amp": True,
         "debug": body.debug_mode,
-        **body.params,
+        **user_params,
     }
     if cameras:
         params["cameras"] = cameras

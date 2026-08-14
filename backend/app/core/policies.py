@@ -116,6 +116,20 @@ def rtc_policies() -> list[str]:
     return _names("rtc")
 
 
+def takes_language(policy_type: str) -> bool:
+    """이 정책이 `task` 문자열을 실제로 쓰는가.
+
+    ACT 는 관측→행동만이라 task 를 줘도 안 쓴다. 그런데 **주면 화면에는 뜬다** —
+    CLI 미리보기와 wrapper 로그에 `--task=...` 가 찍혀서, 입력란도 없는데
+    "Task: Pick up the doll and put in the box" 같은 옛 문자열이 나타난다.
+    입력을 감추는 것만으로는 부족하고 **보내는 쪽도 막아야 한다.**
+
+    모르는 정책은 받는 쪽으로 본다 — 언어를 쓰는데 안 보내면 정책이 헛돈다.
+    """
+    spec = POLICIES.get(policy_type)
+    return True if spec is None else bool(spec.get("language"))
+
+
 def encoder_probe_policies() -> set[str]:
     return set(_names("encoder_probe"))
 

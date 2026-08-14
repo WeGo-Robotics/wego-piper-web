@@ -185,3 +185,72 @@ def test_every_page_renders_inside_an_error_boundary():
 
     # 라우트는 전부 그 헬퍼를 거치는가
     assert "element={createElement(" not in main, "경계를 우회하는 라우트가 있다"
+
+
+# ── 감추는 것과 안 보내는 것은 다르다 ──────────────────────────────────────
+
+def test_task_is_stripped_for_policies_that_ignore_it():
+    """**회귀** — ACT 로 추론하는데 입력한 적 없는 task 가 화면에 떴다.
+
+    화면은 `language=False` 면 입력란을 감췄지만, `taskText` 는 localStorage 에서
+    살아나 요청에 계속 실렸다. 그래서 CLI 미리보기와 wrapper 로그에
+    `--task=Pick up the doll and put in the box` 같은 옛 문장이 나타났다.
+    **감추는 것만으로는 부족하다.**
+    """
+    from app.core.policies import takes_language
+
+    assert takes_language("act") is False
+    assert takes_language("smolvla") is True
+
+
+def test_unknown_policy_still_gets_its_task():
+    """모르는 정책은 받는 쪽으로 본다 — 언어를 쓰는데 안 보내면 정책이 헛돈다.
+    반대(안 쓰는데 보냄)는 로그가 지저분해질 뿐이다."""
+    from app.core.policies import takes_language
+
+    assert takes_language("some_future_vla") is True
+
+
+def test_both_inference_paths_drop_the_task(monkeypatch):
+    """로컬·gRPC 두 경로 다 빼야 한다. 한쪽만 고치면 나머지가 조용히 샌다."""
+    import app.routers.models as m
+
+    class _Body:
+        checkpoint_path = "ckpt/last"
+        robot_ports: list = []
+        camera_mapping: dict = {}
+        server_address = "127.0.0.1:8088"
+        actions_per_chunk = 100
+        aggregate_fn = "weighted_average"
+        offset_correction = False
+        smoothing = "none"
+        smoothing_window = 5
+        debug_mode = False
+
+        def __init__(self, policy_type, mode):
+            self.policy_type = policy_type
+            self.inference_mode = mode
+            self.params = {"task": "pick up the doll", "max_velocity": 200}
+
+    monkeypatch.setattr(m, "resolve_robot_type", lambda t: t)
+    monkeypatch.setattr(m, "build_cameras_json", lambda mapping: "")
+
+    for mode in ("local", "server"):
+        act = " ".join(m._build_args_for(_Body("act", mode), "piper_follower", "can1"))
+        assert "pick up the doll" not in act, f"{mode}: ACT 에 task 가 실렸다"
+        vla = " ".join(m._build_args_for(_Body("smolvla", mode), "piper_follower", "can1"))
+        assert "pick up the doll" in vla, f"{mode}: VLA 인데 task 가 빠졌다"
+
+
+def test_the_frontend_hides_and_sends_on_the_same_value():
+    """감추는 조건과 보내는 조건이 갈리면 이 버그가 그대로 돌아온다."""
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2]
+           / "frontend/src/pages/InferencePage.tsx").read_text()
+    # 요청에 params 를 싣는 곳은 전부 헬퍼를 거쳐야 한다
+    assert "task: taskText" not in src.replace("takesLanguage(activePolicy) ? { ...params, task: taskText }", ""), \
+        "taskText 를 헬퍼 밖에서 직접 싣는 곳이 있다"
+    guards = set(re.findall(r"takesLanguage\((\w+)\)", src))
+    assert guards == {"activePolicy"}, f"판정 기준이 갈렸다: {guards}"

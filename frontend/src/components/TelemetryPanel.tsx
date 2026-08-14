@@ -20,6 +20,10 @@ type Props = {
   data: TelemetryData | null
   targetFps: number
   cameraNames: string[]
+  /** 이 정책이 `task` 를 실제로 쓰는가. wrapper 는 안 쓰는 정책에도 기본값
+   *  `"do the task"` 를 텔레메트리에 실어 보내므로, 여기서 안 걸러내면
+   *  입력란도 없는 ACT 화면에 유령 Task 가 뜬다. */
+  showTask?: boolean
 }
 
 function JointBar({ name, value, actionValue }: { name: string; value: number; actionValue?: number }) {
@@ -54,7 +58,7 @@ function JointBar({ name, value, actionValue }: { name: string; value: number; a
   )
 }
 
-export default function TelemetryPanel({ data, targetFps, cameraNames }: Props) {
+export default function TelemetryPanel({ data, targetFps, cameraNames, showTask = true }: Props) {
   const [camTimestamp, setCamTimestamp] = useState(0)
 
   // 카메라 프리뷰 1초마다 갱신
@@ -155,8 +159,10 @@ export default function TelemetryPanel({ data, targetFps, cameraNames }: Props) 
         </div>
       )}
 
-      {/* Task */}
-      {data.task && (
+      {/* Task — 언어를 안 받는 정책엔 아예 안 띄운다.
+          판정은 호출부(`takesLanguage(activePolicy)`)가 한다: 입력란을 감추는
+          조건과 **같은 값**이어야 "안 보이는데 화면엔 뜨는" 상태가 안 생긴다. */}
+      {showTask && data.task && (
         <div className="text-xs text-neutral-400">
           Task: <span className="text-neutral-200">{data.task}</span>
         </div>
