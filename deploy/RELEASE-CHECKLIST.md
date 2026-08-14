@@ -179,6 +179,7 @@ git tag --sort=-v:refname | head -1     # 예: v0.3.1 → 다음은 v0.3.2
 | v0.3.5 | 08-15 01:14 | **frontend 이미지만** (27MB) | 시스템 메시지 인터페이스 — `alert`/`confirm` 30곳 제거 |
 | v0.3.6 | 08-15 02:16 | 이미지 (backend+frontend) | 멈춘 영상을 정상처럼 안 보이게 (`streaming`) · 스캔 썸네일 오보 제거 |
 | v0.3.7 | 08-15 02:38 | **backend 이미지만** | 원격 추론 — 이미지에 `grpcio`, `grpc_python` 을 `sys.executable` 로 |
+| v0.3.8 | 08-15 02:48 | 이미지 (backend+frontend) | gRPC 추론이 **한 번도 못 돌던** `_paused` 버그 · 서버 모드 체크포인트 입력 |
 
 ### 원격 추론 (.42 서버 ↔ .120 클라이언트)
 
@@ -195,8 +196,18 @@ curl -X POST http://localhost:8081/api/policy-server/check-remote \
 ⚠ **모델은 서버가 로드한다** — 체크포인트 경로는 **.42 기준**이어야 한다.
 클라이언트(.120)에 모델이 0개인 것은 정상이다.
 
-⚠ **카메라는 클라이언트 것이다.** 정책이 기대하는 키(`top`·`hand` 등)를 .120 이
+⚠ **카메라는 클라이언트 것이다.** 정책이 기대하는 키(`top`·`hand` 등)를 클라이언트가
 전부 갖고 있어야 한다 — 서버에 있어도 소용없다.
+
+⚠ **API 로 추론을 시작하면 2초 뒤 죽는다.** heartbeat 는 브라우저가 보낸다 —
+없으면 estopd 가 제대로 죽인다(`code -9`). CLI 로 시험하려면 heartbeat 를 따로 보낸다:
+
+```bash
+while true; do curl -s -X POST localhost:8000/api/estop/heartbeat -o /dev/null; sleep 0.4; done &
+```
+
+**2026-08-15 실기**: .42 단독(서버+클라이언트, gRPC 루프백)으로 790스텝 / 40초,
+실제 19.90fps(목표 20). 원격 경로 자체는 이때 처음 끝까지 돌았다.
 
 > ⚠ **배포로 백엔드를 재시작하면 장치 감시 기억이 비워진다.** v0.2.8 배포 직후
 > 이미 뽑혀 있던 RealSense 가 조용했던 이유가 이것이었다. v0.2.9 에서 "남아 있는데
