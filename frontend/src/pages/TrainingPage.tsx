@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import SpecFields from '../components/SpecFields'
+import { usePolicyUi, specDefaults, activeWarnings } from '../hooks/usePolicyUi'
 import { api } from '../services/api'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import { LOCAL_JOB_ID, type JobRecord, type ProcessState } from '../types/ws'
@@ -23,13 +25,6 @@ const OPTIMIZER_TYPES = ['adam', 'adamw', 'sgd']
 // 알려주고 바로 받을 수 있게 한다.
 // 처음부터 학습할 때 **가중치가 어디서 오는지** — 정책마다 다르다.
 // ACT 는 자체 기본값이 ImageNet 이라 받을 게 없고, VLA 는 베이스 체크포인트가 필요하다.
-const SCRATCH_WEIGHTS: Record<string, string> = {
-  act: '비전 백본(ResNet18)이 ImageNet 가중치로 시작합니다 — 받을 베이스 체크포인트가 없습니다',
-  diffusion: '비전 백본(ResNet18)을 ImageNet 가중치로 시작하도록 지정합니다 (LeRobot 기본값은 랜덤)',
-  vqbet: '비전 백본(ResNet18)을 ImageNet 가중치로 시작하도록 지정합니다 (LeRobot 기본값은 랜덤)',
-  tdmpc: '별도 비전 백본 사전학습이 없습니다',
-}
-
 
 // 정책별 학습 옵션 스키마 (단일 소스)
 //  - defaults: 정책 선택 시 공통 옵션(batch/steps/optimizer)에 적용할 권장값
@@ -37,92 +32,6 @@ const SCRATCH_WEIGHTS: Record<string, string> = {
 // VLA(SmolVLA/Pi0/Pi05)는 추론 런타임 파라미터가 아닌 학습 config만 노출한다.
 // `arch: true` = 모델 구조를 정하는 값. 체크포인트에서 이어 학습(pretrained)하면
 // 구조가 이미 고정이라 바꿀 수 없다. 나머지는 **학습 방식** 이라 파인튜닝에도 유효하다
-// (예: freeze_vision_encoder — 파인튜닝에서 가장 중요한 스위치인데 예전엔 숨어 있었다).
-type PolicyField = { key: string; label: string; type: 'number' | 'bool'; default: number | boolean; min?: number; max?: number; step?: number; arch?: boolean }
-type PolicySchema = { defaults: { batchSize: number; steps: number; optimizerType: string }; fields: PolicyField[] }
-
-const PI_FIELDS: PolicyField[] = [
-  { key: 'chunk_size', label: 'chunk_size', type: 'number', default: 50, min: 1, max: 200, step: 1, arch: true },
-  { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 50, min: 1, max: 200, step: 1, arch: true },
-  { key: 'freeze_vision_encoder', label: 'freeze_vision_encoder', type: 'bool', default: false },
-  { key: 'train_expert_only', label: 'train_expert_only', type: 'bool', default: false },
-  { key: 'num_inference_steps', label: 'num_inference_steps', type: 'number', default: 10, min: 1, max: 100, step: 1 },
-  { key: 'gradient_checkpointing', label: 'gradient_checkpointing', type: 'bool', default: false },
-]
-
-const POLICY_TRAIN_SCHEMAS: Record<string, PolicySchema> = {
-  act: {
-    defaults: { batchSize: 8, steps: 100000, optimizerType: 'adam' },
-    fields: [
-      { key: 'chunk_size', label: 'chunk_size', type: 'number', default: 100, min: 1, max: 200, step: 1, arch: true },
-      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 100, min: 1, max: 200, step: 1, arch: true },
-      { key: 'n_obs_steps', label: 'n_obs_steps', type: 'number', default: 1, min: 1, max: 10, step: 1, arch: true },
-      { key: 'dim_model', label: 'dim_model', type: 'number', default: 512, min: 64, max: 2048, step: 64, arch: true },
-      { key: 'use_vae', label: 'use_vae', type: 'bool', default: true, arch: true },
-    ],
-  },
-  diffusion: {
-    defaults: { batchSize: 64, steps: 200000, optimizerType: 'adam' },
-    fields: [
-      { key: 'horizon', label: 'horizon', type: 'number', default: 16, min: 1, max: 128, step: 1, arch: true },
-      { key: 'n_obs_steps', label: 'n_obs_steps', type: 'number', default: 2, min: 1, max: 10, step: 1, arch: true },
-      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 8, min: 1, max: 128, step: 1, arch: true },
-      { key: 'num_train_timesteps', label: 'num_train_timesteps', type: 'number', default: 100, min: 1, max: 1000, step: 1, arch: true },
-    ],
-  },
-  smolvla: {
-    defaults: { batchSize: 64, steps: 200000, optimizerType: 'adamw' },
-    fields: [
-      { key: 'chunk_size', label: 'chunk_size', type: 'number', default: 50, min: 1, max: 200, step: 1, arch: true },
-      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 50, min: 1, max: 200, step: 1, arch: true },
-      { key: 'freeze_vision_encoder', label: 'freeze_vision_encoder', type: 'bool', default: true },
-      { key: 'train_expert_only', label: 'train_expert_only', type: 'bool', default: true },
-      // LeRobot 기본값은 false — 처음부터 학습할 때 false면 VLM(SigLIP 비전 인코더 포함)이
-      // 랜덤 초기화된다. freeze_vision_encoder=true와 겹치면 학습조차 되지 않으므로 기본 true.
-      // (pretrained_path로 파인튜닝할 땐 체크포인트에서 가중치가 오므로 이 패널 자체가 숨겨진다)
-      { key: 'load_vlm_weights', label: 'load_vlm_weights', type: 'bool', default: true },
-    ],
-  },
-  pi0: { defaults: { batchSize: 32, steps: 30000, optimizerType: 'adamw' }, fields: PI_FIELDS },
-  pi05: { defaults: { batchSize: 32, steps: 30000, optimizerType: 'adamw' }, fields: PI_FIELDS },
-  // 아래 셋은 백엔드 `core/policies.py` 의 trainable 목록에 있는데 스키마가 없어서
-  // **선택해도 화면이 전혀 안 바뀌었다.** 기본값은 LeRobot config 클래스에서 읽어 맞췄다.
-  pi0_fast: {
-    defaults: { batchSize: 32, steps: 30000, optimizerType: 'adamw' },
-    fields: [
-      { key: 'chunk_size', label: 'chunk_size', type: 'number', default: 50, min: 1, max: 200, step: 1, arch: true },
-      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 50, min: 1, max: 200, step: 1, arch: true },
-      { key: 'max_decoding_steps', label: 'max_decoding_steps', type: 'number', default: 256, min: 1, max: 1024, step: 1, arch: true },
-      { key: 'freeze_vision_encoder', label: 'freeze_vision_encoder', type: 'bool', default: false },
-      { key: 'gradient_checkpointing', label: 'gradient_checkpointing', type: 'bool', default: false },
-    ],
-  },
-  tdmpc: {
-    defaults: { batchSize: 256, steps: 100000, optimizerType: 'adam' },
-    fields: [
-      { key: 'horizon', label: 'horizon', type: 'number', default: 5, min: 1, max: 64, step: 1, arch: true },
-      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 1, min: 1, max: 64, step: 1, arch: true },
-      { key: 'n_obs_steps', label: 'n_obs_steps', type: 'number', default: 1, min: 1, max: 10, step: 1, arch: true },
-      { key: 'latent_dim', label: 'latent_dim', type: 'number', default: 50, min: 8, max: 1024, step: 1, arch: true },
-    ],
-  },
-  vqbet: {
-    defaults: { batchSize: 64, steps: 250000, optimizerType: 'adam' },
-    fields: [
-      { key: 'n_obs_steps', label: 'n_obs_steps', type: 'number', default: 5, min: 1, max: 20, step: 1, arch: true },
-      { key: 'n_action_steps', label: 'n_action_steps', type: 'number', default: 5, min: 1, max: 64, step: 1, arch: true },
-      { key: 'n_vqvae_training_steps', label: 'n_vqvae_training_steps', type: 'number', default: 20000, min: 100, max: 200000, step: 100 },
-    ],
-  },
-}
-
-// 정책의 config 필드 기본값 객체 생성
-function policyConfigDefaults(policy: string): Record<string, number | boolean> {
-  const schema = POLICY_TRAIN_SCHEMAS[policy]
-  if (!schema) return {}
-  return Object.fromEntries(schema.fields.map((f) => [f.key, f.default]))
-}
-
 export default function TrainingPage() {
   // 설정 — localStorage에서 복원
   const _saved = (() => { try { return JSON.parse(localStorage.getItem('piper_train_settings') || '{}') } catch { return {} } })()
@@ -151,9 +60,36 @@ export default function TrainingPage() {
   const [renameMap, setRenameMap] = useState(_saved.renameMap || '')
   // 저장값을 스키마 기본값 위에 덮어쓴다. 스키마에 필드가 추가되면 저장값에 없던 키가
   // 그대로 누락되어(=CLI 인자 미생성) LeRobot 기본값으로 학습되는 것을 막기 위함.
+  // 스펙이 오기 전에는 저장된 값만 갖고 시작한다 — 기본값은 아래 effect 가
+  // 스펙에서 채운다. 예전엔 여기서 하드코딩 테이블을 읽었다.
   const [policyParams, setPolicyParams] = useState<Record<string, number | boolean>>(
-    { ...policyConfigDefaults(_saved.policyType || 'act'), ...(_saved.policyParams ?? {}) }
+    { ...(_saved.policyParams ?? {}) }
   )
+
+  // 정책 화면 스펙 — `policies/<type>.yaml` 이 정본이다.
+  const policyUi = usePolicyUi(policyType)
+
+  // ⚠ 스펙이 도착하면 **저장된 값이 없는 키만** 채운다. 통째로 덮으면 사용자가
+  // 방금 만진 값이 되돌아가고, 아무것도 안 채우면 새 정책의 필드가 빈 칸이 된다.
+  const appliedSpecFor = useRef('')
+  //   첫 스펙: 저장된 값을 기본값 위에 얹는다 (새로고침해도 만지던 값이 남는다)
+  //   정책 변경: **통째로 갈아끼운다** — 남겨두면 ACT 의 `use_vae` 가 SmolVLA
+  //   실행 인자에 실려 "왜 이런 설정이 들어갔지"가 된다
+  const restored = useRef<Record<string, number | boolean>>(_saved.policyParams ?? {})
+  useEffect(() => {
+    if (!policyUi.type || appliedSpecFor.current === policyUi.type) return
+    const first = appliedSpecFor.current === ''
+    appliedSpecFor.current = policyUi.type
+    const d = policyUi.train.defaults as { batch_size?: number; steps?: number; optimizer_type?: string }
+    if (!first) {
+      if (d.batch_size) setBatchSize(d.batch_size)
+      if (d.steps) setSteps(d.steps)
+      if (d.optimizer_type) setOptimizerType(d.optimizer_type)
+    }
+    const defaults = specDefaults(policyUi.train.fields)
+    setPolicyParams(first ? { ...defaults, ...restored.current } : defaults)
+  }, [policyUi])
+
   const [amp, setAmp] = useState<string>(_saved.amp ?? 'bf16')  // 혼합정밀도: off | bf16 | fp16
   const [cliArgs, setCliArgs] = useState('')
   const [cliEdited, setCliEdited] = useState(false)
@@ -345,13 +281,8 @@ export default function TrainingPage() {
       const cur = models.find((m) => m.path === pretrainedPath)
       if (cur && cur.policy_type && cur.policy_type !== next) setPretrainedPath('')
     }
-    const schema = POLICY_TRAIN_SCHEMAS[next]
-    if (schema) {
-      setBatchSize(schema.defaults.batchSize)
-      setSteps(schema.defaults.steps)
-      setOptimizerType(schema.defaults.optimizerType)
-      setPolicyParams(policyConfigDefaults(next))
-    }
+    // 기본값은 스펙이 온 뒤 아래 effect 가 채운다 — 여기서 못 하는 이유는
+    // `usePolicyUi` 가 비동기라 이 시점엔 아직 이전 정책의 스펙이기 때문이다.
     setCliEdited(false)
   }
 
@@ -367,10 +298,10 @@ export default function TrainingPage() {
     (m) => m.is_policy !== false && (!m.policy_type || m.policy_type === policyType)
   )
 
-  const policySchema = POLICY_TRAIN_SCHEMAS[policyType]
   // 체크포인트에서 이어 학습하면 모델 구조는 이미 고정 — `arch` 값만 가린다.
   // 학습 방식 스위치(freeze_vision_encoder 등)는 파인튜닝에서도 유효하다.
-  const policyFields = (policySchema?.fields ?? []).filter((f) => !(pretrainedPath && f.arch))
+  const policyFields = policyUi.train.fields.filter((f) => !(pretrainedPath && f.arch))
+  const warnings = activeWarnings(policyUi.train.warnings, policyParams)
 
   const trainParams = () => ({
     dataset_repo_id: selectedDataset, policy_type: policyType,
@@ -605,16 +536,21 @@ export default function TrainingPage() {
                   false 면 `SmolVLMForConditionalGeneration(config=...)` 로 VLM 을
                   **랜덤 초기화**한다 — 사전학습 가중치를 안 쓴다는 뜻이다.
                   이 저장소가 예전에 실제로 당한 문제라(커밋 ce768bc) 눈에 보이게 경고한다. */}
-              {!pretrainedPath && policyType === 'smolvla' && policyParams.load_vlm_weights === false && (
+              {/* ⚠ **조건을 여기 다시 적지 않는다.** 예전엔 `policyType === 'smolvla' &&
+                  policyParams.load_vlm_weights === false` 가 박혀 있었고, 아래 파라미터
+                  카드에 같은 경고가 또 있었다 — 둘이 갈리면 한쪽만 뜬다.
+                  스펙이 `error` 를 냈고 처음부터 학습이면 여기에 크게 띄운다.
+                  **무엇을 경고할지는 스펙, 어디에 띄울지는 화면**이다. */}
+              {!pretrainedPath && warnings.some((w) => w.level === 'error') && (
                 <p className="mt-1 px-2 py-1.5 rounded bg-red-500/10 border border-red-500/30 text-[10px] text-red-300">
-                  ⚠ <b>load_vlm_weights 가 꺼져 있습니다.</b> 이 상태로 처음부터 학습하면
-                  비전-언어 백본까지 랜덤 초기화되어 사실상 학습이 되지 않습니다.
-                  아래 파라미터에서 켜거나 체크포인트를 골라주세요.
+                  ⚠ 이 상태로 <b>처음부터 학습</b>하면 사실상 학습이 되지 않습니다 —
+                  {' '}{warnings.filter((w) => w.level === 'error').map((w) => w.text).join(' / ')}.
+                  아래 파라미터에서 고치거나 체크포인트를 골라주세요.
                 </p>
               )}
-              {!pretrainedPath && SCRATCH_WEIGHTS[policyType] && (
+              {!pretrainedPath && policyUi.scratch_note && (
                 <p className="text-[10px] text-neutral-500 mt-1">
-                  처음부터 학습 — {SCRATCH_WEIGHTS[policyType]}
+                  처음부터 학습 — {policyUi.scratch_note}
                 </p>
               )}
               {finetuneCandidates.length === 0 && (
@@ -748,40 +684,22 @@ export default function TrainingPage() {
                   체크포인트에서 이어 학습 중 — 모델 구조 값(chunk_size 등)은 체크포인트에 고정돼 숨겼습니다.
                 </p>
               )}
-              <div className="grid grid-cols-2 gap-2">
-                {policyFields.map((f) => (
-                  <div key={f.key} className={f.type === 'bool' ? 'col-span-2' : ''}>
-                    {f.type === 'bool' ? (
-                      <label className="flex items-center gap-2 text-xs cursor-pointer">
-                        <input type="checkbox" checked={Boolean(policyParams[f.key] ?? f.default)}
-                          onChange={(e) => setPolicyParam(f.key, e.target.checked)}
-                          className="accent-blue-500" />
-                        <span className="text-neutral-400">{f.label}</span>
-                      </label>
-                    ) : (
-                      <>
-                        <label className="text-xs text-neutral-400">{f.label}</label>
-                        <input type="number" value={Number(policyParams[f.key] ?? f.default)}
-                          min={f.min} max={f.max} step={f.step || 1}
-                          onChange={(e) => setPolicyParam(f.key, Number(e.target.value))}
-                          className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
+              <SpecFields fields={policyFields} values={policyParams} onChange={setPolicyParam} />
+              {/* 정책과 무관한 규칙이라 스펙이 아니라 여기 남는다 — 두 키가 다
+                  있을 때만 뜻이 있고, 어느 정책이든 같은 관계다. */}
               {typeof policyParams.n_action_steps === 'number' && typeof policyParams.chunk_size === 'number'
                 && policyParams.n_action_steps > policyParams.chunk_size && (
                 <span className="text-yellow-500 text-[10px]">⚠ n_action_steps는 chunk_size 이하여야 합니다</span>
               )}
-              {policyType === 'smolvla' && !policyParams.load_vlm_weights && (
-                <span className="block text-red-400 text-[10px]">
-                  ⚠ load_vlm_weights=false — VLM이 랜덤 초기화됩니다
-                  {policyParams.freeze_vision_encoder
-                    ? ' (freeze_vision_encoder=true와 겹쳐 비전 인코더가 학습조차 되지 않습니다)'
-                    : ''}
+              {/* 정책별 경고는 스펙이 준다 — 예전엔 `policyType === 'smolvla'` 가
+                  화면에 박혀 있었다. 조건도 문구도 `policies/<type>.yaml` 에 있다. */}
+              {warnings.map((w, i) => (
+                <span key={i} className={`block text-[10px] ${
+                  w.level === 'error' ? 'text-red-400'
+                  : w.level === 'warn' ? 'text-yellow-500' : 'text-neutral-400'}`}>
+                  ⚠ {w.text}
                 </span>
-              )}
+              ))}
             </div>
           )}
 

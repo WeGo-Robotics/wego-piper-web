@@ -82,6 +82,9 @@ RUN pip install --no-deps /tmp/vendor/wego_piper \
 WORKDIR /app
 COPY backend/ /app/backend/
 COPY wrapper/ /app/wrapper/
+# 정책 스펙 — `core/policy_spec.py` 가 저장소 루트(/app)의 `policies/` 에서 읽는다.
+# 빠뜨리면 정책 목록이 **통째로 비고**, 학습·추론 화면이 아무것도 못 고른다.
+COPY policies/ /app/policies/
 
 # ── 데이터 경로 계약 ──
 # 컨테이너 내부 경로는 호스트와 무관한 고정 상수다. 호스트 디렉토리는 compose 가

@@ -1,0 +1,32 @@
+# VQ-BeT
+# ⚠ `supported: false` — 정의는 남기고 꺼둔다. 스키마·클래스 경로가 이미 붙어
+# 있어서 되살릴 때 이 한 줄만 바꾸면 된다.
+spec_version: 1
+type: vqbet
+label: VQ-BeT
+supported: false
+
+capabilities:
+  train: true
+  infer: true
+  rtc: false
+  encoder_probe: false
+  language: false
+
+runtime:
+  model: [lerobot.policies.vqbet.modeling_vqbet, VQBeTPolicy]
+  config: [lerobot.policies.vqbet.configuration_vqbet, VQBeTConfig]
+
+# 베이스 체크포인트 없이 처음부터 학습할 때 무엇이 어디서 시작하는지.
+# 화면이 `pretrained_path` 가 비었을 때 보여준다.
+scratch_note: "비전 백본(ResNet18)을 ImageNet 가중치로 시작하도록 지정합니다 (LeRobot 기본값은 랜덤)"
+
+train:
+  # ⚠ VQ-BeT 은 `n_action_steps` 가 **없다.** 옛 프론트 스키마에는 있었고,
+  # 실제 이름은 `action_chunk_size` / `n_action_pred_token` 이다 — 생성기가 잡았다.
+  defaults: { batch_size: 64, steps: 250000, optimizer_type: adam }
+  fields:
+    - { key: n_obs_steps, kind: number, min: 1, max: 20, arch: true, from_lerobot: true, default: 5 }
+    - { key: action_chunk_size, kind: number, min: 1, max: 64, arch: true, from_lerobot: true, default: 5 }
+    - { key: n_action_pred_token, kind: number, min: 1, max: 64, arch: true, from_lerobot: true, default: 3 }
+    - { key: n_vqvae_training_steps, kind: number, min: 100, max: 200000, step: 100, from_lerobot: true, default: 20000 }

@@ -1,0 +1,44 @@
+# ACT — Action Chunking with Transformers.
+#
+# 이 파일 하나가 ACT 의 전부다: 목록에 뜨는가, 어떤 학습 필드가 보이는가,
+# wrapper 가 어떤 클래스를 import 하는가, 프로브가 어디서 특징을 뽑는가.
+#
+# `default` 는 손으로 적지 않는다 — `tools/gen_policy_spec.py` 가 LeRobot
+# config 클래스에서 읽어 채우고, 테스트가 상류와 대조한다.
+spec_version: 1
+type: act
+label: ACT
+supported: true
+
+capabilities:
+  train: true
+  infer: true
+  rtc: false          # flow-matching 이 아니다 — RTC 가이던스 파라미터를 안 띄운다
+  encoder_probe: true
+  # ⚠ 관측→행동만이다. task 를 줘도 안 쓰이므로 **보내지도 않는다** —
+  # 감추기만 하면 CLI·텔레메트리에 유령 task 가 뜬다(실제로 겪었다).
+  language: false
+
+runtime:
+  model: [lerobot.policies.act.modeling_act, ACTPolicy]
+  config: [lerobot.policies.act.configuration_act, ACTConfig]
+
+# 베이스 체크포인트 없이 처음부터 학습할 때 무엇이 어디서 시작하는지.
+# 화면이 `pretrained_path` 가 비었을 때 보여준다.
+scratch_note: "비전 백본(ResNet18)이 ImageNet 가중치로 시작합니다 — 받을 베이스 체크포인트가 없습니다"
+
+train:
+  defaults: { batch_size: 8, steps: 100000, optimizer_type: adam }
+  fields:
+    - { key: chunk_size, kind: number, min: 1, max: 200, arch: true, from_lerobot: true, default: 100 }
+    - { key: n_action_steps, kind: number, min: 1, max: 200, arch: true, from_lerobot: true, default: 100 }
+    - { key: n_obs_steps, kind: number, min: 1, max: 10, arch: true, from_lerobot: true, default: 1 }
+    - { key: dim_model, kind: number, min: 64, max: 2048, step: 64, arch: true, from_lerobot: true, default: 512 }
+    - { key: use_vae, kind: bool, arch: true, from_lerobot: true, default: true }
+
+encoder_probe:
+  # 체크포인트 없이도 돈다 — 백본이 무작위가 아니라 ImageNet 사전학습에서 시작하기
+  # 때문이다. 그 시작점이 "학습이 엔코더를 좋게 만들었나"의 기준선이다.
+  base_label: "베이스 ResNet-18 / ImageNet (학습 전)"
+  taps:
+    - { key: backbone, label: "ResNet-18 최종 특징맵", default: true }

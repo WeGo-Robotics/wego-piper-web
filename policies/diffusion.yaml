@@ -1,0 +1,30 @@
+# Diffusion
+# ⚠ `supported: false` — 정의는 남기고 꺼둔다. 스키마·클래스 경로가 이미 붙어
+# 있어서 되살릴 때 이 한 줄만 바꾸면 된다.
+spec_version: 1
+type: diffusion
+label: Diffusion
+supported: false
+
+capabilities:
+  train: true
+  infer: true
+  rtc: false
+  encoder_probe: false
+  language: false
+
+runtime:
+  model: [lerobot.policies.diffusion.modeling_diffusion, DiffusionPolicy]
+  config: [lerobot.policies.diffusion.configuration_diffusion, DiffusionConfig]
+
+# 베이스 체크포인트 없이 처음부터 학습할 때 무엇이 어디서 시작하는지.
+# 화면이 `pretrained_path` 가 비었을 때 보여준다.
+scratch_note: "비전 백본(ResNet18)을 ImageNet 가중치로 시작하도록 지정합니다 (LeRobot 기본값은 랜덤)"
+
+train:
+  defaults: { batch_size: 64, steps: 200000, optimizer_type: adam }
+  fields:
+    - { key: horizon, kind: number, min: 1, max: 128, arch: true, from_lerobot: true, default: 16 }
+    - { key: n_obs_steps, kind: number, min: 1, max: 10, arch: true, from_lerobot: true, default: 2 }
+    - { key: n_action_steps, kind: number, min: 1, max: 128, arch: true, from_lerobot: true, default: 8 }
+    - { key: num_train_timesteps, kind: number, min: 1, max: 1000, arch: true, from_lerobot: true, default: 100 }

@@ -1,12 +1,12 @@
-"""학습 페이지의 정책별 파라미터가 백엔드 정책 목록과 어긋나지 않는지.
+"""학습 파라미터 스키마가 정책 목록과 어긋나지 않는지.
 
-정책 목록은 `core/policies.py` 가 단일 출처인데(refactor/02-policy-registry.md),
-프론트가 `POLICY_TRAIN_SCHEMAS` 라는 **두 번째 목록**을 따로 들고 있다.
-실제로 어긋났다 — `pi0_fast`/`tdmpc`/`vqbet` 은 학습 가능한데 스키마가 없어서
-**선택해도 화면이 전혀 안 바뀌었다** (기본 batch/steps 도 적용되지 않았다).
+원래 프론트 `POLICY_TRAIN_SCHEMAS` 가 **두 번째 목록**이었고 실제로 어긋났다 —
+`pi0_fast`/`tdmpc`/`vqbet` 은 학습 가능한데 스키마가 없어서 **선택해도 화면이
+전혀 안 바뀌었다.**
 
-한 언어로 합칠 수 없으니(파이썬↔TS) 목록이 같은지를 테스트로 고정한다 —
-`ws_messages` ↔ `types/ws.ts` 와 같은 방식이다.
+이제 둘 다 `policies/*.yaml` 한 곳에서 온다(feature/policy-ui-spec.md).
+그래도 검사는 남긴다 — 파일을 새로 추가할 때 `train.fields` 를 빼먹는 것은
+여전히 가능하고, 증상이 예전과 똑같다.
 """
 
 import re
@@ -15,13 +15,20 @@ from pathlib import Path
 from app.core import policies
 
 _PAGE = Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages" / "TrainingPage.tsx"
-_SRC = _PAGE.read_text()
+_RAW = _PAGE.read_text()
+# ⚠ **주석을 걷고 본다.** 이 저장소는 "왜 이렇게 됐는지"를 코드 옆에 적으므로,
+# 옛 조건을 설명하는 주석이 흔하다. 원문으로 검사하면 그 설명이 걸려서
+# "고쳤는데 테스트가 실패"한다 — 이번 세션에만 여러 번 겪었다.
+_SRC = re.sub(r"\{?/\*[\s\S]*?\*/\}?|//.*", "", _RAW)
 
 
 def _schema_keys() -> set[str]:
-    body = _SRC.split("POLICY_TRAIN_SCHEMAS: Record<string, PolicySchema> = {", 1)[1]
-    body = body.split("\n}\n", 1)[0]
-    return set(re.findall(r"^\s{2}(\w+):", body, re.M))
+    """`train.fields` 를 가진 정책들."""
+    return {n for n, s in policies.SPECS.items() if s.train.fields}
+
+
+def _fields(name: str):
+    return policies.SPECS[name].train.fields
 
 
 def test_every_trainable_policy_has_a_schema():
@@ -48,8 +55,8 @@ def test_architecture_fields_are_marked():
     예전에는 패널 **전체**를 숨겨서 `freeze_vision_encoder` 처럼 파인튜닝에서 가장
     중요한 학습 스위치까지 사라졌다.
     """
-    assert "arch?: boolean" in _SRC, "PolicyField 에 arch 플래그가 없다"
-    assert "arch: true" in _SRC, "아키텍처 값을 하나도 표시하지 않았다"
+    assert any(f.arch for n in _schema_keys() for f in _fields(n)), \
+        "아키텍처 값을 하나도 표시하지 않았다"
     assert "pretrainedPath && f.arch" in _SRC, "pretrained 일 때 arch 만 가리지 않는다"
 
 
@@ -59,20 +66,20 @@ def test_finetuning_switches_stay_visible():
     이 키들이 `arch` 로 표시되면 체크포인트 학습에서 통째로 숨어버린다 —
     정작 파인튜닝에서 제일 자주 만지는 값들이다.
     """
-    switches = ("freeze_vision_encoder", "train_expert_only", "load_vlm_weights")
-    for line in _SRC.splitlines():
-        if not any(f"'{k}'" in line for k in switches):
-            continue
-        assert "arch: true" not in line, f"학습 스위치를 아키텍처로 표시했다: {line.strip()}"
+    switches = {"freeze_vision_encoder", "train_expert_only", "load_vlm_weights"}
+    for name in _schema_keys():
+        for f in _fields(name):
+            if f.key in switches:
+                assert not f.arch, f"{name}.{f.key} 를 아키텍처로 표시했다"
 
 
 def test_architecture_fields_actually_exist():
     """반대 방향 — 모델 구조 값은 반드시 `arch` 로 표시돼야 pretrained 때 가려진다."""
     for key in ("chunk_size", "dim_model", "n_obs_steps", "use_vae"):
-        lines = [ln for ln in _SRC.splitlines() if f"key: '{key}'" in ln]
-        assert lines, f"{key} 필드가 없다"
-        for ln in lines:
-            assert "arch: true" in ln, f"구조 값인데 arch 표시가 없다: {ln.strip()}"
+        found = [(n, f) for n in _schema_keys() for f in _fields(n) if f.key == key]
+        assert found, f"{key} 필드가 어느 정책에도 없다"
+        for name, f in found:
+            assert f.arch, f"{name}.{key} 는 구조 값인데 arch 표시가 없다"
 
 
 # ── 파인튜닝 후보 목록 ───────────────────────────────────────────────────────
@@ -144,7 +151,11 @@ def test_random_vlm_init_is_warned():
     LeRobot 기본값이 false 라 그냥 두면 조용히 그렇게 된다 —
     이 저장소가 실제로 당했던 문제다(커밋 ce768bc, "silently using a random vision encoder").
     """
-    assert "load_vlm_weights === false" in _SRC, "랜덤 초기화 상태를 경고하지 않는다"
+    warns = policies.SPECS["smolvla"].train.warnings
+    assert any(w.when.field == "load_vlm_weights" and w.when.is_ is False and w.level == "error"
+               for w in warns), "랜덤 초기화 상태를 경고하지 않는다"
+    # 화면이 조건을 다시 적지 않는다 — 갈리면 한쪽만 뜬다
+    assert "load_vlm_weights === false" not in _SRC, "화면이 경고 조건을 또 적고 있다"
 
 
 def test_resnet_backbone_is_not_left_random():

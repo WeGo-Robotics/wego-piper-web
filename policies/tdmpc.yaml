@@ -1,0 +1,30 @@
+# TD-MPC
+# ⚠ `supported: false` — 정의는 남기고 꺼둔다. 스키마·클래스 경로가 이미 붙어
+# 있어서 되살릴 때 이 한 줄만 바꾸면 된다.
+spec_version: 1
+type: tdmpc
+label: TD-MPC
+supported: false
+
+capabilities:
+  train: true
+  infer: true
+  rtc: false
+  encoder_probe: false
+  language: false
+
+runtime:
+  model: [lerobot.policies.tdmpc.modeling_tdmpc, TDMPCPolicy]
+  config: [lerobot.policies.tdmpc.configuration_tdmpc, TDMPCConfig]
+
+# 베이스 체크포인트 없이 처음부터 학습할 때 무엇이 어디서 시작하는지.
+# 화면이 `pretrained_path` 가 비었을 때 보여준다.
+scratch_note: "별도 비전 백본 사전학습이 없습니다"
+
+train:
+  defaults: { batch_size: 256, steps: 100000, optimizer_type: adam }
+  fields:
+    - { key: horizon, kind: number, min: 1, max: 64, arch: true, from_lerobot: true, default: 5 }
+    - { key: n_action_steps, kind: number, min: 1, max: 64, arch: true, from_lerobot: true, default: 1 }
+    - { key: n_obs_steps, kind: number, min: 1, max: 10, arch: true, from_lerobot: true, default: 1 }
+    - { key: latent_dim, kind: number, min: 8, max: 1024, arch: true, from_lerobot: true, default: 50 }

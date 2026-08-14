@@ -8,83 +8,57 @@
 - Hub 태깅 목록에 정책이 아닌 `rtc` 가 섞여 있었고,
   `pi0` 가 `pi05` 보다 앞이라 **pi05 모델이 pi0 로 잘못 태깅**됐다
 
+## 이제 정의는 `policies/*.yaml` 에 있다
+
+여기는 **로더**다. 파이썬 dict 로 들고 있었더니 프론트가 못 읽어서, 화면 쪽에
+`POLICY_TRAIN_SCHEMAS`(400줄)와 `policyType === '...'` 분기가 따로 자랐다
+(feature/policy-ui-spec.md). 같은 사실을 프론트도 읽을 수 있는 곳에 두면
+그 분기가 생길 자리가 없다.
+
+`POLICIES` 의 **모양과 공개 함수는 그대로다** — 부르는 쪽은 한 줄도 안 바뀐다.
+
 `core/` 에 두는 이유: 순수 데이터라 `services/` 를 참조하지 않는다
 (`core/` → `services/` 방향 import 는 이 저장소에 없다).
 """
 
 from typing import TypedDict
 
+from app.core.policy_spec import PolicySpec, load_specs
+
 
 class Policy(TypedDict, total=False):
     label: str
-    # 지금 실제로 지원하는가. **정의는 지우지 않고 꺼둔다** —
-    # 스키마·베이스 체크포인트·백본 안전망이 이미 붙어 있어서,
-    # 나중에 이 한 줄만 켜면 되살아난다.
     supported: bool
-    train: bool           # 학습 화면에서 고를 수 있는가
-    infer: bool           # 추론 화면에서 고를 수 있는가 (= wrapper POLICY_IMPORTS 에 있어야 함)
-    rtc: bool             # flow-matching → RTC 가이던스 파라미터 노출
-    # 언어 지시(task)를 입력으로 받는가. **VLA 만 받는다.**
-    # ⚠ `vlm_base` 유무로 유추하지 않는다 — 둘은 다른 사실이고, VLM 백본 없이
-    # 언어를 받는 정책이 나오면 그 순간 유추가 거짓말을 한다.
+    train: bool
+    infer: bool
+    rtc: bool
     language: bool
-    encoder_probe: bool   # 이미지 엔코더 프로브 지원
-    policy_base: str      # Hub 베이스 체크포인트
-    vlm_base: str         # VLM 백본
+    encoder_probe: bool
+    policy_base: str
+    vlm_base: str
 
+
+SPECS: dict[str, PolicySpec] = load_specs()
+
+
+def _flatten(spec: PolicySpec) -> Policy:
+    """YAML 스펙을 옛 `Policy` 모양으로. **부르는 쪽을 안 바꾸려고** 있는 함수다."""
+    c = spec.capabilities
+    return Policy(
+        label=spec.label, supported=spec.supported,
+        train=c.train, infer=c.infer, rtc=c.rtc,
+        language=c.language, encoder_probe=c.encoder_probe,
+        policy_base=spec.bases.policy, vlm_base=spec.bases.vlm,
+    )
+
+
+# ⚠ 정렬 순서가 화면 목록 순서다. YAML 파일명이 아니라 **원하는 표시 순서**로
+# 고정한다 — 파일명 알파벳순이면 SmolVLA 가 ACT 뒤로 가서 목록이 뒤집힌다.
+_ORDER = ["smolvla", "act", "diffusion", "pi0", "pi05", "pi0_fast", "vqbet", "tdmpc"]
 
 POLICIES: dict[str, Policy] = {
-    "smolvla": {
-        "label": "SmolVLA",
-        "supported": True,
-        "train": True, "infer": True, "rtc": True, "encoder_probe": True,
-        "language": True,
-        "policy_base": "lerobot/smolvla_base",
-        "vlm_base": "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
-    },
-    "act": {
-        "label": "ACT",
-        "supported": True,
-        "train": True, "infer": True, "rtc": False, "encoder_probe": True,
-        "language": False,      # ACT 는 관측→행동만. task 를 줘도 쓰이지 않는다
-    },
-    "diffusion": {
-        "label": "Diffusion",
-        "train": True, "infer": True, "rtc": False, "encoder_probe": False,
-        "language": False,
-    },
-    "pi0": {
-        "label": "π0",
-        "train": True, "infer": True, "rtc": True, "encoder_probe": False,
-        "language": True,
-        "policy_base": "lerobot/pi0_base",
-        "vlm_base": "google/paligemma-3b-pt-224",
-    },
-    "pi05": {
-        "label": "π0.5",
-        "train": True, "infer": True, "rtc": True, "encoder_probe": False,
-        "language": True,
-        "policy_base": "lerobot/pi05_base",
-        "vlm_base": "google/paligemma-3b-pt-224",
-    },
-    "pi0_fast": {
-        "label": "π0-FAST",
-        "train": True, "infer": True, "rtc": False, "encoder_probe": False,
-        "language": True,       # π0 계열 — RTC 는 안 쓰지만 언어는 받는다
-    },
-    "vqbet": {
-        "label": "VQ-BeT",
-        "train": True, "infer": True, "rtc": False, "encoder_probe": False,
-        "language": False,
-    },
-    "tdmpc": {
-        "label": "TD-MPC",
-        "train": True, "infer": True, "rtc": False, "encoder_probe": False,
-        "language": False,
-    },
-    # `sac` 는 의도적으로 없다 — 강화학습(보상·환경·리플레이 버퍼)이라
-    # 이 프로젝트의 수집→학습→추론 흐름과 맞지 않는다.
-    # 되살리려면 wrapper/lerobot_wrapper.py 의 POLICY_IMPORTS 에도 함께 넣어야 한다.
+    name: _flatten(SPECS[name])
+    for name in sorted(SPECS, key=lambda n: (_ORDER.index(n) if n in _ORDER else 99, n))
 }
 
 
@@ -164,3 +138,56 @@ def spec_for_frontend() -> list[dict]:
         for name, spec in POLICIES.items()
         if spec.get("supported")
     ]
+
+
+def ui_spec(policy_type: str) -> dict:
+    """`GET /api/policies/{type}/ui` — 화면이 그릴 **항목**을 준다.
+
+    ⚠ 배치는 안 담는다. 어느 카드에 몇 열로 놓을지는 화면이 정하고, 여기는
+    "어떤 필드가 있고 범위·기본값이 얼마인가"만 말한다. 그 선을 넘기 시작하면
+    타입 검사도 디버깅도 안 되는 JSX 를 YAML 로 쓰게 된다.
+    """
+    spec = SPECS.get(policy_type)
+    if spec is None:
+        # 모르는 정책이면 빈 스펙. **막지는 않는다** — 스펙은 편의 계층이지
+        # 안전 계층이 아니다. 값 검증의 정본은 백엔드 클램프에 남아 있다.
+        return {"type": policy_type, "scratch_note": "",
+                "train": {"defaults": {}, "fields": [], "warnings": []},
+                "encoder_probe": {"base_label": "", "taps": [], "note": ""}}
+    t = spec.train
+    return {
+        "type": policy_type,
+        "scratch_note": spec.scratch_note,
+        "train": {
+            "defaults": t.defaults,
+            "fields": [
+                {
+                    "key": f.key,
+                    # 라벨을 안 적으면 키를 그대로 쓴다 — LeRobot 설정 이름이
+                    # 곧 사용자가 검색할 이름이라 대개 그게 낫다.
+                    "label": f.label or f.key,
+                    "kind": f.kind,
+                    "default": f.resolved_default(),
+                    "min": f.min, "max": f.max, "step": f.step,
+                    "arch": f.arch,
+                    # 상류와 일부러 다른 값이면 화면이 그 이유를 보여줄 수 있다
+                    "override_reason": f.override.reason if f.override else "",
+                }
+                for f in t.fields
+            ],
+            "warnings": [
+                {
+                    "when": {"field": w.when.field, "is": w.when.is_},
+                    "and": ({"field": w.and_.field, "is": w.and_.is_} if w.and_ else None),
+                    "level": w.level, "text": w.text,
+                }
+                for w in t.warnings
+            ],
+        },
+        "encoder_probe": {
+            "base_label": spec.encoder_probe.base_label,
+            "taps": [{"key": t_.key, "label": t_.label, "default": t_.default}
+                     for t_ in spec.encoder_probe.taps],
+            "note": spec.encoder_probe.note,
+        },
+    }

@@ -1,0 +1,55 @@
+# SmolVLA — 비전-언어-행동 정책.
+spec_version: 1
+type: smolvla
+label: SmolVLA
+supported: true
+
+capabilities:
+  train: true
+  infer: true
+  rtc: true
+  encoder_probe: true
+  language: true
+
+bases:
+  policy: lerobot/smolvla_base
+  vlm: HuggingFaceTB/SmolVLM2-500M-Video-Instruct
+
+runtime:
+  model: [lerobot.policies.smolvla.modeling_smolvla, SmolVLAPolicy]
+  config: [lerobot.policies.smolvla.configuration_smolvla, SmolVLAConfig]
+
+train:
+  defaults: { batch_size: 64, steps: 200000, optimizer_type: adamw }
+  fields:
+    - { key: chunk_size, kind: number, min: 1, max: 200, arch: true, from_lerobot: true, default: 50 }
+    - { key: n_action_steps, kind: number, min: 1, max: 200, arch: true, from_lerobot: true, default: 50 }
+    - { key: freeze_vision_encoder, kind: bool, from_lerobot: true, default: true }
+    - { key: train_expert_only, kind: bool, from_lerobot: true, default: true }
+    # ⚠ **상류와 일부러 다르다.** `default` 는 LeRobot 값(false)을 그대로 두고
+    # `override` 가 실제로 쓸 값을 정한다. 상류가 바뀌면 테스트가 알려준다.
+    - key: load_vlm_weights
+      kind: bool
+      from_lerobot: true
+      default: false
+      override:
+        value: true
+        # false 면 VLM(SigLIP 비전 인코더 포함)이 랜덤 초기화되고,
+        # freeze_vision_encoder=true 와 겹치면 **학습 자체가 안 된다.**
+        # (pretrained_path 로 파인튜닝하면 체크포인트가 가중치를 들고 오므로 무관)
+        reason: "LeRobot 기본값 false 는 scratch 학습에서 freeze 와 충돌한다"
+
+  warnings:
+    - when: { field: load_vlm_weights, is: false }
+      level: error
+      text: "load_vlm_weights=false — VLM이 랜덤 초기화됩니다"
+    - when: { field: load_vlm_weights, is: false }
+      and: { field: freeze_vision_encoder, is: true }
+      level: error
+      text: "freeze_vision_encoder=true와 겹쳐 비전 인코더가 학습조차 되지 않습니다"
+
+encoder_probe:
+  base_label: "베이스 SigLIP (체크포인트 없이)"
+  taps:
+    - { key: siglip,    label: "비전 타워 출력 (32x32)", default: true }
+    - { key: connector, label: "VLM 입력 토큰 (8x8)" }

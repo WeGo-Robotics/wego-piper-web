@@ -1,0 +1,32 @@
+# π0
+# ⚠ `supported: false` — 정의는 남기고 꺼둔다. 스키마·클래스 경로가 이미 붙어
+# 있어서 되살릴 때 이 한 줄만 바꾸면 된다.
+spec_version: 1
+type: pi0
+label: π0
+supported: false
+
+capabilities:
+  train: true
+  infer: true
+  rtc: true
+  encoder_probe: false
+  language: true
+
+bases:
+  policy: lerobot/pi0_base
+  vlm: google/paligemma-3b-pt-224
+
+runtime:
+  model: [lerobot.policies.pi0.modeling_pi0, PI0Policy]
+  config: [lerobot.policies.pi0.configuration_pi0, PI0Config]
+
+train:
+  defaults: { batch_size: 32, steps: 30000, optimizer_type: adamw }
+  fields:
+    - { key: chunk_size, kind: number, min: 1, max: 200, arch: true, from_lerobot: true, default: 50 }
+    - { key: n_action_steps, kind: number, min: 1, max: 200, arch: true, from_lerobot: true, default: 50 }
+    - { key: freeze_vision_encoder, kind: bool, from_lerobot: true, default: false }
+    - { key: train_expert_only, kind: bool, from_lerobot: true, default: false }
+    - { key: num_inference_steps, kind: number, min: 1, max: 100, from_lerobot: true, default: 10 }
+    - { key: gradient_checkpointing, kind: bool, from_lerobot: true, default: false }

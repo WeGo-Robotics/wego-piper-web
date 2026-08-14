@@ -13,6 +13,9 @@ dependencies = [
     "huggingface-hub>=0.25",
     "pandas>=2.0",
     "plotly>=6.0",
+    # 정책 스펙(`policies/*.yaml`). 주석이 달린다는 게 YAML 을 고른 이유라
+    # JSON 으로 타협하지 않았다 (feature/policy-ui-spec.md).
+    "pyyaml>=6.0",
 ]
 
 [tool.setuptools.packages.find]
