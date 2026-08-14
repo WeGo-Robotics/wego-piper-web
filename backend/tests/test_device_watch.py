@@ -21,8 +21,13 @@ from app.services import device_watch as W
 
 
 class _Arm:
-    def __init__(self, iface, ready=True, role="follower"):
+    def __init__(self, iface, ready=True, role="follower", connected=True):
         self.iface, self.ready, self.role = iface, ready, role
+        # 장치 사실. 사람이 정한 등록(`ready`)과 다르다 — 요약이 이 둘을 가른다.
+        self.connected = connected
+
+    def mark_absent(self):
+        self.connected = False
 
 
 class _Cam:
@@ -34,6 +39,10 @@ class _Cam:
         # 스캔이 이 장치를 봤는가. 멈춘 이유가 케이블인지 데몬인지를 이게 가른다.
         self.present = present
         self.name = cam_id
+
+    def mark_absent(self):
+        self.connected = False
+        self.present = False
 
 
 @pytest.fixture
@@ -373,3 +382,86 @@ def test_stale_threshold_has_one_owner():
     from app.services import camera_manager as CM
 
     assert "device_watch import STALE_S" in inspect.getsource(CM._is_fresh)
+
+
+# ── 상태바 요약 (feature/layout-redesign.md 2단계) ──────────────────────────
+
+def test_summary_counts_what_was_registered_not_what_was_scanned(world):
+    """스캔에 뜨는 것과 **이 시스템이 쓰기로 한 것**은 다르다.
+
+    상태바가 답해야 하는 것은 후자다 — 옆에 굴러다니는 웹캠까지 세면 숫자가
+    "지금 쓸 수 있는 장치"를 뜻하지 않게 된다.
+    """
+    world["arms"] = [_Arm("can0"), _Arm("can1", ready=False)]
+    world["cams"] = [_Cam("rs:1:color"), _Cam("/dev/video9", ready=False)]
+    world["apply"]()
+
+    s = W.DeviceWatch().summary()
+    assert s["robots"] == {"ok": 1, "warn": 0}
+    assert s["cameras"] == {"ok": 1, "warn": 0}
+
+
+def test_summary_splits_missing_devices_into_warn(world):
+    """없어진 것 — 뽑혔거나 데몬이 모른다.
+
+    `ok` 에 섞어 세면 상태바가 **없는 장치를 있다고 말한다.**
+    """
+    world["arms"] = [_Arm("can0"), _Arm("can1", connected=False)]
+    world["cams"] = [_Cam("rs:1:color", present=False)]
+    world["apply"]()
+
+    s = W.DeviceWatch().summary()
+    assert s["robots"] == {"ok": 1, "warn": 1}
+    assert s["cameras"] == {"ok": 0, "warn": 1}
+
+
+def test_a_camera_that_is_plugged_in_but_not_opened_is_not_a_warning(world):
+    """**회귀** — `present && !connected` 는 정상이다(camera_manager 가 그렇게 정의했다).
+
+    꽂혀 있는데 아직 안 연 것뿐이고, 녹화·추론이 시작할 때 연다. 이걸 경고로 세면
+    **게이트웨이를 재시작할 때마다 등록된 카메라가 전부 노랗게 뜬다.** 실제로
+    이 코드의 첫 판이 그랬다 — 갓 뜬 인스턴스가 `warn: 3` 을 냈다.
+
+    경보 쪽에서 같은 실수를 이미 했다 (`test_idle_is_not_a_fault`).
+    """
+    world["cams"] = [_Cam("rs:1:color", connected=False),
+                     _Cam("rs:2:color", connected=False)]
+    world["apply"]()
+
+    assert W.DeviceWatch().summary()["cameras"] == {"ok": 2, "warn": 0}
+
+
+def test_summary_cannot_disagree_with_the_alert(world):
+    """**이 테스트가 요약을 `device_watch` 에 둔 이유다.**
+
+    개수를 따로 세는 API 를 만들었다면 "경보는 사라졌다는데 상태바는 초록"인
+    화면이 만들어질 수 있다. 아무도 안 믿게 되는 종류의 화면이다.
+
+    같은 `check()` 가 판정하고 그 결과를 관리자에 내려놓으므로, 경보가 뜨면
+    요약도 같은 방향으로 움직여야 한다.
+    """
+    world["arms"] = [_Arm("can0")]          # 관리자는 아직 "연결됨"으로 안다
+    world["arm_stale"] = ["can0"]           # 그런데 발행이 멈췄다
+    world["apply"]()
+
+    watch = W.DeviceWatch()
+    assert watch.summary()["robots"] == {"ok": 1, "warn": 0}   # 판정 전
+
+    new, _ = watch.check()
+    assert new and new[0].reason == "device_gone"
+    s = watch.summary()
+    assert s["robots"] == {"ok": 0, "warn": 1}, "경보는 떴는데 요약은 멀쩡하다고 한다"
+    assert s["alerts"] == 1
+
+
+def test_summary_does_not_enumerate_devices_itself(world):
+    """요약은 **세지 않는다** — 이미 아는 것을 내놓는다.
+
+    여기서 조사를 다시 돌리면 상태바 폴링이 곧 장치 열거가 되고, 5초마다
+    그걸 하게 된다. `check()` 가 2초마다 내려놓은 boolean 만 읽어야 한다.
+    """
+    import inspect
+
+    src = inspect.getsource(W.DeviceWatch.summary)
+    for forbidden in ("_survey_arms", "_survey_cameras", "scan", "lost("):
+        assert forbidden not in src, f"요약이 장치를 다시 훑는다: {forbidden}"

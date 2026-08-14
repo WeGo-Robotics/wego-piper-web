@@ -106,7 +106,7 @@ export type PageEntry = {
 | 왼쪽 | **활동 칩** — 추론 · 녹화 · 학습 · 정책서버 중 **도는 것만** | 아무것도 안 뜬다 |
 | 왼쪽(칩 안) | 활동별 한 줄 요약: 추론 `19.9fps`, 학습 `6200/20000`, 녹화 `ep 3/10` | 상태만 |
 | 오른쪽 | **장치 요약** — 로봇 n · 카메라 n. 이상이 있으면 그 숫자가 경고색 | `0` (회색) |
-| 오른쪽 | 디스크 사용률 ([DiskUsageBar](../frontend/src/components/DiskUsageBar.tsx) 재사용) | — |
+| 오른쪽 | 디스크 사용량 (`💾 41GB`, 임계치 넘으면 경고색) | — |
 | 오른쪽 | WS 연결 점 · E-stop `armed` 표시 | — |
 
 > ⚠ **상태바는 판정하지 않는다.** 라벨과 경보 문구는 백엔드가 만든다 —
@@ -129,7 +129,7 @@ export type PageEntry = {
 | 녹화 에피소드 | WS `record_status` | ☑ 있다 |
 | E-stop `armed` | `GET /api/estop/status` | ☑ 있다 |
 | WS 연결 | `useWebSocket().connected` | ☑ 있다 |
-| **로봇·카메라 개수** | `GET /api/devices/summary` | ☐ **새로 만든다** |
+| **로봇·카메라 개수** | `GET /api/devices/summary` | ☑ 2단계에서 만들었다 |
 
 ### 왜 요약 API 하나가 필요한가
 
@@ -143,11 +143,22 @@ export type PageEntry = {
 결과를 노출하는 것이다. 장치를 건드리지 않고, 응답은 dict 하나다.
 
 ```jsonc
-// GET /api/devices/summary
+// GET /api/devices/summary   — 실측 1.5ms
 { "robots":  { "ok": 2, "warn": 0 },
   "cameras": { "ok": 3, "warn": 1 },
-  "alerts": 1 }        // 지금 떠 있는 경보 수 — 배지용
+  "alerts": 1 }
 ```
+
+> ⚠ **`ok` 는 "연결됨"이 아니라 "거기 있음"이다.** 처음엔 `connected` 로 셌는데,
+> 갓 뜬 게이트웨이가 `cameras: {ok: 0, warn: 3}` 을 냈다 — 등록된 카메라를 아직
+> 안 열었을 뿐인데 전부 경고가 된 것이다. `camera_manager` 는 이미
+> **`present && !connected` 를 정상으로 정의**해 뒀다(꽂혀 있는데 안 연 상태이고,
+> `prepare_cameras` 가 시작할 때 연다). 경보 쪽에서 똑같은 실수를 한 번 했고
+> 그게 `test_idle_is_not_a_fault` 다. 그래서 카메라는 `present`, 팔은
+> (`present` 가 없으므로) `connected` 를 본다.
+>
+> `alerts` 는 숫자로 안 그린다 — 경보 자체는 `SystemMessages` 가 이미 크게
+> 띄우므로 배지가 같은 말을 두 번 하게 된다. 툴팁에만 쓴다.
 
 ### 갱신 주기
 
@@ -156,6 +167,10 @@ export type PageEntry = {
   방식이고, [#12 WS 계약](../refactor/12-ws-message-contract.md) 작업과 안 부딪힌다
 - **장치 수**: 5초 폴링. `device_alert` 는 **전이에서만** 오므로 그것만으로는
   개수가 안 맞는다(경보 없는 정상 변화 — 카메라를 새로 연결하는 것 — 을 못 본다)
+- **디스크**: 폴링하지 **않는다.** `check_disk_usage()` 는 데이터셋·모델 디렉토리를
+  통째로 훑는다 — 위 5초 주기에 태우면 그 폴링이 곧 부하다. 마운트할 때 한 번
+  읽고, **디스크를 실제로 움직이는 일이 끝났을 때**(녹화·업로드 → `idle`) 다시
+  읽는다. `DiskUsageBar` 는 카드 모양이라 재사용하지 않고 한 줄짜리로 따로 그린다
 
 > 주기 WS 브로드캐스트가 더 깔끔하지만 **WS 계약에 타입을 하나 더 얹는 일**이다.
 > #12 가 계약을 정리하는 중이라 그 뒤에 판단한다. 그때 폴링 한 줄을 지우면 된다.
@@ -197,8 +212,8 @@ export type PageEntry = {
 
 | # | 작업 | 얻는 것 | 의존 |
 |---|---|---|---|
-| **1** | `pages.ts` 에 `group`·`icon` + `Layout` 2단 골격. **상태바는 활동 칩만** (이미 있는 값) | **메뉴 한계가 풀린다.** 모델·데이터셋이 내비로 돌아온다 | 없음 |
-| 2 | `GET /api/devices/summary` + 장치 칩 · 디스크 · WS 점 | 어느 페이지에서든 장치 상태가 보인다 | 1 |
+| **1 ☑** | `pages.ts` 에 `group`·`icon` + `Layout` 2단 골격. **상태바는 활동 칩만** (이미 있는 값) | **메뉴 한계가 풀렸다.** 14개 전부 내비에 — 모델·데이터셋이 돌아왔다 | 없음 |
+| **2 ☑** | `GET /api/devices/summary` + 장치 칩 · 디스크 · WS 점 | 어느 페이지에서든 장치 상태가 보인다 | 1 |
 | 3 | 접힘 · 반응형 · `localStorage` | 좁은 화면 | 1 |
 | 4 | 대시보드 정리 (중복 카드 제거 → 최근 작업) | 중복 제거 | 1 |
 

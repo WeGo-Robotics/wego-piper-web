@@ -1,7 +1,11 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useActivity, isStateMessage } from '../hooks/useActivity'
 import type { ActivityName } from '../hooks/useActivity'
+import { useDeviceSummary } from '../hooks/useDeviceSummary'
+import type { DeviceCount } from '../hooks/useDeviceSummary'
 import { useWebSocket } from '../hooks/useWebSocket'
+import { api } from '../services/api'
+import type { DiskUsage } from '../types/models'
 
 /**
  * 상단 상태바 — **어느 페이지에 있든** 무엇이 도는지 보인다
@@ -37,9 +41,40 @@ const DOT: Record<string, string> = {
   upload: 'bg-amber-400',
 }
 
+/** `🦾 2` — 문제가 있으면 숫자가 경고색이 되고 툴팁이 이유를 말한다. */
+function DeviceChip({ icon, name, count }: {
+  icon: string; name: string; count: DeviceCount
+}) {
+  const warn = count.warn > 0
+  return (
+    <span className={`flex shrink-0 items-center gap-1 text-xs tabular-nums ${
+      warn ? 'text-amber-400' : 'text-neutral-400'}`}
+      title={warn
+        ? `${name} ${count.ok}개 사용 가능, ${count.warn}개 없음 — 등록해뒀는데 지금 못 씁니다`
+        : `${name} ${count.ok}개 사용 가능`}>
+      <span aria-hidden>{icon}</span>
+      {count.ok}
+      {warn && <span aria-hidden>⚠</span>}
+      <span className="sr-only">
+        {name} {count.ok}개{warn ? `, ${count.warn}개 없음` : ''}
+      </span>
+    </span>
+  )
+}
+
 export default function StatusBar() {
   const { running, labelOf, refresh } = useActivity()
   const [detail, setDetail] = useState<Detail>({})
+  const devices = useDeviceSummary()
+  const [disk, setDisk] = useState<DiskUsage | null>(null)
+
+  // ⚠ **디스크는 주기 폴링에 안 태운다.** `check_disk_usage()` 는 데이터셋·모델
+  //   디렉토리를 통째로 훑는다 — 5초마다 부르면 그 자체가 부하다.
+  //   대신 **디스크를 실제로 바꾸는 일이 끝났을 때** 다시 읽는다.
+  const refreshDisk = useCallback(() => {
+    api.get<DiskUsage>('/datasets/disk-usage').then(setDisk).catch(() => {})
+  }, [])
+  useEffect(() => { refreshDisk() }, [refreshDisk])
 
   const { connected } = useWebSocket('/ws', {
     onMessage: (msg) => {
@@ -47,6 +82,11 @@ export default function StatusBar() {
       // **새 WS 타입을 만들지 않는다** (#12 계약 작업과 안 부딪힌다).
       if (isStateMessage(msg.type)) {
         refresh()
+        // 녹화·업로드가 끝났으면 디스크가 움직였다
+        if ((msg.type === 'record_state' || msg.type === 'upload_state')
+            && msg.data === 'idle') {
+          refreshDisk()
+        }
         return
       }
       if (msg.type === 'telemetry') {
@@ -88,6 +128,18 @@ export default function StatusBar() {
               {detail[a] && <span className="text-neutral-400 tabular-nums">{detail[a]}</span>}
             </span>
           ))
+        )}
+      </div>
+
+      <div className="flex shrink-0 items-center gap-3">
+        <DeviceChip icon="🦾" name="로봇" count={devices.robots} />
+        <DeviceChip icon="📷" name="카메라" count={devices.cameras} />
+        {disk && (
+          <span className={`shrink-0 text-xs tabular-nums ${
+            disk.warning ? 'text-amber-400' : 'text-neutral-400'}`}
+            title={`데이터셋·모델 ${disk.total_gb}GB / 경고 임계치 ${disk.threshold_gb}GB`}>
+            💾 {disk.total_gb}GB{disk.warning && ' ⚠'}
+          </span>
         )}
       </div>
 

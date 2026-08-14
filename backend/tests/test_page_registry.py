@@ -119,3 +119,16 @@ def test_the_status_bar_stays_read_only():
     src = (_SRC / "components" / "StatusBar.tsx").read_text()
     assert "api.post" not in src, "상태바가 명령을 보낸다"
     assert "<button" not in src, "상태바에 버튼이 생겼다 — 읽기 전용이어야 한다"
+
+
+def test_the_status_bar_does_not_poll_the_disk_walk():
+    """`check_disk_usage()` 는 데이터셋·모델 디렉토리를 **통째로 훑는다.**
+
+    장치 요약과 같은 5초 주기에 태우면 그 폴링 자체가 부하가 된다. 디스크는
+    녹화·업로드가 끝났을 때만 다시 읽는다 — 그게 디스크를 실제로 움직이는 일이다.
+    """
+    src = (_SRC / "components" / "StatusBar.tsx").read_text()
+    assert "disk-usage" in src, "디스크를 아예 안 읽는다"
+    # `setInterval` 로 도는 것은 장치 요약(별도 훅)뿐이어야 한다
+    assert "setInterval" not in src, "상태바가 자체 타이머를 돌린다 — 디스크가 딸려간다"
+    assert "record_state" in src, "녹화가 끝나도 디스크 표시가 안 바뀐다"

@@ -192,6 +192,51 @@ class DeviceWatch:
     def alerts(self) -> list[dict]:
         return [a.to_dict() for a in self._alerts]
 
+    def summary(self) -> dict:
+        """상태바용 한 줄 요약 — **세는 것이 아니라 이미 아는 것을 내놓는다.**
+
+        `check()` 가 2초마다 조사하고 그 결과를 `_apply_to_managers()` 로 관리자에
+        내려놓는다. 그러니 관리자의 `connected` 는 이미 최신이다. 여기서 장치를
+        다시 열거하면 같은 일을 두 번 하는 것이고, 무엇보다 **판정이 두 벌이 된다** —
+        경보는 "없어졌다"인데 개수는 "정상"인 상태가 만들어진다.
+
+        - `ok`   등록해뒀고 **거기 있는** 것
+        - `warn` 등록해뒀는데 없어진 것
+
+        등록 안 한 장치는 안 센다. 스캔에 뜨는 것과 **이 시스템이 쓰기로 한 것**은
+        다르고, 상태바가 답해야 하는 것은 후자다.
+
+        ⚠ **"안 열려 있다"는 경고가 아니다.** 카메라는
+        [`present && !connected` 를 정상으로 정의](camera_manager.py)해 뒀다 —
+        꽂혀 있는데 아직 안 연 상태이고, 녹화·추론이 시작할 때 `prepare_cameras`
+        가 그때 연다. 이걸 경고로 세면 **게이트웨이를 재시작할 때마다 등록된
+        카메라가 전부 노랗게 뜬다.** 같은 실수를 경보 쪽에서 이미 한 번 했다
+        (`test_idle_is_not_a_fault` — rsd 를 되살렸는데 아직 안 연 것이
+        "사라졌습니다"로 떴다).
+
+        팔에는 그 구분이 없다. `ArmInfo` 는 `present` 를 안 갖고, `connected` 가
+        곧 "robotd 가 이 팔을 안다"이며 `mark_absent()` 가 지우는 것도 그것이다.
+        """
+        from app.services.camera_manager import camera_manager
+        from app.services.robot_manager import robot_manager
+
+        def _here(device) -> bool:
+            """이 장치가 거기 있는가."""
+            if hasattr(device, "present"):
+                return bool(device.present)   # 카메라 — 안 연 것과 없는 것을 가른다
+            return bool(getattr(device, "connected", False))   # 팔 — robotd 가 아는가
+
+        def _count(items) -> dict:
+            registered = [d for d in items if getattr(d, "ready", False)]
+            ok = sum(1 for d in registered if _here(d))
+            return {"ok": ok, "warn": len(registered) - ok}
+
+        return {
+            "robots": _count(robot_manager.arms.values()),
+            "cameras": _count(camera_manager.cameras.values()),
+            "alerts": len(self._alerts),
+        }
+
     def check(self) -> tuple[list[Alert], list[Alert]]:
         """지금 상태를 보고 `(새로 생긴 것, 해소된 것)` 을 돌려준다."""
         found = self._collect()
