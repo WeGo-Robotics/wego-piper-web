@@ -55,6 +55,9 @@ RUN pip install "lerobot[smolvla]==0.5.0" "transformers==5.3.0" \
 
 # ── Piper 하드웨어 스택 ──
 RUN pip install piper_sdk==0.6.1 python-can==4.6.1
+# gRPC — 원격 추론(정책 서버 ↔ 클라이언트). lerobot 의 async_inference 모듈은
+# 들어 있는데 `grpc` 자체가 없어서, .120 에서 원격 추론을 붙이려다 막혔다.
+RUN pip install grpcio
 
 # ── 버스·shm 계약 패키지 ──
 # 게이트웨이와 데몬이 **공유하는 계약**이다. 데몬 자체(rsd/camerad/robotd)는

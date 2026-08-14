@@ -1,5 +1,6 @@
 from pydantic import Field
 from pydantic_settings import BaseSettings
+import sys
 from pathlib import Path
 import json
 import logging
@@ -145,7 +146,14 @@ class Settings(BaseSettings):
 
     # 실행 경로
     local_python: str = "python"  # 로컬 wrapper용 python
-    grpc_python: str = str(Path.home() / "miniconda3" / "bin" / "python")  # gRPC wrapper용 python
+    # gRPC wrapper·정책 서버용 python.
+    #
+    # ⚠ **홈 경로를 박아두지 않는다.** 예전 기본값은 `~/miniconda3/bin/python` 이었는데,
+    # 컨테이너에서는 `$HOME=/root` 라 그런 파일이 **없다** — 원격 추론을 붙이려다
+    # .120 에서 정확히 이걸로 막혔다. 지금 도는 인터프리터가 정답이다:
+    # 호스트면 conda, 컨테이너면 `/opt/venv/bin/python` 으로 저절로 맞는다.
+    # 다른 것을 쓰려면 `PIPER_GRPC_PYTHON` 으로 덮어쓴다.
+    grpc_python: str = sys.executable
     hf_cli: str = ""  # huggingface-cli 경로 (빈 문자열이면 자동 탐색)
 
     @property

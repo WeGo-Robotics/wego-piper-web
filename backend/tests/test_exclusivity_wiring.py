@@ -115,3 +115,28 @@ def test_error_message_uses_correct_korean_particle(client, pretend_running):
     detail = client.post("/api/policy-server/start", json={}).json()["detail"]
     assert "(를)" not in detail and "(가)" not in detail
     assert "정책 서버를 시작하세요" in detail
+
+
+# ── 원격 추론 배선 ──────────────────────────────────────────────────────────
+
+def test_grpc_python_is_not_a_hardcoded_home_path():
+    """**회귀** — 원격 추론이 `.120` 컨테이너에서 못 떴다.
+
+    기본값이 `~/miniconda3/bin/python` 이었는데 컨테이너는 `$HOME=/root` 라
+    그 파일이 없다. 지금 도는 인터프리터가 호스트·컨테이너 양쪽에서 맞는 답이다.
+    """
+    import sys
+
+    from app.core.config import Settings
+
+    default = Settings.model_fields["grpc_python"].default
+    assert default == sys.executable, "gRPC 인터프리터가 지금 환경과 다르다"
+    assert "miniconda" not in default or default == sys.executable
+
+
+def test_the_image_ships_grpc():
+    """lerobot 의 async_inference 는 들어 있는데 `grpc` 가 없어서 막혔다."""
+    from pathlib import Path
+
+    dockerfile = (Path(__file__).resolve().parents[2] / "backend" / "Dockerfile").read_text()
+    assert "grpcio" in dockerfile, "이미지에 grpc 가 없으면 원격 추론이 안 뜬다"
