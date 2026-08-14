@@ -514,7 +514,10 @@ def main() -> None:
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    global _target_fps, _reset_requested
+    # ⚠ `_paused` 를 빠뜨리면 **제어 루프 첫 줄에서 죽는다.** 아래에서 대입하므로
+    # 선언이 없으면 파이썬이 지역 변수로 보고, 읽는 순간 `UnboundLocalError` 다.
+    # gRPC 원격 추론이 이것 때문에 **한 번도 돈 적이 없었다** (Total steps: 0).
+    global _target_fps, _reset_requested, _paused
     _target_fps = float(args.fps)
 
     step = 0

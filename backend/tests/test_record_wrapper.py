@@ -99,3 +99,41 @@ def test_next_episode_control_is_not_called_a_skip():
     visible = re.sub(r"\{/\*.*?\*/\}", "", controls, flags=re.S)
     assert "건너뛰기" not in visible, "에피소드 제어 UI 에 '건너뛰기' 가 남아 있다"
     assert "저장" in visible, "저장된다는 사실이 문구에 없다"
+
+
+# ── wrapper 의 전역 대입 (gRPC 원격 추론) ───────────────────────────────────
+
+def test_wrappers_declare_the_globals_they_assign():
+    """**회귀** — gRPC 원격 추론이 제어 루프 첫 줄에서 죽었다.
+
+        UnboundLocalError: cannot access local variable '_paused'
+
+    `main()` 이 `_paused` 를 대입하면서 `global` 선언을 빠뜨렸다. 파이썬은 그러면
+    지역 변수로 보고, 읽는 순간 터진다 — 원격 추론이 **한 번도 돈 적이 없었다**
+    (Total steps: 0). 실행해봐야만 드러나는 종류라 여기서 정적으로 막는다.
+    """
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "wrapper"
+    for path in sorted(root.glob("*.py")):
+        tree = ast.parse(path.read_text())
+        module_globals = {
+            t.id for n in tree.body if isinstance(n, ast.Assign)
+            for t in n.targets if isinstance(t, ast.Name) and t.id.startswith("_")
+        }
+        if not module_globals:
+            continue
+        for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+            declared = {nm for n in ast.walk(fn) if isinstance(n, ast.Global) for nm in n.names}
+            assigned = {
+                t.id for n in ast.walk(fn) if isinstance(n, ast.Assign)
+                for t in n.targets if isinstance(t, ast.Name)
+            }
+            # 읽기도 하는 것만 문제다 — 대입만 하고 안 읽으면 지역 변수여도 무해하다
+            read = {n.id for n in ast.walk(fn)
+                    if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+            shadowed = (assigned & module_globals & read) - declared
+            assert not shadowed, (
+                f"{path.name}:{fn.name} 이 전역 {sorted(shadowed)} 을 global 선언 없이 "
+                "대입한다 — 읽는 순간 UnboundLocalError 다")

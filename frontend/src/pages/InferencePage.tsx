@@ -89,6 +89,15 @@ export default function InferencePage() {
   const [cliArgs, setCliArgs] = useState<string>('')
   const [cliEdited, setCliEdited] = useState(false)
   const [inferenceMode, setInferenceMode] = useState<'local' | 'server'>('local')
+  /**
+   * 서버 모드의 체크포인트 경로. **서버 기준 경로**다.
+   *
+   * ⚠ 드롭다운을 쓰면 안 된다 — 그건 **이 기계**의 모델 목록이고, 서버 모드에서
+   * 모델을 로드하는 것은 원격 서버다. 원격 클라이언트에 모델이 없으면 목록이 비어
+   * "서버에 체크포인트가 없다"로 보인다(실제로 그렇게 보였다).
+   */
+  const [serverCheckpoint, setServerCheckpoint] = useState(
+    () => localStorage.getItem('piper_server_checkpoint') || '')
   const [serverAddress, setServerAddress] = useState('127.0.0.1:8088')
   const [aggregateFn, setAggregateFn] = useState('weighted_average')
   const [offsetCorrection, setOffsetCorrection] = useState(false)
@@ -200,6 +209,9 @@ export default function InferencePage() {
   }, [params])
 
   const selectedModelData = models.find((m) => m.id === selectedModel)
+  /** 실행에 실을 체크포인트 경로. 서버 모드면 **서버 기준**, 아니면 로컬 모델 경로. */
+  const checkpointPath = () =>
+    inferenceMode === 'server' ? serverCheckpoint.trim() : (selectedModelData?.path ?? '')
   const reqs = selectedModelData?.requirements
   // 파라미터 패널/정책 표시 기준: 선택 모델의 policy_type 우선, 없으면 수동 선택값
   const activePolicy = selectedModelData?.policy_type ?? policyType
@@ -240,10 +252,10 @@ export default function InferencePage() {
     }).then((v) => {
       setValidation(v)
       if (v.valid) {
-        const model = models.find((m) => m.id === selectedModel)
-        if (model) {
+        const ckpt = checkpointPath()
+        if (ckpt) {
           api.post<{ command: string }>('/models/inference/preview', {
-            checkpoint_path: model.path,
+            checkpoint_path: ckpt,
             robot_port: selectedFollower, camera_mapping: cameraMapping,
             params: taskParams(),
             inference_mode: inferenceMode, server_address: serverAddress,
@@ -268,11 +280,11 @@ export default function InferencePage() {
 
   const handleStart = async () => {
     try {
-      const model = models.find((m) => m.id === selectedModel)
-      if (!model) return
+      const ckpt = checkpointPath()
+      if (!ckpt) return
       // start API를 직접 호출 (subprocess 리스트로 안전하게 전달)
       await api.post('/models/inference/start', {
-        checkpoint_path: model.path,
+        checkpoint_path: ckpt,
         robot_port: robotMode === 'single' ? selectedFollower : leftFollower,
         robot_ports: robotMode === 'bimanual' ? [leftFollower, rightFollower] : [],
         camera_mapping: cameraMapping,
@@ -485,6 +497,19 @@ export default function InferencePage() {
                     onChange={(e) => { setServerAddress(e.target.value); setCliEdited(false) }}
                     placeholder="서버 주소 (예: 127.0.0.1:8088)"
                     className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
+                  {/* ⚠ **서버 기준 경로다.** 모델을 로드하는 건 원격 서버라,
+                      이 기계의 모델 목록은 상관이 없다. */}
+                  <input type="text" value={serverCheckpoint}
+                    onChange={(e) => {
+                      setServerCheckpoint(e.target.value)
+                      localStorage.setItem('piper_server_checkpoint', e.target.value)
+                      setCliEdited(false)
+                    }}
+                    placeholder="서버의 체크포인트 경로 (예: /home/사용자/outputs/train/…/pretrained_model)"
+                    className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
+                  <p className="text-[10px] text-neutral-500">
+                    이 경로는 <b>서버 기계</b>에서 열립니다 — 이 화면의 모델 목록과 무관합니다.
+                  </p>
                   <div className="flex items-center gap-2 text-xs">
                     <span className="text-neutral-400 w-20">Policy</span>
                     <select value={policyType} onChange={(e) => { setPolicyType(e.target.value); setCliEdited(false) }}
