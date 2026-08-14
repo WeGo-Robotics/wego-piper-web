@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import PlotlyChart, { type Series } from '../components/PlotlyChart'
 
@@ -35,6 +36,7 @@ const DEFAULT_PARAMS: FilterParams = {
 }
 
 export default function DebugLogsPage() {
+  const { confirm: askConfirm } = useSystemMessage()
   const [runs, setRuns] = useState<RunSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<string | null>(null)
@@ -107,7 +109,7 @@ export default function DebugLogsPage() {
   }, [selected, control, params])
 
   const handleDelete = async (id: string) => {
-    if (!confirm(`디버그 런 ${id} 을(를) 삭제하시겠습니까?`)) return
+    if (!await askConfirm(`디버그 런 ${id} 을(를) 삭제하시겠습니까?`)) return
     try {
       await api.delete(`/debug/runs/${id}`)
       if (selected === id) { setSelected(null); setDetail(null) }

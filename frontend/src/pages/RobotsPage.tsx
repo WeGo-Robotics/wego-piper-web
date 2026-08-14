@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
+import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import { JOINT_NAMES } from '../config/joints'
 
@@ -153,6 +154,9 @@ function ParkingCalibrationModal({ iface, onClose }: { iface: string; onClose: (
 type UsbInfo = { flat: string; tree: string; controllers: string[] }
 
 function UsbInfoModal({ onClose }: { onClose: () => void }) {
+  // 리바인딩은 되돌릴 수 없고 USB 가 통째로 끊긴다 — 물어보고 한다.
+  // `window.confirm` 은 heartbeat 를 막으므로 쓰지 않는다.
+  const { confirm: askConfirm } = useSystemMessage()
   const [info, setInfo] = useState<UsbInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [recovering, setRecovering] = useState(false)
@@ -168,7 +172,7 @@ function UsbInfoModal({ onClose }: { onClose: () => void }) {
   useEffect(() => { load() }, [load])
 
   const handleRecover = async () => {
-    if (!confirm('xHCI USB 컨트롤러를 재바인딩합니다.\n잠깐 동안 키보드/마우스 등 USB 장치가 모두 끊겼다 다시 연결됩니다.\n계속할까요?')) return
+    if (!await askConfirm('xHCI USB 컨트롤러를 재바인딩합니다.\n잠깐 동안 키보드/마우스 등 USB 장치가 모두 끊겼다 다시 연결됩니다.\n계속할까요?')) return
     setRecovering(true)
     setMsg(null)
     try {
@@ -270,6 +274,11 @@ type MotionStatus = {
 }
 
 export default function RobotsPage() {
+  // ⚠ `window.alert` 를 쓰지 않는다 — 이벤트 루프를 막아 E-stop heartbeat 가
+  //   끊기고, 2초 타임아웃에 추론이 강제 종료된다 (confirm 으로 실제로 겪었다).
+  const { notify, confirm: askConfirm } = useSystemMessage()
+  const notifyError = (text: string) =>
+    notify({ level: 'error', text, source: '로봇' })
   const [loading, setLoading] = useState(true)
   const [arms, setArms] = useState<ArmInfo[]>([])
   const [scanning, setScanning] = useState(false)
@@ -330,7 +339,7 @@ export default function RobotsPage() {
     try {
       const updated = await api.post<ArmInfo>('/robots/connect', { iface })
       setArms((prev) => prev.map((a) => (a.iface === iface ? updated : a)))
-    } catch { alert('연결 실패') }
+    } catch { notifyError('연결 실패') }
     finally { setConnectingIface(null) }
   }
   const handleCheckActive = async (iface: string) => {
@@ -349,7 +358,7 @@ export default function RobotsPage() {
       await api.post('/robots/can/up', { iface })
       setArms((prev) => prev.map((a) => a.iface === iface ? { ...a, state: 'UP' } : a))
       handleCheckActive(iface)
-    } catch { alert('CAN UP 실패') }
+    } catch { notifyError('CAN UP 실패') }
   }
 
   const handleRename = async (oldName: string) => {
@@ -361,7 +370,7 @@ export default function RobotsPage() {
       await api.post('/robots/can/rename', { old_name: oldName, new_name: renameValue.trim() })
       setArms((prev) => prev.map((a) => a.iface === oldName ? { ...a, iface: renameValue.trim() } : a))
       setRenamingIface(null)
-    } catch { alert('이름 변경 실패') }
+    } catch { notifyError('이름 변경 실패') }
   }
 
   const handleDisconnect = async (iface: string) => {
@@ -382,7 +391,7 @@ export default function RobotsPage() {
     try {
       const updated = await api.post<ArmInfo>('/robots/master-slave', { iface, master })
       setArms((prev) => prev.map((a) => (a.iface === iface ? updated : a)))
-    } catch (e) { alert(`설정 실패: ${(e as Error).message}`) }
+    } catch (e) { notifyError(`설정 실패: ${(e as Error).message}`) }
     finally { setSettingMs(null) }
   }
 
@@ -403,7 +412,7 @@ export default function RobotsPage() {
           await refreshArms()
         }
       }, 300)
-    } catch { alert('감지할 미연결 팔이 없습니다') }
+    } catch { notifyError('감지할 미연결 팔이 없습니다') }
   }
   useEffect(() => () => clearInterval(motionPollRef.current), [])
 
@@ -418,7 +427,7 @@ export default function RobotsPage() {
     try {
       const updated = await api.post<ArmInfo>('/robots/register', { iface })
       setArms((prev) => prev.map((a) => (a.iface === iface ? updated : a)))
-    } catch { alert('등록 실패: 연결 및 역할 지정을 확인하세요') }
+    } catch { notifyError('등록 실패: 연결 및 역할 지정을 확인하세요') }
   }
   const handleUnregister = async (iface: string) => {
     await api.post('/robots/unregister', { iface })
@@ -461,7 +470,7 @@ export default function RobotsPage() {
     } finally { setPresetBusy(false) }
   }
   const handlePresetDelete = async (name: string) => {
-    if (!confirm(`"${name}" 프리셋을 삭제하시겠습니까?`)) return
+    if (!await askConfirm(`"${name}" 프리셋을 삭제하시겠습니까?`)) return
     await api.delete(`/robots/presets/${name}`)
     setPresets(await api.get<string[]>('/robots/presets'))
   }
@@ -745,7 +754,7 @@ export default function RobotsPage() {
                   <button onClick={async () => {
                     try {
                       await api.post('/robots/parking/torque?enable=false', { iface: arm.iface })
-                    } catch { alert('토크 OFF 실패') }
+                    } catch { notifyError('토크 OFF 실패') }
                   }}
                     className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-amber-600 text-neutral-300 hover:text-white">토크 OFF</button>
                   <button onClick={() => handleUnregister(arm.iface)}

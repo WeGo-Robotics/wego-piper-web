@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import type { Model } from '../types/models'
 import DiskUsageBar from '../components/DiskUsageBar'
@@ -15,6 +16,11 @@ function formatBytes(bytes: number): string {
 type SortKey = 'name' | 'size' | 'date' | 'policy'
 
 export default function ModelsPage({ embedded = false }: { embedded?: boolean }) {
+  // ⚠ `window.alert` 를 쓰지 않는다 — 이벤트 루프를 막아 E-stop heartbeat 가
+  //   끊기고, 2초 타임아웃에 추론이 강제 종료된다 (confirm 으로 실제로 겪었다).
+  const { notify, confirm: askConfirm } = useSystemMessage()
+  const notifyError = (text: string) =>
+    notify({ level: 'error', text, source: '추론' })
   const [tab, setTab] = useState<'local' | 'hub'>('local')
   const [models, setModels] = useState<Model[]>([])
   const [loading, setLoading] = useState(true)
@@ -42,7 +48,7 @@ export default function ModelsPage({ embedded = false }: { embedded?: boolean })
     const msg = isLocal
       ? `"${id}" 모델 폴더를 삭제하시겠습니까?\n경로: ${model.path}`
       : `"${id}" 모델을 삭제하시겠습니까?`
-    if (!confirm(msg)) return
+    if (!await askConfirm(msg)) return
     await api.delete(`/models/${id}`)
     fetchModels()
     if (selectedId === id) setSelectedId(null)
@@ -54,7 +60,7 @@ export default function ModelsPage({ embedded = false }: { embedded?: boolean })
         checkpoint_path: model.path,
       })
     } catch (e) {
-      alert('추론 시작 실패')
+      notifyError('추론 시작 실패')
     }
   }
 

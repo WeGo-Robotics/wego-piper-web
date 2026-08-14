@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
+import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 
 type LogFile = { name: string; category: string; label: string; size_kb: number; modified: string; path: string }
 type Category = { id: string; label: string; count: number }
 
 export default function LogsPage() {
+  const { confirm: askConfirm } = useSystemMessage()
   const [logs, setLogs] = useState<LogFile[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [selectedCat, setSelectedCat] = useState('')
@@ -27,7 +29,7 @@ export default function LogsPage() {
   useEffect(() => { fetchLogs() }, [selectedCat])
 
   const handleDelete = async (name: string) => {
-    if (!confirm(`${name} 파일을 삭제하시겠습니까?`)) return
+    if (!await askConfirm(`${name} 파일을 삭제하시겠습니까?`)) return
     try {
       await api.delete(`/logs/delete/${name}`)
       fetchLogs()

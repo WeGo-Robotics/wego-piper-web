@@ -1,9 +1,15 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 
 type ModelPath = { path: string; exists: boolean }
 
 export default function SettingsPage() {
+  // ⚠ `window.alert` 를 쓰지 않는다 — 이벤트 루프를 막아 E-stop heartbeat 가
+  //   끊기고, 2초 타임아웃에 추론이 강제 종료된다 (confirm 으로 실제로 겪었다).
+  const { notify } = useSystemMessage()
+  const notifyError = (text: string) =>
+    notify({ level: 'error', text, source: '설정' })
   const [paths, setPaths] = useState<ModelPath[]>([])
   const [newPath, setNewPath] = useState('')
 
@@ -21,12 +27,12 @@ export default function SettingsPage() {
       setNewPath('')
       fetchPaths()
     } catch (e) {
-      alert(e instanceof Error ? e.message : '경로 추가 실패')
+      notifyError(e instanceof Error ? e.message : '경로 추가 실패')
     }
   }
 
   const handleRemove = async (path: string) => {
-    if (paths.length <= 1) { alert('최소 1개의 경로가 필요합니다'); return }
+    if (paths.length <= 1) { notifyError('최소 1개의 경로가 필요합니다'); return }
     await api.post('/models/paths/remove', { path })
     fetchPaths()
   }

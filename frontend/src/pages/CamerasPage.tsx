@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import PresetBar from '../components/PresetBar'
+import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 
 /**
@@ -92,6 +93,11 @@ type ProfileReport = {
 }
 
 export default function CamerasPage() {
+  // ⚠ `window.alert` 를 쓰지 않는다 — 이벤트 루프를 막아 E-stop heartbeat 가
+  //   끊기고, 2초 타임아웃에 추론이 강제 종료된다 (confirm 으로 실제로 겪었다).
+  const { notify, confirm: askConfirm } = useSystemMessage()
+  const notifyError = (text: string) =>
+    notify({ level: 'error', text, source: '카메라' })
   const [loading, setLoading] = useState(true)
   const [cams, setCams] = useState<CamInfo[]>([])
   const [scanning, setScanning] = useState(false)
@@ -142,7 +148,7 @@ export default function CamerasPage() {
       bumpPreview([id])
     } catch (e) {
       // 거부 사유(far <= near, 녹화 중)는 백엔드가 문장으로 준다
-      alert(e instanceof Error ? e.message : '깊이 범위를 바꾸지 못했습니다')
+      notifyError(e instanceof Error ? e.message : '깊이 범위를 바꾸지 못했습니다')
       setDepthEnc({ ...cur })
     }
   }
@@ -238,7 +244,7 @@ export default function CamerasPage() {
       const label = (labelDraft[id] ?? '').trim()
       const updated = await api.post<CamInfo>('/cameras/register', { id, label })
       setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
-    } catch { alert('등록 실패') }
+    } catch { notifyError('등록 실패') }
     finally { setConnectingId(null) }
   }
 
@@ -285,7 +291,7 @@ export default function CamerasPage() {
   // RealSense 하드웨어 리셋 (펌웨어 파워사이클) → 재열거 대기 후 재스캔
   const handleResetDevice = async (camId: string) => {
     if (busyId) return
-    if (!confirm('카메라를 하드웨어 리셋합니다.\n수 초간 사라졌다 다시 나타납니다. 계속할까요?')) return
+    if (!await askConfirm('카메라를 하드웨어 리셋합니다.\n수 초간 사라졌다 다시 나타납니다. 계속할까요?')) return
     setBusyId(camId)
     // 실시간 보기/컨트롤 패널 정리 (리셋 중 프리뷰는 무의미)
     setLiveIds((prev) => { const next = new Set(prev); next.delete(camId); return next })
@@ -298,7 +304,7 @@ export default function CamerasPage() {
       setCams(result)
       bumpPreview(result.map((c) => c.id))
     } catch (e) {
-      alert('하드웨어 리셋 실패: ' + (e instanceof Error ? e.message : '알 수 없는 오류'))
+      notifyError('하드웨어 리셋 실패: ' + (e instanceof Error ? e.message : '알 수 없는 오류'))
     } finally {
       setBusyId(null)
     }
@@ -477,7 +483,7 @@ export default function CamerasPage() {
                             setCams((prev) => prev.map((c) => c.id === cam.id ? updated : c))
                             setLiveIds((prev) => new Set(prev).add(cam.id))
                             bumpPreview([cam.id])
-                          } catch { alert('카메라 연결 실패') }
+                          } catch { notifyError('카메라 연결 실패') }
                         }
                       }}
                         className={`flex-1 py-1 text-xs rounded transition-colors ${isLive ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white'}`}>

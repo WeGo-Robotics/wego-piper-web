@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import './index.css'
 import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/Layout'
+import { SystemMessageProvider } from './components/SystemMessages'
 import { layoutPages, standalonePages } from './config/pages'
 import type { PageEntry } from './config/pages'
 
@@ -24,6 +25,9 @@ function renderPage(page: PageEntry) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    {/* ⚠ 라우터 **밖**이다 — 페이지가 바뀌어도 메시지가 살아 있어야 한다.
+        장치가 빠진 뒤 다른 탭으로 옮겼다고 경고가 사라지면 안 된다. */}
+    <SystemMessageProvider>
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
@@ -55,5 +59,6 @@ createRoot(document.getElementById('root')!).render(
         ))}
       </Routes>
     </BrowserRouter>
+    </SystemMessageProvider>
   </StrictMode>,
 )

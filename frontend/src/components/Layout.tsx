@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import DeviceAlerts from './DeviceAlerts'
 import EStopButton from './EStopButton'
+import { SystemMessageHost } from './SystemMessages'
 import { navPages } from '../config/pages'
 
 export default function Layout() {
@@ -41,9 +42,11 @@ export default function Layout() {
           </div>
         </div>
       </nav>
-      {/* 장치 경보는 **어느 페이지에 있든** 보여야 한다 — USB 가 빠지는 순간
-          사용자가 카메라 페이지에 있으리라는 보장이 없다. */}
+      {/* 장치 경보를 시스템 메시지로 흘려보낸다 (자기 UI 없음).
+          ⚠ 문서 흐름에 배너를 두면 긴 페이지에서 스크롤을 올려야 보인다 —
+          수집 페이지에서 안 보인다는 지적이 그거였다. 호스트는 `fixed` 다. */}
       <DeviceAlerts />
+      <SystemMessageHost />
       <main className="max-w-7xl mx-auto px-4 py-6">
         <Outlet />
       </main>

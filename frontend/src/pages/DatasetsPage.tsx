@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import { copyText } from '../services/clipboard'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
@@ -18,6 +19,11 @@ function formatBytes(bytes: number): string {
 type SortKey = 'name' | 'size' | 'date' | 'episodes'
 
 export default function DatasetsPage({ embedded = false }: { embedded?: boolean }) {
+  // ⚠ `window.alert` 를 쓰지 않는다 — 이벤트 루프를 막아 E-stop heartbeat 가
+  //   끊기고, 2초 타임아웃에 추론이 강제 종료된다 (confirm 으로 실제로 겪었다).
+  const { notify, confirm: askConfirm } = useSystemMessage()
+  const notifyError = (text: string) =>
+    notify({ level: 'error', text, source: '데이터셋' })
   const [tab, setTab] = useState<'local' | 'hub'>('local')
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [loading, setLoading] = useState(true)
@@ -56,11 +62,11 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
     try {
       const r = await api.post<{ resolved: string }>('/datasets/hf-cli', { path: hfCliPath })
       setHfCliResolved(r.resolved)
-    } catch { alert('경로 저장 실패') }
+    } catch { notifyError('경로 저장 실패') }
   }
 
   const handleUpload = async (id: string) => {
-    if (!confirm(`"${id}"를 HuggingFace Hub에 업로드하시겠습니까?`)) return
+    if (!await askConfirm(`"${id}"를 HuggingFace Hub에 업로드하시겠습니까?`)) return
     setUploadId(id)
     setUploadLogs([])
     setUploadState('starting')
@@ -96,7 +102,7 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm(`"${id}" 데이터셋을 삭제하시겠습니까?`)) return
+    if (!await askConfirm(`"${id}" 데이터셋을 삭제하시겠습니까?`)) return
     await api.delete(`/datasets/${id}`)
     fetchDatasets()
     if (detail?.id === id) setDetail(null)
@@ -104,7 +110,7 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
 
   const handleDeleteEpisodes = async () => {
     if (!detail || selectedEpisodes.length === 0) return
-    if (!confirm(`${selectedEpisodes.length}개 에피소드를 삭제하시겠습니까?`))
+    if (!await askConfirm(`${selectedEpisodes.length}개 에피소드를 삭제하시겠습니까?`))
       return
     await api.post(`/datasets/${detail.id}/edit`, {
       operation: 'delete_episodes',
@@ -123,7 +129,7 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
       setEditingTask(null)
       setSelectedEpisodes([])
       handleSelect(detail.id)
-    } catch { alert('Task 변경 실패') }
+    } catch { notifyError('Task 변경 실패') }
   }
 
   const toggleEpisode = (idx: number) => {
@@ -269,8 +275,8 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
                       className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 hover:text-white">
                       경로 복사
                     </button>
-                    <button onClick={() => {
-                      if (!confirm('영상을 프레임별 JPG로 디코딩합니다. 학습 속도가 향상됩니다.')) return
+                    <button onClick={async () => {
+                      if (!await askConfirm('영상을 프레임별 JPG로 디코딩합니다. 학습 속도가 향상됩니다.')) return
                       setUploadId(detail.id); setUploadLogs([]); setUploadState('starting')
                       api.post(`/datasets/${detail.id}/decode-cache`, {}).catch((e) => {
                         setUploadLogs(prev => [...prev, `[ERROR] ${e instanceof Error ? e.message : '실패'}`])
@@ -281,9 +287,9 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
                       디코딩 캐시
                     </button>
                     <button onClick={async () => {
-                      if (!confirm('디코딩 캐시(프레임 JPG)를 삭제합니다.')) return
+                      if (!await askConfirm('디코딩 캐시(프레임 JPG)를 삭제합니다.')) return
                       const r = await api.post<{ deleted_files: number }>(`/datasets/${detail.id}/decode-cache/delete`, {})
-                      alert(`${r.deleted_files}개 파일 삭제됨`)
+                      notify({ level: 'info', text: `${r.deleted_files}개 파일 삭제됨`, source: '데이터셋' })
                       handleSelect(detail.id)
                     }}
                       className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-orange-600 text-neutral-300 hover:text-white">

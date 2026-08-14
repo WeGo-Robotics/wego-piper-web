@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import SpecFields from '../components/SpecFields'
 import { usePolicyUi, specDefaults, activeWarnings } from '../hooks/usePolicyUi'
+import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import { LOCAL_JOB_ID, type JobRecord, type ProcessState } from '../types/ws'
@@ -33,6 +34,7 @@ const OPTIMIZER_TYPES = ['adam', 'adamw', 'sgd']
 // `arch: true` = 모델 구조를 정하는 값. 체크포인트에서 이어 학습(pretrained)하면
 // 구조가 이미 고정이라 바꿀 수 없다. 나머지는 **학습 방식** 이라 파인튜닝에도 유효하다
 export default function TrainingPage() {
+  const { confirm: askConfirm } = useSystemMessage()
   // 설정 — localStorage에서 복원
   const _saved = (() => { try { return JSON.parse(localStorage.getItem('piper_train_settings') || '{}') } catch { return {} } })()
   const [datasets, setDatasets] = useState<Dataset[]>([])
@@ -615,7 +617,7 @@ export default function TrainingPage() {
                   <p className="text-xs text-amber-400 mt-1">
                     이미 로컬에 존재합니다: {existing.id}
                     <button onClick={async () => {
-                      if (!confirm(`"${existing.id}" 모델을 삭제하시겠습니까?\n경로: ${existing.path}`)) return
+                      if (!await askConfirm(`"${existing.id}" 모델을 삭제하시겠습니까?\n경로: ${existing.path}`)) return
                       await api.delete(`/models/${existing.id}`)
                       api.get<Model[]>('/models').then(setModels).catch(() => {})
                     }} className="ml-2 text-red-400 hover:text-red-300 underline">삭제</button>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import type { ProcessState } from '../types/ws'
@@ -38,6 +39,7 @@ function formatElapsed(ms: number): string {
 }
 
 export default function RecordingPage() {
+  const { confirm: askConfirm } = useSystemMessage()
   const [followers, setFollowers] = useState<ReadyArm[]>([])
   const [leaders, setLeaders] = useState<ReadyArm[]>([])
   const [cameras, setCameras] = useState<ReadyCam[]>([])
@@ -162,7 +164,7 @@ export default function RecordingPage() {
   }, [repoId, checkTrigger])
 
   const handleDeleteDataset = async () => {
-    if (!repoId || !confirm(`"${repoId}" 데이터셋을 삭제하시겠습니까? 복구할 수 없습니다.`)) return
+    if (!repoId || !await askConfirm(`"${repoId}" 데이터셋을 삭제하시겠습니까? 복구할 수 없습니다.`)) return
     try {
       await api.delete(`/recording/delete-dataset/${repoId}`)
       setDatasetExists({ exists: false, size_mb: 0 })
