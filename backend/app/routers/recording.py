@@ -119,7 +119,7 @@ async def start_recording(body: RecordStartRequest):
     from app.services.robot_config import ArmPrepareError, prepare_arms
 
     try:
-        prepare_arms([body.robot_port], purpose="recording")
+        prepare_arms([body.robot_port, body.teleop_port], purpose="recording")
     except ArmPrepareError as e:
         raise HTTPException(400, str(e))
 

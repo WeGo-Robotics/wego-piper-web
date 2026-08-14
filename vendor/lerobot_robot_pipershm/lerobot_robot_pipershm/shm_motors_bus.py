@@ -51,11 +51,17 @@ class PiperShmMotorsBus(MotorsBusBase):
 
     def __init__(self, id: str, port: str, motors: dict[str, Motor],
                  calibration: dict[str, MotorCalibration] | None = None,
-                 deadman_ms: int = DEFAULT_DEADMAN_MS) -> None:
+                 deadman_ms: int = DEFAULT_DEADMAN_MS, read_only: bool = False) -> None:
         super().__init__(port, motors, calibration)
         self.id = id
         self.iface = port           # 여기서 port 는 CAN 인터페이스 이름이다
         self.deadman_ms = deadman_ms
+        # ⚠ 리더팔(teleop)은 **명령 세그먼트를 만들면 안 된다.** robotd 의
+        # `_command_loop` 는 세그먼트가 있는데 새 명령이 안 오면(데드맨) 현재
+        # 자세를 유지하라는 CAN 명령을 실제로 보낸다 — 사람이 손으로 자유롭게
+        # 움직여야 하는 팔에 그러면 힘겨루기가 된다. `read_only=True` 면
+        # 상태만 읽는다 (`PiperLeaderShm`).
+        self.read_only = read_only
         self._state: StateReader | None = None
         self._action: ActionWriter | None = None
         self._last_goal: dict[str, float] = {}
@@ -67,10 +73,12 @@ class PiperShmMotorsBus(MotorsBusBase):
 
     @property
     def is_connected(self) -> bool:
+        if self.read_only:
+            return self._state is not None
         return self._state is not None and self._action is not None
 
     def connect(self, handshake: bool = True) -> None:
-        """robotd 의 상태 세그먼트를 열고 명령 세그먼트를 만든다.
+        """robotd 의 상태 세그먼트를 열고, 읽기 전용이 아니면 명령 세그먼트도 만든다.
 
         ⚠ **상태 세그먼트가 없으면 여기서 실패해야 한다.** 조용히 넘어가면
         정책이 0 자세(정규화 좌표의 "가운데")를 관측으로 받고, 그건 그럴듯해 보인다.
@@ -79,6 +87,9 @@ class PiperShmMotorsBus(MotorsBusBase):
             self._state = StateReader(self.iface)
         except ArmSegmentError as exc:
             raise ConnectionError(f"{self}: robotd 상태를 열 수 없습니다 — {exc}") from exc
+        if self.read_only:
+            logger.info("%s connected (read-only)", self)
+            return
         # 명령 세그먼트는 소비자가 만든다 — **존재 자체가 "누가 조종 중"이라는 뜻**이다
         self._action = ActionWriter(self.iface, deadman_ms=self.deadman_ms)
         logger.info("%s connected (deadman %dms)", self, self.deadman_ms)
@@ -189,6 +200,8 @@ class PiperShmMotorsBus(MotorsBusBase):
         어느 쪽이든 그대로 쓴다. 인자를 남겨 두는 건 `PiperFollower` 가
         `is_conv=True` 로 부르기 때문이다.
         """
+        if self.read_only:
+            raise RuntimeError(f"{self}: read-only 버스는 명령을 보낼 수 없습니다")
         if self._action is None:
             raise ConnectionError(f"{self} is not connected.")
         # 빠진 관절은 현재 상태로 채운다 — 0으로 채우면 팔이 "가운데"로 튄다

@@ -19,10 +19,11 @@ RECORD_CMD = "lerobot-record"
 EDIT_DATASET_CMD = "lerobot-edit-dataset"
 
 # `direct` 타입 → `shm` 프록시 타입 (refactor/robot-transport.md).
-# 프록시는 `PiperFollower` 를 상속해 `__init__` 만 바꾸므로 관측·행동 계약이 같다.
-# 여기 없는 타입(leader 등)은 **그대로 둔다** — 조용히 바꾸면 있지도 않은
-# `robot.type` 으로 subprocess 가 죽는다.
+# 프록시는 `PiperFollower`/`PiperLeader` 를 상속해 `__init__` 만 바꾸므로
+# 관측·행동 계약이 같다. 여기 없는 타입은 **그대로 둔다** — 조용히 바꾸면
+# 있지도 않은 `robot.type`/`teleop.type` 으로 subprocess 가 죽는다.
 SHM_ROBOT_TYPES: dict[str, str] = {"piper_follower": "piper_follower_shm"}
+SHM_TELEOP_TYPES: dict[str, str] = {"piper_leader": "piper_leader_shm"}
 
 
 def resolve_robot_type(robot_type: str) -> str:
@@ -35,6 +36,18 @@ def resolve_robot_type(robot_type: str) -> str:
     if settings.robot_transport != "shm":
         return robot_type
     return SHM_ROBOT_TYPES.get(robot_type, robot_type)
+
+
+def resolve_teleop_type(teleop_type: str) -> str:
+    """전송 방식에 맞는 `teleop.type`. `resolve_robot_type` 과 같은 이유로 존재한다.
+
+    ⚠ `piper_leader_shm` 은 **읽기 전용**이다 (`PiperShmMotorsBus(read_only=True)`) —
+    리더팔에 명령 세그먼트를 만들면 robotd 의 데드맨이 "현재 자세 유지"를 CAN 으로
+    내려보내 사람이 손으로 움직이는 팔과 힘겨루기를 하게 된다.
+    """
+    if settings.robot_transport != "shm":
+        return teleop_type
+    return SHM_TELEOP_TYPES.get(teleop_type, teleop_type)
 
 # wrapper 인자 매핑 (lerobot_wrapper.py 기준)
 INFERENCE_ARGS_MAP: dict[str, str] = {
@@ -391,7 +404,11 @@ def build_record_args(params: dict) -> list[str]:
     """레코딩 CLI 인자 빌더."""
     args = [settings.grpc_python, "-u", RECORD_WRAPPER_PATH]
     # 미리보기와 실행이 같은 조립기를 쓰므로 여기서 한 번만 바꾸면 둘 다 맞는다
-    params = {**params, "robot_type": resolve_robot_type(params.get("robot_type", ""))}
+    params = {
+        **params,
+        "robot_type": resolve_robot_type(params.get("robot_type", "")),
+        "teleop_type": resolve_teleop_type(params.get("teleop_type", "")),
+    }
 
     for key, value in params.items():
         cli_flag = RECORD_ARGS_MAP.get(key)
