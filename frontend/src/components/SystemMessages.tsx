@@ -160,7 +160,9 @@ export function SystemMessageHost() {
   const { messages, dismiss } = useSystemMessage()
   if (messages.length === 0) return null
   return (
-    <div className="fixed top-16 right-4 z-50 w-[min(28rem,calc(100vw-2rem))] space-y-2"
+    // ⚠ `top` 은 **상단 상태바 높이(h-12)** 아래여야 한다. 상태바를 덮으면
+    //   무엇이 도는지가 경보에 가려진다. 오른쪽 정렬이라 사이드바는 안 덮는다.
+    <div className="fixed top-14 right-4 z-50 w-[min(28rem,calc(100vw-2rem))] space-y-2"
          role="status" aria-live="polite">
       {messages.map((m) => (
         <div key={m.id}

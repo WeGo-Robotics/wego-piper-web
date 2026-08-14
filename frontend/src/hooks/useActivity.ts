@@ -56,7 +56,19 @@ export function useActivity() {
     [snapshot],
   )
 
-  return { running: snapshot.running, isBlocked, blockedBy, refresh }
+  /**
+   * 활동의 한글 이름. **백엔드가 준 것을 그대로 쓴다.**
+   *
+   * 화면이 자기 사전을 들면 백엔드 `LABELS` 와 갈라져, 같은 활동이 버튼 옆에서는
+   * "정책 서버"인데 상태바에서는 "정책서버"가 된다. `DeviceAlerts` 가 문구를
+   * 백엔드에서 받는 것과 같은 이유다.
+   */
+  const labelOf = useCallback(
+    (a: ActivityName) => snapshot.labels[a] ?? a,
+    [snapshot],
+  )
+
+  return { running: snapshot.running, isBlocked, blockedBy, labelOf, refresh }
 }
 
 // `isStateMessage` 는 WS 계약의 일부이므로 types/ws.ts 에 있다.
