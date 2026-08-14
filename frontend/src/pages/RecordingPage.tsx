@@ -12,6 +12,24 @@ type RecordStatusData = { state?: string; current_episode: number; total_episode
 
 const VCODECS = ['auto', 'libsvtav1', 'h264', 'hevc', 'h264_nvenc', 'libx264']
 
+// 백엔드가 `play_sounds=false`로 녹화를 돌리므로(컨테이너엔 스피커가 없다) lerobot_record가
+// spd-say로 내려던 안내를 여기서 대신 읽는다. lerobot_record.py의 log_say() 호출 5곳과 맞춘 목록.
+const SPEAKABLE_PATTERNS = [
+  /Recording episode \d+/,
+  /Reset the environment/,
+  /Re-record episode/,
+  /Stop recording/,
+  /Exiting/,
+]
+
+function extractSpeech(line: string): string | null {
+  for (const re of SPEAKABLE_PATTERNS) {
+    const m = line.match(re)
+    if (m) return m[0]
+  }
+  return null
+}
+
 export default function RecordingPage() {
   const [followers, setFollowers] = useState<ReadyArm[]>([])
   const [leaders, setLeaders] = useState<ReadyArm[]>([])
@@ -39,6 +57,8 @@ export default function RecordingPage() {
   const [encoderQueue, setEncoderQueue] = useState(_saved.encoderQueue ?? 100)
   const [pushToHub, setPushToHub] = useState(_saved.pushToHub ?? true)
   const [webPreview, setWebPreview] = useState(_saved.webPreview ?? true)
+  // 서버(컨테이너)엔 스피커가 없어 음성 안내를 브라우저에서 대신 재생한다
+  const [voiceEnabled, setVoiceEnabled] = useState(_saved.voiceEnabled ?? true)
   const [resume, setResume] = useState(false)
   const [cliArgs, setCliArgs] = useState('')
   const [cliEdited, setCliEdited] = useState(false)
@@ -67,11 +87,18 @@ export default function RecordingPage() {
         }
       }
       else if (msg.type === 'record_status') setStatus(msg.data as RecordStatusData)
-      else if (msg.type === 'record_log') setLogs((prev) => {
-        const next = [...prev, msg.data as string]
-        return next.length > MAX_LOGS ? next.slice(-MAX_LOGS) : next
-      })
-    }, [refreshActivity]),
+      else if (msg.type === 'record_log') {
+        const line = msg.data as string
+        setLogs((prev) => {
+          const next = [...prev, line]
+          return next.length > MAX_LOGS ? next.slice(-MAX_LOGS) : next
+        })
+        if (voiceEnabled && 'speechSynthesis' in window) {
+          const speech = extractSpeech(line)
+          if (speech) window.speechSynthesis.speak(new SpeechSynthesisUtterance(speech))
+        }
+      }
+    }, [refreshActivity, voiceEnabled]),
   })
 
   useEffect(() => {
@@ -89,9 +116,9 @@ export default function RecordingPage() {
     localStorage.setItem('piper_record_settings', JSON.stringify({
       followerPort, leaderPort, cameraMapping, camWidth, camHeight,
       repoId, singleTask, numEpisodes, fps, episodeTime, resetTime,
-      streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview,
+      streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled,
     }))
-  }, [followerPort, leaderPort, cameraMapping, camWidth, camHeight, repoId, singleTask, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview])
+  }, [followerPort, leaderPort, cameraMapping, camWidth, camHeight, repoId, singleTask, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled])
 
   // 데이터셋 존재 여부 확인
   useEffect(() => {
@@ -408,6 +435,10 @@ export default function RecordingPage() {
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                   <input type="checkbox" checked={webPreview} onChange={e => setWebPreview(e.target.checked)} className="accent-blue-500" />
                   <span className="text-neutral-400">녹화 중 웹 미리보기</span>
+                </label>
+                <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                  <input type="checkbox" checked={voiceEnabled} onChange={e => setVoiceEnabled(e.target.checked)} className="accent-blue-500" />
+                  <span className="text-neutral-400">음성 안내 (브라우저)</span>
                 </label>
               </div>
             </div>
