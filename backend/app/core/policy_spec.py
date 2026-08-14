@@ -115,6 +115,16 @@ class TrainSpec(_Strict):
     warnings: list[Warning_] = Field(default_factory=list)
 
 
+class InferSpec(_Strict):
+    """이 정책만 노출하는 추론 파라미터 이름들.
+
+    ⚠ 파라미터의 **정의**(범위·실시간 여부)는 `core/inference_params.py` 가 갖는다 —
+    그건 안전 계약이라 클램프와 버스 화이트리스트가 거기서 나온다. 여기는
+    "누가 그걸 쓰는가"만 말한다. 둘을 합치면 정책 파일이 안전 값을 정하게 된다.
+    """
+    extra_params: list[str] = Field(default_factory=list)
+
+
 class Tap(_Strict):
     key: str
     label: str
@@ -140,6 +150,7 @@ class PolicySpec(_Strict):
     # 베이스 없이 처음부터 학습할 때의 안내. 정책마다 다른 **사실**이라 스펙에 둔다.
     scratch_note: str = ""
     train: TrainSpec = Field(default_factory=TrainSpec)
+    infer: InferSpec = Field(default_factory=InferSpec)
     encoder_probe: ProbeSpec = Field(default_factory=ProbeSpec)
 
 

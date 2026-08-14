@@ -21,6 +21,10 @@ runtime:
   model: [lerobot.policies.pi0.modeling_pi0, PI0Policy]
   config: [lerobot.policies.pi0.configuration_pi0, PI0Config]
 
+infer:
+# 이 정책만 노출하는 추론 파라미터.
+  extra_params: [max_guidance_weight, execution_horizon]
+
 train:
   defaults: { batch_size: 32, steps: 30000, optimizer_type: adamw }
   fields:

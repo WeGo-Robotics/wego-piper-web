@@ -281,7 +281,7 @@ cd frontend && npm run build     # 타입 검증은 반드시 build
 
 ## 상태
 
-◐ **1~5, 7~8 완료** (2026-08-14). **6(추론 파라미터 역전)만 남았다.**
+☑ **완료** (2026-08-14). 8단계 전부.
 
 | # | 작업 | |
 |---|---|---|
@@ -290,7 +290,7 @@ cd frontend && npm run build     # 타입 검증은 반드시 build
 | 3 | 학습 필드 → `<SpecFields>` | ☑ `TrainingPage` **125줄 삭제 / 45줄 추가** |
 | 4 | `runtime` 으로 `POLICY_IMPORTS` 대체 | ☑ [wrapper/policy_registry.py](../wrapper/policy_registry.py) — `lerobot_bootstrap` 의 세 번째 사본도 같이 흡수 |
 | 5 | `encoder_probe` 절로 프로브 분기 제거 | ☑ `EncoderProbePage` 6곳 · wrapper `--tap` 선택지·기본값 |
-| 6 | `infer.extra_params` 로 `PARAM_SPEC` 역전 | ☐ |
+| 6 | `infer.extra_params` 로 `PARAM_SPEC` 역전 | ☑ 파라미터 표가 정책 이름을 더 이상 모른다 |
 | 7 | 조건부 경고 | ☑ 3단계에 딸려 왔다 (`when`/`and`) |
 | 8 | 기기별 덮어쓰기 | ☑ 로더가 지원, 실기 확인 |
 
@@ -311,7 +311,7 @@ cd frontend && npm run build     # 타입 검증은 반드시 build
 | # | 위치 | |
 |---|---|---|
 | 1 | `POLICIES` | ☑ 로더 |
-| 2 | `PARAM_SPEC` 의 `policies:` | ☐ **유일하게 남은 것** (6단계) |
+| 2 | `PARAM_SPEC` 의 `policies:` | ☑ `infer.extra_params` (방향을 뒤집었다) |
 | 3 | `POLICY_IMPORTS` | ☑ `runtime` |
 | 4 | 프로브 `--tap` | ☑ `encoder_probe.taps` |
 | 5 | `POLICY_TRAIN_SCHEMAS` | ☑ `train.fields` |
@@ -319,6 +319,30 @@ cd frontend && npm run build     # 타입 검증은 반드시 build
 
 덤으로 `lerobot_bootstrap._CONFIG_IMPORTS`(세 번째 사본)와
 `SCRATCH_WEIGHTS`(TSX 테이블)도 흡수했다.
+
+### 파일 하나로 정책이 추가되는가 — 실기로 확인
+
+`config_dir/policies/faketest.yaml` **한 장만** 놓고 게이트웨이를 올렸다.
+파이썬·TSX 는 한 줄도 안 건드렸다.
+
+| 확인 | 결과 |
+|---|---|
+| 정책 목록 | ☑ `FakeTest` 가 뜬다 (`rtc`·`language` 플래그 반영) |
+| 학습 스펙 | ☑ `batch_size: 16, steps: 12345` + `chunk_size` 필드 |
+| 추론 파라미터 게이팅 | ☑ `max_guidance_weight → [faketest, pi0, pi05, smolvla]` |
+| wrapper 클래스 경로 | ☑ 같은 파일에서 읽는다 |
+
+이게 이 작업의 목적이었다.
+
+### 안전 계약은 안 옮겼다
+
+파라미터의 **정의**(범위·실시간 여부)는 `core/inference_params.py` 에 남는다 —
+클램프와 버스 화이트리스트가 거기서 나오는 안전 계약이기 때문이다.
+정책 파일은 **"누가 그걸 쓰는가"만** 말한다. 합쳤으면 정책 YAML 이 관절 속도 상한을
+정하게 됐을 것이다.
+
+`PARAM_SPEC` 에는 `scoped: True` 만 남는다 — "전부에 해당하진 않는다"는 표시다.
+정책 **이름**은 없다. 응답 모양(`policies: [...]`)은 그대로라 프론트는 안 바뀌었다.
 
 ### 두 판을 두고 결과를 대조한다
 

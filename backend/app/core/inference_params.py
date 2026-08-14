@@ -18,7 +18,8 @@
 - `cli_mapping.OVERRIDE_KEYS`               → `send_at_start=True` 인 것
 - 프론트 슬라이더                            → `GET /api/params/spec`
 
-정책별 노출 여부(`policies`)는 [core/policies.py](policies.py) 의 레지스트리와 맞물린다.
+정책별 노출 여부는 **정책 파일이 정한다** — `policies/<type>.yaml` 의
+`infer.extra_params`. 여기는 `scoped: True` 로 "전부는 아니다"만 표시한다.
 """
 
 from typing import Literal, TypedDict
@@ -37,8 +38,13 @@ class ParamSpec(TypedDict, total=False):
     realtime: bool
     # 시작 시 --config-overrides 로 전달 (= 기존 OVERRIDE_KEYS)
     send_at_start: bool
-    # 이 정책들에서만 노출. 비우면 전부. `core/policies.py` 의 타입 이름을 쓴다.
-    policies: list[str]
+    # **모든 정책에 해당하지 않는다**는 표시. 켜면 자기를 `infer.extra_params` 에
+    # 적은 정책에서만 노출된다.
+    #
+    # ⚠ 여기에 정책 **이름**을 적지 않는다. 예전에는 `policies: ["smolvla","pi0","pi05"]`
+    # 였는데, 그러면 모델을 추가할 때마다 **모두가 쓰는 이 표**를 고쳐야 한다.
+    # 뒤집으면 새 모델은 자기 파일만 만들면 된다 (feature/policy-ui-spec.md 6단계).
+    scoped: bool
     # UI 묶음 (프론트 카드 제목)
     group: str
     help: str
@@ -101,20 +107,20 @@ PARAM_SPEC: dict[str, ParamSpec] = {
         "label": "max_guidance_weight", "kind": "number", "default": 10.0,
         "min": 0, "max": 50, "step": 0.5,
         "realtime": True, "send_at_start": True, "group": "RTC 파라미터",
-        "policies": ["smolvla", "pi0", "pi05"],
+        "scoped": True,
     },
     "execution_horizon": {
         "label": "execution_horizon", "kind": "number", "default": 10,
         "min": 1, "max": 100, "step": 1,
         "realtime": True, "send_at_start": True, "group": "RTC 파라미터",
-        "policies": ["smolvla", "pi0", "pi05"],
+        "scoped": True,
     },
     # ── ACT 전용 ──
     "temporal_ensemble_coeff": {
         "label": "temporal_ensemble_coeff", "kind": "number", "default": 0.01,
         "min": 0, "max": 1, "step": 0.001,
         "realtime": True, "send_at_start": True, "group": "ACT 파라미터",
-        "policies": ["act"],
+        "scoped": True,
     },
     # 옛 localStorage 에 남아 들어올 수 있어 계약에는 남긴다.
     # UI 슬라이더는 use_chunk_size 로 통합됐다 (refactor/01 "노브 2개" 참고).
@@ -122,7 +128,7 @@ PARAM_SPEC: dict[str, ParamSpec] = {
         "label": "n_action_steps (사용 안 함 — use_chunk_size 로 통합)",
         "kind": "number", "default": 50, "min": 1, "max": 100, "step": 1,
         "realtime": True, "send_at_start": True, "group": "",
-        "policies": ["act"],
+        "scoped": True,
     },
 }
 
@@ -158,6 +164,20 @@ def defaults() -> dict[str, float | bool]:
     return {k: v["default"] for k, v in PARAM_SPEC.items() if "default" in v}
 
 
+def _users_of(key: str) -> list[str]:
+    """이 파라미터를 `infer.extra_params` 에 적은 정책들.
+
+    ⚠ 응답 모양은 예전과 같다(`policies: [...]`) — 뒤집힌 건 **정본의 위치**지
+    계약이 아니다. 덕분에 프론트는 한 줄도 안 바뀐다.
+
+    지연 import 다: `policies` 가 이 모듈을 부르면 순환이 되는데, 지금은 안 부른다
+    (테스트가 방향을 강제한다).
+    """
+    from app.core.policies import SPECS
+
+    return sorted(n for n, spec in SPECS.items() if key in spec.infer.extra_params)
+
+
 def spec_for_frontend() -> list[dict]:
     """GET /api/params/spec — 프론트가 슬라이더를 여기서 생성한다."""
     return [
@@ -170,7 +190,7 @@ def spec_for_frontend() -> list[dict]:
             "max": v.get("max"),
             "step": v.get("step"),
             "group": v.get("group", ""),
-            "policies": v.get("policies", []),
+            "policies": _users_of(key) if v.get("scoped") else [],
             "help": v.get("help", ""),
         }
         for key, v in PARAM_SPEC.items()

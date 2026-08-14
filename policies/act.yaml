@@ -27,6 +27,11 @@ runtime:
 # 화면이 `pretrained_path` 가 비었을 때 보여준다.
 scratch_note: "비전 백본(ResNet18)이 ImageNet 가중치로 시작합니다 — 받을 베이스 체크포인트가 없습니다"
 
+infer:
+# ACT 전용 파라미터. `n_action_steps` 는 UI 슬라이더에서 빠졌지만
+# 옛 localStorage 값이 들어올 수 있어 계약에는 남아 있다.
+  extra_params: [temporal_ensemble_coeff, n_action_steps]
+
 train:
   defaults: { batch_size: 8, steps: 100000, optimizer_type: adam }
   fields:

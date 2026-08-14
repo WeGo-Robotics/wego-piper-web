@@ -258,3 +258,62 @@ def test_wrapper_registry_matches_the_backend_loader():
                 *spec_obj.runtime.model, *spec_obj.runtime.config)
     assert mod.default_tap("act") == "backbone"
     assert mod.default_tap("smolvla") == "siglip"
+
+
+# ── 6. 추론 파라미터 — 방향이 뒤집혔는가 ────────────────────────────────────
+
+def test_param_spec_holds_no_policy_names():
+    """**이게 6단계의 전부다.** 파라미터 표가 정책 이름을 알면, 모델을 추가할 때마다
+    **모두가 쓰는 그 표**를 고쳐야 한다."""
+    from app.core.inference_params import PARAM_SPEC
+
+    for key, v in PARAM_SPEC.items():
+        assert "policies" not in v, f"{key}: 아직 정책 이름을 들고 있다"
+
+
+def test_scoped_params_are_claimed_by_someone():
+    """`scoped` 인데 아무도 안 쓰면 **어디에도 안 뜬다** — 조용히 사라진 슬라이더다."""
+    from app.core.inference_params import PARAM_SPEC
+
+    claimed = {k for spec in P.SPECS.values() for k in spec.infer.extra_params}
+    orphans = {k for k, v in PARAM_SPEC.items() if v.get("scoped")} - claimed
+    assert not orphans, f"scoped 인데 아무 정책도 안 쓴다: {sorted(orphans)}"
+
+
+def test_claimed_params_exist_and_are_scoped():
+    """반대 방향 — 없는 파라미터를 적으면 조용히 무시된다."""
+    from app.core.inference_params import PARAM_SPEC
+
+    for name, spec in P.SPECS.items():
+        for key in spec.infer.extra_params:
+            assert key in PARAM_SPEC, f"{name}: 모르는 파라미터 {key!r}"
+            assert PARAM_SPEC[key].get("scoped"), (
+                f"{name}: {key} 는 공용 파라미터인데 정책이 따로 적었다 — "
+                "그러면 다른 정책에서 사라진다")
+
+
+def test_the_api_shape_did_not_change():
+    """뒤집힌 건 **정본의 위치**지 계약이 아니다 — 프론트가 안 바뀌어야 한다."""
+    from app.core.inference_params import spec_for_frontend
+
+    rows = {r["key"]: r for r in spec_for_frontend()}
+    assert rows["max_velocity"]["policies"] == [], "공용 파라미터에 정책이 붙었다"
+    assert rows["temporal_ensemble_coeff"]["policies"] == ["act"]
+    assert set(rows["max_guidance_weight"]["policies"]) == {"smolvla", "pi0", "pi05"}
+
+
+def test_rtc_params_go_to_rtc_policies():
+    """RTC 파라미터를 노출하는 정책은 `capabilities.rtc` 여야 한다.
+
+    갈리면 flow-matching 이 아닌 정책에 가이던스 슬라이더가 뜨고, 만져도 아무 일도
+    안 일어난다 — `takes_language` 때와 같은 종류의 거짓말이다.
+    """
+    for name, spec in P.SPECS.items():
+        if "max_guidance_weight" in spec.infer.extra_params:
+            assert spec.capabilities.rtc, f"{name}: RTC 파라미터를 쓰는데 rtc=false"
+
+
+def test_import_direction_stays_one_way():
+    """`policies` → `inference_params` 방향이 생기면 순환이 된다."""
+    src = (_REPO / "backend/app/core/policies.py").read_text()
+    assert "inference_params" not in src, "policies 가 inference_params 를 import 한다"
