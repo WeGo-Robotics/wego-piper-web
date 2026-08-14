@@ -387,24 +387,49 @@ class _RSDevice:
         self._thread = threading.Thread(target=self._read_loop, daemon=True)
         self._thread.start()
 
-    # 이만큼 연속으로 프레임이 안 오면 장치가 없어진 것으로 본다.
-    # ⚠ **librealsense 에 다시 묻지 않는다.** `query_devices()` 를 주기적으로 부르면
-    # D405 를 커널 D-state 로 물리게 하는 그 질의를 늘리는 셈이다 —
-    # 프로세스를 나눠서 격리한 이유가 그건데, 스스로 그 위험을 만들 이유가 없다.
-    # 파이프라인이 돌고 있는데 프레임이 안 온다는 것만으로 충분한 증거다.
+    # USB 노드가 아직 있는지 보는 주기. sysfs 경로 확인이라 사실상 공짜다.
+    _PRESENCE_S = 1.0
+    # 노드는 남아 있는데 프레임만 안 오는 경우의 상한.
     _MAX_EMPTY = 5          # try_wait_for_frames(timeout_ms=1000) 기준 = 약 5초
+
+    def _device_present(self) -> bool:
+        """이 카메라의 USB 노드가 아직 있는가 — **결정적 증거**다.
+
+        뽑으면 커널이 `/sys/bus/usb/devices/<포트>` 를 즉시 지운다.
+        camerad 의 `/dev/videoN`, robotd 의 `/sys/class/net/can0` 과 같은 신호다.
+
+        ⚠ **librealsense 에 다시 묻지 않는다.** `query_devices()` 를 주기적으로
+        부르면 D405 를 커널 D-state 로 물리게 하는 그 질의를 늘리는 셈이고,
+        프로세스를 나눠 얻은 격리를 스스로 깨는 짓이다. 이건 파일 존재 확인뿐이라
+        장치를 건드리지 않는다.
+
+        포트를 모르면(빈 문자열) 판정하지 않는다 — 모르는 것과 없는 것은 다르다.
+        """
+        from pathlib import Path
+
+        node = (self.usb_port or "").split(":")[0]
+        if not node:
+            return True
+        return Path(f"/sys/bus/usb/devices/{node}").exists()
 
     def _read_loop(self) -> None:
         import numpy as np
         import cv2
         empty = 0
+        next_presence = 0.0
         while self._running and self._pipeline is not None:
+            now = time.monotonic()
+            if now >= next_presence:
+                next_presence = now + self._PRESENCE_S
+                if not self._device_present():
+                    self._declare_lost("USB 노드가 사라졌습니다")
+                    return
             try:
                 ok, frames = self._pipeline.try_wait_for_frames(timeout_ms=1000)
                 if not ok or frames is None:
                     empty += 1
                     if empty >= self._MAX_EMPTY:
-                        self._declare_lost()
+                        self._declare_lost("프레임이 오지 않습니다")
                         return
                     continue
                 empty = 0
@@ -437,7 +462,14 @@ class _RSDevice:
                     for stream, frame in updates.items():
                         publish_frame(f"rs:{self.serial}:{stream}", frame)
             except Exception as exc:
+                # ⚠ **예외도 실패로 센다.** 장치를 뽑으면 librealsense 가 던지는데,
+                # 예전에는 여기서 삼키고 0.1초 자며 영원히 돌았다 — `empty` 가 안 늘어
+                # 판정에 **도달할 수가 없었다.** 그래서 뽑아도 아무 일이 없었다.
+                empty += 1
                 logger.debug("RealSense %s read error: %s", self.serial, exc)
+                if empty >= self._MAX_EMPTY:
+                    self._declare_lost(f"읽기가 계속 실패합니다 ({exc})")
+                    return
                 time.sleep(0.1)
 
     def get_frame(self, stream: str):
@@ -472,14 +504,13 @@ class _RSDevice:
             else:
                 self._ensure_streams(active)
 
-    def _declare_lost(self) -> None:
-        """프레임이 끊겼다 — 장치가 없어진 것으로 판정하고 발행을 끊는다.
+    def _declare_lost(self, why: str = "프레임이 오지 않습니다") -> None:
+        """장치가 없어진 것으로 판정하고 발행을 끊는다.
 
         세그먼트를 남기지 않는 것이 중요하다: 남겨두면 소비자가 열어놓고
         **멈춘 화면**을 본다. 등록·설정은 게이트웨이가 들고 있다.
         """
-        logger.warning("RealSense %s: %d초간 프레임이 없습니다 — 발행을 중단합니다",
-                       self.serial, self._MAX_EMPTY)
+        logger.warning("RealSense %s: %s — 발행을 중단합니다", self.serial, why)
         self.lost_at = time.time()
         self._running = False
         try:

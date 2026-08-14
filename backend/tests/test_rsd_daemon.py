@@ -160,3 +160,59 @@ def test_probe_enables_all_streams_of_a_device_at_once():
     src = _HUB.read_text()
     assert "self._active | self.available" in src, "장치의 스트림을 함께 켜지 않는다"
     assert "PROBE_REUSE_S" in src, "최근 probe 결과를 재사용하지 않는다"
+
+
+# ── 장치가 사라진 것을 rsd 가 스스로 판정하는가 ─────────────────────────────
+
+def test_read_errors_reach_a_verdict():
+    """**회귀** — "리얼센스 뽑으니 바로 알람 안 온다".
+
+    장치를 뽑으면 librealsense 는 **예외를 던진다.** 예전 루프는 그걸
+    `except` 에서 삼키고 0.1초 자며 영원히 돌았다 — 빈 프레임 카운터가 안 늘어
+    판정에 **도달할 수가 없었다.** 그래서 아무 일도 안 일어났다.
+    """
+    from piper_rs.hub import _RSDevice
+
+    dev = _RSDevice("S1", "D405", "", {"color"})     # 포트 모름 → 존재 판정은 건너뛴다
+
+    class _Boom:
+        def try_wait_for_frames(self, timeout_ms=0):
+            raise RuntimeError("No device connected")
+
+    verdicts = []
+    dev._pipeline = _Boom()
+    dev._running = True
+    dev._stop_pipeline = lambda: None
+    dev._declare_lost = lambda why="": verdicts.append(why) or setattr(dev, "_running", False)
+
+    dev._read_loop()
+    assert verdicts, "예외가 계속 나는데 결론을 안 낸다"
+    assert "실패" in verdicts[0]
+
+
+def test_usb_node_removal_is_the_decisive_signal():
+    """뽑으면 `/sys/bus/usb/devices/<포트>` 가 즉시 사라진다.
+
+    camerad 의 `/dev/videoN`, robotd 의 `/sys/class/net/can0` 과 같은 신호다.
+    **librealsense 에 다시 묻지 않는다** — `query_devices()` 를 주기적으로 부르면
+    D405 를 D-state 로 물리게 하는 그 질의를 늘리는 셈이다.
+    """
+    from piper_rs.hub import _RSDevice
+
+    assert _RSDevice("S", "D405", "9-99:1.0", set())._device_present() is False
+    # 포트를 모르면 판정하지 않는다 — 모르는 것과 없는 것은 다르다
+    assert _RSDevice("S", "D405", "", set())._device_present() is True
+
+
+def test_presence_check_does_not_query_librealsense():
+    """존재 확인이 장치를 건드리면 격리를 스스로 깨는 것이다."""
+    import ast
+    import inspect
+
+    from piper_rs.hub import _RSDevice
+
+    src = inspect.getsource(_RSDevice._device_present)
+    calls = {ast.unparse(n.func) for n in ast.walk(ast.parse(src.lstrip()))
+             if isinstance(n, ast.Call)}
+    assert not any("rs." in c or "query_devices" in c for c in calls), \
+        f"librealsense 를 부른다: {calls}"
