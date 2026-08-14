@@ -13,25 +13,28 @@ _REPO = Path(__file__).resolve().parents[2]
 _WRAPPER = _REPO / "wrapper" / "lerobot_wrapper.py"
 
 
-def _wrapper_policy_imports() -> set[str]:
-    """wrapper 의 POLICY_IMPORTS 키 — wrapper 는 백엔드를 import 하지 않는다
-    (크래시 격리). 그래서 소스에서 읽어 대조한다."""
-    src = _WRAPPER.read_text()
-    block = re.search(r"POLICY_IMPORTS = \{(.*?)\n\}", src, re.S)
-    assert block, "POLICY_IMPORTS 를 못 찾았다"
-    return set(re.findall(r'^\s*"([a-z0-9_]+)":', block.group(1), re.M))
+def test_inferable_policies_have_runtime_classes():
+    """`infer: true` 인데 클래스 경로가 없으면 **추론 시작에서 죽는다.**
 
-
-def test_inferable_policies_exist_in_wrapper():
-    """`infer: True` 인데 wrapper 에 없으면 **추론 시작에서 죽는다.**
-
-    이게 `sac` 으로 실제로 났던 사고다.
+    이게 `sac` 으로 실제로 났던 사고다. 예전에는 wrapper 가 `POLICY_IMPORTS` 라는
+    **두 번째 목록**을 손으로 들고 있어서 소스를 파싱해 대조했는데, 이제 둘 다
+    `policies/*.yaml` 에서 온다 — 대조할 두 목록이 없으므로 **스펙이 완결인지**를 본다.
     """
-    missing = set(policies.inferable()) - _wrapper_policy_imports()
-    assert not missing, (
-        f"추론 가능하다고 선언됐지만 wrapper POLICY_IMPORTS 에 없다: {missing} "
-        "→ 추론 시작 시 ValueError 로 죽는다"
-    )
+    for name in policies.inferable():
+        rt = policies.SPECS[name].runtime
+        assert len(rt.model) == 2 and len(rt.config) == 2, (
+            f"{name}: 추론 가능하다고 선언됐지만 `runtime.model/config` 가 없다 "
+            "→ wrapper 가 정책 클래스를 못 찾아 시작에서 죽는다")
+
+
+def test_the_wrapper_no_longer_keeps_its_own_list():
+    """**회귀** — 목록이 다시 손으로 적히면 갈라진다.
+
+    wrapper 는 백엔드를 import 하지 않으므로(크래시 격리) 소스로 확인한다.
+    """
+    src = _WRAPPER.read_text()
+    assert "POLICY_IMPORTS = policy_imports()" in src, \
+        "wrapper 가 정책 목록을 다시 손으로 들고 있다"
 
 
 def test_rtc_policies_are_inferable():

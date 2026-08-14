@@ -49,6 +49,7 @@ from typing import Any
 
 import numpy as np
 from piper_bus.client import Bus
+from policy_registry import policy_imports
 
 # root logger에 stdout handler만 설정 (중복 방지)
 _handler = logging.StreamHandler(sys.stdout)
@@ -104,24 +105,11 @@ _refill_threshold_pct = 20.0
 _actions_per_chunk = 0
 
 # 정책 타입별 lazy import (policies/__init__.py 우회)
-POLICY_IMPORTS = {
-    "smolvla": ("lerobot.policies.smolvla.modeling_smolvla", "SmolVLAPolicy",
-                "lerobot.policies.smolvla.configuration_smolvla", "SmolVLAConfig"),
-    "act": ("lerobot.policies.act.modeling_act", "ACTPolicy",
-            "lerobot.policies.act.configuration_act", "ACTConfig"),
-    "diffusion": ("lerobot.policies.diffusion.modeling_diffusion", "DiffusionPolicy",
-                  "lerobot.policies.diffusion.configuration_diffusion", "DiffusionConfig"),
-    "pi0": ("lerobot.policies.pi0.modeling_pi0", "PI0Policy",
-            "lerobot.policies.pi0.configuration_pi0", "PI0Config"),
-    "pi05": ("lerobot.policies.pi05.modeling_pi05", "PI05Policy",
-             "lerobot.policies.pi05.configuration_pi05", "PI05Config"),
-    "pi0_fast": ("lerobot.policies.pi0_fast.modeling_pi0_fast", "PI0FastPolicy",
-                 "lerobot.policies.pi0_fast.configuration_pi0_fast", "PI0FastConfig"),
-    "tdmpc": ("lerobot.policies.tdmpc.modeling_tdmpc", "TDMPCPolicy",
-              "lerobot.policies.tdmpc.configuration_tdmpc", "TDMPCConfig"),
-    "vqbet": ("lerobot.policies.vqbet.modeling_vqbet", "VQBeTPolicy",
-              "lerobot.policies.vqbet.configuration_vqbet", "VQBeTConfig"),
-}
+# 정책 → (모델모듈, 모델클래스, config모듈, config클래스).
+# ⚠ **손으로 적지 않는다.** 예전에는 이 dict 와 백엔드 `POLICIES` 가 각자 목록을
+# 들고 있었고, `sac` 를 학습에서 고를 수 있는데 추론에서 죽는 사고가 났다.
+# 이제 둘 다 `policies/*.yaml` 한 곳에서 온다 (feature/policy-ui-spec.md).
+POLICY_IMPORTS = policy_imports()
 
 
 def param_listener(policy: Any, bus: "Bus") -> None:

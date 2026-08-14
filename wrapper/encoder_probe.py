@@ -29,6 +29,15 @@ from pathlib import Path
 
 import numpy as np
 
+from policy_registry import SPECS as _SPECS
+from policy_registry import default_tap, probe_taps, tap_keys
+
+
+def probe_policies() -> list[str]:
+    """`encoder_probe: true` 인 정책만. 목록을 두 벌 두지 않는다."""
+    return sorted(n for n, d in _SPECS.items()
+                  if (d.get("capabilities") or {}).get("encoder_probe"))
+
 VLM_DEFAULT = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
 # SmolVLA 체크포인트 내부의 비전 타워 / 커넥터 가중치 접두사
 VIS_PREFIX = "model.vlm_with_expert.vlm.model.vision_model."
@@ -327,15 +336,22 @@ def run_act(args, rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, dict]:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="이미지 엔코더 특징 추출")
-    p.add_argument("--policy-type", required=True, choices=["smolvla", "act"])
+    # ⚠ 선택지를 손으로 안 적는다 — 프로브 되는 정책은 `policies/*.yaml` 이 정한다
+    p.add_argument("--policy-type", required=True, choices=probe_policies())
     p.add_argument("--checkpoint", default="", help="체크포인트 경로 (ACT 필수)")
     p.add_argument("--image", required=True)
     p.add_argument("--image-key", default="", help="ACT 카메라 키 (정규화 통계 선택)")
-    p.add_argument("--tap", default="siglip", choices=["siglip", "connector"],
-                   help="SmolVLA 추출 지점: siglip=비전 타워 출력(32x32), connector=VLM 입력 토큰(8x8)")
+    # 기본값을 여기서 못 정한다 — 정책마다 다르고 `--policy-type` 을 파싱한 뒤에야
+    # 안다. 그래서 빈 값으로 받고 아래에서 스펙의 `default: true` tap 으로 채운다.
+    p.add_argument("--tap", default="", choices=[""] + tap_keys(),
+                   help="추출 지점. 비우면 정책 스펙의 기본 tap (policies/<type>.yaml)")
     p.add_argument("--out", required=True)
     p.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
     args = p.parse_args()
+    # ⚠ 정책 이름으로 갈라 적지 않는다. 예전에는 `args.tap if policy_type ==
+    # "smolvla" else "backbone"` 이라 정책이 늘 때마다 이 줄도 늘었다.
+    if args.tap not in {t["key"] for t in probe_taps(args.policy_type)}:
+        args.tap = default_tap(args.policy_type)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -344,6 +360,10 @@ def main() -> None:
     orig_h, orig_w = rgb.shape[:2]
 
     started = time.monotonic()
+    # ⚠ 이 갈림은 **스펙으로 안 옮긴다.** 아키텍처마다 특징을 뽑는 코드가 다르고
+    # 그건 데이터가 아니라 로직이다 (feature/policy-ui-spec.md: "표현이 안 되면
+    # 그건 진짜 로직이라는 신호"). 옮길 수 있었던 것 — 선택지·기본 tap·라벨 —
+    # 은 이미 `policies/*.yaml` 로 갔다.
     if args.policy_type == "smolvla":
         feat, view, meta = run_smolvla(args, rgb)
     else:
@@ -351,7 +371,7 @@ def main() -> None:
 
     meta.update({
         "policy_type": args.policy_type,
-        "tap": args.tap if args.policy_type == "smolvla" else "backbone",
+        "tap": args.tap,
         "checkpoint": args.checkpoint,
         "orig_w": orig_w,
         "orig_h": orig_h,

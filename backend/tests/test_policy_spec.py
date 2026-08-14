@@ -209,3 +209,52 @@ def test_warning_condition_grammar_stays_small():
                if isinstance(n, ast.ClassDef) and n.name == "Condition")
     names = {t.target.id for t in cls.body if isinstance(t, ast.AnnAssign)}
     assert names == {"field", "is_"}, f"조건 문법이 자랐다: {names}"
+
+
+# ── 4~5. 나머지 소비자도 스펙을 읽는가 ──────────────────────────────────────
+
+def test_encoder_probe_page_has_no_policy_names():
+    """**회귀** — 분기 6개가 여기 있었다. 정책이 늘면 6곳이 같이 늘었다."""
+    src = (_REPO / "frontend/src/pages/EncoderProbePage.tsx").read_text()
+    code = re.sub(r"\{?/\*[\s\S]*?\*/\}?|//.*", "", src)
+    for name in P.SPECS:
+        assert f"'{name}'" not in code, f"EncoderProbePage 가 {name} 을 안다"
+
+
+def test_probe_wrapper_derives_taps_from_the_spec():
+    """`--tap` 선택지와 기본값이 손으로 적혀 있으면 정책마다 한 줄씩 는다."""
+    src = (_REPO / "wrapper/encoder_probe.py").read_text()
+    code = re.sub(r"#.*", "", src)
+    assert 'choices=["siglip", "connector"]' not in code
+    assert 'args.tap if args.policy_type' not in code, "기본 tap 을 정책 이름으로 고른다"
+    assert "default_tap(args.policy_type)" in code
+    # ⚠ `run_smolvla` / `run_act` 갈림은 **남아야 한다.** 아키텍처마다 특징을 뽑는
+    # 코드가 다르고, 그건 데이터가 아니라 로직이다. 스펙에 담으려 하면 YAML 안에
+    # 프로그램이 생긴다 — 문서가 말하는 "표현이 안 되면 진짜 로직" 이 이 경우다.
+    assert "run_smolvla(args, rgb)" in code
+
+
+def test_bootstrap_and_wrapper_share_one_class_table():
+    """예전엔 config 6개(bootstrap)와 model+config 8개(wrapper)가 **따로** 있었고,
+    왜 다른지 아무도 몰라 "임의로 맞추지 않는다"고 적혀 있었다."""
+    boot = (_REPO / "wrapper/lerobot_bootstrap.py").read_text()
+    assert "_CONFIG_IMPORTS = config_imports()" in boot
+    assert "ACTConfig" not in re.sub(r"#.*", "", boot), "부트스트랩이 클래스를 또 적고 있다"
+
+
+def test_wrapper_registry_matches_the_backend_loader():
+    """wrapper 는 백엔드를 import 하지 않으므로 판이 둘이다 — **결과는 같아야 한다.**"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_probe_registry", _REPO / "wrapper" / "policy_registry.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    assert set(mod.SPECS) == set(P.SPECS), "두 판이 서로 다른 정책 집합을 본다"
+    for name, spec_obj in P.SPECS.items():
+        if len(spec_obj.runtime.model) == 2:
+            assert mod.policy_imports()[name] == (
+                *spec_obj.runtime.model, *spec_obj.runtime.config)
+    assert mod.default_tap("act") == "backbone"
+    assert mod.default_tap("smolvla") == "siglip"

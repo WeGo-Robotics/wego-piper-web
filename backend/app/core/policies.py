@@ -153,7 +153,8 @@ def ui_spec(policy_type: str) -> dict:
         # 안전 계층이 아니다. 값 검증의 정본은 백엔드 클램프에 남아 있다.
         return {"type": policy_type, "scratch_note": "",
                 "train": {"defaults": {}, "fields": [], "warnings": []},
-                "encoder_probe": {"base_label": "", "taps": [], "note": ""}}
+                "encoder_probe": {"base_label": "", "taps": [],
+                                  "image_key_select": False, "note": ""}}
     t = spec.train
     return {
         "type": policy_type,
@@ -188,6 +189,7 @@ def ui_spec(policy_type: str) -> dict:
             "base_label": spec.encoder_probe.base_label,
             "taps": [{"key": t_.key, "label": t_.label, "default": t_.default}
                      for t_ in spec.encoder_probe.taps],
+            "image_key_select": spec.encoder_probe.image_key_select,
             "note": spec.encoder_probe.note,
         },
     }

@@ -53,3 +53,8 @@ encoder_probe:
   taps:
     - { key: siglip,    label: "비전 타워 출력 (32x32)", default: true }
     - { key: connector, label: "VLM 입력 토큰 (8x8)" }
+  image_key_select: false
+  # 체크포인트를 안 골랐을 때만 뜻이 있는 안내다 — 화면이 그 판단을 한다.
+  note: |
+    SmolVLA는 freeze_vision_encoder=true면 학습 중 비전 인코더가 바뀌지 않습니다.
+    체크포인트 없이 베이스만으로도 "이 장면에서 SigLIP이 쓸 만한가"를 미리 볼 수 있습니다.

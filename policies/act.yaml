@@ -42,3 +42,8 @@ encoder_probe:
   base_label: "베이스 ResNet-18 / ImageNet (학습 전)"
   taps:
     - { key: backbone, label: "ResNet-18 최종 특징맵", default: true }
+  # ACT 는 카메라마다 정규화 통계가 달라 어느 키로 볼지 골라야 한다.
+  # SmolVLA 는 공용 비전 타워라 필요 없다 — 그래서 정책별 **사실**이다.
+  image_key_select: true
+  note: |
+    ACT의 ResNet 백본은 정책과 함께 학습되므로 체크포인트마다 다릅니다 — 사후 진단용입니다.

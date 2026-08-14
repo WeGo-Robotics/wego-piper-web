@@ -37,14 +37,20 @@ export type PolicyUi = {
   /** 베이스 없이 처음부터 학습할 때의 안내. 없으면 빈 문자열. */
   scratch_note: string
   train: { defaults: Record<string, unknown>; fields: SpecField[]; warnings: SpecWarning[] }
-  encoder_probe: { base_label: string; taps: { key: string; label: string; default: boolean }[]; note: string }
+  encoder_probe: {
+    base_label: string
+    taps: { key: string; label: string; default: boolean }[]
+    /** 카메라별 정규화 통계를 고를 수 있어야 하는가 (ACT). */
+    image_key_select: boolean
+    note: string
+  }
 }
 
 const EMPTY: PolicyUi = {
   type: '',
   scratch_note: '',
   train: { defaults: {}, fields: [], warnings: [] },
-  encoder_probe: { base_label: '', taps: [], note: '' },
+  encoder_probe: { base_label: '', taps: [], image_key_select: false, note: '' },
 }
 
 export function usePolicyUi(policyType: string) {

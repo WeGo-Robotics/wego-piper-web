@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { usePolicies } from '../hooks/usePolicies'
+import { usePolicyUi } from '../hooks/usePolicyUi'
 import { type ReadyCam } from '../types/camera'
 
-type PolicyType = 'smolvla' | 'act'
+// ⚠ 정책 이름을 유니언으로 박지 않는다 — 모델이 늘 때마다 여기도 늘어난다.
+// 어떤 정책이 프로브 되는지는 `policies/*.yaml` (capabilities.encoder_probe) 이 정한다.
+type PolicyType = string
 type SlotKey = 'A' | 'B'
 type ViewKind = 'input' | 'pca' | 'sim' | 'kmeans'
 
@@ -233,7 +237,22 @@ export default function EncoderProbePage() {
   const [policyType, setPolicyType] = useState<PolicyType>('smolvla')
   const [checkpoint, setCheckpoint] = useState('')
   const [imageKey, setImageKey] = useState('')
-  const [tap, setTap] = useState<'siglip' | 'connector'>('siglip')
+  const [tap, setTap] = useState('')
+
+  // 정책 화면 스펙 — 프로브 가능 목록·베이스 문구·추출 지점·설명이 전부 여기서 온다.
+  const { policies } = usePolicies()
+  const probePolicies = policies.filter((p) => p.encoder_probe)
+  const probe = usePolicyUi(policyType).encoder_probe
+
+  // ⚠ 정책을 바꾸면 tap 을 **그 정책의 기본값으로** 갈아끼운다. 남겨두면
+  // SmolVLA 의 `siglip` 이 ACT 요청에 실려 나가고, wrapper 가 되돌리긴 하지만
+  // 화면에 뜬 값과 실제로 쓴 값이 달라진다.
+  useEffect(() => {
+    if (probe.taps.length === 0) { setTap(''); return }
+    if (!probe.taps.some((t) => t.key === tap)) {
+      setTap((probe.taps.find((t) => t.default) ?? probe.taps[0]).key)
+    }
+  }, [probe])
   const [device, setDevice] = useState('')
 
   const [slots, setSlots] = useState<Record<SlotKey, Slot | null>>({ A: null, B: null })
@@ -387,11 +406,11 @@ export default function EncoderProbePage() {
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-3">
-            {(['smolvla', 'act'] as PolicyType[]).map((p) => (
-              <label key={p} className="flex items-center gap-1.5 text-xs cursor-pointer">
-                <input type="radio" name="probePolicy" value={p} checked={policyType === p}
-                  onChange={() => setPolicyType(p)} className="accent-blue-500" />
-                <span className="text-neutral-300">{p.toUpperCase()}</span>
+            {probePolicies.map((p) => (
+              <label key={p.type} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                <input type="radio" name="probePolicy" value={p.type} checked={policyType === p.type}
+                  onChange={() => setPolicyType(p.type)} className="accent-blue-500" />
+                <span className="text-neutral-300">{p.label}</span>
               </label>
             ))}
           </div>
@@ -401,25 +420,25 @@ export default function EncoderProbePage() {
             <select value={checkpoint} onChange={(e) => setCheckpoint(e.target.value)}
               className="px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-xs text-neutral-100 max-w-[22rem]">
               {/* 두 정책 다 **학습 전 시작점**을 볼 수 있어야 비교가 성립한다.
-                  ACT 의 백본은 무작위가 아니라 ImageNet ResNet-18 로 시작한다. */}
-              {policyType === 'smolvla' && <option value="">베이스 SigLIP (체크포인트 없이)</option>}
-              {policyType === 'act' && <option value="">베이스 ResNet-18 / ImageNet (학습 전)</option>}
+                  무엇이 그 시작점인지는 정책마다 다르므로 스펙이 문구를 준다. */}
+              {probe.base_label && <option value="">{probe.base_label}</option>}
               {candidates.map((m) => <option key={m.path} value={m.path}>{m.id}</option>)}
             </select>
           </div>
 
-          {policyType === 'smolvla' && (
+          {/* 뽑을 지점이 둘 이상일 때만 고르게 한다 — ACT 는 하나뿐이라 안 뜬다.
+              예전엔 `policyType === 'smolvla'` 로 그 사실을 화면이 알고 있었다. */}
+          {probe.taps.length > 1 && (
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-neutral-400">추출 지점</span>
-              <select value={tap} onChange={(e) => setTap(e.target.value as 'siglip' | 'connector')}
+              <select value={tap} onChange={(e) => setTap(e.target.value)}
                 className="px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-xs text-neutral-100">
-                <option value="siglip">비전 타워 (32×32)</option>
-                <option value="connector">VLM 입력 토큰 (8×8)</option>
+                {probe.taps.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
               </select>
             </div>
           )}
 
-          {policyType === 'act' && (
+          {probe.image_key_select && (
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-neutral-400">카메라 키</span>
               <select value={imageKey} onChange={(e) => setImageKey(e.target.value)}
@@ -441,17 +460,8 @@ export default function EncoderProbePage() {
           </div>
         </div>
 
-        {policyType === 'smolvla' && !checkpoint && (
-          <p className="text-[11px] text-neutral-500">
-            SmolVLA는 <code>freeze_vision_encoder=true</code>면 학습 중 비전 인코더가 바뀌지 않습니다.
-            체크포인트 없이 베이스만으로도 "이 장면에서 SigLIP이 쓸 만한가"를 미리 볼 수 있습니다.
-          </p>
-        )}
-        {policyType === 'act' && (
-          <p className="text-[11px] text-neutral-500">
-            ACT의 ResNet 백본은 정책과 함께 학습되므로 체크포인트마다 다릅니다 — 사후 진단용입니다.
-          </p>
-        )}
+        {/* 문구도 조건도 스펙이 준다. 예전엔 정책 이름 두 개가 여기 박혀 있었다. */}
+        {probe.note && <p className="text-[11px] text-neutral-500 whitespace-pre-line">{probe.note.trim()}</p>}
         {note && <p className="text-[11px] text-yellow-500">{note}</p>}
       </div>
 

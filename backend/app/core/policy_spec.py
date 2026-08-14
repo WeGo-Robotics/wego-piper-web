@@ -124,6 +124,8 @@ class Tap(_Strict):
 class ProbeSpec(_Strict):
     base_label: str = ""
     taps: list[Tap] = Field(default_factory=list)
+    # 카메라별 정규화 통계를 고를 수 있어야 하는가 (ACT). 정책별 **사실**이다.
+    image_key_select: bool = False
     note: str = ""
 
 

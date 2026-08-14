@@ -24,9 +24,8 @@ groot config 까지 필요하면 (start_record / start_policy_server):
 - 실행 방식이 `python /경로/wrapper/xxx.py` 라 `sys.path[0]` 가 wrapper 디렉터리다 →
   `import lerobot_bootstrap` 이 그대로 동작한다
   (`parking_controller.py` 의 `from arm_controller import ...` 가 같은 방식이다).
-- 아래 `_CONFIG_IMPORTS` 는 `lerobot_wrapper.py` 의 `POLICY_IMPORTS` 와 목록이 겹치지만
-  **같지 않다** (여기는 config 6개, 저기는 model+config 8개). 기존 동작을 그대로 옮긴
-  것이므로 임의로 맞추지 않는다 — 바꾸려면 실기로 확인해야 한다.
+- `_CONFIG_IMPORTS` 는 이제 `policy_registry` 가 `policies/*.yaml` 에서 만든다.
+  예전에는 여기 6개, `lerobot_wrapper.POLICY_IMPORTS` 에 8개가 **따로** 적혀 있었다.
 """
 
 import importlib
@@ -34,15 +33,14 @@ import os
 import sys
 import types
 
-# helpers.py 가 필요로 하는 config 클래스
-_CONFIG_IMPORTS = {
-    "ACTConfig": "lerobot.policies.act.configuration_act",
-    "DiffusionConfig": "lerobot.policies.diffusion.configuration_diffusion",
-    "PI0Config": "lerobot.policies.pi0.configuration_pi0",
-    "PI05Config": "lerobot.policies.pi05.configuration_pi05",
-    "SmolVLAConfig": "lerobot.policies.smolvla.configuration_smolvla",
-    "VQBeTConfig": "lerobot.policies.vqbet.configuration_vqbet",
-}
+from policy_registry import config_imports
+
+# helpers.py 가 필요로 하는 config 클래스.
+# ⚠ 예전에는 여기 6개를 손으로 적어뒀고 `lerobot_wrapper.POLICY_IMPORTS`(8개)와
+# 달랐다 — 왜 다른지 아무도 몰라 "임의로 맞추지 않는다"고 적혀 있었다.
+# 이제 둘 다 `policies/*.yaml` 에서 오므로 그 질문 자체가 없어진다.
+# 등록은 아래에서 try/except 로 감싸므로 여분이 있어도 조용히 건너뛴다.
+_CONFIG_IMPORTS = config_imports()
 
 _lerobot = importlib.import_module("lerobot")
 POLICIES_DIR = os.path.join(os.path.dirname(_lerobot.__file__), "policies")
