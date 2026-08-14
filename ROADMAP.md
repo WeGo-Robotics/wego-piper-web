@@ -9,6 +9,12 @@
 실제 학습(ACT 20000스텝)으로 확인했다: 2000스텝에서 게이트웨이를 죽였는데
 학습은 계속 돌았고, 다시 띄우니 6000 → 7000/20000 으로 진행률까지 이어졌다.
 
+**Phase 4 첫 기능이 닫혔다 — [camera-profiles](feature/camera-profiles.md).**
+구조 개편의 배당금을 처음 실제로 받은 사례다: 원인 7개 중 넷이 코드를 쓰기도 전에
+사라졌고(해상도 전달·해제 후 재적용·트리거 6개 배선), 남은 셋만 구현했다.
+적용 지점은 데몬 `connect()` 한 곳이다. D405 로 확인 — 컨트롤을 전부 기본값으로
+되돌린 뒤 **연결만 했는데** 노출·화이트밸런스가 복원됐다.
+
 | 단계 | | 상태 |
 |---|---|---|
 | Phase 0 | 배타 모드 가드 · 추론 파라미터 드리프트 | ☑ |
@@ -22,7 +28,16 @@
 | **3b-6** | systemd 유닛화 | ☑ 학습·정책서버·xferd — **실제 학습으로 재부착 확인** |
 | 3b-7 | 실행별 컨테이너 분리 + **encoderd** | ◐ 단일 백엔드 컨테이너는 실기 확인 |
 | 3b-8 | 게이트웨이 정리 | ◐ |
-| Phase 4 | 깊이맵(인코딩 ☑ / 정책 입력 ☐) · camera-profiles ☑ · phase-annotation 4~8 · cloud-training 5~12 | ◐ |
+| Phase 4 | 깊이맵(인코딩 ☑ / 정책 입력 ☐) · **camera-profiles ☑** · phase-annotation 4~8 · cloud-training 5~12 | ◐ |
+
+### Phase 4 세부
+
+| 기능 | 상태 | 남은 것 |
+|---|---|---|
+| [camera-profiles](feature/camera-profiles.md) | ☑ | v4l2 웹캠에서의 확인만 (지금 RealSense 둘뿐이라 menu 스위치 경로는 단위 테스트만) |
+| 깊이맵 정책 입력 | ◐ | 인코딩·메타·범위조절 ☑ / **녹화→학습→추론 한 바퀴 + fps 측정** ☐ |
+| [phase-annotation](feature/01-phase-annotation.md) 4~8 | ☐ | UI · 굽기 · 추론 경로 |
+| [cloud-training](feature/cloud-training.md) 5~12 | ☐ | 데이터 전송 · 체크포인트 회수 · 비용 가드 |
 
 ### 바로 이어서 할 것
 
@@ -138,10 +153,12 @@ camera-profiles는 트리거 4·5·6단계를 **이 함수 직후**에 배선한
 7개 중 4개(4·5·6 + 트리거 배선)가 사라졌다. 상세는
 [feature/camera-profiles.md](feature/camera-profiles.md) 머리의 상태표.
 
-### `_build_cameras_json` — 3중 충돌
+### ~~`_build_cameras_json` — 3중 충돌~~ ☑ 해소
 
 camera-transport(`type: "shm"`), camera-profiles(하드코딩 제거), 깊이맵(세그먼트 추가)이
-**같은 함수**를 고친다. 한 번에.
+**같은 함수**를 고친다 — 예정대로 한 번에 끝났다. camera-profiles 몫이던
+"하드코딩 제거"는 별도 작업이 아니라 shm 전환에 딸려 왔다: 발행자(데몬)가 값을 정하니
+실행 경로가 해상도를 조립할 일 자체가 없다.
 
 ### `TrainManager` — cloud-training과 daemon-split이 같은 이음매
 
@@ -236,7 +253,12 @@ daemon-split 6의 systemd 유닛화는 그 이음매에 **`SystemdRunner`를 하
 | 5 | **rsd ☑ · camerad ☑ · robotd ☑** (버스 RPC · shm 발행 · 안전층) | **합치지 않았다** — D405 hang 이력. 게이트웨이는 이제 카메라 장치를 전혀 안 연다 |
 | 6 | ☑ 학습 러너 · 정책서버 · xferd(업로드·편집·페이즈) — 선택은 [`make_process()`](backend/app/services/systemd_process.py) 한 곳 | 유닛이 소유자라 게이트웨이 재시작에도 산다. journald 로 **로그까지 이어 읽는다** |
 | 7 | ◐ infer / record / **encoderd** 컨테이너화 — **단일 백엔드 컨테이너는 실기 확인** (하드웨어 권한·호스트 네트워크 둘 다 제거, GPU + `ipc: host` 만 남음). 실행별로 쪼개는 것은 6단계 이후 | GPU + `ipc: host`만 |
-| 8 | ◐ 게이트웨이 정리 — `robot_manager` 995→248줄, `camera_manager` 685→298줄, `arm_bridge` 삭제 | `services/`에 스캐너만 남는다 |
+| 8 | ◐ 게이트웨이 정리 — `robot_manager` 995→658줄, `camera_manager` 685→289줄, `arm_bridge` 삭제 | `services/`에 스캐너만 남는다 |
+
+> 줄 수는 데몬 분리 직후 값이다. 그 뒤 기능이 붙어 `camera_manager` 는 418 줄
+> (프로파일 키·컨트롤 적용 위임), `robot_manager` 는 658 줄 그대로다.
+> **8단계가 아직 ◐ 인 이유**: 줄 수가 준 것과 "스캐너만 남는다"는 다른 이야기다 —
+> 두 파일 다 아직 상태(등록·역할·별칭)를 들고 있다.
 
 ### Phase 4 — 기능 완성
 
@@ -278,7 +300,7 @@ B·C·D·E는 A를 거의 안 막는다. **E의 URDF 확보는 지금 바로 시
 | 동시 학습 job 수 상한 | ~~3b-3.5 전~~ → **4단계(SSH 러너) 전** | 레지스트리는 N개를 담게 만들고 상한만 `MAX_CONCURRENT_JOBS=1` 로 뒀다 — 클라우드가 붙을 때 상수 하나만 고치면 된다 |
 | E-stop이 무엇을 죽이는가 | 3b-2 전 | #10과 estopd 분리가 같이 걸려 있다 |
 | URDF를 구할 수 있는가 | 트랙 E 시작 전 | 못 구하면 robotd-safety 트랙 자체가 없다. [manual-control](feature/manual-control.md)의 중력 보상도 같이 막힌다 (관성 파라미터까지 필요) |
-| camerad/rsd 합칠 것인가 | 3b-5 전 | 크래시 격리 vs 단순함 |
+| ~~camerad/rsd 합칠 것인가~~ | ~~3b-5 전~~ | ☑ **안 합친다.** D405 의 UVC 질의가 커널 D-state 로 프로세스를 통째로 먹통으로 만든 전례가 결정적이었다. 다만 순수 로직은 공유한다 — 컨트롤 적용 순서가 `piper_cam.controls` 한 벌이다 |
 
 **Phase 0~2 착수를 막는 질문은 없다.**
 
@@ -294,3 +316,13 @@ B·C·D·E는 A를 거의 안 막는다. **E의 URDF 확보는 지금 바로 시
 이번 정리에서 바뀐 것: **cloud-training이 데몬 분리를 안 기다린다.**
 0~2는 순수 리팩터라 Phase 2로, 3~4는 Redis만 있으면 되므로 3b-3.5로 당겼다.
 클라우드 학습이 구조 개편 완료 전에 실제로 돈다.
+
+### 두 번째 원칙의 실측값
+
+"camera-profiles를 뒤로"가 얼마를 아꼈는지 이제 셀 수 있다. 원래 문서의 작업 7개 중
+**셋이 코드 한 줄 없이 사라졌고**(트리거 6개 배선, `_open_cap` 의 `cap.set`/`actual_*` 분리,
+`_build_cameras_json` 하드코딩 제거), 마이그레이션 1개는 불필요해졌다.
+먼저 했다면 그 넷을 만들었다가 3b-4 에서 지웠을 것이다.
+
+같은 논리가 아직 안 끝난 것들에도 걸려 있다 — phase-annotation 6(굽기)은 `#8` 뒤,
+cloud-training 3 은 Redis 뒤. **§3 의 금지 순서를 계속 지킨다.**
