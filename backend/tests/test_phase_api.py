@@ -21,7 +21,7 @@ def client():
 @pytest.fixture
 def sidecar_backup():
     """테스트가 실제 사이드카를 건드리므로 원상복구한다."""
-    from app.services import phase_labeler as PL
+    from piper_phase import labeler as PL
 
     ds = find_dataset_path(_DS)
     if ds is None:
@@ -148,7 +148,7 @@ def test_signals_match_frame_count(client, sidecar_backup):
 
 
 def test_signals_404_before_analysis(client, sidecar_backup):
-    from app.services import phase_labeler as PL
+    from piper_phase import labeler as PL
 
     labels, signals = PL.sidecar_paths(sidecar_backup)
     labels.unlink(missing_ok=True)

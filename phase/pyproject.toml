@@ -5,6 +5,10 @@ description = "작업 단계 라벨러 (백엔드 라벨러 ↔ wrapper 온라�
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.24"]
 
+# 인과 코어(fsm)는 numpy 만. 배치 라벨러(labeler)와 CLI 만 parquet 의존이 있다.
+[project.optional-dependencies]
+labeler = ["pandas>=2.0", "pyarrow>=14"]
+
 [tool.setuptools.packages.find]
 include = ["piper_phase*"]
 

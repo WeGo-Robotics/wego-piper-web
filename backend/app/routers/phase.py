@@ -17,7 +17,8 @@ from fastapi import APIRouter, HTTPException
 from piper_phase import Params
 from pydantic import BaseModel
 
-from app.services import phase_labeler as PL
+from piper_phase import labeler as PL
+
 from app.services.dataset_scanner import find_dataset_path
 
 logger = logging.getLogger(__name__)

@@ -1,15 +1,20 @@
 # 1. 작업 단계(phase) 라벨 — 상태 슬롯 추가 + 자동 라벨러 + 편집 UI
 
 > **◐ 1~3단계 완료.** 라벨러는 [phase/piper_phase/](../phase/piper_phase/) 설치 패키지로,
-> 분석 배치는 [phase_labeler.py](../backend/app/services/phase_labeler.py), API 는 [routers/phase.py](../backend/app/routers/phase.py) 로 만들었다.
+> 분석 배치는 [piper_phase/labeler.py](../phase/piper_phase/labeler.py), API 는 [routers/phase.py](../backend/app/routers/phase.py) 로 만들었다.
 > 문서의 실측값이 **정확히 재현됐다** — ep0 830프레임, 갭 min/mean −35.0/−13.3,
 > **50 에피소드 전부 3사이클**.
 >
-> 문서와 다르게 간 것 둘:
+> 문서와 다르게 간 것 셋:
 > - `done_still` 20 → **5**. 실측 꼬리가 5~25프레임이라 20이면 절반이 `DONE` 을 못 받는다.
 > - 라벨러 위치를 `wrapper/phase_fsm.py` 가 아니라 **설치 패키지**(`pip install -e phase/`)로.
 >   백엔드가 `wrapper/` 를 import 하려면 `sys.path` 조작이 필요한데,
 >   `bus/` 와 같은 방식이면 양쪽이 깔끔하게 같은 코드를 쓴다.
+> - 분석 배치도 백엔드(`app/services/phase_labeler.py`)가 아니라 패키지 안
+>   (`piper_phase.labeler`, extra `[labeler]` = pandas·pyarrow)에 둔다.
+>   **분류기는 에디터/뷰어(§4)와 별개로 단독 실행 가능해야 한다** — 게이트웨이 없는
+>   머신(학습 머신·컨테이너)에서도 품질 검사가 돌아야 해서다. 진입점은
+>   `python -m piper_phase <dataset_path>`, 백엔드 API 는 같은 코드를 import 만 한다.
 >
 > 3단계에서 문서가 경고한 **catch-all 라우트 사고가 실재함을 확인**했다 —
 > `/api/datasets/upload-status` 와 `/hf-cli` 가 `/{dataset_id:path}` 에 먹혀 404 였고
@@ -495,7 +500,7 @@ UI에 띄우고 버튼을 노출한다.
 | # | 단계 | 산출물 | 검증 |
 |---|---|---|---|
 | 1 | ☑ [phase/piper_phase/fsm.py](../phase/piper_phase/fsm.py) — 신호 + 인과 FSM | numpy만. `pip install -e phase/` | ☑ **50 에피소드 전부 3사이클** |
-| 2 | ☑ [phase_labeler.py](../backend/app/services/phase_labeler.py) | `phase_labels.json`, `phase_signals.parquet` | ☑ 4개 데이터셋 전수 + 이상 목록 |
+| 2 | ☑ [piper_phase/labeler.py](../phase/piper_phase/labeler.py) + `python -m piper_phase` | `phase_labels.json`, `phase_signals.parquet` | ☑ 4개 데이터셋 전수 + 이상 목록 |
 | 3 | ☑ [routers/phase.py](../backend/app/routers/phase.py) — 분석/조회/저장/신호 | `/api/phase/*` + 전용 `phase_pm` | ☑ 14개 테스트 |
 | 4 | `PhaseEditorPage` — 스크러버 + 그래프 + 구간 바 | 페이지 1개 | `npm run build` |
 | 5 | 편집 인터랙션 (드래그/분할/병합/단축키/undo) | | 실제로 50개 검토해보기 |

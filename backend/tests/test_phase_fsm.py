@@ -15,7 +15,8 @@ from piper_phase import (
     label_episode, segments,
 )
 
-from app.services import phase_labeler as PL
+from piper_phase import labeler as PL
+
 from app.services.dataset_scanner import find_dataset_path
 
 _P = Params(fps=15.0)
