@@ -281,15 +281,15 @@ cd frontend && npm run build     # 타입 검증은 반드시 build
 
 ## 상태
 
-◐ **1~3 완료** (2026-08-14). 4~8 남음.
+◐ **1~5, 7~8 완료** (2026-08-14). **6(추론 파라미터 역전)만 남았다.**
 
 | # | 작업 | |
 |---|---|---|
 | 1 | `policies/*.yaml` + 로더 | ☑ [policy_spec.py](../backend/app/core/policy_spec.py), [policies.py](../backend/app/core/policies.py) |
 | 2 | LeRobot 생성기 + 상류 대조 | ☑ [tools/gen_policy_spec.py](../tools/gen_policy_spec.py) |
 | 3 | 학습 필드 → `<SpecFields>` | ☑ `TrainingPage` **125줄 삭제 / 45줄 추가** |
-| 4 | `runtime` 으로 `POLICY_IMPORTS` 대체 | ☐ 스펙엔 이미 있다 — wrapper 가 읽기만 하면 된다 |
-| 5 | `encoder_probe` 절로 프로브 분기 제거 | ☐ 스펙엔 이미 있다 — `EncoderProbePage` 6곳 |
+| 4 | `runtime` 으로 `POLICY_IMPORTS` 대체 | ☑ [wrapper/policy_registry.py](../wrapper/policy_registry.py) — `lerobot_bootstrap` 의 세 번째 사본도 같이 흡수 |
+| 5 | `encoder_probe` 절로 프로브 분기 제거 | ☑ `EncoderProbePage` 6곳 · wrapper `--tap` 선택지·기본값 |
 | 6 | `infer.extra_params` 로 `PARAM_SPEC` 역전 | ☐ |
 | 7 | 조건부 경고 | ☑ 3단계에 딸려 왔다 (`when`/`and`) |
 | 8 | 기기별 덮어쓰기 | ☑ 로더가 지원, 실기 확인 |
@@ -306,6 +306,38 @@ cd frontend && npm run build     # 타입 검증은 반드시 build
 둘 다 지금 `supported: false` 라 아무도 안 밟았지만, 켰으면 **학습 시작에서 알 수 없는
 설정 키로 죽었을 것이다.** 손으로 베꼈으면 YAML 에도 그대로 옮겨 적었을 값이다.
 
+### 처음에 센 여섯 곳, 지금
+
+| # | 위치 | |
+|---|---|---|
+| 1 | `POLICIES` | ☑ 로더 |
+| 2 | `PARAM_SPEC` 의 `policies:` | ☐ **유일하게 남은 것** (6단계) |
+| 3 | `POLICY_IMPORTS` | ☑ `runtime` |
+| 4 | 프로브 `--tap` | ☑ `encoder_probe.taps` |
+| 5 | `POLICY_TRAIN_SCHEMAS` | ☑ `train.fields` |
+| 6 | `EncoderProbePage` 분기 6개 | ☑ `encoder_probe` |
+
+덤으로 `lerobot_bootstrap._CONFIG_IMPORTS`(세 번째 사본)와
+`SCRATCH_WEIGHTS`(TSX 테이블)도 흡수했다.
+
+### 두 판을 두고 결과를 대조한다
+
+wrapper 는 게이트웨이를 import 할 수 없다 — 다른 파이썬에서 돌고 컨테이너로도
+나간다. 그래서 [policy_registry.py](../wrapper/policy_registry.py) 가 **읽기만** 하는
+얇은 판을 따로 갖는다. 검증·병합은 백엔드가 하고, **정본이 같은 파일이라 갈라질 수 없다** —
+테스트가 두 판을 다 불러 결과를 비교한다.
+
+이 통합이 오래된 질문 하나를 없앴다. `lerobot_bootstrap` 은 config 6개,
+`lerobot_wrapper` 는 8개를 손으로 들고 있었고, **왜 다른지 아무도 몰라서**
+"임의로 맞추지 않는다 — 바꾸려면 실기로 확인해야 한다"고 적혀 있었다.
+둘 다 같은 표에서 나오게 하니 질문 자체가 사라졌다.
+
+### 일부러 안 옮긴 것
+
+`encoder_probe.py` 의 `run_smolvla` / `run_act` 갈림은 **남겼다.**
+아키텍처마다 특징 뽑는 코드가 다르고 그건 데이터가 아니라 로직이다 —
+이 문서가 "표현이 안 되면 그건 진짜 로직이라는 신호"라고 쓴 바로 그 경우다.
+
 ### 실기로 확인한 것
 
 - **깨진 파일 격리** — `act.yaml` 을 망가뜨리니 목록에 SmolVLA 만 남고
@@ -313,6 +345,10 @@ cd frontend && npm run build     # 타입 검증은 반드시 build
 - **기기별 덮어쓰기** — `config_dir/policies/act.yaml` 에 `steps: 777` 만 적으니
   그것만 바뀌고 `batch_size` 와 필드 5개는 그대로였다
 - **학습 인자 불변** — 미리보기 명령이 이관 전과 같다
+- **프로브 폴백** — ACT 에 `tap=siglip`(ACT 엔 없는 값)을 보내니 스펙의 `backbone`
+  으로 떨어졌다. 예전 동작 그대로인데 이제 **하드코딩이 아니라 유도된** 값이다
+- **wrapper 기동** — `lerobot_wrapper.py --help` 와 부트스트랩 import 가 깨끗하고,
+  config 클래스 8개가 전부 등록된다
 
 > 이 문서를 쓴 계기: ACT 추론에서 입력한 적 없는 task 가 뜬 사고.
 > 원인은 **감추는 조건과 보내는 조건이 다른 파일에 있었던 것**이고,

@@ -13,7 +13,7 @@
 | 에피소드 오케스트레이터 | 스냅샷→판단→실행→리셋 루프. 스텝은 Python, 시퀀스는 YAML 스펙 (ComfyUI 방식, Lua 기각) | 지금은 백엔드 서비스, Redis 이후 버스 클라이언트로 — 프로토콜은 불변 | [episode-orchestrator.md](episode-orchestrator.md) |
 | 수동 조작 + 중력 보상 | 추론 없이 웹 조그(있는 shm 경로에 소비자만 추가) + MIT 모드 중력 보상 드래그 → 손으로 끌며 녹화(단팔 데이터 수집) | 조그는 robotd(3b-5) 완성으로 **지금 가능**. 중력 보상은 **트랙 E(URDF) 의존** — URDF 수혜자가 둘이 된다 | [manual-control.md](manual-control.md) |
 | 양팔(bimanual) | G4 구현 — 양팔 조립을 wrapper 즉석 코드에서 LeRobot bi 클래스로 내려 녹화·로컬/gRPC 추론·파킹이 한 구현 공유. 핸드오버(우선순위 2)의 블로커 해소 | robotd/shm 이 팔 단위라 **안 겹침** — bi 클래스는 지금 가능, 실질 전제는 하드웨어(팔 4대 + udev) | [bimanual.md](bimanual.md) |
-| 정책 UI 스펙 | 모델별 화면 항목을 YAML 로 선언하고 UI 가 그걸 읽어 동적 구성 | ◐ **1~3 완료** — 레지스트리·LeRobot 생성기·학습 필드. 남은 4~5(wrapper·프로브 페이지)는 스펙 소비자만 바꾸면 된다 | [policy-ui-spec.md](policy-ui-spec.md) |
+| 정책 UI 스펙 | 모델별 화면 항목을 YAML 로 선언하고 UI 가 그걸 읽어 동적 구성 | ◐ **여섯 곳 중 다섯이 닫혔다** — 레지스트리·학습 필드·wrapper 클래스·프로브. 남은 것은 `PARAM_SPEC` 역전 하나 | [policy-ui-spec.md](policy-ui-spec.md) |
 | 외부 LLM 연동 | 분리수거 판단·플래너용 구조화 출력 클라이언트 — 슬롯 JSON 만, 에피소드 경계에서만, 오케스트레이터 스텝으로. 규칙은 프리셋 스토어 합류, 온프레미스는 로컬 Qwen 어댑터 | 백엔드 서비스 + 외부 HTTP 뿐이라 **아예 안 겹침** — 클라이언트(1단계)는 지금 가능, 스텝 합류는 오케스트레이터 1단계 뒤 | [llm-integration.md](llm-integration.md) |
 
 ## 왜 순서가 중요한가 (요약)

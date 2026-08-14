@@ -28,7 +28,7 @@
 | subprocess 실행 | [process_manager.py](../backend/app/services/process_manager.py) |
 | ZMQ 전송 (task/pause/reset) | [zmq_bridge.py](../backend/app/services/zmq_bridge.py), [params.py](../backend/app/routers/params.py) |
 | 단발 Python 호출 (스냅샷, argmax) | 신규 — [demo-scenario-gaps.md](demo-scenario-gaps.md) G1·G3 |
-| 외부 HTTP (LLM) | 신규 |
+| 외부 HTTP (LLM) | 신규 — [llm-integration.md](llm-integration.md) |
 | **이벤트 대기** (로드셀 임계치, 스캐너 삑, 타임아웃) | 신규 — G3의 외부 이벤트 리스너 |
 
 그리고 **전 구간이 E-stop으로 즉시 취소 가능**해야 한다. 이건 그래프(DAG) 문제가 아니라
