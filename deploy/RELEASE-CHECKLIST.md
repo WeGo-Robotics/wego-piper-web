@@ -1,8 +1,9 @@
-# 배포 절차 (드래프트) — 192.168.0.120 실기 배포 대비
+# 배포 절차 — 192.168.0.120 실기 배포 기록
 
-> 이 문서는 아직 **개발 소스 배포**를 실제 제품 배포 절차로 옮기는 중간 기록이다.
-> 2026-08-13, 로봇 호스트 `192.168.0.120`(sw-han-Thin-15-B13VE)를 대상으로 사전 점검한
-> 결과를 남긴다. 아직 실행은 안 했고, 순서와 항목만 확정한 상태다 — [미결정](#미결정) 참고.
+> 2026-08-13에 사전 점검을 남겼고, 2026-08-14에 `v0.2.0`을 실제로 이 절차대로
+> `192.168.0.120`(sw-han-Thin-15-B13VE)에 배포해서 끝까지 검증했다. 아래 절차는
+> 그 실행 순서 그대로이고, [겪은 문제](#겪은-문제와-해결) 절이 다음 배포 때 반복하지
+> 않아도 되게 남긴 함정들이다.
 
 ## 왜 "소스 체크아웃"이 아닌가
 
@@ -14,15 +15,19 @@
 
 `docker-compose.yml`이 `privileged`/`/dev` 마운트를 뺀 이후, 하드웨어(CAN·카메라·RealSense)는
 컨테이너가 아니라 **호스트에서 도는 Python 데몬**(`daemons/estopd.py` 등, systemd 유저 유닛)이
-쥔다. 즉 "이미지 하나로 끝"이 아니라 두 레이어를 따로 배포해야 한다.
+쥔다. 즉 "이미지 하나로 끝"이 아니라 세 갈래를 따로 배포해야 한다.
 
 | 레이어 | 내용물 | 배포 방식 |
 |---|---|---|
 | **이미지** | backend, frontend (`docker-compose.yml`) | 로컬 빌드 → `docker save` → `scp` → 호스트 `docker load` |
-| **데몬** | `bus/ cam/ rs/ robot/ shm/ phase/ vendor/*` (순수 파이썬, `daemons/*.py`가 import) | 로컬에서 wheel 빌드 → `scp` → 호스트 전용 venv에 `pip install` |
+| **데몬 라이브러리** | `bus/ cam/ rs/ robot/ shm/` (순수 파이썬, `daemons/*.py`가 직접 import) | 로컬에서 wheel 빌드 → `scp` → 호스트 전용 venv에 `pip install` |
+| **데몬 소스 + 유닛 정의** | `daemons/*.py`, `deploy/systemd/*.service`, `deploy/install-daemons.sh` | 소스 그대로 tar로 묶어 `scp` (이건 wheel이 아니라 daemons/의 엔트리포인트 자체라 패키징 대상이 아님) |
+
+`phase/`, `vendor/*`는 데몬이 import하지 않는다 — `backend/Dockerfile`이 이미지 빌드 때
+같이 넣으므로 별도 wheel 불필요 (`bus/shm/robot/phase/vendor`만 COPY, `cam/rs`는 호스트 전용).
 
 레지스트리(GHCR 등)는 안 쓰기로 했다 — 아직 설정된 게 없고, 로컬 빌드 후 `docker save`/`scp`가
-지금 규모에는 더 간단하다는 판단.
+지금 규모(로컬-호스트 동일 네트워크, 3.4GB 전송)에는 더 간단하다는 판단.
 
 ---
 
@@ -30,98 +35,126 @@
 
 ### 1. 릴리즈 소스 정리 (로컬)
 
-- [ ] `wip/upgrade`의 미커밋 변경 정리 (지금 기준 4개 modified + 1 untracked)
-- [ ] `origin/wip/upgrade`로 push (지금 기준 19커밋 앞서 있음, 미푸시)
-- [ ] release 태그 (예: `v0.1.x`) — **주의**: 지난번 `v0.1.0` 태그를 잘못 찍어서 지운 적
-      있다. 브랜치 정리와 push까지 끝난 뒤에 태그를 찍을 것.
+- [x] `wip/upgrade` 미커밋 변경 정리, `origin/wip/upgrade`로 push
+- [x] release 태그 (`v0.2.0`) — **주의**: 지난번 `v0.1.0` 태그를 잘못 찍어서 지운 적 있다.
+      브랜치 정리와 push까지 끝난 뒤에 태그를 찍을 것.
 
 ### 2. 이미지 빌드 & 전달
 
-- [ ] `docker compose build` (backend + frontend, 로컬)
-- [ ] `docker save piper-web-backend piper-web-frontend | gzip > piper-web-<tag>.tar.gz`
-- [ ] `scp`로 호스트에 전달
-- [ ] 호스트에서 `docker load < piper-web-<tag>.tar.gz`
-- [ ] 호스트에 `docker-compose.yml` + `backend/.env` 배포판(레포 전체 아님) 전달 — compose가
-      `build:`가 아니라 `image:`를 보게 조정 필요 (지금 파일은 `build: context: .`로 돼 있어
-      그대로 쓰면 호스트에서 다시 빌드하려 든다)
+- [x] `docker compose build` (backend + frontend, 로컬) — backend 11.2GB, frontend 99.8MB
+- [x] `docker tag piper-web-backend:latest piper-web-backend:v0.2.0` (frontend도 동일)
+- [x] `docker save piper-web-backend:v0.2.0 piper-web-frontend:v0.2.0 | gzip > piper-web-v0.2.0.tar.gz` (3.4GB)
+- [x] `scp`로 호스트에 전달, 호스트에서 `docker load`
+- [x] 호스트에서 `docker tag ...:v0.2.0 ...:latest` — `docker-compose.yml`이 `image: piper-web-backend`
+      (태그 생략 = `:latest`)로 참조하므로, 로드한 이미지를 `:latest`로도 태깅해야 compose가
+      다시 빌드하려 들지 않는다. (`build:`→`image:` 전환은 여전히 [미결정](#미결정))
 
-### 3. 데몬 레이어 wheel 빌드 & 전달
+### 3. 데몬 레이어 wheel + 소스 빌드 & 전달
 
-- [ ] 로컬에서 `bus/ cam/ rs/ robot/ shm/ phase/`, `vendor/lerobot_camera_pipershm/`,
-      `vendor/lerobot_robot_pipershm/`, `vendor/wego_piper/` 각각 `python -m build --wheel`
+- [x] 로컬에서 `bus/ shm/ cam/ robot/ rs/` 각각 `pip wheel --no-deps -w <out> ./<pkg>`
       (전부 setuptools, 순수 파이썬 — 로컬 py3.13 / 호스트 py3.12 버전 차이 무관)
-- [ ] wheel들 `scp`로 호스트에 전달
-- [ ] 호스트에 데몬 전용 venv 생성:
-      `python3 -m venv --system-site-packages ~/.venvs/piper-daemons`
+      — **주의**: 저장소 안에서 빌드하면 `<pkg>/build/` 산출물이 남는다. 빌드 후
+      `rm -rf {bus,cam,robot,rs,shm}/build` 로 지울 것 (git에 안 잡히지만 지저분함).
+- [x] `daemons/*.py`, `deploy/systemd/`, `deploy/install-daemons.sh`, `docker-compose.yml`,
+      `backend/.env`를 별도 tar로 묶음 (이건 wheel이 아니라 소스 그대로 — 데몬의
+      엔트리포인트라서 패키징 대신 파일 전달)
+- [x] wheel + 소스 tar `scp`로 호스트에 전달
+- [x] 호스트에 데몬 전용 venv 생성: `python3 -m venv --system-site-packages ~/.venvs/piper-daemons`
       (`--system-site-packages`로 이미 깔려 있는 `numpy`/`opencv-python-headless`/`Pillow`/
       `piper-sdk`/`python-can` 재사용)
-- [ ] venv에 wheel 설치 + 부족한 것 PyPI에서 설치: `redis`(파이썬 클라이언트),
-      `pyrealsense2` (호스트 인터넷 됨 — pypi.org 200 확인함)
-- [ ] `deploy/install-daemons.sh`를 이 venv를 activate한 셸에서 실행 (스크립트가
-      "지금 셸의 python3"를 그대로 쓰기 때문 — `/deploy/install-daemons.sh:12` 참고)
+- [x] venv에 wheel `--no-deps` 설치 + 부족한 것 PyPI에서 설치: `redis`, `pyrealsense2`
+- [x] `deploy/install-daemons.sh`를 이 venv를 activate한 셸에서 실행 (스크립트가
+      "지금 셸의 python3"를 그대로 쓰기 때문 — `deploy/install-daemons.sh:12`)
 
-### 4. 호스트 인프라 준비
+### 4. 호스트 인프라 준비 (sudo 필요)
 
-- [ ] `sudo mkdir -p /srv/piper-data` (데이터 루트, 현재 없음)
-- [ ] `redis-server` 설치 (현재 바이너리 자체가 없음) + `/etc/redis/redis.conf`에
-      `unixsocket /run/redis/redis-server.sock` / `unixsocketperm 770` 추가
-      (컨테이너는 유닉스소켓으로, 호스트 데몬들은 기본 TCP `127.0.0.1:6379`로 붙으므로
-      **둘 다** 켜져 있어야 함)
-- [ ] `nvidia-container-toolkit` 설치 (현재 없음 — GPU 패스스루 불가 상태)
-- [ ] `nvidia-smi` 통신 실패 원인 확인 — 드라이버 패키지(`nvidia-driver-580-open`)는 깔려
-      있는데 커널 모듈과 통신이 안 됨. 재부팅으로 해결되는지 우선 확인
-- [ ] CAN: `can0` UP / `can1` DOWN — 이 배포가 듀얼암을 쓰는지에 따라 `can1` 기동 필요 여부
-      결정
-- [ ] v4l2loopback 커널 모듈 현재 미로드 — 런타임에 데몬이 올리는 게 맞는지 확인
-      (RealSense udev 규칙은 이미 설치돼 있어 손댈 것 없음)
+- [x] `sudo mkdir -p /srv/piper-data && chown $USER /srv/piper-data`
+- [x] `apt-get install -y redis-server` + `/etc/redis/redis.conf`에
+      `unixsocket /run/redis/redis-server.sock` / `unixsocketperm 770` 추가 +
+      **`systemctl restart redis-server`** (컨테이너는 유닉스소켓, 호스트 데몬은 기본 TCP
+      `127.0.0.1:6379`로 붙으므로 둘 다 켜져 있어야 함)
+- [x] `nvidia-container-toolkit` 설치 + `nvidia-ctk runtime configure --runtime=docker` +
+      `systemctl restart docker`
+- [x] `sudo loginctl enable-linger $USER`
+- [x] CAN: 이 배포는 "1 리더 / 1 팔로워"라 `can0`(follower)·`can1`(leader) **둘 다** 필요.
+      `can1`이 안 올라와 있으면:
+      ```
+      sudo modprobe gs_usb
+      sudo ip link set can1 down
+      sudo ip link set can1 type can bitrate 1000000
+      sudo ip link set can1 up
+      ```
+      (`robot/piper_robot/can.py:init_can_interface`와 동일한 시퀀스. 이 인터페이스명이
+      `can0`/`can1`인지 `can_follower1`/`can_leader1`인지는 `~/piper_config.json`으로 확인)
+- [x] v4l2loopback — **불필요.** `refactor/camera-transport.md`에서 후보로 검토했지만
+      shm 방식이 채택됐다 (LeRobot 수정 0이 이유). `CLAUDE.md`/Dockerfile 주석에 남은 언급은
+      stale 문서.
 
 ### 5. systemd 데몬 설치 + 상시 기동
 
-- [ ] `deploy/install-daemons.sh` 실행 (estopd, robotd, camerad, rsd 전부)
-- [ ] `loginctl show-user $USER`로 `Linger=yes` 확인, 아니면
-      `sudo loginctl enable-linger $USER` (안 하면 로그아웃 시 데몬 전부 죽음 —
-      [[project_linger_session_kill]] 참고)
+- [x] `deploy/install-daemons.sh` 실행 (estopd, robotd, camerad, rsd 전부) — venv activate된
+      셸에서 실행해야 함
+- [x] `loginctl show-user $USER`로 `Linger=yes` 확인
 
-### 6. 검증
+### 6. `docker compose up` 검증
 
-- [ ] `docker compose up -d` 후 `http://192.168.0.120/` 접속
-- [ ] `journalctl --user -u piper-robotd -f` 등으로 데몬 4개 다 살아있는지 확인
-- [ ] E-stop, 카메라 프리뷰, CAN 연결 등 하드웨어 관련 항목은
+- [x] 호스트 전용 `docker-compose.override.yml`로 포트 조정 필요할 수 있음 — **80/8080이
+      이미 이 호스트의 다른 서비스(WMS 창고관리시스템, 별개 node 앱)가 쓰고 있었다.**
+      compose가 여러 파일의 `ports:`를 **병합(append)**하지 **치환하지 않으므로**,
+      override에서 포트를 바꾸려면 `ports: !override [...]` 로 명시해야 한다:
+      ```yaml
+      services:
+        frontend:
+          ports: !override
+            - "8081:80"
+      ```
+      단순히 `ports: ["8081:80"]`만 쓰면 80과 8081 둘 다 바인딩을 시도해서 여전히 실패한다.
+      **포트를 정하기 전에 `ss -ltnp`로 이미 쓰는 포트를 꼭 확인할 것** — 로봇 전용
+      호스트가 아니라 다른 서비스가 같이 도는 워크스테이션일 수 있다.
+- [x] `docker compose up -d` 후 backend 로그에 `E-stop 버스에 연결할 수 없습니다` /
+      `job 조회 실패 ... No such file or directory` 가 보이면 → redis unixsocket을 설정만 하고
+      재시작을 안 한 상태에서 컨테이너가 먼저 뜬 것. `docker compose restart backend`로 해결.
+- [x] `curl http://<host>:<port>/health` 로 backend 확인, frontend를 통한 프록시도 확인
+- [ ] E-stop, 카메라 프리뷰, 실제 팔 움직임 등 하드웨어 관련 항목은
       [refactor/HARDWARE-CHECKLIST.md](../refactor/HARDWARE-CHECKLIST.md) 절차를 새 호스트에서
-      재실행
+      재실행 (사람이 팔을 잡아야 하는 부분이라 아직 안 함)
 
 ---
 
-## 2026-08-13 사전 점검 스냅샷
+## 겪은 문제와 해결
+
+| 문제 | 원인 | 해결 |
+|---|---|---|
+| GPU 드라이버는 깔려 있는데 `nvidia-smi`가 커널과 통신 실패 | `nvidia-driver-580-open` 메타패키지가 특정 커널 버전용 `linux-modules-nvidia-580-open-<kernel>` 패키지에 의존하는데, 호스트가 커널을 여러 번 업데이트하는 동안 **현재 실행 중인 커널(6.17.0-35)용 모듈 패키지가 한 번도 설치된 적이 없었음** (dkms 자체도 미설치라 자동 재빌드도 안 됨) | `apt install dkms nvidia-dkms-580-open` (dkms 기반 패키지로 전환 — 커널이 또 바뀌어도 자동 재빌드됨) → `depmod -a && modprobe nvidia` — **재부팅 불필요**, 새로 빌드된 모듈을 바로 올릴 수 있었다 |
+| `docker compose up`에서 frontend가 포트 바인딩 실패 | 이 호스트(192.168.0.120)가 로봇 전용이 아니라 다목적 워크스테이션 — :80은 별개 운영 서비스(WMS), :8080은 다른 node 프로세스가 이미 사용 중 | 사용 중이지 않은 포트(8081)로 `docker-compose.override.yml`에서 재배정. `ports:` 병합이 append라 `!override` YAML 태그로 명시해야 실제로 바뀜 |
+| backend가 redis/E-stop 버스에 못 붙음 | `redis.conf`에 `unixsocket` 설정을 append만 하고 `systemctl restart redis-server`를 빠뜨림 — 컨테이너가 이미 그 상태에서 떠서 소켓 파일 자체가 없었음 | `systemctl restart redis-server`로 소켓 생성 확인 후 `docker compose restart backend` |
+
+---
+
+## 2026-08-14 배포 후 상태 (192.168.0.120)
 
 | 항목 | 상태 |
 |---|---|
-| Docker / Compose | 로컬 29.1.3 / 호스트 29.3.1, 둘 다 compose 플러그인 있음, sw-han이 docker 그룹 |
-| 아키텍처 | 로컬/호스트 둘 다 x86_64 — 크로스 빌드 불필요 |
-| GPU 하드웨어 | RTX 4050 Max-Q 있음 (lspci 확인) |
-| nvidia-container-toolkit | 미설치 |
-| nvidia-smi | 드라이버 있는데 커널과 통신 실패 |
-| CAN | can0 UP, can1 DOWN |
-| v4l2loopback | 미로드, `/dev/video0-8`는 있음 |
-| RealSense udev 규칙 | 설치됨 (`99-realsense-libusb.rules`) |
-| redis-server | 미설치 (바이너리 없음) |
-| `/srv/piper-data` | 없음 |
-| systemd 데몬 유닛 | 없음 (호스트 저장소가 이 기능이 없는 `master` 브랜치라서) |
-| 호스트 파이썬 | 3.12.3 (`/usr/bin/python3`), PEP 668 externally-managed |
-| 이미 설치돼 있는 것 | `numpy`, `opencv-python-headless`, `Pillow`, `piper-sdk 0.6.1`, `python-can 4.6.1` |
-| 없는 것 | `redis`(py client), `pyrealsense2` (poetry 캐시에 cp312 wheel은 있음) |
-| 인터넷 | 됨 (pypi.org 200) |
-| 호스트 저장소 상태 | `master` 브랜치, `1b19fbf`, origin과 ahead 62 / behind 49, `.claude/settings.json` 로컬 수정 있음 |
+| `piper-web-backend/frontend:v0.2.0` | `docker load` 완료, `:latest`로도 태깅 |
+| `docker compose up` | 정상, frontend `:8081`, backend `/health` 200 |
+| GPU | RTX 4050, `docker --gpus all` 검증 완료 |
+| redis | unixsocket + TCP 둘 다 동작 |
+| 데몬 4개 (estopd/robotd/camerad/rsd) | systemd 유저 유닛, active, 재시작 0회 |
+| CAN | `can0`(follower) + `can1`(leader) 둘 다 UP, 1Mbps |
+| RealSense | 장치 인식됨 (color/depth/infrared) |
+| v4l2loopback | 불필요 (shm 방식 채택으로 대체됨) |
 
 ---
 
 ## 미결정
 
 - compose 파일을 `build:` → `image:` 참조로 바꿀지, 아니면 배포용으로 별도
-  `docker-compose.release.yml`을 둘지
-- 데몬 venv 표준 경로 (`~/.venvs/piper-daemons` 가제) — 여러 호스트에 배포한다면
+  `docker-compose.release.yml`을 둘지 — 지금은 로드한 이미지를 `:latest`로 태깅해서 우회함
+- 데몬 venv 표준 경로 (`~/.venvs/piper-daemons`) — 여러 호스트에 배포한다면
   경로를 고정하고 `install-daemons.sh`가 그 경로를 찾게 바꿀지 검토
-- release 버전 태깅 규칙 (`v0.1.x` 계속 쓸지, 이미지 태그와 git 태그를 어떻게 묶을지)
-- `can1`을 이 배포에서 쓰는지 (듀얼암 여부) — 사람 확인 필요
-- 호스트 `master` 브랜치에 남아있는 62커밋(ahead)이 뭔지 — 그냥 두고 새 브랜치로 덮을지,
-  따로 볼 게 있는지 확인 필요
+- release 버전 태깅 규칙 — `v0.2.0`까지는 순번대로 감. 이미지 태그와 git 태그를 자동으로
+  묶는 스크립트는 아직 없음 (수작업)
+- `docker-compose.override.yml`의 포트 재배정을 release tarball에 템플릿으로 포함시킬지,
+  아니면 매번 그 호스트의 빈 포트를 확인해서 손으로 만들지
+- 호스트 `master` 브랜치에 남아있던 62커밋(ahead) — 이번 배포는 `wip/upgrade` 기준으로
+  이미지를 만들어 우회했지만, 호스트에 남은 구버전 체크아웃 자체는 안 건드림
