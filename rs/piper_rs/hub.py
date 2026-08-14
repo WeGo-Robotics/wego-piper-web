@@ -366,7 +366,16 @@ class _RSDevice:
         # (그러면 소비자가 발행자 없는 세그먼트를 열어 "멈춘 화면"을 본다.)
         self._running = False
         t = self._thread
-        if t and t.is_alive():
+        # ⚠ **읽기 스레드가 자기 자신을 부를 수 있다.** `_declare_lost()` 는 루프
+        # 안에서 불리는데, 거기서 자기를 join 하면 `RuntimeError: cannot join
+        # current thread` 로 **이 함수가 여기서 끊긴다** — 세그먼트도 안 지워지고
+        # 파이프라인도 안 닫힌 채로. 실기에서 D405 가 USB 에서 떨어졌을 때
+        # 그 상태가 됐고, rsd 를 재시작하기 전엔 다시 잡히지 않았다.
+        #
+        # 자기 자신일 때 join 을 건너뛰어도 안전하다: 부른 쪽이 곧 `return` 하고,
+        # 같은 스레드라 그 사이 프레임이 하나 더 나갈 수 없다 — 위 순서 규칙이
+        # 지키려던 것이 바로 그것이다.
+        if t and t.is_alive() and t is not threading.current_thread():
             t.join(timeout=2)
         self._thread = None
         for stream in stopping:

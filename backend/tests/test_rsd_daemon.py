@@ -216,3 +216,58 @@ def test_presence_check_does_not_query_librealsense():
              if isinstance(n, ast.Call)}
     assert not any("rs." in c or "query_devices" in c for c in calls), \
         f"librealsense 를 부른다: {calls}"
+
+
+def test_losing_a_device_from_the_read_thread_actually_tears_down():
+    """**회귀** — `RuntimeError: cannot join current thread`.
+
+    `_declare_lost()` 는 **읽기 스레드 안에서** 불린다. 그런데 정리를 맡은
+    `_stop_pipeline()` 이 그 스레드를 join 하려 해서, 실기에서 이렇게 터졌다:
+
+        파이프라인 정지 실패 (335122270699): cannot join current thread
+
+    예외가 join 에서 나므로 **그 뒤가 통째로 안 돌았다** — 세그먼트가 안 지워져
+    소비자는 멈춘 화면을 계속 보고, `pipeline.stop()` 도 안 불려 장치를 쥔 채로
+    남는다. `.120` 의 D405 가 USB 에서 떨어졌을 때 rsd 를 재시작하기 전에는
+    다시 안 잡힌 이유가 이것이다.
+
+    ⚠ 위 테스트들이 이걸 못 잡은 이유는 `_stop_pipeline` 을 **스텁으로 갈아끼워서**다.
+    여기서는 진짜를 부른다.
+    """
+    import threading
+
+    from piper_rs.hub import _RSDevice
+
+    dev = _RSDevice("S1", "D405", "", {"color"})   # 4번째는 "제공 가능한" 스트림
+    dev._active = {"color"}                        # 지금 발행 중인 것은 이쪽이다
+
+    class _Pipe:
+        stopped = False
+
+        def try_wait_for_frames(self, timeout_ms=0):
+            raise RuntimeError("No device connected")
+
+        def stop(self):
+            _Pipe.stopped = True
+
+    stopped_streams = []
+    import piper_rs.publish as pub
+    real_stop = pub.stop
+    pub.stop = lambda cam_id, unlink_segment=True: stopped_streams.append(cam_id)
+    try:
+        dev._pipeline = _Pipe()
+        dev._running = True
+        # ⚠ 지역 참조로 든다 — 정리가 제대로 돌면 `dev._thread` 는 None 이 된다
+        t = threading.Thread(target=dev._read_loop)
+        dev._thread = t
+        t.start()
+        t.join(timeout=10)
+        assert not t.is_alive(), "읽기 루프가 안 끝났다"
+        assert dev._thread is None, "정리가 스레드 참조를 안 비웠다"
+    finally:
+        pub.stop = real_stop
+
+    assert _Pipe.stopped, "pipeline.stop() 이 안 불렸다 — 장치를 쥔 채로 남는다"
+    assert stopped_streams == ["rs:S1:color"], \
+        f"세그먼트를 안 지웠다 — 소비자가 멈춘 화면을 본다: {stopped_streams}"
+    assert dev._pipeline is None and dev._active == set()
