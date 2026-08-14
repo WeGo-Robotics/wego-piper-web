@@ -442,10 +442,16 @@ def test_robotd_exposes_only_what_the_gateway_calls():
     from piper_robot.hub import RobotHub
 
     src = (Path(__file__).resolve().parents[2] / "daemons" / "robotd.py").read_text()
+    tree = ast.parse(src)
     methods = next(
         {e.value for e in n.value.elts}
-        for n in ast.walk(ast.parse(src))
+        for n in ast.walk(tree)
         if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "_METHODS"
     )
-    missing = {m for m in methods if not hasattr(RobotHub, m)}
-    assert not missing, f"허브에 없는 메서드를 노출한다: {sorted(missing)}"
+    # ⚠ 허브만 보면 안 된다. robotd 의 `_Serving` 이 몇 개를 **덮어쓰거나 추가**한다
+    # (`connect` 는 발행까지 켜고, `lost` 는 브리지 매니저에게 묻는다) — 그것도
+    # 실재하는 메서드다. 허브에만 있어야 한다고 못 박으면 그 층이 못 자란다.
+    served = {n.name for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)
+              for n in cls.body if isinstance(n, ast.FunctionDef)}
+    missing = {m for m in methods if not hasattr(RobotHub, m) and m not in served}
+    assert not missing, f"허브에도 데몬에도 없는 메서드를 노출한다: {sorted(missing)}"

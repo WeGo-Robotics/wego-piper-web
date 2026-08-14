@@ -48,6 +48,20 @@ def slot_to_can_name(slot: str) -> str:
 
 # ── CAN 포트 스캔 ──
 
+def iface_exists(iface: str) -> bool:
+    """이 CAN 인터페이스가 아직 커널에 있는가.
+
+    **USB-CAN 어댑터를 뽑으면 커널이 즉시 지운다** — 카메라의 `/dev/videoN` 과
+    같은 결정적 신호다. 읽기 실패는 버스가 조용한 것일 수도 있어 그것만으로는
+    "없어졌다"고 못 하지만, 이건 다르다.
+
+    sysfs 조회라 사실상 공짜고 네트워크 네임스페이스 안에서만 뜻이 있다 —
+    robotd 는 호스트에서 도므로 맞다 (게이트웨이 컨테이너는 브리지 네트워크라
+    이걸 못 본다. 그래서 판정이 **데몬 쪽**에 있어야 한다).
+    """
+    return Path(f"/sys/class/net/{iface}").exists()
+
+
 def _read_can_rx(iface: str) -> int:
     """sysfs에서 CAN RX 패킷 수 읽기 (non-blocking)."""
     try:

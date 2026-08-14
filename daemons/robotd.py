@@ -50,6 +50,7 @@ _METHODS = {
     "clear_errors", "read_error", "enable_torque", "disable_torque", "go_parking",
     "start_motion_detect", "motion_status",
     "init_interface", "check_active", "sniff_ids", "rename_interface", "recover_usb", "usb_info",
+    "lost",
 }
 
 
@@ -77,6 +78,15 @@ class _Serving(RobotHub):
     def release_all(self) -> bool:
         publish.arm_bridge_manager.stop_all()
         return super().release_all()
+
+    def lost(self) -> list[dict]:
+        """**데몬이 판정한** 사라진 팔들.
+
+        게이트웨이가 세그먼트 나이로 추론하면 늦고, 애초에 컨테이너 안에서는
+        `/sys/class/net` 이 안 보여 인터페이스 소멸을 알 수도 없다
+        (브리지 네트워크). 판정이 여기 있어야 하는 이유다.
+        """
+        return publish.arm_bridge_manager.lost()
 
 
 def serve(bus: Bus, hub: _Serving) -> None:

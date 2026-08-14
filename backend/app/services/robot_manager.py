@@ -101,6 +101,16 @@ def _pair(result, fallback: str) -> tuple[bool, str]:
 
 # ── 라우터가 직접 부르는 하드웨어 조작 (RPC) ──
 
+def lost_arms() -> list[dict]:
+    """**robotd 가 판정한** 사라진 팔. 게이트웨이가 세그먼트로 추론하지 않는다.
+
+    ⚠ 게이트웨이는 컨테이너에서 돌고 브리지 네트워크라 `/sys/class/net` 에
+    `can0` 이 안 보인다 — 인터페이스 소멸을 **볼 수가 없다.** 판정이 데몬 쪽에
+    있어야 하는 이유가 하나 더 있는 셈이다.
+    """
+    return _call("lost", default=[]) or []
+
+
 def get_usb_info() -> dict:
     return _call("usb_info", default={}) or {}
 

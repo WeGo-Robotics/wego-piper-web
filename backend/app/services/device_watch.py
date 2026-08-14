@@ -197,7 +197,25 @@ class DeviceWatch:
         return out
 
     def _robots(self) -> list[Alert]:
-        from app.services.robot_manager import robot_manager, robotd_available
+        from app.services.robot_manager import (
+            lost_arms, robot_manager, robotd_available)
+
+        arms = robot_manager.arms
+
+        def _name(iface: str) -> str:
+            arm = arms.get(iface)
+            return arm.role if arm and arm.role != "unknown" else iface
+
+        # ⚠ **데몬이 판정한 것을 먼저 쓴다.** robotd 는 `can0` 인터페이스가 사라진 것을
+        # 1초 안에 보지만, 게이트웨이는 컨테이너라 `/sys/class/net` 자체가 안 보인다.
+        try:
+            declared = [_device_gone("robot", i["id"], _name(i["id"]))
+                        for i in lost_arms() if i.get("id")]
+        except Exception as exc:
+            logger.debug("robotd lost() 조회 실패: %s", exc)
+            declared = []
+        if declared:
+            return declared
 
         try:
             alive, stopped = _survey_arms()
@@ -219,11 +237,6 @@ class DeviceWatch:
         # 구분할 수 없고, 그때는 그 장치의 USB 를 보라는 쪽이 쓸모 있다.
         if len(missing) >= 2:
             return [_all_gone("robot", "robotd", len(missing))]
-
-        arms = robot_manager.arms
-        def _name(iface: str) -> str:
-            arm = arms.get(iface)
-            return arm.role if arm and arm.role != "unknown" else iface
 
         return [_device_gone("robot", i, _name(i)) for i in missing]
 

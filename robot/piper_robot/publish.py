@@ -27,6 +27,7 @@ import logging
 import threading
 import time
 
+from piper_robot.can import iface_exists
 from piper_robot.joints import denormalize_all
 from piper_robot.safety import Reason, SafetyConfig, filter_goal
 from piper_shm import ActionReader, ArmSegmentError, StateWriter
@@ -61,6 +62,9 @@ class ArmBridge:
     def __init__(self, arm, safety: SafetyConfig | None = None) -> None:
         self.arm = arm                    # `piper_robot.arm.Arm`
         self.iface = arm.iface
+        # 팔이 사라졌다고 **데몬이 판정한** 시각. 게이트웨이가 세그먼트 나이로
+        # 추론하지 않게 하려는 것이다 (`lost()` RPC 로 나간다).
+        self.lost_at: float = 0.0
         self.safety = safety or SafetyConfig()
         self._state: StateWriter | None = None
         self._running = False
@@ -96,6 +100,8 @@ class ArmBridge:
     def stop(self) -> None:
         # ⚠ **순서가 중요하다.** 스레드를 먼저 멈춘다 — 세그먼트를 먼저 닫으면
         # 그 사이 루프가 한 번 더 발행해 세그먼트를 되살린다 (rsd 에서 겪었다).
+        # 사용자가 일부러 끊는 것 — 사라진 게 아니므로 판정을 지운다
+        self.lost_at = 0.0
         self._running = False
         for t in self._threads:
             if t.is_alive():
@@ -110,12 +116,27 @@ class ArmBridge:
         logger.info("팔 shm 브리지 정지: %s (발행 %d, 송신 %d)",
                     self.iface, self.published, self.sent)
 
+    # CAN 인터페이스가 아직 있는지 보는 주기. `/sys/class/net` 조회라 사실상 공짜다.
+    PRESENCE_S = 1.0
+    # 인터페이스는 남아 있는데 읽기만 계속 실패하는 경우의 상한 (100Hz 기준 ~2초).
+    MAX_READ_FAILS = 200
+
     def _publish_loop(self) -> None:
         period = 1.0 / STATE_HZ
         next_diag = 0.0
+        next_presence = 0.0
+        fails = 0
         err_code = ctrl_mode = 0
         while self._running:
             t0 = time.monotonic()
+            # ⚠ **인터페이스가 사라진 것이 결정적 증거다.** USB-CAN 어댑터를 뽑으면
+            # 커널이 `can0` 을 즉시 지운다 — 카메라의 `/dev/videoN` 과 같은 신호다.
+            # 읽기 실패는 버스가 조용한 것일 수도 있어 그것만으로는 판정하지 않는다.
+            if t0 >= next_presence:
+                next_presence = t0 + self.PRESENCE_S
+                if not iface_exists(self.iface):
+                    self._declare_lost("CAN 인터페이스가 사라졌습니다")
+                    return
             try:
                 # 진단 필드는 핫패스가 아니다. 매 사이클 읽으면 100Hz 로 락을
                 # 세 번씩 잡게 되고, 정작 급한 관절 읽기가 그만큼 늦어진다.
@@ -129,10 +150,35 @@ class ArmBridge:
                 if values is not None and self._state is not None:
                     self._state.publish(values, err_code=err_code, ctrl_mode=ctrl_mode)
                     self.published += 1
+                    fails = 0
+                else:
+                    fails += 1
             except Exception as exc:
+                fails += 1
                 logger.warning("상태 발행 실패 (%s): %s", self.iface, exc)
                 time.sleep(0.1)
+            if fails >= self.MAX_READ_FAILS:
+                self._declare_lost("연속으로 관절 상태를 읽지 못했습니다")
+                return
             time.sleep(max(0.0, period - (time.monotonic() - t0)))
+
+    def _declare_lost(self, why: str) -> None:
+        """팔이 없어졌다고 판정하고 **발행을 끊는다.**
+
+        세그먼트를 남기지 않는 것이 중요하다: 남겨두면 소비자(추론·녹화)가
+        열어놓고 **멈춘 자세**를 관측으로 받는다 — 로봇이 실제로는 없는데
+        정책은 마지막 자세를 계속 보는 상태가 된다.
+        """
+        logger.warning("%s: %s — 발행을 중단합니다", self.iface, why)
+        self.lost_at = time.time()
+        self._running = False
+        if self._state is not None:
+            try:
+                self._state.close()
+            except Exception:
+                pass
+            self._state = None
+        A.unlink(A.segment_name(self.iface, A.KIND_ACTION))
 
     def _command_loop(self) -> None:
         """명령 세그먼트가 생기면 붙어서 소비한다.
@@ -258,6 +304,11 @@ class ArmBridgeManager:
     def stop_all(self) -> None:
         for iface in list(self.bridges):
             self.stop(iface)
+
+    def lost(self) -> list[dict]:
+        """**데몬이 판정한** 사라진 팔들. 게이트웨이가 추론하지 않게 하려는 것이다."""
+        return [{"id": iface, "at": b.lost_at}
+                for iface, b in self.bridges.items() if b.lost_at]
 
     def sweep_stale(self) -> list[str]:
         """지난 프로세스가 남긴 팔 세그먼트 정리. **기동 시 한 번만.**
