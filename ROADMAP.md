@@ -363,6 +363,7 @@ daemon-split 6의 systemd 유닛화는 그 이음매에 **`SystemdRunner`를 하
 | **[manual-control](feature/manual-control.md)** | 웹 조그(1)·MIT 스파이크(2)는 robotd 위에서 **지금 가능**, 병렬 트랙. 중력 보상(3~4)은 **트랙 E(URDF) 의존**, 키네스테틱 녹화(5)는 그 뒤 |
 | **[bimanual](feature/bimanual.md)** | G4 구현 — bi 클래스 3개(WeGo repo)로 녹화·추론·파킹 단일화. robotd 변경 0이라 구조 개편과 **안 겹침.** 전제는 하드웨어뿐(팔 4대 + udev 4개 확장) |
 | ~~[policy-ui-spec](feature/policy-ui-spec.md)~~ | ☑ **완료** — 정책 하나 추가에 손댈 곳이 **6군데 → 0**. 게이트웨이·wrapper·프론트가 같은 YAML 을 읽는다 |
+| **[layout-redesign](feature/layout-redesign.md)** | 좌측 세로 내비 + 상단 상태바. **지금 가능** — 프론트 껍데기 + 요약 API 하나뿐이고 페이지 내용은 안 건드린다. 1단계만으로 메뉴 한계가 풀린다 |
 | **[llm-integration](feature/llm-integration.md)** | 분리수거 판단·플래너용 구조화 출력 클라이언트. 백엔드 서비스뿐이라 **아예 안 겹침** — 1단계는 지금 가능, 스텝 합류는 episode-orchestrator 뒤 |
 | 자체 Hub 서버 | 여기까지 온 뒤 판단 |
 
