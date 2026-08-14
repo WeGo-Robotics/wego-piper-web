@@ -180,6 +180,24 @@ class RobotHub:
 
     # ── CAN 인터페이스 관리 ──
 
+    def init_interface(self, iface: str, bitrate: int) -> tuple[bool, str]:
+        from piper_robot.can import init_can_interface
+
+        return init_can_interface(iface, bitrate)
+
+    def check_active(self, iface: str, interval: float = 0.3) -> bool:
+        """게이트웨이 컨테이너는 브리지 네트워크라 `can0`/`can1` 자체가 안 보인다
+        (network_mode: host 를 뺐다) — sysfs rx 카운터를 읽으려면 여기(호스트)를 거쳐야 한다."""
+        from piper_robot.can import check_can_active
+
+        return check_can_active(iface, interval)
+
+    def sniff_ids(self, iface: str, duration: float = 1.2) -> dict:
+        """raw CAN 소켓도 마찬가지로 호스트 네트워크 네임스페이스가 있어야 열린다."""
+        from piper_robot.can import sniff_can_ids
+
+        return sniff_can_ids(iface, duration)
+
     def rename_interface(self, old: str, new: str) -> tuple[bool, str]:
         from piper_robot.can import rename_can_interface
 

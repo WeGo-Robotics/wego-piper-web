@@ -28,13 +28,13 @@ from app.services import presets
 from piper_bus import contract as C
 from piper_bus.client import Bus
 
-# 장치를 열지 않는 진단 유틸은 그대로 쓴다 (라우터가 직접 import 한다)
-from piper_robot.can import (  # noqa: F401
-    check_can_active,
-    scan_can_interfaces,
-    sniff_can_ids,
-    slot_to_can_name,
-)
+# 순수 문자열 계산이라 장치·네트워크 네임스페이스가 필요 없는 것만 그대로 쓴다.
+from piper_robot.can import slot_to_can_name  # noqa: F401
+# ⚠ init_can_interface·check_can_active·sniff_can_ids·scan_can_interfaces 는 여기서
+# 직접 재노출하지 않는다. `ip link set ... up`은 NET_ADMIN이 필요하고, sysfs rx
+# 카운터·raw CAN 소켓·`ip link show`는 `can0`/`can1`이 보이는 네트워크 네임스페이스가
+# 있어야 하는데 backend 컨테이너는 `network_mode: host`를 뺀 브리지 네트워크라 둘 다 없다
+# (docker-compose.yml). rename_interface·recover_usb 와 같은 이유로 robotd RPC 를 거친다.
 from piper_robot.joints import denormalize_all  # noqa: F401
 
 logger = logging.getLogger(__name__)
@@ -112,6 +112,20 @@ def recover_usb_controllers(pci_addrs: list[str] | None = None) -> tuple[bool, s
     if isinstance(r, (list, tuple)) and len(r) == 3:
         return bool(r[0]), str(r[1]), list(r[2])
     return False, "robotd 응답 없음", []
+
+
+def init_can_interface(iface: str, bitrate: int = 1_000_000) -> tuple[bool, str]:
+    return _pair(_call("init_interface", iface, bitrate, timeout=30), "CAN 인터페이스 초기화 실패")
+
+
+def check_can_active(iface: str, interval: float = 0.3) -> bool:
+    return bool(_call("check_active", iface, interval, default=False, timeout=int(interval) + 5))
+
+
+def sniff_can_ids(iface: str, duration: float = 1.2) -> dict:
+    empty = {"iface": iface, "total": 0, "has_traffic": False, "master_detected": False,
+              "groups": {}, "ids": [], "error": "robotd 응답 없음"}
+    return _call("sniff_ids", iface, duration, default=empty, timeout=int(duration) + 5) or empty
 
 
 def rename_can_interface(old: str, new: str) -> tuple[bool, str]:
