@@ -239,8 +239,28 @@ class ArmInfo:
         _call("disconnect", self.iface)
         self.connected = False
 
+    def mark_absent(self) -> None:
+        """robotd 가 이 팔을 모른다 — **장치 사실만** 지운다.
+
+        역할·슬롯·등록 여부는 사람이 정한 것이라 남긴다. 하지만 `connected` 는
+        장치 사실이고, 데몬이 죽은 동안 살아남으면 **화면은 "연결됨"인데
+        `/dev/shm/piper.arm.<iface>.state` 가 없어 추론이 죽는다.** 실제로 겪었다 —
+        에러는 "세그먼트가 없습니다"라고 하는데 로봇 페이지는 초록불이라
+        무엇이 잘못됐는지 알 길이 없었다.
+
+        데몬이 **다시 떠도** False 다. robotd 는 재시작하면 아무 팔도 안 쥐고 있으므로,
+        살아 있다는 것만으로 연결됐다고 하면 같은 거짓말을 한 번 더 하게 된다.
+        """
+        self.connected = False
+
     def refresh_mode(self) -> None:
-        self.absorb(_call("refresh_mode", self.iface, default={}) or {})
+        info = _call("refresh_mode", self.iface, default={}) or {}
+        # 빈 응답 = robotd 가 죽었거나 이 팔을 모른다. `absorb` 는 빈 dict 를
+        # 그냥 무시하므로(실패한 RPC 가 값을 지우면 안 되니까) 여기서 갈라야 한다.
+        if info:
+            self.absorb(info)
+        else:
+            self.mark_absent()
 
     def refresh_ctrl_mode(self) -> int | None:
         self.refresh_mode()
@@ -289,13 +309,22 @@ class RobotManager:
 
         데몬이 죽어 있으면 빈 목록이 온다 — 그래도 **등록된 설정은 지우지 않는다.**
         데몬 재시작 사이에 사용자가 맞춰둔 역할·슬롯이 사라지면 안 된다.
+
+        ⚠ 다만 **`connected` 는 설정이 아니라 장치 사실이다.** 데몬이 안 말한 팔은
+        연결 안 된 것으로 내린다 — 안 그러면 robotd 가 죽은 뒤에도 화면이
+        "연결됨"인 채로 남고, 추론만 "세그먼트가 없습니다"로 죽는다.
         """
+        seen: set[str] = set()
         for info in _call("scan", default=[], timeout=30) or []:
             iface = info["iface"]
+            seen.add(iface)
             arm = self.arms.get(iface)
             if arm is None:
                 arm = self.arms[iface] = ArmInfo(iface=iface)
             arm.absorb(info)
+        for iface, arm in self.arms.items():
+            if iface not in seen:
+                arm.mark_absent()
         return [a.to_dict() for a in self.arms.values()]
 
     def connect_arm(self, iface: str) -> tuple[bool, str]:

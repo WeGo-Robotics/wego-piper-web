@@ -333,3 +333,61 @@ def test_preset_with_a_type_still_applies_it(monkeypatch, tmp_path):
     rm.load_preset("있음")
     assert rm.selected_type == "so_follower"
     assert rm.config_name == "X"
+
+
+# ── robotd 가 죽었을 때 무엇을 말하는가 ──────────────────────────────────────
+
+def test_dead_daemon_does_not_leave_the_arm_looking_connected(monkeypatch):
+    """**회귀** — robotd 가 죽으면 팔은 연결 해제로 내려가야 한다.
+
+    실제로 겪은 일: robotd 가 죽었는데 로봇 페이지는 초록불이었고, 추론만
+    `팔 세그먼트가 없습니다: /dev/shm/piper.arm.can1.state` 로 죽었다.
+    화면과 에러가 서로 다른 말을 하면 원인을 찾을 길이 없다.
+
+    `scan()` 이 데몬이 준 것만 순회했기 때문이다 — 빈 목록이 오면 루프가 아예
+    안 돌아 `connected` 가 마지막 값에 머물렀다.
+    """
+    from app.services import robot_manager as rm
+
+    mgr = rm.RobotManager()
+    arm = mgr.arms["can1"] = ArmInfo(iface="can1")
+    arm.connected = True
+    arm.role = "follower"
+    arm.ready = True
+
+    monkeypatch.setattr(rm, "_call", lambda *a, **k: k.get("default"))
+    mgr.scan()
+
+    assert arm.connected is False        # 장치 사실은 데몬을 따라 내려간다
+    assert arm.role == "follower"        # 사람이 정한 것은 남는다
+    assert arm.ready is True
+
+
+def test_refresh_mode_marks_absent_when_the_daemon_says_nothing(monkeypatch):
+    """`/robots/current` 폴링 경로도 같아야 한다 — 여기만 남으면 스캔 전까지 거짓말한다."""
+    from app.services import robot_manager as rm
+
+    arm = ArmInfo(iface="can1")
+    arm.connected = True
+    monkeypatch.setattr(rm, "_call", lambda *a, **k: k.get("default"))
+    arm.refresh_mode()
+    assert arm.connected is False
+
+
+def test_a_restarted_daemon_alone_does_not_mean_connected(monkeypatch):
+    """robotd 가 다시 떠도 팔을 쥔 것은 아니다 — 세그먼트도 아직 없다.
+
+    생존 표시만 보고 연결됐다고 하면 같은 거짓말을 한 번 더 하게 된다.
+    """
+    from app.services import robot_manager as rm
+
+    mgr = rm.RobotManager()
+    arm = mgr.arms["can1"] = ArmInfo(iface="can1")
+    arm.connected = True
+
+    # 데몬은 살아나서 iface 는 보이지만 아무것도 연결하지 않았다
+    monkeypatch.setattr(rm, "_call", lambda *a, **k: (
+        [{"iface": "can1", "connected": False, "state": "UP"}]
+        if a and a[0] == "scan" else k.get("default")))
+    mgr.scan()
+    assert arm.connected is False
