@@ -11,7 +11,9 @@
 """
 
 import logging
+import os
 import threading
+import time
 
 from piper_cam import controls as controls_mod
 from piper_cam import v4l2
@@ -33,6 +35,9 @@ class _V4l2Camera:
         self.fps: int | None = None
         # 요청 프로파일 `(w, h, fps)`. None 이면 드라이버 기본값.
         self._want: tuple[int, int, int] | None = None
+        # 장치가 사라졌다고 **데몬이 판정한** 시각. 게이트웨이가 추론하지 않게 하려고
+        # 여기서 결론을 낸다 (`lost()` RPC 로 나간다).
+        self.lost_at: float = 0.0
 
     @property
     def connected(self) -> bool:
@@ -87,17 +92,69 @@ class _V4l2Camera:
 
         publish_frame(self.id, frame)
 
+    # 장치 노드가 사라졌는지 보는 주기. `os.path.exists` 라 사실상 공짜다.
+    _PRESENCE_S = 1.0
+    # 노드는 남아 있는데 읽기만 계속 실패하는 경우의 상한 (드라이버가 늦게 정리하거나
+    # 커널이 노드를 남겨두는 일이 있다).
+    _MAX_READ_FAILS = 30
+
     def _loop(self) -> None:
+        """읽고 발행한다. **장치가 없어지면 스스로 결론을 낸다.**
+
+        예전에는 실패하면 그냥 계속 돌았다. 그래서 USB 를 뽑아도 발행만 멈추고
+        세그먼트는 남아, 게이트웨이가 "오래됐다"로 **추론**해야 했다 —
+        늦고, 읽기가 계속 성공하는 장치에서는 아예 못 잡았다.
+        소유자가 판정하는 편이 빠르고 확실하다.
+        """
+        last_check = time.monotonic()
+        fails = 0
         while self._running and self._cap:
             try:
                 ok, frame = self._cap.read()
                 if ok and frame is not None:
                     self._publish(frame)
+                    fails = 0
+                else:
+                    fails += 1
             except Exception:
-                break
+                fails += 1
+
+            now = time.monotonic()
+            if now - last_check >= self._PRESENCE_S:
+                last_check = now
+                # ⚠ 노드가 사라진 것이 **결정적 증거**다 — USB 를 뽑으면
+                # `/dev/videoN` 이 즉시 없어진다. 읽기 실패는 일시적일 수 있다.
+                if not os.path.exists(self.id):
+                    self._declare_lost("장치 노드가 사라졌습니다")
+                    return
+            if fails >= self._MAX_READ_FAILS:
+                self._declare_lost("연속으로 프레임을 읽지 못했습니다")
+                return
+
+    def _declare_lost(self, why: str) -> None:
+        """장치가 없어졌다고 판정하고 **발행을 끊는다.**
+
+        세그먼트를 지우는 것이 중요하다 — 남겨두면 소비자가 열어놓고 멈춘 화면을
+        본다. 등록·설정은 게이트웨이가 들고 있으므로 여기서 지울 것은 없다.
+        """
+        logger.warning("%s: %s — 발행을 중단합니다", self.id, why)
+        self.lost_at = time.time()
+        self._running = False
+        if self._cap is not None:
+            try:
+                self._cap.release()
+            except Exception:
+                pass
+            self._cap = None
+        from piper_cam.publish import stop as stop_publish
+
+        stop_publish(self.id)
 
     def disconnect(self) -> None:
         from piper_cam.publish import stop as stop_publish
+
+        # 사용자가 일부러 닫는 것 — 사라진 게 아니므로 판정을 지운다
+        self.lost_at = 0.0
 
         # ⚠ **순서가 중요하다.** 읽기 스레드를 먼저 멈춘다 — 발행자를 먼저 닫으면
         # 그 사이 루프가 한 프레임 더 발행해 **세그먼트를 되살린다.**
@@ -226,6 +283,14 @@ class V4l2Hub:
 
     def last_apply_report(self, cam_id: str) -> dict:
         return self._last_apply.get(cam_id, {})
+
+    def lost(self) -> list[dict]:
+        """**데몬이 판정한** 사라진 장치들. 게이트웨이가 추론하지 않게 하려는 것이다.
+
+        `disconnect()` 로 닫은 것은 여기 안 들어온다 — 사라진 것과 닫은 것은 다르다.
+        """
+        return [{"id": cam_id, "at": cam.lost_at}
+                for cam_id, cam in self.cams.items() if cam.lost_at]
 
     def info(self, cam_id: str) -> dict:
         """해상도 등 — 연결 중이면 실제 값, 아니면 스캔 값."""

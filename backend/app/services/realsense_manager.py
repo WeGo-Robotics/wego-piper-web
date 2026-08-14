@@ -86,6 +86,10 @@ class RealSenseHub:
         """프로파일 컨트롤 적용. 순서·검증은 데몬이 한다."""
         return self._call("apply_controls", cam_id, wanted, default={}, timeout=30) or {}
 
+    def lost(self) -> list[dict]:
+        """**데몬이 판정한** 사라진 장치. 게이트웨이가 세그먼트로 추론하지 않는다."""
+        return self._call("lost", default=[]) or []
+
     def last_apply_report(self, cam_id: str) -> dict:
         return self._call("last_apply_report", cam_id, default={}) or {}
 

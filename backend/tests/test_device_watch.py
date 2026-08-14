@@ -240,3 +240,41 @@ def test_message_text_comes_from_the_backend():
     page = (Path(W.__file__).resolve().parents[3]
             / "frontend/src/components/DeviceAlerts.tsx").read_text()
     assert "USB" not in page.split("*/", 1)[-1], "화면이 문구를 직접 만들고 있다"
+
+
+# ── 데몬이 판정한 것을 먼저 쓴다 ────────────────────────────────────────────
+
+def test_the_daemon_verdict_wins_over_inference(world, monkeypatch):
+    """**회귀** — "카메라를 뽑으면 바로 알람이 안 온다".
+
+    게이트웨이가 세그먼트 나이로 추론하면 STALE_S(5초) + 감시 주기(2초)가 걸리고,
+    읽기가 계속 성공하는 장치에서는 아예 못 잡는다. 장치를 쥔 데몬은 노드가
+    사라진 것을 1초 안에 보므로, 그 판정을 **먼저** 쓴다.
+    """
+    world["cams"] = [_Cam("/dev/video2", cam_type="opencv", label="탑")]
+    world["cam_fresh"] = ["dev_video2"]           # 세그먼트는 아직 신선하다
+    world["apply"]()
+    monkeypatch.setattr("app.services.v4l2_client.v4l2_hub.lost",
+                        lambda: [{"id": "/dev/video2", "at": 1.0}])
+    monkeypatch.setattr("app.services.realsense_manager.realsense_hub.lost", lambda: [])
+    new, _ = W.DeviceWatch().check()
+    assert [a.reason for a in new] == ["device_gone"]
+    assert "탑" in new[0].text
+
+
+def test_daemon_loss_is_declared_on_node_removal():
+    """camerad 가 `/dev/videoN` 사라짐을 **결정적 증거**로 삼는가.
+
+    읽기 실패는 일시적일 수 있지만 노드가 없어진 것은 아니다 — USB 를 뽑으면
+    커널이 즉시 지운다.
+    """
+    import ast
+    from pathlib import Path
+
+    src = (Path(W.__file__).resolve().parents[3] / "cam/piper_cam/hub.py").read_text()
+    loop = next(n for n in ast.walk(ast.parse(src))
+                if isinstance(n, ast.FunctionDef) and n.name == "_loop")
+    calls = {n.func.attr for n in ast.walk(loop)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+    assert "exists" in calls, "노드 존재를 안 본다 — 읽기 실패만으로는 늦다"
+    assert "_declare_lost" in calls, "결론을 안 내고 계속 돈다"

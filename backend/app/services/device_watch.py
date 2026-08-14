@@ -6,7 +6,16 @@ USB 가 빠지거나 xHCI 컨트롤러가 죽으면(이 저장소에서 실제�
 사라지는데, 화면은 그대로였다. 목록은 마지막에 본 상태에 머물고, 추론만 뒤늦게
 "세그먼트가 없습니다"로 죽었다. **화면과 에러가 서로 다른 말을 하면 원인을 못 찾는다.**
 
-## 판정 근거 — 발행이 **멈췄는가** (존재가 아니라)
+## 누가 판정하는가 — **장치를 쥔 데몬이** 한다
+
+가장 좋은 신호는 소유자에게서 온다. camerad 는 `/dev/videoN` 노드가 사라진 것을
+1초마다 보고, rsd 는 파이프라인이 5초간 프레임을 못 내면 결론을 낸다. 그러면
+데몬이 발행을 끊고 `lost()` 로 알려준다 — **추론이 아니라 사실**이다.
+
+게이트웨이의 세그먼트 신선도 판정은 **보조**로 남는다: 데몬이 통째로 죽거나
+얼어붙어(SIGSTOP·D-state) 스스로 결론을 못 내는 경우가 그것으로 잡힌다.
+
+## 보조 판정 — 발행이 **멈췄는가** (존재가 아니라)
 
 처음에는 "세그먼트가 없으면 사라진 것"으로 봤는데, **실기에서 아무 반응이 없었다.**
 USB 를 뽑아도 세그먼트는 남아 있기 때문이다:
@@ -220,8 +229,29 @@ class DeviceWatch:
 
     def _cameras(self) -> list[Alert]:
         from app.services.camera_manager import camera_manager
-        from app.services.realsense_manager import rs_available
+        from app.services.realsense_manager import realsense_hub, rs_available
         from app.services.v4l2_client import v4l2_hub
+
+        cams = camera_manager.cameras
+
+        def _name(cam_id: str) -> str:
+            cam = cams.get(cam_id)
+            return (cam.label or cam.name) if cam else cam_id
+
+        # ⚠ **데몬이 판정한 것을 먼저 쓴다.** 장치를 쥔 쪽이 노드 사라짐을 1초 안에
+        # 보므로 여기서 세그먼트로 추론하는 것보다 빠르고 확실하다.
+        # 아래 신선도 판정은 데몬이 스스로 결론을 못 내는 경우(얼어붙음)용 보조다.
+        declared: list[Alert] = []
+        for hub in (realsense_hub, v4l2_hub):
+            try:
+                for item in hub.lost():
+                    cid = item.get("id", "")
+                    if cid:
+                        declared.append(_device_gone("camera", cid, _name(cid)))
+            except Exception as exc:
+                logger.debug("lost() 조회 실패: %s", exc)
+        if declared:
+            return declared
 
         try:
             from piper_shm import segment_for_camera
@@ -230,7 +260,6 @@ class DeviceWatch:
             logger.debug("카메라 신선도 조회 실패: %s", exc)
             return []
 
-        cams = camera_manager.cameras
         # 세그먼트 이름 ↔ 카메라 id. 사라진 뒤에도 이름을 말하려면 매핑이 필요한데,
         # 관리자에서 사라진 카메라는 세그먼트 이름밖에 안 남는다.
         seg_of = {c.id: segment_for_camera(c.id) for c in cams.values()}

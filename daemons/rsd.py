@@ -50,7 +50,7 @@ _METHODS = {
     "scan", "connect", "disconnect", "release_all", "is_d405",
     "probe", "hardware_reset", "list_controls", "set_control",
     "info", "set_depth_encoding",
-    "apply_controls", "last_apply_report",
+    "apply_controls", "last_apply_report", "lost",
 }
 
 

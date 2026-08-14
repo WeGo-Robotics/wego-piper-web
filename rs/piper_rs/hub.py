@@ -130,6 +130,8 @@ class _RSDevice:
         self._profiles: dict[str, list[tuple[int, int, int]]] = {}  # supported() 캐시
         # 지금 파이프라인이 **실제로** 돌리고 있는 프로파일. 요청과 다를 수 있다.
         self._running_profile: dict[str, tuple[int, int, int] | None] = {}
+        # 장치가 사라졌다고 **데몬이 판정한** 시각. 게이트웨이가 추론하지 않게 한다.
+        self.lost_at: float = 0.0
 
     @contextlib.contextmanager
     def op_guard(self, timeout: float = 6.0):
@@ -385,14 +387,27 @@ class _RSDevice:
         self._thread = threading.Thread(target=self._read_loop, daemon=True)
         self._thread.start()
 
+    # 이만큼 연속으로 프레임이 안 오면 장치가 없어진 것으로 본다.
+    # ⚠ **librealsense 에 다시 묻지 않는다.** `query_devices()` 를 주기적으로 부르면
+    # D405 를 커널 D-state 로 물리게 하는 그 질의를 늘리는 셈이다 —
+    # 프로세스를 나눠서 격리한 이유가 그건데, 스스로 그 위험을 만들 이유가 없다.
+    # 파이프라인이 돌고 있는데 프레임이 안 온다는 것만으로 충분한 증거다.
+    _MAX_EMPTY = 5          # try_wait_for_frames(timeout_ms=1000) 기준 = 약 5초
+
     def _read_loop(self) -> None:
         import numpy as np
         import cv2
+        empty = 0
         while self._running and self._pipeline is not None:
             try:
                 ok, frames = self._pipeline.try_wait_for_frames(timeout_ms=1000)
                 if not ok or frames is None:
+                    empty += 1
+                    if empty >= self._MAX_EMPTY:
+                        self._declare_lost()
+                        return
                     continue
+                empty = 0
                 updates: dict[str, object] = {}
                 if "color" in self._active:
                     cf = frames.get_color_frame()
@@ -444,6 +459,8 @@ class _RSDevice:
             return ok
 
     def disconnect_stream(self, stream: str) -> None:
+        # 사용자가 일부러 닫는 것 — 사라진 게 아니므로 판정을 지운다
+        self.lost_at = 0.0
         with self._op_lock:
             if self._refcount.get(stream, 0) > 0:
                 self._refcount[stream] -= 1
@@ -454,6 +471,23 @@ class _RSDevice:
                     self._latest.clear()
             else:
                 self._ensure_streams(active)
+
+    def _declare_lost(self) -> None:
+        """프레임이 끊겼다 — 장치가 없어진 것으로 판정하고 발행을 끊는다.
+
+        세그먼트를 남기지 않는 것이 중요하다: 남겨두면 소비자가 열어놓고
+        **멈춘 화면**을 본다. 등록·설정은 게이트웨이가 들고 있다.
+        """
+        logger.warning("RealSense %s: %d초간 프레임이 없습니다 — 발행을 중단합니다",
+                       self.serial, self._MAX_EMPTY)
+        self.lost_at = time.time()
+        self._running = False
+        try:
+            self._stop_pipeline()
+        except Exception as exc:
+            logger.warning("파이프라인 정지 실패 (%s): %s", self.serial, exc)
+        with self._lock:
+            self._latest.clear()
 
     def force_release(self) -> None:
         """모든 스트림 refcount를 0으로 만들고 파이프라인을 정지한다.
@@ -588,6 +622,20 @@ class RealSenseHub:
         except Exception as exc:
             logger.warning("query stream profiles failed: %s", exc)
         return avail
+
+    def lost(self) -> list[dict]:
+        """**데몬이 판정한** 사라진 스트림들. 게이트웨이가 추론하지 않게 하려는 것이다.
+
+        디바이스 단위로 판정하고 스트림 단위로 펼친다 — 화면과 매핑이 스트림 단위라
+        "어느 카메라"를 스트림 이름으로 말해야 알아본다.
+        """
+        out = []
+        for serial, dev in self._devices.items():
+            if not dev.lost_at:
+                continue
+            streams = sorted(dev._active) or sorted(dev.available)
+            out += [{"id": make_id(serial, st), "at": dev.lost_at} for st in streams]
+        return out
 
     def scan(self) -> list[dict]:
         """연결된 RealSense를 스트림별 엔트리로 반환."""

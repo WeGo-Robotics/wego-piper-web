@@ -40,7 +40,7 @@ _running = True
 _METHODS = {
     "scan", "connect", "disconnect", "release_all",
     "probe", "list_controls", "set_control", "info",
-    "apply_controls", "last_apply_report",
+    "apply_controls", "last_apply_report", "lost",
 }
 
 
