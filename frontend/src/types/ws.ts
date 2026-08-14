@@ -67,7 +67,7 @@ export type DeviceAlert = {
   /** `device_gone` = 그 장치의 USB / `daemon_down` = 데몬이 내려갔다 /
    *  `all_gone` = 한꺼번에 전부 (데몬 또는 USB 컨트롤러 — 확인법이 다르다).
    *  안 가르면 데몬이 죽었을 때 USB 를 확인하러 가게 만든다. */
-  reason: 'device_gone' | 'daemon_down' | 'all_gone'
+  reason: 'device_gone' | 'daemon_down' | 'all_gone' | 'stalled'
   text: string
 }
 

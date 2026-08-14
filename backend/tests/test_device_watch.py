@@ -26,8 +26,10 @@ class _Arm:
 
 
 class _Cam:
-    def __init__(self, cam_id, ready=True, cam_type="realsense", label=""):
+    def __init__(self, cam_id, ready=True, cam_type="realsense", label="", present=True):
         self.id, self.ready, self.cam_type, self.label = cam_id, ready, cam_type, label
+        # 스캔이 이 장치를 봤는가. 멈춘 이유가 케이블인지 데몬인지를 이게 가른다.
+        self.present = present
         self.name = cam_id
 
 
@@ -85,15 +87,31 @@ def test_idle_is_not_a_fault(world):
 
 # ── 쓰던 중에 빠졌다 ────────────────────────────────────────────────────────
 
-def test_a_stopped_publisher_is_reported(world):
-    """세그먼트가 남아 있는데 멈췄다 = 발행자가 비정상으로 끝났다."""
-    world["cams"] = [_Cam("rs:1:color", label="탑뷰"), _Cam("rs:2:color", label="손목")]
+def test_a_stopped_publisher_that_vanished_blames_the_cable(world):
+    """스캔에도 안 보이면 뽑힌 것이다."""
+    world["cams"] = [_Cam("rs:1:color", label="탑뷰"),
+                     _Cam("rs:2:color", label="손목", present=False)]
     world["cam_fresh"] = ["rs_1_color"]
     world["cam_stale"] = ["rs_2_color"]
     world["apply"]()
     new, _ = W.DeviceWatch().check()
     assert len(new) == 1
     assert new[0].reason == "device_gone" and "손목" in new[0].text
+    assert "USB" in new[0].text
+
+
+def test_a_present_device_is_not_blamed_on_the_cable(world):
+    """**회귀** — 노트북 **내장** 웹캠에 "USB 연결을 확인하세요" 가 떴다.
+
+    뽑을 수도 없는 장치다. 발행이 멈춘 이유가 케이블이라고 단정하면 사용자를
+    있는 장치를 뽑으러 보낸다. 스캔이 봤으면(`present`) 데몬이 스트림을 놓친 것이다.
+    """
+    world["cams"] = [_Cam("/dev/video0", cam_type="opencv", label="탑", present=True)]
+    world["cam_stale"] = ["dev_video0"]
+    world["apply"]()
+    new, _ = W.DeviceWatch().check()
+    assert [a.reason for a in new] == ["stalled"]
+    assert "USB" not in new[0].text and "꽂혀 있습니다" in new[0].text
 
 
 def test_one_arm_stopped_is_a_usb_problem(world):

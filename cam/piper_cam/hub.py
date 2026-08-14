@@ -94,9 +94,15 @@ class _V4l2Camera:
 
     # 장치 노드가 사라졌는지 보는 주기. `os.path.exists` 라 사실상 공짜다.
     _PRESENCE_S = 1.0
-    # 노드는 남아 있는데 읽기만 계속 실패하는 경우의 상한 (드라이버가 늦게 정리하거나
-    # 커널이 노드를 남겨두는 일이 있다).
-    _MAX_READ_FAILS = 30
+    # 노드는 남아 있는데 읽기만 계속 실패하는 경우의 상한 — **시간 기준**이다.
+    #
+    # ⚠ 횟수로 세면 안 된다. 실패한 `cap.read()` 는 **즉시** 돌아오므로 30회가
+    # 몇 밀리초 만에 찬다 — 일시적인 딸꾹질에도 "사라졌다"를 선언하게 된다.
+    # 게다가 그 사이 루프가 전력으로 돌아 CPU 를 태운다 (실기에서 camerad 가
+    # 하루도 안 돼 CPU 4시간 41분을 썼다).
+    _FAIL_GRACE_S = 3.0
+    # 실패했을 때 쉬는 시간. 안 쉬면 위와 같은 폭주가 된다.
+    _FAIL_SLEEP_S = 0.05
 
     def _loop(self) -> None:
         """읽고 발행한다. **장치가 없어지면 스스로 결론을 낸다.**
@@ -107,17 +113,19 @@ class _V4l2Camera:
         소유자가 판정하는 편이 빠르고 확실하다.
         """
         last_check = time.monotonic()
-        fails = 0
+        failing_since = 0.0
         while self._running and self._cap:
             try:
                 ok, frame = self._cap.read()
-                if ok and frame is not None:
-                    self._publish(frame)
-                    fails = 0
-                else:
-                    fails += 1
             except Exception:
-                fails += 1
+                ok, frame = False, None
+            if ok and frame is not None:
+                self._publish(frame)
+                failing_since = 0.0
+            else:
+                if not failing_since:
+                    failing_since = time.monotonic()
+                time.sleep(self._FAIL_SLEEP_S)      # 폭주 방지
 
             now = time.monotonic()
             if now - last_check >= self._PRESENCE_S:
@@ -127,8 +135,8 @@ class _V4l2Camera:
                 if not os.path.exists(self.id):
                     self._declare_lost("장치 노드가 사라졌습니다")
                     return
-            if fails >= self._MAX_READ_FAILS:
-                self._declare_lost("연속으로 프레임을 읽지 못했습니다")
+            if failing_since and now - failing_since >= self._FAIL_GRACE_S:
+                self._declare_lost(f"{self._FAIL_GRACE_S:.0f}초간 프레임을 읽지 못했습니다")
                 return
 
     def _declare_lost(self, why: str) -> None:

@@ -101,3 +101,23 @@ def test_gateway_survives_a_dead_daemon(monkeypatch):
     assert hub.scan() == []
     assert hub.connect("/dev/video0") == (False, "camerad 연결 실패")
     assert hub.list_controls("/dev/video0") == []
+
+
+def test_failure_backoff_is_time_based_not_count_based():
+    """**회귀** — 실패한 `cap.read()` 는 즉시 돌아온다.
+
+    횟수로 세면 30회가 몇 밀리초 만에 차서 일시적 딸꾹질에도 "사라졌다"가 되고,
+    그 사이 루프가 전력으로 돌아 CPU 를 태운다 — 실기에서 camerad 가 하루도 안 돼
+    CPU 4시간 41분을 썼다.
+    """
+    import ast
+    import inspect
+
+    from piper_cam.hub import _V4l2Camera
+
+    assert not hasattr(_V4l2Camera, "_MAX_READ_FAILS"), "아직 횟수로 센다"
+    assert _V4l2Camera._FAIL_GRACE_S > 0 and _V4l2Camera._FAIL_SLEEP_S > 0
+
+    loop = ast.parse(inspect.getsource(_V4l2Camera._loop).lstrip())
+    calls = {ast.unparse(n.func) for n in ast.walk(loop) if isinstance(n, ast.Call)}
+    assert "time.sleep" in calls, "실패해도 안 쉰다 — 루프가 폭주한다"

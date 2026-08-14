@@ -161,6 +161,19 @@ def _all_gone(kind: str, daemon: str, count: int) -> Alert:
                  "데몬이 멀쩡하면 USB 컨트롤러가 내려간 것입니다(`dmesg | tail`).")
 
 
+def _stalled(kind: str, ident: str, name: str) -> Alert:
+    """장치는 **있는데** 발행이 멈췄다 — 케이블 문제가 아니다.
+
+    USB 를 확인하라고 하면 있는 장치를 뽑으러 가게 만든다. 실제로 그 오보를 냈다:
+    노트북 내장 웹캠(뽑을 수도 없는 것)에 "USB 연결을 확인하세요" 가 떴다.
+    """
+    what = "로봇팔" if kind == "robot" else "카메라"
+    return Alert(kind, ident, name, "stalled",
+                 f"{what} {name} 의 발행이 멈췄습니다 ({ident}). **장치는 꽂혀 있습니다** — "
+                 "데몬이 스트림을 놓친 것이라 다시 연결하면 됩니다. "
+                 "이 상태로 녹화·추론을 시작하면 시작하자마자 실패합니다.")
+
+
 def _daemon_down(kind: str, daemon: str) -> Alert:
     what = "로봇팔" if kind == "robot" else "카메라"
     return Alert(kind, f"daemon:{daemon}", daemon, "daemon_down",
@@ -310,8 +323,14 @@ class DeviceWatch:
             for seg in mine_missing:
                 cam = cams.get(id_of.get(seg, ""))
                 cid = cam.id if cam else seg
-                out.append(_device_gone("camera", cid,
-                                        (cam.label or cam.name) if cam else seg))
+                label = (cam.label or cam.name) if cam else seg
+                # ⚠ **스캔이 장치를 봤으면 케이블 탓이 아니다.** 이 판정은 세그먼트
+                # 신선도만 보는 보조라 "왜 멈췄나"를 모른다 — 장치 존재 여부가
+                # 그걸 가른다. 안 가르면 내장 웹캠에 "USB 를 확인하세요" 가 뜬다.
+                if cam is not None and getattr(cam, "present", True):
+                    out.append(_stalled("camera", cid, label))
+                else:
+                    out.append(_device_gone("camera", cid, label))
         return out
 
 
