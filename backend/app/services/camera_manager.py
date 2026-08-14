@@ -90,6 +90,12 @@ class CameraInfo:
     stream_type: str = ""
     connected: bool = False
     ready: bool = False       # 등록 완료 → 사용 가능 리스트에 올라감
+    # 마지막 스캔에서 데몬이 이 장치를 **봤는가**. `connected` 와 다른 사실이다:
+    # `present && !connected` = 꽂혀 있는데 안 열었다 (정상)
+    # `!present`              = 아예 없다 (뽑혔다)
+    # 예전엔 둘 다 `connected: false` 라 화면이 구분할 수 없었고, 뽑아둔 카메라가
+    # 스캔 목록에 그대로 남아 "왜 계속 나오지" 가 됐다.
+    present: bool = True
     # 설정값 (요청 해상도 — 실제 값은 데몬이 정한다)
     width: int | None = None
     height: int | None = None
@@ -146,6 +152,7 @@ class CameraInfo:
             "serial": self.serial,
             "stream_type": self.stream_type,
             "connected": self.connected,
+            "present": self.present,
             "ready": self.ready,
             "has_preview": self._hub.has_frame(self.id),
             # 깊이 인코딩은 **데이터셋 해석의 근거**다 — 화면에서 현재 값을 보고
@@ -211,6 +218,7 @@ class CameraInfo:
         먼저 겪었다 (robot_manager.ArmInfo.mark_absent).
         """
         self.connected = False
+        self.present = False
 
     def apply_controls(self, wanted: dict) -> dict:
         """프로파일 컨트롤 적용. **순서와 검증은 데몬이 한다** — 자동 모드
@@ -246,12 +254,21 @@ class CameraManager:
             seen.add(d["id"])
             self._absorb(d, cam_type="realsense")
 
-        # ⚠ **안 보인 카메라는 연결 해제로 내린다.** 예전에는 보고된 것만 순회해서,
+        # ⚠ **안 보인 카메라는 없는 것으로 표시한다.** 예전에는 보고된 것만 순회해서,
         # USB 가 빠져도 목록이 마지막 상태에 머물렀다 — 사용자가 스캔을 눌러도
-        # 아무것도 안 바뀌었다. 등록·별칭은 사람이 정한 것이라 남긴다.
-        for cam_id, cam in self.cameras.items():
-            if cam_id not in seen:
-                cam.mark_absent()
+        # 아무것도 안 바뀌었다.
+        #
+        # 등록된 카메라는 **남긴다** — 별칭·매핑을 사람이 정했고, 다시 꽂으면
+        # 그대로 돌아와야 한다. 대신 `present: false` 로 표시해 화면이 "없음"을
+        # 보여줄 수 있게 한다.
+        #
+        # 등록 안 된 카메라는 **지운다.** 보존할 사람의 결정이 없고, 남겨두면
+        # 뽑아둔 장치가 "미등록" 목록에 계속 떠서 고를 수 있는 것처럼 보인다.
+        for cam_id in [c for c in self.cameras if c not in seen]:
+            cam = self.cameras[cam_id]
+            cam.mark_absent()
+            if not cam.ready:
+                del self.cameras[cam_id]
 
         return [c.to_dict() for c in self.cameras.values()]
 
@@ -272,6 +289,7 @@ class CameraManager:
             cam = self.cameras[cam_id] = CameraInfo(id=cam_id, name=d["name"],
                                                     cam_type=cam_type)
         cam.name = d["name"]
+        cam.present = True
         cam.usb_port = d.get("usb_port", "")
         cam.usb_speed_mbps = int(d.get("usb_speed_mbps") or 0)
         # ⚠ `cam_type` 으로 분기하지 않는다 — "어느 데몬 소유인가"는 `_hub` 한 곳에서만

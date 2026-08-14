@@ -289,3 +289,57 @@ def test_a_device_already_broken_at_startup_is_still_reported(world):
     world["apply"]()
     new, _ = W.DeviceWatch().check()             # 갓 뜬 감시자 — 기억이 비어 있다
     assert [a.reason for a in new] == ["device_gone"]
+
+
+# ── 스캔 목록이 진실을 말하는가 ─────────────────────────────────────────────
+
+def test_scan_drops_unregistered_cameras_that_vanished(monkeypatch):
+    """**회귀** — 카메라를 뽑고 스캔해도 목록에 계속 나왔다.
+
+    등록 안 한 카메라는 보존할 사람의 결정이 없다. 남겨두면 뽑아둔 장치가
+    "미등록" 목록에 떠서 고를 수 있는 것처럼 보인다.
+    """
+    from app.services.camera_manager import CameraInfo, CameraManager
+
+    mgr = CameraManager()
+    mgr.cameras["/dev/video9"] = CameraInfo(id="/dev/video9", name="사라질 것")
+    monkeypatch.setattr("app.services.camera_manager.v4l2_hub.scan", lambda: [])
+    monkeypatch.setattr("app.services.camera_manager.realsense_hub.scan", lambda: [])
+    mgr.scan()
+    assert "/dev/video9" not in mgr.cameras
+
+
+def test_scan_keeps_registered_cameras_but_marks_them_absent(monkeypatch):
+    """등록한 것은 남긴다 — 별칭·매핑을 사람이 정했고 다시 꽂으면 돌아와야 한다.
+
+    다만 `present: false` 로 갈라야 화면이 "사용 가능"과 구분할 수 있다.
+    예전엔 둘 다 `connected: false` 뿐이라 뽑아둔 카메라가 사용 가능에 남았다.
+    """
+    from app.services.camera_manager import CameraInfo, CameraManager
+
+    mgr = CameraManager()
+    cam = mgr.cameras["/dev/video9"] = CameraInfo(id="/dev/video9", name="탑", label="탑")
+    cam.ready, cam.connected = True, True
+    monkeypatch.setattr("app.services.camera_manager.v4l2_hub.scan", lambda: [])
+    monkeypatch.setattr("app.services.camera_manager.realsense_hub.scan", lambda: [])
+    mgr.scan()
+    assert "/dev/video9" in mgr.cameras
+    assert cam.present is False and cam.connected is False
+    assert cam.ready is True and cam.label == "탑"
+
+
+def test_recording_refuses_an_absent_camera(monkeypatch):
+    """**회귀** — 뽑힌 채로 녹화를 시작하면 "카메라 연결 실패" 라는 애매한 에러였다.
+
+    원인은 설정이 아니라 케이블인데, 문구가 그걸 안 말했다.
+    """
+    from app.services import camera_config as CC
+    from app.services.camera_manager import CameraInfo
+
+    cam = CameraInfo(id="/dev/video9", name="탑", label="탑")
+    cam.ready, cam.present = True, False
+    monkeypatch.setattr(CC.camera_manager, "cameras", {"/dev/video9": cam})
+    monkeypatch.setattr(CC.settings, "camera_transport", "shm")
+    with pytest.raises(CC.CameraPrepareError) as e:
+        CC.prepare_cameras({"top": "/dev/video9"}, purpose="recording")
+    assert "USB" in str(e.value) and "탑" in str(e.value)

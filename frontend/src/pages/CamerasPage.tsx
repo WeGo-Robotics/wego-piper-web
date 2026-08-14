@@ -58,6 +58,10 @@ type CamInfo = {
   /** `label || name`. 각 화면이 따로 계산하지 않도록 백엔드가 준다. */
   display_name?: string
   connected: boolean; ready: boolean; has_preview: boolean
+  /** 마지막 스캔에서 데몬이 이 장치를 봤는가. `connected` 와 다른 사실이다 —
+   *  `present && !connected` 는 꽂혀 있는데 안 연 것이고, `!present` 는 아예 없는 것.
+   *  예전엔 둘 다 `connected: false` 라 뽑아둔 카메라가 목록에 그대로 남았다. */
+  present?: boolean
   /** RealSense 스트림 종류. depth 일 때만 깊이 인코딩 설정이 뜬다. */
   stream_type?: string
   /** rsd 가 소유하는 깊이 인코딩 파라미터 — 데이터셋 해석의 근거다. */
@@ -340,9 +344,14 @@ export default function CamerasPage() {
   // 설정을 바꿔도 모달 안 값이 안 갱신된다.
   const settingsCamera = settingsCam ? cams.find((c) => c.id === settingsCam) ?? null : null
 
-  const ready = cams.filter((c) => c.ready)
-  const connected = cams.filter((c) => c.connected && !c.ready)
-  const unconnected = cams.filter((c) => !c.connected && !c.ready)
+  // ⚠ **없는 것을 맨 먼저 가른다.** 등록된 카메라는 뽑혀도 목록에 남는데(별칭·매핑을
+  //   사람이 정했으므로), 그걸 "사용 가능"에 두면 녹화 매핑에 고를 수 있는 것처럼 보인다.
+  //   등록 안 된 것은 백엔드가 목록에서 아예 지운다.
+  const absent = cams.filter((c) => c.present === false)
+  const here = cams.filter((c) => c.present !== false)
+  const ready = here.filter((c) => c.ready)
+  const connected = here.filter((c) => c.connected && !c.ready)
+  const unconnected = here.filter((c) => !c.connected && !c.ready)
 
   if (loading) {
     return <div className="flex items-center justify-center h-64 gap-2 text-neutral-400"><Spinner /> 로딩 중...</div>
@@ -381,7 +390,35 @@ export default function CamerasPage() {
         )}
       </div>
 
-      {/* 등록됨 (최상단) */}
+      {/* ⚠ 사라진 등록 카메라 — **맨 위**에 둔다. 이걸 모르고 녹화를 시작하면
+          시작하자마자 실패하는데, 화면 아래쪽에 있으면 아무도 안 본다. */}
+      {absent.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold text-red-400">연결 안 됨 ({absent.length})</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {absent.map((cam) => (
+              <div key={cam.id} className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 space-y-1">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-red-400">✕</span>
+                  <span className="font-medium">{cam.display_name || cam.name}</span>
+                </div>
+                <p className="text-[11px] text-neutral-400">{cam.id}</p>
+                <p className="text-[11px] text-red-300">
+                  스캔에서 안 보입니다 — USB 를 확인하세요. 등록은 남아 있으므로
+                  다시 꽂고 스캔하면 별칭·설정 그대로 돌아옵니다.
+                </p>
+                <button
+                  onClick={() => handleUnregister(cam.id)}
+                  className="text-[11px] text-neutral-400 hover:text-white underline">
+                  더 안 쓸 거면 등록 해제
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 등록됨 */}
       {ready.length > 0 && (
         <div className="space-y-2">
           <h2 className="text-sm font-semibold text-green-400">사용 가능 ({ready.length})</h2>

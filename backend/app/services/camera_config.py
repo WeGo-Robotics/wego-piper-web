@@ -227,6 +227,13 @@ def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str,
         cam = camera_manager.cameras.get(cam_id)
         if cam is None:
             raise CameraPrepareError(f"카메라를 찾을 수 없습니다: {cam_id}")
+        # ⚠ **없는 장치를 열려고 시도하지 않는다.** 시도하면 "카메라 연결 실패" 라는
+        # 애매한 문구가 나오는데, 원인은 설정이 아니라 **케이블**이다.
+        # 사용자가 겪은 그대로다: 뽑힌 채로 녹화를 시작하면 그냥 에러가 났다.
+        if not cam.present:
+            raise CameraPrepareError(
+                f"카메라 '{cam.label or cam.name}'({cam_id})가 연결돼 있지 않습니다. "
+                "USB 를 확인하고 카메라 페이지에서 스캔하세요.")
         got = cam.running_profile()
         # 같은 요청을 이미 반영했으면 건드리지 않는다. 끊었다 붙이면 그 사이
         # 소비자가 프레임을 잃고, rsd 쪽은 refcount 만 늘어난다.
