@@ -394,6 +394,7 @@ RECORD_ARGS_MAP: dict[str, str] = {
     "push_to_hub": "--dataset.push_to_hub",
     "private": "--dataset.private",
     "display_data": "--display_data",
+    "play_sounds": "--play_sounds",
 }
 
 
@@ -408,6 +409,10 @@ def build_record_args(params: dict) -> list[str]:
         **params,
         "robot_type": resolve_robot_type(params.get("robot_type", "")),
         "teleop_type": resolve_teleop_type(params.get("teleop_type", "")),
+        # ⚠ LeRobot 기본값(True)을 그대로 두면 `log_say`가 `spd-say`를 실행하려다
+        # FileNotFoundError로 **레코딩 전체를 죽인다** (컨테이너엔 스피커도
+        # speech-dispatcher도 없다 — 서버가 소리를 낸들 아무도 못 듣는다).
+        "play_sounds": False,
     }
 
     for key, value in params.items():
