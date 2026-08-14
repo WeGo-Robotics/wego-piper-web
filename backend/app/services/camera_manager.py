@@ -49,19 +49,6 @@ def _active_controls(cam) -> dict:
 
 
 
-def _forget(kind: str, ident: str) -> None:
-    """사용자가 **일부러** 끊었다 — 사라진 것이 아니므로 감시 기억에서 지운다.
-
-    안 지우면 끊을 때마다 "사라졌습니다" 경보가 뜬다.
-    """
-    try:
-        from app.services.device_watch import device_watch
-
-        device_watch.forget(kind, ident)
-    except Exception:
-        pass
-
-
 @dataclass
 class CameraInfo:
     """카메라 **기록**. 장치 I/O 는 데몬이 한다.
@@ -201,7 +188,6 @@ class CameraInfo:
     def disconnect(self) -> None:
         self._hub.disconnect(self.id)
         self.connected = False
-        _forget("camera", self.id)
 
     def get_controls(self) -> list[dict]:
         return self._hub.list_controls(self.id)

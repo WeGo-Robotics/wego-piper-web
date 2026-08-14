@@ -19,15 +19,7 @@ export default function DeviceAlerts() {
   const [alerts, setAlerts] = useState<DeviceAlert[]>([])
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
 
-  // WS 는 **전이에서만** 온다 — 이미 사라진 뒤에 페이지를 열었으면 그 순간을
-  // 놓쳤으므로 현재 목록을 처음에 한 번 받는다.
-  useEffect(() => {
-    api.get<{ alerts: DeviceAlert[] }>('/devices/alerts')
-      .then((r) => setAlerts(r.alerts))
-      .catch(() => {})
-  }, [])
-
-  useWebSocket('/ws', {
+  const { connected } = useWebSocket('/ws', {
     onMessage: (msg) => {
       if (msg.type !== 'device_alert') return
       setAlerts(msg.data.alerts)
@@ -41,6 +33,18 @@ export default function DeviceAlerts() {
       }
     },
   })
+
+  // WS 는 **전이에서만** 온다 — 그 순간을 놓쳤으면 알 길이 없다. 그래서 소켓이
+  // (다시) 붙을 때마다 현재 목록을 받아온다.
+  //
+  // ⚠ 처음 한 번만 받아오면 **재연결 구간을 통째로 놓친다.** 백엔드를 재시작하는
+  // 배포가 정확히 그 구간을 만들고, 그 사이에 장치가 빠지면 화면은 영영 모른다.
+  useEffect(() => {
+    if (!connected) return
+    api.get<{ alerts: DeviceAlert[] }>('/devices/alerts')
+      .then((r) => setAlerts(r.alerts))
+      .catch(() => {})
+  }, [connected])
 
   const visible = alerts.filter((a) => !dismissed.has(a.id))
   if (visible.length === 0) return null

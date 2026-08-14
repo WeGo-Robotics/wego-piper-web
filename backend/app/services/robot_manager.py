@@ -158,19 +158,6 @@ def _save_custom_parking(iface: str, positions: dict) -> None:
 
 
 
-def _forget(kind: str, ident: str) -> None:
-    """사용자가 **일부러** 끊었다 — 사라진 것이 아니므로 감시 기억에서 지운다.
-
-    안 지우면 끊을 때마다 "사라졌습니다" 경보가 뜬다.
-    """
-    try:
-        from app.services.device_watch import device_watch
-
-        device_watch.forget(kind, ident)
-    except Exception:
-        pass
-
-
 @dataclass
 class ArmInfo:
     """팔 하나 — **설정은 여기, 장치 상태는 robotd.**
@@ -266,7 +253,6 @@ class ArmInfo:
     def disconnect(self) -> None:
         _call("disconnect", self.iface)
         self.connected = False
-        _forget("robot", self.iface)
 
     def mark_absent(self) -> None:
         """robotd 가 이 팔을 모른다 — **장치 사실만** 지운다.

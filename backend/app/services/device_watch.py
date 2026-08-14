@@ -40,15 +40,20 @@ USB 를 확인하러 가게 만든다. 그래서 데몬 생존을 **먼저** 보
 통째로 내려간 것이다(xHCI HC died — 이 저장소에서 겪었다). 둘 중 어느 쪽인지는
 확인 방법이 다르므로 **둘 다 적어준다.** 하나를 골라 틀리게 말하는 것보다 낫다.
 
-## 무엇을 "쥐고 있었다"로 볼 것인가 — 관리자 플래그가 아니다
+## 없어진 세그먼트는 안 본다 — **남아 있는데 멈춘 것**만 본다
 
-처음에는 `connected` 플래그를 봤는데, **스캔이 그 플래그를 내린다.** 그래서 장치가
-빠진 뒤 스캔을 누르면 경보가 사라졌다 — 정작 장치는 여전히 없는데. 실기에서 바로 걸렸다.
+한동안 "전에 봤는데 지금 없다"도 경보로 쳤다. 그러자 rsd 를 재시작하고 카메라를
+아직 안 열었을 뿐인 **정상 유휴 상태**가 "사라졌습니다"로 떴다. 세그먼트가 없는 데는
+이유가 둘이고(닫혀 있다 / 없어졌다) 세그먼트만으로는 못 가른다.
 
-그래서 **발행을 본 적이 있는지**를 여기서 직접 기억한다. 한 번이라도 세그먼트를
-봤던 장치가 안 보이면 사라진 것이다. 관리자 상태와 무관하므로 스캔·재연결이
-판정을 흔들지 못한다. 게이트웨이를 새로 띄우면 기억이 비어 있는데, 그것도 맞다 —
-**본 적 없는 장치를 잃었다고 하지 않는다.**
+그래서 신호를 하나로 좁혔다: **세그먼트가 있는데 멈춰 있다.** 이건 이유가 하나뿐이다 —
+발행자가 비정상으로 멈췄다. 닫으면 파일이 지워지고(`stop_publish`), 데몬은 기동할 때
+남은 것을 치우므로, 남아 있으면서 멈춘 것은 언제나 사고다.
+
+돌고 있던 카메라를 뽑는 것이 정확히 이 모양이다 — `cap.read()` 만 실패하고 파일은
+남는다. 반대로 **안 열어둔 카메라를 뽑는 것은 못 잡는다.** 그건 스캔이 잡고
+(`present: false`), 녹화 시작이 이름을 대며 거부한다. 즉시성이 필요한 쪽은
+"쓰던 중에 빠졌다" 이고, 그건 여기서 잡힌다.
 
 ## 전이에서만 알린다
 
@@ -161,26 +166,6 @@ class DeviceWatch:
 
     _seen: set[tuple[str, str]] = field(default_factory=set)
     _alerts: list[Alert] = field(default_factory=list)
-    # 한 번이라도 발행을 본 장치. **관리자 플래그가 아니라 여기가 근거다** — 위 참고.
-    _published: dict[str, set[str]] = field(
-        default_factory=lambda: {"robot": set(), "camera": set()})
-
-    def forget(self, kind: str, ident: str) -> None:
-        """사용자가 일부러 끊었다 — 사라진 것이 아니므로 기억에서 지운다.
-
-        ⚠ 기억은 **세그먼트 이름**으로 들고 있는데 호출부는 카메라 id 를 준다
-        (`rs:1:color` vs `rs_1_color`). 여기서 맞춰주지 않으면 지워지지 않고,
-        프리뷰를 끌 때마다 "사라졌습니다" 가 뜬다 — 실기에서 걸렸다.
-        """
-        key = ident
-        if kind == "camera":
-            try:
-                from piper_shm import segment_for_camera
-
-                key = segment_for_camera(ident)
-            except Exception:
-                pass
-        self._published.get(kind, set()).discard(key)
 
     def alerts(self) -> list[dict]:
         return [a.to_dict() for a in self._alerts]
@@ -211,21 +196,19 @@ class DeviceWatch:
             logger.debug("팔 신선도 조회 실패: %s", exc)
             return []
 
-        # ⚠ **멈춘 채 남아 있는 세그먼트도 아는 것으로 친다.** 발행을 본 적이 있는지만
-        # 따지면, 게이트웨이가 재시작될 때 이미 멈춰 있던 장치는 영영 기억에 안 들어가
-        # 조용해진다 — 배포로 백엔드를 재시작한 직후 실기에서 정확히 그랬다.
-        # 남아 있는데 멈춘 세그먼트는 **그 자체가 비정상**이다: 정상 해제는 파일을
-        # 지우고(`stop_publish`), 데몬은 기동할 때 남은 것을 치운다.
-        known = self._published["robot"]
-        known |= alive | stopped
-        missing = sorted(known - alive)
+        missing = sorted(stopped)
         if not missing:
+            # 발행이 아무것도 없다 — 쥐고 있다고 **기록된** 팔이 있는데 데몬이 죽었으면
+            # 그건 알린다. 팔을 안 연 유휴 상태와는 다르다.
+            held = [a for a in robot_manager.arms.values() if a.ready]
+            if held and not robotd_available():
+                return [_daemon_down("robot", "robotd")]
             return []
         if not robotd_available():
             return [_daemon_down("robot", "robotd")]
         # ⚠ **둘 이상일 때만** "한꺼번에" 다. 하나뿐이면 "전부"와 "그 하나"를
         # 구분할 수 없고, 그때는 그 장치의 USB 를 보라는 쪽이 쓸모 있다.
-        if len(missing) == len(known) and len(missing) >= 2:
+        if len(missing) >= 2:
             return [_all_gone("robot", "robotd", len(missing))]
 
         arms = robot_manager.arms
@@ -253,16 +236,16 @@ class DeviceWatch:
         seg_of = {c.id: segment_for_camera(c.id) for c in cams.values()}
         id_of = {seg: cid for cid, seg in seg_of.items()}
 
-        # ⚠ **멈춘 채 남아 있는 세그먼트도 아는 것으로 친다.** 발행을 본 적이 있는지만
-        # 따지면, 게이트웨이가 재시작될 때 이미 멈춰 있던 장치는 영영 기억에 안 들어가
-        # 조용해진다 — 배포로 백엔드를 재시작한 직후 실기에서 정확히 그랬다.
-        # 남아 있는데 멈춘 세그먼트는 **그 자체가 비정상**이다: 정상 해제는 파일을
-        # 지우고(`stop_publish`), 데몬은 기동할 때 남은 것을 치운다.
-        known = self._published["camera"]
-        known |= alive | stopped
-        missing = sorted(known - alive)
+        missing = sorted(stopped)
         if not missing:
-            return []
+            out: list[Alert] = []
+            for kind, daemon in (("realsense", "rsd"), ("opencv", "camerad")):
+                held = [c for c in cams.values() if c.ready and c.cam_type == kind]
+                alive_daemon = (rs_available() if kind == "realsense"
+                                else v4l2_hub.available())
+                if held and not alive_daemon:
+                    out.append(_daemon_down("camera", daemon))
+            return out
 
         def _kind(seg: str) -> str:
             cam = cams.get(id_of.get(seg, ""))
@@ -279,8 +262,7 @@ class DeviceWatch:
             if not by_type[kind]:
                 out.append(_daemon_down("camera", daemon))
                 continue
-            mine_known = [s for s in known if _kind(s) == kind]
-            if len(mine_missing) == len(mine_known) and len(mine_missing) >= 2:
+            if len(mine_missing) >= 2:
                 out.append(_all_gone("camera", daemon, len(mine_missing)))
                 continue
             for seg in mine_missing:
