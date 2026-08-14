@@ -281,7 +281,38 @@ cd frontend && npm run build     # 타입 검증은 반드시 build
 
 ## 상태
 
-기획안. 착수 전.
+◐ **1~3 완료** (2026-08-14). 4~8 남음.
+
+| # | 작업 | |
+|---|---|---|
+| 1 | `policies/*.yaml` + 로더 | ☑ [policy_spec.py](../backend/app/core/policy_spec.py), [policies.py](../backend/app/core/policies.py) |
+| 2 | LeRobot 생성기 + 상류 대조 | ☑ [tools/gen_policy_spec.py](../tools/gen_policy_spec.py) |
+| 3 | 학습 필드 → `<SpecFields>` | ☑ `TrainingPage` **125줄 삭제 / 45줄 추가** |
+| 4 | `runtime` 으로 `POLICY_IMPORTS` 대체 | ☐ 스펙엔 이미 있다 — wrapper 가 읽기만 하면 된다 |
+| 5 | `encoder_probe` 절로 프로브 분기 제거 | ☐ 스펙엔 이미 있다 — `EncoderProbePage` 6곳 |
+| 6 | `infer.extra_params` 로 `PARAM_SPEC` 역전 | ☐ |
+| 7 | 조건부 경고 | ☑ 3단계에 딸려 왔다 (`when`/`and`) |
+| 8 | 기기별 덮어쓰기 | ☑ 로더가 지원, 실기 확인 |
+
+### 생성기가 첫 실행에서 잡은 것
+
+**옛 화면 테이블이 LeRobot 에 없는 필드 둘을 노출하고 있었다.**
+
+| 정책 | 스키마에 있던 것 | 진짜 |
+|---|---|---|
+| `pi0_fast` | `freeze_vision_encoder` | **없음** (PI0FastConfig 에 그런 필드가 없다) |
+| `vqbet` | `n_action_steps` | `action_chunk_size` / `n_action_pred_token` |
+
+둘 다 지금 `supported: false` 라 아무도 안 밟았지만, 켰으면 **학습 시작에서 알 수 없는
+설정 키로 죽었을 것이다.** 손으로 베꼈으면 YAML 에도 그대로 옮겨 적었을 값이다.
+
+### 실기로 확인한 것
+
+- **깨진 파일 격리** — `act.yaml` 을 망가뜨리니 목록에 SmolVLA 만 남고
+  `정책 스펙 파싱 실패, 건너뜀: act.yaml` 이 찍혔다. 목록이 통째로 비지 않는다
+- **기기별 덮어쓰기** — `config_dir/policies/act.yaml` 에 `steps: 777` 만 적으니
+  그것만 바뀌고 `batch_size` 와 필드 5개는 그대로였다
+- **학습 인자 불변** — 미리보기 명령이 이관 전과 같다
 
 > 이 문서를 쓴 계기: ACT 추론에서 입력한 적 없는 task 가 뜬 사고.
 > 원인은 **감추는 조건과 보내는 조건이 다른 파일에 있었던 것**이고,
