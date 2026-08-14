@@ -195,11 +195,36 @@ class DeviceWatch:
     def check(self) -> tuple[list[Alert], list[Alert]]:
         """지금 상태를 보고 `(새로 생긴 것, 해소된 것)` 을 돌려준다."""
         found = self._collect()
+        # ⚠ **판정을 목록에도 반영한다.** 경보는 떴는데 카메라 페이지는 그 장치를
+        # 멀쩡한 것처럼 보여주던 문제가 있었다 — `present` 가 사용자가 스캔을
+        # 누를 때만 갱신됐기 때문이다. 여기가 이미 알고 있으니 여기서 내린다.
+        self._apply_to_managers(found)
         keys = {(a.kind, a.ident) for a in found}
         new = [a for a in found if (a.kind, a.ident) not in self._seen]
         gone = [a for a in self._alerts if (a.kind, a.ident) not in keys]
         self._seen, self._alerts = keys, found
         return new, gone
+
+    def _apply_to_managers(self, alerts: list[Alert]) -> None:
+        """사라진 장치를 관리자 목록에서도 "없음"으로 내린다.
+
+        등록·별칭은 사람이 정한 것이라 남긴다 (`mark_absent` 가 장치 사실만 지운다).
+        실패해도 경보를 막지 않는다 — 알리는 것이 본업이다.
+        """
+        gone = {(a.kind, a.ident) for a in alerts if a.reason in ("device_gone", "all_gone")}
+        if not gone:
+            return
+        try:
+            from app.services.camera_manager import camera_manager
+            from app.services.robot_manager import robot_manager
+
+            for kind, ident in gone:
+                target = (camera_manager.cameras if kind == "camera"
+                          else robot_manager.arms).get(ident)
+                if target is not None:
+                    target.mark_absent()
+        except Exception as exc:
+            logger.debug("판정 반영 실패: %s", exc)
 
     # ── 무엇이 사라졌나 ──
 
@@ -258,7 +283,11 @@ class DeviceWatch:
         from app.services.realsense_manager import realsense_hub, rs_available
         from app.services.v4l2_client import v4l2_hub
 
-        cams = camera_manager.cameras
+        all_cams = camera_manager.cameras
+        # ⚠ **쓰고 있는 것만 본다.** 스캔 probe 가 남긴 썸네일 세그먼트는 태어날 때부터
+        # 멈춰 있어서, 안 거르면 스캔만 눌러도 "발행이 멈췄다"가 뜬다.
+        # (데몬 생존 판정은 아래에서 `all_cams` 를 쓴다 — 등록만 해둔 것도 세야 한다.)
+        cams = {cid: c for cid, c in all_cams.items() if c.connected}
 
         def _name(cam_id: str) -> str:
             cam = cams.get(cam_id)
@@ -290,12 +319,15 @@ class DeviceWatch:
         # 관리자에서 사라진 카메라는 세그먼트 이름밖에 안 남는다.
         seg_of = {c.id: segment_for_camera(c.id) for c in cams.values()}
         id_of = {seg: cid for cid, seg in seg_of.items()}
+        # 관리자가 모르는 세그먼트는 우리 것이 아니다 — 남의 잔재나 테스트 산물이다
+        stopped = {s for s in stopped if s in id_of}
+        alive = {s for s in alive if s in id_of}
 
         missing = sorted(stopped)
         if not missing:
             out: list[Alert] = []
             for kind, daemon in (("realsense", "rsd"), ("opencv", "camerad")):
-                held = [c for c in cams.values() if c.ready and c.cam_type == kind]
+                held = [c for c in all_cams.values() if c.ready and c.cam_type == kind]
                 alive_daemon = (rs_available() if kind == "realsense"
                                 else v4l2_hub.available())
                 if held and not alive_daemon:

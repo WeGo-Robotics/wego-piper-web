@@ -108,7 +108,8 @@ def lost_arms() -> list[dict]:
     `can0` 이 안 보인다 — 인터페이스 소멸을 **볼 수가 없다.** 판정이 데몬 쪽에
     있어야 하는 이유가 하나 더 있는 셈이다.
     """
-    return _call("lost", default=[]) or []
+    # 짧은 타임아웃 — 2초마다 도는 상태 조회다 (카메라 쪽과 같은 이유)
+    return _call("lost", default=[], timeout=2) or []
 
 
 def get_usb_info() -> dict:

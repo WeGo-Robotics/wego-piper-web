@@ -87,8 +87,13 @@ class RealSenseHub:
         return self._call("apply_controls", cam_id, wanted, default={}, timeout=30) or {}
 
     def lost(self) -> list[dict]:
-        """**데몬이 판정한** 사라진 장치. 게이트웨이가 세그먼트로 추론하지 않는다."""
-        return self._call("lost", default=[]) or []
+        """**데몬이 판정한** 사라진 장치. 게이트웨이가 세그먼트로 추론하지 않는다.
+
+        ⚠ 타임아웃이 **짧다.** 이건 2초마다 도는 상태 조회지 작업이 아니다.
+        기본값(20초)이면 데몬이 막 죽었을 때 생존 표시가 아직 만료 안 된 창에서
+        감시자가 통째로 20초를 기다린다 — 그동안 다른 장치의 사라짐도 못 본다.
+        """
+        return self._call("lost", default=[], timeout=2) or []
 
     def last_apply_report(self, cam_id: str) -> dict:
         return self._call("last_apply_report", cam_id, default={}) or {}

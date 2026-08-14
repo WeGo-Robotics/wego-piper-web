@@ -32,6 +32,26 @@ def _usb_warning(speed_mbps: int) -> str | None:
     )
 
 
+# 이만큼 새 프레임이 없으면 스트림이 죽은 것으로 본다.
+# `device_watch.STALE_S` 와 같은 뜻이라 거기서 가져온다 — 두 곳에 적으면 갈린다.
+def _is_fresh(cam_id: str) -> bool:
+    """이 카메라의 세그먼트가 **지금도** 갱신되고 있는가."""
+    try:
+        import time
+
+        from app.services.device_watch import STALE_S
+        from piper_shm import Subscriber, segment_for_camera
+
+        sub = Subscriber(segment_for_camera(cam_id))
+        try:
+            wall = sub.wall_ns()
+        finally:
+            sub.close()
+        return bool(wall) and (time.time_ns() - wall) / 1e9 <= STALE_S
+    except Exception:
+        return False
+
+
 def _active_controls(cam) -> dict:
     """활성 프로파일에서 이 카메라의 컨트롤 값. 없으면 빈 dict.
 
@@ -142,6 +162,11 @@ class CameraInfo:
             "present": self.present,
             "ready": self.ready,
             "has_preview": self._hub.has_frame(self.id),
+            # ⚠ **프레임이 지금도 오고 있는가.** `has_preview` 와 다른 사실이다:
+            # 세그먼트에 마지막 프레임이 남아 있으면 그건 True 지만 스트림은
+            # 죽었을 수 있다. 그래서 뽑힌 카메라가 화면에서 **정상처럼 보였다.**
+            # 원인(케이블·데몬·멈춤)과 무관하게 "지금 영상이 오나"만 말한다.
+            "streaming": self.connected and _is_fresh(self.id),
             # 깊이 인코딩은 **데이터셋 해석의 근거**다 — 화면에서 현재 값을 보고
             # 고칠 수 있어야 한다.
             # ⚠ depth 일 때만 묻는다. `to_dict` 는 스캔에서 카메라마다 불리므로

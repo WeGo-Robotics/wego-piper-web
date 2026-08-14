@@ -26,8 +26,11 @@ class _Arm:
 
 
 class _Cam:
-    def __init__(self, cam_id, ready=True, cam_type="realsense", label="", present=True):
+    def __init__(self, cam_id, ready=True, cam_type="realsense", label="", present=True,
+                 connected=True):
         self.id, self.ready, self.cam_type, self.label = cam_id, ready, cam_type, label
+        # ⚠ 판정은 **쓰고 있는 것만** 본다 — 스캔 probe 썸네일을 사고로 읽지 않으려고.
+        self.connected = connected
         # 스캔이 이 장치를 봤는가. 멈춘 이유가 케이블인지 데몬인지를 이게 가른다.
         self.present = present
         self.name = cam_id
@@ -296,3 +299,77 @@ def test_daemon_loss_is_declared_on_node_removal():
              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
     assert "exists" in calls, "노드 존재를 안 본다 — 읽기 실패만으로는 늦다"
     assert "_declare_lost" in calls, "결론을 안 내고 계속 돈다"
+
+
+def test_a_scan_thumbnail_is_not_a_fault(world):
+    """**회귀** — 스캔만 눌러도 경보가 떴다.
+
+    `probe()` 는 썸네일 한 장을 남기고 장치를 놓는다 (스캔 목록에 그림을 보여주려고).
+    그 세그먼트는 **태어날 때부터 멈춰 있다** — 사고가 아니다.
+    판정은 관리자가 `connected` 로 아는 것만 본다.
+    """
+    world["cams"] = [_Cam("rs:1:color", connected=False)]     # 스캔만 했다
+    world["cam_stale"] = ["rs_1_color"]                        # 썸네일이 남아 있다
+    world["apply"]()
+    assert W.DeviceWatch().check() == ([], [])
+
+
+def test_a_segment_the_manager_never_heard_of_is_ignored(world):
+    """남의 잔재나 테스트 산물로 경보가 뜨면 소음이 된다."""
+    world["cams"] = []
+    world["cam_stale"] = ["dev_video99"]
+    world["apply"]()
+    assert W.DeviceWatch().check() == ([], [])
+
+
+# ── 화면이 멈춘 영상을 정상처럼 보여주지 않는가 ─────────────────────────────
+
+def test_streaming_is_a_different_fact_from_having_a_preview():
+    """**회귀** — 뽑은 카메라가 카메라 페이지에서 **정상처럼** 보였다.
+
+    세그먼트에 마지막 프레임이 남아 있으면 `has_preview` 는 참이다. 하지만
+    스트림은 죽었을 수 있다 — 그 둘은 다른 사실이고, 화면은 후자를 알아야 한다.
+    """
+    import numpy as np
+    from piper_shm import Publisher, unlink
+
+    from app.services.camera_manager import _is_fresh
+
+    name = "pytest_stream_cam"
+    pub = Publisher(name, height=4, width=4, channels=3)
+    try:
+        pub.publish(np.zeros((4, 4, 3), dtype=np.uint8))
+        assert _is_fresh(name) is True
+
+        old, W.STALE_S = W.STALE_S, -1.0          # 시간이 흐른 것으로 친다
+        try:
+            assert _is_fresh(name) is False, "멈춘 세그먼트를 살아 있다고 한다"
+        finally:
+            W.STALE_S = old
+    finally:
+        pub.close()
+        try:
+            unlink(name)
+        except Exception:
+            pass
+
+
+def test_the_page_hides_a_dead_stream():
+    """`has_preview` 만 보면 멈춘 마지막 프레임을 계속 그린다."""
+    import re
+    from pathlib import Path
+
+    src = (Path(W.__file__).resolve().parents[3]
+           / "frontend/src/pages/CamerasPage.tsx").read_text()
+    code = re.sub(r"\{?/\*[\s\S]*?\*/\}?|//.*", "", src)
+    assert "streaming === false" in code, "스트림이 죽었는지 안 본다"
+    assert "영상 끊김" in code
+
+
+def test_stale_threshold_has_one_owner():
+    """`camera_manager` 가 임계값을 따로 적으면 판정이 갈린다."""
+    import inspect
+
+    from app.services import camera_manager as CM
+
+    assert "device_watch import STALE_S" in inspect.getsource(CM._is_fresh)

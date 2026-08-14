@@ -63,6 +63,10 @@ type CamInfo = {
    *  `present && !connected` 는 꽂혀 있는데 안 연 것이고, `!present` 는 아예 없는 것.
    *  예전엔 둘 다 `connected: false` 라 뽑아둔 카메라가 목록에 그대로 남았다. */
   present?: boolean
+  /** 프레임이 **지금도** 오고 있는가. `has_preview` 와 다르다 — 세그먼트에 마지막
+   *  프레임이 남아 있으면 그건 true 지만 스트림은 죽었을 수 있다. 그래서 뽑힌
+   *  카메라가 화면에서 정상처럼 보였다. */
+  streaming?: boolean
   /** RealSense 스트림 종류. depth 일 때만 깊이 인코딩 설정이 뜬다. */
   stream_type?: string
   /** rsd 가 소유하는 깊이 인코딩 파라미터 — 데이터셋 해석의 근거다. */
@@ -182,6 +186,18 @@ export default function CamerasPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false))
+  }, [])
+
+  // ⚠ **목록을 주기적으로 다시 받는다.** 예전에는 마운트 때 한 번뿐이라, 다른 탭에서
+  //   경보를 보고 카메라 페이지로 와도 뽑힌 카메라가 **멀쩡한 것처럼** 남아 있었다.
+  //   백엔드가 감시 주기(2초)마다 `present` 를 내리므로 여기서 그걸 가져오면 된다.
+  useEffect(() => {
+    const id = setInterval(() => {
+      api.get<{ cameras: CamInfo[] }>('/cameras/current')
+        .then((r) => { if (r.cameras) setCams(r.cameras) })
+        .catch(() => {})
+    }, 3000)
+    return () => clearInterval(id)
   }, [])
 
   // 프리뷰 자동 갱신 (실시간 보기 중인 카메라)
@@ -433,6 +449,25 @@ export default function CamerasPage() {
               const isLive = liveIds.has(cam.id)
               return (
                 <div key={cam.id} className="rounded-lg border border-green-500/30 bg-green-500/5 overflow-hidden hover:border-green-500/60 transition-colors">
+                  {/* ⚠ **없는 카메라는 그리지 않는다.** 세그먼트에 마지막 프레임이
+                      남아 있으면 뽑힌 카메라가 **정상처럼 보인다** — 실제로 그랬다.
+                      영상이 있다는 것과 장치가 있다는 것은 다른 사실이다. */}
+                  {/* ⚠ 장치가 없거나 **영상이 끊긴** 카메라는 그리지 않는다.
+                      세그먼트에 마지막 프레임이 남아 있어서, 안 가리면 뽑힌 카메라가
+                      정상처럼 보인다 — 실제로 그렇게 보였다. */}
+                  {cam.present === false || (cam.connected && cam.streaming === false) ? (
+                    <div className="w-full aspect-[4/3] bg-neutral-900 flex flex-col items-center justify-center gap-1 text-center px-3">
+                      <span className="text-2xl text-red-400">✕</span>
+                      <span className="text-xs text-red-300">
+                        {cam.present === false ? '연결 안 됨' : '영상 끊김'}
+                      </span>
+                      <span className="text-[10px] text-neutral-500">
+                        {cam.present === false
+                          ? 'USB 를 확인하고 스캔하세요'
+                          : '프레임이 오지 않습니다 — 상단 메시지를 확인하세요'}
+                      </span>
+                    </div>
+                  ) : (
                   <img
                     src={`/api/cameras/${encodeURIComponent(cam.id)}/preview?t=${previewTs[cam.id] ?? 0}`}
                     alt={cam.name}
@@ -440,6 +475,7 @@ export default function CamerasPage() {
                     onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.2' }}
                     onLoad={(e) => { (e.target as HTMLImageElement).style.opacity = '1' }}
                   />
+                  )}
                   <div className="p-3 space-y-2">
                     <div className="flex items-center gap-2">
                       <span className="text-green-400 text-sm">✓</span>
@@ -570,6 +606,25 @@ export default function CamerasPage() {
               return (
                 <div key={cam.id} className="rounded-lg border border-blue-500/30 bg-blue-500/5 overflow-hidden hover:border-blue-500/60 transition-colors">
                   {/* 프리뷰 */}
+                  {/* ⚠ **없는 카메라는 그리지 않는다.** 세그먼트에 마지막 프레임이
+                      남아 있으면 뽑힌 카메라가 **정상처럼 보인다** — 실제로 그랬다.
+                      영상이 있다는 것과 장치가 있다는 것은 다른 사실이다. */}
+                  {/* ⚠ 장치가 없거나 **영상이 끊긴** 카메라는 그리지 않는다.
+                      세그먼트에 마지막 프레임이 남아 있어서, 안 가리면 뽑힌 카메라가
+                      정상처럼 보인다 — 실제로 그렇게 보였다. */}
+                  {cam.present === false || (cam.connected && cam.streaming === false) ? (
+                    <div className="w-full aspect-[4/3] bg-neutral-900 flex flex-col items-center justify-center gap-1 text-center px-3">
+                      <span className="text-2xl text-red-400">✕</span>
+                      <span className="text-xs text-red-300">
+                        {cam.present === false ? '연결 안 됨' : '영상 끊김'}
+                      </span>
+                      <span className="text-[10px] text-neutral-500">
+                        {cam.present === false
+                          ? 'USB 를 확인하고 스캔하세요'
+                          : '프레임이 오지 않습니다 — 상단 메시지를 확인하세요'}
+                      </span>
+                    </div>
+                  ) : (
                   <img
                     src={`/api/cameras/${encodeURIComponent(cam.id)}/preview?t=${previewTs[cam.id] ?? 0}`}
                     alt={cam.name}
@@ -577,6 +632,7 @@ export default function CamerasPage() {
                     onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.2' }}
                     onLoad={(e) => { (e.target as HTMLImageElement).style.opacity = '1' }}
                   />
+                  )}
                   <div className="p-3 space-y-2">
                     <div className="flex items-center gap-2">
                       <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
