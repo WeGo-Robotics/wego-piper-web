@@ -154,6 +154,7 @@
 | v0.2.1~v0.2.5 | 08-14 저녁 | 이미지 | 리더 shm 텔레오퍼레이터, CAN RPC, 사운드 |
 | v0.2.6 | 08-14 22:02 | **frontend 이미지만** (27MB) | 에피소드 경과 시간 |
 | v0.2.7 | 08-14 22:36 | 이미지 (backend+frontend) | 장치 사라짐 경보 |
+| v0.2.8 | 08-14 22:52 | **backend 이미지만** | 경보 판정을 "발행 멈춤"으로 (v0.2.7 은 진짜 USB 뽑기를 못 잡았다) |
 
 ### 두 번째 배포부터는 레이어를 **먼저 재보고** 정한다
 
@@ -173,6 +174,13 @@ git diff --name-only <이전태그>..HEAD -- backend/ frontend/ wrapper/ policie
 git diff --name-only <이전태그>..HEAD -- bus/ shm/ cam/ rs/ robot/                      # wheel
 git diff --name-only <이전태그>..HEAD -- daemons/ deploy/                               # 데몬 소스
 ```
+
+### backend 만 바뀌어도 3.4GB 다 — 줄일 방법이 없다
+
+v0.2.8 은 backend 파일 2개만 바뀌었는데도 3.4GB 를 보냈다. `docker save` 는 델타를
+못 만들고, 바뀐 레이어(`COPY backend/`)만 골라 보낼 방법이 없다. `docker load` 가
+있는 레이어를 건너뛰어도 **전송량은 그대로**다. 이걸 줄이려면 레지스트리가 필요하고,
+그건 [미결정](#미결정) 항목이다.
 
 ### frontend 만 바뀌었으면 3.4GB 를 보내지 않는다
 
