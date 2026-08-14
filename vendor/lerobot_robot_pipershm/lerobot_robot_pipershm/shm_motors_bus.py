@@ -60,7 +60,7 @@ class PiperShmMotorsBus(MotorsBusBase):
         # `_command_loop` 는 세그먼트가 있는데 새 명령이 안 오면(데드맨) 현재
         # 자세를 유지하라는 CAN 명령을 실제로 보낸다 — 사람이 손으로 자유롭게
         # 움직여야 하는 팔에 그러면 힘겨루기가 된다. `read_only=True` 면
-        # 상태만 읽는다 (`PiperLeaderShm`).
+        # 상태만 읽는다 (`PiperShmLeader`).
         self.read_only = read_only
         self._state: StateReader | None = None
         self._action: ActionWriter | None = None

@@ -26,7 +26,7 @@ from .shm_motors_bus import PiperShmMotorsBus
 logger = logging.getLogger(__name__)
 
 
-class PiperLeaderShm(PiperLeader):
+class PiperShmLeader(PiperLeader):
 
     config_class = PiperShmLeaderConfig
     name = "piper_leader_shm"

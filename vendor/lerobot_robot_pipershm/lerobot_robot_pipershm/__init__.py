@@ -8,11 +8,11 @@
 from .config_pipershmfollower import PiperShmFollowerConfig
 from .config_pipershmleader import PiperShmLeaderConfig
 from .pipershmfollower import PiperShmFollower
-from .pipershmleader import PiperLeaderShm
+from .pipershmleader import PiperShmLeader
 from .shm_motors_bus import PiperShmMotorsBus
 
 __all__ = [
     "PiperShmFollower", "PiperShmFollowerConfig",
-    "PiperLeaderShm", "PiperShmLeaderConfig",
+    "PiperShmLeader", "PiperShmLeaderConfig",
     "PiperShmMotorsBus",
 ]
