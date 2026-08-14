@@ -52,9 +52,10 @@ def world(monkeypatch):
 
     cm = _CM()
     monkeypatch.setattr("app.services.camera_manager.camera_manager", cm)
-    monkeypatch.setattr("piper_shm.arm.list_segments",
-                        lambda: [f"{i}.state" for i in state["arm_segs"]])
-    monkeypatch.setattr("piper_shm.list_segments", lambda: list(state["cam_segs"]))
+    # ⚠ **발행 중인 것**을 흉내낸다 — 세그먼트 존재가 아니다. USB 를 뽑아도 파일은
+    # 남고 발행만 멈추는데, 처음엔 존재로 판정해서 실기에서 아무 반응이 없었다.
+    monkeypatch.setattr(W, "_fresh_arms", lambda: set(state["arm_segs"]))
+    monkeypatch.setattr(W, "_fresh_cameras", lambda: set(state["cam_segs"]))
 
     def _apply():
         rm.arms = {a.iface: a for a in state["arms"]}
@@ -230,3 +231,40 @@ def test_a_single_device_is_not_called_all(world):
     world["apply"]()
     new, _ = _watch(world, ["can1"]).check()
     assert [a.reason for a in new] == ["device_gone"]
+
+
+# ── 진짜 USB 뽑기: 세그먼트는 남고 발행만 멈춘다 ────────────────────────────
+
+def test_a_stale_segment_counts_as_gone(tmp_path):
+    """**회귀** — 타겟에서 USB 를 뽑아도 아무 반응이 없었다.
+
+    카메라가 빠지면 `cap.read()` 만 실패하고 루프는 계속 돈다. `stop_publish()` 는
+    명시적 `disconnect()` 에서만 불리므로 **세그먼트 파일은 그대로 남는다.**
+    `systemctl stop` 으로 한 검증은 통과했는데(그건 세그먼트를 지운다) 진짜
+    USB 뽑기는 못 잡았던 이유가 이것이다.
+
+    그래서 존재가 아니라 **마지막 발행 시각**으로 판정한다.
+    """
+    import numpy as np
+    from piper_shm import Publisher
+
+    name = "pytest_stale_cam"
+    pub = Publisher(name, height=4, width=4, channels=3)
+    try:
+        pub.publish(np.zeros((4, 4, 3), dtype=np.uint8))
+        assert name in W._fresh_cameras(), "방금 발행했는데 신선하지 않다고 한다"
+
+        # 시간이 흐른 것으로 친다 — 파일은 **그대로 있다**
+        old, W.STALE_S = W.STALE_S, -1.0
+        try:
+            assert name not in W._fresh_cameras(), (
+                "세그먼트가 남아 있으면 살아 있다고 판정한다 — 그게 원래 버그다")
+        finally:
+            W.STALE_S = old
+    finally:
+        pub.close()
+        try:
+            from piper_shm import unlink
+            unlink(name)
+        except Exception:
+            pass

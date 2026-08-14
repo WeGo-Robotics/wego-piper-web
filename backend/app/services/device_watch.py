@@ -6,12 +6,24 @@ USB 가 빠지거나 xHCI 컨트롤러가 죽으면(이 저장소에서 실제�
 사라지는데, 화면은 그대로였다. 목록은 마지막에 본 상태에 머물고, 추론만 뒤늦게
 "세그먼트가 없습니다"로 죽었다. **화면과 에러가 서로 다른 말을 하면 원인을 못 찾는다.**
 
-## 판정 근거 — 세그먼트가 곧 임대권
+## 판정 근거 — 발행이 **멈췄는가** (존재가 아니라)
 
-이 저장소는 이미 "세그먼트 존재 = 누군가 그 장치를 쥐고 있다"로 돌아간다.
-그래서 사라짐도 같은 자리에서 본다: **쥐고 있던 장치의 발행이 끊겼다.**
-장치 열거(`scan`)를 주기적으로 돌릴 필요가 없다 — `/dev/shm` 을 훑는 것은
-사실상 공짜고, RPC 도 안 탄다.
+처음에는 "세그먼트가 없으면 사라진 것"으로 봤는데, **실기에서 아무 반응이 없었다.**
+USB 를 뽑아도 세그먼트는 남아 있기 때문이다:
+
+    # cam/piper_cam/hub.py — 읽기 루프
+    ok, frame = self._cap.read()
+    if ok and frame is not None:
+        self._publish(frame)          # ← 실패하면 발행만 안 할 뿐
+
+장치가 빠지면 `cap.read()` 가 계속 실패하고, 루프는 돌지만 아무것도 발행하지 않는다.
+`stop_publish()` 는 **명시적인 `disconnect()` 에서만** 불리므로 파일은 그대로 남는다.
+세그먼트가 사라지는 것은 데몬을 정상 종료했을 때뿐이고, 그래서 `systemctl stop` 으로 한
+검증은 통과하는데 진짜 USB 뽑기는 못 잡았다.
+
+그래서 헤더의 `wall_ns`(마지막 발행 시각)를 본다 — **얼마나 오래됐는가.**
+세그먼트가 없어진 경우도 자동으로 포함된다(열 수 없으면 무한대로 친다).
+발행자와 게이트웨이는 같은 호스트라(컨테이너도 호스트 시계를 쓴다) 벽시계 비교가 성립한다.
 
 ## 데몬이 죽은 것과 장치가 빠진 것은 다르다
 
@@ -49,8 +61,61 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
+# 이만큼 새 프레임이 없으면 발행이 멈춘 것으로 본다.
+# 가장 느린 정상 스트림(깊이 15fps)의 여러 배 — 한 프레임 늦었다고 경보를 내면
+# 부하가 튈 때마다 거짓 경보가 뜬다. 감시 주기(2초)보다도 커야 한다.
+STALE_S = 5.0
+
 # ── 문구는 여기서만 만든다 ──
 # 화면이 문장을 따로 조립하면 한쪽만 고쳐져 어긋난다 (`_usb_warning` 과 같은 규칙).
+
+
+def _fresh_arms() -> set[str]:
+    """지금 **발행 중인** 팔. 세그먼트가 있어도 오래됐으면 뺀다."""
+    from piper_shm.arm import StateReader, list_segments
+
+    out: set[str] = set()
+    for name in list_segments():
+        if not name.endswith(".state"):
+            # `.action` 은 소비자가 쓰는 것 — 팔이 살아 있다는 증거가 아니다
+            continue
+        iface = name.removesuffix(".state")
+        try:
+            reader = StateReader(iface)
+        except Exception:
+            continue
+        try:
+            if reader.age_s() <= STALE_S:
+                out.add(iface)
+        finally:
+            close = getattr(reader, "close", None)
+            if close:
+                close()
+    return out
+
+
+def _fresh_cameras() -> set[str]:
+    """지금 **발행 중인** 카메라 세그먼트 이름."""
+    import time
+
+    from piper_shm import Subscriber, list_segments
+
+    now = time.time_ns()
+    out: set[str] = set()
+    for name in list_segments():
+        try:
+            sub = Subscriber(name)
+        except Exception:
+            continue
+        try:
+            wall = sub.wall_ns()
+            if wall and (now - wall) / 1e9 <= STALE_S:
+                out.add(name)
+        except Exception:
+            pass
+        finally:
+            sub.close()
+    return out
 
 
 @dataclass(frozen=True)
@@ -69,8 +134,9 @@ class Alert:
 def _device_gone(kind: str, ident: str, name: str) -> Alert:
     what = "로봇팔" if kind == "robot" else "카메라"
     return Alert(kind, ident, name, "device_gone",
-                 f"{what} {name} 이(가) 사라졌습니다 ({ident}). "
-                 "USB 연결을 확인하세요 — 뽑혔거나 컨트롤러가 내려갔을 수 있습니다.")
+                 f"{what} {name} 의 영상이 끊겼습니다 ({ident}). "
+                 "USB 연결을 확인하세요 — 뽑혔거나 컨트롤러가 내려갔을 수 있습니다. "
+                 "이 상태로 녹화·추론을 시작하면 시작하자마자 실패합니다.")
 
 
 def _all_gone(kind: str, daemon: str, count: int) -> Alert:
@@ -141,15 +207,9 @@ class DeviceWatch:
         from app.services.robot_manager import robot_manager, robotd_available
 
         try:
-            from piper_shm.arm import list_segments
-            # ⚠ 팔 세그먼트는 `can0.state` 처럼 **접미사가 붙어** 온다
-            # (`.state` = robotd 발행, `.action` = 소비자 발행). 상태를 안 흘리면
-            # 그 팔은 죽은 것이므로 `.state` 만 본다 — 접미사를 안 맞추면
-            # 모든 팔이 항상 "사라졌다"가 된다.
-            alive = {n.removesuffix(".state") for n in list_segments()
-                     if n.endswith(".state")}
+            alive = _fresh_arms()
         except Exception as exc:
-            logger.debug("팔 세그먼트 조회 실패: %s", exc)
+            logger.debug("팔 신선도 조회 실패: %s", exc)
             return []
 
         known = self._published["robot"]
@@ -177,10 +237,10 @@ class DeviceWatch:
         from app.services.v4l2_client import v4l2_hub
 
         try:
-            from piper_shm import list_segments, segment_for_camera
-            alive = set(list_segments())
+            from piper_shm import segment_for_camera
+            alive = _fresh_cameras()
         except Exception as exc:
-            logger.debug("카메라 세그먼트 조회 실패: %s", exc)
+            logger.debug("카메라 신선도 조회 실패: %s", exc)
             return []
 
         cams = camera_manager.cameras
