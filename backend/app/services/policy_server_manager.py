@@ -51,6 +51,36 @@ class PolicyServerManager:
     async def stop(self) -> None:
         await self.pm.stop()
 
+    def restore_running_process(self) -> bool:
+        """게이트웨이 재시작 후 살아있는 유닛에 재부착 (`train_manager` 와 같은 계약).
+
+        유닛은 살아 있는데 게이트웨이가 idle 로 알면 activity 에서 빠져
+        **배타 모드 가드가 정책 서버를 고려하지 않는다** — 학습을 겹쳐 켜면
+        GPU 경합 그대로다. 실제로 게이트웨이 재시작 뒤 이 상태를 실측했다
+        (`state=idle` 인데 `pid` 는 유닛 PID).
+
+        상태만 복구하면 주소가 기본값으로 남으므로, systemd 가 들고 있는
+        ExecStart 에서 --host/--port/--fps 를 되찾는다 (`exec_argv` 의 존재 이유).
+        """
+        reattach = getattr(self.pm, "reattach", None)
+        if reattach is None or not reattach():
+            return False  # 자식 프로세스 러너거나, 유닛이 안 돈다
+        for arg in self.pm.exec_argv():
+            key, sep, value = arg.partition("=")
+            if not sep:
+                continue
+            try:
+                if key == "--host":
+                    self.host = value
+                elif key == "--port":
+                    self.port = int(value)
+                elif key == "--fps":
+                    self.fps = int(value)
+            except ValueError:
+                logger.warning("정책 서버 인자 복구 실패: %s", arg)
+        logger.info("정책 서버 재부착: %s (pid=%s)", self.address, self.pm.pid)
+        return True
+
     def get_status(self) -> dict:
         return {
             "state": self.pm.state.value,

@@ -28,3 +28,19 @@ edit_pm = make_process("piper-xfer-edit")
 # 페이즈 분석은 수 분 걸릴 수 있고 업로드 중에도 돌 수 있어야 하므로 전용으로 둔다
 # (feature/01-phase-annotation.md §5.3).
 phase_pm = make_process("piper-xfer-phase")
+
+
+def restore_running_jobs() -> list[str]:
+    """게이트웨이 재시작 후 살아있는 작업 유닛에 재부착. 붙은 이름을 돌려준다.
+
+    유닛의 요점이 "재시작해도 산다"인데, 재부착이 없으면 게이트웨이는 idle 로
+    알아서 **수십 분짜리 업로드가 도는 중에 또 하나를 시작하려** 든다
+    (같은 유닛 이름이라 시작은 실패하지만, 사용자에겐 영문 모를 에러다).
+    정책 서버가 같은 문제를 실측으로 드러냈다 — 작업 유닛 셋도 같은 처지다.
+    """
+    restored = []
+    for name, pm in (("upload", upload_pm), ("edit", edit_pm), ("phase", phase_pm)):
+        reattach = getattr(pm, "reattach", None)  # 자식 프로세스 러너에는 없다
+        if reattach is not None and reattach():
+            restored.append(name)
+    return restored

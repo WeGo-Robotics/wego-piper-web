@@ -108,6 +108,21 @@ async def lifespan(app: FastAPI):
         train_manager.restore_running_process()
     except Exception as e:
         logger.warning("Train process restore failed: %s", e)
+    # 정책 서버·작업 유닛 재부착 — 유닛은 사는데 게이트웨이만 idle 로 알면
+    # activity 에서 빠져 배타 모드 가드가 헛돈다 (재시작 후 실측)
+    try:
+        from app.services.policy_server_manager import policy_server_manager
+        if policy_server_manager.restore_running_process():
+            logger.info("Policy server reattached: %s", policy_server_manager.address)
+    except Exception as e:
+        logger.warning("Policy server restore failed: %s", e)
+    try:
+        from app.services import dataset_jobs
+        restored_jobs = dataset_jobs.restore_running_jobs()
+        if restored_jobs:
+            logger.info("Dataset jobs reattached: %s", ", ".join(restored_jobs))
+    except Exception as e:
+        logger.warning("Dataset job restore failed: %s", e)
     # 장치 사라짐 감시. **주기적으로 장치를 열거하지 않는다** — `/dev/shm` 을
     # 훑어 발행이 끊겼는지만 본다(세그먼트 = 임대권). RPC 도 안 타므로 2초 주기가 싸다.
     watch_task = asyncio.create_task(_watch_devices())
