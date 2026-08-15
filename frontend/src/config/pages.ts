@@ -16,6 +16,8 @@ import SettingsPage from '../pages/SettingsPage'
 
 // 디버그 뷰어는 Plotly를 포함하므로 lazy 로드해 메인 번들에서 코드 분리
 const DebugLogsPage = lazy(() => import('../pages/DebugLogsPage'))
+// 에피소드 뷰어도 같은 이유 (신호 그래프 = Plotly)
+const EpisodesPage = lazy(() => import('../pages/EpisodesPage'))
 
 /**
  * 사이드바 묶음. **순서가 곧 화면 순서다** — 정렬 규칙을 따로 두지 않는다.
@@ -93,6 +95,16 @@ export const pages: PageEntry[] = [
     nav: true,
     group: '수집',
     icon: '🗂',
+    card: true,
+  },
+  {
+    path: '/episodes',
+    label: '에피소드',
+    description: '에피소드 재생·신호·페이즈 열람',
+    component: EpisodesPage,
+    nav: true,
+    group: '수집',
+    icon: '🎬',
     card: true,
   },
 

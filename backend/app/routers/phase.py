@@ -85,6 +85,19 @@ async def get_labels(dataset_id: str):
     return data
 
 
+@router.get("/{dataset_id:path}/summary")
+async def get_summary(dataset_id: str):
+    """사이클 분포 + 이상 에피소드 목록 (에피소드 뷰어의 ⚠ 배지·정렬용).
+
+    이상 판정은 백엔드 `flag_outliers` 한 곳에만 있다 — 프론트가 자기 규칙을
+    들면 CLI/API/UI 세 곳이 서로 다른 ⚠ 를 붙이게 된다.
+    """
+    data = PL.load(_dataset(dataset_id))
+    if data is None:
+        raise HTTPException(404, "아직 분석하지 않았습니다 — /analyze 를 먼저 실행하세요")
+    return PL.summary(data)
+
+
 class EpisodeLabels(BaseModel):
     segments: list[list[int]]          # [[start, end(포함), phase], ...]
     reviewed: bool = True

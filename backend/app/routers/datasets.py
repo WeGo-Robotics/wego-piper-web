@@ -1,8 +1,10 @@
 import json
 import logging
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.core.cli_mapping import build_edit_dataset_args
@@ -22,7 +24,8 @@ logger = logging.getLogger(__name__)
 def _find_hf_cli() -> str:
     """huggingface-cli 경로 탐색. 설정 → grpc_python env → conda envs → PATH."""
     from app.core.config import settings
-    import shutil, glob
+    import glob
+    import shutil
     if settings.hf_cli and Path(settings.hf_cli).exists():
         return settings.hf_cli
     candidates = [
@@ -81,7 +84,7 @@ async def set_hf_cli(body: HfCliRequest):
     # .env 파일에 PIPER_HF_CLI 추가/수정
     env_path = Path(__file__).resolve().parents[2] / ".env"
     lines = env_path.read_text().splitlines() if env_path.exists() else []
-    new_lines = [l for l in lines if not l.startswith("PIPER_HF_CLI=")]
+    new_lines = [line for line in lines if not line.startswith("PIPER_HF_CLI=")]
     if body.path:
         new_lines.append(f"PIPER_HF_CLI={body.path}")
     env_path.write_text("\n".join(new_lines) + "\n")
@@ -89,6 +92,29 @@ async def set_hf_cli(body: HfCliRequest):
     from app.core.config import settings
     settings.hf_cli = body.path
     return {"status": "ok", "path": body.path, "resolved": _find_hf_cli()}
+
+
+# ⚠ 이 GET 은 아래 `GET /{dataset_id:path}` (상세) 보다 **위**에 있어야 한다.
+# 같은 메서드의 catch-all 이 먼저 등록되면 프레임 경로 전체가 상세 응답으로 먹힌다
+# (`/upload-status` 가 실제로 겪은 사고와 같은 종류다).
+@router.get("/{dataset_id:path}/episodes/{episode}/frames/{cam}/{frame}")
+async def episode_frame(dataset_id: str, episode: int, cam: str, frame: int):
+    """디코딩 캐시에서 프레임 이미지 서빙 (jpg 우선, png 폴백).
+
+    프레임 번호는 **에피소드 내 상대** 번호다. 캐시가 없으면 404 —
+    UI 는 decode-cache 생성 버튼을 노출한다 (feature/episode-editor.md §3).
+    """
+    ds_path = find_dataset_path(dataset_id)
+    if not ds_path:
+        raise HTTPException(404, "Dataset not found")
+    key = cam if cam.startswith("observation.images.") else f"observation.images.{cam}"
+    ep_dir = ds_path / "images" / key / f"episode-{episode:06d}"
+    for ext in ("jpg", "png"):
+        path = ep_dir / f"frame-{frame:06d}.{ext}"
+        if path.exists():
+            # 캐시 프레임은 불변 — 재생 중 같은 프레임을 브라우저가 다시 받지 않게 한다
+            return FileResponse(path, headers={"Cache-Control": "public, max-age=86400, immutable"})
+    raise HTTPException(404, "디코딩 캐시에 프레임이 없습니다 — decode-cache 를 먼저 생성하세요")
 
 
 @router.get("/{dataset_id:path}")
@@ -234,9 +260,21 @@ async def upload_to_hub(dataset_id: str, body: UploadRequest):
     return {"status": "started", "dataset_id": dataset_id, "pid": _upload_pm.pid}
 
 
+class DecodeCacheRequest(BaseModel):
+    """기본값(PNG 원본 해상도) = LeRobot 공식 캐시 형식. 뷰어는 jpeg+320 으로 요청한다."""
+    format: Literal["png", "jpeg"] = "png"
+    max_dim: int = 0     # 긴 변 축소 (0 = 원본)
+    quality: int = 85    # JPEG 품질
+
+
 @router.post("/{dataset_id:path}/decode-cache")
-async def create_decode_cache(dataset_id: str):
-    """데이터셋의 mp4 영상을 프레임별 jpg로 디코딩 캐시 생성."""
+async def create_decode_cache(dataset_id: str, body: DecodeCacheRequest | None = None):
+    """데이터셋 mp4 → 프레임 이미지 캐시 생성 ([scripts/decode_cache.py]).
+
+    인라인 스크립트를 파일로 뺐다 — 멀티 chunk 데이터셋에서 에피소드가 조용히
+    빠지던 것을 고치면서다 (feature/episode-editor.md §3c). 두 포맷은 같은
+    디렉토리에 공존하고, 프레임 서빙은 jpg 우선으로 읽는다.
+    """
     ds_path = find_dataset_path(dataset_id)
     if not ds_path:
         raise HTTPException(404, "Dataset not found")
@@ -244,59 +282,13 @@ async def create_decode_cache(dataset_id: str):
     require_idle(Activity.UPLOAD)
 
     from app.core.config import settings
-    # LeRobot 공식 캐시 형식: images/{key}/episode-{ep:06d}/frame-{frame:06d}.png
-    script = (
-        "import cv2, json\n"
-        "from pathlib import Path\n"
-        "import pyarrow.parquet as pq\n"
-        f"ds = Path('{ds_path}')\n"
-        "info = json.loads((ds / 'meta/info.json').read_text())\n"
-        "n_eps = info.get('total_episodes', 0)\n"
-        "vid_keys = [k for k in info.get('features', {}) if k.startswith('observation.images.')]\n"
-        "print(f'Dataset: {n_eps} episodes, {len(vid_keys)} cameras: {vid_keys}', flush=True)\n"
-        "# 에피소드별 프레임 수 확인\n"
-        "ep_files = sorted((ds / 'meta/episodes').rglob('*.parquet'))\n"
-        "ep_lengths = {}\n"
-        "if ep_files:\n"
-        "    for f in ep_files:\n"
-        "        df = pq.read_table(f).to_pandas().reset_index()\n"
-        "        for _, row in df.iterrows():\n"
-        "            ep_lengths[int(row['episode_index'])] = int(row['length'])\n"
-        "for vk in vid_keys:\n"
-        "    vid_path = ds / info.get('video_path', 'videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4').format(video_key=vk, chunk_index=0, file_index=0)\n"
-        "    if not vid_path.exists():\n"
-        "        print(f'  SKIP {vk}: {vid_path} not found', flush=True)\n"
-        "        continue\n"
-        "    # 이미 캐시가 있으면 스킵\n"
-        "    first_ep_dir = ds / 'images' / vk / 'episode-000000'\n"
-        "    if first_ep_dir.exists() and any(first_ep_dir.iterdir()):\n"
-        "        print(f'  SKIP {vk}: cache exists', flush=True)\n"
-        "        continue\n"
-        "    cap = cv2.VideoCapture(str(vid_path))\n"
-        "    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))\n"
-        "    print(f'  {vk}: {total_frames} frames from {vid_path.name}', flush=True)\n"
-        "    frame_global = 0\n"
-        "    for ep_idx in range(n_eps):\n"
-        "        ep_len = ep_lengths.get(ep_idx, 0)\n"
-        "        if ep_len == 0:\n"
-        "            continue\n"
-        "        out_dir = ds / 'images' / vk / f'episode-{ep_idx:06d}'\n"
-        "        out_dir.mkdir(parents=True, exist_ok=True)\n"
-        "        for fi in range(ep_len):\n"
-        "            ret, frame = cap.read()\n"
-        "            if not ret:\n"
-        "                break\n"
-        "            fpath = out_dir / f'frame-{fi:06d}.png'\n"
-        "            cv2.imwrite(str(fpath), frame)\n"
-        "            frame_global += 1\n"
-        "        if (ep_idx + 1) % 10 == 0 or ep_idx == n_eps - 1:\n"
-        "            print(f'    {vk}: episode {ep_idx+1}/{n_eps} ({frame_global}/{total_frames} frames)', flush=True)\n"
-        "    cap.release()\n"
-        "print('Decode cache complete', flush=True)\n"
-    )
-    args = [settings.grpc_python, "-u", "-c", script]
+    opts = body or DecodeCacheRequest()
+    script = Path(__file__).resolve().parents[2] / "scripts" / "decode_cache.py"
+    args = [settings.grpc_python, "-u", str(script), str(ds_path),
+            "--format", opts.format, "--max-dim", str(opts.max_dim),
+            "--quality", str(opts.quality)]
     await _upload_pm.start(args)
-    return {"status": "started", "dataset_id": dataset_id}
+    return {"status": "started", "dataset_id": dataset_id, "format": opts.format}
 
 
 @router.post("/{dataset_id:path}/decode-cache/delete")
