@@ -1,0 +1,27 @@
+# ollama — 로컬 판단 LLM 런타임 (feature/llm-integration.md 프로바이더 B).
+#
+# 게이트웨이가 죽어도 판단 런타임은 살아야 하므로 유닛이다 (정책 서버와 같은 이유).
+# 바이너리는 저장소 밖 %h/tools/bin/ollama (사용자 공간 설치, root 불필요) —
+# 없는 머신에서는 Condition 으로 조용히 건너뛴다 (.120 등).
+#
+# GPU 공존 실측 (5090): 정책 서버 + yolod + qwen2.5:7b ≈ 12GB/32GB.
+# 모델은 %h/tools/ollama-models 에 있다. 판단 기본 모델은 backend/.env 의
+# PIPER_LLM_MODEL 이 정한다 — 7b 미만은 판단 오류가 실측됐다 (3b 탈락).
+#
+# 설치: deploy/install-daemons.sh ollama
+
+[Unit]
+Description=Piper local LLM runtime (Ollama)
+Documentation=file://@REPO@/feature/llm-integration.md
+ConditionPathExists=%h/tools/bin/ollama
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=%h/tools/bin/ollama serve
+Environment=OLLAMA_MODELS=%h/tools/ollama-models
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=default.target

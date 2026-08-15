@@ -20,10 +20,14 @@
 > - `qwen2.5:7b`: 스키마 준수 ✓, 판단 정답 ✓, 웜 **326ms** / 콜드 1.5s
 >
 > 시나리오의 *"이 수준의 판단은 로컬 소형 LLM 으로 충분"* 은 **7b 부터** 성립한다.
-> Ollama 는 유닛이 아니라 수동 실행 상태 — 상시 운용이 정해지면 유닛으로 뺀다.
 >
-> 남은 확인: `ANTHROPIC_API_KEY` 를 `backend/.env` 에 넣은 뒤
-> `scripts/llm_smoke.py` (Claude 경로 지연 + 2회차 캐시 적중).
+> **✓ 이 머신의 기본은 Ollama 로 확정.** `piper-ollama` 유닛
+> ([deploy/systemd/piper-ollama.service](../deploy/systemd/piper-ollama.service),
+> `deploy/install-daemons.sh ollama` 로 설치 — 바이너리 없는 머신은 Condition 으로
+> 건너뜀) + `backend/.env` 의 `PIPER_LLM_PROVIDER=openai_compat`,
+> `PIPER_LLM_MODEL=qwen2.5:7b`. Claude 는 호출별 오버라이드(`provider="anthropic"`)
+> 또는 설정 전환으로 언제든 — 그때는 `ANTHROPIC_API_KEY` 를 `.env` 에 추가하고
+> `scripts/llm_smoke.py` 로 캐시 적중까지 확인한다.
 
 [episode-orchestrator.md](episode-orchestrator.md) 스텝 표의 **"외부 HTTP (LLM) | 신규"** 칸을 채우는 설계.
 분리수거 데모(YOLO→LLM→VLA, 시나리오 순위 6)의 "판단" 칸과 장기 플래너(시나리오 5장)가

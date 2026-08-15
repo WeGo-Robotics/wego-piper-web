@@ -110,3 +110,5 @@ cd frontend && npm run dev
 - `PIPER_DATASETS_DIR`: 데이터셋 디렉토리
 - `PIPER_REDIS_URL`: 버스 주소 (기본 redis://127.0.0.1:6379/0). `ProcessManager` 가 모든 자식에게 넘긴다
 - `PIPER_DISK_WARNING_THRESHOLD_GB`: 디스크 경고 임계치 (기본 10GB)
+- `PIPER_LLM_PROVIDER` / `PIPER_LLM_MODEL` / `PIPER_LLM_BASE_URL`: 판단 LLM
+  (feature/llm-integration.md). 이 머신 기본은 로컬 Ollama(`piper-ollama` 유닛) + qwen2.5:7b
