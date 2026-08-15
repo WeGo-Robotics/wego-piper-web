@@ -150,8 +150,10 @@ def test_control_path_never_imports_llm_client():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[2]
+    # 주석·문서의 언급은 허용 — 실제 import 문만 잡는다
     hits = subprocess.run(
-        ["grep", "-rl", "llm_client", str(root / "wrapper"), str(root / "daemons")],
+        ["grep", "-rlE", r"^\s*(from|import)\s+\S*llm_client",
+         str(root / "wrapper"), str(root / "daemons")],
         capture_output=True, text=True,
     ).stdout.strip()
     assert hits == "", f"제어 경로에 llm_client import 발견: {hits}"

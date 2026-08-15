@@ -43,3 +43,6 @@ rs/*.egg-info/
 cam/*.egg-info/
 shm/*.egg-info/
 robot/*.egg-info/
+
+# YOLO 가중치 (yolod 가 첫 실행 때 내려받는다)
+*.pt

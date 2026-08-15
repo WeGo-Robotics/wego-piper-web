@@ -225,6 +225,27 @@ class Bus:
         keys = list(self.r.scan_iter(match=C.PREVIEW_PATTERN))
         return int(self.r.delete(*keys)) if keys else 0
 
+    # ── 시각 검출 (yolod → 소비자) ──
+
+    def put_detections(self, name: str, payload: dict) -> None:
+        """최신 검출로 덮어쓴다. TTL 이 stale 판정의 안전망이다 (계약 주석 참고)."""
+        self.r.set(C.vision_key(name), json.dumps(payload), px=C.VISION_TTL_MS)
+
+    def get_detections(self, name: str) -> dict | None:
+        raw = self.r.get(C.vision_key(name))
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def detection_names(self) -> list[str]:
+        """살아 있는(TTL 안 지난) 검출 카메라 이름."""
+        return sorted(
+            C.vision_name(k) for k in self.r.scan_iter(match=C.VISION_PATTERN)
+        )
+
     # ── 학습 job 레지스트리 ──
 
     def put_job(self, job_id: str, record: dict) -> None:

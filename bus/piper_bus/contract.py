@@ -132,6 +132,25 @@ def preview_name(key: str) -> str:
     return key[len(PREVIEW_PREFIX) + 1:]
 
 
+# ── 시각 검출 (yolod → 오케스트레이터/게이트웨이) ────────────────────────────
+#
+# 프리뷰와 같은 이유로 큐가 아니다: 최신 장면 하나만 의미가 있다. 카메라별 키에
+# JSON 페이로드를 덮어쓰고 TTL 로 만료시킨다. 소비자(판단 스텝)는 payload 의
+# `ts` 로 신선도를 한 번 더 판단한다 — TTL 은 "yolod 가 죽었는데 낡은 검출로
+# 판단하는" 사고만 막는 안전망이다.
+VISION_PREFIX: Final = _k("vision")
+VISION_PATTERN: Final = f"{VISION_PREFIX}:*"
+VISION_TTL_MS: Final = 3000
+
+
+def vision_key(name: str) -> str:
+    return f"{VISION_PREFIX}:{name}"
+
+
+def vision_name(key: str) -> str:
+    return key[len(VISION_PREFIX) + 1:]
+
+
 # ── 학습 job 레지스트리 ──────────────────────────────────────────────────────
 #
 # 해시: {job_id: JobRecord JSON}. 로컬 job 도 여기 들어간다 (`job_id="local"`) —
