@@ -16,6 +16,10 @@
 >   머신(학습 머신·컨테이너)에서도 품질 검사가 돌아야 해서다. 진입점은
 >   `python -m piper_phase <dataset_path>`, 백엔드 API 는 같은 코드를 import 만 한다.
 >
+> **4~5단계(편집 UI)의 집은 [episode-editor.md](episode-editor.md) 로 넓혔다** —
+> 페이즈 전용 `/phase-editor` 대신 재생·신호·페이즈·에피소드 수명주기를 묶은
+> 에피소드 에디터/뷰어 한 화면. §4 의 목업·단축키는 그 화면의 정본 부품으로 남는다.
+>
 > 3단계에서 문서가 경고한 **catch-all 라우트 사고가 실재함을 확인**했다 —
 > `/api/datasets/upload-status` 와 `/hf-cli` 가 `/{dataset_id:path}` 에 먹혀 404 였고
 > 프론트는 조용히 실패하고 있었다. 고정 경로를 위로 올려 고쳤고,
@@ -309,6 +313,10 @@ gripper_gap:float32, wrist_diff:float32, proximity:float32
 ---
 
 ## 4. 편집 UI
+
+> 화면의 집(위치·역할 분담·구현 순서)은 [episode-editor.md](episode-editor.md) 가 정본이다.
+> 이 절의 레이아웃 목업·그래프 구성·단축키는 그 화면의 부품 스펙으로 그대로 쓴다.
+> §4.1 의 `/phase-editor` 경로는 **만들지 않는다** — `/episodes` 가 대체한다.
 
 ### 4.1 위치
 
