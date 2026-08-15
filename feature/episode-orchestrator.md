@@ -1,5 +1,16 @@
 # 에피소드 오케스트레이터 — 스냅샷→판단→실행→리셋 루프
 
+> **◐ 입력 칸들은 준비 완료, 몸통은 미착수.** §1 스텝 표의 두 "신규" 칸이 채워졌다:
+> "YOLO subprocess" 는 [yolod](../daemons/yolod.md) 상주 유닛 + 버스 최신값
+> (`bus.get_detections()`, 페이로드의 `text` 가 곧 판단 프롬프트 재료)로,
+> "외부 HTTP (LLM)" 는 [llm_client.judge()](../backend/app/services/llm_client.py)
+> (스키마 검증 슬롯, 이 머신 기본 = 로컬 Ollama qwen2.5:7b)로. `/vision` 테스트
+> 페이지에서 두 칸을 화면으로 굴려볼 수 있다.
+>
+> **착수 전 결정 하나**: 1단계(§5)의 시나리오. 문서 원안은 팝콘인데 G1(뎁스
+> 스냅샷)·G3(로드셀 판정) 하드웨어 경로가 막혀 있다. 대안은 분리수거 최소 루프
+> (검출→판단→task 주입→타임아웃 대기→리셋)를 먼저 세우는 것 — 판정만 타임아웃/수동.
+
 [demo-scenario-gaps.md](demo-scenario-gaps.md)의 **G2**를 구현하는 설계.
 팝콘 데모(Phase 1~2)·분리수거(YOLO→LLM→VLA)·자동 리셋(무인 연속 시연)·장기 플래너가
 전부 이 하나의 몸통을 공유한다.

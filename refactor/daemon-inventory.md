@@ -38,6 +38,8 @@
 | 7 | `piper-train@<job>` | 학습 프로세스, GPU | ☑ 유닛 + **원격 SSH 도 됨** ([ssh.py](../backend/app/services/training/runners/ssh.py)) |
 | 8 | `piper-policysrv` | gRPC 정책 서버, GPU | ☑ 유닛 ([policy_server_manager.py](../backend/app/services/policy_server_manager.py)) |
 | 9 | ~~`piper-encoderd`~~ | 인코더 프로브 세션(최대 8), GPU | ✗ **안 만든다** (아래) |
+| 10 | `piper-yolod` | YOLO 검출 (shm 구독 → 버스 발행), GPU | ☑ 유닛 — 정책 서버처럼 **필요할 때 켬** ([daemons/yolod.py](../daemons/yolod.py), `/api/vision` 이 소유). 회차마다 subprocess 로 부르면 torch import ~5초를 반복하므로 모델을 물고 있는 쪽이 맞다 |
+| 11 | `piper-ollama` | 로컬 판단 LLM 런타임, GPU | ☑ 유닛 — 상시 ([piper-ollama.service](../deploy/systemd/piper-ollama.service)). 바이너리는 저장소 밖 `~/tools/bin` (사용자 공간) — 없는 머신은 Condition 으로 건너뜀 |
 
 > ⚠ **encoderd 는 유닛으로 감싸는 일이 아니다.** 지금 프로브는 `subprocess.run` 으로
 > 블로킹 1회 실행이고 결과를 그 자리에서 읽는다. 유닛으로 바꾸면 "시작 → 완료 폴링 →

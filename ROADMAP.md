@@ -357,14 +357,16 @@ daemon-split 6의 systemd 유닛화는 그 이음매에 **`SystemdRunner`를 하
 |---|---|
 | ~~parameter-presets 4~5~~ | ☑ 완료 — 추론 프리셋 + 프리셋별 성공률 |
 | ~~camera-profiles~~ | ☑ **완료** — 컨트롤 값 저장(`presets` domain=camera) · v4l2 안정 키 · 자동 모드 순서. 적용은 데몬 `connect()` 한 곳. D405 로 확인(되돌린 뒤 연결만으로 복원) |
-| **phase-annotation 4~8** | UI · 굽기 · 추론 경로 |
+| **phase-annotation 6~8** | 굽기 · 학습 · 추론 경로. ~~4~5(편집 UI)~~ 는 [episode-editor](feature/episode-editor.md) 로 ☑ — 분류기는 `python -m piper_phase` 단독 실행 |
+| **[episode-editor](feature/episode-editor.md) 1~3** | ☑ **완료** — `/episodes` 뷰어(동영상 기본 + 프레임 캐시 폴백) · §3.5 수동 분석(파라미터·미리보기) · 타임라인 수작업 편집(분할 S/병합 M/드래그/undo). 남은 것: 4(삭제·task 이관 + **사이드카 재매핑 버그**) · 5(굽기 UI) |
+| **분리수거 파이프라인 (YOLO→LLM→VLA)** | 앞 두 칸 ☑ — [yolod](daemons/yolod.py)(shm→버스, 유닛) · [llm_client](backend/app/services/llm_client.py)(Claude/로컬 이중 프로바이더, **이 머신 기본 = Ollama qwen2.5:7b, 7b 미만 판단 오류 실측**) · `/vision` 테스트 페이지. 몸통은 [episode-orchestrator](feature/episode-orchestrator.md) — **1단계 시나리오 결정 대기** (팝콘: G1·G3 하드웨어 막힘 vs 분리수거 최소 루프 선행) |
 | **cloud-training 5~12** | 데이터 전송 · 체크포인트 회수 · 비용 가드 · 유료 프로바이더 |
 | **[robotd-safety](refactor/robotd-safety.md)** | **별도 트랙.** URDF 확보라는 독립 선결 조건. robotd(3b-5)가 서면 언제든 |
 | **[manual-control](feature/manual-control.md)** | 웹 조그(1)·MIT 스파이크(2)는 robotd 위에서 **지금 가능**, 병렬 트랙. 중력 보상(3~4)은 **트랙 E(URDF) 의존**, 키네스테틱 녹화(5)는 그 뒤 |
 | **[bimanual](feature/bimanual.md)** | G4 구현 — bi 클래스 3개(WeGo repo)로 녹화·추론·파킹 단일화. robotd 변경 0이라 구조 개편과 **안 겹침.** 전제는 하드웨어뿐(팔 4대 + udev 4개 확장) |
 | ~~[policy-ui-spec](feature/policy-ui-spec.md)~~ | ☑ **완료** — 정책 하나 추가에 손댈 곳이 **6군데 → 0**. 게이트웨이·wrapper·프론트가 같은 YAML 을 읽는다 |
 | **[layout-redesign](feature/layout-redesign.md)** | 좌측 세로 내비 + 상단 상태바. **지금 가능** — 프론트 껍데기 + 요약 API 하나뿐이고 페이지 내용은 안 건드린다. 1단계만으로 메뉴 한계가 풀린다 |
-| **[llm-integration](feature/llm-integration.md)** | 분리수거 판단·플래너용 구조화 출력 클라이언트. 백엔드 서비스뿐이라 **아예 안 겹침** — 1단계는 지금 가능, 스텝 합류는 episode-orchestrator 뒤 |
+| ~~[llm-integration](feature/llm-integration.md) 1·3~~ | ☑ **완료** — `judge()` 계약 + Anthropic·로컬(vLLM/Ollama) 이중 프로바이더 + 호출별 오버라이드. 남은 것: 2(규칙 프리셋 합류) · 4(플래너) — episode-orchestrator 뒤 |
 | 자체 Hub 서버 | 여기까지 온 뒤 판단 |
 
 ---
@@ -373,7 +375,7 @@ daemon-split 6의 systemd 유닛화는 그 이음매에 **`SystemdRunner`를 하
 
 ```
 A (구조)    Phase 0 → 1 → 3b(1→2→3→3.5→4→5→6→7→8) ☑ ──→ Phase 4  ← 지금 여기
-B (데이터)       phase-annotation 1~3 ──→ 4~5 ─────────→ 6~8 (3b-4 이후)
+B (데이터)       phase-annotation 1~3 ☑ ──→ 4~5(episode-editor) ☑ ──→ 6~8 (3b-4 이후)
 C (잡일)         Phase 2 (#3~#6, #11) 아무때나
 D (학습)         cloud-training 0~2 ──────→ 3~4 (3b-3 이후) ──→ 5~12
 E (기구학)          URDF 확보 ─────────────────────────→ robotd-safety (3b-5 이후)

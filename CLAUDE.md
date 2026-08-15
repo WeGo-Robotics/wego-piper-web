@@ -70,6 +70,7 @@ cd frontend && npm run dev
 | 카메라 분배 | v4l2loopback + GStreamer |
 | 키 입력 주입 | evdev UInput |
 | 추론 스무딩 | RTC (flow-matching) / Temporal Ensemble (ACT) |
+| 비전·판단 | YOLO(ultralytics, `piper-yolod` 유닛) + LLM 구조화 출력(`llm_client` — Anthropic API 또는 로컬 Ollama/vLLM) |
 
 ## API 엔드포인트
 
@@ -90,6 +91,10 @@ cd frontend && npm run dev
 | `POST /api/hub/download` | Hub에서 다운로드 |
 | `POST /api/eval/log` | 평가 결과 기록 |
 | `GET /api/eval/stats` | 평가 통계 |
+| `/api/phase/*` | 작업 단계(phase) 분석·라벨·신호 (분류기 자체는 `python -m piper_phase` 로 단독 실행 가능) |
+| `GET /api/datasets/{id}/episodes/{ep}/frames/{cam}/{i}` | 디코딩 캐시 프레임 (에피소드 뷰어) |
+| `GET /api/datasets/{id}/videos/{cam}/{chunk}/{file}` | chunk mp4 Range 서빙 (뷰어 동영상 모드) |
+| `/api/vision/*` | YOLO 검출(yolod 제어·검출·프리뷰) + LLM 판단 테스트 |
 
 ## 안전 관련 주의사항
 

@@ -48,7 +48,7 @@
 | 데이터 형식 | `observation.state` `[7]` → `[8]`, 8번째 = 페이즈 코드 (0~6) |
 | 자동 라벨러 | 관절 속도 + **그리퍼 지령/실측 갭** + 손목 카메라 변화율 → 인과적 FSM |
 | 저장 | 원본을 건드리지 않고 사이드카(`meta/phase_labels.json`)에 먼저 저장 |
-| 편집 UI | `/phase-editor` — 프레임 스크러버 + 신호 그래프 + 드래그 가능한 구간 바 |
+| 편집 UI | ☑ `/episodes` ([episode-editor](episode-editor.md)) — 재생(동영상/프레임) + 신호 그래프 + 드래그 구간 바 |
 | 굽기(export) | 확정 후 **새 데이터셋으로 내보내기** (비디오는 하드링크, 원본 보존) |
 | 추론 | 오프라인 라벨러의 인과 코어를 wrapper에서 그대로 재사용해 실시간 추정 |
 
@@ -510,8 +510,8 @@ UI에 띄우고 버튼을 노출한다.
 | 1 | ☑ [phase/piper_phase/fsm.py](../phase/piper_phase/fsm.py) — 신호 + 인과 FSM | numpy만. `pip install -e phase/` | ☑ **50 에피소드 전부 3사이클** |
 | 2 | ☑ [piper_phase/labeler.py](../phase/piper_phase/labeler.py) + `python -m piper_phase` | `phase_labels.json`, `phase_signals.parquet` | ☑ 4개 데이터셋 전수 + 이상 목록 |
 | 3 | ☑ [routers/phase.py](../backend/app/routers/phase.py) — 분석/조회/저장/신호 | `/api/phase/*` + 전용 `phase_pm` | ☑ 14개 테스트 |
-| 4 | `PhaseEditorPage` — 스크러버 + 그래프 + 구간 바 | 페이지 1개 | `npm run build` |
-| 5 | 편집 인터랙션 (드래그/분할/병합/단축키/undo) | | 실제로 50개 검토해보기 |
+| 4 | ☑ 뷰어 — [EpisodesPage](../frontend/src/pages/EpisodesPage.tsx) (`/phase-editor` 대신 `/episodes`, [episode-editor](episode-editor.md) 정본) | 동영상 기본 + 프레임 캐시 폴백 | ☑ 실데이터셋 열람 |
+| 5 | ☑ 편집 인터랙션 (분할 S/병합 M/0~6/드래그/undo) + §3.5 파라미터 미리보기 | PUT 저장 = 검토됨 ✔ | 50개 실검토는 사용 중 진행 |
 | 6 | 굽기 → `{name}_phase` | 새 데이터셋 | `LeRobotDataset`로 로드, `state.shape==(8,)` |
 | 7 | 학습 1회 (짧게) | 체크포인트 | 정규화 통계 에러 없이 스텝 진행 |
 | 8 | wrapper 추론 경로 (로컬 → 원격) | append 로직 + 온라인 추정기 | 실기 추론, UI에 페이즈 표시 |

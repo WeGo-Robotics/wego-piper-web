@@ -110,6 +110,11 @@ git tag --sort=-v:refname | head -1     # 예: v0.3.1 → 다음은 v0.3.2
 - [x] `deploy/install-daemons.sh` 실행 (estopd, robotd, camerad, rsd 전부) — venv activate된
       셸에서 실행해야 함
 - [x] `loginctl show-user $USER`로 `Linger=yes` 확인
+- [ ] (선택) 로컬 판단 LLM — Ollama 바이너리를 `~/tools/bin` 에 풀고
+      `deploy/install-daemons.sh ollama` + `ollama pull qwen2.5:7b` +
+      `.env` 에 `PIPER_LLM_*` (없는 머신은 유닛 Condition 이 건너뜀)
+- [ ] (선택) YOLO 검출 — 데몬 python 에 `pip install ultralytics`
+      (piper-yolod 는 설치 불필요 — `/api/vision/start` 가 유닛으로 띄움)
 
 ### 6. `docker compose up` 검증
 
