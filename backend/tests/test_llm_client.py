@@ -129,14 +129,6 @@ def test_missing_parse_result_is_validation_error(monkeypatch):
     assert e.value.reason == "validation"
 
 
-def test_openai_compat_is_loudly_unimplemented(monkeypatch):
-    """온프레미스 선택을 조용히 anthropic 으로 폴백하면 안 된다 — 데이터 반출 문제."""
-    monkeypatch.setattr(settings, "llm_provider", "openai_compat")
-    with pytest.raises(LLMJudgeError) as e:
-        asyncio.run(judge("규칙", "입력", JudgeResult))
-    assert e.value.reason == "config"
-
-
 def test_unknown_provider_is_config_error(monkeypatch):
     monkeypatch.setattr(settings, "llm_provider", "banana")
     with pytest.raises(LLMJudgeError) as e:
@@ -157,3 +149,118 @@ def test_control_path_never_imports_llm_client():
         capture_output=True, text=True,
     ).stdout.strip()
     assert hits == "", f"제어 경로에 llm_client import 발견: {hits}"
+
+
+# ── openai_compat (로컬 vLLM/Ollama) ──
+
+def _local(monkeypatch, handler):
+    """MockTransport 를 꽂고 설정을 로컬 프로바이더로 돌린다."""
+    monkeypatch.setattr(settings, "llm_provider", "openai_compat")
+    monkeypatch.setattr(settings, "llm_base_url", "http://local.test/v1")
+    monkeypatch.setattr(settings, "llm_model", "qwen-test")
+    monkeypatch.setattr(llm_client, "_http_transport", httpx.MockTransport(handler))
+
+
+def _chat(content: str) -> dict:
+    return {
+        "choices": [{"message": {"content": content}}],
+        "usage": {"prompt_tokens": 50, "completion_tokens": 10},
+    }
+
+
+def test_local_roundtrip_delegates_schema_but_validates(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_chat('{"target": "bottle", "destination": "plastic_bin"}'))
+
+    _local(monkeypatch, handler)
+    out = asyncio.run(judge("규칙", "검출", JudgeResult))
+
+    assert out == JudgeResult(target="bottle", destination="plastic_bin")
+    assert seen["url"] == "http://local.test/v1/chat/completions"
+    body = seen["body"]
+    assert body["model"] == "qwen-test"
+    # 서버측 스키마 강제(guided decoding / format) 위임 — 하지만 신뢰하지 않는다
+    assert body["response_format"]["type"] == "json_schema"
+    assert body["response_format"]["json_schema"]["schema"]["properties"].keys() >= {"target", "destination"}
+    assert llm_client.stats["output_tokens"] == 10
+
+
+def test_local_schema_violation_retries_once_with_feedback(monkeypatch):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        calls.append(json.loads(request.content))
+        if len(calls) == 1:
+            return httpx.Response(200, json=_chat("정중한 사과의 말씀과 함께..."))
+        return httpx.Response(200, json=_chat('{"target": "cup", "destination": "plastic_bin"}'))
+
+    _local(monkeypatch, handler)
+    out = asyncio.run(judge("규칙", "검출", JudgeResult))
+
+    assert out.target == "cup"
+    assert len(calls) == 2
+    # 재요청에는 위반 내용이 되먹여져야 한다
+    retry_msgs = calls[1]["messages"]
+    assert retry_msgs[-1]["role"] == "user"
+    assert "스키마를 위반" in retry_msgs[-1]["content"]
+
+
+def test_local_double_violation_is_validation_error(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_chat("JSON 이 아님"))
+
+    _local(monkeypatch, handler)
+    with pytest.raises(LLMJudgeError) as e:
+        asyncio.run(judge("규칙", "검출", JudgeResult))
+    assert e.value.reason == "validation"
+
+
+def test_local_http_error_maps_to_api(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    _local(monkeypatch, handler)
+    with pytest.raises(LLMJudgeError) as e:
+        asyncio.run(judge("규칙", "검출", JudgeResult))
+    assert e.value.reason == "api"
+    assert "500" in e.value.detail
+
+
+def test_local_without_base_url_is_config_error(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "openai_compat")
+    monkeypatch.setattr(settings, "llm_base_url", "")
+    with pytest.raises(LLMJudgeError) as e:
+        asyncio.run(judge("규칙", "검출", JudgeResult))
+    assert e.value.reason == "config"
+
+
+def test_per_call_provider_and_model_override(monkeypatch):
+    """스텝이 "이 판단은 로컬 소형으로"를 고를 수 있어야 한다 — 설정은 anthropic 인 채."""
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_chat('{"target": "t", "destination": "d"}'))
+
+    monkeypatch.setattr(settings, "llm_base_url", "http://local.test/v1")
+    monkeypatch.setattr(llm_client, "_http_transport", httpx.MockTransport(handler))
+    assert settings.llm_provider == "anthropic"  # 기본은 그대로
+
+    out = asyncio.run(judge("규칙", "검출", JudgeResult,
+                            provider="openai_compat", model="tiny-local"))
+    assert out.target == "t"
+    assert seen["body"]["model"] == "tiny-local"
+
+
+def test_anthropic_per_call_model_override(monkeypatch):
+    expected = JudgeResult(target="a", destination="b")
+    fake = _install(monkeypatch, _response(parsed=expected))
+    asyncio.run(judge("규칙", "검출", JudgeResult, model="claude-haiku-4-5"))
+    assert fake.captured["model"] == "claude-haiku-4-5"

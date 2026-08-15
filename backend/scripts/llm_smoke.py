@@ -4,15 +4,20 @@
   2. 지연: 판단 1회가 에피소드 경계 예산(수 초) 안인가
   3. 캐시: 2회차부터 cache_read_input_tokens > 0 인가 (규칙 prefix 캐시)
 
-사용:  cd backend && python scripts/llm_smoke.py
-전제:  ANTHROPIC_API_KEY (환경변수 또는 backend/.env)
+사용:
+  cd backend && python scripts/llm_smoke.py                      # 설정값(PIPER_LLM_*)대로
+  python scripts/llm_smoke.py --provider openai_compat \
+      --base-url http://127.0.0.1:11434/v1 --model qwen2.5:3b    # 로컬 LLM
+전제:  anthropic 이면 ANTHROPIC_API_KEY (환경변수 또는 backend/.env)
 """
 
+import argparse
 import asyncio
 import time
 
 from pydantic import BaseModel
 
+from app.core.config import settings
 from app.services import llm_client
 from app.services.llm_client import judge
 
@@ -35,22 +40,36 @@ class Slots(BaseModel):
 
 
 async def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--provider", default=None, help="anthropic | openai_compat (기본: 설정)")
+    parser.add_argument("--model", default=None, help="기본: 설정")
+    parser.add_argument("--base-url", default=None, help="openai_compat 엔드포인트 (설정 덮어씀)")
+    args = parser.parse_args()
+    if args.base_url:
+        settings.llm_base_url = args.base_url
+    provider = args.provider or settings.llm_provider
+
     detections = "[top 848x480] bottle(0.91) center=(420,260), cup(0.77) center=(180,300)"
 
     for i in (1, 2):
         before = dict(llm_client.stats)
         t0 = time.monotonic()
-        slots = await judge(RULES, detections, Slots, timeout_s=30.0)
+        slots = await judge(RULES, detections, Slots, timeout_s=60.0,
+                            provider=args.provider, model=args.model)
         ms = (time.monotonic() - t0) * 1000
         cache_read = llm_client.stats["cache_read_input_tokens"] - before["cache_read_input_tokens"]
         print(f"[{i}회차] {ms:.0f}ms  cache_read={cache_read}  "
               f"target={slots.target} destination={slots.destination}")
         print(f"        reason: {slots.reason}")
 
-    assert llm_client.stats["cache_read_input_tokens"] > 0, (
-        "2회차 캐시 미적중 — 프롬프트 조립에 가변 요소가 섞였다 (llm-integration §4)"
-    )
-    print("OK: 스키마 왕복 + 캐시 적중")
+    if provider == "anthropic":
+        # 캐시 적중은 Anthropic 프리픽스 캐시 검증 항목 — 로컬 경로에는 해당 없음
+        assert llm_client.stats["cache_read_input_tokens"] > 0, (
+            "2회차 캐시 미적중 — 프롬프트 조립에 가변 요소가 섞였다 (llm-integration §4)"
+        )
+        print("OK: 스키마 왕복 + 캐시 적중")
+    else:
+        print("OK: 스키마 왕복 (로컬)")
 
 
 if __name__ == "__main__":

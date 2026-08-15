@@ -78,24 +78,28 @@ async def judge(
     schema: "type[BaseModel]",
     *,
     timeout_s: float = 30.0,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> "BaseModel":
     """프롬프트 → 스키마 검증된 슬롯. 검증 실패·타임아웃은 예외로.
 
     system = 고정 규칙(캐시됨), user = 이번 회차의 가변 입력(검출 목록 등).
+
+    provider/model 은 기본이 기기 설정(`PIPER_LLM_*`)이고, 호출별로 덮어쓸 수
+    있다 — 시나리오 스텝이 "이 판단은 로컬 소형으로, 저 계획은 Claude 로"를
+    고를 수 있게 (스텝 스펙의 선언 필드가 이 인자로 내려온다).
     """
-    provider = settings.llm_provider
+    provider = provider or settings.llm_provider
+    model = model or settings.llm_model
     if provider == "anthropic":
-        return await _judge_anthropic(system, user, schema, timeout_s)
+        return await _judge_anthropic(system, user, schema, timeout_s, model)
     if provider == "openai_compat":
-        # 3단계 (온프레미스 vLLM/Ollama) — 요구가 생기면 구현한다.
-        # 조용히 anthropic 으로 폴백하지 않는다: 온프레미스를 골랐다는 것은
-        # 데이터가 밖으로 나가면 안 된다는 뜻일 수 있다.
-        raise LLMJudgeError("config", "openai_compat 프로바이더는 아직 미구현 (llm-integration §6 3단계)")
+        return await _judge_openai_compat(system, user, schema, timeout_s, model)
     raise LLMJudgeError("config", f"알 수 없는 LLM 프로바이더: {provider}")
 
 
 async def _judge_anthropic(
-    system: str, user: str, schema: "type[BaseModel]", timeout_s: float
+    system: str, user: str, schema: "type[BaseModel]", timeout_s: float, model: str
 ) -> "BaseModel":
     import anthropic
 
@@ -105,7 +109,7 @@ async def _judge_anthropic(
         # parse() = 구조화 출력 — 스키마 위반 응답이 아예 생성되지 않고,
         # SDK 가 Pydantic 인스턴스로 검증해 돌려준다. 파싱·재요청 코드가 필요 없다.
         response = await client.with_options(timeout=timeout_s).messages.parse(
-            model=settings.llm_model,
+            model=model,
             max_tokens=1024,  # 슬롯 출력은 작다
             system=[{
                 "type": "text",
@@ -146,3 +150,83 @@ async def _judge_anthropic(
         stats["failures"] += 1
         raise LLMJudgeError("validation", f"stop_reason={response.stop_reason} 에서 파싱 결과 없음")
     return parsed
+
+
+# 테스트 훅 — httpx.MockTransport 를 꽂아 네트워크 없이 어댑터를 검증한다
+_http_transport = None
+
+
+async def _judge_openai_compat(
+    system: str, user: str, schema: "type[BaseModel]", timeout_s: float, model: str
+) -> "BaseModel":
+    """로컬 OpenAI 호환 엔드포인트 (vLLM guided decoding · Ollama structured outputs).
+
+    스키마 강제는 서버 기능(`response_format: json_schema`)에 위임하되 **신뢰하지
+    않는다** — Pydantic 으로 검증하고, 위반이면 오류를 되먹여 1회만 재요청한다.
+    Claude 경로는 이 검증이 항상 통과하고, 로컬 경로는 여기서 걸러진다.
+    오프라인 동작이 목적이므로 이 경로에 외부 폴백은 없다.
+    """
+    import httpx
+    from pydantic import ValidationError
+
+    base = settings.llm_base_url.rstrip("/")
+    if not base:
+        raise LLMJudgeError(
+            "config", "PIPER_LLM_BASE_URL 이 비어 있습니다 — vLLM/Ollama 의 /v1 엔드포인트를 지정하세요"
+        )
+    headers = {}
+    if settings.llm_api_key:
+        headers["Authorization"] = f"Bearer {settings.llm_api_key}"
+
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    body = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": 1024,
+        "temperature": 0,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": schema.__name__, "schema": schema.model_json_schema()},
+        },
+    }
+
+    stats["calls"] += 1
+    last_err = ""
+    async with httpx.AsyncClient(timeout=timeout_s, transport=_http_transport) as client:
+        for attempt in (1, 2):
+            try:
+                resp = await client.post(f"{base}/chat/completions", json=body, headers=headers)
+            except httpx.TimeoutException as e:
+                stats["failures"] += 1
+                raise LLMJudgeError("timeout", str(e)) from e
+            except httpx.HTTPError as e:
+                stats["failures"] += 1
+                raise LLMJudgeError("api", f"연결 실패: {e}") from e
+            if resp.status_code != 200:
+                stats["failures"] += 1
+                raise LLMJudgeError("api", f"HTTP {resp.status_code}: {resp.text[:300]}")
+
+            content = ""
+            try:
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"] or ""
+                usage = data.get("usage") or {}
+                stats["input_tokens"] += usage.get("prompt_tokens", 0) or 0
+                stats["output_tokens"] += usage.get("completion_tokens", 0) or 0
+                return schema.model_validate_json(content)
+            except (ValidationError, ValueError, KeyError, IndexError, TypeError) as e:
+                last_err = str(e)[:300]
+                if attempt == 1:
+                    # 위반 내용을 되먹여 1회만 재요청 — 그 이상은 루프 지연만 는다
+                    body["messages"] = messages + [
+                        {"role": "assistant", "content": content},
+                        {"role": "user",
+                         "content": f"응답이 스키마를 위반했다: {last_err}\n"
+                                    f"스키마에 맞는 JSON 객체 하나만 다시 출력하라."},
+                    ]
+                    continue
+    stats["failures"] += 1
+    raise LLMJudgeError("validation", f"재요청 후에도 스키마 위반: {last_err}")

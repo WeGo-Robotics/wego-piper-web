@@ -177,9 +177,10 @@ class Settings(BaseSettings):
     # ── 외부 LLM 판단 클라이언트 (feature/llm-integration.md) ──
     # 전부 기기별 설정이다 — 온프레미스 여부가 기기 속성이라서.
     # API 키는 PIPER_ 접두사가 아니라 SDK 표준 `ANTHROPIC_API_KEY` 를 환경에서 읽는다.
-    llm_provider: str = "anthropic"   # anthropic | openai_compat(3단계, 미구현)
-    llm_model: str = "claude-opus-5"
-    llm_base_url: str = ""            # openai_compat 전용 (vLLM/Ollama 엔드포인트)
+    llm_provider: str = "anthropic"   # anthropic | openai_compat(로컬 vLLM/Ollama)
+    llm_model: str = "claude-opus-5"  # openai_compat 이면 로컬 모델명 (예: qwen2.5:7b-instruct)
+    llm_base_url: str = ""            # openai_compat 전용 — /v1 까지 (예: http://127.0.0.1:11434/v1)
+    llm_api_key: str = ""             # openai_compat 전용 — vLLM --api-key 등 (Ollama 는 불필요)
     # ⚠ PIPER_ 접두사 필드는 .env 를 읽지만 **프로세스 환경으로 내보내지 않는다** —
     # SDK 가 스스로 읽을 수 없으므로 여기서 별칭으로 받아 클라이언트에 넘긴다.
     anthropic_api_key: str = Field("", validation_alias="ANTHROPIC_API_KEY")

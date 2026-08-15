@@ -6,11 +6,24 @@
 > (`LLMJudgeError.reason`) + 진단 카운터. 스키마 왕복·refusal 분기·프로바이더
 > 오류·"제어 경로에 import 없음" 가드까지 pytest 8개
 > ([test_llm_client.py](../backend/tests/test_llm_client.py)).
-> `openai_compat` 은 **시끄럽게 미구현** — 온프레미스 선택을 조용히 외부 API 로
-> 폴백하지 않는다 (§7 과 같은 이유).
+> **◐ 3단계(로컬 프로바이더)도 완료.** `openai_compat` — vLLM/Ollama 의
+> `/v1/chat/completions` 에 `response_format: json_schema` 로 스키마를 위임하되
+> **신뢰하지 않는다**: Pydantic 검증 + 위반 내용을 되먹인 1회 재요청 (§2 설계
+> 그대로). 이 경로에 외부 폴백은 없다 — 온프레미스 선택이 조용히 밖으로 새지
+> 않는다. `judge(provider=, model=)` 호출별 오버라이드로 스텝이 "이 판단은
+> 로컬 소형, 저 계획은 Claude"를 고를 수 있다. 설정에 `PIPER_LLM_API_KEY`
+> (vLLM `--api-key` 용) 추가. MockTransport 테스트 6개.
 >
-> 남은 확인 하나: `ANTHROPIC_API_KEY` 를 `backend/.env` 에 넣은 뒤 실제 왕복
-> 1회 (지연 실측 + 2회차 캐시 적중 `stats["cache_read_input_tokens"] > 0`).
+> **로컬 실측 완료** (사용자 공간 Ollama `~/tools/bin/ollama`, 5090 에서 정책
+> 서버와 공존 — 합계 12GB/32GB): 분리수거 판단 스모크 기준
+> - `qwen2.5:3b`: 스키마 준수 ✓, **판단 오류** (target 에 통 이름을 넣음) — 탈락
+> - `qwen2.5:7b`: 스키마 준수 ✓, 판단 정답 ✓, 웜 **326ms** / 콜드 1.5s
+>
+> 시나리오의 *"이 수준의 판단은 로컬 소형 LLM 으로 충분"* 은 **7b 부터** 성립한다.
+> Ollama 는 유닛이 아니라 수동 실행 상태 — 상시 운용이 정해지면 유닛으로 뺀다.
+>
+> 남은 확인: `ANTHROPIC_API_KEY` 를 `backend/.env` 에 넣은 뒤
+> `scripts/llm_smoke.py` (Claude 경로 지연 + 2회차 캐시 적중).
 
 [episode-orchestrator.md](episode-orchestrator.md) 스텝 표의 **"외부 HTTP (LLM) | 신규"** 칸을 채우는 설계.
 분리수거 데모(YOLO→LLM→VLA, 시나리오 순위 6)의 "판단" 칸과 장기 플래너(시나리오 5장)가
