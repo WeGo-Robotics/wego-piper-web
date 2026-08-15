@@ -69,13 +69,17 @@ def _payload(
         })
     # 큰 것부터 — LLM 프롬프트에서 잘려도 주된 물체가 남는다
     objects.sort(key=lambda o: -(o["bbox"][2] - o["bbox"][0]) * (o["bbox"][3] - o["bbox"][1]))
-    return {
+    payload = {
         "ts": wall_ns / 1e9,
         "cam": cam,
         "frame_seq": seq,
         "size": [w, h],
         "objects": objects,
     }
+    # LLM 프롬프트용 문자열을 **생산자가** 만든다 — UI·판단 스텝이 각자 조립하면
+    # 프롬프트가 화면과 어긋난 채 디버깅하게 된다 (같은 사실 두 곳 문제)
+    payload["text"] = detections_text(payload)
+    return payload
 
 
 def detections_text(payload: dict) -> str:

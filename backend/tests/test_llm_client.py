@@ -53,7 +53,12 @@ class FakeClient:
 
 
 @pytest.fixture(autouse=True)
-def _clean():
+def _clean(monkeypatch):
+    # ⚠ 기기 .env 와 무관하게 — 이 머신 기본이 openai_compat(Ollama)로 바뀌자
+    # 기본값에 의존하던 테스트가 **실제 로컬 LLM 으로 나가는** 사고가 났다.
+    monkeypatch.setattr(settings, "llm_provider", "anthropic")
+    monkeypatch.setattr(settings, "llm_model", "claude-opus-5")
+    monkeypatch.setattr(settings, "llm_base_url", "")
     for k in llm_client.stats:
         llm_client.stats[k] = 0
     yield

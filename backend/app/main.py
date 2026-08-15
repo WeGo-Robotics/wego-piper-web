@@ -24,7 +24,7 @@ logging.getLogger("uvicorn.access").addFilter(_QuietAccessFilter())
 from app.routers import (
     activity, cameras, datasets, debug_logs, devices, encoder, estop, eval_log,
     health, hub, inference, logs, models, params, phase, policies, policy_server,
-    presets, recording, robots, training, ws,
+    presets, recording, robots, training, vision, ws,
 )
 
 # 라우터 목록 — 등록 누락을 구조적으로 막는다.
@@ -35,7 +35,7 @@ from app.routers import (
 ROUTERS = [
     health, ws, estop, params, models, datasets, hub, inference, eval_log,
     robots, cameras, logs, debug_logs, training, recording, policy_server,
-    encoder, activity, policies, presets, phase, devices,
+    encoder, activity, policies, presets, phase, devices, vision,
 ]
 from app.services.estop_bridge import estop_bridge
 from app.services.param_bridge import param_bridge

@@ -10,6 +10,7 @@ import DatasetsPage from '../pages/DatasetsPage'
 import TrainingPage from '../pages/TrainingPage'
 import HubPage from '../pages/HubPage'
 import PolicyServerPage from '../pages/PolicyServerPage'
+import VisionPage from '../pages/VisionPage'
 import EncoderProbePage from '../pages/EncoderProbePage'
 import LogsPage from '../pages/LogsPage'
 import SettingsPage from '../pages/SettingsPage'
@@ -134,6 +135,16 @@ export const pages: PageEntry[] = [
     card: true,
   },
   { path: '/policy-server', label: '정책서버', component: PolicyServerPage, nav: true, group: '실행', icon: '🛰' },
+  {
+    path: '/vision',
+    label: '비전·판단',
+    description: 'YOLO 검출·LLM 판단 테스트 (분리수거 파이프라인)',
+    component: VisionPage,
+    nav: true,
+    group: '실행',
+    icon: '👁',
+    card: true,
+  },
 
   // ── 시스템 ──
   { path: '/hub', label: '허브', component: HubPage, nav: true, group: '시스템', icon: '☁' },
