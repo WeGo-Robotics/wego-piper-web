@@ -59,6 +59,9 @@ class AnalyzeRequest(BaseModel):
     params: dict = {}
     episodes: list[int] | None = None
     save: bool = True
+    # 파라미터 미리보기용 (§3.5): save=False 로 돌려보고 구간을 화면에 겹쳐 본다.
+    # 요약만으로는 트랙을 못 그린다 — 구간이 응답에 실려야 저장 없이 비교가 된다.
+    include_segments: bool = False
 
 
 @router.post("/{dataset_id:path}/analyze")
@@ -71,9 +74,15 @@ async def analyze(dataset_id: str, body: AnalyzeRequest):
     async with _lock:
         result = await asyncio.to_thread(PL.analyze, ds, p, body.episodes)
         summary = PL.summary({**result, "_signals": None})
+        episodes_detail = result["episodes"] if body.include_segments else None
         if body.save:
+            # save() 는 병합하며 result["episodes"] 를 바꾼다 — 응답용은 위에서 잡아뒀다
             await asyncio.to_thread(PL.save, ds, result)
-    return {"dataset_id": dataset_id, "params": asdict(p), **summary}
+    out = {"dataset_id": dataset_id, "params": asdict(p), **summary}
+    if episodes_detail is not None:
+        # summary 의 "episodes"(개수)와 키가 겹치므로 상세는 딴 이름으로
+        out["episode_labels"] = episodes_detail
+    return out
 
 
 @router.get("/{dataset_id:path}/labels")

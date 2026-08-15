@@ -86,12 +86,29 @@ export default function EpisodesPage() {
   const [videoError, setVideoError] = useState(false)
   const [cacheMissing, setCacheMissing] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
+  // 수동 분석 (01-phase-annotation §3.5): 파라미터를 만지고, 한 에피소드로
+  // 미리보기(저장 안 함) 후 만족하면 전체 재분석으로 확정한다.
+  const [defaultParams, setDefaultParams] = useState<Record<string, number> | null>(null)
+  const [defaultPhases, setDefaultPhases] = useState<string[]>([])
+  const [paramValues, setParamValues] = useState<Record<string, number>>({})
+  const [showParams, setShowParams] = useState(false)
+  const [preview, setPreview] = useState<{ segments: [number, number, number][]; cycles: number } | null>(null)
 
   const videoRefs = useRef<Record<string, VideoWithRVFC | null>>({})
 
   useEffect(() => {
     api.get<Dataset[]>('/datasets').then(setDatasets).catch(() => {})
+    api.get<{ params: Record<string, number>; phases: string[] }>('/phase/defaults')
+      .then((r) => { setDefaultParams(r.params); setDefaultPhases(r.phases) })
+      .catch(() => {})
   }, [])
+
+  // 파라미터 시드: 사이드카에 저장된 값 > 기본값 — 임계값은 태스크마다 다르다
+  // (min_cube 기본값으로 yeonwonju 를 돌리면 0사이클이 16개 나온다, §3.5)
+  useEffect(() => {
+    if (!defaultParams) return
+    setParamValues({ ...defaultParams, ...(labels?.params ?? {}) })
+  }, [defaultParams, labels])
 
   const loadPhase = useCallback(async (id: string) => {
     // 사이드카는 선택적 — 404 는 "아직 분석 안 됨"이지 오류가 아니다
@@ -106,6 +123,7 @@ export default function EpisodesPage() {
     setPlaying(false)
     setVideoError(false)
     setCacheMissing(false)
+    setPreview(null)
     if (!id) { setDetail(null); setLabels(null); setSummary(null); return }
     try {
       setDetail(await api.get<DatasetDetail>(`/datasets/${id}`))
@@ -119,6 +137,7 @@ export default function EpisodesPage() {
     setPlaying(false)
     setVideoError(false)
     setCacheMissing(false)
+    setPreview(null)
     setSignals(await api.get<Signals>(`/phase/${id}/signals/${index}`).catch(() => null))
   }, [])
 
@@ -176,9 +195,12 @@ export default function EpisodesPage() {
 
   const videoActive = viewMode === 'video' && videoMeta != null && !videoError
 
+  const phaseNames = labels?.phases ?? defaultPhases
+  // 미리보기가 있으면 트랙은 그걸 보여준다 — 저장본과 파라미터를 비교하는 화면이다
+  const displaySegments = preview?.segments ?? labeledEp?.segments
   const currentSegment = useMemo(
-    () => labeledEp?.segments.find(([s, e]) => s <= frame && frame <= e),
-    [labeledEp, frame],
+    () => displaySegments?.find(([s, e]) => s <= frame && frame <= e),
+    [displaySegments, frame],
   )
 
   const frameUrl = useCallback(
@@ -223,8 +245,15 @@ export default function EpisodesPage() {
   useEffect(() => {
     if (!videoActive) return
     const els = cams.map((c) => videoRefs.current[c]).filter(Boolean) as VideoWithRVFC[]
-    if (playing) els.forEach((v) => { void v.play().catch(() => setVideoError(true)) })
-    else els.forEach((v) => v.pause())
+    if (playing) {
+      els.forEach((v) => {
+        void v.play().catch((err: unknown) => {
+          // ⚠ AbortError 는 에피소드 전환·일시정지가 재생 시작을 끊었을 뿐이다.
+          // 이걸 폴백시키면 멀쩡한 h264 데이터셋에서 "코덱" 오진 배너가 뜬다 (실사고).
+          if ((err as DOMException)?.name === 'NotSupportedError') setVideoError(true)
+        })
+      })
+    } else els.forEach((v) => v.pause())
   }, [playing, videoActive, cams])
 
   useEffect(() => {
@@ -311,7 +340,8 @@ export default function EpisodesPage() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       if (t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return
-      if (t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'text') return
+      // range(스크러버)만 전역 단축키를 허용 — 숫자/텍스트 입력은 타이핑이 우선이다
+      if (t.tagName === 'INPUT' && (t as HTMLInputElement).type !== 'range') return
       if (e.code === 'Space') { e.preventDefault(); if (totalFrames > 0) setPlaying((p) => !p) }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); goTo(frameRef.current + (e.shiftKey ? -10 : -1)) }
       else if (e.key === 'ArrowRight') { e.preventDefault(); goTo(frameRef.current + (e.shiftKey ? 10 : 1)) }
@@ -324,16 +354,43 @@ export default function EpisodesPage() {
 
   // ── 동작 ──
 
+  // fps 는 데이터셋 소유라 보내지 않는다 (백엔드가 info.json 에서 채운다).
+  // NaN(입력 중 빈 칸)은 걸러야 JSON 직렬화가 안 깨진다.
+  const sendableParams = useMemo(
+    () => Object.fromEntries(
+      Object.entries(paramValues).filter(([k, v]) => k !== 'fps' && Number.isFinite(v)),
+    ),
+    [paramValues],
+  )
+
   const handleAnalyze = async () => {
     if (!dsId) return
     setAnalyzing(true)
     try {
-      await api.post(`/phase/${dsId}/analyze`, {})
+      await api.post(`/phase/${dsId}/analyze`, { params: sendableParams })
+      setPreview(null)
       await loadPhase(dsId)
       if (ep != null) setSignals(await api.get<Signals>(`/phase/${dsId}/signals/${ep}`).catch(() => null))
       notify({ level: 'info', text: '페이즈 분석 완료', source: '에피소드' })
     } catch (e) {
       notifyError(e instanceof Error ? e.message : '분석 실패')
+    } finally { setAnalyzing(false) }
+  }
+
+  const handlePreview = async () => {
+    if (!dsId || ep == null) return
+    setAnalyzing(true)
+    try {
+      const r = await api.post<{
+        episode_labels?: Record<string, { segments: [number, number, number][]; cycles: number }>
+      }>(`/phase/${dsId}/analyze`, {
+        params: sendableParams, episodes: [ep], save: false, include_segments: true,
+      })
+      const p = r.episode_labels?.[String(ep)]
+      if (p) setPreview({ segments: p.segments, cycles: p.cycles })
+      else notifyError('미리보기 결과가 비어 있습니다')
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : '미리보기 실패')
     } finally { setAnalyzing(false) }
   }
 
@@ -388,6 +445,63 @@ export default function EpisodesPage() {
           </div>
         )}
 
+        {/* 수동 분석: 파라미터 → 미리보기(한 에피소드, 저장 안 함) → 전체 재분석 */}
+        {detail && defaultParams && (
+          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-3 text-xs space-y-2">
+            <button
+              onClick={() => setShowParams((s) => !s)}
+              className="w-full text-left text-neutral-400 hover:text-white"
+            >
+              파라미터 {showParams ? '▴' : '▾'} <span className="text-neutral-600">수동 분석</span>
+            </button>
+            {showParams && (
+              <>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                  {Object.keys(defaultParams).filter((k) => k !== 'fps').map((k) => (
+                    <label key={k} className="flex items-center justify-between gap-1">
+                      <span className="text-neutral-500 truncate" title={k}>{k}</span>
+                      <input
+                        type="number"
+                        step="any"
+                        value={Number.isFinite(paramValues[k]) ? paramValues[k] : ''}
+                        onChange={(e) => {
+                          const raw = e.target.value
+                          setParamValues((v) => ({ ...v, [k]: raw === '' ? NaN : Number(raw) }))
+                        }}
+                        className="w-16 rounded bg-neutral-900 border border-neutral-700 px-1 py-0.5 text-right"
+                      />
+                    </label>
+                  ))}
+                </div>
+                <div className="text-neutral-600">fps {detail.fps ?? 15} — 데이터셋 고정</div>
+                <div className="flex gap-1 flex-wrap">
+                  <button
+                    onClick={() => void handlePreview()}
+                    disabled={analyzing || ep == null}
+                    title="선택한 에피소드만 이 파라미터로 재분석해 트랙에 겹쳐 본다 — 저장 안 함"
+                    className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-amber-600 text-neutral-300 hover:text-white disabled:opacity-50"
+                  >
+                    미리보기
+                  </button>
+                  <button
+                    onClick={() => void handleAnalyze()}
+                    disabled={analyzing}
+                    className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-50"
+                  >
+                    전체 재분석(저장)
+                  </button>
+                  <button
+                    onClick={() => setParamValues({ ...defaultParams })}
+                    className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-400 hover:text-white"
+                  >
+                    기본값
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {episodes.length > 0 && (
           <ul className="rounded-lg border border-neutral-700 bg-neutral-800 divide-y divide-neutral-700/60 max-h-[70vh] overflow-y-auto">
             {episodes.map((r) => (
@@ -437,7 +551,12 @@ export default function EpisodesPage() {
                       playsInline
                       preload="auto"
                       className="w-full rounded border border-neutral-700 bg-black"
-                      onError={() => setVideoError(true)}
+                      onError={(e) => {
+                        // 3=DECODE, 4=SRC_NOT_SUPPORTED 만 진짜 재생 불가.
+                        // 1(abort)·2(network)는 src 교체·프록시 순단으로도 떠서 폴백하면 오진.
+                        const code = e.currentTarget.error?.code
+                        if (code === 3 || code === 4) setVideoError(true)
+                      }}
                       onLoadedMetadata={(e) => {
                         const m = videoMeta?.[cam]
                         if (m) e.currentTarget.currentTime = videoTime(m, frameRef.current)
@@ -486,12 +605,12 @@ export default function EpisodesPage() {
               <span className="font-mono text-neutral-400">
                 {frame + 1}/{totalFrames} · {(frame / fps).toFixed(1)}s
               </span>
-              {currentSegment && labels && (
+              {currentSegment && phaseNames.length > 0 && (
                 <span
                   className="px-2 py-0.5 rounded text-xs font-medium text-black"
                   style={{ backgroundColor: PHASE_COLORS[currentSegment[2]] }}
                 >
-                  {labels.phases[currentSegment[2]]}
+                  {phaseNames[currentSegment[2]]}
                 </span>
               )}
               {labeledEp?.reviewed && <span className="text-green-500 text-xs">✔ 검토됨</span>}
@@ -516,13 +635,24 @@ export default function EpisodesPage() {
             />
 
             {/* 페이즈 트랙 — 구간 클릭 = 그 시작으로 이동 (편집은 3단계) */}
-            {labeledEp ? (
+            {displaySegments ? (
               <div>
-                <div className="relative h-6 rounded overflow-hidden flex border border-neutral-700">
-                  {labeledEp.segments.map(([s, e, code], i) => (
+                {preview && (
+                  <div className="flex items-center gap-2 mb-1 text-xs text-amber-400">
+                    <span>미리보기 — 저장 안 됨 · {preview.cycles}사이클. [전체 재분석(저장)]으로 확정</span>
+                    <button
+                      onClick={() => setPreview(null)}
+                      className="px-1.5 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300"
+                    >
+                      해제
+                    </button>
+                  </div>
+                )}
+                <div className={`relative h-6 rounded overflow-hidden flex border ${preview ? 'border-amber-500' : 'border-neutral-700'}`}>
+                  {displaySegments.map(([s, e, code], i) => (
                     <button
                       key={i}
-                      title={`${labels?.phases[code]} ${s}–${e}`}
+                      title={`${phaseNames[code]} ${s}–${e}`}
                       onClick={() => { setPlaying(false); goTo(s) }}
                       style={{
                         width: `${((e - s + 1) / totalFrames) * 100}%`,
@@ -536,7 +666,7 @@ export default function EpisodesPage() {
                   />
                 </div>
                 <div className="flex gap-3 mt-1 text-[10px] text-neutral-500 flex-wrap">
-                  {labels?.phases.map((name, code) => (
+                  {phaseNames.map((name, code) => (
                     <span key={name} className="flex items-center gap-1">
                       <span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: PHASE_COLORS[code] }} />
                       {name}

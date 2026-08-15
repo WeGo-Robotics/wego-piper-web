@@ -179,3 +179,33 @@ def test_original_dataset_is_never_modified(client, sidecar_backup):
     assert {f: f.stat().st_mtime for f in (ds / "data").rglob("*.parquet")} == data_before, \
         "원본 parquet 가 수정됐다"
     _ = json
+
+
+def test_analyze_preview_returns_segments_without_saving(client, sidecar_backup):
+    """§3.5 파라미터 미리보기: 구간은 응답에, 사이드카는 그대로.
+
+    요약만으로는 트랙을 못 그린다 — save=False + include_segments 가
+    "저장 없이 비교"의 전부다.
+    """
+    from piper_phase import labeler as PL
+
+    labels_path, _ = PL.sidecar_paths(sidecar_backup)
+    before = labels_path.read_bytes() if labels_path.exists() else None
+
+    r = client.post(f"/api/phase/{_DS}/analyze",
+                    json={"episodes": [0], "save": False, "include_segments": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body["episodes"], int)  # 요약 개수는 그대로 남는다
+    segs = body["episode_labels"]["0"]["segments"]
+    assert segs and segs[0][0] == 0 and len(segs[0]) == 3
+
+    after = labels_path.read_bytes() if labels_path.exists() else None
+    assert before == after, "미리보기가 사이드카를 건드렸다"
+
+
+def test_analyze_without_flag_has_no_episodes_payload(client, sidecar_backup):
+    r = client.post(f"/api/phase/{_DS}/analyze", json={"episodes": [0], "save": False})
+    assert r.status_code == 200
+    assert "episode_labels" not in r.json()
+    assert isinstance(r.json()["episodes"], int)
