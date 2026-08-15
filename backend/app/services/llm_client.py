@@ -60,8 +60,9 @@ def _get_client():
     if _client is None:
         from anthropic import AsyncAnthropic
 
-        # ANTHROPIC_API_KEY 는 환경에서. 키가 없으면 호출 시점에 인증 오류로 드러난다.
-        _client = AsyncAnthropic()
+        # 키는 환경변수 또는 backend/.env 의 ANTHROPIC_API_KEY (settings 별칭이 읽는다).
+        # 둘 다 없으면 SDK 기본 해석에 맡긴다 — 호출 시점에 인증 오류로 드러난다.
+        _client = AsyncAnthropic(api_key=settings.anthropic_api_key or None)
     return _client
 
 

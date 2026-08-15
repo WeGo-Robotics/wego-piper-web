@@ -180,6 +180,9 @@ class Settings(BaseSettings):
     llm_provider: str = "anthropic"   # anthropic | openai_compat(3단계, 미구현)
     llm_model: str = "claude-opus-5"
     llm_base_url: str = ""            # openai_compat 전용 (vLLM/Ollama 엔드포인트)
+    # ⚠ PIPER_ 접두사 필드는 .env 를 읽지만 **프로세스 환경으로 내보내지 않는다** —
+    # SDK 가 스스로 읽을 수 없으므로 여기서 별칭으로 받아 클라이언트에 넘긴다.
+    anthropic_api_key: str = Field("", validation_alias="ANTHROPIC_API_KEY")
 
     @property
     def resolved_robot_id(self) -> str:
