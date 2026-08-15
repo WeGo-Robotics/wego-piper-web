@@ -117,6 +117,33 @@ async def episode_frame(dataset_id: str, episode: int, cam: str, frame: int):
     raise HTTPException(404, "디코딩 캐시에 프레임이 없습니다 — decode-cache 를 먼저 생성하세요")
 
 
+@router.get("/{dataset_id:path}/videos/{cam}/{chunk}/{file}")
+async def episode_video(dataset_id: str, cam: str, chunk: int, file: int):
+    """chunk mp4 원본 서빙 — Range 는 FileResponse 가 처리한다 (206, 실측 확인).
+
+    에피소드가 아니라 **파일 단위**다: 같은 chunk 의 에피소드들이 브라우저 캐시를
+    공유한다. 에피소드 경계(`videos/{key}/from·to_timestamp`)는 상세 응답의
+    episodes 레코드에 이미 들어 있어 프론트가 currentTime 으로 진입한다
+    (feature/episode-editor.md §3 — 뷰어 기본은 동영상, 프레임 캐시는 폴백·편집용).
+    """
+    ds_path = find_dataset_path(dataset_id)
+    if not ds_path:
+        raise HTTPException(404, "Dataset not found")
+    key = cam if cam.startswith("observation.images.") else f"observation.images.{cam}"
+    # info.json 의 video_path 템플릿 (scripts/decode_cache.py 와 같은 규칙)
+    template = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+    info_path = ds_path / "meta" / "info.json"
+    if info_path.exists():
+        try:
+            template = json.loads(info_path.read_text()).get("video_path") or template
+        except Exception:
+            pass
+    path = (ds_path / template.format(video_key=key, chunk_index=chunk, file_index=file)).resolve()
+    if not str(path).startswith(str(ds_path.resolve())) or not path.exists():
+        raise HTTPException(404, "비디오 파일이 없습니다")
+    return FileResponse(path, media_type="video/mp4")
+
+
 @router.get("/{dataset_id:path}")
 async def dataset_detail(dataset_id: str):
     ds = get_dataset(dataset_id)

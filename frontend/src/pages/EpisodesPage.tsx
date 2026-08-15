@@ -1,8 +1,17 @@
 /**
  * 에피소드 뷰어 — 재생·신호·페이즈를 한 화면에서 본다 (feature/episode-editor.md 2단계).
  *
- * 이 단계는 **읽기 전용**이다: 프레임 재생 + 신호 그래프 + 페이즈 트랙 + ⚠ 정렬.
+ * 이 단계는 **읽기 전용**이다: 재생 + 신호 그래프 + 페이즈 트랙 + ⚠ 정렬.
  * 구간 편집(드래그/분할/병합)은 3단계, 삭제·task 이관은 4단계.
+ *
+ * ## 재생은 이중 모드다 (§3)
+ *
+ * - **동영상(기본)**: chunk mp4 를 Range 서빙으로 받아 `<video>` 로 재생.
+ *   에피소드 경계는 메타의 from/to_timestamp, 프레임 동기는
+ *   requestVideoFrameCallback 의 mediaTime. 캐시 생성 없이 즉시 열린다.
+ * - **프레임 캐시(폴백·편집용)**: 코덱을 브라우저가 못 읽거나(yuv444p 등)
+ *   메타에 타임스탬프가 없는 구버전이면 자동 전환. 3단계 편집의
+ *   프레임 단위 정밀 조작도 이쪽이 정본이다.
  *
  * 페이즈 사이드카는 선택적 입력이다 — 없으면 트랙 자리에 [분석] 버튼만 보이고
  * 재생은 그대로 동작한다. 분류기(`python -m piper_phase`)가 만든 사이드카도
@@ -37,6 +46,16 @@ type PhaseSummary = {
 }
 type Signals = { frames: number; speed: number[]; gripper_gap: number[]; phase: number[] }
 
+/** 에피소드의 캠별 비디오 위치 (meta/episodes 의 videos/{key}/* 컬럼) */
+type VideoMeta = { chunk: number; file: number; from: number; to: number }
+
+// requestVideoFrameCallback 은 아직 lib.dom 에 없다 (지원: Chrome/Edge/Safari/FF132+)
+type VideoFrameMeta = { mediaTime: number }
+type VideoWithRVFC = HTMLVideoElement & {
+  requestVideoFrameCallback?: (cb: (now: number, meta: VideoFrameMeta) => void) => number
+  cancelVideoFrameCallback?: (handle: number) => void
+}
+
 /** 페이즈 코드(0~6) 색 — 트랙·칩·범례가 같은 배열을 쓴다. */
 const PHASE_COLORS = ['#525252', '#3b82f6', '#22d3ee', '#f59e0b', '#22c55e', '#a855f7', '#404040']
 
@@ -63,8 +82,12 @@ export default function EpisodesPage() {
   const [signals, setSignals] = useState<Signals | null>(null)
   const [frame, setFrame] = useState(0)
   const [playing, setPlaying] = useState(false)
+  const [viewMode, setViewMode] = useState<'video' | 'frames'>('video')
+  const [videoError, setVideoError] = useState(false)
   const [cacheMissing, setCacheMissing] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
+
+  const videoRefs = useRef<Record<string, VideoWithRVFC | null>>({})
 
   useEffect(() => {
     api.get<Dataset[]>('/datasets').then(setDatasets).catch(() => {})
@@ -81,6 +104,7 @@ export default function EpisodesPage() {
     setEp(null)
     setSignals(null)
     setPlaying(false)
+    setVideoError(false)
     setCacheMissing(false)
     if (!id) { setDetail(null); setLabels(null); setSummary(null); return }
     try {
@@ -93,6 +117,7 @@ export default function EpisodesPage() {
     setEp(index)
     setFrame(0)
     setPlaying(false)
+    setVideoError(false)
     setCacheMissing(false)
     setSignals(await api.get<Signals>(`/phase/${id}/signals/${index}`).catch(() => null))
   }, [])
@@ -129,6 +154,28 @@ export default function EpisodesPage() {
   const totalFrames = labeledEp?.frames ?? current?.length ?? 0
   const fps = detail?.fps ?? 15
 
+  /** 캠별 비디오 위치. 컬럼이 없으면(구버전 메타) null → 프레임 캐시로 폴백. */
+  const videoMeta = useMemo<Record<string, VideoMeta> | null>(() => {
+    if (ep == null || !detail || cams.length === 0) return null
+    const rec = detail.episodes.find((e, i) => ((e.episode_index as number) ?? i) === ep)
+    if (!rec) return null
+    const out: Record<string, VideoMeta> = {}
+    for (const cam of cams) {
+      const p = `videos/observation.images.${cam}/`
+      const from = rec[`${p}from_timestamp`]
+      if (typeof from !== 'number') return null
+      out[cam] = {
+        chunk: (rec[`${p}chunk_index`] as number) ?? 0,
+        file: (rec[`${p}file_index`] as number) ?? 0,
+        from,
+        to: (rec[`${p}to_timestamp`] as number) ?? from,
+      }
+    }
+    return out
+  }, [ep, detail, cams])
+
+  const videoActive = viewMode === 'video' && videoMeta != null && !videoError
+
   const currentSegment = useMemo(
     () => labeledEp?.segments.find(([s, e]) => s <= frame && frame <= e),
     [labeledEp, frame],
@@ -138,14 +185,91 @@ export default function EpisodesPage() {
     (cam: string, f: number) => `/api/datasets/${dsId}/episodes/${ep}/frames/${cam}/${f}`,
     [dsId, ep],
   )
-
-  // ── 재생 (rAF, fps 기준) ──
+  const videoUrl = useCallback(
+    (cam: string) => {
+      const m = videoMeta?.[cam]
+      return m ? `/api/datasets/${dsId}/videos/${cam}/${m.chunk}/${m.file}` : ''
+    },
+    [dsId, videoMeta],
+  )
 
   const frameRef = useRef(frame)
   frameRef.current = frame
 
+  /** f 프레임의 비디오 시각(프레임 중앙) */
+  const videoTime = useCallback(
+    (m: VideoMeta, f: number) => m.from + (f + 0.5) / fps,
+    [fps],
+  )
+
+  const seekVideos = useCallback((f: number) => {
+    if (!videoMeta) return
+    for (const cam of cams) {
+      const v = videoRefs.current[cam]
+      const m = videoMeta[cam]
+      if (v && m && v.readyState >= 1) v.currentTime = videoTime(m, f)
+    }
+  }, [videoMeta, cams, videoTime])
+
+  /** 모든 탐색은 여기로 — 프레임 상태와 비디오 위치가 같이 움직인다. */
+  const goTo = useCallback((f: number) => {
+    const clamped = Math.max(0, Math.min(totalFrames - 1, f))
+    setFrame(clamped)
+    if (videoActive) seekVideos(clamped)
+  }, [totalFrames, videoActive, seekVideos])
+
+  // ── 재생: 동영상 모드 — <video> 가 시계다 ──
+
   useEffect(() => {
-    if (!playing || totalFrames === 0) return
+    if (!videoActive) return
+    const els = cams.map((c) => videoRefs.current[c]).filter(Boolean) as VideoWithRVFC[]
+    if (playing) els.forEach((v) => { void v.play().catch(() => setVideoError(true)) })
+    else els.forEach((v) => v.pause())
+  }, [playing, videoActive, cams])
+
+  useEffect(() => {
+    if (!videoActive || !videoMeta || cams.length === 0) return
+    const master = videoRefs.current[cams[0]]
+    const m = videoMeta[cams[0]]
+    if (!master || !m) return
+
+    const syncSlaves = (masterTime: number) => {
+      for (const cam of cams.slice(1)) {
+        const v = videoRefs.current[cam]
+        const mm = videoMeta[cam]
+        if (v && mm) {
+          const want = mm.from + (masterTime - m.from)
+          if (Math.abs(v.currentTime - want) > 1 / fps) v.currentTime = want
+        }
+      }
+    }
+    const onPresented = (mediaTime: number) => {
+      setFrame(Math.max(0, Math.min(totalFrames - 1, Math.round((mediaTime - m.from) * fps))))
+      // 에피소드 끝(to_timestamp)에서 멈춘다 — 파일에는 다음 에피소드가 이어져 있다
+      if (mediaTime >= m.to - 0.5 / fps) setPlaying(false)
+      else syncSlaves(mediaTime)
+    }
+
+    const rvfc = master.requestVideoFrameCallback?.bind(master)
+    if (rvfc) {
+      let handle = 0
+      const loop = (_now: number, meta: VideoFrameMeta) => {
+        onPresented(meta.mediaTime)
+        handle = rvfc(loop)
+      }
+      handle = rvfc(loop)
+      return () => master.cancelVideoFrameCallback?.(handle)
+    }
+    // 폴백(rVFC 미지원): timeupdate ~4Hz — 프레임 표시 정밀도만 떨어진다
+    const onTime = () => onPresented(master.currentTime)
+    master.addEventListener('timeupdate', onTime)
+    return () => master.removeEventListener('timeupdate', onTime)
+  }, [videoActive, videoMeta, cams, fps, totalFrames])
+
+  // ── 재생: 프레임 캐시 모드 — rAF 가 시계다 ──
+
+  useEffect(() => {
+    if (videoActive || !playing || totalFrames === 0) return
     let raf = 0
     let last = performance.now()
     const stepMs = 1000 / fps
@@ -161,25 +285,21 @@ export default function EpisodesPage() {
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [playing, fps, totalFrames])
+  }, [videoActive, playing, fps, totalFrames])
 
   // 앞 프레임 프리페치 — 서버가 immutable 캐시 헤더를 주므로 재생이 끊기지 않는다
   useEffect(() => {
-    if (ep == null || !dsId) return
+    if (videoActive || ep == null || !dsId) return
     for (const cam of cams) {
       for (let i = 1; i <= PREFETCH_AHEAD; i++) {
         if (frame + i >= totalFrames) break
         new Image().src = frameUrl(cam, frame + i)
       }
     }
-  }, [frame, ep, dsId, cams, totalFrames, frameUrl])
+  }, [videoActive, frame, ep, dsId, cams, totalFrames, frameUrl])
 
   // ── 단축키 (01-phase-annotation §4.3 의 뷰어 부분집합) ──
 
-  const stepFrame = useCallback(
-    (d: number) => setFrame((f) => Math.max(0, Math.min(totalFrames - 1, f + d))),
-    [totalFrames],
-  )
   const moveEpisode = useCallback((d: number) => {
     if (ep == null || episodes.length === 0) return
     const pos = episodes.findIndex((r) => r.index === ep)
@@ -193,14 +313,14 @@ export default function EpisodesPage() {
       if (t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return
       if (t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'text') return
       if (e.code === 'Space') { e.preventDefault(); if (totalFrames > 0) setPlaying((p) => !p) }
-      else if (e.key === 'ArrowLeft') { e.preventDefault(); stepFrame(e.shiftKey ? -10 : -1) }
-      else if (e.key === 'ArrowRight') { e.preventDefault(); stepFrame(e.shiftKey ? 10 : 1) }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); goTo(frameRef.current + (e.shiftKey ? -10 : -1)) }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); goTo(frameRef.current + (e.shiftKey ? 10 : 1)) }
       else if (e.key === 'j' || e.key === 'J') moveEpisode(-1)
       else if (e.key === 'k' || e.key === 'K') moveEpisode(1)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [stepFrame, moveEpisode, totalFrames])
+  }, [goTo, moveEpisode, totalFrames])
 
   // ── 동작 ──
 
@@ -305,23 +425,45 @@ export default function EpisodesPage() {
           </div>
         ) : (
           <>
-            {/* 카메라 프레임 */}
+            {/* 카메라 — 동영상 또는 프레임 캐시 */}
             <div className="flex gap-3 flex-wrap">
               {cams.map((cam) => (
                 <figure key={cam} className="flex-1 min-w-[240px] max-w-[520px]">
-                  <img
-                    src={frameUrl(cam, frame)}
-                    alt={cam}
-                    className="w-full rounded border border-neutral-700 bg-black"
-                    onError={() => setCacheMissing(true)}
-                    onLoad={() => setCacheMissing(false)}
-                  />
+                  {videoActive ? (
+                    <video
+                      ref={(el) => { videoRefs.current[cam] = el as VideoWithRVFC | null }}
+                      src={videoUrl(cam)}
+                      muted
+                      playsInline
+                      preload="auto"
+                      className="w-full rounded border border-neutral-700 bg-black"
+                      onError={() => setVideoError(true)}
+                      onLoadedMetadata={(e) => {
+                        const m = videoMeta?.[cam]
+                        if (m) e.currentTarget.currentTime = videoTime(m, frameRef.current)
+                      }}
+                    />
+                  ) : (
+                    <img
+                      src={frameUrl(cam, frame)}
+                      alt={cam}
+                      className="w-full rounded border border-neutral-700 bg-black"
+                      onError={() => setCacheMissing(true)}
+                      onLoad={() => setCacheMissing(false)}
+                    />
+                  )}
                   <figcaption className="text-xs text-neutral-500 mt-1">{cam}</figcaption>
                 </figure>
               ))}
             </div>
 
-            {cacheMissing && (
+            {videoError && viewMode === 'video' && (
+              <div className="rounded border border-neutral-700 bg-neutral-800 p-2 text-xs text-neutral-400">
+                브라우저가 이 비디오를 재생하지 못합니다 (코덱/픽셀 포맷) — 프레임 캐시로 전환됨
+              </div>
+            )}
+
+            {!videoActive && cacheMissing && (
               <div className="rounded-lg border border-amber-700/60 bg-amber-950/40 p-3 text-sm flex items-center justify-between">
                 <span>디코딩 캐시가 없습니다 — 생성해야 프레임이 보입니다 (JPEG·긴변 320px, 수 분 소요)</span>
                 <button
@@ -353,6 +495,15 @@ export default function EpisodesPage() {
                 </span>
               )}
               {labeledEp?.reviewed && <span className="text-green-500 text-xs">✔ 검토됨</span>}
+              {videoMeta && (
+                <button
+                  onClick={() => { setPlaying(false); setViewMode((m) => (m === 'video' ? 'frames' : 'video')) }}
+                  className="ml-auto px-2 py-0.5 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-400 hover:text-white"
+                  title="동영상 = 캐시 없이 즉시 재생 / 프레임 캐시 = 프레임 단위 정밀"
+                >
+                  {videoActive ? '프레임 캐시로 보기' : '동영상으로 보기'}
+                </button>
+              )}
             </div>
 
             <input
@@ -360,7 +511,7 @@ export default function EpisodesPage() {
               min={0}
               max={Math.max(0, totalFrames - 1)}
               value={frame}
-              onChange={(e) => { setPlaying(false); setFrame(Number(e.target.value)) }}
+              onChange={(e) => { setPlaying(false); goTo(Number(e.target.value)) }}
               className="w-full"
             />
 
@@ -372,7 +523,7 @@ export default function EpisodesPage() {
                     <button
                       key={i}
                       title={`${labels?.phases[code]} ${s}–${e}`}
-                      onClick={() => { setPlaying(false); setFrame(s) }}
+                      onClick={() => { setPlaying(false); goTo(s) }}
                       style={{
                         width: `${((e - s + 1) / totalFrames) * 100}%`,
                         backgroundColor: PHASE_COLORS[code],

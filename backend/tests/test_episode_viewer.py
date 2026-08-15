@@ -70,6 +70,31 @@ def test_decode_cache_unknown_dataset_404_before_start(client):
     assert r.status_code == 404
 
 
+# ── 비디오 서빙 (뷰어 기본 모드) ──
+
+def test_video_unknown_dataset_404(client):
+    assert client.get("/api/datasets/no/such-ds/videos/top/0/0").status_code == 404
+
+
+def test_video_serves_mp4_with_range(client, real_ds):
+    """비디오 모드의 전제 둘: mp4 로 열리고, Range 가 206 으로 온다 (탐색용)."""
+    url = f"/api/datasets/{real_ds}/videos/top/0/0"
+    r = client.get(url, headers={"Range": "bytes=0-99"})
+    if r.status_code == 404:
+        pytest.skip("비디오 파일 없음")
+    assert r.status_code == 206
+    assert r.headers["content-type"] == "video/mp4"
+    assert r.headers.get("content-range", "").startswith("bytes 0-99/")
+    assert len(r.content) == 100
+
+
+def test_video_route_not_shadowed_by_detail(client, real_ds):
+    r = client.get(f"/api/datasets/{real_ds}/videos/top/0/0", headers={"Range": "bytes=0-0"})
+    assert r.status_code in (206, 404)
+    if r.status_code == 206:
+        assert not r.headers["content-type"].startswith("application/json")
+
+
 # ── 페이즈 요약 (⚠ 배지) ──
 
 def test_phase_summary_shape(client, real_ds):
