@@ -1,6 +1,6 @@
 # 구현 순서 — 리팩터링과 신기능을 안 꼬이게
 
-## 현재 위치 (2026-08-15)
+## 현재 위치 (2026-08-16)
 
 **구조 개편 본선 3b 완료 (1~8).** 게이트웨이가 CAN 도 카메라도 직접 열지 않고,
 데몬 넷이 장치를 소유하며, 컨테이너에는 GPU + `ipc: host` 만 남았다.
@@ -72,6 +72,32 @@ camerad 는 `/dev/videoN`, robotd 는 `/sys/class/net/can0`, rsd 는
 적용 지점은 데몬 `connect()` 한 곳이다. D405 로 확인 — 컨트롤을 전부 기본값으로
 되돌린 뒤 **연결만 했는데** 노출·화이트밸런스가 복원됐다.
 
+**분리수거 파이프라인이 한 몸이 됐다 (YOLO→LLM→VLA).**
+[yolod](daemons/yolod.py)(shm→GPU→버스, 상주 유닛)와 [llm_client](backend/app/services/llm_client.py)
+(Claude/로컬 이중 프로바이더 — 이 머신 기본은 Ollama qwen2.5:7b, **7b 미만은 판단이
+틀리는 것을 실측**) 위에 [오케스트레이터 1단계](backend/app/services/orchestrator.py)가
+섰다: 검출→판단→task 주입→대기→리셋의 취소 가능한 async 상태기계, 회차별 JSONL 저널,
+E-stop·추론 사망 0.5초 감지. **실버스+실LLM 드라이런 3회차 완주**로 확인했다
+(어두운 장면 → none 판단 → 조용한 스킵 → 정상 종료). 실물 데모에 남은 것은
+코드가 아니라 조명·병·캔과 배포된 정책이다.
+
+**외부에서 조종할 수 있다 — [`/api/ext/v1`](feature/external-api.md).**
+미션 수준 API 다: 미션(분리수거 루프) 제출·감시·취소, 종합 상태, yolod 제어.
+장치 수준은 일부러 안 열었다 — 준비는 로컬 운영자 몫이고 전제가 안 되면 409 다.
+**안전 계약은 외부로 이전된다**: 브라우저가 하던 heartbeat 를 외부 클라이언트가
+보내야 하고, 안 보내면 estopd 가 2.5초 안에 세운다. `PIPER_API_TOKEN` 미설정이면
+전체 503 — 켜는 것이 명시적 행위다. 모든 라우트의 인증을 테스트가 구조적으로 강제한다.
+
+**양팔이 소프트웨어로는 끝났다 — [bimanual](feature/bimanual.md) 1~3단계.**
+조립이 wrapper 즉석 코드에서 `bi_piper_*` Robot 클래스 4개로 내려갔고(WeGo repo 로컬
+커밋 + vendor 동기), 녹화·로컬 추론·gRPC 추론·파킹이 한 구현을 공유한다. grpc_wrapper
+의 즉석 조립을 **지우면서** 결함 둘(왼팔 기준 features·파킹 2단계 누락)이 소멸했다.
+좌/우는 등록(`ArmInfo.side`)에 박제 — iface 에 묶으면 포트를 바꿔 꽂는 날 데이터셋이
+거울상으로 오염된다. 웹이 조립한 녹화 CLI 를 실제 `RecordConfig` 까지 파싱해 14축
+action·`left_top`/`right_hand` 관측 키를 확인했다. **함정 하나**: 중첩 필드에 등록형
+설정을 쓰면 draccus 인자 등록이 무한 재귀한다 — 상류처럼 평면 팔 설정을 분리해 풀었다.
+남은 것은 하드웨어다(팔 4대 + udev 4이름, §7 체크리스트).
+
 | 단계 | | 상태 |
 |---|---|---|
 | Phase 0 | 배타 모드 가드 · 추론 파라미터 드리프트 | ☑ |
@@ -100,9 +126,15 @@ camerad 는 `/dev/videoN`, robotd 는 `/sys/class/net/can0`, rsd 는
 | [cloud-training](feature/cloud-training.md) 5~12 | ☐ | 데이터 전송 · 체크포인트 회수 · 비용 가드 |
 | 원격 추론 (.120 → .42) | ◐ | gRPC 경로 ☑ (루프백으로 790스텝) / **기계 간**은 .120 카메라가 모자라 대기 |
 | [bimanual](feature/bimanual.md) 수집·학습·추론 | ◐ | 소프트웨어 전 구간 ☑ — bi 클래스 4개(WeGo repo + shm) · 녹화/추론 복수화 · 좌/우 등록(side) · grpc 즉석 조립 삭제. **실기는 팔 4대 + udev 4이름 대기** (§7 체크리스트) |
+| 분리수거 파이프라인 + [오케스트레이터](feature/episode-orchestrator.md) | ◐ | yolod·llm_client·`/vision`·루프 1단계 ☑ (드라이런 3회차 완주) / **실물 데모**(조명·물체·정책 배포) ☐ · 2단계(YAML 스펙) ☐ |
+| [외부 제어 API](feature/external-api.md) `/api/ext/v1` | ☑ | 미션·상태·heartbeat·E-stop·vision. 다음 후보: 녹화·학습 미션 타입, SSE |
+| [episode-editor](feature/episode-editor.md) 1~3 | ☑ | 뷰어(동영상+프레임 폴백)·수동 분석·타임라인 편집. 남은 것: 4(삭제·task 이관 + **사이드카 재매핑 버그**) · 5(굽기 UI) |
 
 ### 바로 이어서 할 것
 
+0. **분리수거 실물 데모** — 코드는 다 섰다. 조명 + 병·캔 배치 + 정책 배포 상태에서
+   `/vision` 의 루프를 드라이런 해제로 돌리는 것뿐이다. 저널이 회차별 실패 원인
+   (YOLO/LLM/VLA)을 그대로 남긴다
 1. **깊이맵을 실제 정책 입력으로** — 인코딩·메타 기록·범위 조절은 ☑ 다
    (`rs/piper_rs/depth.py`, `meta/piper_cameras.json`, 카메라 설정 모달).
    남은 것은 **녹화 → 학습 → 추론을 한 바퀴 돌려 fps 를 재는 것** — 인코더 입력이
@@ -126,6 +158,8 @@ camerad 는 `/dev/videoN`, robotd 는 `/sys/class/net/can0`, rsd 는
 | ~~데몬 넷을 유닛으로~~ | ☑ `deploy/install-daemons.sh`. 수동 실행은 **죽어도 아무도 모른다** — robotd 가 조용히 죽어 추론이 세그먼트 없다고 죽은 적이 있다 |
 | [udev 규칙 적용](deploy/udev/99-piper-can.rules) + 로봇 재등록 | `can0`/`can1` 이 포트를 바꿔 꽂으면 **뒤바뀐다**. 실제로 겪었고, 등록이 살아 있었으면 leader 팔에 follower 명령이 갔을 것이다 |
 | joint3 캘리브레이션 결정 | raw 2103 인데 범위 최대가 0 — 지금 녹화하는 데이터에서 상단이 잘린다. 넓히면 기존 데이터셋·모델과 어긋난다 |
+| 분리수거 실물 준비 | 조명 + 병·캔 배치 (지금 장면은 어두워서 YOLO 검출 0) — 위 "바로 이어서 할 것" 0번의 전제 |
+| 양팔 하드웨어 | 팔 2쌍 추가(CAN 어댑터 4개 — **xHCI 컨트롤러 분산 필수**, 통째 사망 이력) + udev 규칙 4이름 확장. 소프트웨어는 대기 중 ([bimanual §7](feature/bimanual.md)) |
 
 [refactor/](refactor/) 13개 + 구조 개편 5문서, [feature/](feature/) 3개를 한 순서로 놓는다.
 
@@ -364,7 +398,7 @@ daemon-split 6의 systemd 유닛화는 그 이음매에 **`SystemdRunner`를 하
 | **cloud-training 5~12** | 데이터 전송 · 체크포인트 회수 · 비용 가드 · 유료 프로바이더 |
 | **[robotd-safety](refactor/robotd-safety.md)** | **별도 트랙.** URDF 확보라는 독립 선결 조건. robotd(3b-5)가 서면 언제든 |
 | **[manual-control](feature/manual-control.md)** | 웹 조그(1)·MIT 스파이크(2)는 robotd 위에서 **지금 가능**, 병렬 트랙. 중력 보상(3~4)은 **트랙 E(URDF) 의존**, 키네스테틱 녹화(5)는 그 뒤 |
-| **[bimanual](feature/bimanual.md)** | G4 구현 — bi 클래스 3개(WeGo repo)로 녹화·추론·파킹 단일화. robotd 변경 0이라 구조 개편과 **안 겹침.** 전제는 하드웨어뿐(팔 4대 + udev 4개 확장) |
+| **[bimanual](feature/bimanual.md)** | ◐ **1~3단계 구현** — bi 클래스 4개(WeGo repo + shm 파생)로 녹화·추론·파킹 단일화, 예고대로 robotd 변경 0. 실기만 하드웨어 대기(팔 4대 + udev 4개 확장) |
 | ~~[policy-ui-spec](feature/policy-ui-spec.md)~~ | ☑ **완료** — 정책 하나 추가에 손댈 곳이 **6군데 → 0**. 게이트웨이·wrapper·프론트가 같은 YAML 을 읽는다 |
 | **[layout-redesign](feature/layout-redesign.md)** | 좌측 세로 내비 + 상단 상태바. **지금 가능** — 프론트 껍데기 + 요약 API 하나뿐이고 페이지 내용은 안 건드린다. 1단계만으로 메뉴 한계가 풀린다 |
 | ~~[llm-integration](feature/llm-integration.md) 1·3~~ | ☑ **완료** — `judge()` 계약 + Anthropic·로컬(vLLM/Ollama) 이중 프로바이더 + 호출별 오버라이드. 남은 것: 2(규칙 프리셋 합류) · 4(플래너) — episode-orchestrator 뒤 |
