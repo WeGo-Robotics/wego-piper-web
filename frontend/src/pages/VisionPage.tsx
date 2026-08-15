@@ -26,6 +26,21 @@ type JudgeResult = {
   model: string
 }
 
+type OrchHistoryItem = {
+  episode: number
+  slots?: { target: string; destination: string } | null
+  task?: string | null
+  outcome?: string | null
+  judge_error?: string | null
+}
+type OrchStatus = {
+  state: string
+  episode: number
+  max_episodes: number
+  step: string
+  history: OrchHistoryItem[]
+}
+
 type CamRow = { alias: string; camId: string }
 
 /** rs_335122271186_color → rs_…1186_color (선택 UI 가독용) */
@@ -47,10 +62,13 @@ export default function VisionPage() {
 
   const running = status?.state === 'running' || status?.state === 'starting'
 
+  const [orch, setOrch] = useState<OrchStatus | null>(null)
+
   const poll = useCallback(async () => {
     try {
       setStatus(await api.get<YoloStatus>('/vision/status'))
       setDetections(await api.get<Record<string, DetPayload>>('/vision/detections'))
+      setOrch(await api.get<OrchStatus>('/orchestrator/status'))
       setTick((t) => t + 1)
     } catch {
       /* 게이트웨이 순단은 다음 폴에 회복 */
@@ -110,6 +128,33 @@ export default function VisionPage() {
     const lines = Object.values(detections).map((d) => d.text)
     if (lines.length === 0) { notifyError('살아 있는 검출이 없습니다 — yolod 를 켜세요'); return }
     setInput(lines.join('\n'))
+  }
+
+  // ── 분리수거 루프 ──
+  const [maxEpisodes, setMaxEpisodes] = useState(10)
+  const [waitS, setWaitS] = useState(40)
+  const [dryRun, setDryRun] = useState(true)
+  const [orchBusy, setOrchBusy] = useState(false)
+  const orchRunning = orch?.state === 'running' || orch?.state === 'stopping'
+
+  const handleOrchStart = async () => {
+    setOrchBusy(true)
+    try {
+      await api.post('/orchestrator/start', {
+        max_episodes: maxEpisodes, wait_s: waitS, dry_run: dryRun,
+        rules, provider, model: llmModel,
+      })
+      notify({ level: 'info', text: `분리수거 루프 시작 (${maxEpisodes}회, ${dryRun ? '드라이런' : '실기'})`, source: '비전·판단' })
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : '루프 시작 실패')
+    } finally { setOrchBusy(false) }
+  }
+
+  const handleOrchStop = async () => {
+    setOrchBusy(true)
+    try { await api.post('/orchestrator/stop') } catch (e) {
+      notifyError(e instanceof Error ? e.message : '정지 실패')
+    } finally { setOrchBusy(false) }
   }
 
   const handleJudge = async () => {
@@ -271,6 +316,73 @@ export default function VisionPage() {
           <div className="rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-300">
             {judgeError}
           </div>
+        )}
+      </section>
+
+      {/* ── 분리수거 루프 (오케스트레이터 1단계) ── */}
+      <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <h2 className="text-lg font-semibold">분리수거 루프</h2>
+          <span className={`text-xs px-2 py-0.5 rounded ${orchRunning ? 'bg-green-900 text-green-300' : 'bg-neutral-700 text-neutral-400'}`}>
+            {orch?.state ?? '…'}
+            {orchRunning && ` · ${orch?.episode}/${orch?.max_episodes} · ${orch?.step || '—'}`}
+          </span>
+          {orchRunning ? (
+            <button onClick={() => void handleOrchStop()} disabled={orchBusy}
+              className="ml-auto px-3 py-1 text-sm rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white disabled:opacity-50">
+              정지
+            </button>
+          ) : (
+            <button onClick={() => void handleOrchStart()} disabled={orchBusy}
+              className="ml-auto px-3 py-1 text-sm rounded bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white disabled:opacity-50">
+              시작
+            </button>
+          )}
+        </div>
+
+        {!orchRunning && (
+          <div className="flex items-center gap-4 text-sm flex-wrap">
+            <label className="text-neutral-400">회차
+              <input type="number" min={1} max={200} value={maxEpisodes}
+                onChange={(e) => setMaxEpisodes(Number(e.target.value))}
+                className="ml-1 w-16 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
+            </label>
+            <label className="text-neutral-400">실행 대기(s)
+              <input type="number" min={1} value={waitS}
+                onChange={(e) => setWaitS(Number(e.target.value))}
+                className="ml-1 w-16 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
+            </label>
+            <label className="text-neutral-400 flex items-center gap-1">
+              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} />
+              드라이런 (task/reset 미전송 — 로봇 없이 루프 확인)
+            </label>
+            <span className="text-xs text-neutral-600">
+              검출→판단→task→대기→리셋. 판단은 위 LLM 설정(프로바이더·모델·규칙)을 쓴다
+            </span>
+          </div>
+        )}
+
+        {orch && orch.history.length > 0 && (
+          <ul className="text-sm divide-y divide-neutral-700/50">
+            {[...orch.history].reverse().slice(0, 8).map((h) => (
+              <li key={h.episode} className="py-1 flex items-center gap-3 flex-wrap">
+                <span className="font-mono text-neutral-500">#{h.episode}</span>
+                {h.slots ? (
+                  <span>🎯 {h.slots.target} → 🗑 {h.slots.destination}</span>
+                ) : (
+                  <span className="text-neutral-500">판단 없음</span>
+                )}
+                <span className={`text-xs px-1.5 rounded ${
+                  h.outcome === 'timeout_done' ? 'bg-green-900 text-green-300'
+                  : h.outcome === 'judge_failed' ? 'bg-red-900 text-red-300'
+                  : 'bg-neutral-700 text-neutral-400'}`}>
+                  {h.outcome}
+                </span>
+                {h.task && <span className="text-xs text-neutral-500 font-mono truncate">{h.task}</span>}
+                {h.judge_error && <span className="text-xs text-red-400">{h.judge_error}</span>}
+              </li>
+            ))}
+          </ul>
         )}
       </section>
     </div>

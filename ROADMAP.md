@@ -359,7 +359,7 @@ daemon-split 6의 systemd 유닛화는 그 이음매에 **`SystemdRunner`를 하
 | ~~camera-profiles~~ | ☑ **완료** — 컨트롤 값 저장(`presets` domain=camera) · v4l2 안정 키 · 자동 모드 순서. 적용은 데몬 `connect()` 한 곳. D405 로 확인(되돌린 뒤 연결만으로 복원) |
 | **phase-annotation 6~8** | 굽기 · 학습 · 추론 경로. ~~4~5(편집 UI)~~ 는 [episode-editor](feature/episode-editor.md) 로 ☑ — 분류기는 `python -m piper_phase` 단독 실행 |
 | **[episode-editor](feature/episode-editor.md) 1~3** | ☑ **완료** — `/episodes` 뷰어(동영상 기본 + 프레임 캐시 폴백) · §3.5 수동 분석(파라미터·미리보기) · 타임라인 수작업 편집(분할 S/병합 M/드래그/undo). 남은 것: 4(삭제·task 이관 + **사이드카 재매핑 버그**) · 5(굽기 UI) |
-| **분리수거 파이프라인 (YOLO→LLM→VLA)** | 앞 두 칸 ☑ — [yolod](daemons/yolod.py)(shm→버스, 유닛) · [llm_client](backend/app/services/llm_client.py)(Claude/로컬 이중 프로바이더, **이 머신 기본 = Ollama qwen2.5:7b, 7b 미만 판단 오류 실측**) · `/vision` 테스트 페이지. 몸통은 [episode-orchestrator](feature/episode-orchestrator.md) — **1단계 시나리오 결정 대기** (팝콘: G1·G3 하드웨어 막힘 vs 분리수거 최소 루프 선행) |
+| **분리수거 파이프라인 (YOLO→LLM→VLA)** | 앞 두 칸 ☑ — [yolod](daemons/yolod.py)(shm→버스, 유닛) · [llm_client](backend/app/services/llm_client.py)(Claude/로컬 이중 프로바이더, **이 머신 기본 = Ollama qwen2.5:7b, 7b 미만 판단 오류 실측**) · `/vision` 테스트 페이지. 몸통 1단계도 ☑ — [orchestrator.py](backend/app/services/orchestrator.py) 분리수거 최소 루프(검출→판단→task→대기→리셋, 판정은 타임아웃). 남은 것: 오케스트레이터 2단계(YAML 스펙) · G3 판정 · 실물 데모 |
 | **cloud-training 5~12** | 데이터 전송 · 체크포인트 회수 · 비용 가드 · 유료 프로바이더 |
 | **[robotd-safety](refactor/robotd-safety.md)** | **별도 트랙.** URDF 확보라는 독립 선결 조건. robotd(3b-5)가 서면 언제든 |
 | **[manual-control](feature/manual-control.md)** | 웹 조그(1)·MIT 스파이크(2)는 robotd 위에서 **지금 가능**, 병렬 트랙. 중력 보상(3~4)은 **트랙 E(URDF) 의존**, 키네스테틱 녹화(5)는 그 뒤 |

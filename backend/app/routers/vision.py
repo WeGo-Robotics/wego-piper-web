@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.core.config import settings
 from app.services import llm_client
@@ -27,32 +27,8 @@ _yolod_pm = make_process("piper-yolod")
 
 _YOLOD_SCRIPT = Path(__file__).resolve().parents[3] / "daemons" / "yolod.py"
 
-# 분리수거 판단 기본 규칙 — 테스트 페이지의 시드. 운영 규칙의 정본은
-# 프리셋 스토어로 간다 (llm-integration §4 "규칙은 이름 붙은 설정이다").
-DEFAULT_RULES = """너는 로봇 팔의 분리수거 판단기다. YOLO 검출 목록을 보고 다음에 집을 물체
-하나와 목적지 통을 정한다.
-
-규칙:
-- plastic_bin: bottle(페트병), cup(플라스틱 컵)
-- can_bin: 캔 종류
-- trash_bin: 그 외 쓰레기, 분류 불확실한 것 전부
-- 신뢰도가 가장 높은 물체를 우선한다. 사람·가구는 대상이 아니다.
-- 집을 물체가 없으면 target="none", destination="none".
-- reason 은 한국어 한 문장으로 짧게.
-"""
-
-
-class JudgeSlots(BaseModel):
-    """테스트용 판단 슬롯 — llm_smoke 와 같은 형태.
-
-    ⚠ Field description 은 장식이 아니다 — `model_json_schema()` 를 타고 로컬
-    모델의 guided decoding 프롬프트에 들어간다. 설명이 없으면 소형 모델이
-    reason 을 폭주시키는 것을 실측했다 ("검출 없음" 입력에서 1024토큰 잡탕).
-    """
-
-    target: str = Field(description="집을 물체의 라벨 (검출 목록에 있는 것) 또는 'none'")
-    destination: str = Field(description="plastic_bin | can_bin | trash_bin | none")
-    reason: str = Field(description="판단 근거, 한국어 한 문장")
+# 규칙·슬롯의 정본은 오케스트레이터 서비스 — 테스트 페이지와 루프가 같은 판단을 쓴다
+from app.services.orchestrator import DEFAULT_RULES, JudgeSlots  # noqa: E402
 
 
 # ── yolod 제어 ──

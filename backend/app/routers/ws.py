@@ -204,6 +204,16 @@ def _setup_callbacks() -> None:
     policy_server_manager.pm.set_log_callback(on_ps_log)
     policy_server_manager.pm.set_state_callback(on_ps_state)
 
+    # ── 에피소드 오케스트레이터 콜백 ──
+    from app.services.orchestrator import orchestrator
+
+    def on_orchestrator_event(event: dict) -> None:
+        asyncio.run_coroutine_threadsafe(
+            broadcast({"type": M.ORCHESTRATOR, "data": event}), loop
+        )
+
+    orchestrator.set_event_callback(on_orchestrator_event)
+
     # ── 데이터셋 업로드 콜백 ──
     from app.routers.datasets import _upload_pm
 

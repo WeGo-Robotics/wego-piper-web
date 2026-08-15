@@ -34,6 +34,8 @@ class Activity(str, enum.Enum):
     POLICY_SERVER = "policy_server"
     DATASET_EDIT = "dataset_edit"
     UPLOAD = "upload"
+    # 에피소드 루프 (분리수거 등). 추론 **위에서** 돈다 — 추론과는 배타가 아니다.
+    ORCHESTRATOR = "orchestrator"
     # 아래 둘은 "시작하는 활동"이 아니라 자원 접근이다. 남을 막지 않고 조회만 한다.
     ENCODER_PROBE = "encoder_probe"
     CAMERA_ACCESS = "camera_access"
@@ -46,6 +48,7 @@ LABELS: dict[Activity, str] = {
     Activity.POLICY_SERVER: "정책 서버",
     Activity.DATASET_EDIT: "데이터셋 편집",
     Activity.UPLOAD: "업로드/캐시 작업",
+    Activity.ORCHESTRATOR: "에피소드 루프",
     Activity.ENCODER_PROBE: "인코더 프로브",
     Activity.CAMERA_ACCESS: "카메라 접근",
 }
@@ -58,14 +61,19 @@ LABELS: dict[Activity, str] = {
 BLOCKED_BY: dict[Activity, list[Activity]] = {
     # 카메라 + CAN + GPU 를 전부 점유한다
     Activity.INFERENCE: [Activity.TRAINING, Activity.RECORDING, Activity.DATASET_EDIT],
-    Activity.RECORDING: [Activity.TRAINING, Activity.INFERENCE, Activity.DATASET_EDIT],
+    Activity.RECORDING: [Activity.TRAINING, Activity.INFERENCE, Activity.DATASET_EDIT,
+                         Activity.ORCHESTRATOR],
     # GPU. 정책 서버도 GPU에 정책을 올리므로 학습과 배타다.
-    Activity.TRAINING: [Activity.INFERENCE, Activity.RECORDING, Activity.POLICY_SERVER],
+    Activity.TRAINING: [Activity.INFERENCE, Activity.RECORDING, Activity.POLICY_SERVER,
+                        Activity.ORCHESTRATOR],
     Activity.POLICY_SERVER: [Activity.TRAINING],
     # 데이터셋 파일을 다시 쓴다. 녹화가 같은 디스크에 기록 중이면 피한다.
-    Activity.DATASET_EDIT: [Activity.INFERENCE, Activity.RECORDING],
+    Activity.DATASET_EDIT: [Activity.INFERENCE, Activity.RECORDING, Activity.ORCHESTRATOR],
     # 네트워크/디스크만 쓴다. 아무것도 막지 않고 아무것도 막지 못한다.
     Activity.UPLOAD: [],
+    # 추론 위에서 도는 자동화 계층 — 추론과 공존이 설계다.
+    # 팔을 새 일로 보내는 루프이므로 녹화·학습·편집과는 서로 막는다.
+    Activity.ORCHESTRATOR: [Activity.TRAINING, Activity.RECORDING, Activity.DATASET_EDIT],
     # ── 아래는 자원 접근 (막히기만 하고 남을 막지 않는다) ──
     # GPU 경합 시 409가 아니라 CPU 폴백. blocked_reason() 으로만 쓴다.
     Activity.ENCODER_PROBE: [Activity.TRAINING, Activity.INFERENCE],
@@ -94,7 +102,14 @@ STATE_PROVIDERS: dict[Activity, Callable[[], bool]] = {
     Activity.POLICY_SERVER: lambda: _busy(policy_server_manager.state),
     Activity.DATASET_EDIT: lambda: _busy(dataset_jobs.edit_pm.state),
     Activity.UPLOAD: lambda: _busy(dataset_jobs.upload_pm.state),
+    Activity.ORCHESTRATOR: lambda: _orchestrator().is_running,
 }
+
+
+def _orchestrator():
+    # 지연 import — orchestrator 가 process_manager 등을 물고 있어 기동 순서 순환 방지
+    from app.services.orchestrator import orchestrator
+    return orchestrator
 
 # E-stop 이 정지시키는 활동 — 로봇을 물리적으로 움직이는 것 전부.
 # 녹화도 텔레오퍼레이션으로 팔을 움직이므로 포함한다 (이전에는 추론만 죽였다).

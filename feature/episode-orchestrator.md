@@ -7,9 +7,17 @@
 > (스키마 검증 슬롯, 이 머신 기본 = 로컬 Ollama qwen2.5:7b)로. `/vision` 테스트
 > 페이지에서 두 칸을 화면으로 굴려볼 수 있다.
 >
-> **착수 전 결정 하나**: 1단계(§5)의 시나리오. 문서 원안은 팝콘인데 G1(뎁스
-> 스냅샷)·G3(로드셀 판정) 하드웨어 경로가 막혀 있다. 대안은 분리수거 최소 루프
-> (검출→판단→task 주입→타임아웃 대기→리셋)를 먼저 세우는 것 — 판정만 타임아웃/수동.
+> **✓ 1단계 구현 — 분리수거로 결정했다** (팝콘은 G1·G3 하드웨어 대기).
+> [services/orchestrator.py](../backend/app/services/orchestrator.py):
+> 취소 가능한 async 상태기계, 스텝 하드코딩(capture→judge→set_task→wait_done→
+> eval→reset), 회차별 JSONL 저널, `Activity.ORCHESTRATOR` 배타 가드(추론과는
+> 공존 — 추론 **위에서** 돈다), WS `orchestrator` 이벤트, E-stop/추론 사망/정지
+> 요청을 0.5초 폴링으로 감지해 스텝 중단. 판정은 아직 타임아웃 — G3 이 오면
+> wait_done 스텝만 바뀐다. `/vision` 페이지에서 시작/정지·회차 이력 표시,
+> `dry_run` 이면 로봇 없이 루프만 돈다 (실버스+실LLM 드라이런 3회차 완주 확인).
+> 판단 실패는 회차 스킵 — LLM 은 단일 장애점이 아니다 (llm-integration §3).
+>
+> 남은 것: §5 의 2단계(스텝 레지스트리 + YAML 스펙)부터.
 
 [demo-scenario-gaps.md](demo-scenario-gaps.md)의 **G2**를 구현하는 설계.
 팝콘 데모(Phase 1~2)·분리수거(YOLO→LLM→VLA)·자동 리셋(무인 연속 시연)·장기 플래너가
