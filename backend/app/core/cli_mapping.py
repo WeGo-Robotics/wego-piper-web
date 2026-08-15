@@ -193,19 +193,29 @@ def build_grpc_client_args(params: dict) -> list[str]:
     return args
 
 
+EDIT_WRAPPER_PATH = str(Path(__file__).resolve().parents[3] / "wrapper" / "edit_dataset.py")
+
+
 def build_edit_dataset_args(
     repo_id: str,
     operation: str,
     operation_params: dict | None = None,
 ) -> list[str]:
-    """데이터셋 편집 CLI 인자 리스트 생성."""
+    """데이터셋 편집 CLI 인자 리스트 생성.
+
+    직접 `lerobot-edit-dataset` 이 아니라 래퍼를 부른다 — in-place delete 가
+    사이드카(페이즈 라벨·카메라 해석)를 `_old` 에 버려두고 새 meta 를 쓰므로,
+    편집과 **같은 프로세스**에서 재매핑해 가져와야 한다 (wrapper/edit_dataset.py).
+    """
     op_type = EDIT_OPERATIONS.get(operation)
     if op_type is None:
         raise ValueError(f"Unknown operation: {operation}")
 
     args = [
-        EDIT_DATASET_CMD,
-        f"--repo-id={repo_id}",
+        settings.grpc_python, "-u", EDIT_WRAPPER_PATH,
+        # ⚠ lerobot 0.5 의 플래그는 밑줄(`--repo_id`)이다. 예전 `--repo-id` 는
+        # draccus 가 `unrecognized arguments` 로 거부한다 — 실행해 보고서야 잡혔다
+        f"--repo_id={repo_id}",
         f"--operation.type={op_type}",
     ]
     if operation_params:

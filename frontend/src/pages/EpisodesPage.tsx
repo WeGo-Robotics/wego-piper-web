@@ -103,6 +103,11 @@ export default function EpisodesPage() {
   const draftRef = useRef<Segment[] | null>(null)
   draftRef.current = draft
   const trackRef = useRef<HTMLDivElement | null>(null)
+  // 에피소드 수명주기 (4단계): 재생으로 **확인한 뒤** 삭제·task 수정 — REF §5.3 의 흐름.
+  // 삭제는 CLI 래핑(edit 유닛)이라 비동기다: activity 폴링으로 완료를 기다린다.
+  const [marked, setMarked] = useState<number[]>([])
+  const [lifecycleBusy, setLifecycleBusy] = useState(false)
+  const [taskInput, setTaskInput] = useState('')
 
   const videoRefs = useRef<Record<string, VideoWithRVFC | null>>({})
 
@@ -119,6 +124,56 @@ export default function EpisodesPage() {
     if (!defaultParams) return
     setParamValues({ ...defaultParams, ...(labels?.params ?? {}) })
   }, [defaultParams, labels])
+
+  const toggleMark = (idx: number) =>
+    setMarked((m) => m.includes(idx) ? m.filter((i) => i !== idx) : [...m, idx].sort((a, b) => a - b))
+
+  const waitEditDone = async () => {
+    // edit 유닛이 끝날 때까지 (최대 4분). 실패해도 폴링만 끊긴다 — 편집은 유닛이라 계속 돈다
+    for (let i = 0; i < 240; i++) {
+      await new Promise((r) => setTimeout(r, 1000))
+      try {
+        const s = await api.get<{ running: string[] }>('/activity')
+        if (!s.running.includes('dataset_edit')) return
+      } catch { /* 게이트웨이 순단은 무시 */ }
+    }
+  }
+
+  const handleDeleteMarked = async () => {
+    if (!dsId || marked.length === 0) return
+    const ok = await askConfirm(
+      `에피소드 ${marked.map((i) => `#${i}`).join(', ')} — ${marked.length}개를 삭제하시겠습니까?\n` +
+      '삭제 후 뒤 에피소드 번호가 당겨지고, 페이즈 라벨·신호는 자동으로 따라옵니다.')
+    if (!ok) return
+    setLifecycleBusy(true)
+    try {
+      await api.post(`/datasets/${dsId}/edit`, {
+        operation: 'delete_episodes',
+        params: { episode_indices: JSON.stringify(marked) },
+      })
+      await waitEditDone()
+      setMarked([])
+      await selectDataset(dsId)
+      notify({ level: 'info', text: '삭제 완료 — 번호 재정렬 + 사이드카 동기화됨', source: '에피소드' })
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : '삭제 실패')
+    } finally { setLifecycleBusy(false) }
+  }
+
+  const handleTaskUpdate = async () => {
+    if (!dsId || marked.length === 0 || !taskInput.trim()) return
+    setLifecycleBusy(true)
+    try {
+      await api.post(`/datasets/${dsId}/update-task`, {
+        episode_indices: marked, task: taskInput.trim(),
+      })
+      notify({ level: 'info', text: `에피소드 ${marked.length}개 task 변경됨`, source: '에피소드' })
+      setMarked([]); setTaskInput('')
+      await selectDataset(dsId)
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : 'task 변경 실패')
+    } finally { setLifecycleBusy(false) }
+  }
 
   const loadPhase = useCallback(async (id: string) => {
     // 사이드카는 선택적 — 404 는 "아직 분석 안 됨"이지 오류가 아니다
@@ -137,6 +192,7 @@ export default function EpisodesPage() {
     setDraft(null)
     setSelectedSeg(null)
     setUndoStack([])
+    setMarked([])
     if (!id) { setDetail(null); setLabels(null); setSummary(null); return }
     try {
       setDetail(await api.get<DatasetDetail>(`/datasets/${id}`))
@@ -647,12 +703,17 @@ export default function EpisodesPage() {
         {episodes.length > 0 && (
           <ul className="rounded-lg border border-neutral-700 bg-neutral-800 divide-y divide-neutral-700/60 max-h-[70vh] overflow-y-auto">
             {episodes.map((r) => (
-              <li key={r.index}>
+              <li key={r.index} className={`flex items-center ${ep === r.index ? 'bg-neutral-700' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={marked.includes(r.index)}
+                  onChange={() => toggleMark(r.index)}
+                  title="삭제·task 수정 대상으로 표시"
+                  className="ml-2 accent-red-500 shrink-0"
+                />
                 <button
                   onClick={() => void selectEpisode(dsId, r.index)}
-                  className={`w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 hover:bg-neutral-700/50 ${
-                    ep === r.index ? 'bg-neutral-700' : ''
-                  }`}
+                  className="flex-1 min-w-0 text-left px-2 py-1.5 text-sm flex items-center gap-2 hover:bg-neutral-700/50"
                 >
                   <span className="font-mono">#{r.index}</span>
                   <span className="text-xs text-neutral-500">{r.length}f</span>
@@ -669,6 +730,50 @@ export default function EpisodesPage() {
               </li>
             ))}
           </ul>
+        )}
+
+        {/* 수명주기 (4단계): 재생으로 확인한 에피소드를 지우거나 task 를 옮긴다 */}
+        {marked.length > 0 && (
+          <div className="rounded-lg border border-red-500/30 bg-neutral-800 p-3 text-xs space-y-2">
+            <div className="text-neutral-300">
+              선택 {marked.length}개: <span className="font-mono">{marked.map((i) => `#${i}`).join(' ')}</span>
+            </div>
+            <div className="flex gap-1.5">
+              <button
+                onClick={() => void handleDeleteMarked()}
+                disabled={lifecycleBusy}
+                className="px-2 py-1 rounded bg-red-600/80 hover:bg-red-600 text-white disabled:opacity-50"
+              >
+                {lifecycleBusy ? '작업 중…' : '삭제'}
+              </button>
+              <button
+                onClick={() => setMarked([])}
+                disabled={lifecycleBusy}
+                className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300"
+              >
+                해제
+              </button>
+            </div>
+            <div className="flex gap-1.5">
+              <input
+                type="text"
+                value={taskInput}
+                onChange={(e) => setTaskInput(e.target.value)}
+                placeholder="새 task 문구…"
+                className="flex-1 min-w-0 rounded bg-neutral-900 border border-neutral-700 px-2 py-1"
+              />
+              <button
+                onClick={() => void handleTaskUpdate()}
+                disabled={lifecycleBusy || !taskInput.trim()}
+                className="px-2 py-1 rounded bg-blue-600/80 hover:bg-blue-600 text-white disabled:opacity-50"
+              >
+                task 변경
+              </button>
+            </div>
+            <div className="text-neutral-500">
+              삭제하면 뒤 번호가 당겨지고 페이즈 라벨·신호가 자동으로 따라옵니다.
+            </div>
+          </div>
         )}
       </aside>
 

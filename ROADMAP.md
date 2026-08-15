@@ -128,7 +128,7 @@ action·`left_top`/`right_hand` 관측 키를 확인했다. **함정 하나**: �
 | [bimanual](feature/bimanual.md) 수집·학습·추론 | ◐ | 소프트웨어 전 구간 ☑ — bi 클래스 4개(WeGo repo + shm) · 녹화/추론 복수화 · 좌/우 등록(side) · grpc 즉석 조립 삭제. **실기는 팔 4대 + udev 4이름 대기** (§7 체크리스트) |
 | 분리수거 파이프라인 + [오케스트레이터](feature/episode-orchestrator.md) | ◐ | yolod·llm_client·`/vision`·루프 1단계 ☑ (드라이런 3회차 완주) / **실물 데모**(조명·물체·정책 배포) ☐ · 2단계(YAML 스펙) ☐ |
 | [외부 제어 API](feature/external-api.md) `/api/ext/v1` | ☑ | 미션·상태·heartbeat·E-stop·vision. 다음 후보: 녹화·학습 미션 타입, SSE |
-| [episode-editor](feature/episode-editor.md) 1~3 | ☑ | 뷰어(동영상+프레임 폴백)·수동 분석·타임라인 편집. 남은 것: 4(삭제·task 이관 + **사이드카 재매핑 버그**) · 5(굽기 UI) |
+| [episode-editor](feature/episode-editor.md) 1~4 | ☑ | 뷰어·수동 분석·타임라인 편집 + **삭제·task 이관(사이드카 재매핑 — 실데이터 검증)**. 덤: 편집 CLI 가 `--repo-id` 로 애초에 죽고 있던 것 발견·수정. 남은 것: 5(굽기 UI) |
 
 ### 바로 이어서 할 것
 
@@ -393,7 +393,7 @@ daemon-split 6의 systemd 유닛화는 그 이음매에 **`SystemdRunner`를 하
 | ~~parameter-presets 4~5~~ | ☑ 완료 — 추론 프리셋 + 프리셋별 성공률 |
 | ~~camera-profiles~~ | ☑ **완료** — 컨트롤 값 저장(`presets` domain=camera) · v4l2 안정 키 · 자동 모드 순서. 적용은 데몬 `connect()` 한 곳. D405 로 확인(되돌린 뒤 연결만으로 복원) |
 | **phase-annotation 6~8** | 굽기 · 학습 · 추론 경로. ~~4~5(편집 UI)~~ 는 [episode-editor](feature/episode-editor.md) 로 ☑ — 분류기는 `python -m piper_phase` 단독 실행 |
-| **[episode-editor](feature/episode-editor.md) 1~3** | ☑ **완료** — `/episodes` 뷰어(동영상 기본 + 프레임 캐시 폴백) · §3.5 수동 분석(파라미터·미리보기) · 타임라인 수작업 편집(분할 S/병합 M/드래그/undo). 남은 것: 4(삭제·task 이관 + **사이드카 재매핑 버그**) · 5(굽기 UI) |
+| **[episode-editor](feature/episode-editor.md) 1~4** | ☑ **완료** — `/episodes` 뷰어 · 수동 분석 · 타임라인 편집 · **삭제/task 이관(사이드카 재매핑, wrapper/edit_dataset.py)**. 남은 것: 5(굽기 UI) |
 | **분리수거 파이프라인 (YOLO→LLM→VLA)** | 앞 두 칸 ☑ — [yolod](daemons/yolod.py)(shm→버스, 유닛) · [llm_client](backend/app/services/llm_client.py)(Claude/로컬 이중 프로바이더, **이 머신 기본 = Ollama qwen2.5:7b, 7b 미만 판단 오류 실측**) · `/vision` 테스트 페이지. 몸통 1단계도 ☑ — [orchestrator.py](backend/app/services/orchestrator.py) 분리수거 최소 루프(검출→판단→task→대기→리셋, 판정은 타임아웃). 남은 것: 오케스트레이터 2단계(YAML 스펙) · G3 판정 · 실물 데모 |
 | **cloud-training 5~12** | 데이터 전송 · 체크포인트 회수 · 비용 가드 · 유료 프로바이더 |
 | **[robotd-safety](refactor/robotd-safety.md)** | **별도 트랙.** URDF 확보라는 독립 선결 조건. robotd(3b-5)가 서면 언제든 |

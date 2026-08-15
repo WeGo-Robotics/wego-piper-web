@@ -79,11 +79,20 @@ Starlette `FileResponse` 가 Range 를 206 으로 처리한다(실측). 프레�
 | 프레임 이미지 | §3a | **신규** |
 | 에피소드 삭제 | `POST /api/datasets/{id}/edit` delete_episodes | 있음 — 아래 ⚠ |
 
-**⚠ 삭제 ↔ 사이드카 어긋남 (기존 버그, 이 화면이 고칠 것).** delete_episodes 후
-에피소드 인덱스가 당겨지는데 `phase_labels.json` 의 키는 그대로다 — 앞쪽 하나를 지우면
-**뒤쪽 라벨 전부가 한 칸 밀린 채 맞는 것처럼 보인다.** 지금 DatasetsPage 삭제에도 이미
-있는 문제다. 삭제 경로에서 사이드카 키를 재매핑(또는 사이드카 무효화 + 재분석 안내)한다.
-검토 상태(reviewed)가 아까우므로 **재매핑을 기본**으로 한다.
+**✓ 삭제 ↔ 사이드카 어긋남 — 해소됨.** 실제 실체는 문서 예상보다 나빴다:
+lerobot 의 in-place delete 는 원본을 `<이름>_old` 로 옮기고 meta 를 **새로 쓴다** —
+사이드카는 밀리는 게 아니라 **백업에 버려진다** (손으로 복사하면 그때 밀린다).
+편집 경로가 이제 [wrapper/edit_dataset.py](../wrapper/edit_dataset.py) 를 지난다:
+편집 성공 후 **같은 프로세스에서** `_old` 의 사이드카(페이즈 라벨·신호·piper_cameras)를
+번호 재매핑해 새 meta 로 가져온다 ([piper_phase.sidecar](../phase/piper_phase/sidecar.py)).
+게이트웨이 훅이 아닌 래퍼인 이유: 편집은 유닛이라 게이트웨이 재시작에도 도는데,
+훅이면 재시작 순간 동기화가 소리 없이 빠진다. split/merge 는 안 가져간다 —
+산출물이 여러 개라 대응이 자명하지 않아 로그로 알리고 재분석을 안내한다.
+`_old` 백업은 lerobot 표준 동작이라 그대로 둔다 (데이터셋 목록에 보이면 그게 백업이다).
+
+**덤으로 잡힌 것**: 기존 편집 인자 `--repo-id` 는 lerobot 0.5 CLI 가
+`unrecognized arguments` 로 거부한다 (`--repo_id` 밑줄이 맞다) — 즉 화면의
+에피소드 삭제는 **애초에 CLI 에서 죽고 있었다.** 래퍼로 실제 실행해 보고서야 드러났다.
 
 **분석·굽기는 [phase_pm](../backend/app/services/dataset_jobs.py#L30) 으로.** 지금 analyze 는
 게이트웨이 in-process(`asyncio.to_thread`)다 — 짧아서 버텼지만, 전체 재분석은 수 분이고
@@ -97,7 +106,7 @@ Starlette `FileResponse` 가 Range 를 206 으로 처리한다(실측). 프레�
 | 1 | ☑ §3 재생 경로 (비디오 Range + 프레임 서빙 + JPEG 옵션 + 멀티 chunk 수정) | API 만으로 프레임 확인 가능 | 실데이터셋 206/JPEG 실측 |
 | 2 | ☑ EpisodesPage 뷰어 (이중 모드 재생 + 그래프 + 페이즈 트랙 + ⚠ 정렬) + §3.5 수동 분석(파라미터·미리보기) | "리플레이 → 불량 체크 → 삭제" 완성 | `npm run build` + 실데이터셋 열람 |
 | 3 | ☑ 편집 인터랙션 (드래그/분할 S/병합 M/0~6 지정/Ctrl+Z) + PUT 저장(검토됨 ✔) | 01 의 4~5단계 완료 | 50개 실제 검토 (01 §8) 는 사용 중 진행 |
-| 4 | 삭제·task 이관 + **사이드카 재매핑** | 기능 단일 소유 + 기존 버그 해소 | 삭제 후 라벨 대조 |
+| 4 | ☑ 삭제·task 이관 + **사이드카 재매핑** — 뷰어 리스트에서 선택→[삭제]/[task 변경] | 기능 단일 소유 + 기존 버그 해소 | 실데이터 사본으로 delete 실행 — 11→9, 옛 #2→새 #1 라벨·신호 일치 |
 | 5 | 굽기 UI (01 §5, `phase_pm`) | 학습 투입 가능 | 01 §9 라운드트립 |
 
 검증 공통: 프론트는 반드시 `cd frontend && npm run build` (`npx tsc --noEmit` 은 no-op).
