@@ -174,6 +174,13 @@ class Settings(BaseSettings):
     grpc_python: str = sys.executable
     hf_cli: str = ""  # huggingface-cli 경로 (빈 문자열이면 자동 탐색)
 
+    # ── 외부 LLM 판단 클라이언트 (feature/llm-integration.md) ──
+    # 전부 기기별 설정이다 — 온프레미스 여부가 기기 속성이라서.
+    # API 키는 PIPER_ 접두사가 아니라 SDK 표준 `ANTHROPIC_API_KEY` 를 환경에서 읽는다.
+    llm_provider: str = "anthropic"   # anthropic | openai_compat(3단계, 미구현)
+    llm_model: str = "claude-opus-5"
+    llm_base_url: str = ""            # openai_compat 전용 (vLLM/Ollama 엔드포인트)
+
     @property
     def resolved_robot_id(self) -> str:
         """설정된 robot_id, 없으면 호스트명."""

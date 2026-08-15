@@ -1,5 +1,17 @@
 # 외부 LLM 연동 — 판단·계획을 위한 구조화 출력 클라이언트
 
+> **◐ 1단계 완료.** [llm_client.py](../backend/app/services/llm_client.py) —
+> `judge()` 계약 + Anthropic 프로바이더(`messages.parse` 구조화 출력) + 설정
+> (`PIPER_LLM_PROVIDER/MODEL/BASE_URL`) + refusal/타임아웃/검증 예외
+> (`LLMJudgeError.reason`) + 진단 카운터. 스키마 왕복·refusal 분기·프로바이더
+> 오류·"제어 경로에 import 없음" 가드까지 pytest 8개
+> ([test_llm_client.py](../backend/tests/test_llm_client.py)).
+> `openai_compat` 은 **시끄럽게 미구현** — 온프레미스 선택을 조용히 외부 API 로
+> 폴백하지 않는다 (§7 과 같은 이유).
+>
+> 남은 확인 하나: `ANTHROPIC_API_KEY` 를 `backend/.env` 에 넣은 뒤 실제 왕복
+> 1회 (지연 실측 + 2회차 캐시 적중 `stats["cache_read_input_tokens"] > 0`).
+
 [episode-orchestrator.md](episode-orchestrator.md) 스텝 표의 **"외부 HTTP (LLM) | 신규"** 칸을 채우는 설계.
 분리수거 데모(YOLO→LLM→VLA, 시나리오 순위 6)의 "판단" 칸과 장기 플래너(시나리오 5장)가
 같은 클라이언트를 쓴다.
