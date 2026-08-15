@@ -69,7 +69,7 @@ function CollapsibleCard({ title, storageKey, defaultOpen = true, children }: {
   )
 }
 
-type ReadyArm = { iface: string; role: string; config: Record<string, unknown> }
+type ReadyArm = { iface: string; role: string; side?: string | null; config: Record<string, unknown> }
 type ValidationResult = { valid: boolean; errors: string[]; warnings: string[]; robot_joints?: number }
 
 // 관절 수와 정책 목록은 백엔드에서 온다 —
@@ -186,6 +186,9 @@ export default function InferencePage() {
         const followers = all.filter((a) => a.role === 'follower')
         setReadyFollowers(followers)
         if (followers.length === 1) setSelectedFollower(followers[0].iface)
+        // 좌/우는 등록(side)이 정본 — 양팔 선택을 프리필한다
+        setLeftFollower(v => v || followers.find(a => a.side === 'left')?.iface || '')
+        setRightFollower(v => v || followers.find(a => a.side === 'right')?.iface || '')
       }).catch(() => {}),
       api.get<ReadyCam[]>('/cameras/ready').then(setReadyCameras).catch(() => {}),
       api.get<Model[]>('/models').then(setModels).catch(() => {}),
@@ -244,11 +247,15 @@ export default function InferencePage() {
   }, [selectedModel])
 
   useEffect(() => {
-    if (!selectedModel || !selectedFollower || !reqs) { setValidation(null); return }
+    // 양팔이면 두 팔 다 골라야 검증한다 — robot_joints 가 14 로 돌아온다
+    const ifaces = robotMode === 'bimanual' ? [leftFollower, rightFollower] : [selectedFollower]
+    if (!selectedModel || !reqs || !ifaces.every(Boolean)) { setValidation(null); return }
     const allMapped = reqs.required_cameras.every((c) => cameraMapping[c.name])
     if (!allMapped) { setValidation(null); return }
     api.post<ValidationResult>('/inference/validate', {
-      model_id: selectedModel, follower_iface: selectedFollower, camera_mapping: cameraMapping,
+      model_id: selectedModel, follower_iface: ifaces[0],
+      follower_ifaces: robotMode === 'bimanual' ? ifaces : [],
+      camera_mapping: cameraMapping,
     }).then((v) => {
       setValidation(v)
       if (v.valid) {
@@ -256,7 +263,9 @@ export default function InferencePage() {
         if (ckpt) {
           api.post<{ command: string }>('/models/inference/preview', {
             checkpoint_path: ckpt,
-            robot_port: selectedFollower, camera_mapping: cameraMapping,
+            robot_port: ifaces[0],
+            robot_ports: robotMode === 'bimanual' ? ifaces : [],
+            camera_mapping: cameraMapping,
             params: taskParams(),
             inference_mode: inferenceMode, server_address: serverAddress,
             policy_type: policyType, actions_per_chunk: actionsPerChunk,
@@ -266,7 +275,7 @@ export default function InferencePage() {
         }
       }
     }).catch(() => {})
-  }, [selectedModel, selectedFollower, cameraMapping, inferenceMode, serverAddress, policyType, actionsPerChunk, aggregateFn, offsetCorrection, smoothing, smoothingWindow, debugMode])
+  }, [selectedModel, selectedFollower, robotMode, leftFollower, rightFollower, cameraMapping, inferenceMode, serverAddress, policyType, actionsPerChunk, aggregateFn, offsetCorrection, smoothing, smoothingWindow, debugMode])
 
   const saveSelectionRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => {

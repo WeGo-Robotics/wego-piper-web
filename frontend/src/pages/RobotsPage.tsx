@@ -253,7 +253,7 @@ function Spinner({ className = '' }: { className?: string }) {
 type ArmInfo = {
   iface: string; bus_info: string; state: string; connected: boolean
   role: string; ctrl_mode: string; master_slave?: 'master' | 'slave' | null
-  firmware: string; slot: string | null
+  firmware: string; slot: string | null; side?: 'left' | 'right' | null
   ready: boolean; config: Record<string, unknown>; rx_packets?: number
 }
 
@@ -382,6 +382,13 @@ export default function RobotsPage() {
   const handleRoleChange = async (iface: string, role: string) => {
     const updated = await api.post<ArmInfo>('/robots/role', { iface, role })
     setArms((prev) => prev.map((a) => (a.iface === iface ? updated : a)))
+  }
+
+  // 좌/우 스왑 — 등록에 박제된다 (세션 사이에 뒤바뀌면 양팔 데이터셋이 거울상 오염)
+  const handleSideToggle = async (arm: ArmInfo) => {
+    const next = arm.side === 'left' ? 'right' : arm.side === 'right' ? null : 'left'
+    const updated = await api.post<ArmInfo>('/robots/side', { iface: arm.iface, side: next })
+    setArms((prev) => prev.map((a) => (a.iface === arm.iface ? updated : a)))
   }
 
   // 마스터(示教入力)/슬레이브(運動出力) 모드 설정
@@ -729,6 +736,14 @@ export default function RobotsPage() {
                     {arm.role}
                   </span>
                   <MasterSlaveBadge ms={arm.master_slave} />
+                  {/* 좌/우 (양팔) — 클릭 순환 왼→오른→해제. 등록에 저장된다 */}
+                  <button onClick={() => handleSideToggle(arm)}
+                    title="양팔에서 이 팔의 좌/우 (클릭해서 변경)"
+                    className={`px-1.5 py-0.5 text-[10px] rounded border ${
+                      arm.side ? 'bg-purple-600/30 text-purple-300 border-purple-500/40'
+                               : 'bg-neutral-700/50 text-neutral-500 border-neutral-600'}`}>
+                    {arm.side === 'left' ? '왼팔' : arm.side === 'right' ? '오른팔' : '좌/우?'}
+                  </button>
                   <span className="text-xs text-neutral-400">
                     {arm.role === 'leader' ? 'piper_leader' : 'piper_follower'}
                   </span>

@@ -214,91 +214,41 @@ def main() -> None:
     register_third_party_plugins()
 
     # ── 1. 로봇 생성 ──
-    from concurrent.futures import ThreadPoolExecutor
+    # 양팔 조립은 bi_piper_* Robot 클래스가 한다 (feature/bimanual.md) —
+    # 여기 있던 즉석 조립(left/right 로봇 2개 + 접두사 분배)은 삭제됐다.
+    # 그 즉석 코드의 결함 둘이 클래스 이행으로 소멸한다:
+    #   ① lerobot_features 를 왼팔 기준으로만 서버에 보냄 → bi 로봇의 14축 전체
+    #   ② 파킹이 2단계 리프트 없이 동시 파킹 + sleep(5) → ParkingController 공용
+    from robot_factory import build_robot_config
 
-    bimanual_ports = [p.strip() for p in args.robot_ports.split(",") if p.strip()] if args.robot_ports else []
-    is_bimanual = len(bimanual_ports) >= 2
+    robot_cfg, effective_type = build_robot_config(
+        args.robot_type, args.robot_port, args.robot_ports, cameras_cfg)
+    robot = make_robot_from_config(robot_cfg)
+    robot.connect()
+    logger.info("Robot connected: %s (%d motors)", effective_type, len(robot.action_features))
+    lerobot_features = map_robot_keys_to_lerobot_features(robot)
+    motor_names = list(robot.action_features.keys())
 
-    def _make_robot(port, cam_cfg=None):
-        RobotCfgClass = RobotConfig.get_choice_class(args.robot_type)
-        cfg = RobotCfgClass(port=port)
-        if cam_cfg and hasattr(cfg, "cameras"):
-            from lerobot.cameras.configs import CameraConfig
-            for cam_name, cam_params in cam_cfg.items():
-                cp = dict(cam_params)
-                cam_type = cp.pop("type", "opencv")
-                CamCfgClass = CameraConfig.get_choice_class(cam_type)
-                cfg.cameras[cam_name] = CamCfgClass(**cp)
-        r = make_robot_from_config(cfg)
-        r.connect()
-        return r
-
-    if is_bimanual:
-        # 양팔 모드: left/right 로봇 + 카메라 분리
-        left_cams = {k.removeprefix("left_"): v for k, v in cameras_cfg.items() if k.startswith("left_")}
-        right_cams = {k.removeprefix("right_"): v for k, v in cameras_cfg.items() if k.startswith("right_")}
-        shared_cams = {k: v for k, v in cameras_cfg.items() if not k.startswith("left_") and not k.startswith("right_")}
-        # shared 카메라는 left에 할당
-        left_cams.update(shared_cams)
-
-        logger.info("Bimanual mode: left=%s, right=%s", bimanual_ports[0], bimanual_ports[1])
-        robots = {}
-        robots["left"] = _make_robot(bimanual_ports[0], left_cams)
-        robots["right"] = _make_robot(bimanual_ports[1], right_cams)
-
-        # motor_names: left_joint1.pos, ..., left_gripper.pos, right_joint1.pos, ...
-        left_motors = list(robots["left"].action_features.keys())
-        right_motors = list(robots["right"].action_features.keys())
-        motor_names = [f"left_{m}" for m in left_motors] + [f"right_{m}" for m in right_motors]
-        logger.info("Bimanual motors (%d): %s", len(motor_names), motor_names)
-
-        # lerobot_features: left 기준 (서버에 보내는 feature map)
-        lerobot_features = map_robot_keys_to_lerobot_features(robots["left"])
-        robot = None  # 단일 로봇 변수는 None
-    else:
-        # 단일 팔 모드
-        robot = _make_robot(args.robot_port, cameras_cfg)
-        robots = None
-        logger.info("Robot connected: %s (%d motors)", robot.name, len(robot.action_features))
-        lerobot_features = map_robot_keys_to_lerobot_features(robot)
-        motor_names = list(robot.action_features.keys())
-
-    # ── 양팔 헬퍼 함수 ──
     def _get_observation():
-        """단일/양팔 공통 관측 읽기."""
-        if is_bimanual:
-            obs = {}
-            for side, r in robots.items():
-                for k, v in r.get_observation().items():
-                    obs[f"{side}_{k}"] = v
-            return obs
         return robot.get_observation()
 
     def _send_action(action_dict):
-        """단일/양팔 공통 액션 전송."""
-        if is_bimanual:
-            left_a = {k.removeprefix("left_"): v for k, v in action_dict.items() if k.startswith("left_")}
-            right_a = {k.removeprefix("right_"): v for k, v in action_dict.items() if k.startswith("right_")}
-            with ThreadPoolExecutor(2) as ex:
-                ex.submit(robots["left"].send_action, left_a)
-                ex.submit(robots["right"].send_action, right_a)
-        else:
-            robot.send_action(action_dict)
+        robot.send_action(action_dict)
 
     def _parking_and_disconnect():
-        """단일/양팔 공통 파킹 + 종료."""
-        targets = robots.values() if is_bimanual else [robot]
-        for r in targets:
-            try:
-                r.parking()
-            except Exception as e:
-                logger.warning("Parking failed: %s", e)
-        time.sleep(5)
-        for r in targets:
-            try:
-                r.disconnect(disable_torque=True)
-            except Exception:
-                pass
+        """파킹(단계별, 로컬 wrapper 와 같은 컨트롤러) + 종료."""
+        from parking_controller import ParkingController
+
+        try:
+            parked = ParkingController(robot).run()
+            if parked:
+                time.sleep(0.5)  # 토크 차단 전 최종 정지 안정화 여유
+        except Exception as e:
+            logger.warning("Parking failed: %s", e)
+        try:
+            robot.disconnect(disable_torque=True)
+        except Exception:
+            pass
 
     # ── 2. gRPC 서버 연결 ──
     logger.info("Connecting to policy server: %s", args.server_address)
@@ -581,12 +531,12 @@ def main() -> None:
                     "joints": [], "action": [], "task": _current_task,
                     "paused": False, "resetting": True,
                 }), flush=True)
-                # 원점 복귀 (단계별 파킹, 블로킹 ~수초)
-                for r in (robots.values() if is_bimanual else [robot]):
-                    try:
-                        r.parking()
-                    except Exception as e:
-                        logger.warning("Reset homing failed: %s", e)
+                # 원점 복귀 (단계별 파킹, 블로킹 ~수초) — bi 로봇은 양팔 병렬
+                try:
+                    from parking_controller import ParkingController
+                    ParkingController(robot).run()
+                except Exception as e:
+                    logger.warning("Reset homing failed: %s", e)
                 _paused = False
                 continue
 

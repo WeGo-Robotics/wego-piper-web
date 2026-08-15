@@ -5,3 +5,6 @@ from .config_piper import PiperFollowerConfig
 from .config_piper_leader import PiperLeaderConfig
 from .piper_follower import PiperFollower
 from .piper_leader import PiperLeader
+from .config_bi_piper import BiPiperFollowerConfig, BiPiperLeaderConfig
+from .bi_piper_follower import BiPiperFollower
+from .bi_piper_leader import BiPiperLeader

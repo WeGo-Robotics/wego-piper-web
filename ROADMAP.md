@@ -99,6 +99,7 @@ camerad 는 `/dev/videoN`, robotd 는 `/sys/class/net/can0`, rsd 는
 | [phase-annotation](feature/01-phase-annotation.md) 4~8 | ☐ | UI · 굽기 · 추론 경로 |
 | [cloud-training](feature/cloud-training.md) 5~12 | ☐ | 데이터 전송 · 체크포인트 회수 · 비용 가드 |
 | 원격 추론 (.120 → .42) | ◐ | gRPC 경로 ☑ (루프백으로 790스텝) / **기계 간**은 .120 카메라가 모자라 대기 |
+| [bimanual](feature/bimanual.md) 수집·학습·추론 | ◐ | 소프트웨어 전 구간 ☑ — bi 클래스 4개(WeGo repo + shm) · 녹화/추론 복수화 · 좌/우 등록(side) · grpc 즉석 조립 삭제. **실기는 팔 4대 + udev 4이름 대기** (§7 체크리스트) |
 
 ### 바로 이어서 할 것
 

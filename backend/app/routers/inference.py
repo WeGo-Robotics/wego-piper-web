@@ -58,6 +58,8 @@ async def inference_status():
 class ValidateRequest(BaseModel):
     model_id: str
     follower_iface: str
+    # 양팔: [왼팔, 오른팔]. 주면 관절 수가 14 가 되고 팔 검증도 둘 다 한다.
+    follower_ifaces: list[str] = []
     camera_mapping: dict[str, str]  # {"top": "/dev/video0", "hand": "/dev/video1"}
 
 
@@ -77,18 +79,20 @@ async def validate_config(body: ValidateRequest):
     state_dim = reqs.get("state_dim", 0)
     action_dim = reqs.get("action_dim", 0)
 
-    # 2) follower 확인
-    arm = robot_manager.arms.get(body.follower_iface)
-    if not arm:
-        errors.append(f"로봇 '{body.follower_iface}'을(를) 찾을 수 없습니다")
-    elif not arm.ready:
-        errors.append(f"로봇 '{body.follower_iface}'이(가) 등록되지 않았습니다")
-    elif arm.role != "follower":
-        errors.append(f"'{body.follower_iface}'은(는) follower가 아닙니다 (현재: {arm.role})")
+    # 2) follower 확인 — 양팔이면 둘 다
+    ifaces = body.follower_ifaces if len(body.follower_ifaces) >= 2 else [body.follower_iface]
+    for iface in ifaces:
+        arm = robot_manager.arms.get(iface)
+        if not arm:
+            errors.append(f"로봇 '{iface}'을(를) 찾을 수 없습니다")
+        elif not arm.ready:
+            errors.append(f"로봇 '{iface}'이(가) 등록되지 않았습니다")
+        elif arm.role != "follower":
+            errors.append(f"'{iface}'은(는) follower가 아닙니다 (현재: {arm.role})")
 
-    # 3) 관절 수 검증
-    # TODO: 로봇별 관절 수를 동적으로 가져오기. 현재는 Piper 기준 하드코딩
-    robot_joints = PIPER_JOINTS
+    # 3) 관절 수 검증 — 팔 수 × 팔당 관절. 양팔 14축 정책이 여기서 7 에 막히면
+    # 양팔 추론 전체가 시작 불가가 된다 (refactor/08 이 예고한 일반화 지점)
+    robot_joints = PIPER_JOINTS * len(ifaces)
     # 프론트가 같은 상수를 따로 들고 있지 않도록 응답에 실어 보낸다
     if state_dim > 0 and robot_joints != state_dim:
         warnings.append(f"관절 수 불일치: 모델 state={state_dim}, 로봇={robot_joints} (모델이 자동 패딩/트림)")

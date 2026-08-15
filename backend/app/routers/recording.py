@@ -1,6 +1,5 @@
 """데이터셋 레코딩 API."""
 
-import json
 import logging
 
 from fastapi import APIRouter, HTTPException
@@ -23,6 +22,12 @@ logger = logging.getLogger(__name__)
 class RecordStartRequest(BaseModel):
     robot_type: str = "piper_follower"
     robot_port: str = ""
+    # ── 양팔 (feature/bimanual.md 2단계) ──
+    # [왼팔, 오른팔] 순서 고정 — 둘 다 있으면 양팔 모드이고 robot_type 은
+    # bi_piper_follower 를 기대한다. 카메라는 camera_mapping 의 키 접두사로
+    # 팔에 배정한다: `left_*`→왼팔, `right_*`→오른팔, 나머지(공용)→왼팔.
+    robot_ports: list[str] = []
+    teleop_ports: list[str] = []
     robot_cameras: dict = {}
     # `{카메라키: 장치id}`. 주면 백엔드가 `--robot.cameras` JSON 을 조립한다.
     # 프론트가 조립하면 백엔드 설정(`camera_transport`)을 몰라 **녹화만 옛 경로**를 탄다.
@@ -52,6 +57,8 @@ class RecordStartRequest(BaseModel):
 class RecordPreviewRequest(BaseModel):
     robot_type: str = "piper_follower"
     robot_port: str = ""
+    robot_ports: list[str] = []
+    teleop_ports: list[str] = []
     robot_cameras: dict = {}
     camera_mapping: dict[str, str] = {}
     camera_width: int = 0
@@ -73,6 +80,54 @@ class RecordPreviewRequest(BaseModel):
     resume: bool = False
 
 
+def _split_camera_mapping(mapping: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+    """카메라를 팔에 배정한다. 키 접두사가 곧 배정이고, 접두사는 벗겨서 넣는다 —
+    bi 클래스가 관측 키에 팔 접두사를 도로 붙이므로 `left_hand` → 왼팔 `hand`
+    → 관측 `left_hand` 로 왕복이 맞는다. 공용(무접두사)은 왼팔 소속
+    (grpc 즉석 조립이 확립한 규약, feature/bimanual.md §2)."""
+    left, right = {}, {}
+    for name, cam_id in mapping.items():
+        if name.startswith("right_"):
+            right[name.removeprefix("right_")] = cam_id
+        elif name.startswith("left_"):
+            left[name.removeprefix("left_")] = cam_id
+        else:
+            left[name] = cam_id
+    return left, right
+
+
+def _apply_arm_params(params: dict, *, cam_w: int, cam_h: int, cam_fps: int) -> dict:
+    """단팔/양팔에 따라 포트·카메라 키 집합을 조립한다.
+
+    시작과 미리보기가 **같은 조립기**를 써야 미리보기가 거짓말을 안 한다.
+    양팔이면 단수 키(robot_port/teleop_port)를 지우고 중첩 키만 남긴다 —
+    섞이면 draccus 가 `--robot.port` 를 bi 설정에 넣으려다 죽는다.
+    """
+    from app.services.camera_config import build_cameras_json
+
+    mapping = params.pop("camera_mapping", None) or {}
+    robot_ports = params.pop("robot_ports", None) or []
+    teleop_ports = params.pop("teleop_ports", None) or []
+
+    if len(robot_ports) >= 2:
+        params.pop("robot_port", None)
+        params.pop("teleop_port", None)
+        params["left_robot_port"], params["right_robot_port"] = robot_ports[0], robot_ports[1]
+        if len(teleop_ports) >= 2:
+            params["left_teleop_port"], params["right_teleop_port"] = teleop_ports[0], teleop_ports[1]
+        left_map, right_map = _split_camera_mapping(mapping)
+        if left_map:
+            params["left_robot_cameras"] = build_cameras_json(
+                left_map, width=cam_w, height=cam_h, fps=cam_fps)
+        if right_map:
+            params["right_robot_cameras"] = build_cameras_json(
+                right_map, width=cam_w, height=cam_h, fps=cam_fps)
+    elif mapping:
+        params["robot_cameras"] = build_cameras_json(
+            mapping, width=cam_w, height=cam_h, fps=cam_fps)
+    return params
+
+
 @router.post("/start")
 async def start_recording(body: RecordStartRequest):
     """녹화 시작."""
@@ -83,16 +138,25 @@ async def start_recording(body: RecordStartRequest):
         raise HTTPException(400, err)
     if not body.single_task:
         raise HTTPException(400, "Task 설명이 필요합니다.")
-    if not body.robot_port:
-        raise HTTPException(400, "Follower 포트가 필요합니다.")
-    if not body.teleop_port:
-        raise HTTPException(400, "Leader 포트가 필요합니다.")
+    bimanual = len(body.robot_ports) >= 2
+    if bimanual:
+        # 타입과 포트 수가 어긋난 채 시작하면 draccus 안쪽에서 죽어 원인을 알기 어렵다
+        from app.core.cli_mapping import BIMANUAL_ROBOT_TYPES
+
+        if body.robot_type not in BIMANUAL_ROBOT_TYPES:
+            raise HTTPException(400, f"양팔 포트 2개에는 bi 로봇 타입이 필요합니다 (지금: {body.robot_type})")
+        if len(body.teleop_ports) < 2:
+            raise HTTPException(400, "양팔 녹화에는 Leader 포트 2개가 필요합니다.")
+    else:
+        if not body.robot_port:
+            raise HTTPException(400, "Follower 포트가 필요합니다.")
+        if not body.teleop_port:
+            raise HTTPException(400, "Leader 포트가 필요합니다.")
 
     # 전송 방식에 맞게 카메라 준비. `direct` 는 해제하고 `shm` 은 붙잡는다 —
     # 두 방식이 정반대라 한 곳(`camera_config`)에서 판단한다.
     from app.services.camera_config import (
         CameraPrepareError,
-        build_cameras_json,
         check_camera_config,
         prepare_cameras,
     )
@@ -118,8 +182,10 @@ async def start_recording(body: RecordStartRequest):
     # 상태를 발행해야 프록시 드라이버가 붙는다.
     from app.services.robot_config import ArmPrepareError, prepare_arms
 
+    arm_ports = (body.robot_ports + body.teleop_ports) if bimanual \
+        else [body.robot_port, body.teleop_port]
     try:
-        prepare_arms([body.robot_port, body.teleop_port], purpose="recording")
+        prepare_arms(arm_ports, purpose="recording")
     except ArmPrepareError as e:
         raise HTTPException(400, str(e))
 
@@ -128,14 +194,10 @@ async def start_recording(body: RecordStartRequest):
 
     params = body.model_dump()
     params.pop("web_preview", None)
-    mapping = params.pop("camera_mapping", None) or {}
     params.pop("camera_width", None)
     params.pop("camera_height", None)
     params.pop("camera_fps", None)
-    if mapping:
-        params["robot_cameras"] = build_cameras_json(
-            mapping, width=cam_w, height=cam_h, fps=cam_fps
-        )
+    params = _apply_arm_params(params, cam_w=cam_w, cam_h=cam_h, cam_fps=cam_fps)
 
     # 헤드리스 에피소드 제어 채널은 미리보기와 무관하게 항상 켠다.
     # 버스 주소는 ProcessManager 가 모든 자식에게 넣으므로 여기서 넘기지 않는다.
@@ -306,16 +368,10 @@ async def delete_dataset_for_recording(repo_id: str):
 @router.post("/preview")
 async def preview_record_args(body: RecordPreviewRequest):
     """녹화 CLI 인자 미리보기. 시작과 **같은 조립기**를 써야 미리보기가 거짓말을 안 한다."""
-    from app.services.camera_config import build_cameras_json
-
     params = body.model_dump()
-    mapping = params.pop("camera_mapping", None) or {}
     cam_w = params.pop("camera_width", 0)
     cam_h = params.pop("camera_height", 0)
     cam_fps = params.pop("camera_fps", 0) or body.fps
-    if mapping:
-        params["robot_cameras"] = build_cameras_json(
-            mapping, width=cam_w, height=cam_h, fps=cam_fps
-        )
+    params = _apply_arm_params(params, cam_w=cam_w, cam_h=cam_h, cam_fps=cam_fps)
     args = build_record_args(params)
     return {"args": args, "command": " ".join(args)}

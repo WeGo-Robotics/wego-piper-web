@@ -22,8 +22,19 @@ EDIT_DATASET_CMD = "lerobot-edit-dataset"
 # 프록시는 `PiperFollower`/`PiperLeader` 를 상속해 `__init__` 만 바꾸므로
 # 관측·행동 계약이 같다. 여기 없는 타입은 **그대로 둔다** — 조용히 바꾸면
 # 있지도 않은 `robot.type`/`teleop.type` 으로 subprocess 가 죽는다.
-SHM_ROBOT_TYPES: dict[str, str] = {"piper_follower": "piper_follower_shm"}
-SHM_TELEOP_TYPES: dict[str, str] = {"piper_leader": "piper_leader_shm"}
+SHM_ROBOT_TYPES: dict[str, str] = {
+    "piper_follower": "piper_follower_shm",
+    "bi_piper_follower": "bi_piper_follower_shm",
+}
+SHM_TELEOP_TYPES: dict[str, str] = {
+    "piper_leader": "piper_leader_shm",
+    "bi_piper_leader": "bi_piper_leader_shm",
+}
+
+# 양팔 robot.type — 관절 수 검증(inference.py)과 인자 조립이 이 집합으로 분기한다
+BIMANUAL_ROBOT_TYPES: frozenset[str] = frozenset(
+    {"bi_piper_follower", "bi_piper_follower_shm"}
+)
 
 
 def resolve_robot_type(robot_type: str) -> str:
@@ -54,6 +65,9 @@ INFERENCE_ARGS_MAP: dict[str, str] = {
     "checkpoint_path": "--policy-path",
     "robot_type": "--robot-type",
     "robot_port": "--robot-port",
+    # 양팔: "left,right" 콤마 목록. gRPC wrapper 와 같은 규약 — 이게 있으면
+    # 로컬 wrapper 도 bi 로봇을 조립한다 (없던 시절엔 양팔이 gRPC 전용이었다)
+    "robot_ports": "--robot-ports",
     "fps": "--fps",
     "device": "--device",
     "use_amp": "--use-amp",
@@ -105,6 +119,9 @@ def build_inference_args(params: dict) -> list[str]:
         if isinstance(value, bool):
             if value:
                 args.append(cli_flag)
+        elif isinstance(value, list):
+            # robot_ports 등 — gRPC 빌더와 같은 콤마 규약
+            args.extend([cli_flag, ",".join(str(v) for v in value)])
         elif isinstance(value, dict):
             import json
             args.extend([cli_flag, json.dumps(value, separators=(",", ":"))])
@@ -381,6 +398,15 @@ RECORD_ARGS_MAP: dict[str, str] = {
     "teleop_type": "--teleop.type",
     "teleop_port": "--teleop.port",
     "teleop_id": "--teleop.id",
+    # ── 양팔 (bi_piper_*) — 중첩 설정 인자. draccus 는 점 경로를 그대로 받으므로
+    # 평면 매핑으로 충분하다. 단팔 키(robot_port 등)와 섞어 쓰면 안 된다 —
+    # 조립은 recording.py 가 모드에 따라 어느 한쪽 키 집합만 넣는 것으로 보장한다.
+    "left_robot_port": "--robot.left_arm_config.port",
+    "right_robot_port": "--robot.right_arm_config.port",
+    "left_robot_cameras": "--robot.left_arm_config.cameras",
+    "right_robot_cameras": "--robot.right_arm_config.cameras",
+    "left_teleop_port": "--teleop.left_arm_config.port",
+    "right_teleop_port": "--teleop.right_arm_config.port",
     "repo_id": "--dataset.repo_id",
     "single_task": "--dataset.single_task",
     "num_episodes": "--dataset.num_episodes",

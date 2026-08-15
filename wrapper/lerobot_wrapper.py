@@ -189,6 +189,8 @@ def main() -> None:
     parser.add_argument("--policy-path", required=True)
     parser.add_argument("--robot-type", required=True)
     parser.add_argument("--robot-port", required=True)
+    # 양팔: "left,right" 콤마 목록 (gRPC wrapper 와 같은 규약). 있으면 bi 로봇 조립
+    parser.add_argument("--robot-ports", default="")
     parser.add_argument("--cameras", default="{}")
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--device", default="cuda")
@@ -217,30 +219,14 @@ def main() -> None:
     _current_task = args.task if args.task else "do the task"
 
     # ── 1. 로봇 생성 ──
-    logger.info("Creating robot: %s (port=%s, cameras=%d)", args.robot_type, args.robot_port, len(cameras_cfg))
+    # 양팔 포함 조립은 robot_factory 한 곳이다 — gRPC wrapper 와 같은 코드를 쓴다
+    logger.info("Creating robot: %s (port=%s, ports=%s, cameras=%d)",
+                args.robot_type, args.robot_port, args.robot_ports or "-", len(cameras_cfg))
 
-    from lerobot.robots.config import RobotConfig
-    RobotCfgClass = RobotConfig.get_choice_class(args.robot_type)
-    robot_cfg = RobotCfgClass(port=args.robot_port)
+    from robot_factory import build_robot_config
 
-    if cameras_cfg and hasattr(robot_cfg, "cameras"):
-        from lerobot.cameras.configs import CameraConfig
-        # 카메라 서브클래스 등록을 위한 import
-        try:
-            from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-        except ImportError:
-            pass
-        try:
-            from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-        except ImportError:
-            pass
-        for cam_name, cam_params in cameras_cfg.items():
-            cam_type = cam_params.pop("type", "opencv")
-            # OpenCV 카메라: V4L2 백엔드 강제 (ANY 사용 시 GStreamer 등에서 실패하는 경우 방지)
-            if cam_type == "opencv" and "backend" not in cam_params:
-                cam_params["backend"] = 200  # Cv2Backends.V4L2
-            CamCfgClass = CameraConfig.get_choice_class(cam_type)
-            robot_cfg.cameras[cam_name] = CamCfgClass(**cam_params)
+    robot_cfg, _ = build_robot_config(
+        args.robot_type, args.robot_port, args.robot_ports, cameras_cfg)
 
     robot = make_robot_from_config(robot_cfg)
     robot.connect()

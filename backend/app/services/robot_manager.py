@@ -185,6 +185,9 @@ class ArmInfo:
     is_master: bool | None = None
     firmware: str = ""
     slot: str | None = None
+    # 좌/우 — 사람의 해석이라 등록이 소유한다 (feature/bimanual.md §3).
+    # iface 이름에 묶으면 포트를 바꿔 꽂는 순간 데이터셋이 거울상으로 오염된다.
+    side: str | None = None      # "left" | "right" | None(단팔)
     ready: bool = False
     # ── 설정값 (게이트웨이 소유) ──
     disable_torque_on_disconnect: bool = True
@@ -223,6 +226,7 @@ class ArmInfo:
                              else "master" if self.is_master else "slave"),
             "firmware": self.firmware,
             "slot": self.slot,
+            "side": self.side,
             "ready": self.ready,
             "config": self._config_dict(),
         }
@@ -372,6 +376,7 @@ class RobotManager:
             return False
         arm.role = role
         arm.slot = None          # 역할이 바뀌면 슬롯은 무효다
+        arm.side = None          # side 는 슬롯 페어에 붙는 해석이라 같이 무효다
         return True
 
     def assign_slot(self, iface: str, slot: str) -> bool:
@@ -381,8 +386,20 @@ class RobotManager:
         for a in self.arms.values():
             if a.slot == slot:
                 a.slot = None
+                a.side = None
         arm.slot = slot
         arm.role = "leader" if "leader" in slot else "follower"
+        # 페어 번호가 기본 side 다: 1=왼팔, 2=오른팔 (feature/bimanual.md §3).
+        # 스왑은 set_side 로 — 기본값일 뿐 iface 에 묶인 게 아니다.
+        arm.side = "left" if slot.endswith("_1") else "right" if slot.endswith("_2") else None
+        return True
+
+    def set_side(self, iface: str, side: str | None) -> bool:
+        """좌/우 해석 지정 — 녹화·추론 화면이 이 값으로 프리필한다."""
+        arm = self.arms.get(iface)
+        if not arm or side not in ("left", "right", None):
+            return False
+        arm.side = side
         return True
 
     # ── 등록 (사용 가능 리스트) ──
@@ -659,6 +676,7 @@ class RobotManager:
                     "bus_info": arm.bus_info,
                     "role": arm.role,
                     "slot": arm.slot,
+                    "side": arm.side,
                     "ready": arm.ready,
                     "config": arm._config_dict(),
                 })
@@ -700,6 +718,7 @@ class RobotManager:
                     continue
             arm.role = arm_data.get("role", "unknown")
             arm.slot = arm_data.get("slot")
+            arm.side = arm_data.get("side")
             arm.update_config(arm_data.get("config", {}))
             if arm_data.get("ready", False):
                 arm.ready = True

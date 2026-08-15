@@ -418,6 +418,24 @@ async def set_role(body: RoleRequest):
     return arm.to_dict() if arm else {"status": "ok"}
 
 
+# ── 좌/우 지정 (양팔) ──
+
+class SideRequest(BaseModel):
+    iface: str
+    side: str | None  # "left" | "right" | null(해제)
+
+
+@router.post("/side")
+async def set_side(body: SideRequest):
+    """좌/우는 사람의 해석이라 등록에 박제한다 — 세션 사이에 좌/우가 뒤바뀌면
+    양팔 데이터셋이 거울상으로 오염된다 (feature/bimanual.md §3)."""
+    if not robot_manager.set_side(body.iface, body.side):
+        raise HTTPException(400, "Side change failed")
+    robot_manager.save_session()
+    arm = robot_manager.arms.get(body.iface)
+    return arm.to_dict() if arm else {"status": "ok"}
+
+
 # ── 마스터/슬레이브 모드 설정 ──
 
 class MasterSlaveRequest(BaseModel):

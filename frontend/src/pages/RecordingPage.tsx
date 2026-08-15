@@ -8,7 +8,7 @@ import LogViewer from '../components/LogViewer'
 import RecordPreview from '../components/RecordPreview'
 import { camOptionText, type ReadyCam } from '../types/camera'
 
-type ReadyArm = { iface: string; role: string }
+type ReadyArm = { iface: string; role: string; side?: string | null }
 type RecordStatusData = { state?: string; current_episode: number; total_episodes: number; phase: string; progress: number }
 
 const VCODECS = ['auto', 'libsvtav1', 'h264', 'hevc', 'h264_nvenc', 'libx264']
@@ -49,6 +49,12 @@ export default function RecordingPage() {
   const _saved = (() => { try { return JSON.parse(localStorage.getItem('piper_record_settings') || '{}') } catch { return {} } })()
   const [followerPort, setFollowerPort] = useState(_saved.followerPort || '')
   const [leaderPort, setLeaderPort] = useState(_saved.leaderPort || '')
+  // 양팔 (feature/bimanual.md 2단계) — 좌/우는 등록(side)에서 프리필한다
+  const [armMode, setArmMode] = useState<'single' | 'bimanual'>(_saved.armMode || 'single')
+  const [leftFollower, setLeftFollower] = useState(_saved.leftFollower || '')
+  const [rightFollower, setRightFollower] = useState(_saved.rightFollower || '')
+  const [leftLeader, setLeftLeader] = useState(_saved.leftLeader || '')
+  const [rightLeader, setRightLeader] = useState(_saved.rightLeader || '')
   const [cameraMapping, setCameraMapping] = useState<Record<string, string>>(_saved.cameraMapping || {})
   const [camWidth, setCamWidth] = useState(_saved.camWidth ?? 480)
   const [camHeight, setCamHeight] = useState(_saved.camHeight ?? 360)
@@ -147,14 +153,31 @@ export default function RecordingPage() {
     api.get<RecordStatusData>('/recording/status').then((s) => setRecordState(s.state as ProcessState)).catch(() => {})
   }, [])
 
+  // 좌/우 프리필 — 등록(side)이 정본이라 화면은 채워 줄 뿐이다 (RobotsPage 에서 지정)
+  useEffect(() => {
+    setLeftFollower((v: string) => v || followers.find(a => a.side === 'left')?.iface || '')
+    setRightFollower((v: string) => v || followers.find(a => a.side === 'right')?.iface || '')
+    setLeftLeader((v: string) => v || leaders.find(a => a.side === 'left')?.iface || '')
+    setRightLeader((v: string) => v || leaders.find(a => a.side === 'right')?.iface || '')
+  }, [followers, leaders])
+
+  // 단팔/양팔 공용 팔 페이로드 — 시작과 미리보기가 같은 것을 보내야 한다
+  const armPayload = armMode === 'bimanual'
+    ? {
+        robot_type: 'bi_piper_follower', teleop_type: 'bi_piper_leader',
+        robot_ports: [leftFollower, rightFollower], teleop_ports: [leftLeader, rightLeader],
+      }
+    : { robot_port: followerPort, teleop_port: leaderPort }
+
   // 설정값 변경 시 localStorage에 통합 저장
   useEffect(() => {
     localStorage.setItem('piper_record_settings', JSON.stringify({
       followerPort, leaderPort, cameraMapping, camWidth, camHeight,
+      armMode, leftFollower, rightFollower, leftLeader, rightLeader,
       repoId, singleTask, numEpisodes, fps, episodeTime, resetTime,
       streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled,
     }))
-  }, [followerPort, leaderPort, cameraMapping, camWidth, camHeight, repoId, singleTask, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled])
+  }, [followerPort, leaderPort, cameraMapping, camWidth, camHeight, armMode, leftFollower, rightFollower, leftLeader, rightLeader, repoId, singleTask, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled])
 
   // 데이터셋 존재 여부 확인
   useEffect(() => {
@@ -181,15 +204,14 @@ export default function RecordingPage() {
   useEffect(() => {
     if (cliEdited || !repoId) return
     api.post<{ command: string }>('/recording/preview', {
-      robot_port: followerPort,
+      ...armPayload,
       camera_mapping: cameraMapping,
       camera_width: camWidth, camera_height: camHeight, camera_fps: fps,
-      teleop_port: leaderPort,
       repo_id: repoId, single_task: singleTask,
       num_episodes: numEpisodes, fps, episode_time_s: episodeTime, reset_time_s: resetTime,
       streaming_encoding: streamingEncoding, vcodec, encoder_threads: encoderThreads, encoder_queue_maxsize: encoderQueue, push_to_hub: pushToHub, resume,
     }).then(r => setCliArgs(r.command)).catch(() => {})
-  }, [followerPort, leaderPort, cameraMapping, repoId, singleTask, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, pushToHub, resume, cliEdited])
+  }, [followerPort, leaderPort, armMode, leftFollower, rightFollower, leftLeader, rightLeader, cameraMapping, repoId, singleTask, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, pushToHub, resume, cliEdited])
 
   const recordBlockedBy = blockedBy('recording')
   // LeRobot 은 `repo_id.split("/")` 를 2개로 언패킹한다. 슬래시가 없으면 녹화 시작
@@ -205,7 +227,10 @@ export default function RecordingPage() {
     return null
   })()
 
-  const canStart = !!followerPort && !!leaderPort && !!repoId && !repoIdError && !!singleTask && !isRunning && !isBlocked('recording')
+  const armsChosen = armMode === 'bimanual'
+    ? !!leftFollower && !!rightFollower && !!leftLeader && !!rightLeader
+    : !!followerPort && !!leaderPort
+  const canStart = armsChosen && !!repoId && !repoIdError && !!singleTask && !isRunning && !isBlocked('recording')
 
   const handleStart = async () => {
     try {
@@ -213,10 +238,9 @@ export default function RecordingPage() {
         // custom 미지원 — preview에서 빌드된 args 사용
       }
       await api.post('/recording/start', {
-        robot_port: followerPort,
+        ...armPayload,
         camera_mapping: cameraMapping,
         camera_width: camWidth, camera_height: camHeight, camera_fps: fps,
-        teleop_port: leaderPort,
         repo_id: repoId, single_task: singleTask,
         num_episodes: numEpisodes, fps, episode_time_s: episodeTime, reset_time_s: resetTime,
         streaming_encoding: streamingEncoding, vcodec, encoder_threads: encoderThreads, encoder_queue_maxsize: encoderQueue, push_to_hub: pushToHub, resume,
@@ -277,7 +301,22 @@ export default function RecordingPage() {
           <div className="grid gap-6 grid-cols-1 lg:grid-cols-2 items-start">
           {/* 로봇 선택 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-            <h3 className="text-sm font-semibold">로봇</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">로봇</h3>
+              <div className="flex gap-3 text-xs text-neutral-300">
+                <label className="flex items-center gap-1 cursor-pointer">
+                  <input type="radio" name="recArmMode" checked={armMode === 'single'}
+                    onChange={() => { setArmMode('single'); setCliEdited(false) }} className="accent-blue-500" />
+                  단팔
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer">
+                  <input type="radio" name="recArmMode" checked={armMode === 'bimanual'}
+                    onChange={() => { setArmMode('bimanual'); setCliEdited(false) }} className="accent-blue-500" />
+                  양팔
+                </label>
+              </div>
+            </div>
+            {armMode === 'single' ? (
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-xs text-neutral-400">Follower</label>
@@ -296,6 +335,28 @@ export default function RecordingPage() {
                 </select>
               </div>
             </div>
+            ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { label: '왼팔 Follower', value: leftFollower, set: setLeftFollower, opts: followers },
+                { label: '오른팔 Follower', value: rightFollower, set: setRightFollower, opts: followers },
+                { label: '왼팔 Leader', value: leftLeader, set: setLeftLeader, opts: leaders },
+                { label: '오른팔 Leader', value: rightLeader, set: setRightLeader, opts: leaders },
+              ] as { label: string; value: string; set: (v: string) => void; opts: ReadyArm[] }[]).map(({ label, value, set, opts }) => (
+                <div key={label}>
+                  <label className="text-xs text-neutral-400">{label}</label>
+                  <select value={value} onChange={e => { set(e.target.value); setCliEdited(false) }}
+                    className="w-full px-2 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
+                    <option value="">선택...</option>
+                    {opts.map(a => <option key={a.iface} value={a.iface}>{a.iface}{a.side ? ` (${a.side === 'left' ? '왼' : '오른'})` : ''}</option>)}
+                  </select>
+                </div>
+              ))}
+              <p className="col-span-2 text-[10px] text-neutral-500">
+                좌/우는 로봇 페이지의 등록(side)에서 프리필됩니다. 카메라 키는 left_/right_ 접두사로 팔에 배정되고, 무접두사(top 등)는 왼팔 소속이 됩니다.
+              </p>
+            </div>
+            )}
             {/* 카메라 */}
             {cameras.length > 0 && (
               <div className="space-y-1 pt-2">

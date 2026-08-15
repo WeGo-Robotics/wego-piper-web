@@ -1,6 +1,28 @@
 # 양팔(bimanual) — "실행만 되는" 상태에서 수집→학습→실행 전체 경로로
 
-[demo-scenario-gaps.md](demo-scenario-gaps.md)의 **G4**를 구현하는 설계.
+> **◐ 소프트웨어 전 구간 구현됨 (§5 의 1~3단계) — 실기 검증만 하드웨어 대기.**
+>
+> - **bi 클래스 4개**: `bi_piper_follower`/`bi_piper_leader` (WeGo repo,
+>   [config_bi_piper.py](../vendor/lerobot_robot_piper/lerobot_robot_piper/config_bi_piper.py)) +
+>   `bi_piper_follower_shm`/`bi_piper_leader_shm`
+>   ([bipipershm.py](../vendor/lerobot_robot_pipershm/lerobot_robot_pipershm/bipipershm.py)).
+>   상류 관용구 그대로 — 서브클래스는 `arm_class`/`arm_config_class` 만 갈아끼운다.
+>   **함정 하나를 밟았다**: 중첩 필드에 등록형 설정을 쓰면 draccus 인자 등록이
+>   무한 재귀한다. 상류가 `SOFollowerConfig`(평면)/`SOFollowerRobotConfig`(등록형)를
+>   나눈 이유가 그것이라, 우리도 `PiperArmConfig`(평면)를 분리했다.
+> - **녹화**: recording.py 가 `robot_ports`/`teleop_ports` 를 받아 중첩 인자를
+>   조립한다. 웹이 만드는 CLI 를 실제 `RecordConfig` 로 파싱해 로봇·텔레옵
+>   팩토리까지 통과 확인 — action 14축, 관측 키 `left_top`/`left_hand`/`right_hand`.
+> - **추론**: 로컬도 열렸다 (`--robot-ports` → [robot_factory](../wrapper/robot_factory.py)).
+>   grpc_wrapper 의 즉석 조립(236-311)은 **삭제** — 결함 ①(left 기준 features)②(파킹)
+>   가 예고대로 소멸했다. ParkingController 는 양팔 병렬 2단계.
+> - **좌/우 박제**: `ArmInfo.side` — 슬롯 페어 번호가 기본(1=왼, 2=오른),
+>   `/api/robots/side` 로 스왑, 세션에 저장. 녹화·추론 화면이 side 로 프리필한다.
+> - **관절 수 가드**: `/inference/validate` 가 팔 수 × 7 로 검증 — 14축 정책이
+>   7 에 막혀 시작 불가였던 유일한 하드 거부가 풀렸다. phase 분석기의 조용한
+>   7 하드코딩(14축을 왼팔로만 읽던 것)도 수정.
+> - **남은 것**: §7 체크리스트 전부 — 팔 4대 + udev 4이름 확장(사람), 실기 fps,
+>   SIGKILL/E-stop 양팔 동시 정지, 실제 양팔 에피소드 1개.
 핸드오버+재파지(시나리오 우선순위 2)·병뚜껑·수건 접기 — 양팔 데모 전부의 블로커가
 "데이터가 없는데 실행 경로만 있는" 상태다.
 

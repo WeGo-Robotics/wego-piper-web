@@ -33,17 +33,28 @@ FULL_TIMEOUT = 10.0      # 2단계 최대 대기(초)
 
 
 class ParkingController:
-    """단계별 파킹 + 관절 이상 진단."""
+    """단계별 파킹 + 관절 이상 진단. 양팔(bi_piper_*)이면 두 팔을 **병렬로 각각**
+    2단계 파킹한다 — 순차로 하면 한 팔이 다른 팔이 끝날 때까지 뻗은 채 기다린다."""
 
     def __init__(self, robot: Any):
-        # robot은 PiperFollower(.bus 노출).
+        # robot 은 PiperFollower(.bus 노출) 또는 BiPiperFollower(.left_arm/.right_arm)
         self.robot = robot
-        self.arm = ArmController(robot.bus)
+        arms = [robot.left_arm, robot.right_arm] if hasattr(robot, "left_arm") else [robot]
+        self.arms = [ArmController(a.bus) for a in arms]
+        self.arm = self.arms[0]  # 기존 단팔 호출부 호환
 
     def run(self) -> bool:
-        """파킹 수행. 정상 완료 시 True, 관절 이상으로 중단 시 False."""
+        """파킹 수행. 정상 완료 시 True, 관절 이상으로 중단 시 False (하나라도)."""
+        if len(self.arms) == 1:
+            return self._run_one(self.arms[0])
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(len(self.arms), thread_name_prefix="park") as ex:
+            return all(ex.map(self._run_one, self.arms))
+
+    def _run_one(self, arm: "ArmController") -> bool:
         # 0. 건강 체크 — 이상이면 모션 없이 중단
-        ok, diag = self.arm.check_healthy()
+        ok, diag = arm.check_healthy()
         if not ok:
             logger.warning(
                 "관절 이상 감지 — 파킹 중단. err_code=0x%04X problems=%s",
@@ -63,7 +74,7 @@ class ParkingController:
         # 1. 리프트: joint2만 원점, 나머지 현재값 유지 → 그리퍼를 바닥에서 들어올림
         lift_targets = {j: home[j] for j in LIFT_JOINTS if j in home}
         logger.info("Phase 1 (lift %s): raising gripper off the floor", ", ".join(LIFT_JOINTS))
-        settled = self.arm.move_and_wait(
+        settled = arm.move_and_wait(
             lift_targets, hold_current=True,
             timeout=LIFT_TIMEOUT, threshold=SETTLE_THRESHOLD,
             stable_count=STABLE_COUNT, poll_interval=POLL_INTERVAL,
@@ -72,7 +83,7 @@ class ParkingController:
 
         # 2. 나머지 전체 축을 원점으로
         logger.info("Phase 2 (full home): moving all joints to origin")
-        settled = self.arm.move_and_wait(
+        settled = arm.move_and_wait(
             home, hold_current=False,
             timeout=FULL_TIMEOUT, threshold=SETTLE_THRESHOLD,
             stable_count=STABLE_COUNT, poll_interval=POLL_INTERVAL,
@@ -81,4 +92,5 @@ class ParkingController:
         return True
 
     def disable_torque(self) -> None:
-        self.arm.disable_torque()
+        for arm in self.arms:
+            arm.disable_torque()

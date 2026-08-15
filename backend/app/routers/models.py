@@ -154,6 +154,11 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
     }
     if cameras:
         params["cameras"] = cameras
+    if is_bimanual:
+        # 양팔은 이제 로컬도 된다 — wrapper 가 robot_ports 를 보고 bi 로봇을 조립한다.
+        # robot_port 는 첫 팔로 남겨 둔다 (wrapper 의 단팔 폴백 인자)
+        params["robot_port"] = body.robot_ports[0]
+        params["robot_ports"] = body.robot_ports
     return build_inference_args(params)
 
 
