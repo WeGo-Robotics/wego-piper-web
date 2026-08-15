@@ -69,8 +69,10 @@ type EpisodeRow = {
   reasons: string[] // 비어 있으면 정상
 }
 
+type Segment = [number, number, number]
+
 export default function EpisodesPage() {
-  const { notify } = useSystemMessage()
+  const { notify, confirm: askConfirm } = useSystemMessage()
   const notifyError = (text: string) => notify({ level: 'error', text, source: '에피소드' })
 
   const [datasets, setDatasets] = useState<Dataset[]>([])
@@ -93,6 +95,14 @@ export default function EpisodesPage() {
   const [paramValues, setParamValues] = useState<Record<string, number>>({})
   const [showParams, setShowParams] = useState(false)
   const [preview, setPreview] = useState<{ segments: [number, number, number][]; cycles: number } | null>(null)
+  // 타임라인 수작업 편집 (3단계): draft 가 있으면 편집 모드.
+  // 분할(S)·병합(M)·페이즈 지정(0~6)·경계 드래그 — 저장은 PUT (백엔드가 빈틈·겹침 검증)
+  const [draft, setDraft] = useState<Segment[] | null>(null)
+  const [selectedSeg, setSelectedSeg] = useState<number | null>(null)
+  const [undoStack, setUndoStack] = useState<Segment[][]>([])
+  const draftRef = useRef<Segment[] | null>(null)
+  draftRef.current = draft
+  const trackRef = useRef<HTMLDivElement | null>(null)
 
   const videoRefs = useRef<Record<string, VideoWithRVFC | null>>({})
 
@@ -124,6 +134,9 @@ export default function EpisodesPage() {
     setVideoError(false)
     setCacheMissing(false)
     setPreview(null)
+    setDraft(null)
+    setSelectedSeg(null)
+    setUndoStack([])
     if (!id) { setDetail(null); setLabels(null); setSummary(null); return }
     try {
       setDetail(await api.get<DatasetDetail>(`/datasets/${id}`))
@@ -132,6 +145,14 @@ export default function EpisodesPage() {
   }, [loadPhase]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectEpisode = useCallback(async (id: string, index: number) => {
+    // 편집 중이면 버리기 전에 묻는다 — 수작업이 조용히 날아가면 안 된다
+    if (draftRef.current
+        && !(await askConfirm('편집 중인 구간이 저장되지 않았습니다. 버리고 이동할까요?', { danger: true }))) {
+      return
+    }
+    setDraft(null)
+    setSelectedSeg(null)
+    setUndoStack([])
     setEp(index)
     setFrame(0)
     setPlaying(false)
@@ -139,7 +160,7 @@ export default function EpisodesPage() {
     setCacheMissing(false)
     setPreview(null)
     setSignals(await api.get<Signals>(`/phase/${id}/signals/${index}`).catch(() => null))
-  }, [])
+  }, [askConfirm])
 
   // ── 파생 상태 ──
 
@@ -196,11 +217,13 @@ export default function EpisodesPage() {
   const videoActive = viewMode === 'video' && videoMeta != null && !videoError
 
   const phaseNames = labels?.phases ?? defaultPhases
-  // 미리보기가 있으면 트랙은 그걸 보여준다 — 저장본과 파라미터를 비교하는 화면이다
+  // 미리보기가 있으면 트랙은 그걸 보여준다 — 저장본과 파라미터를 비교하는 화면이다.
+  // 편집 중(draft)이면 draft 가 최우선이다.
   const displaySegments = preview?.segments ?? labeledEp?.segments
+  const shownSegments = draft ?? displaySegments
   const currentSegment = useMemo(
-    () => displaySegments?.find(([s, e]) => s <= frame && frame <= e),
-    [displaySegments, frame],
+    () => shownSegments?.find(([s, e]) => s <= frame && frame <= e),
+    [shownSegments, frame],
   )
 
   const frameUrl = useCallback(
@@ -327,6 +350,114 @@ export default function EpisodesPage() {
     }
   }, [videoActive, frame, ep, dsId, cams, totalFrames, frameUrl])
 
+  // ── 타임라인 수작업 편집 ──
+
+  const pushUndo = useCallback(() => {
+    const d = draftRef.current
+    if (d) setUndoStack((u) => [...u.slice(-49), d.map((s) => [...s] as Segment)])
+  }, [])
+
+  const enterEdit = () => {
+    if (!displaySegments) return
+    setPlaying(false)
+    setDraft(displaySegments.map((s) => [...s] as Segment))
+    setSelectedSeg(null)
+    setUndoStack([])
+  }
+
+  const cancelEdit = () => { setDraft(null); setSelectedSeg(null); setUndoStack([]) }
+
+  const undoEdit = useCallback(() => {
+    setUndoStack((u) => {
+      if (!u.length) return u
+      setDraft(u[u.length - 1])
+      return u.slice(0, -1)
+    })
+  }, [])
+
+  const changePhase = useCallback((code: number) => {
+    if (selectedSeg == null || !draftRef.current) return
+    pushUndo()
+    setDraft((d) => d && d.map((s, i) => (i === selectedSeg ? [s[0], s[1], code] as Segment : s)))
+  }, [selectedSeg, pushUndo])
+
+  /** 추가 = 재생헤드에서 분할. 새 오른쪽 구간이 선택되니 바로 0~6 으로 페이즈를 준다. */
+  const splitAtPlayhead = useCallback(() => {
+    const d = draftRef.current
+    if (!d) return
+    const f = frameRef.current
+    const idx = d.findIndex(([s, e]) => s <= f && f <= e)
+    if (idx < 0 || f <= d[idx][0]) return // 구간 시작 프레임에서는 나눌 것이 없다
+    pushUndo()
+    const [s, e, code] = d[idx]
+    setDraft([...d.slice(0, idx), [s, f - 1, code], [f, e, code], ...d.slice(idx + 1)])
+    setSelectedSeg(idx + 1)
+  }, [pushUndo])
+
+  /** 삭제 = 선택 구간을 앞 구간에 흡수 (첫 구간이면 뒤 구간이 흡수). */
+  const mergeSelected = useCallback(() => {
+    const d = draftRef.current
+    if (!d || d.length < 2 || selectedSeg == null) return
+    pushUndo()
+    const i = selectedSeg
+    const nd = d.map((s) => [...s] as Segment)
+    if (i > 0) {
+      nd[i - 1][1] = nd[i][1]
+      nd.splice(i, 1)
+      setSelectedSeg(i - 1)
+    } else {
+      nd[1][0] = nd[0][0]
+      nd.splice(0, 1)
+      setSelectedSeg(0)
+    }
+    setDraft(nd)
+  }, [selectedSeg, pushUndo])
+
+  /** 수정 = 경계 드래그. 이웃 두 구간이 같이 늘고 준다 — 빈틈·겹침이 생길 수 없다. */
+  const startBoundaryDrag = useCallback((idx: number, e: React.PointerEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    pushUndo()
+    const move = (ev: PointerEvent) => {
+      const rect = trackRef.current?.getBoundingClientRect()
+      const d = draftRef.current
+      if (!rect || !d) return
+      const lo = d[idx][0] + 1        // 양쪽 모두 최소 1프레임은 남긴다
+      const hi = d[idx + 1][1]
+      const f = Math.max(lo, Math.min(hi, Math.round(((ev.clientX - rect.left) / rect.width) * totalFrames)))
+      setDraft((cur) => {
+        if (!cur) return cur
+        const nd = cur.map((s) => [...s] as Segment)
+        nd[idx][1] = f - 1
+        nd[idx + 1][0] = f
+        return nd
+      })
+      goTo(f) // 경계 프레임을 화면으로 보면서 놓는다 — 프레임 단위 편집의 요점
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }, [pushUndo, totalFrames, goTo])
+
+  const saveEdit = async () => {
+    if (!draft || ep == null) return
+    try {
+      // 백엔드가 빈틈·겹침·프레임 수 검증을 한다 — 깨진 구간은 저장 자체가 거부된다
+      await api.put(`/phase/${dsId}/labels/${ep}`, { segments: draft, reviewed: true })
+      setDraft(null)
+      setSelectedSeg(null)
+      setUndoStack([])
+      setPreview(null)
+      await loadPhase(dsId)
+      notify({ level: 'info', text: `에피소드 ${ep} 구간 저장됨 (검토됨 ✔)`, source: '에피소드' })
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : '저장 실패')
+    }
+  }
+
   // ── 단축키 (01-phase-annotation §4.3 의 뷰어 부분집합) ──
 
   const moveEpisode = useCallback((d: number) => {
@@ -342,6 +473,17 @@ export default function EpisodesPage() {
       if (t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return
       // range(스크러버)만 전역 단축키를 허용 — 숫자/텍스트 입력은 타이핑이 우선이다
       if (t.tagName === 'INPUT' && (t as HTMLInputElement).type !== 'range') return
+      // 편집 모드 단축키 (01 §4.3): 0~6 페이즈 지정 · S 분할 · M 병합 · Ctrl+Z 되돌리기
+      if (draftRef.current) {
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key >= '0' && e.key <= '6') {
+          e.preventDefault(); changePhase(Number(e.key)); return
+        }
+        if (e.key === 's' || e.key === 'S') { e.preventDefault(); splitAtPlayhead(); return }
+        if (e.key === 'm' || e.key === 'M') { e.preventDefault(); mergeSelected(); return }
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+          e.preventDefault(); undoEdit(); return
+        }
+      }
       if (e.code === 'Space') { e.preventDefault(); if (totalFrames > 0) setPlaying((p) => !p) }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); goTo(frameRef.current + (e.shiftKey ? -10 : -1)) }
       else if (e.key === 'ArrowRight') { e.preventDefault(); goTo(frameRef.current + (e.shiftKey ? 10 : 1)) }
@@ -350,7 +492,7 @@ export default function EpisodesPage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [goTo, moveEpisode, totalFrames])
+  }, [goTo, moveEpisode, totalFrames, changePhase, splitAtPlayhead, mergeSelected, undoEdit])
 
   // ── 동작 ──
 
@@ -614,6 +756,15 @@ export default function EpisodesPage() {
                 </span>
               )}
               {labeledEp?.reviewed && <span className="text-green-500 text-xs">✔ 검토됨</span>}
+              {displaySegments && !draft && (
+                <button
+                  onClick={enterEdit}
+                  className="px-2 py-0.5 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white"
+                  title="타임라인 수작업 편집 — 분할·병합·페이즈 지정·경계 드래그"
+                >
+                  ✏ 편집
+                </button>
+              )}
               {videoMeta && (
                 <button
                   onClick={() => { setPlaying(false); setViewMode((m) => (m === 'video' ? 'frames' : 'video')) }}
@@ -634,10 +785,10 @@ export default function EpisodesPage() {
               className="w-full"
             />
 
-            {/* 페이즈 트랙 — 구간 클릭 = 그 시작으로 이동 (편집은 3단계) */}
-            {displaySegments ? (
+            {/* 페이즈 트랙 — 열람: 구간 클릭 = 이동 / 편집: 선택·분할·병합·드래그 */}
+            {shownSegments ? (
               <div>
-                {preview && (
+                {preview && !draft && (
                   <div className="flex items-center gap-2 mb-1 text-xs text-amber-400">
                     <span>미리보기 — 저장 안 됨 · {preview.cycles}사이클. [전체 재분석(저장)]으로 확정</span>
                     <button
@@ -648,31 +799,112 @@ export default function EpisodesPage() {
                     </button>
                   </div>
                 )}
-                <div className={`relative h-6 rounded overflow-hidden flex border ${preview ? 'border-amber-500' : 'border-neutral-700'}`}>
-                  {displaySegments.map(([s, e, code], i) => (
+                <div
+                  ref={trackRef}
+                  className={`relative rounded overflow-hidden flex border ${
+                    draft ? 'h-8 border-blue-500' : preview ? 'h-6 border-amber-500' : 'h-6 border-neutral-700'
+                  }`}
+                >
+                  {shownSegments.map(([s, e, code], i) => (
                     <button
                       key={i}
                       title={`${phaseNames[code]} ${s}–${e}`}
-                      onClick={() => { setPlaying(false); goTo(s) }}
+                      onClick={() => {
+                        setPlaying(false)
+                        if (draft) setSelectedSeg(i)
+                        goTo(s)
+                      }}
+                      className={draft && selectedSeg === i ? 'ring-2 ring-inset ring-white/90 z-[1]' : ''}
                       style={{
                         width: `${((e - s + 1) / totalFrames) * 100}%`,
                         backgroundColor: PHASE_COLORS[code],
                       }}
                     />
                   ))}
+                  {/* 편집 모드: 경계 핸들 — 드래그하면 이웃 두 구간이 같이 늘고 준다 */}
+                  {draft && draft.slice(0, -1).map((_, i) => (
+                    <div
+                      key={`b${i}`}
+                      onPointerDown={(e) => startBoundaryDrag(i, e)}
+                      className="absolute top-0 bottom-0 w-2 -ml-1 cursor-ew-resize z-10 group"
+                      style={{ left: `${(draft[i + 1][0] / totalFrames) * 100}%` }}
+                    >
+                      <div className="mx-auto w-0.5 h-full bg-white/70 group-hover:bg-white" />
+                    </div>
+                  ))}
                   <div
                     className="absolute top-0 bottom-0 w-px bg-yellow-400 pointer-events-none"
                     style={{ left: `${(frame / Math.max(1, totalFrames - 1)) * 100}%` }}
                   />
                 </div>
-                <div className="flex gap-3 mt-1 text-[10px] text-neutral-500 flex-wrap">
-                  {phaseNames.map((name, code) => (
-                    <span key={name} className="flex items-center gap-1">
-                      <span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: PHASE_COLORS[code] }} />
-                      {name}
-                    </span>
-                  ))}
-                </div>
+
+                {draft ? (
+                  <>
+                    <div className="flex items-center gap-1.5 mt-2 text-xs flex-wrap">
+                      <span className="text-neutral-500">선택 구간 페이즈:</span>
+                      {phaseNames.map((name, code) => (
+                        <button
+                          key={name}
+                          disabled={selectedSeg == null}
+                          onClick={() => changePhase(code)}
+                          className="px-1.5 py-0.5 rounded text-black font-medium disabled:opacity-40"
+                          style={{ backgroundColor: PHASE_COLORS[code] }}
+                        >
+                          {code} {name}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1.5 text-xs flex-wrap">
+                      <button
+                        onClick={splitAtPlayhead}
+                        title="재생헤드 위치에서 구간을 둘로 나눈다"
+                        className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white"
+                      >
+                        분할 (S)
+                      </button>
+                      <button
+                        onClick={mergeSelected}
+                        disabled={selectedSeg == null || draft.length < 2}
+                        title="선택 구간을 앞 구간에 흡수한다"
+                        className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white disabled:opacity-40"
+                      >
+                        병합 (M)
+                      </button>
+                      <button
+                        onClick={undoEdit}
+                        disabled={undoStack.length === 0}
+                        className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 hover:text-white disabled:opacity-40"
+                      >
+                        되돌리기 (Ctrl+Z)
+                      </button>
+                      <span className="flex-1" />
+                      <button
+                        onClick={() => void saveEdit()}
+                        className="px-3 py-0.5 rounded bg-green-700 hover:bg-green-600 text-white"
+                      >
+                        저장 (검토됨 ✔)
+                      </button>
+                      <button
+                        onClick={cancelEdit}
+                        className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 hover:text-white"
+                      >
+                        취소
+                      </button>
+                    </div>
+                    <div className="mt-1 text-[10px] text-neutral-600">
+                      구간 클릭 = 선택 · 경계 세로선 드래그 = 이동 · 0~6 = 선택 구간 페이즈 지정
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex gap-3 mt-1 text-[10px] text-neutral-500 flex-wrap">
+                    {phaseNames.map((name, code) => (
+                      <span key={name} className="flex items-center gap-1">
+                        <span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: PHASE_COLORS[code] }} />
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="rounded border border-neutral-700 bg-neutral-800 p-3 text-xs text-neutral-500">
