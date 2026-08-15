@@ -185,6 +185,10 @@ class Settings(BaseSettings):
     # SDK 가 스스로 읽을 수 없으므로 여기서 별칭으로 받아 클라이언트에 넘긴다.
     anthropic_api_key: str = Field("", validation_alias="ANTHROPIC_API_KEY")
 
+    # ── 외부 제어 API (feature/external-api.md) ──
+    # 기기별 설정. 빈 문자열이면 `/api/ext/*` 전체가 503 — 켜는 것이 명시적 행위다.
+    api_token: str = ""
+
     @property
     def resolved_robot_id(self) -> str:
         """설정된 robot_id, 없으면 호스트명."""

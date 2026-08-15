@@ -91,6 +91,7 @@ cd frontend && npm run dev
 | `POST /api/hub/download` | Hub에서 다운로드 |
 | `POST /api/eval/log` | 평가 결과 기록 |
 | `GET /api/eval/stats` | 평가 통계 |
+| `/api/ext/v1/*` | 외부 제어 API — 미션·상태·heartbeat·E-stop ([feature/external-api.md](feature/external-api.md)). `PIPER_API_TOKEN` Bearer 필수, 미설정이면 503 |
 | `/api/phase/*` | 작업 단계(phase) 분석·라벨·신호 (분류기 자체는 `python -m piper_phase` 로 단독 실행 가능) |
 | `GET /api/datasets/{id}/episodes/{ep}/frames/{cam}/{i}` | 디코딩 캐시 프레임 (에피소드 뷰어) |
 | `GET /api/datasets/{id}/videos/{cam}/{chunk}/{file}` | chunk mp4 Range 서빙 (뷰어 동영상 모드) |
@@ -115,5 +116,6 @@ cd frontend && npm run dev
 - `PIPER_DATASETS_DIR`: 데이터셋 디렉토리
 - `PIPER_REDIS_URL`: 버스 주소 (기본 redis://127.0.0.1:6379/0). `ProcessManager` 가 모든 자식에게 넘긴다
 - `PIPER_DISK_WARNING_THRESHOLD_GB`: 디스크 경고 임계치 (기본 10GB)
+- `PIPER_API_TOKEN`: 외부 제어 API(`/api/ext/v1`) Bearer 토큰. 빈 값이면 외부 API 전체 비활성(503)
 - `PIPER_LLM_PROVIDER` / `PIPER_LLM_MODEL` / `PIPER_LLM_BASE_URL`: 판단 LLM
   (feature/llm-integration.md). 이 머신 기본은 로컬 Ollama(`piper-ollama` 유닛) + qwen2.5:7b
