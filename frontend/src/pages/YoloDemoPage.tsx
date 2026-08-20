@@ -44,6 +44,10 @@ type YoloModel = {
   params_m?: number
   size_mb?: number
   downloaded?: boolean
+  /** 학습 곁 JSON 에서 (커스텀 가중치만) */
+  map50?: number | null
+  classes_n?: number | null
+  trained_on?: string | null
 }
 
 /** 서버 카탈로그(/vision/models)가 정본 — 못 받았을 때(구버전 게이트웨이 등)만 쓰는 폴백. */
@@ -74,7 +78,9 @@ export default function YoloDemoPage() {
   const [segments, setSegments] = useState<string[]>([])
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [models, setModels] = useState<YoloModel[]>(FALLBACK_MODELS)
-  const [model, setModel] = useState('yolo11n.pt')
+  // ?model=<file> 로 열면 그 가중치가 선택된 채 시작 (학습 완료 → 데모 단축 경로)
+  const [model, setModel] = useState(
+    () => new URLSearchParams(window.location.search).get('model') ?? 'yolo11n.pt')
   const [fps, setFps] = useState(5)
   const [imgsz, setImgsz] = useState(640)
   const [uploading, setUploading] = useState(false)
@@ -345,6 +351,9 @@ export default function YoloDemoPage() {
                     <option key={m.file} value={m.file}>
                       {m.file} — {m.label}
                       {m.params_m != null ? ` · ${m.params_m}M` : ''}
+                      {m.trained_on ? ` · ${m.trained_on}` : ''}
+                      {m.classes_n != null ? ` · ${m.classes_n}클래스` : ''}
+                      {m.map50 != null ? ` · mAP50 ${m.map50}` : ''}
                       {m.downloaded === false
                         ? ` (다운로드 필요${m.size_mb != null ? `, ${m.size_mb}MB` : ''})` : ''}
                     </option>

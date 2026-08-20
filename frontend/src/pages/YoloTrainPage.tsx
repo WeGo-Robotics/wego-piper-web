@@ -5,6 +5,7 @@
  * 라벨·학습 탭은 2·3단계에서 붙는다.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import { useSystemMessage } from '../components/SystemMessages'
 import YoloLabeler from '../components/YoloLabeler'
@@ -576,12 +577,17 @@ export default function YoloTrainPage() {
               })()}
 
               {trainStatus.info.state === 'done' && !trainRunning && (
-                <div className="rounded border border-green-800 bg-green-950/40 p-3 space-y-1">
+                <div className="rounded border border-green-800 bg-green-950/40 p-3 space-y-2">
                   <div>✅ 완료 — <b className="font-mono">{trainStatus.info.weight}</b></div>
                   <div className="text-xs text-neutral-400">
-                    mAP50 {trainStatus.info.map50} · mAP50-95 {trainStatus.info.map50_95} —
-                    데모 페이지 모델 드롭다운의 "커스텀" 그룹에서 바로 쓸 수 있습니다
+                    mAP50 {trainStatus.info.map50} · mAP50-95 {trainStatus.info.map50_95}
                   </div>
+                  {trainStatus.info.weight && (
+                    <Link to={`/yolo-demo?model=${encodeURIComponent(trainStatus.info.weight)}`}
+                      className="inline-block px-3 py-1 text-sm rounded bg-green-700 hover:bg-green-600 text-white">
+                      ▶ 데모에서 이 가중치로 열기
+                    </Link>
+                  )}
                 </div>
               )}
               {trainStatus.info.state === 'failed' && !trainRunning && (

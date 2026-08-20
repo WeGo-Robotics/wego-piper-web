@@ -112,6 +112,29 @@ def test_custom_model_upload_list_resolve_delete(client, monkeypatch, tmp_path):
     assert client.delete("/api/vision/models/best.pt").status_code == 404
 
 
+def test_custom_model_sidecar_enriches_catalog(client, monkeypatch, tmp_path):
+    """학습 유닛이 남긴 곁 JSON(mAP·클래스·데이터셋)이 드롭다운 설명이 된다.
+
+    삭제하면 곁 JSON 도 같이 사라진다 — 고아 메타가 다음 가중치를 오염하면 안 된다.
+    """
+    import json as _json
+
+    from app.core.config import settings as cfg
+
+    monkeypatch.setattr(cfg, "yolo_models_dir", tmp_path)
+    (tmp_path / "recycle-0820.pt").write_bytes(b"w")
+    (tmp_path / "recycle-0820.json").write_text(_json.dumps({
+        "dataset": "recycle", "map50": 0.82, "classes": ["pet", "can"],
+    }))
+
+    (custom,) = [m for m in client.get("/api/vision/models").json()["models"]
+                 if m["family"] == "커스텀"]
+    assert (custom["map50"], custom["classes_n"], custom["trained_on"]) == (0.82, 2, "recycle")
+
+    client.delete("/api/vision/models/recycle-0820.pt")
+    assert not (tmp_path / "recycle-0820.json").exists()
+
+
 def test_upload_rejects_bad_names(client, monkeypatch, tmp_path):
     from app.core.config import settings as cfg
 

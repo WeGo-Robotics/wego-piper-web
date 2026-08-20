@@ -5,6 +5,7 @@ yolod 는 정책 서버와 같은 "필요할 때 켜는 유닛"이다 — `make_
 를 **직접 호출**한다 (자기 HTTP 호출 금지 — episode-orchestrator §2 와 같은 규칙).
 """
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -67,20 +68,37 @@ _UPLOAD_LIMIT_MB = 500
 
 
 def _custom_models() -> list[dict]:
-    """업로드된 커스텀 가중치 — label 은 수정일 (내용을 모르니 날짜가 제일 유용하다)."""
+    """업로드·학습된 커스텀 가중치.
+
+    학습 유닛(yolo_traind)이 남긴 곁 JSON(<stem>.json)이 있으면 지표를 싣는다 —
+    드롭다운에서 "어느 데이터셋으로 얼마나 나온 가중치인지"가 보인다.
+    없으면(직접 업로드) 수정일만.
+    """
     d = settings.yolo_models_dir
     if not d.is_dir():
         return []
     out = []
     for p in sorted(d.glob("*.pt")):
         st = p.stat()
-        out.append({
+        entry = {
             "family": "커스텀",
             "file": p.name,
             "label": time.strftime("%Y-%m-%d", time.localtime(st.st_mtime)),
             "size_mb": round(st.st_size / 1e6, 1),
             "downloaded": True,
-        })
+        }
+        sidecar = p.with_suffix(".json")
+        if sidecar.is_file():
+            try:
+                meta = json.loads(sidecar.read_text())
+                entry.update({
+                    "map50": meta.get("map50"),
+                    "classes_n": len(meta.get("classes", [])) or None,
+                    "trained_on": meta.get("dataset"),
+                })
+            except ValueError:
+                pass
+        out.append(entry)
     return out
 
 
@@ -144,6 +162,7 @@ async def delete_yolo_model(name: str):
     if not p.is_file():
         raise HTTPException(404, "그런 커스텀 모델이 없습니다")
     p.unlink()
+    p.with_suffix(".json").unlink(missing_ok=True)  # 학습 곁 JSON 도 같이
     return {"deleted": p.name}
 
 

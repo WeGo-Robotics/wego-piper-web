@@ -95,7 +95,8 @@ cd frontend && npm run dev
 | `/api/phase/*` | 작업 단계(phase) 분석·라벨·신호 (분류기 자체는 `python -m piper_phase` 로 단독 실행 가능) |
 | `GET /api/datasets/{id}/episodes/{ep}/frames/{cam}/{i}` | 디코딩 캐시 프레임 (에피소드 뷰어) |
 | `GET /api/datasets/{id}/videos/{cam}/{chunk}/{file}` | chunk mp4 Range 서빙 (뷰어 동영상 모드) |
-| `/api/vision/*` | YOLO 검출(yolod 제어·검출·프리뷰) + LLM 판단 테스트 |
+| `/api/vision/*` | YOLO 검출(yolod 제어·검출·프리뷰·모델 카탈로그) + LLM 판단 테스트 |
+| `/api/yolo/*` | YOLO 학습 데이터셋 — 캡처·라벨·커스텀 가중치 학습 ([feature/yolo-training.md](feature/yolo-training.md)) |
 
 ## 안전 관련 주의사항
 
