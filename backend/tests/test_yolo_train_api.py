@@ -154,6 +154,46 @@ def test_label_roundtrip_via_service(root):
         yd.write_label("d", fname, [{"cls": 0, "cx": 1.5, "cy": 0.5, "w": 0.1, "h": 0.1}])
 
 
+def test_label_http_roundtrip(client, root):
+    """라벨 API — 화면(라벨러)이 쓰는 계약: null/[]/박스, 클래스 동봉."""
+    client.post("/api/yolo/datasets", json={"name": "d", "classes": ["a", "b"]})
+    fname = client.post("/api/yolo/datasets/d/images", content=JPEG).json()["file"]
+
+    r = client.get(f"/api/yolo/datasets/d/labels/{fname}").json()
+    assert r == {"boxes": None, "classes": ["a", "b"]}          # 미라벨
+
+    boxes = [{"cls": 1, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.1}]
+    assert client.put(f"/api/yolo/datasets/d/labels/{fname}", json={"boxes": boxes}).json()["boxes"] == boxes
+
+    # 범위 밖은 400
+    bad = [{"cls": 7, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.1}]
+    assert client.put(f"/api/yolo/datasets/d/labels/{fname}", json={"boxes": bad}).status_code == 400
+
+    assert client.delete(f"/api/yolo/datasets/d/labels/{fname}").status_code == 200
+    assert client.get(f"/api/yolo/datasets/d/labels/{fname}").json()["boxes"] is None
+
+
+def test_prelabel_txt_lines_name_matching():
+    """사전 라벨 매핑 — 이름 완전 일치만, 좌표 클램프, 불일치 카운트."""
+    import importlib.util
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[2] / "daemons" / "yolo_prelabel.py"
+    spec = importlib.util.spec_from_file_location("yolo_prelabel", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    lines, dropped = mod.txt_lines(
+        classes=["pet_bottle", "can"],
+        names={0: "can", 1: "person", 2: "pet_bottle"},
+        clss=[0, 1, 2],
+        xywhn=[[0.5, 0.5, 0.2, 0.1], [0.1, 0.1, 0.1, 0.1], [0.9, 0.9, 0.3, 1.0001]],
+    )
+    assert dropped == 1                                   # person 은 데이터셋에 없다
+    assert lines[0] == "1 0.500000 0.500000 0.200000 0.100000"   # can → id 1
+    assert lines[1].startswith("0 0.900000 0.900000 0.300000 1.000000")  # 클램프
+
+
 def test_delete_image_removes_label_too(root):
     from app.services import yolo_dataset as yd
 

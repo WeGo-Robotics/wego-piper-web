@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../services/api'
 import { useSystemMessage } from '../components/SystemMessages'
+import YoloLabeler from '../components/YoloLabeler'
 
 type YoloDs = { name: string; classes: string[]; images: number; labeled: number }
 type ImgSource = {
@@ -66,7 +67,7 @@ export default function YoloTrainPage() {
   }
 
   // ── 탭 ──
-  const [tab, setTab] = useState<'capture' | 'gallery'>('capture')
+  const [tab, setTab] = useState<'capture' | 'label' | 'gallery'>('capture')
 
   // ── 갤러리 ──
   const [images, setImages] = useState<ImgEntry[]>([])
@@ -159,6 +160,61 @@ export default function YoloTrainPage() {
     finally { setImporting(false) }
   }
 
+  // ── 라벨 탭 ──
+  // 파일 목록은 탭 진입·필터 변경 때 **스냅샷**한다 — 라벨을 저장할 때마다
+  // "미라벨만" 목록이 줄어들며 인덱스가 튀는 걸 막는다.
+  const [labelFilter, setLabelFilter] = useState<'all' | 'unlabeled'>('all')
+  const [labelFiles, setLabelFiles] = useState<string[]>([])
+  const [labelIdx, setLabelIdx] = useState(0)
+
+  const snapshotLabelFiles = useCallback((filter: 'all' | 'unlabeled', startFile?: string) => {
+    const files = images.filter((i) => filter === 'all' || !i.labeled).map((i) => i.file)
+    setLabelFiles(files)
+    const at = startFile ? files.indexOf(startFile) : -1
+    setLabelIdx(at >= 0 ? at : 0)
+  }, [images])
+
+  const openLabeler = (startFile?: string) => {
+    // 특정 이미지에서 열 때는 필터를 전체로 — 라벨된 이미지도 다시 볼 수 있어야 한다
+    const filter = startFile ? 'all' : labelFilter
+    setLabelFilter(filter)
+    snapshotLabelFiles(filter, startFile)
+    setTab('label')
+  }
+
+  const onLabelSaved = (file: string, labeled: boolean) => {
+    setImages((imgs) => imgs.map((i) => (i.file === file ? { ...i, labeled } : i)))
+  }
+
+  // ── 사전 라벨 ──
+  const [plModel, setPlModel] = useState('yolo11n.pt')
+  const [plModels, setPlModels] = useState<string[]>([])
+  const [plConf, setPlConf] = useState(0.25)
+  const [plBusy, setPlBusy] = useState(false)
+
+  useEffect(() => {
+    if (tab !== 'label') return
+    api.get<{ models: { file: string }[] }>('/vision/models')
+      .then((r) => setPlModels(r.models.map((m) => m.file)))
+      .catch(() => {})
+  }, [tab])
+
+  const runPrelabel = async () => {
+    setPlBusy(true)
+    try {
+      const r = await api.post<{ labeled: number; boxes: number; no_match: number; targets: number }>(
+        `/yolo/datasets/${current}/prelabel`, { model: plModel, conf: plConf })
+      notify({
+        level: 'info', source: 'YOLO 학습',
+        text: `사전 라벨: ${r.targets}장 중 ${r.labeled}장에 박스 ${r.boxes}개` +
+          (r.no_match > 0 ? ` (이름 불일치로 버린 박스 ${r.no_match}개)` : ''),
+      })
+      await refreshImages()
+      snapshotLabelFiles(labelFilter)
+    } catch (e) { notifyError(e instanceof Error ? e.message : '사전 라벨 실패') }
+    finally { setPlBusy(false) }
+  }
+
   const deleteImage = async (file: string) => {
     try {
       await api.delete(`/yolo/datasets/${current}/images/${file}`)
@@ -210,8 +266,13 @@ export default function YoloTrainPage() {
 
       {/* ── 탭 ── */}
       <div className="flex gap-1 border-b border-neutral-700 text-sm">
-        {([['capture', '캡처'], ['gallery', `갤러리 (${ds?.images ?? 0})`]] as const).map(([k, label]) => (
-          <button key={k} onClick={() => setTab(k)}
+        {([
+          ['capture', '캡처'],
+          ['label', `라벨 (${images.filter((i) => i.labeled).length}/${images.length})`],
+          ['gallery', `갤러리 (${images.length})`],
+        ] as const).map(([k, label]) => (
+          <button key={k}
+            onClick={() => { if (k === 'label') openLabeler(); else setTab(k) }}
             className={`px-4 py-2 -mb-px border-b-2 ${
               tab === k ? 'border-blue-500 text-white' : 'border-transparent text-neutral-500 hover:text-neutral-300'}`}>
             {label}
@@ -323,6 +384,62 @@ export default function YoloTrainPage() {
         </div>
       )}
 
+      {tab === 'label' && ds && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 flex-wrap text-sm">
+            <select value={labelFilter}
+              onChange={(e) => {
+                const f = e.target.value as 'all' | 'unlabeled'
+                setLabelFilter(f)
+                snapshotLabelFiles(f)
+              }}
+              className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1">
+              <option value="all">전체</option>
+              <option value="unlabeled">미라벨만</option>
+            </select>
+            <div className="flex items-center gap-2 ml-auto text-xs text-neutral-400">
+              사전 라벨:
+              <select value={plModel} onChange={(e) => setPlModel(e.target.value)}
+                className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1">
+                {!plModels.includes(plModel) && <option value={plModel}>{plModel}</option>}
+                {plModels.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <label>conf
+                <input type="number" step="0.05" min="0" max="1" value={plConf}
+                  onChange={(e) => setPlConf(Number(e.target.value))}
+                  className="ml-1 w-16 rounded bg-neutral-900 border border-neutral-700 px-1.5 py-1" />
+              </label>
+              <button onClick={() => void runPrelabel()} disabled={plBusy}
+                title="미라벨 이미지 전체를 모델로 훑어 초안 박스를 채운다 — 모델 클래스 이름이 데이터셋 클래스와 일치할 때만"
+                className="px-2.5 py-1 rounded bg-blue-800 hover:bg-blue-700 text-white disabled:opacity-50">
+                {plBusy ? '실행 중… (모델 로드 수 초)' : '미라벨 일괄 사전 라벨'}
+              </button>
+            </div>
+          </div>
+
+          <YoloLabeler dataset={current} classes={ds.classes} files={labelFiles} index={labelIdx}
+            onNavigate={setLabelIdx} onSaved={onLabelSaved} onError={notifyError} />
+
+          {/* 필름스트립 */}
+          {labelFiles.length > 0 && (
+            <div className="flex gap-1.5 overflow-x-auto pb-1">
+              {labelFiles.map((f, i) => {
+                const labeled = images.find((im) => im.file === f)?.labeled
+                return (
+                  <button key={f} onClick={() => setLabelIdx(i)}
+                    className={`relative shrink-0 w-24 rounded overflow-hidden border ${
+                      i === labelIdx ? 'border-blue-500' : 'border-neutral-700 opacity-60 hover:opacity-100'}`}>
+                    <img src={`/api/yolo/datasets/${current}/images/${f}`} alt=""
+                      loading="lazy" className="w-full aspect-video object-cover bg-black" />
+                    {labeled && <span className="absolute top-0.5 left-0.5 w-2 h-2 rounded-full bg-green-500" />}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {tab === 'gallery' && (
         <section className="space-y-3">
           <div className="text-sm text-neutral-400">
@@ -339,7 +456,9 @@ export default function YoloTrainPage() {
               {images.map((img) => (
                 <div key={img.file} className="relative group rounded overflow-hidden border border-neutral-700">
                   <img src={`/api/yolo/datasets/${current}/images/${img.file}`} alt=""
-                    loading="lazy" className="w-full aspect-video object-cover bg-black" />
+                    loading="lazy" onClick={() => openLabeler(img.file)}
+                    className="w-full aspect-video object-cover bg-black cursor-pointer"
+                    title="클릭해서 라벨 편집" />
                   <div className="absolute bottom-0 inset-x-0 px-1.5 py-0.5 bg-black/60 text-[10px] text-neutral-300 truncate">
                     {sourceBadge(img.source)}
                   </div>

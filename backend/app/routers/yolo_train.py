@@ -5,13 +5,17 @@ vision.py(yolod 제어·판단)와 접두사를 나눈 이유: 저쪽은 "돌리
 (test_router_registration)이 같은 접두사 공유를 금지한다.
 """
 
+import asyncio
 import functools
+import json
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.core.config import settings
 from app.services import yolo_dataset as yd
 from app.services.yolo_dataset import YoloDatasetError
 
@@ -208,3 +212,78 @@ async def get_image(name: str, fname: str):
 async def delete_image(name: str, fname: str):
     yd.delete_image(name, fname)
     return {"deleted": fname}
+
+
+# ── 라벨 (2단계 — YOLO txt 가 정본, JSON 은 화면 왕복 표현) ──
+
+
+@router.get("/datasets/{name}/labels/{fname}")
+@_wrap
+async def get_label(name: str, fname: str):
+    """boxes: null = 미라벨, [] = 배경 샘플(박스 0개로 확인됨)."""
+    return {"boxes": yd.read_label(name, fname), "classes": yd.read_classes(name)}
+
+
+class LabelRequest(BaseModel):
+    boxes: list[dict]
+
+
+@router.put("/datasets/{name}/labels/{fname}")
+@_wrap
+async def put_label(name: str, fname: str, body: LabelRequest):
+    yd.write_label(name, fname, body.boxes)
+    return {"boxes": yd.read_label(name, fname)}
+
+
+@router.delete("/datasets/{name}/labels/{fname}")
+@_wrap
+async def delete_label(name: str, fname: str):
+    """미라벨로 되돌린다 — [] 저장(배경 확인)과 다른 행위다."""
+    yd.clear_label(name, fname)
+    return {"cleared": fname}
+
+
+# ── 사전 라벨 (모델이 초안, 사람이 수정) ──
+
+_PRELABEL_SCRIPT = Path(__file__).resolve().parents[3] / "daemons" / "yolo_prelabel.py"
+
+
+class PrelabelRequest(BaseModel):
+    model: str = "yolo11n.pt"
+    conf: float = Field(default=0.25, ge=0.0, le=1.0)
+    overwrite: bool = False
+
+
+@router.post("/datasets/{name}/prelabel")
+@_wrap
+async def prelabel(name: str, body: PrelabelRequest):
+    """미라벨 이미지 일괄 사전 라벨 — subprocess 1회로 torch 로드를 상각한다.
+
+    이름 완전 일치 클래스만 채워진다 (스크립트 주석 참고). 수 초~수십 초
+    걸리므로 화면은 버튼을 busy 로 잠근다.
+    """
+    from app.routers.vision import _resolve_model
+
+    ds_dir = yd.dataset_path(name)
+    yd.read_classes(name)  # 존재 검증
+    args = [settings.grpc_python, "-u", str(_PRELABEL_SCRIPT),
+            "--dataset", str(ds_dir), "--model", _resolve_model(body.model),
+            "--conf", str(body.conf)]
+    if body.overwrite:
+        args.append("--overwrite")
+    proc = await asyncio.create_subprocess_exec(
+        *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=600)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise HTTPException(504, "사전 라벨이 10분을 넘었습니다 — 중단")
+    if proc.returncode != 0:
+        tail = (err or out or b"").decode(errors="replace").strip().splitlines()[-3:]
+        raise HTTPException(500, "사전 라벨 실패: " + " / ".join(tail))
+    try:
+        # 마지막 stdout 줄이 결과 JSON (스크립트 계약)
+        summary = json.loads(out.decode().strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        raise HTTPException(500, "사전 라벨 결과를 파싱하지 못했습니다")
+    return summary
