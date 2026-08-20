@@ -50,6 +50,14 @@ export default function VisionPage() {
   const { notify } = useSystemMessage()
   const notifyError = (text: string) => notify({ level: 'error', text, source: '비전·판단' })
 
+  // 패널 배치 — col: 세로 스택(패널이 넓다), row: 가로 3열(한눈에 나란히)
+  const [layout, setLayout] = useState<'col' | 'row'>(
+    () => (localStorage.getItem('vision-layout') === 'row' ? 'row' : 'col'))
+  const switchLayout = (l: 'col' | 'row') => {
+    setLayout(l)
+    localStorage.setItem('vision-layout', l)
+  }
+
   // ── yolod ──
   const [segments, setSegments] = useState<string[]>([])
   const [status, setStatus] = useState<YoloStatus | null>(null)
@@ -172,7 +180,21 @@ export default function VisionPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      {/* 배치 토글 — 값은 localStorage 에 남는다 */}
+      <div className="flex justify-end">
+        <div className="flex rounded overflow-hidden border border-neutral-700 text-xs">
+          {([['col', '세로'], ['row', '가로']] as const).map(([l, label]) => (
+            <button key={l} onClick={() => switchLayout(l)}
+              className={`px-2.5 py-1 ${layout === l
+                ? 'bg-neutral-600 text-white' : 'bg-neutral-800 text-neutral-500 hover:text-neutral-300'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className={layout === 'row' ? 'grid grid-cols-1 xl:grid-cols-3 gap-4 items-start' : 'space-y-4'}>
       {/* ── YOLO ── */}
       <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
         <div className="flex items-center gap-3">
@@ -229,10 +251,24 @@ export default function VisionPage() {
           </div>
         )}
 
-        {/* 검출 라이브 뷰 */}
-        <div className="flex gap-4 flex-wrap">
-          {Object.entries(detections).map(([name, d]) => (
-            <div key={name} className="w-[380px] max-w-full space-y-1">
+        {/* 검출 라이브 뷰 — 세로 배치(넓은 패널)에서는 목록을 사진 옆에,
+            높이를 사진과 같게 고정해 검출 수가 변해도 화면이 안 출렁인다 */}
+        <div className={layout === 'col' ? 'space-y-3' : 'flex gap-4 flex-wrap'}>
+          {Object.entries(detections).map(([name, d]) => {
+            const table = d.objects.length > 0 && (
+              <table className="w-full text-xs text-neutral-300">
+                <tbody>
+                  {d.objects.map((o, i) => (
+                    <tr key={i} className="border-t border-neutral-700/50">
+                      <td className="py-0.5">{o.label}</td>
+                      <td className="text-neutral-500">{o.conf.toFixed(2)}</td>
+                      <td className="text-neutral-500 font-mono">({o.center[0]}, {o.center[1]})</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+            const img = (
               <img
                 src={`/api/vision/preview/${name}?t=${tick}`}
                 alt={name}
@@ -240,22 +276,29 @@ export default function VisionPage() {
                 onError={(e) => { e.currentTarget.style.opacity = '0.3' }}
                 onLoad={(e) => { e.currentTarget.style.opacity = '1' }}
               />
-              <div className="text-xs text-neutral-400 font-mono">{d.text}</div>
-              {d.objects.length > 0 && (
-                <table className="w-full text-xs text-neutral-300">
-                  <tbody>
-                    {d.objects.map((o, i) => (
-                      <tr key={i} className="border-t border-neutral-700/50">
-                        <td className="py-0.5">{o.label}</td>
-                        <td className="text-neutral-500">{o.conf.toFixed(2)}</td>
-                        <td className="text-neutral-500 font-mono">({o.center[0]}, {o.center[1]})</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          ))}
+            )
+            if (layout === 'col') {
+              return (
+                <div key={name} className="flex gap-3 max-w-4xl">
+                  <div className="w-[380px] max-w-[55%] shrink-0 self-start">{img}</div>
+                  {/* 사진이 행 높이를 정한다 — 목록은 absolute 로 그 높이에 갇혀 스크롤 */}
+                  <div className="relative flex-1 min-w-0 self-stretch">
+                    <div className="absolute inset-0 overflow-y-auto rounded border border-neutral-700/60 bg-neutral-900/40 p-2 space-y-1">
+                      <div className="text-xs text-neutral-400 font-mono">{d.text}</div>
+                      {table}
+                    </div>
+                  </div>
+                </div>
+              )
+            }
+            return (
+              <div key={name} className="w-[380px] max-w-full space-y-1">
+                {img}
+                <div className="text-xs text-neutral-400 font-mono">{d.text}</div>
+                {table}
+              </div>
+            )
+          })}
           {running && Object.keys(detections).length === 0 && (
             <div className="text-sm text-neutral-500">검출 대기 중… (모델 로드 수 초)</div>
           )}
@@ -385,6 +428,7 @@ export default function VisionPage() {
           </ul>
         )}
       </section>
+      </div>
     </div>
   )
 }
