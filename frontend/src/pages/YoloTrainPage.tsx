@@ -71,6 +71,20 @@ export default function YoloTrainPage() {
     } catch (e) { notifyError(e instanceof Error ? e.message : '생성 실패') }
   }
 
+  // 클래스 추가 — 추가만 된다 (삭제·순서 변경은 기존 라벨 txt 의 id 를 깬다)
+  const [addingCls, setAddingCls] = useState(false)
+  const [newCls, setNewCls] = useState('')
+
+  const handleAddClasses = async () => {
+    const classes = newCls.split(',').map((s) => s.trim()).filter(Boolean)
+    if (classes.length === 0) { setAddingCls(false); return }
+    try {
+      await api.post(`/yolo/datasets/${current}/classes`, { classes })
+      setAddingCls(false); setNewCls('')
+      await refreshDatasets(current)
+    } catch (e) { notifyError(e instanceof Error ? e.message : '클래스 추가 실패') }
+  }
+
   const handleDeleteDataset = async () => {
     try {
       await api.delete(`/yolo/datasets/${current}`)
@@ -340,6 +354,23 @@ export default function YoloTrainPage() {
             <span className="text-xs text-neutral-500">
               클래스: {ds.classes.join(', ')}
             </span>
+            {addingCls ? (
+              <span className="flex items-center gap-1 text-xs">
+                <input value={newCls} onChange={(e) => setNewCls(e.target.value)} autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void handleAddClasses()
+                    if (e.key === 'Escape') { setAddingCls(false); setNewCls('') }
+                  }}
+                  placeholder="추가할 클래스 (콤마 구분)"
+                  className="w-48 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
+                <button onClick={() => void handleAddClasses()}
+                  className="px-2 py-1 rounded bg-green-700 hover:bg-green-600 text-white">추가</button>
+              </span>
+            ) : (
+              <button onClick={() => setAddingCls(true)}
+                title="클래스는 추가만 됩니다 — 삭제·순서 변경은 기존 라벨을 깨뜨립니다"
+                className="text-xs text-neutral-500 hover:text-white">＋ 클래스</button>
+            )}
             <button onClick={() => void handleDeleteDataset()}
               className="text-sm text-neutral-600 hover:text-red-400">삭제</button>
           </>
