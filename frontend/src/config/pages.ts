@@ -26,10 +26,10 @@ const EpisodesPage = lazy(() => import('../pages/EpisodesPage'))
  * 사이드바 묶음. **순서가 곧 화면 순서다** — 정렬 규칙을 따로 두지 않는다.
  *
  * 플랫폼 별로 나눈다: 하드웨어(장치) → LeRobot(모방학습 본선) → YOLO(인식)
- * → Ollama(LLM 판단) → 시스템. 묶음 **안**에서는 여전히 작업 흐름 순서다
- * (수집하고 → 학습하고 → 돌린다).
+ * → 통합(플랫폼을 엮는 파이프라인: YOLO→LLM→VLA) → 시스템.
+ * 묶음 **안**에서는 여전히 작업 흐름 순서다 (수집하고 → 학습하고 → 돌린다).
  */
-export const PAGE_GROUPS = ['장치', 'LeRobot', 'YOLO', 'Ollama', '시스템'] as const
+export const PAGE_GROUPS = ['장치', 'LeRobot', 'YOLO', '통합', '시스템'] as const
 export type PageGroup = (typeof PAGE_GROUPS)[number]
 
 export type PageEntry = {
@@ -159,14 +159,14 @@ export const pages: PageEntry[] = [
     card: true,
   },
 
-  // ── Ollama (LLM 판단 — 분리수거 파이프라인의 판단·루프 칸) ──
+  // ── 통합 (플랫폼을 엮는 파이프라인 — YOLO 검출 → LLM 판단 → VLA 실행) ──
   {
     path: '/vision',
     label: '비전·판단',
     description: 'YOLO 검출·LLM 판단 테스트 (분리수거 파이프라인)',
     component: VisionPage,
     nav: true,
-    group: 'Ollama',
+    group: '통합',
     icon: '👁',
     card: true,
   },
