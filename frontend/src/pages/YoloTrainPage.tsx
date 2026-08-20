@@ -15,6 +15,17 @@ type ImgSource = {
 }
 type ImgEntry = { file: string; labeled: boolean; source: ImgSource | null }
 type LrDataset = { id: string; total_episodes: number; fps: number; features: Record<string, unknown> }
+type TrainInfo = {
+  state: string; dataset: string; run_name: string; base_model: string
+  epochs: number; imgsz: number; train?: number; val?: number
+  weight?: string; map50?: number; map50_95?: number; error?: string
+}
+type TrainStatus = {
+  state: string
+  pid: number | null
+  info: TrainInfo | null
+  progress: { epoch: number; box_loss: number; map50: number; map50_95: number }[]
+}
 
 const shortId = (s: string) => (s.length > 24 ? `${s.slice(0, 6)}…${s.slice(-10)}` : s)
 
@@ -67,7 +78,7 @@ export default function YoloTrainPage() {
   }
 
   // ── 탭 ──
-  const [tab, setTab] = useState<'capture' | 'label' | 'gallery'>('capture')
+  const [tab, setTab] = useState<'capture' | 'label' | 'train' | 'gallery'>('capture')
 
   // ── 갤러리 ──
   const [images, setImages] = useState<ImgEntry[]>([])
@@ -215,6 +226,47 @@ export default function YoloTrainPage() {
     finally { setPlBusy(false) }
   }
 
+  // ── 학습 탭 ──
+  const [trainStatus, setTrainStatus] = useState<TrainStatus | null>(null)
+  const [trBase, setTrBase] = useState('yolo11n.pt')
+  const [trEpochs, setTrEpochs] = useState(50)
+  const [trImgsz, setTrImgsz] = useState(640)
+  const [trBusy, setTrBusy] = useState(false)
+
+  const trainRunning = trainStatus?.state === 'running' || trainStatus?.state === 'starting'
+
+  useEffect(() => {
+    if (tab !== 'train') return
+    let alive = true
+    const poll = () =>
+      api.get<TrainStatus>('/yolo/train/status').then((r) => { if (alive) setTrainStatus(r) }).catch(() => {})
+    void poll()
+    const t = setInterval(() => void poll(), 2000)
+    // 학습 탭도 사전 라벨용 모델 목록을 쓴다 (base 선택)
+    api.get<{ models: { file: string }[] }>('/vision/models')
+      .then((r) => setPlModels(r.models.map((m) => m.file)))
+      .catch(() => {})
+    return () => { alive = false; clearInterval(t) }
+  }, [tab])
+
+  const startTrain = async () => {
+    setTrBusy(true)
+    try {
+      await api.post('/yolo/train', {
+        dataset: current, base_model: trBase, epochs: trEpochs, imgsz: trImgsz,
+      })
+      notify({ level: 'info', text: `학습 시작: ${current} (${trBase}, ${trEpochs}에폭)`, source: 'YOLO 학습' })
+    } catch (e) { notifyError(e instanceof Error ? e.message : '학습 시작 실패') }
+    finally { setTrBusy(false) }
+  }
+
+  const stopTrain = async () => {
+    setTrBusy(true)
+    try { await api.post('/yolo/train/stop') } catch (e) {
+      notifyError(e instanceof Error ? e.message : '정지 실패')
+    } finally { setTrBusy(false) }
+  }
+
   const deleteImage = async (file: string) => {
     try {
       await api.delete(`/yolo/datasets/${current}/images/${file}`)
@@ -269,6 +321,7 @@ export default function YoloTrainPage() {
         {([
           ['capture', '캡처'],
           ['label', `라벨 (${images.filter((i) => i.labeled).length}/${images.length})`],
+          ['train', '학습'],
           ['gallery', `갤러리 (${images.length})`],
         ] as const).map(([k, label]) => (
           <button key={k}
@@ -438,6 +491,107 @@ export default function YoloTrainPage() {
             </div>
           )}
         </div>
+      )}
+
+      {tab === 'train' && (
+        <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-4">
+          <div className="flex items-center gap-3">
+            <h2 className="font-semibold">커스텀 가중치 학습</h2>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${
+              trainRunning ? 'bg-green-900/70 text-green-300' : 'bg-neutral-700 text-neutral-500'}`}>
+              {trainStatus?.state ?? '…'}
+            </span>
+            {trainRunning && (
+              <button onClick={() => void stopTrain()} disabled={trBusy}
+                className="ml-auto px-3 py-1 text-sm rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white disabled:opacity-50">
+                정지
+              </button>
+            )}
+          </div>
+
+          {!trainRunning && (
+            <div className="flex items-center gap-4 flex-wrap text-sm">
+              <label className="text-neutral-400">데이터셋
+                <span className="ml-1 text-neutral-200">{current || '—'}</span>
+                <span className="ml-1 text-xs text-neutral-600">
+                  (라벨 {images.filter((i) => i.labeled).length}장)
+                </span>
+              </label>
+              <label className="text-neutral-400">베이스
+                <select value={trBase} onChange={(e) => setTrBase(e.target.value)}
+                  className="ml-1 rounded bg-neutral-900 border border-neutral-700 px-2 py-1">
+                  {!plModels.includes(trBase) && <option value={trBase}>{trBase}</option>}
+                  {plModels.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </label>
+              <label className="text-neutral-400">에폭
+                <input type="number" min={1} max={1000} value={trEpochs}
+                  onChange={(e) => setTrEpochs(Number(e.target.value))}
+                  className="ml-1 w-20 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
+              </label>
+              <label className="text-neutral-400">imgsz
+                <select value={trImgsz} onChange={(e) => setTrImgsz(Number(e.target.value))}
+                  className="ml-1 rounded bg-neutral-900 border border-neutral-700 px-2 py-1">
+                  {[320, 480, 640, 960].map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </label>
+              <button onClick={() => void startTrain()}
+                disabled={trBusy || !current || images.filter((i) => i.labeled).length < 4}
+                className="px-4 py-1.5 rounded bg-green-700 hover:bg-green-600 text-white disabled:opacity-40">
+                {trBusy ? '시작 중…' : '▶ 학습 시작'}
+              </button>
+              <span className="text-xs text-neutral-600 basis-full">
+                이전 커스텀 가중치를 베이스로 고르면 이어서 파인튜닝. val 분할은 출처(에피소드) 단위 —
+                완료되면 데모 페이지 모델 목록에 자동 등장
+              </span>
+            </div>
+          )}
+
+          {/* 진행 — 스크립트 상태 파일 + results.csv */}
+          {trainStatus?.info && (
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center gap-3 flex-wrap text-neutral-400">
+                <span className="font-mono text-neutral-300">{trainStatus.info.dataset}</span>
+                <span>{trainStatus.info.base_model} · {trainStatus.info.epochs}에폭 · {trainStatus.info.imgsz}px</span>
+                {trainStatus.info.train != null && (
+                  <span className="text-xs">train {trainStatus.info.train} / val {trainStatus.info.val}</span>
+                )}
+              </div>
+
+              {trainRunning && (() => {
+                const last = trainStatus.progress[trainStatus.progress.length - 1]
+                const pct = last ? Math.round((last.epoch / trainStatus.info!.epochs) * 100) : 0
+                return (
+                  <div className="space-y-1">
+                    <div className="h-2 rounded bg-neutral-700 overflow-hidden">
+                      <div className="h-full bg-blue-600 transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                    <div className="text-xs text-neutral-500 tabular-nums">
+                      {last
+                        ? `에폭 ${last.epoch}/${trainStatus.info.epochs} · box_loss ${last.box_loss} · mAP50 ${last.map50}`
+                        : '첫 에폭 준비 중… (모델 로드·캐시 생성)'}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {trainStatus.info.state === 'done' && !trainRunning && (
+                <div className="rounded border border-green-800 bg-green-950/40 p-3 space-y-1">
+                  <div>✅ 완료 — <b className="font-mono">{trainStatus.info.weight}</b></div>
+                  <div className="text-xs text-neutral-400">
+                    mAP50 {trainStatus.info.map50} · mAP50-95 {trainStatus.info.map50_95} —
+                    데모 페이지 모델 드롭다운의 "커스텀" 그룹에서 바로 쓸 수 있습니다
+                  </div>
+                </div>
+              )}
+              {trainStatus.info.state === 'failed' && !trainRunning && (
+                <div className="rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-300">
+                  학습 실패: {trainStatus.info.error}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
       )}
 
       {tab === 'gallery' && (

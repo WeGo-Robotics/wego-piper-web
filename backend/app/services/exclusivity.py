@@ -36,6 +36,8 @@ class Activity(str, enum.Enum):
     UPLOAD = "upload"
     # 에피소드 루프 (분리수거 등). 추론 **위에서** 돈다 — 추론과는 배타가 아니다.
     ORCHESTRATOR = "orchestrator"
+    # YOLO 커스텀 학습 (feature/yolo-training.md 3단계) — GPU 를 크게 쓴다.
+    YOLO_TRAIN = "yolo_train"
     # 아래 둘은 "시작하는 활동"이 아니라 자원 접근이다. 남을 막지 않고 조회만 한다.
     ENCODER_PROBE = "encoder_probe"
     CAMERA_ACCESS = "camera_access"
@@ -49,6 +51,7 @@ LABELS: dict[Activity, str] = {
     Activity.DATASET_EDIT: "데이터셋 편집",
     Activity.UPLOAD: "업로드/캐시 작업",
     Activity.ORCHESTRATOR: "에피소드 루프",
+    Activity.YOLO_TRAIN: "YOLO 학습",
     Activity.ENCODER_PROBE: "인코더 프로브",
     Activity.CAMERA_ACCESS: "카메라 접근",
 }
@@ -60,12 +63,13 @@ LABELS: dict[Activity, str] = {
 # 한쪽만 고치는 사고가 이 표를 만들게 된 원인이었다.
 BLOCKED_BY: dict[Activity, list[Activity]] = {
     # 카메라 + CAN + GPU 를 전부 점유한다
-    Activity.INFERENCE: [Activity.TRAINING, Activity.RECORDING, Activity.DATASET_EDIT],
+    Activity.INFERENCE: [Activity.TRAINING, Activity.RECORDING, Activity.DATASET_EDIT,
+                         Activity.YOLO_TRAIN],
     Activity.RECORDING: [Activity.TRAINING, Activity.INFERENCE, Activity.DATASET_EDIT,
                          Activity.ORCHESTRATOR],
     # GPU. 정책 서버도 GPU에 정책을 올리므로 학습과 배타다.
     Activity.TRAINING: [Activity.INFERENCE, Activity.RECORDING, Activity.POLICY_SERVER,
-                        Activity.ORCHESTRATOR],
+                        Activity.ORCHESTRATOR, Activity.YOLO_TRAIN],
     Activity.POLICY_SERVER: [Activity.TRAINING],
     # 데이터셋 파일을 다시 쓴다. 녹화가 같은 디스크에 기록 중이면 피한다.
     Activity.DATASET_EDIT: [Activity.INFERENCE, Activity.RECORDING, Activity.ORCHESTRATOR],
@@ -74,6 +78,9 @@ BLOCKED_BY: dict[Activity, list[Activity]] = {
     # 추론 위에서 도는 자동화 계층 — 추론과 공존이 설계다.
     # 팔을 새 일로 보내는 루프이므로 녹화·학습·편집과는 서로 막는다.
     Activity.ORCHESTRATOR: [Activity.TRAINING, Activity.RECORDING, Activity.DATASET_EDIT],
+    # GPU 만 쓴다 (카메라·CAN·데이터셋 파일과 무관). VLA 학습·추론과 배타,
+    # 정책 서버(~1GB 상주)와는 공존 가능 — nano/small 학습은 4~6GB 다.
+    Activity.YOLO_TRAIN: [Activity.TRAINING, Activity.INFERENCE],
     # ── 아래는 자원 접근 (막히기만 하고 남을 막지 않는다) ──
     # GPU 경합 시 409가 아니라 CPU 폴백. blocked_reason() 으로만 쓴다.
     Activity.ENCODER_PROBE: [Activity.TRAINING, Activity.INFERENCE],
@@ -103,7 +110,15 @@ STATE_PROVIDERS: dict[Activity, Callable[[], bool]] = {
     Activity.DATASET_EDIT: lambda: _busy(dataset_jobs.edit_pm.state),
     Activity.UPLOAD: lambda: _busy(dataset_jobs.upload_pm.state),
     Activity.ORCHESTRATOR: lambda: _orchestrator().is_running,
+    Activity.YOLO_TRAIN: lambda: _busy(_yolo_train_pm().state),
 }
+
+
+def _yolo_train_pm():
+    # 지연 import — yolo_train_manager 가 make_process(→settings)를 물고 있어
+    # 모듈 로드 순서에 얽히지 않게 한다 (orchestrator 와 같은 이유)
+    from app.services.yolo_train_manager import yolo_train_pm
+    return yolo_train_pm
 
 
 def _orchestrator():

@@ -194,6 +194,81 @@ def test_prelabel_txt_lines_name_matching():
     assert lines[1].startswith("0 0.900000 0.900000 0.300000 1.000000")  # 클램프
 
 
+def _load_traind():
+    import importlib.util
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[2] / "daemons" / "yolo_traind.py"
+    spec = importlib.util.spec_from_file_location("yolo_traind", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_split_keeps_groups_together():
+    """같은 에피소드의 프레임이 train/val 로 갈라지면 mAP 가 거짓말을 한다."""
+    mod = _load_traind()
+    files = [f"f{i}.jpg" for i in range(30)]
+    groups = {f: f"ep:ds:{i // 10}" for i, f in enumerate(files)}   # 3 그룹 × 10장
+
+    train, val = mod.split_by_group(files, groups)
+    assert sorted(train + val) == sorted(files)
+    assert train and val
+    # 그룹 무결성: 어느 그룹도 양쪽에 걸치지 않는다
+    train_groups = {groups[f] for f in train}
+    val_groups = {groups[f] for f in val}
+    assert not (train_groups & val_groups)
+
+    # 같은 시드 = 같은 분할 (재현성)
+    assert mod.split_by_group(files, groups) == (train, val)
+
+
+def test_split_single_group_falls_back_to_files():
+    """그룹이 하나뿐이면 파일 단위로라도 나눈다 — val 없이는 학습이 안 돈다."""
+    mod = _load_traind()
+    files = [f"f{i}.jpg" for i in range(10)]
+    groups = {f: "ep:ds:0" for f in files}
+    train, val = mod.split_by_group(files, groups)
+    assert len(val) >= 1 and len(train) >= 1
+    assert sorted(train + val) == sorted(files)
+
+
+def test_group_key_shapes():
+    mod = _load_traind()
+    assert mod.group_key({"type": "episode", "dataset": "d", "episode": 3}) == "ep:d:3"
+    assert mod.group_key({"type": "live", "cam": "c", "at": 0}).startswith("live:c:")
+    assert mod.group_key(None) == "unknown"
+
+
+def test_train_requires_labeled_images(client, root):
+    client.post("/api/yolo/datasets", json={"name": "d", "classes": ["a"]})
+    r = client.post("/api/yolo/train", json={"dataset": "d"})
+    assert r.status_code == 400
+    assert "라벨된 이미지" in r.json()["detail"]
+
+
+def test_train_status_shape(client, root):
+    r = client.get("/api/yolo/train/status").json()
+    assert {"state", "pid", "info", "progress"} <= r.keys()
+
+
+def test_read_progress_parses_results_csv(root, monkeypatch):
+    from app.services.yolo_train_manager import read_progress
+
+    run = root / "d" / "runs" / "t1"
+    run.mkdir(parents=True)
+    (run / "results.csv").write_text(
+        "epoch, train/box_loss, metrics/mAP50(B), metrics/mAP50-95(B)\n"
+        "1, 1.5, 0.30, 0.20\n"
+        "2, 1.2, 0.45, 0.31\n"
+    )
+    rows = read_progress("d", "t1")
+    assert rows == [
+        {"epoch": 1, "box_loss": 1.5, "map50": 0.3, "map50_95": 0.2},
+        {"epoch": 2, "box_loss": 1.2, "map50": 0.45, "map50_95": 0.31},
+    ]
+
+
 def test_delete_image_removes_label_too(root):
     from app.services import yolo_dataset as yd
 

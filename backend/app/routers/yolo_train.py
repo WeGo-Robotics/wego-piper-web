@@ -9,6 +9,7 @@ import asyncio
 import functools
 import json
 import logging
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -287,3 +288,66 @@ async def prelabel(name: str, body: PrelabelRequest):
     except (ValueError, IndexError):
         raise HTTPException(500, "사전 라벨 결과를 파싱하지 못했습니다")
     return summary
+
+
+# ── 학습 (3단계 — piper-yolotrain 유닛) ──
+
+_TRAIN_SCRIPT = Path(__file__).resolve().parents[3] / "daemons" / "yolo_traind.py"
+
+
+class TrainRequest(BaseModel):
+    dataset: str
+    base_model: str = "yolo11n.pt"
+    epochs: int = Field(default=50, ge=1, le=1000)
+    imgsz: int = Field(default=640, ge=160, le=1920)
+    batch: int = Field(default=16, ge=1, le=128)
+
+
+@router.post("/train")
+@_wrap
+async def start_train(body: TrainRequest):
+    from app.routers.vision import _resolve_model
+    from app.services import exclusivity
+    from app.services.yolo_train_manager import yolo_train_pm
+
+    exclusivity.require_idle(exclusivity.Activity.YOLO_TRAIN)
+    summary = yd.summarize(body.dataset)   # 존재 검증 겸
+    if summary["labeled"] < 4:
+        raise HTTPException(400, f"라벨된 이미지가 {summary['labeled']}장 — 최소 4장 필요 (train/val 분할)")
+
+    run_name = f"t{int(time.time())}"
+    args = [settings.grpc_python, "-u", str(_TRAIN_SCRIPT),
+            "--dataset", str(yd.dataset_path(body.dataset)),
+            "--model", _resolve_model(body.base_model),
+            "--epochs", str(body.epochs), "--imgsz", str(body.imgsz),
+            "--batch", str(body.batch),
+            "--weights-out", str(settings.yolo_models_dir),
+            "--run-name", run_name]
+    await yolo_train_pm.start(args)
+    logger.info("YOLO 학습 시작: %s (base=%s, %d에폭, 라벨 %d장)",
+                body.dataset, body.base_model, body.epochs, summary["labeled"])
+    return {"status": "started", "run_name": run_name, "labeled": summary["labeled"]}
+
+
+@router.get("/train/status")
+async def train_status():
+    """유닛 상태 + 스크립트가 남긴 상태 파일 + 에폭 진행 (results.csv).
+
+    전부 파일/상태 조회라 게이트웨이가 재시작해도 이어서 보인다.
+    """
+    from app.services.yolo_train_manager import read_progress, read_status, yolo_train_pm
+
+    info = read_status()
+    progress: list[dict] = []
+    if info and info.get("state") == "running":
+        progress = read_progress(info["dataset"], info["run_name"])
+    return {"state": yolo_train_pm.state.value, "pid": yolo_train_pm.pid,
+            "info": info, "progress": progress}
+
+
+@router.post("/train/stop")
+async def stop_train():
+    from app.services.yolo_train_manager import yolo_train_pm
+
+    await yolo_train_pm.stop()
+    return {"status": "stopped"}
