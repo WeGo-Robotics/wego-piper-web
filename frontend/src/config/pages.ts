@@ -25,9 +25,11 @@ const EpisodesPage = lazy(() => import('../pages/EpisodesPage'))
 /**
  * 사이드바 묶음. **순서가 곧 화면 순서다** — 정렬 규칙을 따로 두지 않는다.
  *
- * 흐름을 따라간다: 장치를 붙이고 → 데이터를 모으고 → 학습하고 → 돌린다.
+ * 플랫폼 별로 나눈다: 하드웨어(장치) → LeRobot(모방학습 본선) → YOLO(인식)
+ * → Ollama(LLM 판단) → 시스템. 묶음 **안**에서는 여전히 작업 흐름 순서다
+ * (수집하고 → 학습하고 → 돌린다).
  */
-export const PAGE_GROUPS = ['장치', '수집', '학습', '실행', '시스템'] as const
+export const PAGE_GROUPS = ['장치', 'LeRobot', 'YOLO', 'Ollama', '시스템'] as const
 export type PageGroup = (typeof PAGE_GROUPS)[number]
 
 export type PageEntry = {
@@ -86,8 +88,8 @@ export const pages: PageEntry[] = [
     card: true,
   },
 
-  // ── 수집 ──
-  { path: '/recording', label: '수집', component: RecordingPage, nav: true, group: '수집', icon: '⏺' },
+  // ── LeRobot (모방학습 본선: 수집 → 학습 → 실행) ──
+  { path: '/recording', label: '수집', component: RecordingPage, nav: true, group: 'LeRobot', icon: '⏺' },
   // ⚠ 데이터셋·모델은 **자리가 없어서** 상단바에서 빠져 있었다(카드 전용).
   //   세로 내비는 자리가 있으므로 돌아온다 (feature/layout-redesign.md §1).
   {
@@ -96,7 +98,7 @@ export const pages: PageEntry[] = [
     description: '데이터셋 열람, 에피소드 관리',
     component: DatasetsPage,
     nav: true,
-    group: '수집',
+    group: 'LeRobot',
     icon: '🗂',
     card: true,
   },
@@ -106,70 +108,70 @@ export const pages: PageEntry[] = [
     description: '에피소드 재생·신호·페이즈 열람',
     component: EpisodesPage,
     nav: true,
-    group: '수집',
+    group: 'LeRobot',
     icon: '🎬',
     card: true,
   },
-
-  // ── 학습 ──
-  { path: '/training', label: '학습', component: TrainingPage, nav: true, group: '학습', icon: '📈' },
+  { path: '/training', label: '학습', component: TrainingPage, nav: true, group: 'LeRobot', icon: '📈' },
   {
     path: '/models',
     label: '모델',
     description: '로컬 체크포인트 관리, Hub 탐색',
     component: ModelsPage,
     nav: true,
-    group: '학습',
+    group: 'LeRobot',
     icon: '🧠',
     card: true,
   },
-  { path: '/encoder', label: '엔코더', component: EncoderProbePage, nav: true, group: '학습', icon: '🔬' },
-  {
-    path: '/yolo-train',
-    label: 'YOLO 학습',
-    description: '이미지 캡처·라벨링·커스텀 가중치 학습',
-    component: YoloTrainPage,
-    nav: true,
-    group: '학습',
-    icon: '🏷',
-    card: true,
-  },
-
-  // ── 실행 ──
+  { path: '/encoder', label: '엔코더', component: EncoderProbePage, nav: true, group: 'LeRobot', icon: '🔬' },
   {
     path: '/inference',
     label: '추론',
     description: '모델 배포, 실시간 파라미터 튜닝, 평가',
     component: InferencePage,
     nav: true,
-    group: '실행',
+    group: 'LeRobot',
     icon: '▶',
     card: true,
   },
-  { path: '/policy-server', label: '정책서버', component: PolicyServerPage, nav: true, group: '실행', icon: '🛰' },
-  {
-    path: '/vision',
-    label: '비전·판단',
-    description: 'YOLO 검출·LLM 판단 테스트 (분리수거 파이프라인)',
-    component: VisionPage,
-    nav: true,
-    group: '실행',
-    icon: '👁',
-    card: true,
-  },
+  { path: '/policy-server', label: '정책서버', component: PolicyServerPage, nav: true, group: 'LeRobot', icon: '🛰' },
+  // HuggingFace Hub — LeRobot 모델·데이터셋의 원격 저장소라 여기 속한다
+  { path: '/hub', label: '허브', component: HubPage, nav: true, group: 'LeRobot', icon: '☁' },
 
+  // ── YOLO (인식: 데모 → 커스텀 학습) ──
   {
     path: '/yolo-demo',
     label: 'YOLO 데모',
     description: '시연용 대형 검출 뷰',
     component: YoloDemoPage,
     nav: true,
-    group: '실행',
+    group: 'YOLO',
     icon: '🎯',
+  },
+  {
+    path: '/yolo-train',
+    label: 'YOLO 학습',
+    description: '이미지 캡처·라벨링·커스텀 가중치 학습',
+    component: YoloTrainPage,
+    nav: true,
+    group: 'YOLO',
+    icon: '🏷',
+    card: true,
+  },
+
+  // ── Ollama (LLM 판단 — 분리수거 파이프라인의 판단·루프 칸) ──
+  {
+    path: '/vision',
+    label: '비전·판단',
+    description: 'YOLO 검출·LLM 판단 테스트 (분리수거 파이프라인)',
+    component: VisionPage,
+    nav: true,
+    group: 'Ollama',
+    icon: '👁',
+    card: true,
   },
 
   // ── 시스템 ──
-  { path: '/hub', label: '허브', component: HubPage, nav: true, group: '시스템', icon: '☁' },
   { path: '/logs', label: '로그', component: LogsPage, nav: true, group: '시스템', icon: '📄' },
   { path: '/debug', label: '디버그', component: DebugLogsPage, nav: true, group: '시스템', icon: '🐛', external: true, standalone: true },
   { path: '/settings', label: '설정', component: SettingsPage, nav: true, group: '시스템', icon: '⚙' },
