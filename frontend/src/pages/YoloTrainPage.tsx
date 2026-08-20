@@ -359,6 +359,16 @@ export default function YoloTrainPage() {
         </div>
       )}
 
+      {/* 대상 데이터셋이 없으면 아래 기능 전부가 갈 곳이 없다 — 탭을 감춘다 */}
+      {!ds ? (
+        <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-12 text-center text-sm text-neutral-500">
+          데이터셋이 없습니다 — 위의 <b className="text-neutral-300">＋ 새 데이터셋</b>으로 만들고 시작하세요
+          <div className="mt-2 text-xs text-neutral-600">
+            캡처·라벨·학습·갤러리는 모두 대상 데이터셋 안에서 동작합니다
+          </div>
+        </div>
+      ) : (
+        <>
       {/* ── 탭 ── */}
       <div className="flex gap-1 border-b border-neutral-700 text-sm">
         {([
@@ -672,6 +682,8 @@ export default function YoloTrainPage() {
             </div>
           )}
         </section>
+      )}
+        </>
       )}
     </div>
   )
