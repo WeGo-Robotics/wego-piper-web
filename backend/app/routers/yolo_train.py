@@ -107,18 +107,79 @@ class ImportEpisodeRequest(BaseModel):
     indices: list[int] | None = None        # 주면 stride 무시, 낱장 지정
 
 
+def _cam_key(cam: str) -> str:
+    return cam if cam.startswith("observation.images.") else f"observation.images.{cam}"
+
+
 def _episode_cache_dir(dataset_id: str, episode: int, cam: str):
+    """디코딩 캐시 디렉토리 — 없으면 None (비디오 폴백이 받는다)."""
     from app.services.dataset_scanner import find_dataset_path
 
     ds_path = find_dataset_path(dataset_id)
     if not ds_path:
         raise HTTPException(404, "LeRobot 데이터셋을 찾을 수 없습니다")
-    key = cam if cam.startswith("observation.images.") else f"observation.images.{cam}"
-    ep_dir = ds_path / "images" / key / f"episode-{episode:06d}"
-    if not ep_dir.is_dir():
-        raise HTTPException(
-            404, "디코딩 캐시에 이 에피소드가 없습니다 — decode-cache 를 먼저 생성하세요")
-    return ep_dir
+    ep_dir = ds_path / "images" / _cam_key(cam) / f"episode-{episode:06d}"
+    return ep_dir if ep_dir.is_dir() else None
+
+
+def _extract_from_video(dataset_id: str, episode: int, cam: str,
+                        stride: int, indices: list[int] | None) -> list[tuple[int, bytes]]:
+    """chunk mp4 에서 직접 프레임 추출 — 디코딩 캐시가 없을 때의 폴백.
+
+    cv2 로 에피소드 구간(from~to_timestamp)을 시크하며 뽑는다. 캐시 생성
+    (수 분, 전체 에피소드) 없이 몇 장만 줍는 용도라 프레임당 시크가 더 싸다.
+    블로킹이므로 executor 에서 부른다.
+    """
+    from app.services.dataset_scanner import episode_meta
+
+    found = episode_meta(dataset_id, episode)
+    if not found:
+        raise HTTPException(404, "에피소드 메타를 찾을 수 없습니다")
+    ds_path, meta, rec = found
+    key = _cam_key(cam)
+    try:
+        chunk = int(rec[f"videos/{key}/chunk_index"])
+        file_i = int(rec[f"videos/{key}/file_index"])
+        from_ts = float(rec[f"videos/{key}/from_timestamp"])
+        to_ts = float(rec[f"videos/{key}/to_timestamp"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(404, f"에피소드 레코드에 {key} 비디오 위치가 없습니다")
+
+    template = meta.get("video_path") or \
+        "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+    video = (ds_path / template.format(video_key=key, chunk_index=chunk,
+                                       file_index=file_i)).resolve()
+    if not str(video).startswith(str(ds_path.resolve())) or not video.is_file():
+        raise HTTPException(404, "비디오 파일이 없습니다")
+
+    fps = float(meta.get("fps") or 30)
+    length = int(rec.get("length") or round((to_ts - from_ts) * fps))
+    wanted = ([i for i in indices if 0 <= i < length] if indices is not None
+              else list(range(0, length, stride)))
+    if not wanted:
+        raise HTTPException(400, "가져올 프레임이 없습니다")
+
+    import cv2
+
+    cap = cv2.VideoCapture(str(video))
+    if not cap.isOpened():
+        raise HTTPException(500, "비디오를 열지 못했습니다")
+    out: list[tuple[int, bytes]] = []
+    try:
+        for i in wanted:
+            # 프레임 중앙 시각으로 시크 — 에피소드 뷰어의 videoTime 과 같은 규칙
+            cap.set(cv2.CAP_PROP_POS_MSEC, (from_ts + (i + 0.5) / fps) * 1000)
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            if ok:
+                out.append((i, buf.tobytes()))
+    finally:
+        cap.release()
+    if not out:
+        raise HTTPException(500, "비디오에서 프레임을 읽지 못했습니다")
+    return out
 
 
 def _frame_jpeg(path) -> bytes:
@@ -139,27 +200,41 @@ def _frame_jpeg(path) -> bytes:
 @router.post("/datasets/{name}/import-episode")
 @_wrap
 async def import_episode(name: str, body: ImportEpisodeRequest):
-    ep_dir = _episode_cache_dir(body.dataset_id, body.episode, body.cam)
-    frames = sorted(ep_dir.glob("frame-*.jpg")) or sorted(ep_dir.glob("frame-*.png"))
-    if not frames:
-        raise HTTPException(404, "캐시 디렉토리가 비어 있습니다")
+    """캐시가 있으면 파일 복사(빠르고 정확), 없으면 비디오에서 직접 추출.
 
-    if body.indices is not None:
-        picked = [frames[i] for i in body.indices if 0 <= i < len(frames)]
-    else:
-        picked = frames[::body.stride]
+    캐시 생성(전체 에피소드 디코딩, 수 분)을 강요하지 않는다 — 몇 장 줍는
+    일에는 mp4 시크가 충분하다.
+    """
+    yd.summarize(name)  # 대상 데이터셋 존재 검증 (없으면 404)
+    ep_dir = _episode_cache_dir(body.dataset_id, body.episode, body.cam)
+
+    picked: list[tuple[int, bytes]] = []
+    total = 0
+    method = "cache"
+    if ep_dir is not None:
+        frames = sorted(ep_dir.glob("frame-*.jpg")) or sorted(ep_dir.glob("frame-*.png"))
+        total = len(frames)
+        chosen = ([frames[i] for i in body.indices if 0 <= i < len(frames)]
+                  if body.indices is not None else frames[::body.stride])
+        picked = [(int(f.stem.split("-")[1]), _frame_jpeg(f)) for f in chosen]
+    if not picked:
+        method = "video"
+        loop = asyncio.get_event_loop()
+        picked = await loop.run_in_executor(
+            None, _extract_from_video,
+            body.dataset_id, body.episode, body.cam, body.stride, body.indices)
+        total = max((i for i, _ in picked), default=0) + 1
 
     added = []
-    for f in picked:
-        frame_no = int(f.stem.split("-")[1])
-        fname = yd.add_image(name, _frame_jpeg(f), {
+    for frame_no, data in picked:
+        fname = yd.add_image(name, data, {
             "type": "episode", "dataset": body.dataset_id,
             "episode": body.episode, "cam": body.cam, "frame": frame_no,
         })
         added.append(fname)
-    logger.info("에피소드 가져오기: %s ep%d/%s → %s (%d장/%d장 중)",
-                body.dataset_id, body.episode, body.cam, name, len(added), len(frames))
-    return {"added": len(added), "total_frames": len(frames), "files": added}
+    logger.info("에피소드 가져오기(%s): %s ep%d/%s → %s (%d장)",
+                method, body.dataset_id, body.episode, body.cam, name, len(added))
+    return {"added": len(added), "total_frames": total, "method": method, "files": added}
 
 
 # ── 범용 이미지 업로드 (뷰어 동영상 캡처 · 외부 사진) ──

@@ -114,12 +114,53 @@ def test_import_episode_copies_cache_frames(client, root, monkeypatch, tmp_path)
     })
     assert r.json()["added"] == 1
 
-    # 캐시 없는 에피소드는 404 + 안내
+    # 캐시도 없고 비디오 메타도 없는 에피소드는 404 (비디오 폴백까지 실패)
     r = client.post("/api/yolo/datasets/d/import-episode", json={
         "dataset_id": "myds", "episode": 99, "cam": "top",
     })
     assert r.status_code == 404
-    assert "decode-cache" in r.json()["detail"]
+
+
+def test_import_episode_falls_back_to_video(client, root, monkeypatch, tmp_path):
+    """디코딩 캐시가 없으면 chunk mp4 에서 직접 추출한다 — 캐시 생성을 강요하지 않는다."""
+    cv2 = pytest.importorskip("cv2")
+
+    # 가짜 LeRobot 데이터셋: 10fps 20프레임짜리 chunk mp4 + 메타
+    lr = tmp_path / "lr" / "vds"
+    vid_dir = lr / "videos" / "observation.images.top" / "chunk-000"
+    vid_dir.mkdir(parents=True)
+    (lr / "meta").mkdir()
+    w = cv2.VideoWriter(str(vid_dir / "file-000.mp4"),
+                        cv2.VideoWriter_fourcc(*"mp4v"), 10, (64, 48))
+    if not w.isOpened():
+        pytest.skip("cv2 VideoWriter 사용 불가")
+    import numpy as np
+    for i in range(20):
+        w.write(np.full((48, 64, 3), i * 10, dtype=np.uint8))
+    w.release()
+    (lr / "meta" / "info.json").write_text(json.dumps({"fps": 10}))
+    # 에피소드 1 = 프레임 10~19 (from 1.0s, to 2.0s)
+    (lr / "meta" / "episodes.jsonl").write_text(json.dumps({
+        "episode_index": 1, "length": 10,
+        "videos/observation.images.top/chunk_index": 0,
+        "videos/observation.images.top/file_index": 0,
+        "videos/observation.images.top/from_timestamp": 1.0,
+        "videos/observation.images.top/to_timestamp": 2.0,
+    }) + "\n")
+
+    from app.services import dataset_scanner
+    monkeypatch.setattr(dataset_scanner, "_find_dataset_dir", lambda _id: (lr, "lerobot"))
+
+    client.post("/api/yolo/datasets", json={"name": "v", "classes": ["a"]})
+    r = client.post("/api/yolo/datasets/v/import-episode", json={
+        "dataset_id": "vds", "episode": 1, "cam": "top", "stride": 4,
+    })
+    assert r.status_code == 200, r.json()
+    body = r.json()
+    assert body["method"] == "video"
+    assert body["added"] == 3            # 프레임 0, 4, 8 (에피소드 기준)
+    images = client.get("/api/yolo/datasets/v/images").json()["images"]
+    assert sorted(i["source"]["frame"] for i in images) == [0, 4, 8]
 
 
 def test_label_roundtrip_via_service(root):

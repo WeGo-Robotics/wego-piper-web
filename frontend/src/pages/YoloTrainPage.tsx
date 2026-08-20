@@ -4,7 +4,7 @@
  * 1단계: 캡처(라이브 세그먼트·에피소드 가져오기) + 갤러리.
  * 라벨·학습 탭은 2·3단계에서 붙는다.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import { useSystemMessage } from '../components/SystemMessages'
@@ -78,8 +78,8 @@ export default function YoloTrainPage() {
     } catch (e) { notifyError(e instanceof Error ? e.message : '삭제 실패') }
   }
 
-  // ── 탭 ──
-  const [tab, setTab] = useState<'capture' | 'label' | 'train' | 'gallery'>('capture')
+  // ── 탭 ── (라이브와 에피소드는 다른 작업이라 화면도 나눈다)
+  const [tab, setTab] = useState<'live' | 'episode' | 'label' | 'train' | 'gallery'>('live')
 
   // ── 갤러리 ──
   const [images, setImages] = useState<ImgEntry[]>([])
@@ -101,7 +101,7 @@ export default function YoloTrainPage() {
   const [captured, setCaptured] = useState<Record<string, number>>({}) // 세션 캡처 수
 
   useEffect(() => {
-    if (tab !== 'capture') return
+    if (tab !== 'live') return
     api.get<{ segments: string[] }>('/vision/segments').then((r) => setSegments(r.segments)).catch(() => {})
     const t = setInterval(() => setTick((x) => x + 1), 1000)
     return () => clearInterval(t)
@@ -118,7 +118,7 @@ export default function YoloTrainPage() {
 
   // 자동 캡처 — 체크된 세그먼트를 intervalS 마다
   useEffect(() => {
-    if (tab !== 'capture' || auto.size === 0) return
+    if (tab !== 'live' || auto.size === 0) return
     const t = setInterval(() => { auto.forEach((cam) => void captureLive(cam)) }, intervalS * 1000)
     return () => clearInterval(t)
   }, [tab, auto, intervalS, captureLive])
@@ -130,16 +130,26 @@ export default function YoloTrainPage() {
   const [cam, setCam] = useState('')
   const [stride, setStride] = useState(30)
   const [importing, setImporting] = useState(false)
-  const [frameIdx, setFrameIdx] = useState(0)
-  const [frameOk, setFrameOk] = useState(true)
+  // 뷰어는 chunk mp4 를 그대로 튼다 — 디코딩 캐시가 필요 없다.
+  // 에피소드 경계(chunk/file/from/to)는 상세 응답의 episodes 레코드에서
+  const [lrEpisodes, setLrEpisodes] = useState<Record<string, number>[]>([])
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [epCaptured, setEpCaptured] = useState(0)
 
   useEffect(() => {
-    if (tab !== 'capture') return
+    if (tab !== 'episode') return
     api.get<LrDataset[]>('/datasets').then((list) => {
       setLrList(list)
       if (!lrId && list.length > 0) setLrId(list[0].id)
     }).catch(() => {})
   }, [tab])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (tab !== 'episode' || !lrId) return
+    api.get<{ episodes: Record<string, number>[] }>(`/datasets/${encodeURIComponent(lrId)}`)
+      .then((d) => setLrEpisodes(d.episodes ?? []))
+      .catch(() => setLrEpisodes([]))
+  }, [tab, lrId])
 
   const lrDs = lrList.find((d) => d.id === lrId)
   const lrCams = useMemo(() =>
@@ -152,24 +162,56 @@ export default function YoloTrainPage() {
     if (lrCams.length > 0 && !lrCams.includes(cam)) setCam(lrCams[0])
   }, [lrCams, cam])
 
-  const framePreview = lrId && cam
-    ? `/api/datasets/${encodeURIComponent(lrId)}/episodes/${episode}/frames/${cam}/${frameIdx}`
+  const epRec = lrEpisodes.find((e) => (e.episode_index ?? e.index) === episode)
+  const vKey = `videos/observation.images.${cam}/`
+  const vm = epRec && epRec[`${vKey}chunk_index`] != null ? {
+    chunk: epRec[`${vKey}chunk_index`], file: epRec[`${vKey}file_index`],
+    from: epRec[`${vKey}from_timestamp`], to: epRec[`${vKey}to_timestamp`],
+  } : null
+  const videoUrl = vm && lrId && cam
+    ? `/api/datasets/${encodeURIComponent(lrId)}/videos/${cam}/${vm.chunk}/${vm.file}`
     : null
 
   const importEpisode = async (indices?: number[]) => {
     if (!current) { notifyError('먼저 데이터셋을 만드세요'); return }
     setImporting(true)
     try {
-      const r = await api.post<{ added: number; total_frames: number }>(
+      const r = await api.post<{ added: number; total_frames: number; method: string }>(
         `/yolo/datasets/${current}/import-episode`,
         { dataset_id: lrId, episode, cam, stride, indices })
       notify({
         level: 'info', source: 'YOLO 학습',
-        text: indices ? `프레임 ${indices[0]} 캡처` : `${r.added}장 가져옴 (전체 ${r.total_frames}프레임, ${stride}간격)`,
+        text: `${r.added}장 가져옴 (전체 ${r.total_frames}프레임, ${stride}간격` +
+          `${r.method === 'video' ? ', mp4 직접 추출' : ''})`,
       })
       await refreshDatasets(current)
     } catch (e) { notifyError(e instanceof Error ? e.message : '가져오기 실패') }
     finally { setImporting(false) }
+  }
+
+  /** 재생 중인 그 장면을 canvas 로 떠서 업로드 — EpisodesPage 훅과 같은 방식 */
+  const captureEpFrame = async () => {
+    const v = videoRef.current
+    if (!current) { notifyError('먼저 데이터셋을 만드세요'); return }
+    if (!v || v.readyState < 2 || !vm) { notifyError('비디오가 아직 준비되지 않았습니다'); return }
+    try {
+      const canvas = document.createElement('canvas')
+      canvas.width = v.videoWidth
+      canvas.height = v.videoHeight
+      canvas.getContext('2d')!.drawImage(v, 0, 0)
+      const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9))
+      if (!blob) throw new Error('canvas 캡처 실패')
+      const t = Math.max(0, v.currentTime - vm.from)
+      const q = new URLSearchParams({
+        type: 'episode', dataset: lrId, episode: String(episode), cam, t: t.toFixed(3),
+      })
+      const res = await fetch(`/api/yolo/datasets/${current}/images?${q}`, { method: 'POST', body: blob })
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => null))?.detail
+        throw new Error(detail ?? `${res.status}`)
+      }
+      setEpCaptured((n) => n + 1)
+    } catch (e) { notifyError(e instanceof Error ? e.message : '캡처 실패') }
   }
 
   // ── 라벨 탭 ──
@@ -320,7 +362,8 @@ export default function YoloTrainPage() {
       {/* ── 탭 ── */}
       <div className="flex gap-1 border-b border-neutral-700 text-sm">
         {([
-          ['capture', '캡처'],
+          ['live', '라이브 캡처'],
+          ['episode', '에피소드 캡처'],
           ['label', `라벨 (${images.filter((i) => i.labeled).length}/${images.length})`],
           ['train', '학습'],
           ['gallery', `갤러리 (${images.length})`],
@@ -334,9 +377,7 @@ export default function YoloTrainPage() {
         ))}
       </div>
 
-      {tab === 'capture' && (
-        <div className="space-y-4">
-          {/* ── 라이브 ── */}
+      {tab === 'live' && (
           <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
             <div className="flex items-center gap-3">
               <h2 className="font-semibold">라이브 캡처</h2>
@@ -378,18 +419,19 @@ export default function YoloTrainPage() {
               </div>
             )}
           </section>
+      )}
 
-          {/* ── 에피소드 가져오기 ── */}
+      {tab === 'episode' && (
           <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
             <h2 className="font-semibold">에피소드에서 가져오기</h2>
             <div className="flex items-center gap-3 flex-wrap text-sm">
-              <select value={lrId} onChange={(e) => { setLrId(e.target.value); setEpisode(0); setFrameIdx(0) }}
+              <select value={lrId} onChange={(e) => { setLrId(e.target.value); setEpisode(0) }}
                 className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1 max-w-72">
                 {lrList.map((d) => <option key={d.id} value={d.id}>{d.id} ({d.total_episodes}ep)</option>)}
               </select>
               <label className="text-neutral-400">ep
                 <input type="number" min={0} max={(lrDs?.total_episodes ?? 1) - 1} value={episode}
-                  onChange={(e) => { setEpisode(Number(e.target.value)); setFrameIdx(0) }}
+                  onChange={(e) => setEpisode(Number(e.target.value))}
                   className="ml-1 w-16 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
               </label>
               <select value={cam} onChange={(e) => setCam(e.target.value)}
@@ -403,39 +445,35 @@ export default function YoloTrainPage() {
                 <span className="ml-1 text-xs text-neutral-600">프레임 ({lrDs?.fps ?? 30}fps)</span>
               </label>
               <button onClick={() => void importEpisode()} disabled={importing || !lrId}
+                title="캐시가 있으면 파일 복사, 없으면 mp4 에서 직접 추출 — 캐시 생성 불필요"
                 className="px-3 py-1 rounded bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-50">
                 {importing ? '가져오는 중…' : '일괄 가져오기'}
               </button>
             </div>
 
-            {/* 프레임 미리보기 + 낱장 캡처 (디코딩 캐시) */}
-            {framePreview && (
-              <div className="flex items-start gap-3 flex-wrap">
-                <div className="w-80 max-w-full">
-                  <img src={framePreview} alt="frame"
-                    className="w-full rounded border border-neutral-700 bg-black"
-                    onError={() => setFrameOk(false)} onLoad={() => setFrameOk(true)} />
-                  {!frameOk && (
-                    <div className="text-xs text-amber-400 mt-1">
-                      디코딩 캐시가 없습니다 — 에피소드 페이지에서 decode-cache 를 먼저 생성하세요
-                    </div>
+            {/* 동영상 재생 + 낱장 캡처 — chunk mp4 그대로, 디코딩 캐시 불필요 */}
+            {videoUrl ? (
+              <div className="space-y-2 max-w-2xl">
+                <video ref={videoRef} src={videoUrl} controls muted playsInline preload="metadata"
+                  className="w-full rounded border border-neutral-700 bg-black"
+                  onLoadedMetadata={(e) => { if (vm) e.currentTarget.currentTime = vm.from }} />
+                <div className="flex items-center gap-3 text-sm">
+                  <button onClick={() => void captureEpFrame()}
+                    className="px-3 py-1 rounded bg-neutral-700 hover:bg-green-600 text-neutral-200">
+                    📸 이 장면 캡처
+                  </button>
+                  {epCaptured > 0 && <span className="text-green-400 text-xs">+{epCaptured}</span>}
+                  {vm && (
+                    <span className="text-xs text-neutral-600">
+                      에피소드 구간 {vm.from.toFixed(1)}~{vm.to.toFixed(1)}s — 재생·탐색하다가 원하는 장면에서 캡처
+                    </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <label className="text-neutral-400">프레임
-                    <input type="number" min={0} value={frameIdx}
-                      onChange={(e) => setFrameIdx(Number(e.target.value))}
-                      className="ml-1 w-20 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
-                  </label>
-                  <button onClick={() => void importEpisode([frameIdx])} disabled={importing || !frameOk}
-                    className="px-3 py-1 rounded bg-neutral-700 hover:bg-green-600 text-neutral-200 disabled:opacity-50">
-                    📸 이 프레임 캡처
-                  </button>
-                </div>
               </div>
+            ) : (
+              lrId && <div className="text-sm text-neutral-500">에피소드 메타 로드 중… (또는 이 카메라의 비디오 없음)</div>
             )}
           </section>
-        </div>
       )}
 
       {tab === 'label' && ds && (

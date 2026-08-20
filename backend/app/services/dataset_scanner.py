@@ -143,6 +143,28 @@ def find_dataset_path(dataset_id: str) -> Path | None:
     return result[0] if result else None
 
 
+def episode_meta(dataset_id: str, episode: int) -> tuple[Path, dict, dict] | None:
+    """(데이터셋 경로, info.json meta, 에피소드 레코드) — 상세 응답의 부분집합.
+
+    `get_dataset` 은 `_dir_size`(전체 트리 순회)까지 계산한다 — 에피소드 하나의
+    비디오 위치(chunk/file/timestamp)만 필요한 호출자(YOLO 캡처의 비디오 폴백)용
+    가벼운 경로다. 못 찾으면 None.
+    """
+    result = _find_dataset_dir(dataset_id)
+    if not result:
+        return None
+    ds_path, _ = result
+    info_path = resolve_info_json(ds_path)
+    meta = _parse_meta(info_path) if info_path else {}
+    episodes = _read_meta_table(ds_path / "meta" / "episodes.jsonl", ds_path / "meta" / "episodes")
+    rec = next(
+        (e for e in _sanitize_records(episodes)
+         if int(e.get("episode_index", e.get("index", -1))) == episode),
+        None,
+    )
+    return (ds_path, meta, rec) if rec is not None else None
+
+
 def _sanitize_value(v):
     """numpy/pandas 타입을 JSON 직렬화 가능한 타입으로 변환."""
     import numpy as np
