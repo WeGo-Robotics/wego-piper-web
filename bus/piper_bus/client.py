@@ -246,6 +246,19 @@ class Bus:
             C.vision_name(k) for k in self.r.scan_iter(match=C.VISION_PATTERN)
         )
 
+    def put_yolo_meta(self, meta: dict) -> None:
+        """yolod 자기소개(모델·설정). 루프마다 갱신 — TTL 이 stale 판정을 대신한다."""
+        self.r.set(C.YOLO_META, json.dumps(meta), px=C.YOLO_META_TTL_MS)
+
+    def get_yolo_meta(self) -> dict | None:
+        raw = self.r.get(C.YOLO_META)
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+
     # ── 학습 job 레지스트리 ──
 
     def put_job(self, job_id: str, record: dict) -> None:

@@ -151,6 +151,14 @@ def vision_name(key: str) -> str:
     return key[len(VISION_PREFIX) + 1:]
 
 
+# yolod 자기소개 — 어떤 모델·설정으로 돌고 있나 (프로세스당 하나, 카메라별 아님).
+# ⚠ VISION_PREFIX 아래 두면 `detection_names()` 스캔에 "meta" 카메라로 잡힌다 —
+# 접두사를 분리한다. yolod 가 루프마다 갱신하고 TTL 이 죽은 데몬의 낡은 정보를 지운다.
+YOLO_META: Final = _k("yolo", "meta")
+# 루프마다 갱신되는데, --fps 하한(0.1)이면 루프가 10초다 — 그보다 여유 있게.
+YOLO_META_TTL_MS: Final = 15_000
+
+
 # ── 학습 job 레지스트리 ──────────────────────────────────────────────────────
 #
 # 해시: {job_id: JobRecord JSON}. 로컬 job 도 여기 들어간다 (`job_id="local"`) —

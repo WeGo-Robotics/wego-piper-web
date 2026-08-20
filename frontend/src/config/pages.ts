@@ -11,6 +11,7 @@ import TrainingPage from '../pages/TrainingPage'
 import HubPage from '../pages/HubPage'
 import PolicyServerPage from '../pages/PolicyServerPage'
 import VisionPage from '../pages/VisionPage'
+import YoloDemoPage from '../pages/YoloDemoPage'
 import EncoderProbePage from '../pages/EncoderProbePage'
 import LogsPage from '../pages/LogsPage'
 import SettingsPage from '../pages/SettingsPage'
@@ -144,6 +145,16 @@ export const pages: PageEntry[] = [
     group: '실행',
     icon: '👁',
     card: true,
+  },
+
+  {
+    path: '/yolo-demo',
+    label: 'YOLO 데모',
+    description: '시연용 대형 검출 뷰',
+    component: YoloDemoPage,
+    nav: true,
+    group: '실행',
+    icon: '🎯',
   },
 
   // ── 시스템 ──

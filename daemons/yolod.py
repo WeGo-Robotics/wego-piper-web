@@ -51,11 +51,18 @@ def _payload(
     xyxy: list[list[float]],
     confs: list[float],
     clss: list[int],
+    speed: dict | None = None,
+    det_seq: int | None = None,
 ) -> dict:
     """검출 → 버스 JSON. 순수 함수 — torch 없이 테스트된다.
 
     좌표는 픽셀 단위 xyxy. 소비자(LLM 프롬프트)는 라벨·좌표를 텍스트로 쓰므로
     소수점은 의미 없는 정밀도다 — 반올림해서 페이로드를 줄인다.
+
+    `speed` 는 ultralytics 의 단계별 ms(preprocess/inference/postprocess),
+    `det_seq` 는 카메라별 **검출 횟수** 카운터 — 화면 표시용이라 `text`(LLM
+    프롬프트)에는 넣지 않는다. `frame_seq` 는 카메라 발행 카운터(~30fps)라
+    검출 속도(fps) 측정에 못 쓴다 — UI 가 그걸로 나눠서 fps 가 널뛰었다.
     """
     h, w = shape
     objects = []
@@ -76,6 +83,11 @@ def _payload(
         "size": [w, h],
         "objects": objects,
     }
+    if speed:
+        payload["speed_ms"] = {k: round(float(v), 1) for k, v in speed.items()}
+        payload["infer_ms"] = payload["speed_ms"].get("inference")
+    if det_seq is not None:
+        payload["det_seq"] = det_seq
     # LLM 프롬프트용 문자열을 **생산자가** 만든다 — UI·판단 스텝이 각자 조립하면
     # 프롬프트가 화면과 어긋난 채 디버깅하게 된다 (같은 사실 두 곳 문제)
     payload["text"] = detections_text(payload)
@@ -92,6 +104,23 @@ def detections_text(payload: dict) -> str:
     ]
     w, h = payload["size"]
     return f"[{payload['cam']} {w}x{h}] " + ", ".join(parts)
+
+
+def _model_meta(model, model_file: str, device: str, conf: float, fps: float) -> dict:
+    """yolod 자기소개 — 화면이 "지금 무슨 모델이 돌고 있나"를 보여줄 재료.
+
+    ultralytics 객체에서 읽되, 못 읽어도 데몬은 돌아야 한다 — 표시용 정보다.
+    """
+    # 커스텀 가중치는 절대경로로 들어온다 — 화면에는 파일명이면 충분하다
+    meta = {"model": model_file.rsplit("/", 1)[-1], "device": device, "conf": conf, "fps": fps}
+    try:
+        meta["task"] = getattr(model, "task", None)
+        meta["classes"] = len(getattr(model, "names", None) or {})
+        layers, params, _grads, gflops = model.info(verbose=False)
+        meta.update(layers=layers, params=params, gflops=round(gflops, 1))
+    except Exception as e:
+        logger.warning("모델 정보 읽기 실패 (표시만 빠진다): %s", e)
+    return meta
 
 
 def _parse_cams(specs: list[str]) -> dict[str, str]:
@@ -134,7 +163,9 @@ def main() -> None:
     logger.info("모델 로드: %s (device=%s)", args.model, args.device)
     model = YOLO(args.model)
     bus = Bus()
+    meta = _model_meta(model, args.model, args.device, args.conf, args.fps)
     subs: dict[str, Subscriber] = {}
+    det_counts: dict[str, int] = {alias: 0 for alias in cams}
     interval = 1.0 / max(args.fps, 0.1)
 
     def _sub(alias: str) -> Subscriber | None:
@@ -147,6 +178,7 @@ def main() -> None:
 
     while _running:
         t0 = time.monotonic()
+        bus.put_yolo_meta(meta)  # TTL 갱신 — 죽으면 화면에서도 사라진다
         for alias in cams:
             sub = subs.get(alias) or _sub(alias)
             if sub is None:
@@ -167,12 +199,15 @@ def main() -> None:
             result = model.predict(
                 frame[..., ::-1], conf=args.conf, device=args.device, verbose=False
             )[0]
+            det_counts[alias] += 1
             payload = _payload(
                 alias, seq, wall_ns, frame.shape[:2],
                 result.names,
                 result.boxes.xyxy.tolist(),
                 result.boxes.conf.tolist(),
                 result.boxes.cls.int().tolist(),
+                speed=getattr(result, "speed", None),
+                det_seq=det_counts[alias],
             )
             bus.put_detections(alias, payload)
 

@@ -39,6 +39,32 @@ def test_payload_shape_and_rounding(yolod):
     assert obj["center"] == [60.5, 120.2]   # (x1+x2)/2, (y1+y2)/2 반올림
 
 
+def test_payload_carries_inference_speed(yolod):
+    """ultralytics speed(단계별 ms) → 화면 표시용 필드. text(LLM 프롬프트)에는 안 섞인다."""
+    p = yolod._payload(
+        "top", 1, 0, (480, 848), names={0: "x"},
+        xyxy=[[0, 0, 1, 1]], confs=[0.5], clss=[0],
+        speed={"preprocess": 1.234, "inference": 12.345, "postprocess": 0.567},
+    )
+    assert p["infer_ms"] == 12.3
+    assert p["speed_ms"] == {"preprocess": 1.2, "inference": 12.3, "postprocess": 0.6}
+    assert "12.3" not in p["text"]
+
+    # speed 없이 부르면(구버전 호출·테스트) 필드도 없다
+    p2 = yolod._payload("top", 1, 0, (2, 2), names={}, xyxy=[], confs=[], clss=[])
+    assert "infer_ms" not in p2
+    assert "det_seq" not in p2
+
+
+def test_payload_det_seq_is_detection_counter(yolod):
+    """fps 는 det_seq(검출 횟수)로 잰다 — frame_seq 는 카메라 발행 카운터라 다른 값이다."""
+    p = yolod._payload(
+        "top", 300, 0, (2, 2), names={}, xyxy=[], confs=[], clss=[], det_seq=50,
+    )
+    assert p["det_seq"] == 50
+    assert p["frame_seq"] == 300  # 서로 독립 — 30fps 카메라 / 5fps 검출이면 6배 차이
+
+
 def test_payload_sorts_largest_first(yolod):
     """LLM 프롬프트에서 잘려도 주된 물체가 남아야 한다."""
     p = yolod._payload(
@@ -77,6 +103,56 @@ def test_parse_cams_alias_and_bare(yolod):
         "top": "rs_123_color",
         "hand": "hand",
     }
+
+
+def test_model_meta_reads_ultralytics_shape(yolod):
+    """자기소개 계약 — 화면(YOLO 데모)이 그리는 필드들. torch 없이 가짜 모델로."""
+    class FakeModel:
+        task = "detect"
+        names = {0: "person", 39: "bottle"}
+
+        def info(self, verbose=True):
+            return (100, 2_616_248, 0, 6.55)
+
+    meta = yolod._model_meta(FakeModel(), "yolo11n.pt", "cuda:0", 0.25, 5.0)
+    assert meta == {
+        "model": "yolo11n.pt", "device": "cuda:0", "conf": 0.25, "fps": 5.0,
+        "task": "detect", "classes": 2,
+        "layers": 100, "params": 2_616_248, "gflops": 6.5,
+    }
+
+
+def test_model_meta_survives_broken_model(yolod):
+    """info() 가 죽어도 기본 필드는 남는다 — 표시용 정보가 데몬을 죽이면 안 된다."""
+    class BrokenModel:
+        def info(self, verbose=True):
+            raise RuntimeError("no")
+
+    meta = yolod._model_meta(BrokenModel(), "m.pt", "cpu", 0.5, 1.0)
+    assert meta["model"] == "m.pt"
+    assert "params" not in meta
+
+
+def test_bus_yolo_meta_roundtrip(yolod):
+    """메타 버스 계약: 최신값 덮어쓰기 + TTL (검출 키와 같은 stale 안전망)."""
+    from piper_bus import contract as C
+    from piper_bus.client import Bus
+
+    try:
+        bus = Bus()
+        bus.r.ping()
+    except Exception:
+        pytest.skip("redis 없음")
+
+    meta = {"model": "yolo11n.pt", "device": "cpu", "conf": 0.25, "fps": 5.0}
+    try:
+        bus.put_yolo_meta(meta)
+        assert bus.get_yolo_meta() == meta
+        assert 0 < bus.r.pttl(C.YOLO_META) <= C.YOLO_META_TTL_MS
+        # 검출 이름 스캔에 "meta" 가 섞이면 안 된다 (접두사 분리 이유)
+        assert "meta" not in bus.detection_names()
+    finally:
+        bus.r.delete(C.YOLO_META)
 
 
 def test_bus_detections_roundtrip(yolod):
