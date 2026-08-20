@@ -88,6 +88,21 @@ export default function EpisodesPage() {
   const [videoError, setVideoError] = useState(false)
   const [cacheMissing, setCacheMissing] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
+
+  // ── YOLO 학습 데이터셋으로 캡처 (feature/yolo-training.md 뷰어 훅) ──
+  // 동영상 모드 = canvas 캡처 (캐시 불필요, 출처에 재생 시각 t)
+  // 프레임 모드 = 캐시 파일 복사 (정확한 프레임 번호)
+  const [yoloDatasets, setYoloDatasets] = useState<string[]>([])
+  const [yoloTarget, setYoloTarget] = useState('')
+
+  useEffect(() => {
+    api.get<{ datasets: { name: string }[] }>('/yolo/datasets')
+      .then((r) => {
+        setYoloDatasets(r.datasets.map((d) => d.name))
+        setYoloTarget((cur) => cur || (r.datasets[0]?.name ?? ''))
+      })
+      .catch(() => {})
+  }, [])
   // 수동 분석 (01-phase-annotation §3.5): 파라미터를 만지고, 한 에피소드로
   // 미리보기(저장 안 함) 후 만족하면 전체 재분석으로 확정한다.
   const [defaultParams, setDefaultParams] = useState<Record<string, number> | null>(null)
@@ -296,6 +311,43 @@ export default function EpisodesPage() {
 
   const frameRef = useRef(frame)
   frameRef.current = frame
+
+  /** 보고 있는 그 장면을 YOLO 데이터셋으로 — 모드에 따라 canvas / 캐시 복사. */
+  const captureToYolo = async (cam: string) => {
+    if (!yoloTarget || ep == null) return
+    try {
+      if (videoActive) {
+        const v = videoRefs.current[cam]
+        if (!v || v.readyState < 2) { notifyError('비디오가 아직 준비되지 않았습니다'); return }
+        const canvas = document.createElement('canvas')
+        canvas.width = v.videoWidth
+        canvas.height = v.videoHeight
+        canvas.getContext('2d')!.drawImage(v, 0, 0)
+        const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9))
+        if (!blob) throw new Error('canvas 캡처 실패')
+        // t 는 에피소드 기준 시각 — chunk 파일은 여러 에피소드를 담는다
+        const t = v.currentTime - (videoMeta?.[cam]?.from ?? 0)
+        const q = new URLSearchParams({
+          type: 'episode', dataset: dsId, episode: String(ep), cam, t: t.toFixed(3),
+        })
+        const res = await fetch(`/api/yolo/datasets/${yoloTarget}/images?${q}`, {
+          method: 'POST', body: blob,
+        })
+        if (!res.ok) {
+          const detail = (await res.json().catch(() => null))?.detail
+          throw new Error(detail ?? `${res.status} ${res.statusText}`)
+        }
+      } else {
+        // 프레임 캐시 모드 — 서버가 캐시 파일을 복사한다 (정확한 프레임 번호)
+        await api.post(`/yolo/datasets/${yoloTarget}/import-episode`, {
+          dataset_id: dsId, episode: ep, cam, indices: [frame],
+        })
+      }
+      notify({ level: 'info', text: `${cam} → ${yoloTarget} 데이터셋으로 캡처`, source: '에피소드' })
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : '캡처 실패')
+    }
+  }
 
   /** f 프레임의 비디오 시각(프레임 중앙) */
   const videoTime = useCallback(
@@ -818,7 +870,16 @@ export default function EpisodesPage() {
                       onLoad={() => setCacheMissing(false)}
                     />
                   )}
-                  <figcaption className="text-xs text-neutral-500 mt-1">{cam}</figcaption>
+                  <figcaption className="text-xs text-neutral-500 mt-1 flex items-center gap-2">
+                    {cam}
+                    {yoloTarget && (
+                      <button onClick={() => void captureToYolo(cam)}
+                        title={`이 장면을 ${yoloTarget} YOLO 데이터셋으로 캡처`}
+                        className="px-1.5 rounded bg-neutral-800 hover:bg-green-700 text-neutral-400 hover:text-white">
+                        📸
+                      </button>
+                    )}
+                  </figcaption>
                 </figure>
               ))}
             </div>
@@ -870,10 +931,19 @@ export default function EpisodesPage() {
                   ✏ 편집
                 </button>
               )}
+              {yoloDatasets.length > 0 && (
+                <label className="ml-auto text-xs text-neutral-500">캡처 →
+                  <select value={yoloTarget} onChange={(e) => setYoloTarget(e.target.value)}
+                    className="ml-1 rounded bg-neutral-900 border border-neutral-700 px-1.5 py-0.5 text-neutral-300">
+                    {yoloDatasets.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </label>
+              )}
               {videoMeta && (
                 <button
                   onClick={() => { setPlaying(false); setViewMode((m) => (m === 'video' ? 'frames' : 'video')) }}
-                  className="ml-auto px-2 py-0.5 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-400 hover:text-white"
+                  className={`px-2 py-0.5 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-400 hover:text-white ${
+                    yoloDatasets.length > 0 ? '' : 'ml-auto'}`}
                   title="동영상 = 캐시 없이 즉시 재생 / 프레임 캐시 = 프레임 단위 정밀"
                 >
                   {videoActive ? '프레임 캐시로 보기' : '동영상으로 보기'}

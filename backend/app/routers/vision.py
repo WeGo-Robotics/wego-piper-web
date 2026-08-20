@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.services import llm_client
@@ -159,30 +159,15 @@ async def list_camera_segments():
 async def segment_snapshot(name: str):
     """세그먼트의 최신 프레임 JPEG — 시작 UI 가 "이 카메라가 뭘 보나"를 보여준다.
 
-    yolod 를 켜기 전이라 어노테이트 프리뷰(버스)가 없을 때 쓴다. shm 읽기는
-    memcpy 한 번이라 이벤트 루프에서 바로 해도 된다 (realsense_manager 와 같은 판단).
+    yolod 를 켜기 전이라 어노테이트 프리뷰(버스)가 없을 때 쓴다.
+    YOLO 학습 캡처(yolo_train 라우터)와 같은 읽기를 쓴다.
     """
-    from piper_shm import SegmentError, Subscriber, segment_for_camera
+    from app.services.shm_snapshot import segment_jpeg
 
-    try:
-        sub = Subscriber(segment_for_camera(name))
-    except SegmentError:
-        raise HTTPException(404, "세그먼트 없음")
-    try:
-        got = sub.read()
-        if got is None:
-            raise HTTPException(404, "프레임 없음")
-        import cv2
-
-        frame = got[0]
-        if frame.ndim == 3 and frame.shape[2] == 3:
-            frame = frame[:, :, ::-1]  # 세그먼트는 RGB, imencode 는 BGR
-        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-        if not ok:
-            raise HTTPException(500, "인코딩 실패")
-        return Response(content=buf.tobytes(), media_type="image/jpeg")
-    finally:
-        sub.close()
+    data = segment_jpeg(name, quality=70)
+    if data is None:
+        raise HTTPException(404, "세그먼트 또는 프레임 없음")
+    return Response(content=data, media_type="image/jpeg")
 
 
 class StartRequest(BaseModel):
@@ -190,6 +175,8 @@ class StartRequest(BaseModel):
     model: str = "yolo11n.pt"
     fps: float = 5.0
     conf: float = 0.25
+    # 추론 입력 크기(긴 변). ultralytics 가 32 배수로 맞춘다 — 상하한만 막는다
+    imgsz: int = Field(default=640, ge=160, le=1920)
 
 
 @router.post("/start")
@@ -200,7 +187,8 @@ async def start_yolod(body: StartRequest):
     for alias, cam_id in body.cams.items():
         args += ["--cam", f"{alias}={cam_id}"]
     args += ["--model", _resolve_model(body.model),
-             "--fps", str(body.fps), "--conf", str(body.conf)]
+             "--fps", str(body.fps), "--conf", str(body.conf),
+             "--imgsz", str(body.imgsz)]
     await _yolod_pm.start(args)
     return {"status": "started", "cams": body.cams}
 

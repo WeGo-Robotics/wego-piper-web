@@ -12,6 +12,7 @@ import HubPage from '../pages/HubPage'
 import PolicyServerPage from '../pages/PolicyServerPage'
 import VisionPage from '../pages/VisionPage'
 import YoloDemoPage from '../pages/YoloDemoPage'
+import YoloTrainPage from '../pages/YoloTrainPage'
 import EncoderProbePage from '../pages/EncoderProbePage'
 import LogsPage from '../pages/LogsPage'
 import SettingsPage from '../pages/SettingsPage'
@@ -123,6 +124,16 @@ export const pages: PageEntry[] = [
     card: true,
   },
   { path: '/encoder', label: '엔코더', component: EncoderProbePage, nav: true, group: '학습', icon: '🔬' },
+  {
+    path: '/yolo-train',
+    label: 'YOLO 학습',
+    description: '이미지 캡처·라벨링·커스텀 가중치 학습',
+    component: YoloTrainPage,
+    nav: true,
+    group: '학습',
+    icon: '🏷',
+    card: true,
+  },
 
   // ── 실행 ──
   {

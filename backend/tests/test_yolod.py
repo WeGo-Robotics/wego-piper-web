@@ -114,12 +114,18 @@ def test_model_meta_reads_ultralytics_shape(yolod):
         def info(self, verbose=True):
             return (100, 2_616_248, 0, 6.55)
 
-    meta = yolod._model_meta(FakeModel(), "yolo11n.pt", "cuda:0", 0.25, 5.0)
+    meta = yolod._model_meta(FakeModel(), "yolo11n.pt", "cuda:0", 0.25, 5.0, 640,
+                             {"top": "rs_1_color"})
     assert meta == {
         "model": "yolo11n.pt", "device": "cuda:0", "conf": 0.25, "fps": 5.0,
-        "task": "detect", "classes": 2,
+        "imgsz": 640, "cams": {"top": "rs_1_color"}, "task": "detect", "classes": 2,
         "layers": 100, "params": 2_616_248, "gflops": 6.5,
     }
+
+    # 커스텀 가중치는 절대경로로 들어온다 — 화면에는 파일명만
+    broken = yolod._model_meta(FakeModel(), "/a/b/best.pt", "cpu", 0.5, 1.0, 320)
+    assert broken["model"] == "best.pt"
+    assert broken["cams"] == {}
 
 
 def test_model_meta_survives_broken_model(yolod):
@@ -128,7 +134,7 @@ def test_model_meta_survives_broken_model(yolod):
         def info(self, verbose=True):
             raise RuntimeError("no")
 
-    meta = yolod._model_meta(BrokenModel(), "m.pt", "cpu", 0.5, 1.0)
+    meta = yolod._model_meta(BrokenModel(), "m.pt", "cpu", 0.5, 1.0, 640)
     assert meta["model"] == "m.pt"
     assert "params" not in meta
 

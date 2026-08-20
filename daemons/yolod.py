@@ -106,13 +106,18 @@ def detections_text(payload: dict) -> str:
     return f"[{payload['cam']} {w}x{h}] " + ", ".join(parts)
 
 
-def _model_meta(model, model_file: str, device: str, conf: float, fps: float) -> dict:
+def _model_meta(model, model_file: str, device: str, conf: float, fps: float,
+                imgsz: int, cams: dict[str, str] | None = None) -> dict:
     """yolod 자기소개 — 화면이 "지금 무슨 모델이 돌고 있나"를 보여줄 재료.
 
     ultralytics 객체에서 읽되, 못 읽어도 데몬은 돌아야 한다 — 표시용 정보다.
+    `cams`(alias→세그먼트)를 싣는 이유: 화면이 "이 장면 캡처"를 하려면
+    검출 이름(alias)에서 원본 세그먼트로 돌아가야 하는데, 그 매핑을 아는
+    것은 시작 인자를 받은 yolod 뿐이다.
     """
     # 커스텀 가중치는 절대경로로 들어온다 — 화면에는 파일명이면 충분하다
-    meta = {"model": model_file.rsplit("/", 1)[-1], "device": device, "conf": conf, "fps": fps}
+    meta = {"model": model_file.rsplit("/", 1)[-1], "device": device,
+            "conf": conf, "fps": fps, "imgsz": imgsz, "cams": cams or {}}
     try:
         meta["task"] = getattr(model, "task", None)
         meta["classes"] = len(getattr(model, "names", None) or {})
@@ -139,6 +144,8 @@ def main() -> None:
     parser.add_argument("--model", default="yolo11n.pt")
     parser.add_argument("--fps", type=float, default=5.0, help="검출 주기 (프레임 주기와 무관)")
     parser.add_argument("--conf", type=float, default=0.25)
+    parser.add_argument("--imgsz", type=int, default=640,
+                        help="추론 입력 크기 (긴 변, letterbox). 프리뷰 해상도와 무관")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--no-preview", action="store_true", help="어노테이트 프리뷰 발행 끄기")
     parser.add_argument("--once", action="store_true", help="1회 검출 후 종료 (스모크)")
@@ -163,7 +170,8 @@ def main() -> None:
     logger.info("모델 로드: %s (device=%s)", args.model, args.device)
     model = YOLO(args.model)
     bus = Bus()
-    meta = _model_meta(model, args.model, args.device, args.conf, args.fps)
+    meta = _model_meta(model, args.model, args.device, args.conf, args.fps,
+                       args.imgsz, cams)
     subs: dict[str, Subscriber] = {}
     det_counts: dict[str, int] = {alias: 0 for alias in cams}
     interval = 1.0 / max(args.fps, 0.1)
@@ -197,7 +205,8 @@ def main() -> None:
 
             # 세그먼트는 RGB, ultralytics 의 numpy 입력 규약은 BGR
             result = model.predict(
-                frame[..., ::-1], conf=args.conf, device=args.device, verbose=False
+                frame[..., ::-1], conf=args.conf, imgsz=args.imgsz,
+                device=args.device, verbose=False,
             )[0]
             det_counts[alias] += 1
             payload = _payload(

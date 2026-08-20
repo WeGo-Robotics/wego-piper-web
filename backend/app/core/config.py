@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     # 사용자가 업로드한 커스텀 YOLO 가중치 (.pt). HF 캐시(models_dir)와 별개 —
     # 저긴 허브 구조라 흩어진 .pt 를 스캔할 곳이 못 된다.
     yolo_models_dir: Path = _BACKEND_DIR / "data" / "yolo_models"
+    # YOLO 학습용 이미지 데이터셋 (feature/yolo-training.md). LeRobot 데이터셋
+    # (datasets_dir)과 완전히 다른 물건이라 섞지 않는다.
+    yolo_datasets_dir: Path = _BACKEND_DIR / "data" / "yolo_datasets"
 
     # 모델 스캔 루트. ':' 로 구분 (PATH 형식). 비우면 models_dir 하나만 스캔.
     # 필드명이 model_ 로 시작하면 pydantic 보호 네임스페이스와 충돌하므로 alias 로 매핑.

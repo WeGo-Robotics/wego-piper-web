@@ -27,6 +27,9 @@ type YoloMeta = {
   device: string
   conf: number
   fps: number
+  imgsz?: number
+  /** alias→세그먼트 매핑 — "이 장면 캡처"가 원본 세그먼트로 돌아가는 길 */
+  cams?: Record<string, string>
   task?: string
   classes?: number
   layers?: number
@@ -73,8 +76,10 @@ export default function YoloDemoPage() {
   const [models, setModels] = useState<YoloModel[]>(FALLBACK_MODELS)
   const [model, setModel] = useState('yolo11n.pt')
   const [fps, setFps] = useState(5)
+  const [imgsz, setImgsz] = useState(640)
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [imgTick, setImgTick] = useState(0)
@@ -82,6 +87,31 @@ export default function YoloDemoPage() {
   const running = status?.state === 'running' || status?.state === 'starting'
   // yolod 가 버스에 발행하는 자기소개 — 돌고 있는데 없으면 아직 모델 로드 중
   const meta = status?.model ?? null
+
+  // ── YOLO 학습 데이터셋으로 캡처 (feature/yolo-training.md 데모 훅) ──
+  const [capDatasets, setCapDatasets] = useState<string[]>([])
+  const [capTarget, setCapTarget] = useState('')
+  const [capCount, setCapCount] = useState<Record<string, number>>({})
+
+  useEffect(() => {
+    api.get<{ datasets: { name: string }[] }>('/yolo/datasets')
+      .then((r) => {
+        setCapDatasets(r.datasets.map((d) => d.name))
+        setCapTarget((cur) => cur || (r.datasets[0]?.name ?? ''))
+      })
+      .catch(() => {})
+  }, [])
+
+  const captureScene = async (alias: string) => {
+    const seg = meta?.cams?.[alias]
+    if (!capTarget || !seg) return
+    try {
+      await api.post(`/yolo/datasets/${capTarget}/capture`, { cam: seg })
+      setCapCount((c) => ({ ...c, [alias]: (c[alias] ?? 0) + 1 }))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '캡처 실패')
+    }
+  }
 
   // 검출 fps — 검출 카운터 증분 / 생산자 타임스탬프 증분.
   // ⚠ frame_seq(카메라 발행 카운터)를 브라우저 폴 간격으로 나누면 안 된다:
@@ -145,7 +175,7 @@ export default function YoloDemoPage() {
     setError(null)
     try {
       const cams = Object.fromEntries(chosen.map((s, i) => [ALIASES[i] ?? `cam${i}`, s]))
-      await api.post('/vision/start', { cams, model, conf: 0.25, fps })
+      await api.post('/vision/start', { cams, model, conf: 0.25, fps, imgsz })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'yolod 시작 실패')
     } finally { setBusy(false) }
@@ -206,6 +236,7 @@ export default function YoloDemoPage() {
     meta.device,
     `conf ${meta.conf}`,
     `${meta.fps} fps`,
+    meta.imgsz != null && `입력 ${meta.imgsz}px`,
     meta.task,
     meta.classes != null && `${meta.classes} 클래스`,
     meta.params != null && `${(meta.params / 1e6).toFixed(1)}M 파라미터`,
@@ -244,6 +275,14 @@ export default function YoloDemoPage() {
         ))}
         <div className="ml-auto flex items-center gap-3">
           {error && <span className="text-xs text-red-400">{error}</span>}
+          {running && capDatasets.length > 0 && (
+            <label className="text-xs text-neutral-500">캡처 →
+              <select value={capTarget} onChange={(e) => setCapTarget(e.target.value)}
+                className="ml-1 rounded bg-neutral-900 border border-neutral-700 px-1.5 py-0.5 text-neutral-300">
+                {capDatasets.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </label>
+          )}
           {running && (
             <button onClick={() => void handleStop()} disabled={busy}
               className="px-4 py-1.5 text-sm rounded bg-neutral-800 hover:bg-red-700 text-neutral-300 hover:text-white disabled:opacity-50">
@@ -323,6 +362,15 @@ export default function YoloDemoPage() {
               ))}
             </select>
           </label>
+          <label className="flex items-center gap-2 text-sm text-neutral-400">
+            해상도
+            <select value={imgsz} onChange={(e) => setImgsz(Number(e.target.value))}
+              className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1 text-neutral-200">
+              {[320, 480, 640, 960, 1280].map((v) => (
+                <option key={v} value={v}>{v}px</option>
+              ))}
+            </select>
+          </label>
           <input ref={fileRef} type="file" accept=".pt" className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0]
@@ -378,6 +426,19 @@ export default function YoloDemoPage() {
                     </span>
                   )}
                 </div>
+                {/* 이 장면을 학습 데이터셋으로 — 오검출을 본 그 순간이 하드 케이스다 */}
+                {capTarget && meta?.cams?.[name] && (
+                  <div className="absolute top-2 right-2 flex items-center gap-1.5">
+                    {capCount[name] != null && (
+                      <span className="px-1.5 py-0.5 rounded bg-black/60 text-xs text-green-400">+{capCount[name]}</span>
+                    )}
+                    <button onClick={() => void captureScene(name)}
+                      title={`원본 프레임을 ${capTarget} 데이터셋으로 캡처`}
+                      className="px-2 py-0.5 rounded bg-black/60 backdrop-blur text-sm text-neutral-300 hover:bg-green-700 hover:text-white">
+                      📸
+                    </button>
+                  </div>
+                )}
                 {/* 검출 라벨 칩 */}
                 <div className="absolute bottom-2 left-2 right-2 flex flex-wrap gap-1.5">
                   {d.objects.map((o, i) => (
