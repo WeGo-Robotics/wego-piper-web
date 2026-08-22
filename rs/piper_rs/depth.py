@@ -50,6 +50,13 @@ INVALID = 255
 # 유효 구간이 쓰는 최대값. 255 는 무효 전용이라 비워둔다.
 VALID_MAX = 254
 
+# raw 한 단위가 몇 미터인가 — librealsense 의 `depth_units` 기본값.
+#
+# ⚠ **장치마다 다르다.** D435 는 0.001(1mm)이지만 **D405 는 0.0001(0.1mm)** 이다.
+# 근접 카메라라 같은 uint16 으로 더 촘촘히 재려고 그렇게 잡혀 나온다.
+# 이 값을 안 쓰면 D405 의 raw 3000 을 3000mm 로 읽는다 — 실제로는 300mm 다.
+DEFAULT_UNITS_M = 0.001
+
 
 @dataclass(frozen=True)
 class DepthEncoding:
@@ -70,19 +77,35 @@ class DepthEncoding:
         return asdict(self)
 
 
-def encode_depth(depth_mm: np.ndarray, enc: DepthEncoding) -> np.ndarray:
-    """uint16 mm → (H, W, 3) uint8.
+def encode_depth(depth_raw: np.ndarray, enc: DepthEncoding,
+                 units_m: float = DEFAULT_UNITS_M) -> np.ndarray:
+    """raw uint16 → (H, W, 3) uint8.
+
+    `units_m` 은 **raw 한 단위가 몇 미터인가**(librealsense `depth_units`).
+    장치에서 읽어 넘긴다 — 안 넘기면 1mm 로 보는데, 그건 D435 에서만 맞다.
+
+    ⚠ 이 인자가 없던 시절에는 raw 를 곧 mm 로 봤다. **D405 에서 10배 틀렸다** —
+    30cm 물체를 보려면 `far_mm` 에 3000 을 넣어야 했고, 그렇게 넣으면
+    데이터셋 메타에 "3000mm 까지"라고 적히는데 실제로는 300mm 였다.
 
     **순수 함수다** — 하드웨어 없이 경계를 시험할 수 있어야 한다(안전 필터와 같은 이유).
     """
     if enc.far_mm <= enc.near_mm:
         raise ValueError(f"far_mm 이 near_mm 보다 커야 합니다: {enc}")
+    if not units_m or units_m <= 0:
+        raise ValueError(f"depth_units 가 양수여야 합니다: {units_m}")
 
-    d = depth_mm.astype(np.float32)
-    invalid = depth_mm == 0            # RealSense 가 못 읽은 픽셀
+    d = depth_raw.astype(np.float32)
+    invalid = depth_raw == 0           # RealSense 가 못 읽은 픽셀
 
-    span = float(enc.far_mm - enc.near_mm)
-    v = (d - enc.near_mm) / span * VALID_MAX
+    # ⚠ 구간을 **raw 쪽으로** 옮겨 계산한다. 프레임을 mm 로 바꾸면 400k 픽셀짜리
+    #   배열을 한 번 더 만드는데, 경계 두 개를 옮기면 결과가 같고 공짜다.
+    mm_per_raw = units_m * 1000.0
+    near_raw = enc.near_mm / mm_per_raw
+    far_raw = enc.far_mm / mm_per_raw
+
+    span = float(far_raw - near_raw)
+    v = (d - near_raw) / span * VALID_MAX
     # 구간 밖은 잘라 붙인다. 자르지 않으면 wrap 되어 **먼 것이 가까워 보인다.**
     np.clip(v, 0, VALID_MAX, out=v)
 

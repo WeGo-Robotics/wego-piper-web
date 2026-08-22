@@ -9,6 +9,7 @@ import pytest
 
 pytest.importorskip("piper_rs")
 from piper_rs.depth import INVALID, VALID_MAX, DepthEncoding, encode_depth  # noqa: E402
+from piper_rs import depth as D  # noqa: E402
 
 ENC = DepthEncoding(near_mm=150, far_mm=1200)
 
@@ -149,3 +150,79 @@ def test_changing_the_range_is_blocked_while_recording():
 
     src = inspect.getsource(cameras.set_depth_encoding)
     assert "require_idle" in src, "녹화 중 변경을 안 막는다"
+
+
+# ── 장치마다 raw 단위가 다르다 (D405 = 0.1mm) ──────────────────────────────
+
+def test_the_same_distance_encodes_the_same_on_every_device():
+    """**회귀** — D405 에서 거리가 10배 틀렸다.
+
+    D435 는 `depth_units=0.001`(raw 1 = 1mm)인데 **D405 는 0.0001**(raw 1 = 0.1mm)
+    이다. 근접 카메라라 같은 uint16 으로 더 촘촘히 재려고 그렇게 나온다.
+    raw 를 곧 mm 로 보면 D405 의 raw 3000(=300mm)을 3000mm 로 읽는다.
+
+    증상은 이랬다: 30cm 안쪽 물체를 보려고 `far_mm` 에 3000 을 넣어야 했고,
+    그러면 데이터셋 메타에는 "3000mm 까지"라고 적히는데 실제로는 300mm 였다.
+
+    여기서 잠그는 것: **같은 거리는 장치가 달라도 같은 픽셀값이 된다.**
+    """
+    enc = D.DepthEncoding(near_mm=100, far_mm=500)
+
+    for mm in (100, 200, 300, 400, 500):
+        d435 = D.encode_depth(np.full((1, 1), mm, np.uint16), enc, 0.001)
+        d405 = D.encode_depth(np.full((1, 1), mm * 10, np.uint16), enc, 0.0001)
+        assert d435[0, 0, 0] == d405[0, 0, 0], (
+            f"{mm}mm 가 장치마다 다른 값으로 인코딩된다: "
+            f"D435={d435[0,0,0]} D405={d405[0,0,0]}"
+        )
+
+
+def test_a_d405_frame_read_as_millimetres_is_wrong_by_ten():
+    """고치기 전 동작을 **숫자로** 박아둔다 — 왜 이 인자가 있는지가 남는다.
+
+    D405 의 raw 3000 은 300mm 다. 1mm 로 보면 3000mm 로 읽혀 100~500mm 구간을
+    한참 넘어가고, 그래서 **전부 흰색(가장 멂)으로 잘린다.**
+    """
+    enc = D.DepthEncoding(near_mm=100, far_mm=500)
+    raw = np.full((1, 1), 3000, np.uint16)          # D405 로 잰 30cm
+
+    assert D.encode_depth(raw, enc, 0.001)[0, 0, 0] == D.VALID_MAX, "옛 동작이 아니다"
+    # 실제 스케일로 읽으면 구간 한가운데(100~500 의 300mm)에 앉는다
+    mid = D.encode_depth(raw, enc, 0.0001)[0, 0, 0]
+    assert 0 < mid < D.VALID_MAX and abs(int(mid) - D.VALID_MAX // 2) <= 2, mid
+
+
+def test_the_default_unit_keeps_the_old_behaviour():
+    """인자를 안 주면 1mm — D435 에서는 지금까지와 같다.
+
+    기본값이 바뀌면 **손대지 않은 카메라의 데이터 뜻이 조용히 달라진다.**
+    """
+    enc = D.DepthEncoding(near_mm=100, far_mm=500)
+    raw = np.full((1, 1), 300, np.uint16)
+    assert D.encode_depth(raw, enc)[0, 0, 0] == D.encode_depth(raw, enc, 0.001)[0, 0, 0]
+    assert D.DEFAULT_UNITS_M == 0.001
+
+
+def test_a_nonsense_unit_is_rejected_not_divided_by():
+    """0 이 오면 0 으로 나눈다 — 프레임 전체가 NaN 이 되어 **조용히 검게** 나간다."""
+    enc = D.DepthEncoding()
+    for bad in (0, -0.001):
+        with pytest.raises(ValueError):
+            D.encode_depth(np.zeros((1, 1), np.uint16), enc, bad)
+
+
+def test_the_daemon_asks_the_device_for_its_scale_once():
+    """⚠ 읽기 루프에서 물으면 안 된다 — D405 의 UVC 질의가 커널 D-state 로
+    프로세스를 통째로 먹통으로 만든 그 경로를 매 프레임 타게 된다.
+
+    값은 스트림이 도는 동안 안 바뀌므로 `pipeline.start` 직후 한 번이면 된다.
+    """
+    import inspect
+
+    from piper_rs.hub import _RSDevice
+
+    assert "get_depth_scale" in inspect.getsource(_RSDevice._read_depth_units)
+    assert "get_depth_scale" not in inspect.getsource(_RSDevice._read_loop), \
+        "읽기 루프가 매 프레임 장치에 묻는다"
+    # 인코딩에 실제로 넘기는가 — 안 넘기면 필드만 있고 아무 일도 안 한다
+    assert "self.depth_units_m" in inspect.getsource(_RSDevice._read_loop)

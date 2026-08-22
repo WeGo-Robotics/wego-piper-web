@@ -72,6 +72,8 @@ type CamInfo = {
   stream_type?: string
   /** rsd 가 소유하는 깊이 인코딩 파라미터 — 데이터셋 해석의 근거다. */
   depth_encoding?: { near_mm: number; far_mm: number; mode: string } | null
+  /** raw 한 단위가 몇 미터인가. D435=0.001, **D405=0.0001**. */
+  depth_units_m?: number | null
   config: { width: number | null; height: number | null; fps: number | null; color_mode: string; rotation: number; fourcc: string | null }
 }
 
@@ -783,6 +785,14 @@ export default function CamerasPage() {
                   step={DEPTH_STEP}
                   onChange={(v) => setDepthDraft((d) => ({ ...d, far_mm: v }))}
                   onCommit={(v) => setDepthRange(settingsCamera.id, null, v)} />
+                {/* 장치 스케일을 **보여준다.** 이게 안 보여서 D405 가 D435 처럼
+                    계산되는 걸 오래 못 알아챘다 — 아래 mm 는 이 값으로 환산된 것이다. */}
+                {settingsCamera.depth_units_m && settingsCamera.depth_units_m !== 0.001 && (
+                  <p className="text-[10px] text-neutral-400">
+                    이 장치는 raw 1 단위 = {(settingsCamera.depth_units_m * 1000).toFixed(2)}mm
+                    입니다 (보통 1.00mm). 위 값은 <b>실제 거리</b>이고, 환산은 rsd 가 합니다.
+                  </p>
+                )}
                 <p className="text-[10px] text-neutral-500">
                   폭 {Math.max(0, depthDraft.far_mm - depthDraft.near_mm)}mm →
                   {' '}1단계 ≈ {((depthDraft.far_mm - depthDraft.near_mm) / 254).toFixed(1)}mm

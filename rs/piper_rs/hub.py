@@ -28,7 +28,7 @@ import time
 import numpy as np
 
 from piper_cam import controls as controls_mod
-from piper_rs.depth import DepthEncoding, encode_depth
+from piper_rs.depth import DEFAULT_UNITS_M, DepthEncoding, encode_depth
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +125,9 @@ class _RSDevice:
         # 깊이 인코딩 파라미터. **rsd 가 단일 소유자다** — 같은 픽셀값이 실행마다
         # 다른 거리를 뜻하면 데이터셋이 조용히 오염된다. `info()` 로 내보낸다.
         self.depth_encoding = DepthEncoding()
+        # raw 한 단위가 몇 미터인가. **장치가 답한다** — D435 는 0.001 이지만
+        # D405 는 0.0001 이라 안 물어보면 10배 틀린 거리를 인코딩한다.
+        self.depth_units_m: float = DEFAULT_UNITS_M
         # 스트림별 요청 프로파일 `(w, h, fps)`. 없으면 장치 기본값.
         self._want: dict[str, tuple[int, int, int]] = {}
         self._profiles: dict[str, list[tuple[int, int, int]]] = {}  # supported() 캐시
@@ -321,8 +324,37 @@ class _RSDevice:
         # **장치가 실제로 연 값**을 기록한다. 요청 해석값을 그대로 믿으면,
         # 요청이 없어 기본값으로 열린 스트림의 해상도를 영영 모른다.
         self._running_profile = self._read_active_profiles(pipeline, streams)
+        if "depth" in self._active:
+            self.depth_units_m = self._read_depth_units(pipeline)
         self._start_thread()
         return True
+
+    def _read_depth_units(self, pipeline) -> float:
+        """raw 한 단위가 몇 미터인가. **장치에 묻는다.**
+
+        ⚠ **여기서만 묻는다** — `pipeline.start` 직후, `_op_lock` 안이다.
+        읽기 루프에서 물으면 D405 의 UVC 질의가 커널 D-state 로 프로세스를
+        통째로 먹통으로 만든 그 경로를 매 프레임 타게 된다. 값은 스트림이
+        도는 동안 안 바뀌므로 한 번이면 된다.
+
+        못 읽으면 기본값으로 간다 — 발행을 멈추는 것보다 낫다. 다만 D405 라면
+        그 기본값이 10배 틀리므로 **조용히 넘어가지 않는다.**
+        """
+        try:
+            scale = float(pipeline.get_active_profile().get_device()
+                          .first_depth_sensor().get_depth_scale())
+        except Exception as exc:
+            logger.warning("RealSense %s: depth_units 를 못 읽어 %s 로 갑니다 — "
+                           "이 장치가 D405 면 거리가 10배 틀립니다: %s",
+                           self.serial, DEFAULT_UNITS_M, exc)
+            return DEFAULT_UNITS_M
+        if scale <= 0:
+            logger.warning("RealSense %s: depth_units 가 %s 다 — 기본값으로 갑니다",
+                           self.serial, scale)
+            return DEFAULT_UNITS_M
+        logger.info("RealSense %s: depth_units=%g (raw 1 = %.3gmm)",
+                    self.serial, scale, scale * 1000.0)
+        return scale
 
     @staticmethod
     def _read_active_profiles(pipeline, streams: set[str]
@@ -455,7 +487,8 @@ class _RSDevice:
                         # ⚠ 프리뷰용 JET 컬러맵을 쓰지 않는다 — 단조롭지 않아
                         # 정책 입력으로 최악이고, 무효 픽셀(0)이 "가장 가까움"이
                         # 된다. `depth.encode_depth` 참고.
-                        updates["depth"] = encode_depth(depth, self.depth_encoding)
+                        updates["depth"] = encode_depth(depth, self.depth_encoding,
+                                                        self.depth_units_m)
                 if "infrared" in self._active:
                     irf = frames.get_infrared_frame(1)
                     if irf:
@@ -824,6 +857,9 @@ class RealSenseHub:
             # 데이터셋 메타에 실려야 하는 값 — 없으면 나중에 같은 픽셀값이
             # 무슨 거리였는지 알 방법이 없다
             out["depth_encoding"] = dev.depth_encoding.to_dict()
+            # 어떤 스케일로 계산했는지 남긴다. near/far 는 이미 실제 mm 라
+            # 해석에 필요하진 않지만, 틀렸을 때 **어디서 틀렸는지**가 보인다.
+            out["depth_units_m"] = dev.depth_units_m
         return out
 
     def disconnect(self, cam_id: str) -> None:

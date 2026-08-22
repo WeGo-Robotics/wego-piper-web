@@ -173,6 +173,10 @@ class CameraInfo:
             # 무조건 물으면 RPC 가 카메라 수만큼 늘어 스캔이 그만큼 느려진다.
             "depth_encoding": (self.running_profile().get("depth_encoding")
                                if self.stream_type == "depth" else None),
+            # raw 한 단위가 몇 미터인가. **화면에 보여준다** — 이게 안 보여서
+            # D405(0.0001)가 D435(0.001)처럼 계산되는 걸 오래 못 알아챘다.
+            "depth_units_m": (self.running_profile().get("depth_units_m")
+                              if self.stream_type == "depth" else None),
             "config": {
                 "width": self.width,
                 "height": self.height,
