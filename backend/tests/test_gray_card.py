@@ -183,3 +183,27 @@ def test_aiming_the_box_does_not_touch_the_device():
     src = inspect.getsource(RealSenseHub.measure_gray_card)
     assert "set_control" not in src, "재기만 해야 하는데 장치를 건드린다"
     assert "sleep" not in src, "조준 되먹임이 느려진다"
+
+
+def test_the_box_is_hidden_until_calibration_starts():
+    """프리뷰는 대부분의 시간 **카메라를 확인하는 화면**이다.
+
+    늘 떠 있는 조준 상자는 그때 방해만 되고, 지금 보정 중인지 아닌지도 흐려진다.
+    """
+    src = (_SRC / "pages" / "CamerasPage.tsx").read_text()
+    assert "{aiming && settingsCamera.stream_type !== 'depth' && (\n                <RoiPicker" in src, \
+        "조준 중이 아닐 때도 상자를 그린다"
+
+
+def test_starting_calibration_measures_once_right_away():
+    """빈 상자만 뜨면 어디로 옮겨야 좋은지 알 수 없다 — 첫 숫자를 바로 채운다."""
+    src = (_SRC / "pages" / "CamerasPage.tsx").read_text()
+    body = src.split("const startAiming", 1)[1].split("\n  }", 1)[0]
+    assert "setAiming(true)" in body and "measureRoi(" in body
+
+
+def test_finishing_calibration_puts_the_box_away():
+    """결과를 볼 차례다. 상자가 남아 있으면 아직 조준 중인 것처럼 보인다."""
+    src = (_SRC / "pages" / "CamerasPage.tsx").read_text()
+    body = src.split("const calibrateGrayCard", 1)[1].split("\n  }", 1)[0]
+    assert "setAiming(false)" in body

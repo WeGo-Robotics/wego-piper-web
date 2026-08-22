@@ -153,6 +153,9 @@ export default function CamerasPage() {
   const [grayCard, setGrayCard] = useState<GrayCardReport | null>(null)
   const [calibrating, setCalibrating] = useState(false)
   // 카드 영역. **프레임 좌표**다 — 화면 크기는 창을 줄이면 바뀐다.
+  // 조준 중인가. **평소에는 상자를 안 그린다** — 프리뷰는 대부분의 시간
+  // 카메라를 확인하는 화면이고, 늘 떠 있는 상자는 그때 방해만 된다.
+  const [aiming, setAiming] = useState(false)
   const [roi, setRoi] = useState<Roi | null>(null)
   const [roiReading, setRoiReading] = useState<GrayCardReading | null>(null)
   const previewRef = useRef<HTMLImageElement | null>(null)
@@ -196,6 +199,18 @@ export default function CamerasPage() {
     } catch { /* 조준 도우미다 — 실패해도 화면을 어지럽히지 않는다 */ }
   }, [])
 
+  /** 조준을 시작한다. 상자를 처음 띄우고 곧바로 한 번 재서 숫자를 채운다 —
+   *  빈 상자만 뜨면 어디로 옮겨야 좋은지 알 수 없다. */
+  const startAiming = (colorId: string) => {
+    const img = previewRef.current
+    const box = roi ?? (img?.naturalWidth
+      ? centerRoi(img.naturalWidth, img.naturalHeight) : null)
+    setGrayCard(null)
+    setRoi(box)
+    setAiming(true)
+    if (box) measureRoi(colorId, box)
+  }
+
   /** 회색 카드로 화이트밸런스·노출을 맞춘다. 값은 장치에만 올라간다 —
    *  마음에 들면 사용자가 프로파일로 저장한다(그쪽이 연결 시 적용까지 한다). */
   const calibrateGrayCard = async (colorId: string) => {
@@ -208,6 +223,7 @@ export default function CamerasPage() {
         `/cameras/${encodeURIComponent(colorId)}/calibrate-gray-card`,
         box ? { roi: box } : {})
       setGrayCard(r)
+      setAiming(false)          // 결과를 볼 차례다 — 상자는 치운다
       bumpPreview([colorId])
     } catch (e) {
       notifyError(e instanceof Error ? e.message : '보정에 실패했습니다')
@@ -314,7 +330,7 @@ export default function CamerasPage() {
     else setDepthDraft(DEPTH_DEFAULT)
     const color = cams.find((x) => x.id === settingsCam.replace(/:depth$/, ':color'))
     setMaskOn(color?.background_mask?.enabled ?? false)
-    setRoi(null); setRoiReading(null); setGrayCard(null)
+    setAiming(false); setRoi(null); setRoiReading(null); setGrayCard(null)
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeSettings() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -802,14 +818,15 @@ export default function CamerasPage() {
                 onLoad={(e) => {
                   const img = e.target as HTMLImageElement
                   img.style.opacity = '1'
-                  // 첫 프레임을 봐야 프레임 크기를 안다 — 그 전엔 상자를 못 만든다
-                  if (!roi && img.naturalWidth) {
+                  // 상자는 **조준을 시작할 때** 만든다. 프레임 크기는 여기서 알게
+                  // 되지만, 미리 만들어두면 안 쓰는 상태가 하나 생긴다.
+                  if (aiming && !roi && img.naturalWidth) {
                     setRoi(centerRoi(img.naturalWidth, img.naturalHeight))
                   }
                 }}
               />
               {/* 카드 영역 고르기 — 컬러 스트림에서만 의미가 있다 */}
-              {settingsCamera.stream_type !== 'depth' && (
+              {aiming && settingsCamera.stream_type !== 'depth' && (
                 <RoiPicker
                   imgRef={previewRef} roi={roi}
                   hint={roiReading ? `밝기 ${roiReading.luma} · 얼룩 ${roiReading.spread_pct}%` : undefined}
@@ -859,30 +876,51 @@ export default function CamerasPage() {
               <div className="space-y-1.5 rounded border border-neutral-700 p-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-neutral-400">회색 카드 보정</span>
-                  <button
-                    onClick={() => calibrateGrayCard(settingsCamera.id)}
-                    disabled={calibrating}
-                    className="px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500
-                               disabled:bg-neutral-700 disabled:text-neutral-500 text-white">
-                    {calibrating ? '맞추는 중…' : '지금 맞추기'}
-                  </button>
-                </div>
-                <p className="text-[10px] text-neutral-500">
-                  왼쪽 화면에서 <b>카드 위를 클릭·드래그</b>해 노란 상자를 옮기고,
-                  <b> 휠로 크기</b>를 맞추세요. 상자 안쪽만 계산에 씁니다.
-                  {roiReading && (
-                    <span className={roiReading.usable ? 'text-neutral-400' : 'text-amber-400'}>
-                      {' '}지금 상자: 밝기 {roiReading.luma} · 색 치우침{' '}
-                      {roiReading.neutral_error_pct}% · 얼룩 {roiReading.spread_pct}%
-                      {!roiReading.usable && ` — ${roiReading.why}`}
+                  {aiming ? (
+                    <span className="flex gap-1">
+                      <button
+                        onClick={() => { setAiming(false); setRoiReading(null) }}
+                        disabled={calibrating}
+                        className="px-2 py-1 text-xs rounded bg-neutral-700
+                                   hover:bg-neutral-600 disabled:opacity-50">취소</button>
+                      <button
+                        onClick={() => calibrateGrayCard(settingsCamera.id)}
+                        disabled={calibrating}
+                        className="px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500
+                                   disabled:bg-neutral-700 disabled:text-neutral-500 text-white">
+                        {calibrating ? '맞추는 중…' : '이 영역으로 맞추기'}
+                      </button>
                     </span>
+                  ) : (
+                    <button
+                      onClick={() => startAiming(settingsCamera.id)}
+                      className="px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white">
+                      보정 시작
+                    </button>
                   )}
-                </p>
-                <p className="text-[10px] text-neutral-500">
-                  누르면 자동 노출·WB 를 잠깐 켜 카드에 맞춘 뒤 <b>잠그고</b>,
-                  밝기를 목표까지 보정합니다. 값은 장치에만 올라갑니다 —
-                  마음에 들면 아래 프로파일로 저장하세요.
-                </p>
+                </div>
+                {aiming ? (
+                  <>
+                    <p className="text-[10px] text-neutral-500">
+                      왼쪽 화면에서 <b>카드 위를 클릭·드래그</b>해 노란 상자를 옮기고,
+                      <b> 휠로 크기</b>를 맞추세요. 상자 안쪽만 계산에 씁니다.
+                    </p>
+                    {roiReading && (
+                      <p className={`text-[10px] tabular-nums ${roiReading.usable
+                        ? 'text-neutral-400' : 'text-amber-400'}`}>
+                        지금 상자: 밝기 {roiReading.luma} · 색 치우침{' '}
+                        {roiReading.neutral_error_pct}% · 얼룩 {roiReading.spread_pct}%
+                        {!roiReading.usable && ` — ${roiReading.why}`}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-[10px] text-neutral-500">
+                    회색 카드를 화면에 두고 누르면 영역을 고르게 됩니다. 자동 노출·WB 를
+                    잠깐 켜 카드에 맞춘 뒤 <b>잠그고</b>, 밝기를 목표까지 보정합니다.
+                    값은 장치에만 올라갑니다 — 마음에 들면 아래 프로파일로 저장하세요.
+                  </p>
+                )}
                 {grayCard && (
                   <div className={`rounded px-2 py-1.5 text-[11px] ${grayCard.ok
                     ? 'bg-emerald-500/10 text-emerald-300'
