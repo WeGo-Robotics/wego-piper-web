@@ -98,6 +98,12 @@ class RealSenseHub:
     def last_apply_report(self, cam_id: str) -> dict:
         return self._call("last_apply_report", cam_id, default={}) or {}
 
+    def calibrate_gray_card(self, cam_id: str, roi=None, target=None) -> dict:
+        # ⚠ 자동 수렴을 기다리므로 보통 RPC 보다 오래 걸린다 — 타임아웃을 넉넉히.
+        return self._call("calibrate_gray_card", cam_id, roi, target,
+                          default={"ok": False, "error": "rsd 가 응답하지 않습니다"},
+                          timeout=30) or {"ok": False, "error": "응답 없음"}
+
     def set_background_mask(self, cam_id: str, enabled: bool) -> tuple[bool, str]:
         return _pair(self._call("set_background_mask", cam_id, enabled),
                      "배경 마스킹을 바꾸지 못했습니다")

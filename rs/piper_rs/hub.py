@@ -873,6 +873,101 @@ class RealSenseHub:
         logger.info("깊이 인코딩 변경 %s: %s", serial, enc.to_dict())
         return True, "OK"
 
+    # 자동이 수렴할 때까지 주는 시간. RealSense 의 자동 노출·WB 는 몇 프레임
+    # 걸리고, 조명이 어두우면 더 걸린다.
+    _CAL_SETTLE_S = 2.0
+    # 노출 비례 보정을 몇 번까지 반복하나. 보통 1~2번이면 들어온다.
+    _CAL_ROUNDS = 3
+
+    def calibrate_gray_card(self, cam_id: str, roi=None, target: float | None = None
+                            ) -> dict:
+        """회색 카드로 화이트밸런스·노출을 맞춘다 (feature/gray-card-calibration.md).
+
+        절차:
+
+        1. **자동을 켜고 기다린다** — 회색 카드는 자동 WB 가 가장 잘 맞는 조건이다
+           (중성 피사체가 화면을 채운 상태). 카메라 자기 알고리즘을 쓰는 편이
+           켈빈 값을 이분 탐색하는 것보다 빠르고 정확하다.
+        2. **자동을 끈다** — 값이 그 자리에 얼어붙는다. 이게 "캘리브레이션"의 실체다.
+           켜둔 채로는 카드를 치우는 순간 다시 흔들려 재현이 안 된다.
+        3. 카드를 재서 **노출만** 비례 보정한다. 밝기는 노출에 거의 비례한다.
+        4. 다시 재서 결과를 돌려준다.
+
+        값을 저장하지는 않는다 — 저장은 카메라 프로파일이 하는 일이고, 그쪽은
+        이미 연결할 때 적용까지 한다. 여기서는 **장치에 올려놓고 보고**만 한다.
+        """
+        from piper_cam import graycard as gc
+
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return {"ok": False, "error": f"Not a RealSense id: {cam_id}"}
+        serial, stream = parsed
+        if stream != "color":
+            return {"ok": False, "error": "회색 카드 보정은 컬러 스트림에만 합니다"}
+        dev = self._device(serial)
+        if dev is None or "color" not in dev._active:
+            return {"ok": False, "error": "컬러 스트림이 연결돼 있지 않습니다"}
+
+        target = gc.TARGET_LUMA if target is None else float(target)
+        steps: list[dict] = []
+
+        def _read():
+            frame = dev.get_frame("color")
+            if frame is None:
+                return None
+            return gc.measure(frame, tuple(roi) if roi else None)
+
+        # 1) 자동으로 맞추게 두고 기다린다
+        for name in ("enable_auto_white_balance", "enable_auto_exposure"):
+            self.set_control(cam_id, name, 1)
+        time.sleep(self._CAL_SETTLE_S)
+
+        before = _read()
+        if before is None:
+            return {"ok": False, "error": "프레임을 받지 못했습니다"}
+        usable, why = before.usable
+        if not usable:
+            # ⚠ 못 믿을 측정으로 값을 정하면 다음 주에 재현이 안 된다 —
+            #   그게 이 기능의 존재 이유인데 스스로 깨는 셈이다.
+            return {"ok": False, "error": why, "before": before.to_dict()}
+
+        # 2) 자동을 끈다 — 자동이 찾은 값이 그대로 얼어붙는다
+        for name in ("enable_auto_white_balance", "enable_auto_exposure"):
+            self.set_control(cam_id, name, 0)
+        time.sleep(0.4)
+
+        # 3) 노출만 비례 보정한다. WB 는 자동이 카드에서 이미 맞췄다.
+        lo, hi, cur = self._exposure_range(cam_id)
+        reading = _read() or before
+        for _ in range(self._CAL_ROUNDS):
+            if abs(reading.luma - target) <= gc.LUMA_TOLERANCE:
+                break
+            new_us = gc.exposure_for(reading, cur, lo, hi, target)
+            if abs(new_us - cur) < 1:
+                break
+            self.set_control(cam_id, "exposure", new_us)
+            cur = new_us
+            time.sleep(0.4)
+            reading = _read() or reading
+            steps.append({"exposure_us": round(cur), "luma": round(reading.luma, 1)})
+
+        ok, verdict = reading.verdict(target)
+        logger.info("회색 카드 보정 %s: %s (노출 %.0fus, 밝기 %.0f, 치우침 %.1f%%)",
+                    serial, verdict, cur, reading.luma, reading.neutral_error_pct)
+        return {"ok": ok, "verdict": verdict, "target": target,
+                "before": before.to_dict(), "after": reading.to_dict(),
+                "exposure_us": round(cur), "steps": steps,
+                "roi": list(roi) if roi else list(gc.center_roi(
+                    dev.get_frame("color").shape))}
+
+    def _exposure_range(self, cam_id: str) -> tuple[float, float, float]:
+        """`(min, max, 현재)` 노출. 못 읽으면 넓게 잡되 현재값은 보수적으로."""
+        for c in self.list_controls(cam_id):
+            if c.get("name") == "exposure":
+                return (float(c.get("min") or 1), float(c.get("max") or 165000),
+                        float(c.get("value") or 1000))
+        return 1.0, 165000.0, 1000.0
+
     def set_background_mask(self, cam_id: str, enabled: bool) -> tuple[bool, str]:
         """깊이로 컬러의 배경을 지울지 켜고 끈다. **다음 프레임부터 적용된다.**
 

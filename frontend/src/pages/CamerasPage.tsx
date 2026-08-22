@@ -94,6 +94,16 @@ type CamApplyResult = {
   details?: { name: string; want: number; got: number | null; status: string }[]
 }
 
+type GrayCardReading = {
+  luma: number; neutral_error_pct: number; clipped_pct: number
+  spread_pct: number; usable: boolean; why: string
+}
+type GrayCardReport = {
+  ok: boolean; verdict: string; target: number
+  before: GrayCardReading; after: GrayCardReading
+  exposure_us: number
+}
+
 type ProfileReport = {
   profile: string
   cameras: CamApplyResult[]
@@ -136,6 +146,10 @@ export default function CamerasPage() {
   const [depthDraft, setDepthDraft] = useState<{ near_mm: number; far_mm: number }>(DEPTH_DEFAULT)
   // 배경 마스킹은 **컬러 스트림**의 성질이지만 경계(`far_mm`)를 깊이 창과 공유한다.
   const [maskOn, setMaskOn] = useState(false)
+  // 회색 카드 보정 결과. 값을 저장하진 않으므로 **결과를 보여주는 것이 전부**다 —
+  // 마음에 들면 사용자가 프로파일로 저장한다.
+  const [grayCard, setGrayCard] = useState<GrayCardReport | null>(null)
+  const [calibrating, setCalibrating] = useState(false)
   // 프로파일 — 노출·화이트밸런스 같은 컨트롤 값을 이름 붙여 저장한다.
   // 적용 자체는 **데몬이 카메라를 열 때** 하므로 여기는 저장·수동적용·결과 표시만 한다.
   const [profileReport, setProfileReport] = useState<ProfileReport | null>(null)
@@ -161,6 +175,22 @@ export default function CamerasPage() {
     }), { applied: 0, locked: 0, failed: 0 })
     const miss = r.unmatched?.length ? ` / 못 찾음 ${r.unmatched.length}대` : ''
     return `"${name}" 적용 — ${sum.applied} 적용 / ${sum.locked} 잠김 / ${sum.failed} 실패${miss}`
+  }
+
+  /** 회색 카드로 화이트밸런스·노출을 맞춘다. 값은 장치에만 올라간다 —
+   *  마음에 들면 사용자가 프로파일로 저장한다(그쪽이 연결 시 적용까지 한다). */
+  const calibrateGrayCard = async (colorId: string) => {
+    setCalibrating(true); setGrayCard(null)
+    try {
+      const r = await api.post<GrayCardReport>(
+        `/cameras/${encodeURIComponent(colorId)}/calibrate-gray-card`, {})
+      setGrayCard(r)
+      bumpPreview([colorId])
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : '보정에 실패했습니다')
+    } finally {
+      setCalibrating(false)
+    }
   }
 
   /** 같은 장치의 **컬러** 스트림에서 배경을 지울지. 경계는 깊이 창의 `far_mm` 이다. */
@@ -779,6 +809,42 @@ export default function CamerasPage() {
                 화면에서 알아보기 위한 이름입니다. 데이터셋 피처 이름은 바뀌지 않습니다.
               </p>
             </div>
+
+            {/* 회색 카드 보정 — 컬러 스트림에만 뜬다.
+                기하 보정이 아니다. 색·밝기를 재현 가능하게 만드는 것이 전부다. */}
+            {settingsCamera.stream_type !== 'depth' && (
+              <div className="space-y-1.5 rounded border border-neutral-700 p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-neutral-400">회색 카드 보정</span>
+                  <button
+                    onClick={() => calibrateGrayCard(settingsCamera.id)}
+                    disabled={calibrating}
+                    className="px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500
+                               disabled:bg-neutral-700 disabled:text-neutral-500 text-white">
+                    {calibrating ? '맞추는 중…' : '지금 맞추기'}
+                  </button>
+                </div>
+                <p className="text-[10px] text-neutral-500">
+                  회색 카드를 <b>화면 가운데를 채우도록</b> 놓고 누르세요. 자동 노출·WB 를
+                  잠깐 켜 카드에 맞춘 뒤 <b>잠그고</b>, 밝기를 목표까지 보정합니다.
+                  값은 장치에만 올라갑니다 — 마음에 들면 아래 프로파일로 저장하세요.
+                </p>
+                {grayCard && (
+                  <div className={`rounded px-2 py-1.5 text-[11px] ${grayCard.ok
+                    ? 'bg-emerald-500/10 text-emerald-300'
+                    : 'bg-amber-500/10 text-amber-300'}`}>
+                    <p className="font-medium">{grayCard.ok ? '맞음' : grayCard.verdict}</p>
+                    <p className="mt-0.5 text-neutral-400 tabular-nums">
+                      밝기 {grayCard.before.luma} → <b>{grayCard.after.luma}</b>
+                      {' '}(목표 {grayCard.target}) · 색 치우침{' '}
+                      {grayCard.before.neutral_error_pct}% →{' '}
+                      <b>{grayCard.after.neutral_error_pct}%</b> · 노출{' '}
+                      {(grayCard.exposure_us / 1000).toFixed(1)}ms
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* 깊이 인코딩 — depth 스트림에만 뜬다.
                 작업 공간에 맞춰 좁힐수록 해상도가 오른다. 기본 150~1200mm 는

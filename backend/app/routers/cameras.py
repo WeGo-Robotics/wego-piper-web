@@ -308,6 +308,36 @@ async def get_controls(cam_id: str):
     return await loop.run_in_executor(_executor, camera_manager.get_controls, cam_id)
 
 
+class GrayCardRequest(BaseModel):
+    """`roi` 는 `(x, y, w, h)`. 없으면 화면 가운데 상자."""
+
+    roi: list[int] | None = None
+    target: float | None = None
+
+
+@router.post("/{cam_id:path}/calibrate-gray-card")
+async def calibrate_gray_card(cam_id: str, body: GrayCardRequest):
+    """회색 카드로 화이트밸런스·노출을 맞춘다.
+
+    값을 **저장하지는 않는다** — 장치에 올려놓고 결과를 보고할 뿐이다.
+    저장은 카메라 프로파일이 하고, 그쪽은 연결할 때 적용까지 한다.
+
+    ⚠ 녹화·추론 중에는 막는다. 도중에 노출이 바뀌면 한 에피소드 안에서 밝기가
+    달라지는데, 정책이 그걸 장면 변화로 배운다 (`_guard_device_access` 와 같은 이유).
+    """
+    from app.services.exclusivity import Activity, require_idle
+    from app.services.realsense_manager import realsense_hub
+
+    require_idle(Activity.CAMERA_ACCESS)
+    loop = asyncio.get_event_loop()
+    report = await loop.run_in_executor(
+        _executor, lambda: realsense_hub.calibrate_gray_card(
+            cam_id, body.roi, body.target))
+    if not report.get("ok") and report.get("error"):
+        raise HTTPException(400, report["error"])
+    return report
+
+
 class BackgroundMaskRequest(BaseModel):
     enabled: bool
 
