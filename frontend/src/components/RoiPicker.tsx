@@ -54,6 +54,9 @@ export default function RoiPicker({
   hint?: string
 }) {
   const dragging = useRef(false)
+  // ⚠ 휠 리스너는 **여기** 붙는다. 이미지에 붙이면 안 먹는다 — 이 층이 이미지를
+  //   덮고 있고 둘은 형제라, wheel 이 이미지로 흘러가지 않는다. 실기에서 그랬다.
+  const surfaceRef = useRef<HTMLDivElement | null>(null)
 
   const toFrame = useCallback((clientX: number, clientY: number): Roi | null => {
     const img = imgRef.current
@@ -76,19 +79,19 @@ export default function RoiPicker({
   //   `preventDefault()` 가 안 먹는다 — 그러면 상자를 키우는 동안 설정 모달이
   //   같이 스크롤된다.
   useEffect(() => {
-    const img = imgRef.current
-    if (!img) return
+    const surface = surfaceRef.current
+    if (!surface) return
     const onWheel = (e: WheelEvent) => {
       if (!roi) return
       e.preventDefault()
-      const img2 = imgRef.current
-      const nw = img2?.naturalWidth || 1
-      const nh = img2?.naturalHeight || 1
+      const img = imgRef.current
+      const nw = img?.naturalWidth || 1
+      const nh = img?.naturalHeight || 1
       const factor = e.deltaY < 0 ? STEP : 1 / STEP
       onChange({ ...roi, size: Math.max(MIN_SIZE, Math.min(roi.size * factor, nw, nh)) })
     }
-    img.addEventListener('wheel', onWheel, { passive: false })
-    return () => img.removeEventListener('wheel', onWheel)
+    surface.addEventListener('wheel', onWheel, { passive: false })
+    return () => surface.removeEventListener('wheel', onWheel)
   }, [imgRef, roi, onChange])
 
   useEffect(() => {
@@ -112,17 +115,30 @@ export default function RoiPicker({
     height: bw * s,
   }
 
+  // ⚠ 바깥을 어둡게 하는 데 **거대한 그림자를 쓰지 않는다.** `9999px` 짜리 확산은
+  //   프리뷰 상자를 넘어 페이지 전체를 덮는다(실기에서 그랬다). 네 조각으로
+  //   상자 둘레만 덮으면 이 컨테이너 밖으로 샐 수가 없다.
+  const dim = 'pointer-events-none absolute bg-black/45'
+  const { left, top, width, height } = style
+
   return (
     <>
-      {/* 마우스를 받는 층. 이미지 위에 겹쳐 두고 드래그로 옮긴다. */}
+      <div className={dim} style={{ left: 0, top: 0, right: 0, height: top }} />
+      <div className={dim} style={{ left: 0, top: top + height, right: 0, bottom: 0 }} />
+      <div className={dim} style={{ left: 0, top, width: left, height }} />
+      <div className={dim} style={{ left: left + width, top, right: 0, height }} />
+
+      {/* 마우스를 받는 층. 이미지 위에 겹쳐 두고 드래그로 옮긴다.
+          휠 리스너도 여기 붙는다 — 위 주석 참고. */}
       <div
-        className="absolute inset-0 cursor-crosshair"
+        ref={surfaceRef}
+        className="absolute inset-0 cursor-crosshair touch-none"
         onPointerDown={(e) => { dragging.current = true; moveTo(e) }}
         onPointerMove={(e) => { if (dragging.current) moveTo(e) }}
       />
-      <div className="pointer-events-none absolute border-2 border-amber-400
-                      shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]" style={style}>
-        <span className="absolute -top-5 left-0 whitespace-nowrap rounded bg-amber-400
+      <div className="pointer-events-none absolute border-2 border-amber-400" style={style}>
+        {/* 상자 **안쪽**에 붙인다. 위에 두면 상자가 화면 꼭대기에 있을 때 잘린다. */}
+        <span className="absolute left-0 top-0 whitespace-nowrap rounded-br bg-amber-400
                          px-1 text-[10px] font-medium text-black tabular-nums">
           {Math.round(bw)}px{hint ? ` · ${hint}` : ''}
         </span>

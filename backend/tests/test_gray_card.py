@@ -207,3 +207,28 @@ def test_finishing_calibration_puts_the_box_away():
     src = (_SRC / "pages" / "CamerasPage.tsx").read_text()
     body = src.split("const calibrateGrayCard", 1)[1].split("\n  }", 1)[0]
     assert "setAiming(false)" in body
+
+
+def test_the_wheel_listens_on_the_layer_that_receives_the_mouse():
+    """**회귀** — 휠이 아예 안 먹었다.
+
+    마우스를 받는 층이 이미지를 덮고 있고 **둘은 형제**라, 이미지에 리스너를 달면
+    wheel 이 거기까지 안 간다. 포인터를 받는 바로 그 요소에 달아야 한다.
+    """
+    src = (_SRC / "components" / "RoiPicker.tsx").read_text()
+    assert "surface.addEventListener('wheel'" in src, "휠을 상호작용 층에 안 단다"
+    assert "img.addEventListener('wheel'" not in src, "이미지에 달면 안 먹는다"
+    # 리스너를 다는 요소가 포인터도 받는 그 요소인가
+    assert "ref={surfaceRef}" in src and "onPointerDown" in src.split("ref={surfaceRef}", 1)[1][:400]
+
+
+def test_the_dimming_cannot_escape_the_preview():
+    """**회귀** — `보정 시작` 을 누르면 **페이지 전체가 어두워졌다.**
+
+    `shadow-[0_0_0_9999px_…]` 는 확산이 프리뷰 상자를 넘어 화면 끝까지 뻗는다.
+    상자 둘레를 네 조각으로 덮으면 컨테이너 밖으로 샐 수가 없다.
+    """
+    src = (_SRC / "components" / "RoiPicker.tsx").read_text()
+    # ⚠ 주석에도 `9999px` 가 나온다(왜 안 쓰는지 적어뒀다) — **클래스**를 본다
+    assert "shadow-[0_0_0_" not in src, "거대한 그림자가 페이지로 샌다"
+    assert src.count("className={dim}") == 4, "상자 둘레를 네 조각으로 안 덮는다"
