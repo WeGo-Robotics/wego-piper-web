@@ -960,6 +960,34 @@ class RealSenseHub:
                 "roi": list(roi) if roi else list(gc.center_roi(
                     dev.get_frame("color").shape))}
 
+    def measure_gray_card(self, cam_id: str, roi=None) -> dict:
+        """카드 영역을 **재기만** 한다. 장치는 안 건드린다.
+
+        상자를 어디에 둘지 고르려면 즉시 되먹임이 있어야 한다 — 그림자나 반사가
+        걸린 자리는 눈으로 잘 안 보이고 숫자로만 드러난다(얼룩 %).
+        보정을 눌러보고 거절당하는 것보다 옮기면서 보는 편이 낫다.
+        """
+        from piper_cam import graycard as gc
+
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return {"ok": False, "error": f"Not a RealSense id: {cam_id}"}
+        serial, stream = parsed
+        dev = self._device(serial)
+        if dev is None:
+            return {"ok": False, "error": f"RealSense {serial} not found"}
+        frame = dev.get_frame(stream)
+        if frame is None:
+            return {"ok": False, "error": "프레임을 받지 못했습니다"}
+        try:
+            reading = gc.measure(frame, tuple(roi) if roi else None)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        ok, verdict = reading.verdict()
+        return {"ok": ok, "verdict": verdict, "reading": reading.to_dict(),
+                "frame": [int(frame.shape[1]), int(frame.shape[0])],
+                "roi": list(roi) if roi else list(gc.center_roi(frame.shape))}
+
     def _exposure_range(self, cam_id: str) -> tuple[float, float, float]:
         """`(min, max, 현재)` 노출. 못 읽으면 넓게 잡되 현재값은 보수적으로."""
         for c in self.list_controls(cam_id):

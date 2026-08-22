@@ -129,3 +129,57 @@ def test_calibration_is_blocked_while_a_camera_is_in_use():
     from app.routers import cameras
 
     assert "require_idle" in inspect.getsource(cameras.calibrate_gray_card)
+
+
+# ── 영역 고르기 (프론트) ─────────────────────────────────────────────────────
+
+from pathlib import Path  # noqa: E402
+
+_SRC = Path(__file__).resolve().parents[2] / "frontend" / "src"
+
+
+def test_the_roi_is_mapped_through_the_drawn_image_not_the_element():
+    """⚠ **`object-contain` 은 레터박스를 만든다.**
+
+    848x480 프레임을 `aspect-[4/3]` 상자에 넣으면 위아래에 빈 띠가 생긴다.
+    요소 좌표를 그대로 비율로 쓰면 그 띠만큼 어긋나 **상자가 손끝에서 미끄러진다.**
+    """
+    src = (_SRC / "components" / "RoiPicker.tsx").read_text()
+    assert "naturalWidth" in src and "naturalHeight" in src, "원본 프레임 크기를 안 본다"
+    assert "Math.min(r.width / nw, r.height / nh)" in src, "contain 맞춤을 안 푼다"
+
+
+def test_the_wheel_listener_is_not_passive():
+    """React 의 `onWheel` 은 루트에 passive 로 붙어 `preventDefault()` 가 안 먹는다 —
+    그러면 상자를 키우는 동안 **설정 모달이 같이 스크롤된다.**"""
+    src = (_SRC / "components" / "RoiPicker.tsx").read_text()
+    assert "addEventListener('wheel'" in src, "네이티브 리스너를 안 쓴다"
+    assert "{ passive: false }" in src, "passive 로 붙어 preventDefault 가 안 먹는다"
+    assert "onWheel=" not in src, "React onWheel 로 되돌아갔다"
+
+
+def test_the_box_never_leaves_the_frame():
+    """프레임 밖을 자르면 백엔드가 빈 ROI 를 받는다."""
+    src = (_SRC / "components" / "RoiPicker.tsx").read_text()
+    box = src.split("export function toBox", 1)[1].split("\n}", 1)[0]
+    assert "Math.max" in box and "Math.min" in box, "가장자리에서 안 막는다"
+    assert "MIN_SIZE" in box, "최소 크기를 안 지킨다"
+
+
+def test_the_calibration_sends_the_chosen_box():
+    """상자를 골라놓고 안 보내면 사용자는 **가운데를 잰 결과**를 보게 된다."""
+    src = (_SRC / "pages" / "CamerasPage.tsx").read_text()
+    body = src.split("const calibrateGrayCard", 1)[1].split("\n  }", 1)[0]
+    assert "toBox(" in body and "roi: box" in body, "고른 영역을 안 싣는다"
+
+
+def test_aiming_the_box_does_not_touch_the_device():
+    """상자를 옮길 때마다 부르는 경로다 — 여기서 컨트롤을 건드리면 조준하는 동안
+    노출이 춤춘다."""
+    import inspect
+
+    from piper_rs.hub import RealSenseHub
+
+    src = inspect.getsource(RealSenseHub.measure_gray_card)
+    assert "set_control" not in src, "재기만 해야 하는데 장치를 건드린다"
+    assert "sleep" not in src, "조준 되먹임이 느려진다"

@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import PresetBar from '../components/PresetBar'
 import { useSystemMessage } from '../components/SystemMessages'
 import ParamSlider from '../components/ParamSlider'
+import RoiPicker, { centerRoi, toBox } from '../components/RoiPicker'
+import type { Roi } from '../components/RoiPicker'
 import { api } from '../services/api'
 
 /**
@@ -150,6 +152,10 @@ export default function CamerasPage() {
   // 마음에 들면 사용자가 프로파일로 저장한다.
   const [grayCard, setGrayCard] = useState<GrayCardReport | null>(null)
   const [calibrating, setCalibrating] = useState(false)
+  // 카드 영역. **프레임 좌표**다 — 화면 크기는 창을 줄이면 바뀐다.
+  const [roi, setRoi] = useState<Roi | null>(null)
+  const [roiReading, setRoiReading] = useState<GrayCardReading | null>(null)
+  const previewRef = useRef<HTMLImageElement | null>(null)
   // 프로파일 — 노출·화이트밸런스 같은 컨트롤 값을 이름 붙여 저장한다.
   // 적용 자체는 **데몬이 카메라를 열 때** 하므로 여기는 저장·수동적용·결과 표시만 한다.
   const [profileReport, setProfileReport] = useState<ProfileReport | null>(null)
@@ -177,13 +183,30 @@ export default function CamerasPage() {
     return `"${name}" 적용 — ${sum.applied} 적용 / ${sum.locked} 잠김 / ${sum.failed} 실패${miss}`
   }
 
+  /** 지금 상자를 재기만 한다. 장치를 안 건드리므로 옮길 때마다 불러도 된다 —
+   *  그림자·반사는 눈으로 잘 안 보이고 얼룩 % 로만 드러난다. */
+  const measureRoi = useCallback(async (colorId: string, box: Roi | null) => {
+    const img = previewRef.current
+    if (!img?.naturalWidth || !box) return
+    try {
+      const r = await api.post<{ reading: GrayCardReading }>(
+        `/cameras/${encodeURIComponent(colorId)}/measure-gray-card`,
+        { roi: toBox(box, img.naturalWidth, img.naturalHeight) })
+      setRoiReading(r.reading ?? null)
+    } catch { /* 조준 도우미다 — 실패해도 화면을 어지럽히지 않는다 */ }
+  }, [])
+
   /** 회색 카드로 화이트밸런스·노출을 맞춘다. 값은 장치에만 올라간다 —
    *  마음에 들면 사용자가 프로파일로 저장한다(그쪽이 연결 시 적용까지 한다). */
   const calibrateGrayCard = async (colorId: string) => {
     setCalibrating(true); setGrayCard(null)
     try {
+      const img = previewRef.current
+      const box = (roi && img?.naturalWidth)
+        ? toBox(roi, img.naturalWidth, img.naturalHeight) : null
       const r = await api.post<GrayCardReport>(
-        `/cameras/${encodeURIComponent(colorId)}/calibrate-gray-card`, {})
+        `/cameras/${encodeURIComponent(colorId)}/calibrate-gray-card`,
+        box ? { roi: box } : {})
       setGrayCard(r)
       bumpPreview([colorId])
     } catch (e) {
@@ -291,6 +314,7 @@ export default function CamerasPage() {
     else setDepthDraft(DEPTH_DEFAULT)
     const color = cams.find((x) => x.id === settingsCam.replace(/:depth$/, ':color'))
     setMaskOn(color?.background_mask?.enabled ?? false)
+    setRoi(null); setRoiReading(null); setGrayCard(null)
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeSettings() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -770,12 +794,31 @@ export default function CamerasPage() {
             {/* 프리뷰 — 오른쪽 설정을 만지면 여기서 바로 결과가 보인다 */}
             <div className="relative self-start">
               <img
+                ref={previewRef}
                 src={`/api/cameras/${encodeURIComponent(settingsCamera.id)}/preview?t=${previewTs[settingsCamera.id] ?? 0}`}
                 alt={settingsCamera.display_name ?? settingsCamera.name}
                 className="w-full max-h-[62vh] aspect-[4/3] object-contain rounded bg-neutral-900"
                 onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.2' }}
-                onLoad={(e) => { (e.target as HTMLImageElement).style.opacity = '1' }}
+                onLoad={(e) => {
+                  const img = e.target as HTMLImageElement
+                  img.style.opacity = '1'
+                  // 첫 프레임을 봐야 프레임 크기를 안다 — 그 전엔 상자를 못 만든다
+                  if (!roi && img.naturalWidth) {
+                    setRoi(centerRoi(img.naturalWidth, img.naturalHeight))
+                  }
+                }}
               />
+              {/* 카드 영역 고르기 — 컬러 스트림에서만 의미가 있다 */}
+              {settingsCamera.stream_type !== 'depth' && (
+                <RoiPicker
+                  imgRef={previewRef} roi={roi}
+                  hint={roiReading ? `밝기 ${roiReading.luma} · 얼룩 ${roiReading.spread_pct}%` : undefined}
+                  onChange={(next) => {
+                    setRoi(next)
+                    measureRoi(settingsCamera.id, next)
+                  }}
+                />
+              )}
               {!settingsCamera.connected && (
                 // 연결 안 된 카메라는 프레임이 안 들어온다. 여기서 몰래 열지 않는다 —
                 // 장치를 쥐는 것은 사용자가 결정할 일이다.
@@ -825,9 +868,20 @@ export default function CamerasPage() {
                   </button>
                 </div>
                 <p className="text-[10px] text-neutral-500">
-                  회색 카드를 <b>화면 가운데를 채우도록</b> 놓고 누르세요. 자동 노출·WB 를
-                  잠깐 켜 카드에 맞춘 뒤 <b>잠그고</b>, 밝기를 목표까지 보정합니다.
-                  값은 장치에만 올라갑니다 — 마음에 들면 아래 프로파일로 저장하세요.
+                  왼쪽 화면에서 <b>카드 위를 클릭·드래그</b>해 노란 상자를 옮기고,
+                  <b> 휠로 크기</b>를 맞추세요. 상자 안쪽만 계산에 씁니다.
+                  {roiReading && (
+                    <span className={roiReading.usable ? 'text-neutral-400' : 'text-amber-400'}>
+                      {' '}지금 상자: 밝기 {roiReading.luma} · 색 치우침{' '}
+                      {roiReading.neutral_error_pct}% · 얼룩 {roiReading.spread_pct}%
+                      {!roiReading.usable && ` — ${roiReading.why}`}
+                    </span>
+                  )}
+                </p>
+                <p className="text-[10px] text-neutral-500">
+                  누르면 자동 노출·WB 를 잠깐 켜 카드에 맞춘 뒤 <b>잠그고</b>,
+                  밝기를 목표까지 보정합니다. 값은 장치에만 올라갑니다 —
+                  마음에 들면 아래 프로파일로 저장하세요.
                 </p>
                 {grayCard && (
                   <div className={`rounded px-2 py-1.5 text-[11px] ${grayCard.ok

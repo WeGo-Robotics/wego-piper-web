@@ -98,6 +98,11 @@ class RealSenseHub:
     def last_apply_report(self, cam_id: str) -> dict:
         return self._call("last_apply_report", cam_id, default={}) or {}
 
+    def measure_gray_card(self, cam_id: str, roi=None) -> dict:
+        return self._call("measure_gray_card", cam_id, roi,
+                          default={"ok": False, "error": "rsd 가 응답하지 않습니다"}
+                          ) or {"ok": False, "error": "응답 없음"}
+
     def calibrate_gray_card(self, cam_id: str, roi=None, target=None) -> dict:
         # ⚠ 자동 수렴을 기다리므로 보통 RPC 보다 오래 걸린다 — 타임아웃을 넉넉히.
         return self._call("calibrate_gray_card", cam_id, roi, target,

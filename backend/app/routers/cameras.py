@@ -315,6 +315,19 @@ class GrayCardRequest(BaseModel):
     target: float | None = None
 
 
+@router.post("/{cam_id:path}/measure-gray-card")
+async def measure_gray_card(cam_id: str, body: GrayCardRequest):
+    """카드 영역을 **재기만** 한다 — 장치를 안 건드리므로 배타 가드도 안 탄다.
+
+    상자를 옮기며 부를 용도라 싸야 한다: 마지막 프레임 하나를 읽고 평균을 낸다.
+    """
+    from app.services.realsense_manager import realsense_hub
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        _executor, lambda: realsense_hub.measure_gray_card(cam_id, body.roi))
+
+
 @router.post("/{cam_id:path}/calibrate-gray-card")
 async def calibrate_gray_card(cam_id: str, body: GrayCardRequest):
     """회색 카드로 화이트밸런스·노출을 맞춘다.
