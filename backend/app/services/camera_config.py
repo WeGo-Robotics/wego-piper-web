@@ -323,6 +323,10 @@ def camera_sidecar(camera_mapping: dict[str, str]) -> dict:
         entry["id"] = cam_id
         if info.get("depth_encoding"):
             entry["depth_encoding"] = info["depth_encoding"]
+        # ⚠ 배경이 지워진 데이터인지는 **프레임만 봐서는 못 가린다** — 어두운 배경과
+        #   지워진 배경이 똑같이 검다. 여기 안 남기면 영영 모른다.
+        if info.get("background_mask"):
+            entry["background_mask"] = info["background_mask"]
         out["cameras"][name] = entry
     return out
 

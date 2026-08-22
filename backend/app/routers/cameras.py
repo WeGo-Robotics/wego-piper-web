@@ -308,6 +308,29 @@ async def get_controls(cam_id: str):
     return await loop.run_in_executor(_executor, camera_manager.get_controls, cam_id)
 
 
+class BackgroundMaskRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/{cam_id:path}/background-mask")
+async def set_background_mask(cam_id: str, body: BackgroundMaskRequest):
+    """깊이로 컬러의 배경을 지울지 켜고 끈다.
+
+    ⚠ **녹화 중에는 막는다.** 도중에 바꾸면 한 데이터셋 안에 배경이 있는 프레임과
+    없는 프레임이 섞이는데, 사이드카에는 정지 시점의 값 하나만 남아 거짓이 된다
+    (`depth-encoding` 과 같은 이유).
+    """
+    from app.services.exclusivity import Activity, require_idle
+    from app.services.realsense_manager import realsense_hub
+
+    require_idle(Activity.CAMERA_ACCESS)
+    ok, msg = realsense_hub.set_background_mask(cam_id, body.enabled)
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"status": "ok",
+            "background_mask": realsense_hub.info(cam_id).get("background_mask")}
+
+
 class DepthEncodingRequest(BaseModel):
     near_mm: int
     far_mm: int

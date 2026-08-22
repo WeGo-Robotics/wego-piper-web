@@ -177,6 +177,10 @@ class CameraInfo:
             # D405(0.0001)가 D435(0.001)처럼 계산되는 걸 오래 못 알아챘다.
             "depth_units_m": (self.running_profile().get("depth_units_m")
                               if self.stream_type == "depth" else None),
+            # 배경이 지워진 채로 나오는지는 **컬러 프레임의 성질**이다.
+            # ⚠ depth 일 때 묻지 않는다 — `to_dict` 는 스캔에서 카메라마다 불린다.
+            "background_mask": (self.running_profile().get("background_mask")
+                                if self.stream_type == "color" else None),
             "config": {
                 "width": self.width,
                 "height": self.height,

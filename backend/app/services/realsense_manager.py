@@ -98,6 +98,10 @@ class RealSenseHub:
     def last_apply_report(self, cam_id: str) -> dict:
         return self._call("last_apply_report", cam_id, default={}) or {}
 
+    def set_background_mask(self, cam_id: str, enabled: bool) -> tuple[bool, str]:
+        return _pair(self._call("set_background_mask", cam_id, enabled),
+                     "배경 마스킹을 바꾸지 못했습니다")
+
     def set_depth_encoding(self, cam_id: str, near_mm: int, far_mm: int) -> tuple[bool, str]:
         """깊이 인코딩 범위 변경. 작업 공간에 맞춰 좁힐수록 해상도가 오른다."""
         return _pair(self._call("set_depth_encoding", cam_id, near_mm, far_mm),

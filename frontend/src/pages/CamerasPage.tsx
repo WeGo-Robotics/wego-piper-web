@@ -74,6 +74,8 @@ type CamInfo = {
   depth_encoding?: { near_mm: number; far_mm: number; mode: string } | null
   /** raw 한 단위가 몇 미터인가. D435=0.001, **D405=0.0001**. */
   depth_units_m?: number | null
+  /** 컬러 스트림에만 붙는다 — 배경이 지워진 채로 나오는가. */
+  background_mask?: { enabled: boolean; far_mm: number } | null
   config: { width: number | null; height: number | null; fps: number | null; color_mode: string; rotation: number; fourcc: string | null }
 }
 
@@ -132,6 +134,8 @@ export default function CamerasPage() {
   // 중에는 아직 안 보냈고, 거부되면 이 값으로 되돌아가야 한다.
   const [depthEnc, setDepthEnc] = useState<{ near_mm: number; far_mm: number } | null>(null)
   const [depthDraft, setDepthDraft] = useState<{ near_mm: number; far_mm: number }>(DEPTH_DEFAULT)
+  // 배경 마스킹은 **컬러 스트림**의 성질이지만 경계(`far_mm`)를 깊이 창과 공유한다.
+  const [maskOn, setMaskOn] = useState(false)
   // 프로파일 — 노출·화이트밸런스 같은 컨트롤 값을 이름 붙여 저장한다.
   // 적용 자체는 **데몬이 카메라를 열 때** 하므로 여기는 저장·수동적용·결과 표시만 한다.
   const [profileReport, setProfileReport] = useState<ProfileReport | null>(null)
@@ -157,6 +161,20 @@ export default function CamerasPage() {
     }), { applied: 0, locked: 0, failed: 0 })
     const miss = r.unmatched?.length ? ` / 못 찾음 ${r.unmatched.length}대` : ''
     return `"${name}" 적용 — ${sum.applied} 적용 / ${sum.locked} 잠김 / ${sum.failed} 실패${miss}`
+  }
+
+  /** 같은 장치의 **컬러** 스트림에서 배경을 지울지. 경계는 깊이 창의 `far_mm` 이다. */
+  const setBackgroundMask = async (depthId: string, enabled: boolean) => {
+    const colorId = depthId.replace(/:depth$/, ':color')
+    setMaskOn(enabled)                       // 먼저 반영해 토글이 안 굳어 보이게
+    try {
+      await api.post(`/cameras/${encodeURIComponent(colorId)}/background-mask`,
+                     { enabled })
+      bumpPreview([colorId, depthId])
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : '배경 마스킹을 바꾸지 못했습니다')
+      setMaskOn(!enabled)
+    }
   }
 
   /** 깊이 범위 변경. **한쪽만 바꿔도 다른 쪽 값을 함께 보낸다** —
@@ -241,6 +259,8 @@ export default function CamerasPage() {
     const c = cams.find((x) => x.id === settingsCam)
     if (c?.depth_encoding) { setDepthEnc(c.depth_encoding); setDepthDraft(c.depth_encoding) }
     else setDepthDraft(DEPTH_DEFAULT)
+    const color = cams.find((x) => x.id === settingsCam.replace(/:depth$/, ':color'))
+    setMaskOn(color?.background_mask?.enabled ?? false)
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeSettings() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -801,6 +821,22 @@ export default function CamerasPage() {
                     <span className="ml-1 text-amber-400">· 놓으면 반영됩니다</span>
                   )}
                 </p>
+                {/* 배경 마스킹 — 경계가 위 `먼 쪽`과 같아서 여기 둔다.
+                    지우는 대상은 **같은 장치의 컬러 스트림**이다. */}
+                <label className="flex items-start gap-2 pt-1 cursor-pointer">
+                  <input type="checkbox" checked={maskOn}
+                    onChange={(e) => setBackgroundMask(settingsCamera.id, e.target.checked)}
+                    className="mt-0.5 accent-blue-500" />
+                  <span className="text-xs text-neutral-300">
+                    이 장치의 <b>컬러</b>에서 배경 지우기
+                    <span className="block text-[10px] text-neutral-500">
+                      위 <b>먼 쪽({depthDraft.far_mm}mm)</b>보다 먼 픽셀을 검게 만듭니다.
+                      깊이를 못 읽은 곳은 <b>남깁니다</b> — 깊이가 없다고 물체가 없는 건
+                      아니라서, 지웠다가 물체에 구멍이 뚫리는 쪽이 더 나쁩니다.
+                    </span>
+                  </span>
+                </label>
+
                 <p className="text-[10px] text-neutral-500">
                   이 구간이 0~254 로 매핑됩니다(가까울수록 어둡게). 범위 밖은 잘리고,
                   카메라가 못 읽은 픽셀은 255(가장 멂)입니다.

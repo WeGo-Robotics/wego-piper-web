@@ -14,6 +14,7 @@
 | 수동 조작 + 중력 보상 | 추론 없이 웹 조그(있는 shm 경로에 소비자만 추가) + MIT 모드 중력 보상 드래그 → 손으로 끌며 녹화(단팔 데이터 수집) | 조그는 robotd(3b-5) 완성으로 **지금 가능**. 중력 보상은 **트랙 E(URDF) 의존** — URDF 수혜자가 둘이 된다 | [manual-control.md](manual-control.md) |
 | 양팔(bimanual) | G4 구현 — 양팔 조립을 wrapper 즉석 코드에서 LeRobot bi 클래스로 내려 녹화·로컬/gRPC 추론·파킹이 한 구현 공유. 핸드오버(우선순위 2)의 블로커 해소 | robotd/shm 이 팔 단위라 **안 겹침** — bi 클래스는 지금 가능, 실질 전제는 하드웨어(팔 4대 + udev) | [bimanual.md](bimanual.md) |
 | 정책 UI 스펙 | 모델별 화면 항목을 YAML 로 선언하고 UI 가 그걸 읽어 동적 구성 | ☑ **완료.** 정책 추가에 손댈 곳이 **6군데 → 0** — 파일 하나면 목록·학습 필드·추론 파라미터·wrapper 클래스가 다 붙는다 | [policy-ui-spec.md](policy-ui-spec.md) |
+| 깊이 배경 제거 | 깊이 `far_mm` 밖을 **컬러에서** 지워 정책이 배경에 안 물들게. 깊이를 못 읽은 픽셀은 남긴다(D405 는 42%가 그렇다) | rsd 소유라 녹화·추론이 같은 처리를 받는다. `rs.align` 은 켠 장치에서만 | [depth-background-mask.md](depth-background-mask.md) |
 | 화면 레이아웃 개편 | 좌측 세로 내비(그룹) + 상단 상태바(도는 활동·로봇/캠 개수). 상단 가로 내비가 한계 — **모델·데이터셋은 이미 자리가 없어 밀려나 있다** | 프론트 껍데기 + 요약 API 하나라 **아예 안 겹침.** 값은 `/api/activity` 와 `device_watch` 가 이미 갖고 있다 | [layout-redesign.md](layout-redesign.md) |
 | 외부 LLM 연동 | 분리수거 판단·플래너용 구조화 출력 클라이언트 — 슬롯 JSON 만, 에피소드 경계에서만, 오케스트레이터 스텝으로. 규칙은 프리셋 스토어 합류, 온프레미스는 로컬 Qwen 어댑터 | 백엔드 서비스 + 외부 HTTP 뿐이라 **아예 안 겹침** — 클라이언트(1단계)는 지금 가능, 스텝 합류는 오케스트레이터 1단계 뒤 | [llm-integration.md](llm-integration.md) |
 

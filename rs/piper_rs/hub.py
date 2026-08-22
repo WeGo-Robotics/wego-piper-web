@@ -29,6 +29,7 @@ import numpy as np
 
 from piper_cam import controls as controls_mod
 from piper_rs.depth import DEFAULT_UNITS_M, DepthEncoding, encode_depth
+from piper_rs.mask import apply_mask, shapes_match
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,12 @@ class _RSDevice:
         # raw 한 단위가 몇 미터인가. **장치가 답한다** — D435 는 0.001 이지만
         # D405 는 0.0001 이라 안 물어보면 10배 틀린 거리를 인코딩한다.
         self.depth_units_m: float = DEFAULT_UNITS_M
+        # 깊이로 컬러의 배경을 지울 것인가. `depth_encoding.far_mm` 을 경계로 쓴다 —
+        # 창이 둘이면 사람이 둘 다 맞춰야 하고, 어긋나면 조용히 이상해진다.
+        self.mask_background: bool = False
+        # 정렬기. **마스킹을 켤 때만 만든다** — 매 프레임 비용이 붙는다.
+        self._align = None
+        self._mask_warned = False
         # 스트림별 요청 프로파일 `(w, h, fps)`. 없으면 장치 기본값.
         self._want: dict[str, tuple[int, int, int]] = {}
         self._profiles: dict[str, list[tuple[int, int, int]]] = {}  # supported() 캐시
@@ -453,6 +460,41 @@ class _RSDevice:
             return True
         return Path(f"/sys/bus/usb/devices/{node}").exists()
 
+    def _aligned_depth(self, frames):
+        """마스킹용 **컬러에 정렬된** 깊이. 켜져 있지 않으면 None.
+
+        ⚠ 켜졌을 때만 정렬한다. `rs.align` 은 프레임마다 재투영을 돌리므로
+        안 쓰는 실행에 비용을 물리면 안 된다.
+        """
+        if not (self.mask_background and {"color", "depth"} <= self._active):
+            return None
+        try:
+            if self._align is None:
+                self._align = rs.align(rs.stream.color)
+            df = self._align.process(frames).get_depth_frame()
+            return np.asanyarray(df.get_data()) if df else None
+        except Exception as exc:
+            if not self._mask_warned:
+                self._mask_warned = True
+                logger.warning("RealSense %s: 깊이 정렬 실패 — 배경 마스킹을 건너뜁니다: %s",
+                               self.serial, exc)
+            return None
+
+    def _mask_color(self, bgr, depth_aligned):
+        """배경을 지운 컬러. 모양이 안 맞으면 **원본 그대로** 돌려준다.
+
+        어긋난 마스크는 안 하느니만 못하다 — 물체를 엉뚱한 데서 지운다.
+        """
+        if not shapes_match(bgr, depth_aligned):
+            if not self._mask_warned:
+                self._mask_warned = True
+                logger.warning("RealSense %s: 정렬 결과가 컬러와 안 맞아(%s vs %s) "
+                               "배경 마스킹을 건너뜁니다",
+                               self.serial, bgr.shape[:2], depth_aligned.shape)
+            return bgr
+        return apply_mask(bgr, depth_aligned,
+                          float(self.depth_encoding.far_mm), self.depth_units_m)
+
     def _read_loop(self) -> None:
         import numpy as np
         import cv2
@@ -475,11 +517,18 @@ class _RSDevice:
                     continue
                 empty = 0
                 updates: dict[str, object] = {}
+                # ⚠ 정렬한 깊이는 **마스킹에만** 쓴다. 발행하는 깊이는 원본
+                #   그대로다 — 정렬하면 시점과 해상도가 컬러 쪽으로 바뀌는데,
+                #   그걸 조용히 바꾸면 예전 데이터셋과 뜻이 달라진다.
+                aligned_depth = self._aligned_depth(frames)
                 if "color" in self._active:
                     cf = frames.get_color_frame()
                     if cf:
                         img = np.asanyarray(cf.get_data())  # rgb8
-                        updates["color"] = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                        bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                        if aligned_depth is not None:
+                            bgr = self._mask_color(bgr, aligned_depth)
+                        updates["color"] = bgr
                 if "depth" in self._active:
                     df = frames.get_depth_frame()
                     if df:
@@ -824,6 +873,28 @@ class RealSenseHub:
         logger.info("깊이 인코딩 변경 %s: %s", serial, enc.to_dict())
         return True, "OK"
 
+    def set_background_mask(self, cam_id: str, enabled: bool) -> tuple[bool, str]:
+        """깊이로 컬러의 배경을 지울지 켜고 끈다. **다음 프레임부터 적용된다.**
+
+        경계는 `depth_encoding.far_mm` 이다 — 창을 따로 두지 않는다.
+
+        ⚠ 녹화 중에 바꾸면 한 데이터셋 안에 배경이 있는 프레임과 없는 프레임이
+        섞인다. 여기서 막지는 않는다 — 녹화 중인지는 게이트웨이가 안다(배타 가드).
+        """
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return False, f"Not a RealSense id: {cam_id}"
+        serial, _ = parsed
+        with self._lock:
+            dev = self._devices.get(serial)
+        if dev is None:
+            return False, f"RealSense {serial} not found"
+        dev.mask_background = bool(enabled)
+        dev._mask_warned = False        # 다시 켜면 경고도 다시 할 기회를 준다
+        logger.info("배경 마스킹 %s: %s (far=%dmm)", serial,
+                    "켬" if enabled else "끔", dev.depth_encoding.far_mm)
+        return True, "OK"
+
     def info(self, cam_id: str) -> dict:
         """지금 **실제로** 돌고 있는 프로파일. 요청값이 아니다.
 
@@ -860,6 +931,10 @@ class RealSenseHub:
             # 어떤 스케일로 계산했는지 남긴다. near/far 는 이미 실제 mm 라
             # 해석에 필요하진 않지만, 틀렸을 때 **어디서 틀렸는지**가 보인다.
             out["depth_units_m"] = dev.depth_units_m
+        # 컬러 쪽 사실이다 — 배경이 지워진 채로 녹화됐는지는 컬러 프레임의 성질이다
+        if stream == "color":
+            out["background_mask"] = {"enabled": dev.mask_background,
+                                      "far_mm": dev.depth_encoding.far_mm}
         return out
 
     def disconnect(self, cam_id: str) -> None:
