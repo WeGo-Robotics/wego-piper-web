@@ -72,7 +72,7 @@ export default function RoiPicker({
 }) {
   const [geo, setGeo] = useState<Geo | null>(null)
   const dragging = useRef(false)
-  const surfaceRef = useRef<HTMLDivElement | null>(null)
+  const detachWheel = useRef<(() => void) | null>(null)
   // 리스너를 다시 붙이지 않고 최신 값을 읽는 통로
   const roiRef = useRef(roi)
   const onChangeRef = useRef(onChange)
@@ -113,14 +113,27 @@ export default function RoiPicker({
     })
   }, [imgRef])
 
-  // ⚠ 네이티브 리스너다. React 의 `onWheel` 은 루트에 passive 로 붙어
-  //   `preventDefault()` 가 안 먹는다 — 모달이 같이 스크롤된다.
-  //   그리고 **마우스를 받는 이 층**에 붙여야 한다. 이미지는 이 층에 덮여 있고
-  //   둘은 형제라 wheel 이 거기까지 안 간다.
-  //   의존성은 비운다 — 굴리는 내내 떼였다 붙으면 크기가 초기화된 것처럼 보인다.
-  useEffect(() => {
-    const surface = surfaceRef.current
-    if (!surface) return
+  /**
+   * 마우스를 받는 층. **콜백 ref 다** — `useEffect` 로는 못 붙였다.
+   *
+   * ⚠ 이 컴포넌트는 `geo` 가 잡히기 전(첫 프레임 로드 전)에는 `null` 을 렌더한다.
+   *   그때는 이 요소가 아예 없어서, 마운트 때 한 번 도는 이펙트는 붙일 대상을
+   *   못 찾고 끝난다 — 의존성을 비워뒀으니 **다시 시도하지도 않는다.**
+   *   실기에서 휠이 아예 안 먹은 이유가 이것이다. 콜백 ref 는 요소가 **실제로
+   *   생기는 순간** 불리므로 의존성을 맞출 필요가 없다.
+   *
+   * ⚠ 네이티브 리스너다. React 의 `onWheel` 은 루트에 passive 로 붙어
+   *   `preventDefault()` 가 안 먹는다 — 모달이 같이 스크롤된다.
+   *   그리고 **이 층**이어야 한다. 이미지는 여기 덮여 있고 둘은 형제라
+   *   wheel 이 이미지까지 안 간다.
+   *
+   * 최신 `roi`·`onChange` 는 ref 로 읽는다 — 값이 바뀔 때마다 다시 붙으면
+   * 그 틈의 이벤트가 같은 옛 값에서 계산해 크기가 초기화된 것처럼 보인다.
+   */
+  const surfaceRef = useCallback((node: HTMLDivElement | null) => {
+    detachWheel.current?.()
+    detachWheel.current = null
+    if (!node) return
     const onWheel = (e: WheelEvent) => {
       const cur = roiRef.current
       if (!cur) return
@@ -135,8 +148,8 @@ export default function RoiPicker({
         ...cur, size: Math.max(MIN_SIZE, Math.min(cur.size * factor, cap)),
       })
     }
-    surface.addEventListener('wheel', onWheel, { passive: false })
-    return () => surface.removeEventListener('wheel', onWheel)
+    node.addEventListener('wheel', onWheel, { passive: false })
+    detachWheel.current = () => node.removeEventListener('wheel', onWheel)
   }, [imgRef])
 
   useEffect(() => {

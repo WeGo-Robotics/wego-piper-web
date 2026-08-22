@@ -216,7 +216,7 @@ def test_the_wheel_listens_on_the_layer_that_receives_the_mouse():
     wheel 이 거기까지 안 간다. 포인터를 받는 바로 그 요소에 달아야 한다.
     """
     src = (_SRC / "components" / "RoiPicker.tsx").read_text()
-    assert "surface.addEventListener('wheel'" in src, "휠을 상호작용 층에 안 단다"
+    assert "node.addEventListener('wheel'" in src, "휠을 상호작용 층에 안 단다"
     assert "img.addEventListener('wheel'" not in src, "이미지에 달면 안 먹는다"
     # 리스너를 다는 요소가 포인터도 받는 그 요소인가
     assert "ref={surfaceRef}" in src and "onPointerDown" in src.split("ref={surfaceRef}", 1)[1][:400]
@@ -251,7 +251,7 @@ def test_the_wheel_listener_is_attached_once():
     """**회귀** — 굴리는 내내 리스너가 떼였다 붙으면, 그 틈에 들어온 이벤트가
     **같은 옛 값에서 다시 계산**해 크기가 초기화된 것처럼 보인다."""
     src = (_SRC / "components" / "RoiPicker.tsx").read_text()
-    wheel = src.split("surface.addEventListener('wheel'", 1)[1]
+    wheel = src.split("node.addEventListener('wheel'", 1)[1]
     deps = wheel.split("}, [", 1)[1].split("]", 1)[0]
     assert "roi" not in deps and "onChange" not in deps, \
         f"휠 리스너가 값이 바뀔 때마다 다시 붙는다: [{deps}]"
@@ -264,3 +264,20 @@ def test_aiming_does_not_fire_a_request_per_wheel_tick():
     src = (_SRC / "pages" / "CamerasPage.tsx").read_text()
     body = src.split("const measureRoi", 1)[1].split("\n  }, [", 1)[0]
     assert "clearTimeout" in body and "setTimeout" in body, "디바운스가 없다"
+
+
+def test_the_wheel_attaches_when_the_layer_appears_not_at_mount():
+    """**회귀** — 휠이 아예 안 먹었다(두 번째).
+
+    이 컴포넌트는 `geo` 가 잡히기 전에 `null` 을 렌더한다. 그때는 상호작용 층이
+    **존재하지 않으므로**, 마운트 때 한 번 도는 이펙트는 붙일 대상을 못 찾고 끝난다 —
+    의존성을 비워뒀으니 다시 시도하지도 않는다. 값이 바뀔 때 다시 붙게 하면
+    이번엔 크기가 초기화되는 앞의 버그로 돌아간다.
+
+    콜백 ref 는 요소가 **실제로 생기는 순간** 불린다 — 의존성을 맞출 필요가 없다.
+    """
+    src = (_SRC / "components" / "RoiPicker.tsx").read_text()
+    assert "if (!roi || !geo) return null" in src, "전제가 바뀌었다 — 아래 판단을 다시 보라"
+    assert "const surfaceRef = useCallback((node: HTMLDivElement | null)" in src, \
+        "콜백 ref 가 아니면 층이 없는 동안 붙일 기회를 놓친다"
+    assert "detachWheel" in src, "떼는 경로가 없다 — 리스너가 샌다"
