@@ -132,3 +132,69 @@ def test_the_status_bar_does_not_poll_the_disk_walk():
     # `setInterval` 로 도는 것은 장치 요약(별도 훅)뿐이어야 한다
     assert "setInterval" not in src, "상태바가 자체 타이머를 돌린다 — 디스크가 딸려간다"
     assert "record_state" in src, "녹화가 끝나도 디스크 표시가 안 바뀐다"
+
+
+# ── 깊이 범위 슬라이더 (카메라 설정) ──────────────────────────────────────
+
+def _cameras_page() -> str:
+    return (_SRC / "pages" / "CamerasPage.tsx").read_text()
+
+
+def test_depth_range_commits_on_release_not_on_every_tick():
+    """`type=range` 는 **끄는 내내** `onChange` 를 쏜다.
+
+    깊이 범위 한 번은 장치 RPC 고 배타 가드(`require_idle`)까지 탄다 — 틱마다
+    보내면 슬라이더 한 번 끄는 데 수십 번이 나간다. 놓을 때 한 번만 보낸다.
+    """
+    src = _cameras_page()
+    assert src.count("onCommit={(v) => setDepthRange") == 2, "놓을 때 보내지 않는다"
+    # **한 짝이라도** 드래그로 서버를 부르면 그 슬라이더가 홍수를 낸다.
+    # 개수로 본다 — 한쪽만 고쳐도 다른 쪽 문구가 검사를 통과시키기 때문이다.
+    assert src.count("onChange={(v) => setDepthDraft") == 2, \
+        "드래그가 화면 값이 아니라 서버 호출을 움직인다"
+
+
+def test_depth_sliders_cannot_be_dragged_past_each_other():
+    """`far > near` 는 백엔드 규칙이다 (`depth.py` 가 `ValueError` 를 던진다).
+
+    끌어서 넘길 수 있게 두면 **놓는 순간 거부**당한다 — 막을 수 있는 실수를
+    굳이 하게 하고, 그 사이 화면은 잘못된 값을 보여준다.
+    """
+    src = _cameras_page()
+    assert "max={Math.max(0, depthDraft.far_mm - DEPTH_STEP)}" in src, \
+        "가까운 쪽 손잡이가 먼 쪽을 넘어갈 수 있다"
+    assert "min={depthDraft.near_mm + DEPTH_STEP}" in src, \
+        "먼 쪽 손잡이가 가까운 쪽을 밑돌 수 있다"
+
+
+def test_a_rejected_depth_change_snaps_back_to_the_server_value():
+    """거부됐는데 끌던 값이 남으면 **화면은 바뀐 척하고 장치는 안 바뀐다.**
+
+    깊이 범위는 녹화한 데이터의 픽셀값 해석이 걸린 값이라 그 거짓말이 특히 비싸다.
+    """
+    src = _cameras_page()
+    body = src.split("const setDepthRange", 1)[1].split("\n  }", 1)[0]
+    assert "setDepthDraft(server)" in body, "거부돼도 끌던 값이 남는다"
+
+
+def test_the_slider_default_matches_the_daemon_default():
+    """화면 기본값이 rsd 와 다르면 **아무도 안 바꾼 카메라의 값을 잘못 말한다.**"""
+    import re
+
+    front = _cameras_page().split("const DEPTH_DEFAULT = ", 1)[1].split("\n", 1)[0]
+    near = int(re.search(r"near_mm:\s*(\d+)", front).group(1))
+    far = int(re.search(r"far_mm:\s*(\d+)", front).group(1))
+
+    depth_py = (Path(__file__).resolve().parents[2] / "rs" / "piper_rs" / "depth.py").read_text()
+    assert f"near_mm: int = {near}" in depth_py, f"rsd 기본 near 와 다르다 ({near})"
+    assert f"far_mm: int = {far}" in depth_py, f"rsd 기본 far 와 다르다 ({far})"
+
+
+def test_param_slider_still_streams_when_no_commit_is_given():
+    """추론 파라미터는 **끄는 동안 팔이 따라오는 게 요점**이다.
+
+    `onCommit` 을 추가하면서 그쪽 동작이 바뀌면 안 된다 — 선택형이어야 한다.
+    """
+    src = (_SRC / "components" / "ParamSlider.tsx").read_text()
+    assert "onCommit?:" in src, "필수 prop 이 되면 기존 호출부가 전부 깨진다"
+    assert "onCommit?.(value)" in src, "없을 때를 안 봐준다"

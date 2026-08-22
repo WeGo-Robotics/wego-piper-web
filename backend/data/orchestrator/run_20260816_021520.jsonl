@@ -1,0 +1,2 @@
+{"episode": 1, "ts": 1786814120.3147476, "detections": "[hand] 검출 없음\n[top] 검출 없음", "slots": {"target": "none", "destination": "none", "reason": "손이나 상자 등 분류 대상이 없습니다."}, "outcome": "nothing_to_pick"}
+{"episode": 2, "ts": 1786814124.2047105, "detections": "[hand] 검출 없음\n[top] 검출 없음", "slots": {"target": "none", "destination": "none", "reason": "손이나 상자 등 분류 대상이 없습니다."}, "outcome": "nothing_to_pick"}

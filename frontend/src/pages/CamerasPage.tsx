@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import PresetBar from '../components/PresetBar'
 import { useSystemMessage } from '../components/SystemMessages'
+import ParamSlider from '../components/ParamSlider'
 import { api } from '../services/api'
 
 /**
@@ -96,6 +97,20 @@ type ProfileReport = {
   error?: string
 }
 
+/** rsd `DepthEncoding` 의 기본값과 같아야 한다 (rs/piper_rs/depth.py). */
+const DEPTH_DEFAULT = { near_mm: 150, far_mm: 1200 }
+
+/** 슬라이더 눈금. 1mm 단위로 끌게 하면 손이 떨려도 값이 바뀐다. */
+const DEPTH_STEP = 10
+
+/**
+ * 슬라이더가 덮는 범위. D405 는 70~500mm 짜리 근접 카메라고 D435 는 0.3~3m 라
+ * 한 값으로 둘 다 잘 담을 수 없다 — 흔히 쓰는 구간을 덮고, 그 밖의 값은
+ * **숫자 입력으로** 넣게 둔다. 지금 값이 밖에 있으면 눈금을 늘려 손잡이가
+ * 끝에 붙어 보이지 않게 한다.
+ */
+const DEPTH_SLIDER_MAX = 2000
+
 export default function CamerasPage() {
   // ⚠ `window.alert` 를 쓰지 않는다 — 이벤트 루프를 막아 E-stop heartbeat 가
   //   끊기고, 2초 타임아웃에 추론이 강제 종료된다 (confirm 으로 실제로 겪었다).
@@ -111,7 +126,10 @@ export default function CamerasPage() {
   // 설정은 **모달로 띄운다.** 카드 안에서 펼치면 그리드 행 높이가 늘어나
   // 같은 줄의 다른 카드까지 함께 커진다.
   const [settingsCam, setSettingsCam] = useState<string | null>(null)
+  // 서버가 아는 값. 슬라이더가 보여주는 값(`depthDraft`)과 따로 둔다 — 드래그
+  // 중에는 아직 안 보냈고, 거부되면 이 값으로 되돌아가야 한다.
   const [depthEnc, setDepthEnc] = useState<{ near_mm: number; far_mm: number } | null>(null)
+  const [depthDraft, setDepthDraft] = useState<{ near_mm: number; far_mm: number }>(DEPTH_DEFAULT)
   // 프로파일 — 노출·화이트밸런스 같은 컨트롤 값을 이름 붙여 저장한다.
   // 적용 자체는 **데몬이 카메라를 열 때** 하므로 여기는 저장·수동적용·결과 표시만 한다.
   const [profileReport, setProfileReport] = useState<ProfileReport | null>(null)
@@ -140,20 +158,27 @@ export default function CamerasPage() {
   }
 
   /** 깊이 범위 변경. **한쪽만 바꿔도 다른 쪽 값을 함께 보낸다** —
-   *  백엔드는 구간을 한 벌로 검증하므로(far > near) 절반만 보내면 거부된다. */
+   *  백엔드는 구간을 한 벌로 검증하므로(far > near) 절반만 보내면 거부된다.
+   *
+   *  ⚠ 거부되면 **서버가 아는 값**으로 되돌린다. 드래그하던 값으로 되돌리면
+   *  화면은 바뀐 척하는데 장치는 안 바뀐 상태가 된다 — 깊이 범위는 녹화한
+   *  데이터의 해석이 걸린 값이라 그 거짓말이 특히 비싸다. */
   const setDepthRange = async (id: string, near: number | null, far: number | null) => {
-    const cur = depthEnc ?? { near_mm: 150, far_mm: 1200 }
-    const body = { near_mm: near ?? cur.near_mm, far_mm: far ?? cur.far_mm }
-    if (body.near_mm === cur.near_mm && body.far_mm === cur.far_mm) return
+    const server = depthEnc ?? DEPTH_DEFAULT
+    // ⚠ 빈 자리는 **화면에 보이는 값**(초안)으로 채운다. 서버 값으로 채우면
+    //   한쪽을 끌어놓고 다른 쪽을 만졌을 때 먼저 끈 값이 조용히 사라진다.
+    const body = { near_mm: near ?? depthDraft.near_mm, far_mm: far ?? depthDraft.far_mm }
+    if (body.near_mm === server.near_mm && body.far_mm === server.far_mm) return
     try {
       const r = await api.post<{ encoding: { near_mm: number; far_mm: number } }>(
         `/cameras/${encodeURIComponent(id)}/depth-encoding`, body)
       setDepthEnc(r.encoding)
+      setDepthDraft(r.encoding)
       bumpPreview([id])
     } catch (e) {
       // 거부 사유(far <= near, 녹화 중)는 백엔드가 문장으로 준다
       notifyError(e instanceof Error ? e.message : '깊이 범위를 바꾸지 못했습니다')
-      setDepthEnc({ ...cur })
+      setDepthDraft(server)
     }
   }
   // 프리뷰 캐시버스팅 타임스탬프 — 카메라별로 따로 관리해야 한 카메라 동작이
@@ -209,10 +234,11 @@ export default function CamerasPage() {
 
   // 모달은 Esc 로도 닫힌다
   useEffect(() => {
-    if (!settingsCam) { setDepthEnc(null); return }
+    if (!settingsCam) { setDepthEnc(null); setDepthDraft(DEPTH_DEFAULT); return }
     // 현재 값을 먼저 채운다 — 기본값을 보여주면 사용자가 "그 값이다"라고 믿는다
     const c = cams.find((x) => x.id === settingsCam)
-    if (c?.depth_encoding) setDepthEnc(c.depth_encoding)
+    if (c?.depth_encoding) { setDepthEnc(c.depth_encoding); setDepthDraft(c.depth_encoding) }
+    else setDepthDraft(DEPTH_DEFAULT)
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeSettings() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -737,18 +763,34 @@ export default function CamerasPage() {
                 넓게 잡은 값이라, 1m 안쪽 작업이면 절반을 버리는 셈이다. */}
             {settingsCamera.stream_type === 'depth' && (
               <div className="space-y-1.5">
-                <label className="text-xs text-neutral-400">깊이 범위 (mm)</label>
-                <div className="flex items-center gap-2">
-                  <input type="number" defaultValue={depthEnc?.near_mm ?? 150}
-                    key={`near-${settingsCamera.id}`}
-                    onBlur={(e) => setDepthRange(settingsCamera.id, +e.target.value, null)}
-                    className="w-24 px-2 py-1 text-sm rounded bg-neutral-900 border border-neutral-700 text-neutral-100" />
-                  <span className="text-xs text-neutral-500">~</span>
-                  <input type="number" defaultValue={depthEnc?.far_mm ?? 1200}
-                    key={`far-${settingsCamera.id}`}
-                    onBlur={(e) => setDepthRange(settingsCamera.id, null, +e.target.value)}
-                    className="w-24 px-2 py-1 text-sm rounded bg-neutral-900 border border-neutral-700 text-neutral-100" />
-                </div>
+                <label className="text-xs text-neutral-400">깊이 범위</label>
+                {/* ⚠ **끄는 동안에는 안 보낸다** (`onCommit`). 한 번이 장치 RPC 라
+                    틱마다 보내면 그 자체가 부하고, 배타 가드(`require_idle`)도
+                    매번 탄다. 놓는 순간 한 번만 반영된다.
+                    ⚠ 두 손잡이는 서로의 한계다 — `far > near` 는 백엔드 규칙이라
+                    끌어서 넘길 수 있게 두면 놓는 순간 거부당한다. */}
+                <ParamSlider label="가까운 쪽" unit="mm"
+                  value={depthDraft.near_mm}
+                  min={0}
+                  max={Math.max(0, depthDraft.far_mm - DEPTH_STEP)}
+                  step={DEPTH_STEP}
+                  onChange={(v) => setDepthDraft((d) => ({ ...d, near_mm: v }))}
+                  onCommit={(v) => setDepthRange(settingsCamera.id, v, null)} />
+                <ParamSlider label="먼 쪽" unit="mm"
+                  value={depthDraft.far_mm}
+                  min={depthDraft.near_mm + DEPTH_STEP}
+                  max={Math.max(DEPTH_SLIDER_MAX, depthDraft.far_mm)}
+                  step={DEPTH_STEP}
+                  onChange={(v) => setDepthDraft((d) => ({ ...d, far_mm: v }))}
+                  onCommit={(v) => setDepthRange(settingsCamera.id, null, v)} />
+                <p className="text-[10px] text-neutral-500">
+                  폭 {Math.max(0, depthDraft.far_mm - depthDraft.near_mm)}mm →
+                  {' '}1단계 ≈ {((depthDraft.far_mm - depthDraft.near_mm) / 254).toFixed(1)}mm
+                  {depthEnc && (depthDraft.near_mm !== depthEnc.near_mm
+                    || depthDraft.far_mm !== depthEnc.far_mm) && (
+                    <span className="ml-1 text-amber-400">· 놓으면 반영됩니다</span>
+                  )}
+                </p>
                 <p className="text-[10px] text-neutral-500">
                   이 구간이 0~254 로 매핑됩니다(가까울수록 어둡게). 범위 밖은 잘리고,
                   카메라가 못 읽은 픽셀은 255(가장 멂)입니다.

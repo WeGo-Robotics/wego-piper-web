@@ -1,0 +1,3 @@
+{"episode": 1, "ts": 1786867320.844626, "detections": "[hand 848x480] toilet(0.43) center=(683,251)\n[top] 검출 없음", "slots": {"target": "none", "destination": "none", "reason": "현재 검출된 물체가 없음."}, "outcome": "nothing_to_pick"}
+{"episode": 2, "ts": 1786867323.1472673, "detections": "[hand 848x480] bench(0.27) center=(683,251)\n[top] 검출 없음", "slots": {"target": "none", "destination": "none", "reason": "검출된 물체가 없음."}, "outcome": "nothing_to_pick"}
+{"episode": 3, "ts": 1786867325.4412158, "detections": "[hand 848x480] toilet(0.54) center=(683,250)\n[top] 검출 없음", "slots": {"target": "none", "destination": "none", "reason": "검출된 물체가 없음."}, "outcome": "nothing_to_pick"}

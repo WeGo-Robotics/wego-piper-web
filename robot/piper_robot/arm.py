@@ -191,19 +191,33 @@ class Arm:
             except Exception:
                 return None
 
+    # 피드백보다 제어지령이 이만큼 신선하면 지령을 상태로 쓴다. 마스터(연동 示教입력)
+    # 팔은 피드백(0x2A5~7)을 송신하지 않아 GetArmJointMsgs 가 모드 전환 시점 값으로
+    # 얼어붙는다 — 지령(0x155~7·0x159)이 그 팔의 실제 관절 위치다. 슬레이브는
+    # 피드백이 항상 이보다 신선하므로 이 분기를 타지 않는다.
+    _CTRL_FRESHER_S = 0.5
+
     def read_joints_normalized(self) -> dict[str, float] | None:
         """정규화된 관절 위치 읽기 (joint1~6 + gripper)."""
         with self._lock:
             if not self._piper:
                 return None
             try:
-                j = self._piper.GetArmJointMsgs().joint_state
-                g = self._piper.GetArmGripperMsgs().gripper_state
+                jm = self._piper.GetArmJointMsgs()
+                gm = self._piper.GetArmGripperMsgs()
+                j = jm.joint_state
+                gripper = float(gm.gripper_state.grippers_angle)
+                jc = self._piper.GetArmJointCtrl()
+                if jc.time_stamp - jm.time_stamp > self._CTRL_FRESHER_S:
+                    j = jc.joint_ctrl
+                    gc = self._piper.GetArmGripperCtrl()
+                    if gc.time_stamp - gm.time_stamp > self._CTRL_FRESHER_S:
+                        gripper = float(gc.gripper_ctrl.grippers_angle)
                 raw = {
                     "joint1": float(j.joint_1), "joint2": float(j.joint_2),
                     "joint3": float(j.joint_3), "joint4": float(j.joint_4),
                     "joint5": float(j.joint_5), "joint6": float(j.joint_6),
-                    "gripper": float(g.grippers_angle),
+                    "gripper": gripper,
                 }
                 return normalize_all(raw)
             except Exception as e:
