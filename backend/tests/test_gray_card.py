@@ -232,3 +232,35 @@ def test_the_dimming_cannot_escape_the_preview():
     # ⚠ 주석에도 `9999px` 가 나온다(왜 안 쓰는지 적어뒀다) — **클래스**를 본다
     assert "shadow-[0_0_0_" not in src, "거대한 그림자가 페이지로 샌다"
     assert src.count("className={dim}") == 4, "상자 둘레를 네 조각으로 안 덮는다"
+
+
+def test_the_box_survives_the_preview_reloading():
+    """**회귀** — 휠을 굴리면 상자가 사라지거나 크기가 초기화됐다.
+
+    설정 모달은 프리뷰 `src` 를 **200ms 마다** 갈아끼운다. 그때 `naturalWidth` 가
+    0 이 되므로, 렌더마다 이미지에서 크기를 읽으면 상자가 5분의 1초마다 사라진다.
+    마지막으로 제대로 읽은 값을 들고 있어야 한다.
+    """
+    src = (_SRC / "components" / "RoiPicker.tsx").read_text()
+    assert "if (g) setGeo(g)" in src, "0 을 그대로 덮어쓴다 — 상자가 깜빡인다"
+    assert "if (!nw || !nh || !r.width || !r.height) return null" in src, \
+        "재로딩 중인 크기를 걸러내지 않는다"
+
+
+def test_the_wheel_listener_is_attached_once():
+    """**회귀** — 굴리는 내내 리스너가 떼였다 붙으면, 그 틈에 들어온 이벤트가
+    **같은 옛 값에서 다시 계산**해 크기가 초기화된 것처럼 보인다."""
+    src = (_SRC / "components" / "RoiPicker.tsx").read_text()
+    wheel = src.split("surface.addEventListener('wheel'", 1)[1]
+    deps = wheel.split("}, [", 1)[1].split("]", 1)[0]
+    assert "roi" not in deps and "onChange" not in deps, \
+        f"휠 리스너가 값이 바뀔 때마다 다시 붙는다: [{deps}]"
+    assert "roiRef.current" in src, "최신 값을 ref 로 안 읽는다"
+
+
+def test_aiming_does_not_fire_a_request_per_wheel_tick():
+    """휠 한 번에 이벤트가 수십 개 온다. 틱마다 보내면 조준하는 동안 요청이 밀려
+    숫자가 뒤늦게, 뒤섞여 들어온다."""
+    src = (_SRC / "pages" / "CamerasPage.tsx").read_text()
+    body = src.split("const measureRoi", 1)[1].split("\n  }, [", 1)[0]
+    assert "clearTimeout" in body and "setTimeout" in body, "디바운스가 없다"

@@ -159,6 +159,7 @@ export default function CamerasPage() {
   const [roi, setRoi] = useState<Roi | null>(null)
   const [roiReading, setRoiReading] = useState<GrayCardReading | null>(null)
   const previewRef = useRef<HTMLImageElement | null>(null)
+  const measureTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 프로파일 — 노출·화이트밸런스 같은 컨트롤 값을 이름 붙여 저장한다.
   // 적용 자체는 **데몬이 카메라를 열 때** 하므로 여기는 저장·수동적용·결과 표시만 한다.
   const [profileReport, setProfileReport] = useState<ProfileReport | null>(null)
@@ -188,16 +189,28 @@ export default function CamerasPage() {
 
   /** 지금 상자를 재기만 한다. 장치를 안 건드리므로 옮길 때마다 불러도 된다 —
    *  그림자·반사는 눈으로 잘 안 보이고 얼룩 % 로만 드러난다. */
-  const measureRoi = useCallback(async (colorId: string, box: Roi | null) => {
-    const img = previewRef.current
-    if (!img?.naturalWidth || !box) return
-    try {
-      const r = await api.post<{ reading: GrayCardReading }>(
-        `/cameras/${encodeURIComponent(colorId)}/measure-gray-card`,
-        { roi: toBox(box, img.naturalWidth, img.naturalHeight) })
-      setRoiReading(r.reading ?? null)
-    } catch { /* 조준 도우미다 — 실패해도 화면을 어지럽히지 않는다 */ }
+  const measureRoi = useCallback((colorId: string, box: Roi | null) => {
+    // ⚠ **멈춘 뒤에 잰다.** 휠 한 번에 이벤트가 수십 개 오는데 그때마다 요청을
+    //   보내면 조준하는 동안 요청이 밀려 숫자가 뒤늦게, 뒤섞여 들어온다.
+    if (measureTimer.current) clearTimeout(measureTimer.current)
+    measureTimer.current = setTimeout(async () => {
+      const img = previewRef.current
+      if (!img?.naturalWidth || !box) return
+      try {
+        const r = await api.post<{ reading: GrayCardReading }>(
+          `/cameras/${encodeURIComponent(colorId)}/measure-gray-card`,
+          { roi: toBox(box, img.naturalWidth, img.naturalHeight) })
+        setRoiReading(r.reading ?? null)
+      } catch { /* 조준 도우미다 — 실패해도 화면을 어지럽히지 않는다 */ }
+    }, 200)
   }, [])
+
+  /** 상자가 움직였다. 열려 있는 카메라가 바뀔 때만 새로 만든다 — 매 렌더 새
+   *  함수를 넘기면 자식이 그걸 의존성으로 쓰는 순간 리스너가 떼였다 붙는다. */
+  const onRoiChange = useCallback((next: Roi) => {
+    setRoi(next)
+    if (settingsCam) measureRoi(settingsCam, next)
+  }, [settingsCam, measureRoi])
 
   /** 조준을 시작한다. 상자를 처음 띄우고 곧바로 한 번 재서 숫자를 채운다 —
    *  빈 상자만 뜨면 어디로 옮겨야 좋은지 알 수 없다. */
@@ -830,10 +843,7 @@ export default function CamerasPage() {
                 <RoiPicker
                   imgRef={previewRef} roi={roi}
                   hint={roiReading ? `밝기 ${roiReading.luma} · 얼룩 ${roiReading.spread_pct}%` : undefined}
-                  onChange={(next) => {
-                    setRoi(next)
-                    measureRoi(settingsCamera.id, next)
-                  }}
+                  onChange={onRoiChange}
                 />
               )}
               {!settingsCamera.connected && (
