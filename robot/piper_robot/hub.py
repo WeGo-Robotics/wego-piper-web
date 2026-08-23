@@ -121,6 +121,47 @@ class RobotHub:
         arm = self.arms.get(iface)
         return bool(arm and arm.disable_torque())
 
+    # 말단 조그의 도달 대기. 넘으면 "못 가는 방향"으로 본다.
+    END_POSE_SETTLE_S = 2.0
+
+    def jog_end_pose(self, iface: str, axis: str, delta: float,
+                     box: dict | None = None) -> dict:
+        """말단을 한 걸음 움직인다 (feature/teleoperation.md §3-C).
+
+        ⚠ **관절 안전 필터가 안 걸리는 유일한 경로다.** 막는 것은 전부
+        `endpose` 의 상자와 걸음 상한이고, 그게 통과한 뒤에야 명령이 나간다.
+        """
+        from piper_robot.endpose import WorkspaceBox, reached, step_target
+
+        arm = self.arms.get(iface)
+        if arm is None:
+            return {"ok": False, "error": f"{iface} 를 모릅니다"}
+        current = arm.read_end_pose()
+        if current is None:
+            return {"ok": False, "error": "말단 자세를 읽지 못했습니다"}
+
+        wb = WorkspaceBox(**{k: tuple(v) for k, v in box.items()}) if box else WorkspaceBox()
+        target, why = step_target(current, axis, delta, wb)
+        if target is None:
+            return {"ok": False, "error": why, "pose": current}
+
+        ok, msg = arm.move_end_pose(target)
+        if not ok:
+            return {"ok": False, "error": msg, "pose": current}
+
+        time.sleep(self.END_POSE_SETTLE_S)
+        now = arm.read_end_pose() or current
+        if not reached(target, now):
+            # ⚠ 더 보내지 않는다. IK 해가 없는 곳을 계속 밀면 팔이 떨거나
+            #   특이점에서 튄다 — 못 가는 방향이라고 말해야 한다.
+            return {"ok": False, "error": "그 방향으로는 못 갑니다 (도달 실패)",
+                    "pose": now, "target": target}
+        return {"ok": True, "pose": now, "target": target}
+
+    def read_end_pose(self, iface: str) -> dict | None:
+        arm = self.arms.get(iface)
+        return arm.read_end_pose() if arm else None
+
     def disable_all_torque(self) -> list[str]:
         """쥐고 있는 팔 **전부**의 토크를 끊는다. 끊은 iface 목록을 돌려준다.
 

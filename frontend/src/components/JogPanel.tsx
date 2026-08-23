@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import EndPosePanel from './EndPosePanel'
 import ManualControlPanel from './ManualControlPanel'
 import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
@@ -158,6 +159,10 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
         title={`${iface} 관절 조그`}
         disabledHint="[조그 시작] 을 누르면 움직일 수 있습니다"
       />
+
+      {/* 말단 조그 — 조그 세션과 **다른 경로**다(shm 이 아니라 RPC).
+          그래서 세션을 안 열어도 되지만, 릴레이 중에는 팔이 리더를 따라가므로 숨긴다. */}
+      <EndPosePanel iface={iface} enabled={!relaying} />
 
       {running && (
         <p className="text-[10px] text-neutral-500">

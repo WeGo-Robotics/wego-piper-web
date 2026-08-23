@@ -450,6 +450,15 @@ class RobotManager:
 
     # ── 움직임 감지 ──
 
+    def jog_end_pose(self, iface: str, axis: str, delta: float, box=None) -> dict:
+        """말단을 한 걸음. **팔이 실제로 움직인다.**"""
+        return _call("jog_end_pose", iface, axis, delta, box,
+                     default={"ok": False, "error": "robotd 가 응답하지 않습니다"}
+                     ) or {"ok": False, "error": "응답 없음"}
+
+    def read_end_pose(self, iface: str) -> dict | None:
+        return _call("read_end_pose", iface, default=None)
+
     def start_identify(self, slot: str, iface: str) -> bool:
         """명령 반응으로 이 팔이 마스터인지 가린다. **팔이 실제로 움직인다.**
 

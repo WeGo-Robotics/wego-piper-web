@@ -461,6 +461,48 @@ async def jog_status():
     return jog_session.status()
 
 
+# ── 말단 조그 (feature/teleoperation.md §3-C) ──
+
+
+class EndPoseJogRequest(BaseModel):
+    iface: str
+    #: x|y|z (mm) 또는 rx|ry|rz (도)
+    axis: str
+    #: **상대** 이동량. 절대 좌표를 안 받는 이유는 오타 하나가 큰 이동이 되기 때문이다.
+    delta: float
+
+
+@router.post("/end-pose/jog")
+async def end_pose_jog(body: EndPoseJogRequest):
+    """말단을 한 걸음 움직인다 — **관절은 팔의 온보드 IK 가 정한다.**
+
+    ⚠ 이 경로는 관절 안전 필터를 **타지 않는다.** 막는 것은 작업 공간 상자와
+    걸음 상한뿐이라(`piper_robot.endpose`), 다른 모드보다 상자를 좁게 잡는다.
+    """
+    from app.services.exclusivity import Activity, require_idle
+
+    import asyncio
+
+    require_idle(Activity.TELEOP)
+    _require_commandable(body.iface)
+    # ⚠ 블로킹이다 — 명령을 보내고 도달을 2초 기다린다. 이벤트 루프에서 직접
+    #   돌리면 그동안 heartbeat 를 포함한 모든 요청이 멈춘다.
+    loop = asyncio.get_event_loop()
+    report = await loop.run_in_executor(
+        None, lambda: robot_manager.jog_end_pose(body.iface, body.axis, body.delta))
+    if not report.get("ok"):
+        raise HTTPException(409, report.get("error", "말단 조그에 실패했습니다"))
+    return report
+
+
+@router.get("/end-pose/{iface}")
+async def end_pose(iface: str):
+    """지금 말단 자세 + 작업 공간 상자. 화면이 한계를 알아야 한다."""
+    from piper_robot.endpose import WorkspaceBox
+
+    return {"pose": robot_manager.read_end_pose(iface), "box": WorkspaceBox().to_dict()}
+
+
 # ── 리더 릴레이 (feature/teleoperation.md §3-A) ──
 
 

@@ -250,6 +250,45 @@ class Arm:
                 logger.error("go_parking error: %s", e)
                 return False
 
+    # ── 말단 자세 (온보드 IK) ──
+
+    def read_end_pose(self) -> dict[str, int] | None:
+        """지금 말단 자세. **SDK 단위**(0.001mm / 0.001도)."""
+        with self._lock:
+            if not self._piper:
+                return None
+            try:
+                e = self._piper.GetArmEndPoseMsgs().end_pose
+                return {"x": e.X_axis, "y": e.Y_axis, "z": e.Z_axis,
+                        "rx": e.RX_axis, "ry": e.RY_axis, "rz": e.RZ_axis}
+            except Exception:
+                return None
+
+    # 말단 이동 속도. **낮게 고정한다** — 관절 필터가 안 걸리는 모드라
+    # 속도가 사람이 반응할 수 있는 범위를 넘으면 안 된다.
+    END_POSE_SPEED = 20
+
+    def move_end_pose(self, target: dict[str, int]) -> tuple[bool, str]:
+        """말단을 목표로 보낸다. **관절은 팔의 온보드 IK 가 정한다.**
+
+        ⚠ 이 경로는 `safety.filter_goal` 을 **타지 않는다** — 우리가 관절을 안
+        정하기 때문이다. 범위 판단은 호출부가 `endpose.step_target` 으로 끝내고
+        와야 한다.
+        """
+        with self._lock:
+            if not self._piper:
+                return False, "연결되지 않음"
+            try:
+                self._piper.EnablePiper()
+                time.sleep(0.2)
+                # MOVE P = 점대점 말단 제어. 관절 모드(MOVE J)와 다른 모드다.
+                self._piper.ModeCtrl(0x01, 0x00, self.END_POSE_SPEED, 0x00)
+                self._piper.EndPoseCtrl(target["x"], target["y"], target["z"],
+                                        target["rx"], target["ry"], target["rz"])
+            except Exception as e:
+                return False, f"말단 명령 실패: {e}"
+        return True, "OK"
+
     # ── 명령 반응으로 마스터/슬레이브 가리기 ──
 
     # 어느 관절을 건드리나. **손목(joint6)** 이다 — 질량이 가장 작고 팔의 도달
