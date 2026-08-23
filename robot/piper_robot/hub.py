@@ -127,6 +127,61 @@ class RobotHub:
 
     # ── 움직임 감지 ──
 
+    # ⚠ **부팅 중인 팔에 CAN 을 보내면 부팅이 깨진다.** 그래서 무슨 일이 있어도
+    #   이만큼 기다린 뒤에 시작한다 — 방금 전원을 넣었을 수 있고, 여기서는 그걸
+    #   알 방법이 없다. 기다리는 편이 싸다.
+    IDENTIFY_BOOT_WAIT_S = 10.0
+
+    def start_identify(self, key: str, ifaces: list[str]) -> bool:
+        """**명령에 반응하는가**로 팔마다 마스터/슬레이브를 가린다.
+
+        마스터는 외부 제어 명령을 무시하고 피드백도 안 보낸다 — 움직이지도, 관절값이
+        바뀌지도 않는다. 슬레이브는 둘 다 한다.
+
+        CAN RX 카운터로 보던 기존 `_classify_master` 보다 확실하다: 그쪽은 "피드백이
+        오는가"라는 **간접 증거**라 케이블이나 타이밍에 흔들리는데, 이건 팔에 직접
+        물어보는 것이다.
+        """
+        candidates = [self.arms[i] for i in ifaces
+                      if i in self.arms and self.arms[i].connected]
+        if not candidates:
+            return False
+        self._motion[key] = {"status": "waiting", "phase": "부팅 대기",
+                             "remaining": self.IDENTIFY_BOOT_WAIT_S, "results": {}}
+        threading.Thread(target=self._identify, args=(key, candidates),
+                         daemon=True).start()
+        return True
+
+    def _identify(self, key: str, candidates: list[Arm]) -> None:
+        # 1) 부팅 보호 대기. 남은 시간을 계속 알려 준다 — 10초 동안 아무 표시가
+        #    없으면 사용자는 멈춘 줄 안다.
+        start = time.monotonic()
+        while True:
+            left = self.IDENTIFY_BOOT_WAIT_S - (time.monotonic() - start)
+            if left <= 0:
+                break
+            self._motion[key] = {"status": "waiting", "phase": "부팅 대기",
+                                 "remaining": round(left, 1), "results": {}}
+            time.sleep(0.1)
+
+        # 2) 한 팔씩 건드린다. 동시에 하면 어느 팔이 움직였는지 눈으로 못 가린다.
+        results: dict[str, dict] = {}
+        for arm in candidates:
+            self._motion[key] = {"status": "probing", "phase": f"{arm.iface} 확인 중",
+                                 "remaining": 0, "results": dict(results)}
+            try:
+                r = arm.probe_command_response()
+            except Exception as exc:
+                logger.warning("%s 판별 실패: %s", arm.iface, exc)
+                r = {"ok": False, "error": str(exc)}
+            if r.get("ok"):
+                r["role"] = "master" if r["is_master"] else "slave"
+            results[arm.iface] = r
+            logger.info("판별 %s: %s", arm.iface, r)
+
+        self._motion[key] = {"status": "done", "phase": "완료", "remaining": 0,
+                             "results": results}
+
     def start_motion_detect(self, key: str, ifaces: list[str]) -> bool:
         """후보 팔 중 **어느 것이 움직였는지** 찾는다.
 

@@ -83,3 +83,39 @@ def test_level_is_stated_not_guessed():
     assert "level: MessageLevel" in src
     for guess in ("includes('실패')", 'includes("실패")', "startsWith('⚠"):
         assert guess not in src, "문구로 심각도를 추측한다"
+
+
+def test_a_bare_confirm_call_is_never_the_browser_one():
+    """⚠ **`window.confirm` 은 이벤트 루프를 멈춰 E-stop heartbeat 를 끊는다** —
+    추론 중이면 2초 뒤 팔이 강제로 선다. 이 저장소가 실제로 겪은 사고다.
+
+    그런데 `confirm(` 은 **전역이 있어서 TypeScript 가 안 잡는다.** 훅에서
+    `confirm: askConfirm` 으로 이름을 바꿔 받아놓고 습관대로 `confirm(` 이라고
+    쓰면 조용히 브라우저 것이 불린다 — 실제로 그렇게 썼다가 잡았다.
+
+    규칙: 맨 `confirm(`/`alert(` 는 **그 파일이 훅에서 그 이름 그대로 받았을 때만**
+    허용한다.
+    """
+    import re
+    from pathlib import Path
+
+    from conftest import code_only
+
+    root = Path(__file__).resolve().parents[2] / "frontend" / "src"
+    offenders = []
+    for f in list(root.rglob("*.tsx")) + list(root.rglob("*.ts")):
+        if f.name == "SystemMessages.tsx":     # 여기가 그 `confirm` 을 정의한다
+            continue
+        src = code_only(f.read_text())
+        # 훅에서 `confirm` 을 그 이름으로 받았나
+        destructured = re.search(r"const\s*\{[^}]*\bconfirm\b[^}]*\}\s*=\s*useSystemMessage",
+                                 src) and "confirm:" not in src
+        for name in ("confirm", "alert"):
+            if destructured and name == "confirm":
+                continue
+            # `window.confirm(` 도 `foo.confirm(` 도 아닌 **맨** 호출
+            if re.search(rf"(?<![.\w]){name}\s*\(", src):
+                offenders.append(f"{f.relative_to(root)}: {name}(")
+    assert not offenders, (
+        "브라우저 전역이 불린다 — 이벤트 루프가 멈춰 heartbeat 가 끊긴다: "
+        + ", ".join(offenders))

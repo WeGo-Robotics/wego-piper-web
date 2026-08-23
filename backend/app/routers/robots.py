@@ -341,6 +341,28 @@ class MotionDetectRequest(BaseModel):
     slot: str
 
 
+@router.post("/identify")
+async def start_identify(body: MotionDetectRequest):
+    """마스터/슬레이브를 **팔에 직접 물어서** 가린다.
+
+    각 팔에 작은 이동 명령을 넣고 반응을 본다 — 마스터는 외부 명령을 무시하고
+    피드백도 안 보내므로 움직이지도, 관절값이 바뀌지도 않는다.
+
+    ⚠ **팔이 실제로 움직인다.** 추론·녹화 중에는 막는다 — 돌고 있는 에피소드
+    한가운데서 손목이 돌아가면 그 데이터는 못 쓴다.
+
+    ⚠ 시작까지 10초를 기다린다. 부팅 중인 팔에 CAN 이 도착하면 부팅이 깨지는데,
+    방금 전원을 넣었는지 여기서는 알 수 없다.
+    """
+    from app.services.exclusivity import Activity, require_idle
+
+    require_idle(Activity.INFERENCE)
+    require_idle(Activity.RECORDING)
+    if not robot_manager.start_identify(body.slot):
+        raise HTTPException(400, "연결된 팔이 없습니다")
+    return {"status": "started", "slot": body.slot}
+
+
 @router.post("/find-by-motion")
 async def start_motion_detect(body: MotionDetectRequest):
     if not robot_manager.start_motion_detect(body.slot):

@@ -450,6 +450,13 @@ class RobotManager:
 
     # ── 움직임 감지 ──
 
+    def start_identify(self, slot: str) -> bool:
+        """명령 반응으로 마스터/슬레이브를 가린다. **팔이 실제로 움직인다.**"""
+        ifaces = [a.iface for a in self.arms.values() if a.connected]
+        if not ifaces:
+            return False
+        return bool(_call("start_identify", slot, ifaces, default=False))
+
     def start_motion_detect(self, slot: str) -> bool:
         """슬롯에 배정할 팔을 움직임으로 찾는다.
 

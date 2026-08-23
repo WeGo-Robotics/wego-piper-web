@@ -269,8 +269,17 @@ function MasterSlaveBadge({ ms }: { ms?: 'master' | 'slave' | null }) {
     </span>
   )
 }
+type ProbeResult = {
+  ok: boolean; role?: 'master' | 'slave'; moved_raw?: number
+  commanded_raw?: number; error?: string
+}
 type MotionStatus = {
-  status: string; remaining: number; max_delta: number; threshold: number; found_iface: string | null
+  status: string
+  phase?: string
+  remaining: number
+  results?: Record<string, ProbeResult>
+  // 예전 손 감지 방식이 쓰던 것들 — 아직 엔드포인트가 남아 있다
+  max_delta?: number; threshold?: number; found_iface?: string | null
 }
 
 export default function RobotsPage() {
@@ -402,24 +411,47 @@ export default function RobotsPage() {
     finally { setSettingMs(null) }
   }
 
-  // 움직임 감지 (역할 식별용 — 슬롯 대신 iface 기반)
-  const handleFindByMotion = async (targetIface: string) => {
-    // 임시 슬롯명으로 사용
-    const slot = `find_${targetIface}`
+  /**
+   * 마스터/슬레이브를 **팔에 직접 물어서** 가린다.
+   *
+   * 예전에는 사람이 팔을 손으로 움직이면 그걸 감지했다. 이제는 각 팔에 작은 이동
+   * 명령을 넣고 반응을 본다 — 마스터는 외부 명령을 무시하고 피드백도 안 보내므로
+   * 움직이지도, 관절값이 바뀌지도 않는다.
+   *
+   * ⚠ **팔이 실제로 움직인다**(손목 4%). 그리고 시작까지 **10초를 기다린다** —
+   * 부팅 중인 팔에 CAN 이 도착하면 부팅이 깨지는데, 방금 전원을 넣었는지
+   * 화면에서는 알 수 없다.
+   */
+  const handleIdentify = async () => {
+    const slot = 'identify'
+    const yes = await askConfirm(
+      '연결된 팔들을 하나씩 움직여 마스터/슬레이브를 가립니다.\n\n' +
+      '· 손목(joint6)이 가동범위의 4%만큼 돌았다가 제자리로 돌아옵니다\n' +
+      '· 부팅 중인 팔을 깨뜨리지 않으려고 시작까지 10초를 기다립니다\n\n' +
+      '팔 주변이 비어 있는지 확인하세요.')
+    if (!yes) return
     try {
-      await api.post('/robots/find-by-motion', { slot })
-      setMotionIface(targetIface)
-      setMotionStatus({ status: 'detecting', remaining: 30, max_delta: 0, threshold: 45000, found_iface: null })
+      await api.post('/robots/identify', { slot })
+      setMotionIface(slot)
+      setMotionStatus({ status: 'waiting', phase: '부팅 대기', remaining: 10, results: {} })
       motionPollRef.current = setInterval(async () => {
         const st = await api.get<MotionStatus>(`/robots/find-by-motion/status?slot=${slot}`)
         setMotionStatus(st)
-        if (st.status !== 'detecting') {
+        if (st.status === 'done' || st.status === 'error') {
           clearInterval(motionPollRef.current)
           setMotionIface(null)
+          const lines = Object.entries(st.results ?? {}).map(([iface, r]) =>
+            r.ok ? `${iface}: ${r.role === 'master' ? '마스터' : '슬레이브'}` +
+                   ` (${r.moved_raw}/${r.commanded_raw} raw 이동)`
+                 : `${iface}: 판별 실패 — ${r.error}`)
+          notify({ level: 'info', source: '로봇',
+            text: lines.join('\n') || '판별할 팔이 없습니다' })
           await refreshArms()
         }
-      }, 300)
-    } catch { notifyError('감지할 미연결 팔이 없습니다') }
+      }, 400)
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : '판별을 시작하지 못했습니다')
+    }
   }
   useEffect(() => () => clearInterval(motionPollRef.current), [])
 
@@ -642,16 +674,15 @@ export default function RobotsPage() {
                       {/* 움직임 감지 */}
                       {isDetecting && motionStatus ? (
                         <div className="text-xs text-neutral-400 flex items-center gap-2">
-                          <span>{motionStatus.remaining}s</span>
-                          <div className="w-16 h-1.5 bg-neutral-700 rounded-full overflow-hidden">
-                            <div className="h-full bg-amber-500 rounded-full transition-all"
-                              style={{ width: `${Math.min(100, (motionStatus.max_delta / motionStatus.threshold) * 100)}%` }} />
-                          </div>
+                          <span className="text-amber-400">
+                            {motionStatus.phase ?? '확인 중'}
+                            {motionStatus.status === 'waiting' && ` ${motionStatus.remaining}s`}
+                          </span>
                         </div>
                       ) : (
-                        <button onClick={() => handleFindByMotion(arm.iface)} disabled={!!motionIface}
+                        <button onClick={handleIdentify} disabled={!!motionIface}
                           className="px-2 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50"
-                          title="팔을 움직여서 식별">찾기</button>
+                          title="이동 명령에 반응하는지로 마스터/슬레이브 판별 (팔이 움직입니다)">찾기</button>
                       )}
                       <button onClick={() => handleSetMasterSlave(arm.iface, true)} disabled={settingMs === arm.iface}
                         className="px-2 py-1 text-xs rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50"

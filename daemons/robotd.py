@@ -48,7 +48,7 @@ _METHODS = {
     "scan", "connect", "disconnect", "release_all", "info",
     "refresh_mode", "set_master_slave", "read_joints", "read_joints_raw",
     "clear_errors", "read_error", "enable_torque", "disable_torque", "go_parking",
-    "start_motion_detect", "motion_status",
+    "start_motion_detect", "motion_status", "start_identify",
     "init_interface", "check_active", "sniff_ids", "rename_interface", "recover_usb", "usb_info",
     "lost",
 }

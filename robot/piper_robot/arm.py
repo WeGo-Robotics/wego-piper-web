@@ -250,6 +250,78 @@ class Arm:
                 logger.error("go_parking error: %s", e)
                 return False
 
+    # ── 명령 반응으로 마스터/슬레이브 가리기 ──
+
+    # 어느 관절을 건드리나. **손목(joint6)** 이다 — 질량이 가장 작고 팔의 도달
+    # 범위가 안 바뀌어서, 주변에 뭐가 있어도 부딪힐 일이 가장 적다.
+    PROBE_JOINT = "joint6"
+    # 얼마나 움직이나. 정규화 4 = 그 관절 가동범위의 4% 다. 눈에 보일 만큼은
+    # 되면서 위험하지 않은 크기.
+    PROBE_DELTA_NORM = 4.0
+    # 명령이 반영될 시간. 짧으면 슬레이브를 마스터로 오판한다.
+    PROBE_SETTLE_S = 1.5
+
+    def probe_command_response(self) -> dict:
+        """**이동 명령에 반응하는가**로 마스터/슬레이브를 가린다.
+
+        마스터(示教输入臂)는 외부 제어 명령을 무시하고 피드백도 안 보낸다 —
+        명령을 넣어도 움직이지 않고 관절값도 그대로다. 슬레이브는 움직이고
+        관절값이 따라온다. 그 차이가 이 판정의 전부다.
+
+        ⚠ **팔이 실제로 움직인다.** 호출부가 사람이 옆에 있는지, 다른 것이 돌고
+        있지 않은지를 책임진다(게이트웨이의 배타 가드).
+
+        ⚠ 끝나면 **원래 자세로 되돌린다.** 판별하려고 팔을 옮겨놓고 두면 다음
+        작업이 그 자세에서 시작한다.
+        """
+        before = self.read_joints_raw()
+        if before is None:
+            return {"ok": False, "error": "관절값을 읽지 못했습니다"}
+
+        from piper_robot.joints import JOINT_CALIBRATION, denormalize_joint
+
+        idx = int(self.PROBE_JOINT[-1]) - 1
+        lo, hi = JOINT_CALIBRATION[self.PROBE_JOINT]
+        span = abs(denormalize_joint(self.PROBE_JOINT, 100)
+                   - denormalize_joint(self.PROBE_JOINT, 0))
+        delta = int(span * self.PROBE_DELTA_NORM / 100)
+        # 가동범위 끝에 있으면 반대로 민다 — 끝에서 밀면 안 움직이고,
+        # 그걸 "반응 없음"으로 읽으면 슬레이브를 마스터라고 한다.
+        target = list(before)
+        headroom = max(lo, hi) - before[idx]
+        target[idx] += delta if headroom > delta else -delta
+
+        with self._lock:
+            if not self._piper:
+                return {"ok": False, "error": "연결되지 않음"}
+            try:
+                self._piper.EnablePiper()
+                time.sleep(0.3)
+                self._piper.ModeCtrl(0x01, 0x01, 20, 0x00)
+                self._piper.JointCtrl(*target)
+            except Exception as e:
+                return {"ok": False, "error": f"명령 전송 실패: {e}"}
+
+        time.sleep(self.PROBE_SETTLE_S)
+        after = self.read_joints_raw()
+
+        # 되돌린다. 마스터면 어차피 무시하므로 해로울 게 없다.
+        with self._lock:
+            if self._piper:
+                try:
+                    self._piper.JointCtrl(*before)
+                except Exception as e:
+                    logger.warning("%s: 원위치 복귀 실패: %s", self.iface, e)
+
+        if after is None:
+            return {"ok": False, "error": "명령 후 관절값을 읽지 못했습니다"}
+        moved = max(abs(a - b) for a, b in zip(after, before))
+        # 명령한 것의 절반은 움직여야 반응으로 본다. 잡음(수십 raw)보다 훨씬 크고,
+        # 부하로 목표에 못 미쳐도 걸린다.
+        is_master = moved < delta // 2
+        return {"ok": True, "is_master": is_master, "moved_raw": moved,
+                "commanded_raw": delta, "joint": self.PROBE_JOINT}
+
     def enable_torque(self) -> bool:
         with self._lock:
             if not self._piper:
