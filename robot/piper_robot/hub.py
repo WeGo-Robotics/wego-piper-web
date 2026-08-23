@@ -146,7 +146,8 @@ class RobotHub:
                       if i in self.arms and self.arms[i].connected]
         if not candidates:
             return False
-        self._motion[key] = {"status": "waiting", "phase": "부팅 대기",
+        self._motion[key] = {"status": "waiting",
+                             "phase": "부팅 중인 팔을 깨뜨리지 않으려고 대기",
                              "remaining": self.IDENTIFY_BOOT_WAIT_S, "results": {}}
         threading.Thread(target=self._identify, args=(key, candidates),
                          daemon=True).start()
@@ -160,17 +161,30 @@ class RobotHub:
             left = self.IDENTIFY_BOOT_WAIT_S - (time.monotonic() - start)
             if left <= 0:
                 break
-            self._motion[key] = {"status": "waiting", "phase": "부팅 대기",
-                                 "remaining": round(left, 1), "results": {}}
+            self._motion[key] = {
+                "status": "waiting",
+                # 왜 기다리는지 적는다 — "그냥 느린 것"으로 보이면 다음 사람이 지운다
+                "phase": "부팅 중인 팔을 깨뜨리지 않으려고 대기",
+                "remaining": round(left, 1), "results": {},
+            }
             time.sleep(0.1)
 
         # 2) 한 팔씩 건드린다. 동시에 하면 어느 팔이 움직였는지 눈으로 못 가린다.
         results: dict[str, dict] = {}
-        for arm in candidates:
-            self._motion[key] = {"status": "probing", "phase": f"{arm.iface} 확인 중",
-                                 "remaining": 0, "results": dict(results)}
+        total = len(candidates)
+        for n, arm in enumerate(candidates, 1):
+            def on_step(text: str, remaining: float = 0.0, _a=arm, _n=n) -> None:
+                # 단계마다 화면을 갱신한다 — 이 절차는 몇 초를 조용히 보내는데,
+                # 아무 변화가 없으면 **멈춘 것과 구분이 안 된다.**
+                self._motion[key] = {
+                    "status": "probing", "phase": text, "iface": _a.iface,
+                    "index": _n, "total": total,
+                    "remaining": remaining, "results": dict(results),
+                }
+
+            on_step("시작하는 중")
             try:
-                r = arm.probe_command_response()
+                r = arm.probe_command_response(on_step=on_step)
             except Exception as exc:
                 logger.warning("%s 판별 실패: %s", arm.iface, exc)
                 r = {"ok": False, "error": str(exc)}

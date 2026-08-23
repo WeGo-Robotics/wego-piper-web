@@ -261,7 +261,7 @@ class Arm:
     # 명령이 반영될 시간. 짧으면 슬레이브를 마스터로 오판한다.
     PROBE_SETTLE_S = 1.5
 
-    def probe_command_response(self) -> dict:
+    def probe_command_response(self, on_step=None) -> dict:
         """**이동 명령에 반응하는가**로 마스터/슬레이브를 가린다.
 
         마스터(示教输入臂)는 외부 제어 명령을 무시하고 피드백도 안 보낸다 —
@@ -273,7 +273,15 @@ class Arm:
 
         ⚠ 끝나면 **원래 자세로 되돌린다.** 판별하려고 팔을 옮겨놓고 두면 다음
         작업이 그 자세에서 시작한다.
+
+        `on_step(설명, 남은초)` 를 주면 단계마다 부른다. 이 함수는 몇 초를 조용히
+        보내는데, 화면에 아무 변화가 없으면 **멈춘 것과 구분이 안 된다.**
         """
+        def step(text: str, remaining: float = 0.0) -> None:
+            if on_step:
+                on_step(text, remaining)
+
+        step("기준 관절값 읽는 중")
         before = self.read_joints_raw()
         if before is None:
             return {"ok": False, "error": "관절값을 읽지 못했습니다"}
@@ -291,6 +299,7 @@ class Arm:
         headroom = max(lo, hi) - before[idx]
         target[idx] += delta if headroom > delta else -delta
 
+        step("이동 명령 보내는 중")
         with self._lock:
             if not self._piper:
                 return {"ok": False, "error": "연결되지 않음"}
@@ -302,10 +311,21 @@ class Arm:
             except Exception as e:
                 return {"ok": False, "error": f"명령 전송 실패: {e}"}
 
-        time.sleep(self.PROBE_SETTLE_S)
+        # 반응을 기다린다. **남은 시간을 계속 알린다** — 여기가 가장 긴 침묵이고,
+        # 사용자가 "지금 뭘 기다리는 건가"를 알아야 하는 구간이다.
+        deadline = time.monotonic() + self.PROBE_SETTLE_S
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            step("반응 기다리는 중", round(left, 1))
+            time.sleep(0.1)
+
+        step("관절값 다시 읽는 중")
         after = self.read_joints_raw()
 
         # 되돌린다. 마스터면 어차피 무시하므로 해로울 게 없다.
+        step("원위치로 되돌리는 중")
         with self._lock:
             if self._piper:
                 try:

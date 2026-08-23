@@ -275,8 +275,13 @@ type ProbeResult = {
 }
 type MotionStatus = {
   status: string
+  /** 지금 무엇을 하고 있나. 몇 초씩 조용한 절차라 이게 없으면 멈춘 것처럼 보인다. */
   phase?: string
+  /** 이 단계가 끝나기까지 남은 초. 0 이면 안 보여준다. */
   remaining: number
+  iface?: string
+  index?: number
+  total?: number
   results?: Record<string, ProbeResult>
   // 예전 손 감지 방식이 쓰던 것들 — 아직 엔드포인트가 남아 있다
   max_delta?: number; threshold?: number; found_iface?: string | null
@@ -448,7 +453,8 @@ export default function RobotsPage() {
             text: lines.join('\n') || '판별할 팔이 없습니다' })
           await refreshArms()
         }
-      }, 400)
+        // 카운트다운을 보여주므로 촘촘히 본다 — 0.4초면 숫자가 뚝뚝 끊긴다
+      }, 150)
     } catch (e) {
       notifyError(e instanceof Error ? e.message : '판별을 시작하지 못했습니다')
     }
@@ -674,9 +680,22 @@ export default function RobotsPage() {
                       {/* 움직임 감지 */}
                       {isDetecting && motionStatus ? (
                         <div className="text-xs text-neutral-400 flex items-center gap-2">
-                          <span className="text-amber-400">
-                            {motionStatus.phase ?? '확인 중'}
-                            {motionStatus.status === 'waiting' && ` ${motionStatus.remaining}s`}
+                          {/* 절차가 몇 초씩 조용하다 — **무엇을, 얼마나 더**
+                              기다리는지 둘 다 보여야 멈춘 것과 구분된다. */}
+                          <span className="flex items-center gap-1.5 text-amber-400">
+                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400"
+                                  aria-hidden />
+                            <span>
+                              {motionStatus.iface && motionStatus.total
+                                ? `${motionStatus.iface} (${motionStatus.index}/${motionStatus.total}) · `
+                                : ''}
+                              {motionStatus.phase ?? '확인 중'}
+                            </span>
+                            {motionStatus.remaining > 0 && (
+                              <span className="tabular-nums font-medium">
+                                {motionStatus.remaining.toFixed(1)}s
+                              </span>
+                            )}
                           </span>
                         </div>
                       ) : (
