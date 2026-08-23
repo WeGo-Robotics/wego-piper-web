@@ -726,6 +726,7 @@ export default function RobotsPage() {
                       <JogPanel
                         iface={arm.iface}
                         commandable={arm.connected && arm.role === 'follower'}
+                        leader={connectedArms.find((a) => a.role === 'leader' && a.connected)?.iface}
                         reason={
                           !arm.connected ? '연결되지 않아 조작할 수 없습니다'
                           : arm.role === 'leader'

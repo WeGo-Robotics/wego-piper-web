@@ -145,11 +145,29 @@ STOPPERS: dict[Activity, Callable[[], Awaitable[None]]] = {
     Activity.RECORDING: lambda: record_manager.pm.kill(),
     # ⚠ 여기서 토크를 끊지 않는다. 게이트웨이가 멈춰 있으면 못 하기 때문이다 —
     #   팔을 쥔 robotd 가 E-stop 알림을 **직접 듣고** 끊는다.
-    Activity.TELEOP: lambda: teleop_session.kill(),
+    # 조그든 릴레이든 세션 하나다 — 무엇이 돌든 그걸 닫는다.
+    Activity.TELEOP: lambda: _stop_teleop(),
 }
 
 
 # ── 조회 ──────────────────────────────────────────────────────────────────────
+
+
+async def _stop_teleop() -> None:
+    """텔레오퍼레이션 정지. **토크는 robotd 가 끊는다** — 여기서는 세션만 닫는다.
+
+    조그와 릴레이가 각각 자기 자원(shm 라이터·리더 리더)을 들고 있으므로
+    `teleop_session` 만 닫으면 그것들이 남는다.
+    """
+    from app.services.jog import jog_session
+    from app.services.relay import relay_session
+
+    for session in (jog_session, relay_session):
+        try:
+            session.stop()
+        except Exception as exc:
+            logger.error("텔레오퍼레이션 정지 실패 (%s): %s", type(session).__name__, exc)
+    await teleop_session.kill()
 
 
 def is_running(activity: Activity) -> bool:

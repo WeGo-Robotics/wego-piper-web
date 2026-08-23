@@ -26,7 +26,9 @@ import logging
 import threading
 import time
 
-from app.services.teleop import teleop_session
+from app.services.teleop import (
+    ArmBusyError, close_action_writer, open_action_writer, teleop_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,27 +69,21 @@ class JogSession:
 
     def start(self, iface: str, current: dict[str, float]) -> None:
         """조그를 연다. 못 열면 `JogError` 로 **이유를 말한다.**"""
-        from piper_shm import arm as shm_arm
-
         with self._lock:
             if self.is_running:
                 raise JogError(f"이미 {self._iface} 를 조종 중입니다")
-
-            # ⚠ **라이터는 이중 열기를 막아주지 않는다.** `O_CREAT` 라 기존 세그먼트를
-            #   조용히 덮는다 — 추론 프록시가 조종 중이면 그 명령 경로를 가로채는 셈이다.
-            #   "세그먼트 존재 = 조종 중"은 관례지 강제가 아니므로 여기서 확인한다.
-            name = shm_arm.segment_name(iface, shm_arm.KIND_ACTION)
-            if name in set(shm_arm.list_segments()):
-                raise JogError(
-                    f"{iface} 의 명령 세그먼트를 누가 이미 쥐고 있습니다 — "
-                    "추론이나 녹화가 도는 중인지 보세요")
 
             ok, why = teleop_session.start(iface, "joint")
             if not ok:
                 raise JogError(why)
 
+            # 명령 경로를 넘겨받는 위험한 부분은 `teleop` 한 곳에 있다 —
+            # 리더 릴레이도 같은 일을 하므로 두 벌이 되면 안 된다.
             try:
-                self._writer = shm_arm.ActionWriter(iface, deadman_ms=DEADMAN_MS)
+                self._writer = open_action_writer(iface, DEADMAN_MS)
+            except ArmBusyError as exc:
+                teleop_session.stop()
+                raise JogError(str(exc)) from exc
             except Exception as exc:
                 teleop_session.stop()
                 raise JogError(f"명령 경로를 열지 못했습니다: {exc}") from exc
@@ -104,22 +100,12 @@ class JogSession:
             logger.info("조그 시작: %s", iface)
 
     def stop(self) -> None:
-        """닫고 세그먼트를 지운다 — 브리지가 "소비자 종료"로 처리한다."""
-        from piper_shm import arm as shm_arm
-
         with self._lock:
             self._stop.set()
             writer, iface = self._writer, self._iface
             self._writer, self._iface, self._goal = None, None, {}
-        if writer is not None:
-            try:
-                writer.close()
-            except Exception as exc:
-                logger.warning("조그 라이터 닫기 실패: %s", exc)
+        close_action_writer(writer, iface)
         if iface:
-            # ⚠ 지운다. 남겨두면 발행자 없는 세그먼트가 되어, 게이트웨이의
-            #   장치 감시가 "발행이 멈췄다"로 읽는다.
-            shm_arm.unlink(shm_arm.segment_name(iface, shm_arm.KIND_ACTION))
             logger.info("조그 정지: %s", iface)
         teleop_session.stop()
 

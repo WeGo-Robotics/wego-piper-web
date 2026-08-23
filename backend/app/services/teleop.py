@@ -56,3 +56,47 @@ class TeleopSession:
 
 
 teleop_session = TeleopSession()
+
+
+# ── 팔의 명령 경로를 넘겨받기 ──
+#
+# 조그와 리더 릴레이가 **같은 일**을 한다: 팔로워의 action 세그먼트를 연다.
+# 위험한 부분이 거기라 한 곳에 둔다.
+
+
+class ArmBusyError(RuntimeError):
+    """명령 경로를 못 잡는 이유. 호출부가 그대로 사용자에게 보여준다."""
+
+
+def open_action_writer(iface: str, deadman_ms: int):
+    """팔의 명령 경로를 연다. 이미 누가 쥐고 있으면 **거절한다.**
+
+    ⚠ `ActionWriter` 는 `O_CREAT` 라 기존 세그먼트를 **조용히 덮는다.** 추론
+    프록시가 조종 중인데 그 위에 열면 팔의 명령 경로를 가로채는 셈이다.
+    "세그먼트 존재 = 조종 중"은 관례지 강제가 아니므로 여기서 확인한다.
+    """
+    from piper_shm import arm as shm_arm
+
+    name = shm_arm.segment_name(iface, shm_arm.KIND_ACTION)
+    if name in set(shm_arm.list_segments()):
+        raise ArmBusyError(
+            f"{iface} 의 명령 세그먼트를 누가 이미 쥐고 있습니다 — "
+            "추론이나 녹화가 도는 중인지 보세요")
+    return shm_arm.ActionWriter(iface, deadman_ms=deadman_ms)
+
+
+def close_action_writer(writer, iface: str | None) -> None:
+    """닫고 **세그먼트를 지운다** — 브리지가 "소비자 종료"로 처리한다.
+
+    남겨두면 발행자 없는 세그먼트가 되어, 게이트웨이의 장치 감시가
+    "발행이 멈췄다"로 읽는다.
+    """
+    from piper_shm import arm as shm_arm
+
+    if writer is not None:
+        try:
+            writer.close()
+        except Exception as exc:
+            logger.warning("명령 라이터 닫기 실패: %s", exc)
+    if iface:
+        shm_arm.unlink(shm_arm.segment_name(iface, shm_arm.KIND_ACTION))

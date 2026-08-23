@@ -22,13 +22,18 @@ type Props = {
   /** 이 팔에 명령을 보낼 수 있나. 마스터거나 역할을 모르면 못 보낸다. */
   commandable: boolean
   reason?: string
+  /** 짝이 될 리더 팔. 있으면 "리더로 조종" 도 제공한다. */
+  leader?: string
 }
 
-export default function JogPanel({ iface, commandable, reason }: Props) {
+export default function JogPanel({ iface, commandable, reason, leader }: Props) {
   const { notify } = useSystemMessage()
   const [running, setRunning] = useState(false)
   // 시작 자세. **슬라이더의 출발점**이라, 0 이면 첫 조작에 팔이 튄다.
   const [joints, setJoints] = useState<number[]>([])
+  const [relaying, setRelaying] = useState(false)
+  const relayingRef = useRef(false)
+  relayingRef.current = relaying
   const [busy, setBusy] = useState(false)
   const runningRef = useRef(false)
   runningRef.current = running
@@ -74,7 +79,29 @@ export default function JogPanel({ iface, commandable, reason }: Props) {
 
   // ⚠ 화면을 떠나면 **반드시 닫는다.** 열린 채로 두면 추론·녹화가 계속 막히고,
   //   사용자는 왜 막히는지 알 길이 없다.
-  useEffect(() => () => { if (runningRef.current) api.post('/robots/jog/stop', {}).catch(() => {}) }, [])
+  useEffect(() => () => {
+    if (runningRef.current) api.post('/robots/jog/stop', {}).catch(() => {})
+    if (relayingRef.current) api.post('/robots/relay/stop', {}).catch(() => {})
+  }, [])
+
+  const startRelay = async () => {
+    if (!leader) return
+    setBusy(true)
+    try {
+      await api.post('/robots/relay/start', { leader, follower: iface })
+      setRelaying(true)
+    } catch (e) { fail(e, '릴레이를 시작하지 못했습니다') }
+    finally { setBusy(false) }
+  }
+
+  const stopRelay = async () => {
+    setBusy(true)
+    try {
+      await api.post('/robots/relay/stop', {})
+      setRelaying(false)
+    } catch (e) { fail(e, '릴레이를 멈추지 못했습니다') }
+    finally { setBusy(false) }
+  }
 
   const send = (values: Record<string, number>) => {
     api.post('/robots/jog/goal', { iface, values }).catch((e) => {
@@ -94,12 +121,30 @@ export default function JogPanel({ iface, commandable, reason }: Props) {
 
   return (
     <div className="space-y-2">
+      {/* 리더 릴레이 — 같은 명령 경로를 쓰므로 조그와 **동시에 못 켠다**.
+          백엔드의 teleop 세션이 그걸 지키고, 여기서는 서로 가려 둔다. */}
+      {leader && (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-neutral-400">
+            {leader} 로 조종
+            {relaying && <span className="ml-2 text-amber-400">· 따라가는 중</span>}
+          </span>
+          <button onClick={relaying ? stopRelay : startRelay} disabled={busy || running}
+            title={running ? '조그를 먼저 끝내세요' : undefined}
+            className={`px-2 py-1 text-xs rounded text-white disabled:opacity-50 ${
+              relaying ? 'bg-red-600 hover:bg-red-500' : 'bg-purple-700 hover:bg-purple-600'}`}>
+            {relaying ? '릴레이 끝내기' : '리더로 조종'}
+          </button>
+        </div>
+      )}
+
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs text-neutral-400">
           웹 조그
           {running && <span className="ml-2 text-amber-400">· 명령 경로 점유 중</span>}
         </span>
-        <button onClick={running ? stop : start} disabled={busy}
+        <button onClick={running ? stop : start} disabled={busy || relaying}
+          title={relaying ? '릴레이를 먼저 끝내세요' : undefined}
           className={`px-2 py-1 text-xs rounded text-white disabled:opacity-50 ${
             running ? 'bg-red-600 hover:bg-red-500' : 'bg-amber-600 hover:bg-amber-500'}`}>
           {busy ? '…' : running ? '조그 끝내기' : '조그 시작'}

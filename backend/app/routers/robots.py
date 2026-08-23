@@ -461,6 +461,55 @@ async def jog_status():
     return jog_session.status()
 
 
+# ── 리더 릴레이 (feature/teleoperation.md §3-A) ──
+
+
+class RelayStartRequest(BaseModel):
+    leader: str
+    follower: str
+
+
+@router.post("/relay/start")
+async def relay_start(body: RelayStartRequest):
+    """리더 팔이 끄는 대로 팔로워를 따라 움직이게 한다.
+
+    ⚠ 리더에게는 **아무것도 안 보낸다** — 읽기만 한다. 마스터는 외부 명령을
+    무시하므로 보낼 이유도 없다.
+    """
+    from app.services.exclusivity import Activity, require_idle
+    from app.services.relay import RelayError, relay_session
+
+    require_idle(Activity.TELEOP)
+    _require_commandable(body.follower)
+    leader = robot_manager.arms.get(body.leader)
+    if leader is None or not leader.connected:
+        raise HTTPException(400, f"{body.leader} 가 연결돼 있지 않습니다")
+    if leader.role != "leader":
+        raise HTTPException(
+            409, f"{body.leader} 는 리더가 아닙니다 — [찾기] 로 판별하거나 "
+                 "마스터로 설정하세요")
+    try:
+        relay_session.start(body.leader, body.follower)
+    except RelayError as e:
+        raise HTTPException(409, str(e))
+    return {"status": "started", **relay_session.status()}
+
+
+@router.post("/relay/stop")
+async def relay_stop():
+    from app.services.relay import relay_session
+
+    relay_session.stop()
+    return {"status": "stopped"}
+
+
+@router.get("/relay/status")
+async def relay_status():
+    from app.services.relay import relay_session
+
+    return relay_session.status()
+
+
 # ── 설정 저장/로드 ──
 
 class SaveConfigRequest(BaseModel):
