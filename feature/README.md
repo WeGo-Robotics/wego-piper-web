@@ -11,6 +11,7 @@
 | 파라미터 프리셋 | 추론·학습 설정을 이름 붙여 저장·재사용 | 추론 부분이 **#1 단계 2(PARAM_SPEC)에 의존** | [parameter-presets.md](parameter-presets.md) |
 | 데모 시나리오 격차 | [데모 시나리오](../PiPER_AI_데모_시나리오_정리.md) 수행에 필요한 공통 격차 4개(뎁스 경로·에피소드 루프·센서 입력·양팔 수집) 분석 | camerad 없이 가능한 지름길과 미룰 것을 구분 | [demo-scenario-gaps.md](demo-scenario-gaps.md) |
 | 에피소드 오케스트레이터 | 스냅샷→판단→실행→리셋 루프. 스텝은 Python, 시퀀스는 YAML 스펙 (ComfyUI 방식, Lua 기각) | 지금은 백엔드 서비스, Redis 이후 버스 클라이언트로 — 프로토콜은 불변 | [episode-orchestrator.md](episode-orchestrator.md) |
+| 텔레오퍼레이션 | 리더암 릴레이 · 관절 조그 · **엔드포인트(SDK 온보드 IK)** 셋을 한 화면에. 조그는 [manual-control](manual-control.md) 재사용 | shm 명령 경로가 이미 있어 조그는 소비자 하나. 엔드포인트만 `filter_goal` 이 안 걸려 별도 제한이 필요 | [teleoperation.md](teleoperation.md) |
 | 수동 조작 + 중력 보상 | 추론 없이 웹 조그(있는 shm 경로에 소비자만 추가) + MIT 모드 중력 보상 드래그 → 손으로 끌며 녹화(단팔 데이터 수집) | 조그는 robotd(3b-5) 완성으로 **지금 가능**. 중력 보상은 **트랙 E(URDF) 의존** — URDF 수혜자가 둘이 된다 | [manual-control.md](manual-control.md) |
 | 양팔(bimanual) | G4 구현 — 양팔 조립을 wrapper 즉석 코드에서 LeRobot bi 클래스로 내려 녹화·로컬/gRPC 추론·파킹이 한 구현 공유. 핸드오버(우선순위 2)의 블로커 해소 | robotd/shm 이 팔 단위라 **안 겹침** — bi 클래스는 지금 가능, 실질 전제는 하드웨어(팔 4대 + udev) | [bimanual.md](bimanual.md) |
 | 정책 UI 스펙 | 모델별 화면 항목을 YAML 로 선언하고 UI 가 그걸 읽어 동적 구성 | ☑ **완료.** 정책 추가에 손댈 곳이 **6군데 → 0** — 파일 하나면 목록·학습 필드·추론 파라미터·wrapper 클래스가 다 붙는다 | [policy-ui-spec.md](policy-ui-spec.md) |
