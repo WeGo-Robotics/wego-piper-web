@@ -157,8 +157,10 @@ def test_encoder_overlay_never_renders_at_a_mismatched_size():
         "크기를 확인하지 않고 ImageData 를 만든다"
     )
     # 오버레이 재계산 effect 가 시작할 때 옛 것을 버리는가
-    build = src.split("Promise.all([build('A'), build('B')])")[0]
-    assert "setOverlays({ A: null, B: null })" in build[-600:], (
+    # (이미지가 여러 장이라 sid 별 맵이다 — 비우는 건 `setOverlays({})`)
+    assert "Promise.all(filled.map(" in src, "오버레이 재계산 지점이 사라졌다 — 이 테스트가 무의미해졌다"
+    build = src.split("Promise.all(filled.map(")[0]
+    assert "setOverlays({})" in build[-600:], (
         "슬롯이 바뀌어도 옛 오버레이를 들고 있는다"
     )
 

@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """이미지 엔코더 특징 추출 (오프라인 진단용).
 
-추론 루프와 완전히 분리된 1회성 프로세스. 이미지 한 장을 정책의 **이미지 엔코더에만**
+추론 루프와 완전히 분리된 1회성 프로세스. 이미지를 정책의 **이미지 엔코더에만**
 통과시켜 패치 특징을 .npy 로 저장하고 바로 종료한다. 액션은 계산하지 않는다.
 
 이 분리 덕에 백엔드는 torch/lerobot 을 import 하지 않고 저장된 배열을 numpy 로만
-다룰 수 있다(PCA / 코사인 유사도 / k-means). 모델은 요청당 한 번만 GPU를 잡았다 놓는다.
+다룰 수 있다(PCA / 코사인 유사도 / k-means). 모델은 프로세스당 **한 번만** 로드한다 —
+이미지를 여러 장 주면 같은 모델로 순서대로 돌린다. 한 장마다 프로세스를 띄우면
+장당 4초 안팎의 로드가 그대로 곱해진다.
 
 사용:
   python encoder_probe.py --policy-type smolvla --image in.jpg --out /tmp/probe1
   python encoder_probe.py --policy-type act --checkpoint <ckpt> --image-key top \
-      --image in.jpg --out /tmp/probe2
+      --image a.jpg b.jpg --out /tmp/probe2 /tmp/probe3
 
-출력(--out 디렉터리):
+출력(--out 디렉터리, 이미지마다 하나):
   features.npy  (N, D) float32 — 패치 토큰 특징
   input.jpg     모델이 실제로 보는 이미지(리사이즈/패딩 반영)
   meta.json     격자 크기, 유효 영역, 인코더 가중치 통계 등
-meta 는 stdout 으로도 한 줄 JSON 으로 출력한다.
+  error.json    그 이미지만 실패했을 때 (나머지는 계속 진행한다)
+meta 는 stdout 으로도 이미지마다 한 줄 JSON 으로 출력한다.
 """
 
 import argparse
@@ -56,7 +59,8 @@ def _load_image(path: str) -> np.ndarray:
 
     bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if bgr is None:
-        raise SystemExit(f"이미지를 읽을 수 없습니다: {path}")
+        # SystemExit 이 아니다 — 배치에서 한 장이 깨져도 나머지는 돌아야 한다
+        raise RuntimeError(f"이미지를 읽을 수 없습니다: {path}")
     return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
@@ -133,7 +137,8 @@ def _load_ckpt_vision(checkpoint: str, vision_model, connector) -> bool:
     return True
 
 
-def run_smolvla(args, rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, dict]:
+def load_smolvla(args):
+    """모델을 한 번 올리고, 이미지 한 장을 인코딩하는 함수를 돌려준다."""
     import torch
     from transformers import AutoModelForImageTextToText
 
@@ -164,48 +169,52 @@ def run_smolvla(args, rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, dict]:
     device = _pick_device(args.device)
     vision_model.to(device).eval()
     connector.to(device).eval()
+    encoder_stats = _encoder_weight_stats(vision_model)
 
-    h, w = rgb.shape[:2]
-    x = torch.from_numpy(rgb.copy()).permute(2, 0, 1).float().div(255.0).unsqueeze(0)
-    # SmolVLAPolicy.prepare_images 와 동일: 종횡비 유지 리사이즈 + 위/왼쪽 패딩 + [-1,1]
-    padded = resize_with_pad(x, size[0], size[1], pad_value=0)
-    model_view = (padded[0].permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+    def encode(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, dict]:
+        h, w = rgb.shape[:2]
+        x = torch.from_numpy(rgb.copy()).permute(2, 0, 1).float().div(255.0).unsqueeze(0)
+        # SmolVLAPolicy.prepare_images 와 동일: 종횡비 유지 리사이즈 + 위/왼쪽 패딩 + [-1,1]
+        padded = resize_with_pad(x, size[0], size[1], pad_value=0)
+        model_view = (padded[0].permute(1, 2, 0).numpy() * 255).astype(np.uint8)
 
-    t0 = time.monotonic()
-    with torch.inference_mode():
-        hidden = vision_model(pixel_values=(padded * 2.0 - 1.0).to(device)).last_hidden_state
-        if args.tap == "connector":
-            hidden = connector(hidden)
-    feat = hidden[0].float().cpu().numpy()
-    elapsed = (time.monotonic() - t0) * 1000
+        t0 = time.monotonic()
+        with torch.inference_mode():
+            hidden = vision_model(pixel_values=(padded * 2.0 - 1.0).to(device)).last_hidden_state
+            if args.tap == "connector":
+                hidden = connector(hidden)
+        feat = hidden[0].float().cpu().numpy()
+        elapsed = (time.monotonic() - t0) * 1000
 
-    n_patches = feat.shape[0]
-    side = int(round(math.sqrt(n_patches)))
-    patch_px = size[0] / side  # 모델 입력(512) 기준 패치 한 변
+        n_patches = feat.shape[0]
+        side = int(round(math.sqrt(n_patches)))
+        patch_px = size[0] / side  # 모델 입력(512) 기준 패치 한 변
 
-    # 패딩은 위/왼쪽에만 들어간다(resize_with_pad). 패딩에 조금이라도 걸치는
-    # 패치는 유효 영역에서 제외해야 히트맵이 원본과 어긋나지 않는다.
-    ratio = max(w / size[0], h / size[1])
-    pad_w = max(0, size[0] - int(w / ratio))
-    pad_h = max(0, size[1] - int(h / ratio))
+        # 패딩은 위/왼쪽에만 들어간다(resize_with_pad). 패딩에 조금이라도 걸치는
+        # 패치는 유효 영역에서 제외해야 히트맵이 원본과 어긋나지 않는다.
+        ratio = max(w / size[0], h / size[1])
+        pad_w = max(0, size[0] - int(w / ratio))
+        pad_h = max(0, size[1] - int(h / ratio))
 
-    meta = {
-        "grid_h": side,
-        "grid_w": side,
-        "model_w": size[0],
-        "model_h": size[1],
-        "valid_row0": int(math.ceil(pad_h / patch_px)),
-        "valid_col0": int(math.ceil(pad_w / patch_px)),
-        "patch_px_model": round(patch_px, 2),
-        "patch_px_orig_x": round(patch_px * ratio, 2),
-        "patch_px_orig_y": round(patch_px * ratio, 2),
-        "encoder_source": encoder_source,
-        "encoder_stats": _encoder_weight_stats(vision_model),
-        "elapsed_ms": round(elapsed, 1),
-        "device": device,
-        "image_keys": [],
-    }
-    return feat, model_view, meta
+        meta = {
+            "grid_h": side,
+            "grid_w": side,
+            "model_w": size[0],
+            "model_h": size[1],
+            "valid_row0": int(math.ceil(pad_h / patch_px)),
+            "valid_col0": int(math.ceil(pad_w / patch_px)),
+            "patch_px_model": round(patch_px, 2),
+            "patch_px_orig_x": round(patch_px * ratio, 2),
+            "patch_px_orig_y": round(patch_px * ratio, 2),
+            "encoder_source": encoder_source,
+            "encoder_stats": encoder_stats,
+            "elapsed_ms": round(elapsed, 1),
+            "device": device,
+            "image_keys": [],
+        }
+        return feat, model_view, meta
+
+    return encode
 
 
 # ── ACT (ResNet) ──────────────────────────────────────────────────────────────
@@ -255,7 +264,8 @@ def _act_base_backbone():
     }
 
 
-def run_act(args, rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, dict]:
+def load_act(args):
+    """백본을 한 번 올리고, 이미지 한 장을 인코딩하는 함수를 돌려준다."""
     import torch
 
     from lerobot.policies.act.modeling_act import ACTPolicy
@@ -295,43 +305,47 @@ def run_act(args, rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, dict]:
 
     device = _pick_device(args.device)
     backbone.to(device)
-
-    h, w = rgb.shape[:2]
-    x = torch.from_numpy(rgb.copy()).permute(2, 0, 1).float().div(255.0).unsqueeze(0)
-    # ACT 는 리사이즈 없이 원본 해상도를 그대로 백본에 넣는다(VISUAL=MEAN_STD 정규화만).
-    x = (x - mean) / std
-
-    t0 = time.monotonic()
-    with torch.inference_mode():
-        fmap = backbone(x.to(device))["feature_map"]  # (1, C, h', w')
-    elapsed = (time.monotonic() - t0) * 1000
-
-    _, c, gh, gw = fmap.shape
-    # ACT 본체와 동일한 순서: (h w) 로 평탄화 → index = row * gw + col
-    feat = fmap[0].reshape(c, gh * gw).T.float().cpu().numpy()
-
-    meta = {
-        "grid_h": gh,
-        "grid_w": gw,
-        "model_w": w,
-        "model_h": h,
-        "valid_row0": 0,
-        "valid_col0": 0,
-        "patch_px_model": round(w / gw, 2),
-        "patch_px_orig_x": round(w / gw, 2),
-        "patch_px_orig_y": round(h / gh, 2),
-        "encoder_source": encoder_source,
-        "encoder_stats": {
-            "vision_backbone": cfg.get("vision_backbone"),
-            "pretrained_backbone_weights": cfg.get("pretrained_backbone_weights"),
-            "random_init": cfg.get("pretrained_backbone_weights") is None,
-        },
-        "elapsed_ms": round(elapsed, 1),
-        "device": device,
-        "image_keys": image_keys,
-        "image_key": key,
+    encoder_stats = {
+        "vision_backbone": cfg.get("vision_backbone"),
+        "pretrained_backbone_weights": cfg.get("pretrained_backbone_weights"),
+        "random_init": cfg.get("pretrained_backbone_weights") is None,
     }
-    return feat, rgb, meta
+
+    def encode(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, dict]:
+        h, w = rgb.shape[:2]
+        x = torch.from_numpy(rgb.copy()).permute(2, 0, 1).float().div(255.0).unsqueeze(0)
+        # ACT 는 리사이즈 없이 원본 해상도를 그대로 백본에 넣는다(VISUAL=MEAN_STD 정규화만).
+        x = (x - mean) / std
+
+        t0 = time.monotonic()
+        with torch.inference_mode():
+            fmap = backbone(x.to(device))["feature_map"]  # (1, C, h', w')
+        elapsed = (time.monotonic() - t0) * 1000
+
+        _, c, gh, gw = fmap.shape
+        # ACT 본체와 동일한 순서: (h w) 로 평탄화 → index = row * gw + col
+        feat = fmap[0].reshape(c, gh * gw).T.float().cpu().numpy()
+
+        meta = {
+            "grid_h": gh,
+            "grid_w": gw,
+            "model_w": w,
+            "model_h": h,
+            "valid_row0": 0,
+            "valid_col0": 0,
+            "patch_px_model": round(w / gw, 2),
+            "patch_px_orig_x": round(w / gw, 2),
+            "patch_px_orig_y": round(h / gh, 2),
+            "encoder_source": encoder_source,
+            "encoder_stats": encoder_stats,
+            "elapsed_ms": round(elapsed, 1),
+            "device": device,
+            "image_keys": image_keys,
+            "image_key": key,
+        }
+        return feat, rgb, meta
+
+    return encode
 
 
 def main() -> None:
@@ -339,13 +353,13 @@ def main() -> None:
     # ⚠ 선택지를 손으로 안 적는다 — 프로브 되는 정책은 `policies/*.yaml` 이 정한다
     p.add_argument("--policy-type", required=True, choices=probe_policies())
     p.add_argument("--checkpoint", default="", help="체크포인트 경로 (ACT 필수)")
-    p.add_argument("--image", required=True)
+    p.add_argument("--image", required=True, nargs="+", help="이미지 경로 (여러 장 가능)")
     p.add_argument("--image-key", default="", help="ACT 카메라 키 (정규화 통계 선택)")
     # 기본값을 여기서 못 정한다 — 정책마다 다르고 `--policy-type` 을 파싱한 뒤에야
     # 안다. 그래서 빈 값으로 받고 아래에서 스펙의 `default: true` tap 으로 채운다.
     p.add_argument("--tap", default="", choices=[""] + tap_keys(),
                    help="추출 지점. 비우면 정책 스펙의 기본 tap (policies/<type>.yaml)")
-    p.add_argument("--out", required=True)
+    p.add_argument("--out", required=True, nargs="+", help="출력 디렉터리 (--image 와 같은 개수)")
     p.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
     args = p.parse_args()
     # ⚠ 정책 이름으로 갈라 적지 않는다. 예전에는 `args.tap if policy_type ==
@@ -353,38 +367,54 @@ def main() -> None:
     if args.tap not in {t["key"] for t in probe_taps(args.policy_type)}:
         args.tap = default_tap(args.policy_type)
 
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-
-    rgb = _load_image(args.image)
-    orig_h, orig_w = rgb.shape[:2]
+    if len(args.image) != len(args.out):
+        raise SystemExit(f"--image {len(args.image)}개에 --out {len(args.out)}개 — 개수가 같아야 합니다")
 
     started = time.monotonic()
     # ⚠ 이 갈림은 **스펙으로 안 옮긴다.** 아키텍처마다 특징을 뽑는 코드가 다르고
     # 그건 데이터가 아니라 로직이다 (feature/policy-ui-spec.md: "표현이 안 되면
     # 그건 진짜 로직이라는 신호"). 옮길 수 있었던 것 — 선택지·기본 tap·라벨 —
     # 은 이미 `policies/*.yaml` 로 갔다.
-    if args.policy_type == "smolvla":
-        feat, view, meta = run_smolvla(args, rgb)
-    else:
-        feat, view, meta = run_act(args, rgb)
+    encode = load_smolvla(args) if args.policy_type == "smolvla" else load_act(args)
+    load_ms = round((time.monotonic() - started) * 1000, 1)
+    _log(f"모델 로드 {load_ms:.0f}ms, 이미지 {len(args.image)}장")
 
-    meta.update({
-        "policy_type": args.policy_type,
-        "tap": args.tap,
-        "checkpoint": args.checkpoint,
-        "orig_w": orig_w,
-        "orig_h": orig_h,
-        "n_patches": int(feat.shape[0]),
-        "dim": int(feat.shape[1]),
-        "total_ms": round((time.monotonic() - started) * 1000, 1),
-    })
-    meta.setdefault("image_key", args.image_key)
+    failed = 0
+    for image_path, out_path in zip(args.image, args.out):
+        out = Path(out_path)
+        out.mkdir(parents=True, exist_ok=True)
+        t0 = time.monotonic()
+        try:
+            rgb = _load_image(image_path)
+            feat, view, meta = encode(rgb)
+        except Exception as exc:  # 한 장의 실패가 배치를 죽이지 않는다
+            failed += 1
+            _log(f"{image_path}: {exc}")
+            (out / "error.json").write_text(json.dumps({"error": str(exc)}))
+            continue
 
-    np.save(out / "features.npy", feat.astype(np.float32))
-    _save_jpg(out / "input.jpg", view)
-    (out / "meta.json").write_text(json.dumps(meta, indent=2))
-    print(json.dumps(meta), flush=True)
+        orig_h, orig_w = rgb.shape[:2]
+        meta.update({
+            "policy_type": args.policy_type,
+            "tap": args.tap,
+            "checkpoint": args.checkpoint,
+            "orig_w": orig_w,
+            "orig_h": orig_h,
+            "n_patches": int(feat.shape[0]),
+            "dim": int(feat.shape[1]),
+            "load_ms": load_ms,
+            "total_ms": round(load_ms + (time.monotonic() - t0) * 1000, 1),
+        })
+        meta.setdefault("image_key", args.image_key)
+
+        np.save(out / "features.npy", feat.astype(np.float32))
+        _save_jpg(out / "input.jpg", view)
+        (out / "meta.json").write_text(json.dumps(meta, indent=2))
+        print(json.dumps(meta), flush=True)
+
+    # 전부 실패했을 때만 실패로 끝낸다 — 일부 실패는 error.json 이 말해 준다
+    if failed and failed == len(args.image):
+        raise SystemExit("모든 이미지 인코딩에 실패했습니다")
 
 
 if __name__ == "__main__":

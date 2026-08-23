@@ -27,8 +27,13 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 PROBE_SCRIPT = str(Path(__file__).resolve().parents[3] / "wrapper" / "encoder_probe.py")
-MAX_SESSIONS = 8
+# 슬롯마다 이미지를 여러 장 두고 슬롯도 여러 개다. 세션 하나가 SigLIP 기준
+# 1024×768 float32 ≈ 3MB 이므로 48개여도 /dev/shm 150MB 안팎이다.
+MAX_SESSIONS = 48
+# 배치 한 번의 한도. 세션 상한보다 작아야 한 배치가 자기 자신을 밀어내지 않는다.
+MAX_BATCH = 24
 PROBE_TIMEOUT = 300.0
+PROBE_TIMEOUT_PER_IMAGE = 30.0  # CPU 폴백이면 장당 수 초 — 배치 길이에 비례해 늘린다
 
 
 def _probe_python() -> str:
@@ -109,49 +114,89 @@ class EncoderProbeManager:
         tap: str = "siglip",
         device: str = "cuda",
     ) -> ProbeSession:
-        """subprocess 로 엔코더를 1회 실행하고 세션을 만든다 (블로킹)."""
-        sid = uuid.uuid4().hex[:12]
-        out = _base_dir() / sid
-        out.mkdir(parents=True, exist_ok=True)
-        src = out / "source.jpg"
-        src.write_bytes(image_bytes)
+        """이미지 한 장 — `run_many` 의 특수한 경우."""
+        result = self.run_many([image_bytes], policy_type, checkpoint, image_key, tap, device)[0]
+        if isinstance(result, str):
+            raise RuntimeError(result)
+        return result
+
+    def run_many(
+        self,
+        images: list[bytes],
+        policy_type: str,
+        checkpoint: str = "",
+        image_key: str = "",
+        tap: str = "siglip",
+        device: str = "cuda",
+    ) -> list[ProbeSession | str]:
+        """subprocess **하나**로 여러 장을 인코딩한다 (블로킹).
+
+        모델 로드(4초 안팎)를 배치당 한 번만 치른다. 반환 목록은 입력 순서와 같고,
+        한 장만 실패하면 그 자리에 사유 문자열이 들어간다 — 프로세스 자체가 죽었을
+        때만 예외다.
+        """
+        if not images:
+            return []
+        if len(images) > MAX_BATCH:
+            raise RuntimeError(f"한 번에 {MAX_BATCH}장까지 인코딩할 수 있습니다 ({len(images)}장 요청)")
+
+        root = _base_dir()
+        outs: list[Path] = []
+        for image_bytes in images:
+            out = root / uuid.uuid4().hex[:12]
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "source.jpg").write_bytes(image_bytes)
+            outs.append(out)
 
         cmd = [
             _probe_python(), "-u", PROBE_SCRIPT,
             "--policy-type", policy_type,
-            "--image", str(src),
-            "--out", str(out),
             "--device", device,
             "--tap", tap,
+            "--image", *[str(o / "source.jpg") for o in outs],
+            "--out", *[str(o) for o in outs],
         ]
         if checkpoint:
             cmd += ["--checkpoint", checkpoint]
         if image_key:
             cmd += ["--image-key", image_key]
 
-        logger.info("encoder_probe: %s", " ".join(cmd))
+        timeout = PROBE_TIMEOUT + PROBE_TIMEOUT_PER_IMAGE * len(images)
+        logger.info("encoder_probe (%d장): %s", len(images), " ".join(cmd))
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=PROBE_TIMEOUT)
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired:
-            shutil.rmtree(out, ignore_errors=True)
-            raise RuntimeError(f"엔코더 실행이 {PROBE_TIMEOUT:.0f}초를 초과했습니다")
+            for o in outs:
+                shutil.rmtree(o, ignore_errors=True)
+            raise RuntimeError(f"엔코더 실행이 {timeout:.0f}초를 초과했습니다")
 
         if proc.returncode != 0:
-            shutil.rmtree(out, ignore_errors=True)
+            for o in outs:
+                shutil.rmtree(o, ignore_errors=True)
             tail = (proc.stderr or proc.stdout or "").strip().splitlines()
             raise RuntimeError(tail[-1] if tail else f"엔코더 실행 실패 (code {proc.returncode})")
 
-        meta_path = out / "meta.json"
-        if not meta_path.exists():
-            shutil.rmtree(out, ignore_errors=True)
-            raise RuntimeError("엔코더가 결과를 남기지 않았습니다")
-
-        meta = json.loads(meta_path.read_text())
-        sess = ProbeSession(sid=sid, path=out, meta=meta)
-        meta["feature_stats"] = feature_stats(sess)
-        self._sessions[sid] = sess
+        results: list[ProbeSession | str] = []
+        for out in outs:
+            meta_path = out / "meta.json"
+            if not meta_path.exists():
+                err_path = out / "error.json"
+                reason = "엔코더가 결과를 남기지 않았습니다"
+                if err_path.exists():
+                    try:
+                        reason = json.loads(err_path.read_text()).get("error") or reason
+                    except ValueError:
+                        pass
+                shutil.rmtree(out, ignore_errors=True)
+                results.append(reason)
+                continue
+            meta = json.loads(meta_path.read_text())
+            sess = ProbeSession(sid=out.name, path=out, meta=meta)
+            meta["feature_stats"] = feature_stats(sess)
+            self._sessions[sess.sid] = sess
+            results.append(sess)
         self._evict()
-        return sess
+        return results
 
 
 # ── 특징 분석 (numpy) ──────────────────────────────────────────────────────────
@@ -206,6 +251,48 @@ def cosine_map(target: ProbeSession, ref: ProbeSession, patch: int) -> dict:
     if target is ref:
         out.update(_locality(target, values, patch, mask))
     return out
+
+
+def patch_matrix(sessions: list[ProbeSession | None], patch: int) -> dict:
+    """여러 이미지의 **같은 패치 위치** 특징끼리 코사인 유사도 행렬.
+
+    "조명·위치를 바꿔 찍은 장면들에서 그 자리 특징이 얼마나 같게 나오나"를 표 하나로
+    본다. 패치 번호가 격자를 벗어나거나 패딩에 걸린 이미지, 차원이 다른 이미지, 만료된
+    세션(None)은 행·열이 비어(null) 나온다 — 한 장 때문에 표 전체가 실패하지 않는다.
+    """
+    vecs: list[np.ndarray | None] = []
+    for sess in sessions:
+        if sess is None:
+            vecs.append(None)
+            continue
+        feat = sess.features()
+        if not 0 <= patch < feat.shape[0] or not sess.valid_mask()[patch]:
+            vecs.append(None)
+            continue
+        vecs.append(_l2norm(feat[patch]))
+
+    dim = next((v.shape[0] for v in vecs if v is not None), None)
+    vecs = [v if v is not None and v.shape[0] == dim else None for v in vecs]
+
+    n = len(vecs)
+    matrix: list[list[float | None]] = [[None] * n for _ in range(n)]
+    off_diag: list[float] = []
+    for i in range(n):
+        for j in range(n):
+            a, b = vecs[i], vecs[j]
+            if a is None or b is None:
+                continue
+            v = round(float(a @ b), 4)
+            matrix[i][j] = v
+            if i < j:
+                off_diag.append(v)
+    return {
+        "patch": patch,
+        "valid": [v is not None for v in vecs],
+        "matrix": matrix,
+        "mean": round(float(np.mean(off_diag)), 4) if off_diag else None,
+        "min": round(float(np.min(off_diag)), 4) if off_diag else None,
+    }
 
 
 def _locality(sess: ProbeSession, values: np.ndarray, patch: int, mask: np.ndarray, top: int = 20) -> dict:
