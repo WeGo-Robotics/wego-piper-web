@@ -1,6 +1,20 @@
 import { useEffect, useState, useCallback } from 'react'
+import ServicesPanel from '../components/ServicesPanel'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
+
+/**
+ * 설정 — 탭으로 나눈다.
+ *
+ * 한 장에 계속 쌓으면 스크롤로 찾게 되고, 서로 상관없는 것들이 섞인다.
+ * 탭 목록은 **여기 한 곳**에서 나온다 — `pages.ts` 가 페이지에 대해 하는 일과 같다.
+ */
+
+const TABS = [
+  { id: 'general', label: '일반' },
+  { id: 'services', label: '서비스' },
+] as const
+type TabId = (typeof TABS)[number]['id']
 
 type ModelPath = { path: string; exists: boolean }
 
@@ -10,6 +24,7 @@ export default function SettingsPage() {
   const { notify } = useSystemMessage()
   const notifyError = (text: string) =>
     notify({ level: 'error', text, source: '설정' })
+  const [tab, setTab] = useState<TabId>('general')
   const [paths, setPaths] = useState<ModelPath[]>([])
   const [newPath, setNewPath] = useState('')
 
@@ -41,7 +56,25 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">설정</h1>
 
-      {/* 모델 검색 경로 */}
+      <div className="flex gap-1 border-b border-neutral-700">
+        {TABS.map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`-mb-px border-b-2 px-3 py-1.5 text-sm transition-colors ${
+              tab === t.id
+                ? 'border-blue-500 text-white'
+                : 'border-transparent text-neutral-400 hover:text-neutral-200'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'services' && (
+        <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5">
+          <ServicesPanel />
+        </div>
+      )}
+
+      {tab === 'general' && (
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5 space-y-4">
         <div>
           <h2 className="text-lg font-semibold">모델 검색 경로</h2>
@@ -69,6 +102,7 @@ export default function SettingsPage() {
             className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white">추가</button>
         </div>
       </div>
+      )}
     </div>
   )
 }

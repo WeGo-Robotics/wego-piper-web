@@ -24,8 +24,8 @@ logging.getLogger("uvicorn.access").addFilter(_QuietAccessFilter())
 from app.routers import (
     activity, cameras, datasets, debug_logs, devices, encoder, estop, eval_log,
     external, health, hub, inference, logs, models, orchestrator, params, phase,
-    policies, policy_server, presets, recording, robots, training, vision, ws,
-    yolo_train,
+    policies, policy_server, presets, recording, robots, system, training, vision,
+    ws, yolo_train,
 )
 
 # 라우터 목록 — 등록 누락을 구조적으로 막는다.
@@ -35,7 +35,7 @@ from app.routers import (
 # `pkgutil` 자동 순회는 일부러 쓰지 않는다 — 등록 순서가 암묵적이 되고 import 부작용이 숨는다.
 ROUTERS = [
     health, ws, estop, params, models, datasets, hub, inference, eval_log,
-    robots, cameras, logs, debug_logs, training, recording, policy_server,
+    robots, cameras, logs, debug_logs, training, recording, policy_server, system,
     encoder, activity, policies, presets, phase, devices, vision, yolo_train,
     orchestrator, external,
 ]

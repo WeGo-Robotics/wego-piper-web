@@ -47,3 +47,22 @@ def isolated_bus(monkeypatch):
     except Exception:
         return          # redis 미설치 환경 — 버스 테스트는 어차피 skip 된다
     monkeypatch.setattr(bus_client, "url", lambda: TEST_REDIS_URL)
+
+
+def code_only(src: str) -> str:
+    """주석을 걷어낸 소스.
+
+    ⚠ 소스를 문자열로 뒤지는 테스트에서 **주석이 자꾸 걸린다.** "`window.confirm` 을
+    쓰지 않는다"고 적어둔 설명이 "`window.confirm` 이 있으면 실패" 검사에 걸리는 식
+    이다 — 이 저장소에서 두 번 났다(`shadow-[0_0_0_9999px_…]`, `window.confirm`).
+
+    금지 검사에는 이걸 통과시킨 소스를 쓴다. **왜 안 쓰는지 적어둔 주석이
+    그 규칙을 깨뜨리면 안 된다.**
+    """
+    import re
+
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)      # /* … */
+    src = re.sub(r"^\s*#.*$", "", src, flags=re.M)       # 파이썬 주석
+    # `//` 는 URL(`https://`) 안에도 나온다 — 앞이 `:` 가 아닐 때만 주석으로 본다
+    src = re.sub(r"(?<!:)//.*$", "", src, flags=re.M)
+    return src
