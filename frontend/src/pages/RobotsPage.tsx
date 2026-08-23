@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
+import JogPanel from '../components/JogPanel'
 import { JOINT_NAMES } from '../config/joints'
 
 // ── 파킹 보정 모달 ──
@@ -720,6 +721,18 @@ export default function RobotsPage() {
                   {/* 설정 패널 (펼침) */}
                   {isExpanded && (
                     <div className="border-t border-neutral-700 p-3 space-y-3 bg-neutral-900/50">
+                      {/* 웹 조그 — 추론을 안 띄우고 이 팔을 움직인다.
+                          마스터는 외부 명령을 무시하므로 이유를 적고 막는다. */}
+                      <JogPanel
+                        iface={arm.iface}
+                        commandable={arm.connected && arm.role === 'follower'}
+                        reason={
+                          !arm.connected ? '연결되지 않아 조작할 수 없습니다'
+                          : arm.role === 'leader'
+                            ? '마스터(리더)는 외부 명령을 무시합니다 — 슬레이브로 바꾸거나 팔로워 팔을 고르세요'
+                            : '역할을 모릅니다 — 먼저 [찾기] 로 판별하세요'
+                        } />
+
                       <h4 className="text-xs font-semibold text-neutral-400">
                         {arm.role === 'leader' ? 'Leader 설정' : 'Follower 설정'}
                       </h4>

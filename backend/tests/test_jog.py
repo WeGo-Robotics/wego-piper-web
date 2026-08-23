@@ -142,3 +142,54 @@ def test_jog_start_goes_through_both_guards():
     src = inspect.getsource(robots.jog_start)
     assert "require_idle(Activity.TELEOP)" in src
     assert "_require_commandable" in src
+
+
+# ── 화면 ────────────────────────────────────────────────────────────────────
+
+def _src(rel: str) -> str:
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[2] / "frontend" / "src" / rel).read_text()
+
+
+def test_the_slider_has_no_built_in_destination():
+    """⚠ 어디로 보내는지가 이 컴포넌트에서 **가장 중요한 사실**이다.
+
+    기본 목적지가 있으면 호출부가 그걸 안 보고 지나간다 — 추론 경로로 보내는 줄
+    모르고 조그에 쓰거나, 그 반대가 된다.
+    """
+    from conftest import code_only
+
+    # ⚠ 주석을 걷어내고 본다 — **왜 안 박아뒀는지** 적어둔 설명이 이 검사에 걸리면
+    #   안 된다 (이 저장소에서 세 번째다: 9999px, window.confirm, 그리고 이것).
+    src = code_only(_src("components/ManualControlPanel.tsx"))
+    assert "manual-action" not in src, "목적지가 박혀 있다"
+    assert "onSend" in src and "onSend?" not in src, "목적지가 선택 사항이면 기본이 생긴다"
+
+
+def test_both_call_sites_say_where_they_send():
+    src = _src("pages/InferencePage.tsx")
+    assert "params/manual-action" in src, "추론 경로가 사라졌다"
+    jog = _src("components/JogPanel.tsx")
+    assert "robots/jog/goal" in jog
+
+
+def test_leaving_the_page_closes_the_session():
+    """⚠ 열린 채로 두면 추론·녹화가 계속 막히고, **왜 막히는지 알 길이 없다.**"""
+    src = _src("components/JogPanel.tsx")
+    cleanup = src.split("useEffect(() => () =>", 1)[1][:200]
+    assert "jog/stop" in cleanup, "언마운트에서 안 닫는다"
+
+
+def test_the_sliders_start_from_the_arms_pose():
+    """0 에서 시작하면 첫 조작이 **정규화 좌표의 가운데로 가는 큰 이동**이 된다."""
+    src = _src("components/JogPanel.tsx")
+    assert "parking/joints" in src, "현재 자세를 안 읽는다"
+    assert "if (!runningRef.current) read()" in src, \
+        "조그 중에도 읽는다 — 슬라이더와 팔이 서로를 밀어 떨린다"
+
+
+def test_a_master_arm_is_refused_on_screen_too():
+    """백엔드가 막아도 화면이 버튼을 주면 사용자는 눌러보고 나서야 안다."""
+    src = _src("pages/RobotsPage.tsx")
+    assert "arm.role === 'follower'" in src, "아무 팔에나 조그를 준다"
+    assert "마스터(리더)는 외부 명령을 무시합니다" in src, "막기만 하고 이유가 없다"

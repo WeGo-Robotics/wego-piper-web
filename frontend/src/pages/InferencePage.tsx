@@ -803,6 +803,8 @@ export default function InferencePage() {
           <ManualControlPanel
             currentJoints={telemetry?.joints ?? []}
             disabled={!paused}
+            // 추론 경로 — 정책을 일시정지한 채 wrapper 에 목표를 밀어넣는다
+            onSend={(action) => { api.post('/params/manual-action', { action }).catch(() => {}) }}
           />
           <EvalPanel checkpoint={selectedModel} preset={activePreset} params={params} />
         </div>
