@@ -31,6 +31,8 @@ FIND_TIMEOUT_SEC = 30
 class RobotHub:
     def __init__(self) -> None:
         self.arms: dict[str, Arm] = {}
+        # 말단 조그의 직전 명령. 도달 확인을 **다음 명령 때** 하려고 들고 있다.
+        self._pending: dict[str, dict] = {}
         self._motion: dict = {}
 
     # ── 스캔/연결 ──
@@ -121,7 +123,7 @@ class RobotHub:
         arm = self.arms.get(iface)
         return bool(arm and arm.disable_torque())
 
-    # 말단 조그의 도달 대기. 넘으면 "못 가는 방향"으로 본다.
+    # 직전 명령이 도달했는지 **다음 명령 때** 본다. 그만큼 지났어야 판정이 뜻이 있다.
     END_POSE_SETTLE_S = 2.0
 
     def jog_end_pose(self, iface: str, axis: str, delta: float,
@@ -145,18 +147,46 @@ class RobotHub:
         if target is None:
             return {"ok": False, "error": why, "pose": current}
 
+        # ⚠ **직전 명령의 도달을 여기서 본다 — 보내기 전에.**
+        #
+        #   원래는 보낸 뒤 2초를 기다려 확인했는데, 그러면 버튼 한 번에 UI 가
+        #   2초 잠긴다. 조그는 연타하는 물건이라 그게 못 쓸 정도로 느렸다.
+        #
+        #   확인이 필요한 순간은 "못 가는 방향으로 **또** 미는" 때다. 그 순간이
+        #   바로 다음 명령이므로, 여기서 보면 기다릴 필요가 없다.
+        stuck = self._check_previous(iface, current, axis, delta)
+        if stuck:
+            return {"ok": False, "error": stuck, "pose": current}
+
         ok, msg = arm.move_end_pose(target)
         if not ok:
+            self._pending.pop(iface, None)
             return {"ok": False, "error": msg, "pose": current}
 
-        time.sleep(self.END_POSE_SETTLE_S)
-        now = arm.read_end_pose() or current
-        if not reached(current, target, now):
-            # ⚠ 더 보내지 않는다. IK 해가 없는 곳을 계속 밀면 팔이 떨거나
-            #   특이점에서 튄다 — 못 가는 방향이라고 말해야 한다.
-            return {"ok": False, "error": "그 방향으로는 못 갑니다 (도달 실패)",
-                    "pose": now, "target": target}
-        return {"ok": True, "pose": now, "target": target}
+        self._pending[iface] = {"before": current, "target": target,
+                                "axis": axis, "delta": delta, "at": time.time()}
+        return {"ok": True, "pose": current, "target": target, "sent": True}
+
+    def _check_previous(self, iface: str, now: dict, axis: str, delta: float) -> str | None:
+        """직전 명령이 못 갔는데 **같은 방향으로 또** 미는가. 그러면 사유를 돌려준다.
+
+        같은 방향만 막는다 — 못 가는 쪽으로 계속 밀면 팔이 떨거나 특이점에서
+        튀지만, 빠져나오는 방향까지 막으면 갇힌다(작업 공간 상자와 같은 규율).
+        """
+        from piper_robot.endpose import reached
+
+        prev = self._pending.get(iface)
+        if not prev:
+            return None
+        if time.time() - prev["at"] < self.END_POSE_SETTLE_S:
+            return None          # 아직 가는 중일 수 있다
+        self._pending.pop(iface, None)
+        if reached(prev["before"], prev["target"], now):
+            return None
+        same_way = prev["axis"] == axis and (prev["delta"] > 0) == (delta > 0)
+        if not same_way:
+            return None
+        return "그 방향으로는 못 갑니다 (직전 명령이 도달하지 못했습니다)"
 
     def read_end_pose(self, iface: str) -> dict | None:
         arm = self.arms.get(iface)

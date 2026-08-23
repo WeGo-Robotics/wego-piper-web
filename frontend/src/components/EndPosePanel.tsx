@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
 
@@ -28,7 +28,9 @@ export default function EndPosePanel({ iface, enabled }: { iface: string; enable
   const { notify } = useSystemMessage()
   const [pose, setPose] = useState<Pose | null>(null)
   const [box, setBox] = useState<Box | null>(null)
-  const [busy, setBusy] = useState(false)
+  const trackRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // 화면을 떠나면 폴링을 멈춘다 — 안 그러면 모달을 닫아도 계속 읽는다
+  useEffect(() => () => { if (trackRef.current) clearInterval(trackRef.current) }, [])
   const [stepMm, setStepMm] = useState(5)
   const [stepDeg, setStepDeg] = useState(2)
 
@@ -40,18 +42,38 @@ export default function EndPosePanel({ iface, enabled }: { iface: string; enable
 
   useEffect(() => { if (enabled) read() }, [enabled, read])
 
-  const jog = async (axis: string, delta: number) => {
-    setBusy(true)
-    try {
-      const r = await api.post<{ pose: Pose }>('/robots/end-pose/jog', { iface, axis, delta })
-      setPose(r.pose)
-    } catch (e) {
-      // 상자 밖·도달 실패 모두 여기로 온다. 백엔드가 문장을 만든다 —
-      // 화면이 조립하면 "왜 안 갔는지"가 두 곳에서 갈린다.
-      notify({ level: 'warn', source: '말단 조그',
-               text: e instanceof Error ? e.message : '움직이지 못했습니다' })
+  /**
+   * 한 걸음 보낸다. **응답을 기다리며 잠기지 않는다.**
+   *
+   * ⚠ 예전에는 백엔드가 2초를 기다려 도달을 확인하고 답했다 — 버튼 한 번에 UI 가
+   *   2초 잠겼고, 조그는 연타하는 물건이라 못 쓸 정도였다. 이제 명령을 보내고
+   *   바로 풀리며, **팔이 가는 동안 자세만 따라 읽어** 움직임이 보이게 한다.
+   *   도달 확인은 백엔드가 다음 명령 때 한다(막아야 할 순간이 거기다).
+   */
+  const jog = (axis: string, delta: number) => {
+    api.post('/robots/end-pose/jog', { iface, axis, delta })
+      .catch((e) => {
+        // 상자 밖·도달 실패 모두 여기로 온다. 백엔드가 문장을 만든다 —
+        // 화면이 조립하면 "왜 안 갔는지"가 두 곳에서 갈린다.
+        notify({ level: 'warn', source: '말단 조그',
+                 text: e instanceof Error ? e.message : '움직이지 못했습니다' })
+      })
+    // 가는 동안 자세를 따라 읽는다. 안 하면 눌러도 화면이 가만히 있어
+    // "안 먹었나" 싶어 또 누르게 된다.
+    track()
+  }
+
+  /** 잠깐 동안 자세를 자주 읽는다. 겹쳐 부르면 앞의 것을 대신한다. */
+  const track = () => {
+    if (trackRef.current) clearInterval(trackRef.current)
+    let left = 12                       // 0.25초 × 12 ≈ 3초
+    trackRef.current = setInterval(() => {
       read()
-    } finally { setBusy(false) }
+      if (--left <= 0 && trackRef.current) {
+        clearInterval(trackRef.current)
+        trackRef.current = null
+      }
+    }, 250)
   }
 
   if (!enabled) return null
@@ -94,9 +116,9 @@ export default function EndPosePanel({ iface, enabled }: { iface: string; enable
           {(axes as { axis: string; label: string }[]).map(({ axis, label }) => (
             <div key={axis} className="flex items-center gap-1">
               <span className="flex-1 text-[10px] text-neutral-500">{label}</span>
-              <button onClick={() => jog(axis, -(step as number))} disabled={busy}
+              <button onClick={() => jog(axis, -(step as number))}
                 className="rounded bg-neutral-700 px-1.5 py-0.5 text-xs hover:bg-neutral-600 disabled:opacity-40">−</button>
-              <button onClick={() => jog(axis, step as number)} disabled={busy}
+              <button onClick={() => jog(axis, step as number)}
                 className="rounded bg-neutral-700 px-1.5 py-0.5 text-xs hover:bg-neutral-600 disabled:opacity-40">+</button>
             </div>
           ))}

@@ -116,7 +116,10 @@ def test_the_hub_checks_the_box_before_commanding():
 
     src = inspect.getsource(RobotHub.jog_end_pose)
     assert src.index("step_target") < src.index("move_end_pose")
-    assert "reached(" in src, "도달 확인을 안 한다"
+    # 도달 확인은 **다음 명령 때** 한다 (기다리지 않으려고) — 그쪽에 있어야 한다
+    assert "reached(" in inspect.getsource(RobotHub._check_previous), "도달 확인을 안 한다"
+    assert src.index("_check_previous") < src.index("move_end_pose"), \
+        "직전 실패를 보기 전에 또 보낸다"
 
 
 def test_the_route_never_takes_an_absolute_pose():
@@ -228,3 +231,67 @@ def test_excursion_measures_how_far_outside():
     assert box.excursion(55, 0, 200) == pytest.approx(45)
     # 여러 축이 함께 나가면 합친다 — 한 축만 고쳐도 나아진 것으로 본다
     assert box.excursion(55, 400, 200) == pytest.approx(145)
+
+
+def test_the_command_does_not_wait_for_the_arm_to_arrive():
+    """**회귀 — 실기에서 못 쓸 정도로 느렸다.**
+
+    도달을 2초 기다린 뒤 답하면 버튼 한 번에 UI 가 2초 잠긴다. 조그는 연타하는
+    물건이라 그게 치명적이다.
+    """
+    import inspect
+
+    from piper_robot.hub import RobotHub
+
+    src = inspect.getsource(RobotHub.jog_end_pose)
+    assert "time.sleep" not in src, "보내고 기다린다 — 화면이 그만큼 잠긴다"
+    assert "_check_previous" in src, "그럼 도달 확인은 어디서 하나"
+
+
+def test_pushing_the_same_bad_direction_twice_is_refused():
+    """확인이 필요한 순간은 "못 가는 방향으로 **또** 미는" 때다 —
+    그 순간이 바로 다음 명령이므로 거기서 보면 기다릴 필요가 없다."""
+    from piper_robot.hub import RobotHub
+
+    hub = RobotHub()
+    hub._pending["can1"] = {
+        "before": HOME, "target": dict(HOME, z=HOME["z"] + 5_000),
+        "axis": "z", "delta": 5, "at": 0,      # 오래전 = 판정할 때가 됐다
+    }
+    # 팔이 그대로다 = 직전 명령이 못 갔다
+    assert hub._check_previous("can1", HOME, "z", 5), "같은 방향인데 안 막는다"
+
+
+def test_the_opposite_direction_is_still_allowed():
+    """빠져나오는 방향까지 막으면 갇힌다 — 작업 공간 상자와 같은 규율."""
+    from piper_robot.hub import RobotHub
+
+    hub = RobotHub()
+    pend = {"before": HOME, "target": dict(HOME, z=HOME["z"] + 5_000),
+            "axis": "z", "delta": 5, "at": 0}
+    hub._pending["can1"] = dict(pend)
+    assert hub._check_previous("can1", HOME, "z", -5) is None, "반대 방향을 막는다"
+    hub._pending["can1"] = dict(pend)
+    assert hub._check_previous("can1", HOME, "x", 5) is None, "다른 축을 막는다"
+
+
+def test_a_command_still_settling_is_not_judged():
+    """보내자마자 판정하면 **가는 중인 것을 못 갔다고** 한다."""
+    import time
+
+    from piper_robot.hub import RobotHub
+
+    hub = RobotHub()
+    hub._pending["can1"] = {"before": HOME, "target": dict(HOME, z=HOME["z"] + 5_000),
+                            "axis": "z", "delta": 5, "at": time.time()}
+    assert hub._check_previous("can1", HOME, "z", 5) is None
+
+
+def test_the_screen_watches_the_arm_while_it_moves():
+    """안 하면 눌러도 화면이 가만히 있어 "안 먹었나" 싶어 또 누르게 된다."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "components"
+           / "EndPosePanel.tsx").read_text()
+    assert "track()" in src and "setInterval" in src
+    assert "disabled={busy}" not in src, "버튼이 응답을 기다리며 잠긴다"
