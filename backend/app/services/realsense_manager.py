@@ -109,8 +109,10 @@ class RealSenseHub:
                           default={"ok": False, "error": "rsd 가 응답하지 않습니다"},
                           timeout=30) or {"ok": False, "error": "응답 없음"}
 
-    def set_background_mask(self, cam_id: str, enabled: bool) -> tuple[bool, str]:
-        return _pair(self._call("set_background_mask", cam_id, enabled),
+    def set_background_mask(self, cam_id: str, enabled: bool,
+                            far_mm=None, keep_unknown=None) -> tuple[bool, str]:
+        return _pair(self._call("set_background_mask", cam_id, enabled,
+                                far_mm, keep_unknown),
                      "배경 마스킹을 바꾸지 못했습니다")
 
     def set_depth_encoding(self, cam_id: str, near_mm: int, far_mm: int) -> tuple[bool, str]:

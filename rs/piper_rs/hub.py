@@ -129,9 +129,17 @@ class _RSDevice:
         # raw 한 단위가 몇 미터인가. **장치가 답한다** — D435 는 0.001 이지만
         # D405 는 0.0001 이라 안 물어보면 10배 틀린 거리를 인코딩한다.
         self.depth_units_m: float = DEFAULT_UNITS_M
-        # 깊이로 컬러의 배경을 지울 것인가. `depth_encoding.far_mm` 을 경계로 쓴다 —
-        # 창이 둘이면 사람이 둘 다 맞춰야 하고, 어긋나면 조용히 이상해진다.
+        # 깊이로 컬러의 배경을 지울 것인가.
         self.mask_background: bool = False
+        # 지우는 경계(mm). **None 이면 깊이 창의 `far_mm` 을 따라간다** — 처음엔
+        # 그 값만 썼는데, 인코딩 창은 해상도를 위해 좁히고 마스킹은 더 멀리까지
+        # 남기고 싶은 경우가 갈렸다. 기본을 따라가게 두면 둘을 맞출 필요가 없고,
+        # 필요할 때만 떼어낼 수 있다.
+        self.mask_far_mm: float | None = None
+        # 깊이를 못 읽은 픽셀을 남길 것인가. 기본은 남긴다 — D405 는 프레임의
+        # 42% 가 무효라, 지우면 물체 한가운데가 뚫린다. 다만 깊이가 잘 잡히는
+        # 장면에서는 지우는 쪽이 깔끔해서 **장면이 정할 일**이다.
+        self.mask_keep_unknown: bool = True
         # 정렬기. **마스킹을 켤 때만 만든다** — 매 프레임 비용이 붙는다.
         self._align = None
         self._mask_warned = False
@@ -492,8 +500,13 @@ class _RSDevice:
                                "배경 마스킹을 건너뜁니다",
                                self.serial, bgr.shape[:2], depth_aligned.shape)
             return bgr
-        return apply_mask(bgr, depth_aligned,
-                          float(self.depth_encoding.far_mm), self.depth_units_m)
+        return apply_mask(bgr, depth_aligned, self.effective_mask_far_mm,
+                          self.depth_units_m, keep_unknown=self.mask_keep_unknown)
+
+    @property
+    def effective_mask_far_mm(self) -> float:
+        """지금 실제로 쓰이는 경계. 따로 안 정했으면 깊이 창을 따라간다."""
+        return float(self.mask_far_mm if self.mask_far_mm else self.depth_encoding.far_mm)
 
     def _read_loop(self) -> None:
         import numpy as np
@@ -996,7 +1009,8 @@ class RealSenseHub:
                         float(c.get("value") or 1000))
         return 1.0, 165000.0, 1000.0
 
-    def set_background_mask(self, cam_id: str, enabled: bool) -> tuple[bool, str]:
+    def set_background_mask(self, cam_id: str, enabled: bool,
+                            far_mm=None, keep_unknown=None) -> tuple[bool, str]:
         """깊이로 컬러의 배경을 지울지 켜고 끈다. **다음 프레임부터 적용된다.**
 
         경계는 `depth_encoding.far_mm` 이다 — 창을 따로 두지 않는다.
@@ -1013,9 +1027,16 @@ class RealSenseHub:
         if dev is None:
             return False, f"RealSense {serial} not found"
         dev.mask_background = bool(enabled)
+        if far_mm is not None:
+            # 0 이나 None 은 "깊이 창을 따라간다"는 뜻이다
+            dev.mask_far_mm = float(far_mm) if far_mm else None
+        if keep_unknown is not None:
+            dev.mask_keep_unknown = bool(keep_unknown)
         dev._mask_warned = False        # 다시 켜면 경고도 다시 할 기회를 준다
-        logger.info("배경 마스킹 %s: %s (far=%dmm)", serial,
-                    "켬" if enabled else "끔", dev.depth_encoding.far_mm)
+        logger.info("배경 마스킹 %s: %s (경계 %.0fmm%s, 무효 %s)", serial,
+                    "켬" if enabled else "끔", dev.effective_mask_far_mm,
+                    "" if dev.mask_far_mm else " — 깊이 창 따라감",
+                    "남김" if dev.mask_keep_unknown else "지움")
         return True, "OK"
 
     def info(self, cam_id: str) -> dict:
@@ -1056,8 +1077,13 @@ class RealSenseHub:
             out["depth_units_m"] = dev.depth_units_m
         # 컬러 쪽 사실이다 — 배경이 지워진 채로 녹화됐는지는 컬러 프레임의 성질이다
         if stream == "color":
-            out["background_mask"] = {"enabled": dev.mask_background,
-                                      "far_mm": dev.depth_encoding.far_mm}
+            out["background_mask"] = {
+                "enabled": dev.mask_background,
+                "far_mm": dev.effective_mask_far_mm,
+                # 따로 정한 값인가, 깊이 창을 따라가는 중인가
+                "follows_depth": dev.mask_far_mm is None,
+                "keep_unknown": dev.mask_keep_unknown,
+            }
         return out
 
     def disconnect(self, cam_id: str) -> None:

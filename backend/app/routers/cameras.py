@@ -353,6 +353,10 @@ async def calibrate_gray_card(cam_id: str, body: GrayCardRequest):
 
 class BackgroundMaskRequest(BaseModel):
     enabled: bool
+    #: 지우는 경계(mm). 안 주거나 0 이면 **깊이 창의 `far_mm` 을 따라간다**.
+    far_mm: float | None = None
+    #: 깊이를 못 읽은 픽셀을 남길 것인가. 안 주면 지금 설정을 유지한다.
+    keep_unknown: bool | None = None
 
 
 @router.post("/{cam_id:path}/background-mask")
@@ -367,7 +371,8 @@ async def set_background_mask(cam_id: str, body: BackgroundMaskRequest):
     from app.services.realsense_manager import realsense_hub
 
     require_idle(Activity.CAMERA_ACCESS)
-    ok, msg = realsense_hub.set_background_mask(cam_id, body.enabled)
+    ok, msg = realsense_hub.set_background_mask(
+        cam_id, body.enabled, body.far_mm, body.keep_unknown)
     if not ok:
         raise HTTPException(400, msg)
     return {"status": "ok",

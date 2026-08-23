@@ -144,3 +144,62 @@ def test_changing_the_mask_is_blocked_while_recording():
 
     src = inspect.getsource(cameras.set_background_mask)
     assert "require_idle" in src, "녹화 중에도 바꿀 수 있다"
+
+
+# ── 경계와 무효 처리를 사람이 고른다 ─────────────────────────────────────────
+
+def test_unknown_pixels_can_be_erased_when_asked():
+    """깊이가 잘 잡히는 장면에서는 지우는 쪽이 배경이 깔끔하다.
+
+    **어느 쪽이 맞는지는 장면이 정한다** — 그래서 고를 수 있어야 한다.
+    """
+    d = _depth([None, 100, 900], UNITS_D435)
+    kept = M.apply_mask(_color(3), d, 500, UNITS_D435, keep_unknown=True)
+    cut = M.apply_mask(_color(3), d, 500, UNITS_D435, keep_unknown=False)
+    assert list(kept[0, :, 0]) == [200, 200, 0]
+    assert list(cut[0, :, 0]) == [0, 200, 0], "무효를 지우라고 했는데 남았다"
+
+
+def test_keeping_unknown_pixels_stays_the_default():
+    """기본이 뒤집히면 **손대지 않은 설정의 결과가 조용히 달라진다** —
+    D405 처럼 무효가 많은 카메라에서 물체에 구멍이 뚫린다."""
+    import inspect
+
+    sig = inspect.signature(M.background_mask)
+    assert sig.parameters["keep_unknown"].default is True
+    assert inspect.signature(M.apply_mask).parameters["keep_unknown"].default is True
+
+
+def test_the_mask_distance_can_differ_from_the_depth_window():
+    """인코딩 창은 해상도를 위해 좁히고, 마스킹은 더 멀리까지 남기고 싶을 수 있다."""
+    from piper_rs.hub import _RSDevice
+    from piper_rs.depth import DepthEncoding
+
+    dev = _RSDevice("S", "D405", "", {"color", "depth"})
+    dev.depth_encoding = DepthEncoding(near_mm=70, far_mm=400)
+    assert dev.effective_mask_far_mm == 400, "안 정했으면 깊이 창을 따라가야 한다"
+    dev.mask_far_mm = 900
+    assert dev.effective_mask_far_mm == 900
+
+
+def test_clearing_the_distance_goes_back_to_following_the_depth_window():
+    """둘을 따로 두면 사람이 둘 다 맞춰야 한다 — 되돌릴 길이 있어야 한다."""
+    import inspect
+
+    from piper_rs.hub import RealSenseHub
+
+    src = inspect.getsource(RealSenseHub.set_background_mask)
+    assert "dev.mask_far_mm = float(far_mm) if far_mm else None" in src, \
+        "0 을 줘도 깊이 창으로 안 돌아간다"
+
+
+def test_the_screen_is_told_which_distance_is_in_effect():
+    """따라가는 중인지 따로 정했는지 화면이 모르면, 깊이 창을 바꿨을 때
+    마스킹이 왜 안 따라오는지(또는 왜 따라오는지) 알 수 없다."""
+    import inspect
+
+    from piper_rs.hub import RealSenseHub
+
+    src = inspect.getsource(RealSenseHub.info)
+    for key in ('"far_mm"', '"follows_depth"', '"keep_unknown"'):
+        assert key in src, f"{key} 를 안 알려준다"

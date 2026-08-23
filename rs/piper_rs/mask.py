@@ -37,8 +37,15 @@ import numpy as np
 FILL_BGR = (0, 0, 0)
 
 
-def background_mask(depth_raw: np.ndarray, far_mm: float, units_m: float) -> np.ndarray:
-    """지울 픽셀이 True. **무효(raw 0)는 False** — 모르면 남긴다.
+def background_mask(depth_raw: np.ndarray, far_mm: float, units_m: float,
+                    keep_unknown: bool = True) -> np.ndarray:
+    """지울 픽셀이 True.
+
+    `keep_unknown` 이 참이면 **무효(raw 0)는 남긴다** — 기본값이고, 그 이유는
+    위 문서에 있다(D405 는 프레임의 42% 가 무효였다).
+
+    끄면 무효도 배경으로 친다. 배경이 깔끔하게 떨어지는 장면 — 깊이가 잘 잡히는
+    가까운 작업대 — 에서는 그쪽이 낫다. **어느 쪽이 맞는지는 장면이 정한다.**
 
     순수 함수다. 하드웨어 없이 경계를 시험할 수 있어야 한다.
     """
@@ -50,12 +57,15 @@ def background_mask(depth_raw: np.ndarray, far_mm: float, units_m: float) -> np.
     # 비교를 raw 쪽에서 한다 — 프레임을 mm 로 바꾸면 배열을 하나 더 만든다
     # (`encode_depth` 와 같은 이유).
     far_raw = far_mm / (units_m * 1000.0)
-    return (depth_raw > 0) & (depth_raw > far_raw)
+    unknown = depth_raw == 0
+    beyond = depth_raw > far_raw
+    return (beyond & ~unknown) if keep_unknown else (beyond | unknown)
 
 
 def apply_mask(color_bgr: np.ndarray, depth_raw: np.ndarray,
                far_mm: float, units_m: float,
-               fill: tuple[int, int, int] = FILL_BGR) -> np.ndarray:
+               fill: tuple[int, int, int] = FILL_BGR,
+               keep_unknown: bool = True) -> np.ndarray:
     """컬러에서 배경을 지운다. **깊이는 컬러에 정렬돼 있어야 한다.**
 
     모양이 안 맞으면 원본을 그대로 돌려준다 — 어긋난 마스크보다 낫고,
@@ -65,7 +75,7 @@ def apply_mask(color_bgr: np.ndarray, depth_raw: np.ndarray,
     if not shapes_match(color_bgr, depth_raw):
         return color_bgr
     out = color_bgr.copy()
-    out[background_mask(depth_raw, far_mm, units_m)] = fill
+    out[background_mask(depth_raw, far_mm, units_m, keep_unknown)] = fill
     return out
 
 

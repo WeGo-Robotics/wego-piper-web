@@ -77,7 +77,11 @@ type CamInfo = {
   /** raw 한 단위가 몇 미터인가. D435=0.001, **D405=0.0001**. */
   depth_units_m?: number | null
   /** 컬러 스트림에만 붙는다 — 배경이 지워진 채로 나오는가. */
-  background_mask?: { enabled: boolean; far_mm: number } | null
+  background_mask?: {
+    enabled: boolean; far_mm: number
+    /** 따로 정한 값이 아니라 깊이 창을 따라가는 중인가. */
+    follows_depth: boolean; keep_unknown: boolean
+  } | null
   config: { width: number | null; height: number | null; fps: number | null; color_mode: string; rotation: number; fourcc: string | null }
 }
 
@@ -148,6 +152,10 @@ export default function CamerasPage() {
   const [depthDraft, setDepthDraft] = useState<{ near_mm: number; far_mm: number }>(DEPTH_DEFAULT)
   // 배경 마스킹은 **컬러 스트림**의 성질이지만 경계(`far_mm`)를 깊이 창과 공유한다.
   const [maskOn, setMaskOn] = useState(false)
+  // 마스킹 경계와 무효 픽셀 처리. 경계는 깊이 창과 **따로** 둘 수 있다 —
+  // 인코딩 창은 해상도를 위해 좁히고 마스킹은 더 멀리 남기고 싶은 경우가 있다.
+  const [maskFar, setMaskFar] = useState<number>(DEPTH_DEFAULT.far_mm)
+  const [maskKeepUnknown, setMaskKeepUnknown] = useState(true)
   // 회색 카드 보정 결과. 값을 저장하진 않으므로 **결과를 보여주는 것이 전부**다 —
   // 마음에 들면 사용자가 프로파일로 저장한다.
   const [grayCard, setGrayCard] = useState<GrayCardReport | null>(null)
@@ -246,16 +254,28 @@ export default function CamerasPage() {
   }
 
   /** 같은 장치의 **컬러** 스트림에서 배경을 지울지. 경계는 깊이 창의 `far_mm` 이다. */
-  const setBackgroundMask = async (depthId: string, enabled: boolean) => {
+  const setBackgroundMask = async (
+    depthId: string,
+    patch: { enabled?: boolean; far_mm?: number; keep_unknown?: boolean },
+  ) => {
     const colorId = depthId.replace(/:depth$/, ':color')
-    setMaskOn(enabled)                       // 먼저 반영해 토글이 안 굳어 보이게
+    const enabled = patch.enabled ?? maskOn
+    const prev = { enabled: maskOn, far: maskFar, keep: maskKeepUnknown }
+    // 먼저 반영해 토글·슬라이더가 굳어 보이지 않게
+    if (patch.enabled !== undefined) setMaskOn(patch.enabled)
+    if (patch.far_mm !== undefined) setMaskFar(patch.far_mm)
+    if (patch.keep_unknown !== undefined) setMaskKeepUnknown(patch.keep_unknown)
     try {
-      await api.post(`/cameras/${encodeURIComponent(colorId)}/background-mask`,
-                     { enabled })
+      await api.post(`/cameras/${encodeURIComponent(colorId)}/background-mask`, {
+        enabled,
+        far_mm: patch.far_mm ?? maskFar,
+        keep_unknown: patch.keep_unknown ?? maskKeepUnknown,
+      })
       bumpPreview([colorId, depthId])
     } catch (e) {
       notifyError(e instanceof Error ? e.message : '배경 마스킹을 바꾸지 못했습니다')
-      setMaskOn(!enabled)
+      // 거부됐으면 화면이 바뀐 척하면 안 된다 — 되돌린다
+      setMaskOn(prev.enabled); setMaskFar(prev.far); setMaskKeepUnknown(prev.keep)
     }
   }
 
@@ -342,7 +362,10 @@ export default function CamerasPage() {
     if (c?.depth_encoding) { setDepthEnc(c.depth_encoding); setDepthDraft(c.depth_encoding) }
     else setDepthDraft(DEPTH_DEFAULT)
     const color = cams.find((x) => x.id === settingsCam.replace(/:depth$/, ':color'))
-    setMaskOn(color?.background_mask?.enabled ?? false)
+    const bg = color?.background_mask
+    setMaskOn(bg?.enabled ?? false)
+    setMaskFar(bg?.far_mm ?? c?.depth_encoding?.far_mm ?? DEPTH_DEFAULT.far_mm)
+    setMaskKeepUnknown(bg?.keep_unknown ?? true)
     setAiming(false); setRoi(null); setRoiReading(null); setGrayCard(null)
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeSettings() }
     window.addEventListener('keydown', onKey)
@@ -991,19 +1014,47 @@ export default function CamerasPage() {
                 </p>
                 {/* 배경 마스킹 — 경계가 위 `먼 쪽`과 같아서 여기 둔다.
                     지우는 대상은 **같은 장치의 컬러 스트림**이다. */}
-                <label className="flex items-start gap-2 pt-1 cursor-pointer">
-                  <input type="checkbox" checked={maskOn}
-                    onChange={(e) => setBackgroundMask(settingsCamera.id, e.target.checked)}
-                    className="mt-0.5 accent-blue-500" />
-                  <span className="text-xs text-neutral-300">
-                    이 장치의 <b>컬러</b>에서 배경 지우기
-                    <span className="block text-[10px] text-neutral-500">
-                      위 <b>먼 쪽({depthDraft.far_mm}mm)</b>보다 먼 픽셀을 검게 만듭니다.
-                      깊이를 못 읽은 곳은 <b>남깁니다</b> — 깊이가 없다고 물체가 없는 건
-                      아니라서, 지웠다가 물체에 구멍이 뚫리는 쪽이 더 나쁩니다.
+                <div className="space-y-1.5 rounded border border-neutral-700 p-2">
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input type="checkbox" checked={maskOn}
+                      onChange={(e) => setBackgroundMask(settingsCamera.id,
+                                                         { enabled: e.target.checked })}
+                      className="mt-0.5 accent-blue-500" />
+                    <span className="text-xs text-neutral-300">
+                      이 장치의 <b>컬러</b>에서 배경 지우기
                     </span>
-                  </span>
-                </label>
+                  </label>
+
+                  {maskOn && (
+                    <>
+                      {/* 경계는 깊이 창과 **따로** 둘 수 있다 — 인코딩 창은 해상도를
+                          위해 좁히고, 마스킹은 더 멀리까지 남기고 싶을 때가 있다. */}
+                      <ParamSlider label="이 거리보다 멀면 지움" unit="mm"
+                        value={maskFar}
+                        min={DEPTH_STEP}
+                        max={Math.max(DEPTH_SLIDER_MAX, maskFar)}
+                        step={DEPTH_STEP}
+                        onChange={setMaskFar}
+                        onCommit={(v) => setBackgroundMask(settingsCamera.id, { far_mm: v })} />
+
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input type="checkbox" checked={maskKeepUnknown}
+                          onChange={(e) => setBackgroundMask(
+                            settingsCamera.id, { keep_unknown: e.target.checked })}
+                          className="mt-0.5 accent-blue-500" />
+                        <span className="text-xs text-neutral-300">
+                          깊이를 못 읽은 곳은 남기기
+                          <span className="block text-[10px] text-neutral-500">
+                            깊이가 없다고 물체가 없는 건 아닙니다 — 이 카메라는 프레임의
+                            상당 부분을 못 읽을 수 있고, 지우면 <b>물체 한가운데가
+                            뚫립니다</b>. 깊이가 잘 잡히는 장면이면 꺼서 배경을 더
+                            깔끔하게 지울 수 있습니다.
+                          </span>
+                        </span>
+                      </label>
+                    </>
+                  )}
+                </div>
 
                 <p className="text-[10px] text-neutral-500">
                   이 구간이 0~254 로 매핑됩니다(가까울수록 어둡게). 범위 밖은 잘리고,
