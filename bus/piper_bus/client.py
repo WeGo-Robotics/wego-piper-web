@@ -95,6 +95,34 @@ class Bus:
         self.r.publish(C.CH_ESTOP, json.dumps(payload))
         return payload
 
+    def estop_events(self, stop=None, timeout: float = 1.0):
+        """E-stop 알림을 하나씩 내놓는다. `stop` 은 `threading.Event`.
+
+        **폴링이 아니라 구독이다** — E-stop 은 늦으면 의미가 없다.
+
+        ⚠ 소비자가 죽지 않게 예외를 삼킨다. Redis 가 잠깐 끊겨도 다시 붙어야
+        한다 — 이 이터레이터가 멈추면 그걸 듣던 안전 장치가 조용히 사라진다.
+        """
+        import json as _json
+
+        while stop is None or not stop.is_set():
+            try:
+                pubsub = self.r.pubsub(ignore_subscribe_messages=True)
+                pubsub.subscribe(C.CH_ESTOP)
+                while stop is None or not stop.is_set():
+                    msg = pubsub.get_message(timeout=timeout)
+                    if not msg:
+                        continue
+                    try:
+                        yield _json.loads(msg["data"])
+                    except Exception:
+                        yield {}
+            except GeneratorExit:
+                raise
+            except Exception:
+                # 다시 붙는다. 여기서 빠져나가면 듣던 쪽이 영영 못 듣는다.
+                time.sleep(0.5)
+
     def last_estop(self) -> dict | None:
         raw = self.r.hgetall(C.ESTOP_LAST)
         if not raw:

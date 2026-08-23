@@ -22,6 +22,7 @@ from app.services import dataset_jobs
 from app.services.policy_server_manager import policy_server_manager
 from app.services.process_manager import ProcessState, process_manager
 from app.services.record_manager import record_manager
+from app.services.teleop import teleop_session
 from app.services.training import train_manager
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ class Activity(str, enum.Enum):
     POLICY_SERVER = "policy_server"
     DATASET_EDIT = "dataset_edit"
     UPLOAD = "upload"
+    TELEOP = "teleop"
     # 에피소드 루프 (분리수거 등). 추론 **위에서** 돈다 — 추론과는 배타가 아니다.
     ORCHESTRATOR = "orchestrator"
     # YOLO 커스텀 학습 (feature/yolo-training.md 3단계) — GPU 를 크게 쓴다.
@@ -50,6 +52,7 @@ LABELS: dict[Activity, str] = {
     Activity.POLICY_SERVER: "정책 서버",
     Activity.DATASET_EDIT: "데이터셋 편집",
     Activity.UPLOAD: "업로드/캐시 작업",
+    Activity.TELEOP: "수동 조작",
     Activity.ORCHESTRATOR: "에피소드 루프",
     Activity.YOLO_TRAIN: "YOLO 학습",
     Activity.ENCODER_PROBE: "인코더 프로브",
@@ -64,9 +67,9 @@ LABELS: dict[Activity, str] = {
 BLOCKED_BY: dict[Activity, list[Activity]] = {
     # 카메라 + CAN + GPU 를 전부 점유한다
     Activity.INFERENCE: [Activity.TRAINING, Activity.RECORDING, Activity.DATASET_EDIT,
-                         Activity.YOLO_TRAIN],
+                         Activity.YOLO_TRAIN, Activity.TELEOP],
     Activity.RECORDING: [Activity.TRAINING, Activity.INFERENCE, Activity.DATASET_EDIT,
-                         Activity.ORCHESTRATOR],
+                         Activity.ORCHESTRATOR, Activity.TELEOP],
     # GPU. 정책 서버도 GPU에 정책을 올리므로 학습과 배타다.
     Activity.TRAINING: [Activity.INFERENCE, Activity.RECORDING, Activity.POLICY_SERVER,
                         Activity.ORCHESTRATOR, Activity.YOLO_TRAIN],
@@ -75,9 +78,13 @@ BLOCKED_BY: dict[Activity, list[Activity]] = {
     Activity.DATASET_EDIT: [Activity.INFERENCE, Activity.RECORDING, Activity.ORCHESTRATOR],
     # 네트워크/디스크만 쓴다. 아무것도 막지 않고 아무것도 막지 못한다.
     Activity.UPLOAD: [],
+    # 팔을 직접 민다 — 같은 팔을 둘이 밀면 안 된다. 학습·YOLO 학습은 GPU 만
+    # 쓰므로 막지 않는다.
+    Activity.TELEOP: [Activity.INFERENCE, Activity.RECORDING, Activity.ORCHESTRATOR],
     # 추론 위에서 도는 자동화 계층 — 추론과 공존이 설계다.
     # 팔을 새 일로 보내는 루프이므로 녹화·학습·편집과는 서로 막는다.
-    Activity.ORCHESTRATOR: [Activity.TRAINING, Activity.RECORDING, Activity.DATASET_EDIT],
+    Activity.ORCHESTRATOR: [Activity.TRAINING, Activity.RECORDING, Activity.DATASET_EDIT,
+                            Activity.TELEOP],
     # GPU 만 쓴다 (카메라·CAN·데이터셋 파일과 무관). VLA 학습·추론과 배타,
     # 정책 서버(~1GB 상주)와는 공존 가능 — nano/small 학습은 4~6GB 다.
     Activity.YOLO_TRAIN: [Activity.TRAINING, Activity.INFERENCE],
@@ -109,6 +116,7 @@ STATE_PROVIDERS: dict[Activity, Callable[[], bool]] = {
     Activity.POLICY_SERVER: lambda: _busy(policy_server_manager.state),
     Activity.DATASET_EDIT: lambda: _busy(dataset_jobs.edit_pm.state),
     Activity.UPLOAD: lambda: _busy(dataset_jobs.upload_pm.state),
+    Activity.TELEOP: lambda: teleop_session.is_running,
     Activity.ORCHESTRATOR: lambda: _orchestrator().is_running,
     Activity.YOLO_TRAIN: lambda: _busy(_yolo_train_pm().state),
 }
@@ -128,12 +136,16 @@ def _orchestrator():
 
 # E-stop 이 정지시키는 활동 — 로봇을 물리적으로 움직이는 것 전부.
 # 녹화도 텔레오퍼레이션으로 팔을 움직이므로 포함한다 (이전에는 추론만 죽였다).
-ESTOP_TARGETS: list[Activity] = [Activity.INFERENCE, Activity.RECORDING]
+ESTOP_TARGETS: list[Activity] = [Activity.INFERENCE, Activity.RECORDING,
+                                 Activity.TELEOP]
 
 # E-stop 은 graceful stop 이 아니라 즉시 kill 이다.
 STOPPERS: dict[Activity, Callable[[], Awaitable[None]]] = {
     Activity.INFERENCE: lambda: process_manager.kill(),
     Activity.RECORDING: lambda: record_manager.pm.kill(),
+    # ⚠ 여기서 토크를 끊지 않는다. 게이트웨이가 멈춰 있으면 못 하기 때문이다 —
+    #   팔을 쥔 robotd 가 E-stop 알림을 **직접 듣고** 끊는다.
+    Activity.TELEOP: lambda: teleop_session.kill(),
 }
 
 

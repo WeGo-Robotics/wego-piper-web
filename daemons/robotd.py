@@ -27,6 +27,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 
 from piper_bus import contract as C
@@ -89,8 +90,30 @@ class _Serving(RobotHub):
         return publish.arm_bridge_manager.lost()
 
 
+def watch_estop(bus: Bus, hub, stop) -> None:
+    """E-stop 알림을 듣고 **토크를 끊는다.**
+
+    ⚠ **estopd 가 여기로 RPC 를 보내지 않는다.** estopd 는 "게이트웨이가 응답
+    못 하는 상황"을 위해 존재하는데, 남에게 부탁하는 순간 그 남도 응답 못 할 수
+    있다. 그래서 알림을 **우리가 듣는다** — 이미 버스에 붙어 있으니 새 의존이 아니다.
+
+    토크 차단은 CAN 명령이라 팔을 쥔 프로세스만 할 수 있고, 그게 robotd 다.
+    """
+    for event in bus.estop_events(stop=stop):
+        try:
+            hub.disable_all_torque()
+        except Exception as exc:
+            logger.error("E-stop 토크 차단 실패: %s", exc)
+        else:
+            logger.warning("E-stop(%s) → 토크 차단", event.get("reason", "?"))
+
+
 def serve(bus: Bus, hub: _Serving) -> None:
     logger.info("로봇 데몬 시작")
+    # E-stop 은 늦으면 의미가 없다 — RPC 루프와 **따로** 듣는다.
+    stop = threading.Event()
+    threading.Thread(target=watch_estop, args=(bus, hub, stop),
+                     daemon=True, name="estop-watch").start()
     last_beat = 0.0
     while _running:
         now = time.monotonic()

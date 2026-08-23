@@ -121,6 +121,27 @@ class RobotHub:
         arm = self.arms.get(iface)
         return bool(arm and arm.disable_torque())
 
+    def disable_all_torque(self) -> list[str]:
+        """쥐고 있는 팔 **전부**의 토크를 끊는다. 끊은 iface 목록을 돌려준다.
+
+        E-stop 이 여기로 온다. 하나가 실패해도 나머지는 계속 — 부분 성공이라도
+        해야 한다(estopd 가 PID 를 죽일 때와 같은 규율).
+
+        ⚠ **팔이 중력으로 떨어진다.** 그게 대가고, E-stop 이 그걸 감수하는
+        이유는 사람이 팔에 끼었을 때 손으로 빼낼 수 있어야 하기 때문이다.
+        데드맨(연결 끊김)은 반대로 그 자리에 선다 — `safety.filter_goal` 참고.
+        """
+        done = []
+        for iface, arm in list(self.arms.items()):
+            try:
+                if arm.disable_torque():
+                    done.append(iface)
+            except Exception as exc:
+                logger.error("%s 토크 차단 실패: %s", iface, exc)
+        if done:
+            logger.warning("E-STOP → 토크 차단: %s", ", ".join(done))
+        return done
+
     def go_parking(self, iface: str) -> bool:
         arm = self.arms.get(iface)
         return bool(arm and arm.go_parking())
