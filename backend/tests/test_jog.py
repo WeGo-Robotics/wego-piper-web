@@ -193,3 +193,31 @@ def test_a_master_arm_is_refused_on_screen_too():
     src = _src("pages/RobotsPage.tsx")
     assert "arm.role === 'follower'" in src, "아무 팔에나 조그를 준다"
     assert "마스터(리더)는 외부 명령을 무시합니다" in src, "막기만 하고 이유가 없다"
+
+
+def test_starting_a_session_turns_torque_on():
+    """**회귀 — 실기에서 걸렸다.** "명령은 가는데 안 움직인다".
+
+    관절 명령 경로(shm → robotd)는 토크를 안 건드린다 — 추론 프록시가 자기 연결
+    시점에 켜는 것을 전제로 만들어졌다. 조그·릴레이에는 그 프록시가 없다.
+    """
+    from app.services import jog, relay
+
+    for mod in (jog, relay):
+        assert "enable_torque(" in inspect.getsource(mod), \
+            f"{mod.__name__} 이 토크를 안 켠다"
+
+
+def test_failing_to_enable_torque_does_not_block_the_start():
+    """이미 켜져 있을 수도 있다. 못 켰다면 안 움직이는 것으로 사용자가 알고,
+    시작 자체를 거절하면 이유가 더 흐려진다."""
+    from app.services.teleop import enable_torque
+
+    src = inspect.getsource(enable_torque)
+    assert "raise" not in src and "logger.warning" in src
+
+
+def test_the_screen_can_turn_torque_back_on():
+    """OFF 만 있으면 끈 뒤 되돌릴 길이 화면에 없다."""
+    src = _src("pages/RobotsPage.tsx")
+    assert "torque?enable=true" in src and "torque?enable=false" in src

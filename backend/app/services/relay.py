@@ -32,7 +32,8 @@ import threading
 import time
 
 from app.services.teleop import (
-    ArmBusyError, close_action_writer, open_action_writer, teleop_session,
+    ArmBusyError, close_action_writer, enable_torque, open_action_writer,
+    teleop_session,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,8 @@ class RelaySession:
                 reader.close(); teleop_session.stop()
                 raise RelayError(f"명령 경로를 열지 못했습니다: {exc}") from exc
 
+            # 토크부터 켠다 — 안 켜면 명령이 나가도 팔이 힘을 안 쓴다
+            enable_torque(follower)
             self._reader, self._leader, self._follower = reader, leader, follower
             self._sent, self._stale_since = 0, 0.0
             self._stop.clear()

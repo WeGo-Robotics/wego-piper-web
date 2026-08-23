@@ -833,6 +833,15 @@ export default function RobotsPage() {
                     title="이 팔을 슬레이브(運動出力)로 설정">슬레이브</button>
                   <button onClick={() => setParkingIface(arm.iface)}
                     className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white">파킹 보정</button>
+                  {/* ⚠ ON 이 없으면 토크를 끈 뒤 되돌릴 길이 화면에 없다.
+                      조그·릴레이는 시작할 때 알아서 켜지만, 그 전에 팔을 세워
+                      두고 싶을 때가 있다. */}
+                  <button onClick={async () => {
+                    try {
+                      await api.post('/robots/parking/torque?enable=true', { iface: arm.iface })
+                    } catch { notifyError('토크 ON 실패') }
+                  }}
+                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white">토크 ON</button>
                   <button onClick={async () => {
                     try {
                       await api.post('/robots/parking/torque?enable=false', { iface: arm.iface })

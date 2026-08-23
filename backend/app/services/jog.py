@@ -27,7 +27,8 @@ import threading
 import time
 
 from app.services.teleop import (
-    ArmBusyError, close_action_writer, open_action_writer, teleop_session,
+    ArmBusyError, close_action_writer, enable_torque, open_action_writer,
+    teleop_session,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,8 @@ class JogSession:
                 teleop_session.stop()
                 raise JogError(f"명령 경로를 열지 못했습니다: {exc}") from exc
 
+            # 토크부터 켠다 — 안 켜면 명령이 나가도 팔이 힘을 안 쓴다
+            enable_torque(iface)
             self._iface = iface
             # 시작 목표는 **지금 자세**다. 0 으로 채우면 정규화 좌표의 "가운데"라
             # 그럴듯해 보이는데, 그게 첫 명령이 되면 팔이 튄다.

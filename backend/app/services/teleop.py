@@ -85,6 +85,29 @@ def open_action_writer(iface: str, deadman_ms: int):
     return shm_arm.ActionWriter(iface, deadman_ms=deadman_ms)
 
 
+def enable_torque(iface: str) -> None:
+    """조작 전에 토크를 켠다. **안 켜면 명령이 나가도 팔이 힘을 안 쓴다.**
+
+    ⚠ 관절 명령 경로(shm → robotd)는 토크를 안 건드린다 — 추론 프록시가 자기
+    연결 시점에 켜는 것을 전제로 만들어졌기 때문이다. 조그·릴레이는 그 프록시가
+    없으므로 여기서 켠다. 실기에서 "명령은 가는데 안 움직인다"로 걸렸다.
+
+    실패해도 막지 않는다. 토크가 이미 켜져 있을 수도 있고, 못 켰다면 어차피
+    안 움직이는 것으로 사용자가 안다 — 시작 자체를 거절하면 이유가 더 흐려진다.
+    """
+    from app.services.robot_manager import robot_manager
+
+    arm = robot_manager.arms.get(iface)
+    if arm is None:
+        return
+    try:
+        if not arm.enable_torque():
+            logger.warning("%s 토크를 켜지 못했습니다 — 명령이 나가도 안 움직일 수 있습니다",
+                           iface)
+    except Exception as exc:
+        logger.warning("%s 토크 켜기 실패: %s", iface, exc)
+
+
 def close_action_writer(writer, iface: str | None) -> None:
     """닫고 **세그먼트를 지운다** — 브리지가 "소비자 종료"로 처리한다.
 
