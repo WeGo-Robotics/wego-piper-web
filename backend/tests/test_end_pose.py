@@ -61,14 +61,35 @@ def test_the_box_starts_narrow():
 def test_not_reaching_the_target_is_detected():
     """IK 해가 없는 곳을 계속 밀면 팔이 떨거나 특이점에서 튄다."""
     target = dict(HOME, x=400_000)
-    assert E.reached(target, target)
-    assert not E.reached(target, HOME), "100mm 를 못 갔는데 도달로 본다"
+    assert E.reached(HOME, target, target)
+    assert not E.reached(HOME, target, HOME), "100mm 를 못 갔는데 도달로 본다"
 
 
 def test_reaching_allows_a_little_slack():
     """정확히 같은 값을 요구하면 늘 실패한다 — 서보에는 오차가 있다."""
     target = dict(HOME, x=400_000)
-    assert E.reached(target, dict(target, x=402_000))
+    assert E.reached(HOME, target, dict(target, x=398_000))
+
+
+def test_a_step_that_did_not_move_is_never_called_reached():
+    """**회귀 — 실기에서 걸렸다.**
+
+    처음엔 절대 오차 5mm 를 뒀는데 한 걸음도 5mm 였다. Z +5mm 를 보내고 팔이
+    **전혀 안 움직였는데** 오차 안이라 "도달"로 보고했다.
+
+    시킨 거리에 견줘 본다 — 절대값으로 재면 걸음이 작을수록 검사가 무의미해진다.
+    """
+    target = dict(HOME, z=HOME["z"] + 5_000)     # 5mm 걸음
+    assert not E.reached(HOME, target, HOME), "안 움직였는데 도달로 본다"
+    # 1/5 만 간 것도 실패다
+    assert not E.reached(HOME, target, dict(HOME, z=HOME["z"] + 1_000))
+    # 절반 넘게 갔으면 인정
+    assert E.reached(HOME, target, dict(HOME, z=HOME["z"] + 3_000))
+
+
+def test_moving_the_wrong_way_is_not_reaching():
+    target = dict(HOME, z=HOME["z"] + 5_000)
+    assert not E.reached(HOME, target, dict(HOME, z=HOME["z"] - 5_000))
 
 
 # ── 배선 ────────────────────────────────────────────────────────────────────
@@ -169,3 +190,41 @@ def test_the_refusal_message_comes_from_the_backend():
            / "EndPosePanel.tsx").read_text()
     assert "e instanceof Error ? e.message" in src
     assert "작업 공간 밖" not in src.split("const jog", 1)[1].split("}", 1)[0]
+
+
+def test_an_arm_outside_the_box_can_come_back():
+    """**회귀 — 실기에서 걸렸다.**
+
+    파킹 자세가 X 55mm 였는데 상자는 100~500 이라, 목표가 밖이면 무조건 거절하는
+    규칙이 **상자로 돌아가는 명령까지 막았다.** 어느 방향으로도 못 움직였다.
+
+    클램프가 아니라 **방향 판정**으로 푼다: 시킨 곳으로 가되 나빠지는 쪽만 막는다.
+    """
+    box = E.WorkspaceBox()
+    out = dict(HOME, x=55_000)          # 상자 밖 (X 55mm)
+
+    back, why = E.step_target(out, "x", 5, box)
+    assert back is not None, f"돌아오는 방향을 막는다: {why}"
+    assert back["x"] == 60_000
+
+    worse, why2 = E.step_target(out, "x", -5, box)
+    assert worse is None, "더 나가는 방향을 허용한다"
+
+    # 위반과 무관한 축은 움직일 수 있어야 한다 — 아니면 자세를 못 바꾼다
+    sideways, _ = E.step_target(out, "z", 5, box)
+    assert sideways is not None
+
+
+def test_being_inside_still_means_you_cannot_leave():
+    """돌아올 길을 열어준 것이 **나갈 길까지 연 것은 아니다.**"""
+    box = E.WorkspaceBox()
+    t, why = E.step_target(dict(HOME, x=495_000), "x", 20, box)
+    assert t is None and "작업 공간" in why
+
+
+def test_excursion_measures_how_far_outside():
+    box = E.WorkspaceBox()
+    assert box.excursion(300, 0, 200) == 0
+    assert box.excursion(55, 0, 200) == pytest.approx(45)
+    # 여러 축이 함께 나가면 합친다 — 한 축만 고쳐도 나아진 것으로 본다
+    assert box.excursion(55, 400, 200) == pytest.approx(145)

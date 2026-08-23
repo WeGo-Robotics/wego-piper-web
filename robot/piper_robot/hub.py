@@ -151,7 +151,7 @@ class RobotHub:
 
         time.sleep(self.END_POSE_SETTLE_S)
         now = arm.read_end_pose() or current
-        if not reached(target, now):
+        if not reached(current, target, now):
             # ⚠ 더 보내지 않는다. IK 해가 없는 곳을 계속 밀면 팔이 떨거나
             #   특이점에서 튄다 — 못 가는 방향이라고 말해야 한다.
             return {"ok": False, "error": "그 방향으로는 못 갑니다 (도달 실패)",

@@ -44,11 +44,20 @@ class WorkspaceBox:
     z: tuple[float, float] = (50.0, 500.0)
 
     def contains(self, x_mm: float, y_mm: float, z_mm: float) -> tuple[bool, str]:
-        for name, value, (lo, hi) in (("X", x_mm, self.x), ("Y", y_mm, self.y),
-                                      ("Z", z_mm, self.z)):
+        for name, value, (lo, hi) in self._axes(x_mm, y_mm, z_mm):
             if not (lo <= value <= hi):
                 return False, f"{name} {value:.0f}mm 가 작업 공간({lo:.0f}~{hi:.0f}) 밖입니다"
         return True, "OK"
+
+    def _axes(self, x_mm: float, y_mm: float, z_mm: float):
+        return (("X", x_mm, self.x), ("Y", y_mm, self.y), ("Z", z_mm, self.z))
+
+    def excursion(self, x_mm: float, y_mm: float, z_mm: float) -> float:
+        """상자 밖으로 얼마나 나가 있나(mm). 안이면 0."""
+        out = 0.0
+        for _, value, (lo, hi) in self._axes(x_mm, y_mm, z_mm):
+            out += max(0.0, lo - value) + max(0.0, value - hi)
+        return out
 
     def to_dict(self) -> dict:
         return {"x": list(self.x), "y": list(self.y), "z": list(self.z)}
@@ -81,25 +90,51 @@ def step_target(current: dict[str, int], axis: str, delta: float,
     target = dict(current)
     target[axis] = int(round(current[axis] + step * scale))
 
-    ok, why = box.contains(target["x"] / UM_PER_MM, target["y"] / UM_PER_MM,
-                           target["z"] / UM_PER_MM)
-    if not ok:
-        # ⚠ 클램프해서 보내지 않는다. 상자 모서리로 미끄러져 들어가면 사용자는
-        #   자기가 시킨 것과 다른 곳으로 간 이유를 모른다 — 거절하고 말한다.
-        return None, why
-    return target, "OK"
+    def _mm(pose):
+        return (pose["x"] / UM_PER_MM, pose["y"] / UM_PER_MM, pose["z"] / UM_PER_MM)
+
+    ok, why = box.contains(*_mm(target))
+    if ok:
+        return target, "OK"
+
+    # ⚠ **밖에서 시작했으면 돌아올 길을 막지 않는다.**
+    #
+    # 목표가 밖이라고 무조건 거절하면, 팔이 상자 밖에 있을 때 **상자로 돌아가는
+    # 명령까지 거절**돼 영영 못 빠져나온다. 실기에서 걸렸다 — 파킹 자세가
+    # X 55mm 였는데 상자는 100~500 이라 어느 방향도 안 됐다.
+    #
+    # 그래서 "밖으로 더 나가지 않으면" 허용한다. 클램프가 아니라 **방향 판정**이다 —
+    # 사용자가 시킨 곳으로 가되, 나빠지는 쪽만 막는다.
+    before = box.excursion(*_mm(current))
+    after = box.excursion(*_mm(target))
+    if before > 0 and after <= before:
+        return target, f"작업 공간 밖이지만 돌아오는 방향입니다 ({before:.0f}→{after:.0f}mm)"
+    return None, why
 
 
-def reached(target: dict[str, int], now: dict[str, int],
-            tol_mm: float = 5.0, tol_deg: float = 3.0) -> bool:
-    """명령한 곳에 왔나.
+# 시킨 거리의 이만큼은 가야 "갔다"고 본다.
+MIN_PROGRESS = 0.5
 
-    ⚠ 안 왔으면 **더 보내면 안 된다.** IK 해가 없는 곳을 계속 밀면 팔이 떨거나
-    특이점에서 튄다. 못 가는 방향이라는 것을 사람에게 알려야 한다.
+
+def reached(before: dict[str, int], target: dict[str, int], now: dict[str, int],
+            min_progress: float = MIN_PROGRESS) -> bool:
+    """명령한 만큼 갔나 — **시킨 거리에 견줘서** 본다.
+
+    ⚠ **회귀. 절대 허용 오차를 쓰면 안 된다.** 처음엔 5mm 오차를 뒀는데 한 걸음도
+    5mm 였다 — 팔이 **전혀 안 움직여도** 오차 안이라 "도달"로 읽혔다. 실기에서
+    Z +5mm 를 보내고 자세가 그대로인데 성공으로 보고했다.
+
+    시킨 거리의 절반은 가야 갔다고 본다. 마스터/슬레이브 판별이 쓰는 규칙과 같다.
+
+    안 갔으면 **더 보내면 안 된다** — IK 해가 없는 곳을 계속 밀면 팔이 떨거나
+    특이점에서 튄다. 못 가는 방향이라고 사람에게 말해야 한다.
     """
     for axis in AXES:
-        scale = UM_PER_MM if axis in _LINEAR else MDEG_PER_DEG
-        tol = tol_mm if axis in _LINEAR else tol_deg
-        if abs(target.get(axis, 0) - now.get(axis, 0)) > tol * scale:
+        commanded = target.get(axis, 0) - before.get(axis, 0)
+        if commanded == 0:
+            continue
+        moved = now.get(axis, 0) - before.get(axis, 0)
+        # 부호가 다르면 반대로 간 것이다 — 비율이 음수가 되어 걸린다
+        if moved / commanded < min_progress:
             return False
     return True
