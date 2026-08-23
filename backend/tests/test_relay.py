@@ -171,3 +171,34 @@ def test_leaving_the_page_closes_the_relay_too():
            / "JogPanel.tsx").read_text()
     cleanup = src.split("useEffect(() => () => {", 1)[1][:300]
     assert "relay/stop" in cleanup and "jog/stop" in cleanup
+
+
+def _page() -> str:
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+            / "RobotsPage.tsx").read_text()
+
+
+def test_registered_arms_get_the_controls_too():
+    """**회귀 — 화면에 통째로 안 보였다.**
+
+    조작 패널을 `connectedArms` 에만 붙였는데 그 목록은 `!ready` 다 — **등록하는
+    순간 빠진다.** 등록된 팔은 `readyArms` 로 그려지므로, 실제로 쓰는 상태에서는
+    패널이 어디에도 없었다.
+    """
+    src = _page()
+    ready_block = src.split("readyArms.map", 1)[1]
+    assert "JogPanel" in ready_block, "등록된 팔에 조작 패널이 없다"
+
+
+def test_the_leader_is_looked_up_across_all_arms():
+    """`connectedArms` 에서 찾으면 **등록된 팔끼리는 릴레이 버튼이 영영 안 뜬다.**"""
+    src = _page()
+    assert "const leaderIface = arms.find(" in src
+    assert "leader={connectedArms.find" not in src
+
+
+def test_both_panels_use_the_same_leader_value():
+    """두 목록이 서로 다른 리더를 보면 한쪽에서만 릴레이가 뜬다."""
+    src = _page()
+    assert src.count("leader={leaderIface}") == 2

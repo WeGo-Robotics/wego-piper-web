@@ -533,6 +533,9 @@ export default function RobotsPage() {
   // 생기는데, 예전 `unconnectedArms` 는 `ready` 를 안 봐서 그 팔이 1단계와
   // 사용 가능 목록에 **동시에** 떴다.
   const readyArms = arms.filter((a) => a.ready)
+  // ⚠ **전체에서 찾는다.** `connectedArms` 는 `!ready` 라 등록하는 순간 빠지는데,
+  //   거기서 리더를 찾으면 등록된 팔끼리는 릴레이 버튼이 영영 안 뜬다.
+  const leaderIface = arms.find((a) => a.role === 'leader' && a.connected)?.iface
   const connectedArms = arms.filter((a) => a.connected && !a.ready)
   const unconnectedArms = arms.filter((a) => !a.connected && !a.ready)
 
@@ -726,7 +729,7 @@ export default function RobotsPage() {
                       <JogPanel
                         iface={arm.iface}
                         commandable={arm.connected && arm.role === 'follower'}
-                        leader={connectedArms.find((a) => a.role === 'leader' && a.connected)?.iface}
+                        leader={leaderIface}
                         reason={
                           !arm.connected ? '연결되지 않아 조작할 수 없습니다'
                           : arm.role === 'leader'
@@ -787,7 +790,8 @@ export default function RobotsPage() {
         ) : (
           <div className="space-y-1">
             {readyArms.map((arm) => (
-              <div key={arm.iface} className="flex items-center justify-between rounded border border-green-500/30 bg-green-500/5 p-2.5">
+              <div key={arm.iface} className="rounded border border-green-500/30 bg-green-500/5">
+              <div className="flex items-center justify-between p-2.5">
                 <div className="flex items-center gap-2">
                   {/* 등록됐다고 연결까지 되어 있는 것은 아니다 — 팔 전원이 꺼져 있거나
                       프리셋 로드 중 연결이 실패하면 여기 끊긴 채로 남는다. */}
@@ -835,9 +839,30 @@ export default function RobotsPage() {
                     } catch { notifyError('토크 OFF 실패') }
                   }}
                     className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-amber-600 text-neutral-300 hover:text-white">토크 OFF</button>
+                  {/* ⚠ 조작 패널을 여는 자리. 등록된 팔이 **여기** 그려지는데
+                      패널을 미등록 목록에만 붙였다가 화면에서 통째로 안 보였다. */}
+                  {arm.connected && (
+                    <button onClick={() => setExpandedArm(expandedArm === arm.iface ? null : arm.iface)}
+                      className={`px-3 py-1 text-xs rounded ${expandedArm === arm.iface
+                        ? 'bg-amber-600 text-white' : 'bg-neutral-700 hover:bg-amber-600 text-neutral-300 hover:text-white'}`}>
+                      조작</button>
+                  )}
                   <button onClick={() => handleUnregister(arm.iface)}
                     className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">등록해제</button>
                 </div>
+              </div>
+
+              {expandedArm === arm.iface && arm.connected && (
+                <div className="border-t border-green-500/20 p-3 space-y-3 bg-neutral-900/50">
+                  <JogPanel
+                    iface={arm.iface}
+                    commandable={arm.role === 'follower'}
+                    reason={arm.role === 'leader'
+                      ? '마스터(리더)는 외부 명령을 무시합니다 — 이 팔로 팔로워를 끄세요'
+                      : '역할을 모릅니다 — 먼저 [찾기] 로 판별하세요'}
+                    leader={leaderIface} />
+                </div>
+              )}
               </div>
             ))}
           </div>
