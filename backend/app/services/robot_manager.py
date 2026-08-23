@@ -471,12 +471,38 @@ class RobotManager:
             return False
         return bool(_call("start_motion_detect", slot, candidates, default=False))
 
+    # 판별 결과 → 역할. 마스터(示教输入臂)가 사람이 잡는 쪽이라 leader 다.
+    _ROLE_OF = {"master": "leader", "slave": "follower"}
+
     def get_motion_status(self, slot: str) -> dict:
         st = _call("motion_status", slot, default={"status": "idle"}) or {"status": "idle"}
         # 데몬은 "어느 iface 가 움직였는지"까지만 안다. 배정은 여기서 한다.
         if st.get("status") == "found" and st.get("found_iface"):
             self.assign_slot(st["found_iface"], slot)
+        # 판별이 끝났으면 역할을 세운다. **데몬이 아니라 여기서** 한다 —
+        # `arm.py` 가 적어둔 대로, 장치 상태를 읽는 폴링이 역할을 덮으면 사용자가
+        # 고른 값이 조용히 되돌아간다. 이건 사용자가 버튼을 눌러 시작한 결과라
+        # 덮어도 되는 유일한 순간이다.
+        if st.get("status") == "done":
+            self._apply_identified_roles(st.get("results") or {})
         return st
+
+    def _apply_identified_roles(self, results: dict) -> list[str]:
+        """판별 결과를 역할로 옮긴다. 바뀐 iface 목록을 돌려준다.
+
+        ⚠ **같은 값이면 건드리지 않는다.** `set_role` 은 슬롯과 side 를 무효로
+        만드는데, 폴링마다 그걸 다시 하면 이미 배정해둔 슬롯이 계속 지워진다.
+        """
+        changed = []
+        for iface, r in results.items():
+            role = self._ROLE_OF.get(r.get("role")) if isinstance(r, dict) else None
+            arm = self.arms.get(iface)
+            if not role or arm is None or arm.role == role:
+                continue
+            if self.set_role(iface, role):
+                changed.append(iface)
+                logger.info("판별 결과로 역할 지정: %s → %s", iface, role)
+        return changed
 
 
     def save_config(self, config_name: str) -> tuple[bool, str]:

@@ -158,3 +158,53 @@ def test_the_screen_and_the_daemon_use_the_same_wait_wording():
             / "RobotsPage.tsx").read_text()
     phrase = "부팅 중인 팔을 깨뜨리지 않으려고 대기"
     assert phrase in hub_src and phrase in page
+
+
+# ── 판별 결과가 역할이 되는가 ────────────────────────────────────────────────
+
+class _ArmInfo:
+    def __init__(self, role="unknown", slot=None):
+        self.role, self.slot, self.side = role, slot, None
+
+
+def _manager(**arms):
+    from app.services.robot_manager import RobotManager
+    m = RobotManager()
+    m.arms = arms
+    return m
+
+
+def test_master_becomes_leader_and_slave_becomes_follower():
+    """판별해놓고 역할을 안 세우면 **사용자가 손으로 또 골라야 한다** —
+    기계가 이미 아는 것을 다시 묻는 셈이다."""
+    m = _manager(can0=_ArmInfo(), can1=_ArmInfo())
+    m._apply_identified_roles({"can0": {"ok": True, "role": "master"},
+                               "can1": {"ok": True, "role": "slave"}})
+    assert m.arms["can0"].role == "leader"
+    assert m.arms["can1"].role == "follower"
+
+
+def test_applying_the_same_role_twice_does_not_wipe_the_slot():
+    """⚠ `set_role` 은 슬롯과 side 를 무효로 만든다. 폴링마다 다시 세우면
+    **이미 배정해둔 슬롯이 계속 지워진다.**"""
+    m = _manager(can0=_ArmInfo(role="leader", slot="leader_1"))
+    assert m._apply_identified_roles({"can0": {"ok": True, "role": "master"}}) == []
+    assert m.arms["can0"].slot == "leader_1", "슬롯이 지워졌다"
+
+
+def test_a_failed_probe_leaves_the_role_alone():
+    """판별에 실패했는데 역할을 바꾸면 **틀린 값을 확신에 차서 적는 것**이다."""
+    m = _manager(can0=_ArmInfo(role="follower"))
+    m._apply_identified_roles({"can0": {"ok": False, "error": "관절값을 읽지 못했습니다"}})
+    assert m.arms["can0"].role == "follower"
+
+
+def test_roles_are_applied_when_the_run_finishes():
+    """데몬은 마스터인지까지만 안다 — 역할로 옮기는 것은 게이트웨이 몫이다."""
+    import inspect
+
+    from app.services.robot_manager import RobotManager
+
+    src = inspect.getsource(RobotManager.get_motion_status)
+    assert '_apply_identified_roles' in src
+    assert 'st.get("status") == "done"' in src
