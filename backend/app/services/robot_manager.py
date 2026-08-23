@@ -450,12 +450,16 @@ class RobotManager:
 
     # ── 움직임 감지 ──
 
-    def start_identify(self, slot: str) -> bool:
-        """명령 반응으로 마스터/슬레이브를 가린다. **팔이 실제로 움직인다.**"""
-        ifaces = [a.iface for a in self.arms.values() if a.connected]
-        if not ifaces:
+    def start_identify(self, slot: str, iface: str) -> bool:
+        """명령 반응으로 이 팔이 마스터인지 가린다. **팔이 실제로 움직인다.**
+
+        ⚠ **부른 팔 하나만** 건드린다. 연결된 것을 전부 훑으면 사용자가 누르지도
+        않은 팔이 움직이는데, 이건 물리적으로 움직이는 동작이라 그러면 안 된다.
+        """
+        arm = self.arms.get(iface)
+        if arm is None or not arm.connected:
             return False
-        return bool(_call("start_identify", slot, ifaces, default=False))
+        return bool(_call("start_identify", slot, [iface], default=False))
 
     def start_motion_detect(self, slot: str) -> bool:
         """슬롯에 배정할 팔을 움직임으로 찾는다.

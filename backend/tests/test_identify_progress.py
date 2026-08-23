@@ -107,23 +107,42 @@ def test_the_page_shows_the_countdown_and_the_step():
            / "RobotsPage.tsx").read_text()
     assert "motionStatus.phase" in src, "단계를 안 보여준다"
     assert "motionStatus.remaining > 0" in src, "남은 시간을 안 보여준다"
-    assert "motionStatus.iface" in src, "어느 팔인지 안 보여준다"
+    # 어느 팔인지는 **행 자체**가 말한다 — 표시가 그 팔의 줄에만 뜨므로
+    # 문장에 iface 를 또 넣으면 같은 말을 두 번 한다.
 
 
-def test_the_progress_is_not_keyed_on_a_single_arm():
+def test_the_row_is_matched_by_what_was_actually_stored():
     """**회귀** — 진행 표시가 화면에 아예 안 나왔다.
 
-    찾기 버튼은 팔 행마다 있는데 표시 조건이 `motionIface === arm.iface` 였다.
-    판별은 **연결된 팔 전부**를 훑는 한 번의 실행이라 거기 담기는 것은 슬롯 이름
-    (`identify`)이고, 어느 행의 iface 와도 같지 않다 — 버튼이 흐려지기만 했다.
+    행을 가리는 조건은 `motionIface === arm.iface` 인데, 거기에 슬롯 이름
+    (`identify`)을 넣었다. 어느 행의 iface 와도 같지 않아 버튼이 흐려지기만 했다.
+
+    담는 값과 비교하는 값이 **같은 것**이어야 한다.
     """
     from pathlib import Path
 
     src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
            / "RobotsPage.tsx").read_text()
-    assert "motionIface === arm.iface" not in src, \
-        "실행 전체를 팔 하나에 묶어 판정한다 — 어느 행에도 안 걸린다"
-    assert "isProbingThis" in src, "지금 건드리는 팔을 구분하지 않는다"
+    assert "motionIface === arm.iface" in src, "행을 iface 로 안 가린다"
+    assert "setMotionIface(iface)" in src, "iface 가 아닌 것을 담는다"
+    assert "setMotionIface(slot)" not in src
+
+
+def test_only_the_pressed_arm_is_probed():
+    """⚠ **물리적으로 움직이는 동작**이다. 연결된 것을 전부 훑으면 사용자가
+    누르지도 않은 팔이 움직인다."""
+    import inspect
+
+    from app.services.robot_manager import RobotManager
+
+    src = inspect.getsource(RobotManager.start_identify)
+    assert "[iface]" in src, "부른 팔 하나만 넘기지 않는다"
+    assert "for a in self.arms.values()" not in src, "연결된 전부를 훑는다"
+
+    from pathlib import Path
+    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+            / "RobotsPage.tsx").read_text()
+    assert "handleIdentify(arm.iface)" in page, "어느 팔을 눌렀는지 안 보낸다"
 
 
 def test_the_screen_and_the_daemon_use_the_same_wait_wording():

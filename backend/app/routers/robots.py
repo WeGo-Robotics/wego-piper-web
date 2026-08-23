@@ -341,11 +341,18 @@ class MotionDetectRequest(BaseModel):
     slot: str
 
 
+class IdentifyRequest(BaseModel):
+    """`iface` 는 **버튼을 누른 그 팔**이다. `slot` 은 상태를 담아둘 키."""
+
+    slot: str
+    iface: str
+
+
 @router.post("/identify")
-async def start_identify(body: MotionDetectRequest):
+async def start_identify(body: IdentifyRequest):
     """마스터/슬레이브를 **팔에 직접 물어서** 가린다.
 
-    각 팔에 작은 이동 명령을 넣고 반응을 본다 — 마스터는 외부 명령을 무시하고
+    **부른 팔 하나에만** 작은 이동 명령을 넣고 반응을 본다 — 마스터는 외부 명령을 무시하고
     피드백도 안 보내므로 움직이지도, 관절값이 바뀌지도 않는다.
 
     ⚠ **팔이 실제로 움직인다.** 추론·녹화 중에는 막는다 — 돌고 있는 에피소드
@@ -358,8 +365,8 @@ async def start_identify(body: MotionDetectRequest):
 
     require_idle(Activity.INFERENCE)
     require_idle(Activity.RECORDING)
-    if not robot_manager.start_identify(body.slot):
-        raise HTTPException(400, "연결된 팔이 없습니다")
+    if not robot_manager.start_identify(body.slot, body.iface):
+        raise HTTPException(400, f"{body.iface} 가 연결돼 있지 않습니다")
     return {"status": "started", "slot": body.slot}
 
 
