@@ -382,6 +382,85 @@ async def motion_detect_status(slot: str):
     return robot_manager.get_motion_status(slot)
 
 
+# ── 웹 조그 (feature/manual-control.md §2) ──
+
+
+def _require_commandable(iface: str):
+    """이 팔에 명령을 보내도 되는가. 아니면 **이유를 말하고 막는다.**
+
+    ⚠ 마스터로 설정된 팔은 **외부 제어 명령을 무시한다** — 추정이 아니라 판별
+    기능이 이용하는 측정된 성질이다. 보내면 에러도 안 나고 명령이 그냥 사라져서,
+    사용자는 팔이 고장 났다고 생각하게 된다. 그래서 조용히 보내느니 막는다.
+    """
+    arm = robot_manager.arms.get(iface)
+    if arm is None or not arm.connected:
+        raise HTTPException(400, f"{iface} 가 연결돼 있지 않습니다")
+    if arm.role == "leader":
+        raise HTTPException(
+            409, f"{iface} 는 마스터(리더)라 외부 명령을 무시합니다 — "
+                 "슬레이브로 바꾸거나 팔로워 팔을 고르세요")
+    if arm.role != "follower":
+        raise HTTPException(
+            409, f"{iface} 의 역할을 모릅니다 — 먼저 [찾기] 로 판별하세요")
+    return arm
+
+
+class JogStartRequest(BaseModel):
+    iface: str
+
+
+class JogGoalRequest(BaseModel):
+    iface: str
+    #: 정규화 목표. **부분 목표를 허용한다** — 세션이 직전 값과 병합한다.
+    values: dict[str, float]
+
+
+@router.post("/jog/start")
+async def jog_start(body: JogStartRequest):
+    """조그를 연다. 추론·녹화와 배타이고, 팔은 팔로워여야 한다."""
+    from app.services.exclusivity import Activity, require_idle
+    from app.services.jog import JogError, jog_session
+
+    require_idle(Activity.TELEOP)
+    arm = _require_commandable(body.iface)
+    # 시작 목표는 **지금 자세**다 — 0 으로 채우면 첫 명령에 팔이 튄다
+    current = arm.read_joints_normalized()
+    if not current:
+        raise HTTPException(400, f"{body.iface} 의 관절값을 읽지 못했습니다")
+    try:
+        jog_session.start(body.iface, current)
+    except JogError as e:
+        raise HTTPException(409, str(e))
+    return {"status": "started", **jog_session.status()}
+
+
+@router.post("/jog/goal")
+async def jog_goal(body: JogGoalRequest):
+    from app.services.jog import JogError, jog_session
+
+    if jog_session.iface != body.iface:
+        raise HTTPException(409, f"{body.iface} 는 조종 중이 아닙니다")
+    try:
+        return {"status": "ok", "goal": jog_session.set_goal(body.values)}
+    except JogError as e:
+        raise HTTPException(409, str(e))
+
+
+@router.post("/jog/stop")
+async def jog_stop():
+    from app.services.jog import jog_session
+
+    jog_session.stop()
+    return {"status": "stopped"}
+
+
+@router.get("/jog/status")
+async def jog_status():
+    from app.services.jog import jog_session
+
+    return jog_session.status()
+
+
 # ── 설정 저장/로드 ──
 
 class SaveConfigRequest(BaseModel):
