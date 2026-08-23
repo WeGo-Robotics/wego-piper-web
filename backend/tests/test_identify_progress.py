@@ -108,3 +108,34 @@ def test_the_page_shows_the_countdown_and_the_step():
     assert "motionStatus.phase" in src, "단계를 안 보여준다"
     assert "motionStatus.remaining > 0" in src, "남은 시간을 안 보여준다"
     assert "motionStatus.iface" in src, "어느 팔인지 안 보여준다"
+
+
+def test_the_progress_is_not_keyed_on_a_single_arm():
+    """**회귀** — 진행 표시가 화면에 아예 안 나왔다.
+
+    찾기 버튼은 팔 행마다 있는데 표시 조건이 `motionIface === arm.iface` 였다.
+    판별은 **연결된 팔 전부**를 훑는 한 번의 실행이라 거기 담기는 것은 슬롯 이름
+    (`identify`)이고, 어느 행의 iface 와도 같지 않다 — 버튼이 흐려지기만 했다.
+    """
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+           / "RobotsPage.tsx").read_text()
+    assert "motionIface === arm.iface" not in src, \
+        "실행 전체를 팔 하나에 묶어 판정한다 — 어느 행에도 안 걸린다"
+    assert "isProbingThis" in src, "지금 건드리는 팔을 구분하지 않는다"
+
+
+def test_the_screen_and_the_daemon_use_the_same_wait_wording():
+    """처음 뜨는 문구와 폴링이 가져오는 문구가 다르면 시작하자마자 글자가 바뀐다."""
+    from pathlib import Path
+
+    import inspect
+
+    from piper_robot.hub import RobotHub
+
+    hub_src = inspect.getsource(RobotHub._identify)
+    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+            / "RobotsPage.tsx").read_text()
+    phrase = "부팅 중인 팔을 깨뜨리지 않으려고 대기"
+    assert phrase in hub_src and phrase in page

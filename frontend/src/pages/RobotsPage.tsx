@@ -438,7 +438,8 @@ export default function RobotsPage() {
     try {
       await api.post('/robots/identify', { slot })
       setMotionIface(slot)
-      setMotionStatus({ status: 'waiting', phase: '부팅 대기', remaining: 10, results: {} })
+      setMotionStatus({ status: 'waiting', phase: '부팅 중인 팔을 깨뜨리지 않으려고 대기',
+                        remaining: 10, results: {} })
       motionPollRef.current = setInterval(async () => {
         const st = await api.get<MotionStatus>(`/robots/find-by-motion/status?slot=${slot}`)
         setMotionStatus(st)
@@ -650,7 +651,10 @@ export default function RobotsPage() {
           <div className="space-y-2">
             {connectedArms.map((arm) => {
               const isExpanded = expandedArm === arm.iface
-              const isDetecting = motionIface === arm.iface
+              // 판별은 팔 하나가 아니라 **연결된 전부**를 훑는다. 그래서 실행 중이면
+              // 모든 행이 진행 표시로 바뀌고, 지금 건드리는 팔만 자세히 적는다.
+              const isDetecting = !!motionIface && !!motionStatus
+              const isProbingThis = motionStatus?.iface === arm.iface
               const canRegister = arm.connected && arm.role !== 'unknown'
 
               return (
@@ -682,16 +686,27 @@ export default function RobotsPage() {
                         <div className="text-xs text-neutral-400 flex items-center gap-2">
                           {/* 절차가 몇 초씩 조용하다 — **무엇을, 얼마나 더**
                               기다리는지 둘 다 보여야 멈춘 것과 구분된다. */}
-                          <span className="flex items-center gap-1.5 text-amber-400">
-                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400"
+                          <span className={`flex items-center gap-1.5 ${
+                            isProbingThis || !motionStatus.iface
+                              ? 'text-amber-400' : 'text-neutral-500'}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${
+                              isProbingThis || !motionStatus.iface
+                                ? 'animate-pulse bg-amber-400' : 'bg-neutral-600'}`}
                                   aria-hidden />
-                            <span>
-                              {motionStatus.iface && motionStatus.total
-                                ? `${motionStatus.iface} (${motionStatus.index}/${motionStatus.total}) · `
-                                : ''}
-                              {motionStatus.phase ?? '확인 중'}
-                            </span>
-                            {motionStatus.remaining > 0 && (
+                            {/* 지금 건드리는 팔만 단계를 적는다. 모든 행에 같은
+                                문장을 띄우면 어느 팔이 움직일 차례인지 안 보인다. */}
+                            {!motionStatus.iface ? (
+                              <span>{motionStatus.phase ?? '준비 중'}</span>
+                            ) : isProbingThis ? (
+                              <span>
+                                {motionStatus.phase ?? '확인 중'}
+                                {motionStatus.total ? ` (${motionStatus.index}/${motionStatus.total})` : ''}
+                              </span>
+                            ) : (
+                              <span>차례 기다리는 중</span>
+                            )}
+                            {(isProbingThis || !motionStatus.iface)
+                              && motionStatus.remaining > 0 && (
                               <span className="tabular-nums font-medium">
                                 {motionStatus.remaining.toFixed(1)}s
                               </span>
