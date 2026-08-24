@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { JOINTS } from '../config/joints'
 
 /**
@@ -33,6 +33,24 @@ export default function ManualControlPanel({
     return init
   })
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+
+  // ⚠ **못 쓰는 동안에는 팔을 따라간다.**
+  //
+  // 예전에는 마운트 때 한 번만 `currentJoints` 로 초기화했다. 그 순간 값이 아직
+  // 안 왔으면(빈 배열) 슬라이더가 **전부 0 으로 굳었다** — 그 상태로 하나를 끌면
+  // 나머지 관절까지 0 을 목표로 보내, 팔이 엉뚱한 자세로 천천히 기어갔다.
+  // 화면에서는 "반응이 없다"로 보인다.
+  //
+  // 조작 중(`disabled` 가 아닐 때)에는 따라가지 않는다 — 슬라이더와 팔이 서로를
+  // 밀어 떨린다.
+  useEffect(() => {
+    if (!disabled || currentJoints.length === 0) return
+    setValues(() => {
+      const synced: Record<string, number> = {}
+      JOINTS.forEach((j, i) => { synced[j.actionKey] = currentJoints[i] ?? 0 })
+      return synced
+    })
+  }, [disabled, currentJoints])
 
   const handleChange = (name: string, value: number) => {
     const next = { ...values, [name]: value }

@@ -221,3 +221,33 @@ def test_the_screen_can_turn_torque_back_on():
     """OFF 만 있으면 끈 뒤 되돌릴 길이 화면에 없다."""
     src = _src("pages/RobotsPage.tsx")
     assert "torque?enable=true" in src and "torque?enable=false" in src
+
+
+def test_the_sliders_follow_the_arm_until_you_grab_them():
+    """**회귀 — 화면에서 "조그가 반응이 없다"로 보였다.**
+
+    슬라이더를 마운트 때 한 번만 초기화했다. 그 순간 관절값이 아직 안 왔으면
+    (빈 배열) **전부 0 으로 굳었고**, 그 상태로 하나를 끌면 나머지 관절까지 0 을
+    목표로 보내 팔이 엉뚱한 자세로 천천히 기어갔다.
+
+    못 쓰는 동안(`disabled`)에는 팔을 따라가고, 조작 중에는 안 따라간다 —
+    따라가면 슬라이더와 팔이 서로를 밀어 떨린다.
+    """
+    src = _src("components/ManualControlPanel.tsx")
+    assert "if (!disabled || currentJoints.length === 0) return" in src, \
+        "따라가지 않거나, 조작 중에도 따라간다"
+    assert "[disabled, currentJoints]" in src
+
+
+def test_there_is_a_way_back_to_the_home_pose():
+    """조그로 되돌리려면 관절 여섯을 손으로 맞춰야 한다 — 버튼 하나면 될 일이다."""
+    src = _src("components/JogPanel.tsx")
+    assert "parking/go" in src, "원점으로 보내는 길이 없다"
+    assert "await confirm(" in src, "팔이 한 번에 움직이는데 안 묻는다"
+
+
+def test_going_home_is_blocked_while_something_else_drives():
+    """조그·릴레이가 명령 경로를 쥔 채로 파킹을 보내면 둘이 팔을 두고 다툰다."""
+    src = _src("components/JogPanel.tsx")
+    home = src.split("onClick={goHome}", 1)[1][:200]
+    assert "busy || running || relaying" in home

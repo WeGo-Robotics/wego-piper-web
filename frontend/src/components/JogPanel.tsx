@@ -28,7 +28,7 @@ type Props = {
 }
 
 export default function JogPanel({ iface, commandable, reason, leader }: Props) {
-  const { notify } = useSystemMessage()
+  const { notify, confirm } = useSystemMessage()
   const [running, setRunning] = useState(false)
   // 시작 자세. **슬라이더의 출발점**이라, 0 이면 첫 조작에 팔이 튄다.
   const [joints, setJoints] = useState<number[]>([])
@@ -58,6 +58,19 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
     const id = setInterval(() => { if (!runningRef.current) read() }, 500)
     return () => { alive = false; clearInterval(id) }
   }, [iface, commandable])
+
+  const goHome = async () => {
+    const yes = await confirm(
+      `${iface} 를 파킹(원점) 자세로 보냅니다.\n\n` +
+      '팔이 지금 자세에서 파킹까지 **한 번에** 움직입니다 — 경로 위가 비어 있는지 확인하세요.')
+    if (!yes) return
+    setBusy(true)
+    try {
+      await api.post('/robots/parking/go', { iface })
+      notify({ level: 'info', source: '로봇', text: `${iface} 파킹 자세로 이동` })
+    } catch (e) { fail(e, '파킹으로 보내지 못했습니다') }
+    finally { setBusy(false) }
+  }
 
   const start = async () => {
     setBusy(true)
@@ -144,12 +157,20 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
           웹 조그
           {running && <span className="ml-2 text-amber-400">· 명령 경로 점유 중</span>}
         </span>
+        <span className="flex gap-1">
+        {/* 원점(파킹)으로 — 조그로 되돌리려면 관절 여섯을 손으로 맞춰야 한다 */}
+        <button onClick={goHome} disabled={busy || running || relaying}
+          title={running || relaying ? '조작을 먼저 끝내세요' : '파킹(원점) 자세로 이동'}
+          className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-50">
+          원점으로
+        </button>
         <button onClick={running ? stop : start} disabled={busy || relaying}
           title={relaying ? '릴레이를 먼저 끝내세요' : undefined}
           className={`px-2 py-1 text-xs rounded text-white disabled:opacity-50 ${
             running ? 'bg-red-600 hover:bg-red-500' : 'bg-amber-600 hover:bg-amber-500'}`}>
           {busy ? '…' : running ? '조그 끝내기' : '조그 시작'}
         </button>
+        </span>
       </div>
 
       <ManualControlPanel
