@@ -158,6 +158,15 @@ class RobotHub:
         if stuck:
             return {"ok": False, "error": stuck, "pose": current}
 
+        # ⚠ **SDK 는 전송 실패를 예외로 안 준다.** 팔이 꺼져 있어도 명령은 조용히
+        #   돌아오고 로그에만 남는다 — 실기에서 5번을 "성공"으로 보고했다.
+        #   버스 상태가 그걸 바로 말해 준다.
+        from piper_robot.can import can_unhealthy_reason
+
+        bad = can_unhealthy_reason(iface)
+        if bad:
+            return {"ok": False, "error": bad, "pose": current}
+
         ok, msg = arm.move_end_pose(target)
         if not ok:
             self._pending.pop(iface, None)

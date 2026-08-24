@@ -17,6 +17,7 @@ xHCI 컨트롤러가 죽으면 CAN 어댑터와 카메라가 **함께** 사라�
 
 import logging
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -68,6 +69,44 @@ def _read_can_rx(iface: str) -> int:
         return int(Path(f"/sys/class/net/{iface}/statistics/rx_packets").read_text().strip())
     except Exception:
         return 0
+
+
+# 버스가 건강한 상태. 이거 말고는 프레임이 안 나가거나 곧 안 나간다.
+CAN_HEALTHY = "ERROR-ACTIVE"
+
+
+def can_state(iface: str) -> str | None:
+    """버스 상태(`ERROR-ACTIVE` / `ERROR-PASSIVE` / `BUS-OFF`). 못 읽으면 None.
+
+    ⚠ **이게 필요한 이유: SDK 가 전송 실패를 예외로 안 준다.** 팔 전원이 꺼져
+    있어도 `JointCtrl`·`EndPoseCtrl` 은 조용히 돌아오고 로그에만
+    `SEND_MESSAGE_FAILED` 가 남는다 — 화면에는 "성공"으로 보인다. 실기에서
+    그렇게 5번을 성공으로 보고했다.
+
+    아무도 ACK 하지 않으면 컨트롤러가 `ERROR-PASSIVE` 로 내려간다. 그게 "팔이
+    안 듣고 있다"의 결정적 증거다 — `tx_errors` 는 그때도 0 이었다.
+
+    sysfs 에는 없다(netlink 속성이라 `ip` 를 거쳐야 한다). 3~4ms 라 명령마다는
+    괜찮지만 **프레임마다 부르면 안 된다.**
+    """
+    try:
+        out = subprocess.run(["ip", "-details", "link", "show", iface],
+                             capture_output=True, text=True, timeout=2).stdout
+    except Exception:
+        return None
+    m = re.search(r"can state (\S+)", out)
+    return m.group(1) if m else None
+
+
+def can_unhealthy_reason(iface: str) -> str | None:
+    """버스가 나쁘면 사람이 읽을 사유, 괜찮으면 None."""
+    state = can_state(iface)
+    if state is None or state == CAN_HEALTHY:
+        return None
+    if state == "BUS-OFF":
+        return f"{iface} 버스가 꺼졌습니다(BUS-OFF) — 팔 전원과 CAN 케이블을 보세요"
+    return (f"{iface} 버스가 {state} 입니다 — 명령이 안 나가고 있습니다. "
+            "팔 전원과 CAN 케이블을 보세요")
 
 
 def sniff_can_ids(iface: str, duration: float = 1.2) -> dict:

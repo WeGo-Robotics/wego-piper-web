@@ -85,6 +85,20 @@ def open_action_writer(iface: str, deadman_ms: int):
     return shm_arm.ActionWriter(iface, deadman_ms=deadman_ms)
 
 
+def require_healthy_bus(iface: str) -> None:
+    """버스가 나쁘면 시작을 막는다. `ArmBusyError` 로 사유를 말한다.
+
+    ⚠ 여기서 안 막으면 조그가 열리고 슬라이더도 움직이는데 **팔만 안 움직인다.**
+    SDK 가 전송 실패를 조용히 삼키기 때문이다 — 사용자는 소프트웨어를 의심하게
+    된다. 시작하는 순간이 그걸 말해줄 가장 좋은 때다.
+    """
+    from piper_robot.can import can_unhealthy_reason
+
+    bad = can_unhealthy_reason(iface)
+    if bad:
+        raise ArmBusyError(bad)
+
+
 def enable_torque(iface: str) -> None:
     """조작 전에 토크를 켠다. **안 켜면 명령이 나가도 팔이 힘을 안 쓴다.**
 

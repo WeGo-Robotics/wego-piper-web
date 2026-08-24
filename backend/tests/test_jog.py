@@ -251,3 +251,45 @@ def test_going_home_is_blocked_while_something_else_drives():
     src = _src("components/JogPanel.tsx")
     home = src.split("onClick={goHome}", 1)[1][:200]
     assert "busy || running || relaying" in home
+
+
+def test_a_dead_bus_is_reported_instead_of_a_silent_success():
+    """⚠ **SDK 가 전송 실패를 예외로 안 준다.**
+
+    팔 전원이 꺼져 있어도 `JointCtrl`·`EndPoseCtrl` 은 조용히 돌아오고 로그에만
+    `SEND_MESSAGE_FAILED` 가 남는다 — 실기에서 다섯 번을 "성공"으로 보고했다.
+    `tx_errors` 는 그때도 0 이었다. 결정적 신호는 **버스 상태**다.
+    """
+    from piper_robot.can import CAN_HEALTHY, can_unhealthy_reason
+
+    assert CAN_HEALTHY == "ERROR-ACTIVE"
+    # 모르는 인터페이스는 판정하지 않는다 — 모르는 것과 나쁜 것은 다르다
+    assert can_unhealthy_reason("canX_없음") is None
+
+
+def test_sessions_refuse_to_start_on_a_dead_bus():
+    """안 막으면 조그가 열리고 슬라이더도 움직이는데 **팔만 안 움직인다** —
+    사용자는 소프트웨어를 의심하게 된다."""
+    from app.services import jog, relay
+
+    for mod in (jog, relay):
+        assert "require_healthy_bus(" in inspect.getsource(mod), \
+            f"{mod.__name__} 이 버스를 안 본다"
+
+
+def test_the_end_pose_command_checks_the_bus_before_sending():
+    from piper_robot.hub import RobotHub
+
+    src = inspect.getsource(RobotHub.jog_end_pose)
+    assert "can_unhealthy_reason" in src
+    assert src.index("can_unhealthy_reason") < src.index("move_end_pose"), \
+        "보낸 뒤에 본다 — 그러면 이미 실패한 뒤다"
+
+
+def test_the_bus_is_not_checked_per_frame():
+    """`ip` 호출은 3~4ms 다. 명령마다는 괜찮지만 발행 루프에 들어가면 안 된다."""
+    from pathlib import Path
+
+    publish = (Path(__file__).resolve().parents[2] / "robot" / "piper_robot"
+               / "publish.py").read_text()
+    assert "can_state" not in publish and "can_unhealthy_reason" not in publish

@@ -28,7 +28,7 @@ import time
 
 from app.services.teleop import (
     ArmBusyError, close_action_writer, enable_torque, open_action_writer,
-    teleop_session,
+    require_healthy_bus, teleop_session,
 )
 
 logger = logging.getLogger(__name__)
@@ -89,6 +89,9 @@ class JogSession:
                 teleop_session.stop()
                 raise JogError(f"명령 경로를 열지 못했습니다: {exc}") from exc
 
+            # 버스가 죽어 있으면 여기서 말한다 — 안 그러면 슬라이더는
+            # 움직이는데 팔만 안 움직여 소프트웨어를 의심하게 된다
+            require_healthy_bus(iface)
             # 토크부터 켠다 — 안 켜면 명령이 나가도 팔이 힘을 안 쓴다
             enable_torque(iface)
             self._iface = iface
