@@ -119,8 +119,15 @@ class ProcessManager:
             self._set_state(ProcessState.RUNNING)
             self._log_task = asyncio.create_task(self._read_stdout())
             self._err_task = asyncio.create_task(self._read_stderr())
+        except FileNotFoundError as e:
+            # ⚠ `[Errno 2] No such file or directory` 는 **어느 파일인지 안 말한다.**
+            #   실행 파일이 없는 것인데 모델 경로 문제로 읽혀서 한참을 헤맸다
+            #   (`local_python` 이 PATH 에 없던 건). 이름을 찍는다.
+            logger.error("실행 파일을 못 찾음: %s (%s)", cmd[0], e)
+            self._set_state(ProcessState.ERROR)
+            raise FileNotFoundError(f"실행 파일이 없습니다: {cmd[0]}") from e
         except Exception as e:
-            logger.error("Failed to start process: %s", e)
+            logger.error("Failed to start process: %s (cmd=%s)", e, cmd[0])
             self._set_state(ProcessState.ERROR)
             raise
 

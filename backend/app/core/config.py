@@ -169,7 +169,14 @@ class Settings(BaseSettings):
     debug_dir: str = "/tmp/piper_debug"
 
     # 실행 경로
-    local_python: str = "python"  # 로컬 wrapper용 python
+    # 로컬 wrapper 용 python. **`grpc_python` 과 같은 이유로 같은 기본값이다** —
+    # 아래 주석을 그대로 읽으면 된다.
+    #
+    # ⚠ 예전 기본값은 그냥 `"python"` 이었다. 셸에서 띄우던 동안은 conda 가 PATH 에
+    # 있어 맞았지만, 게이트웨이를 systemd 유닛으로 옮기자 유닛 PATH 에 conda 가 없어
+    # `[Errno 2] No such file or directory` 로 추론이 안 떴다. **어느 파일인지도 안
+    # 나와서** 모델 경로 문제로 보였다. PATH 에 기대지 않는다.
+    local_python: str = sys.executable
     # gRPC wrapper·정책 서버용 python.
     #
     # ⚠ **홈 경로를 박아두지 않는다.** 예전 기본값은 `~/miniconda3/bin/python` 이었는데,

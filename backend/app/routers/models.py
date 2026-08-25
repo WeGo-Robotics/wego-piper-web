@@ -26,9 +26,22 @@ router = APIRouter(prefix="/api/models", tags=["models"])
 
 # ── 모델 검색 경로 관리 ──
 
+def _readable(p) -> bool:
+    """⚠ `exists()` 는 상위 디렉토리를 못 읽으면 `PermissionError` 를 **던진다.**
+
+    컨테이너에서 붙었던 `/root/.cache/huggingface/hub` 가 목록에 남아 있어서
+    이 엔드포인트가 통째로 500 이었고, 설정 화면은 경로 목록을 **빈 채로** 보여줬다
+    — 즉 문제의 그 경로를 지울 방법이 화면에 없었다. 스캐너는 이미 건너뛰고 있다.
+    """
+    try:
+        return p.exists()
+    except OSError:
+        return False
+
+
 @router.get("/paths")
 async def list_model_paths():
-    return [{"path": str(p), "exists": p.exists()} for p in settings.model_paths]
+    return [{"path": str(p), "exists": _readable(p)} for p in settings.model_paths]
 
 
 class PathRequest(BaseModel):
