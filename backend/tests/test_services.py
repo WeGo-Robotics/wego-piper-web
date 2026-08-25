@@ -150,3 +150,50 @@ def test_respawn_is_refused_when_the_command_line_is_unknown(monkeypatch):
     monkeypatch.setattr(U.sys, "orig_argv", ["python"])
     assert U.respawn_argv() is None
     assert U.gateway_status()["restartable"] is False
+
+
+def test_the_web_server_and_frontend_are_units_too():
+    """**회귀 — 재부팅하면 화면이 안 떴다.**
+
+    장치 데몬 다섯은 `enabled` 라 알아서 뜨는데 게이트웨이·프론트는 유닛이
+    아니어서, 손으로 띄운 것이 재부팅과 함께 사라졌다.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    for name in ("piper-gateway", "piper-frontend"):
+        unit = root / "deploy" / "systemd" / f"{name}.service"
+        assert unit.exists(), f"{name} 유닛 파일이 없다"
+        src = unit.read_text()
+        assert "WantedBy=default.target" in src, f"{name} 이 부팅 때 안 뜬다"
+        # ⚠ `[Service]` 에 두면 이 systemd 가 조용히 무시한다 (estopd 가 그랬다)
+        head = src.split("[Service]", 1)[0]
+        assert "StartLimitIntervalSec" in head, f"{name} 이 그 키를 [Service] 에 뒀다"
+
+
+def test_the_frontend_unit_pins_the_node_path():
+    """systemd 는 로그인 셸이 아니라 nvm 이 깔아주는 PATH 가 없다 —
+    `npm` 을 못 찾아 **조용히 실패한다.**"""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "deploy" / "systemd"
+           / "piper-frontend.service").read_text()
+    assert "@NODE_BIN@" in src and "Environment=PATH=" in src
+
+
+def test_the_installer_cannot_kill_the_container_backend():
+    """⚠ **회귀 — 실제로 죽였다.**
+
+    `uvicorn app.main:app` 만으로 찾으면 컨테이너 안에서 도는 같은 이름까지
+    잡힌다(호스트 PID 네임스페이스에 그대로 보인다). 인터프리터 경로까지 넣어 좁힌다.
+    """
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "deploy" / "install-daemons.sh").read_text()
+    assert 'pat="^$PY -m uvicorn app.main:app"' in src, "패턴이 넓어 남의 것을 잡는다"
+
+
+def test_the_gateway_is_judged_but_the_frontend_is_not():
+    """vite dev 는 고치면 그 자리에서 반영된다 — "낡았다"가 성립하지 않는다."""
+    assert "piper-gateway" in U._SOURCES
+    assert "piper-frontend" not in U._SOURCES

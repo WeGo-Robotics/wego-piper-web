@@ -1,0 +1,31 @@
+# piper-gateway — 웹 서버(FastAPI/uvicorn).
+#
+# 설치: deploy/install-daemons.sh gateway
+#
+# 왜 유닛인가: 지금까지 손으로 띄웠고, **재부팅하면 사라졌다.** 데몬 다섯은
+# `enabled` 라 알아서 뜨는데 정작 화면이 안 떠서 "서버가 죽었나" 를 매번 확인해야
+# 했다. 유닛이면 뜨고, 죽으면 되살아나고, journald 에 남는다.
+#
+# ⚠ **사용자 유닛이다.** 데몬들이 `/dev/shm` 세그먼트를 사용자 권한으로 만들므로
+# 게이트웨이도 같은 사용자여야 읽는다 (robotd 유닛의 같은 경고 참고).
+
+[Unit]
+Description=Piper web gateway (FastAPI)
+Documentation=file://@REPO@/CLAUDE.md
+
+# ⚠ `StartLimitIntervalSec` 은 **`[Unit]` 에 둔다.** `[Service]` 에 쓰면 이 systemd
+# 버전이 "Unknown key name" 으로 조용히 무시한다 (estopd 가 그랬다).
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@/backend
+ExecStart=@PY@ -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# 게이트웨이가 죽어도 팔은 스스로 안 움직인다 — 명령이 끊기면 robotd 의 데드맨이
+# 그 자리에 세우고, heartbeat 가 끊기면 estopd 가 정지시킨다. 되살아나도 안전하다.
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

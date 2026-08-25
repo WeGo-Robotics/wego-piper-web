@@ -1,0 +1,27 @@
+# piper-frontend — 개발 서버(vite).
+#
+# 설치: deploy/install-daemons.sh frontend
+#
+# ⚠ **개발 서버다.** 코드를 고치면 저장하는 즉시 반영되는 것이 이 기계의 용도라
+# 빌드본 정적 서빙 대신 이걸 쓴다. 시연·운영 기계라면 `npm run build` 결과를
+# 서빙하는 편이 가볍다 — 그때는 이 유닛을 바꾼다.
+#
+# ⚠ node 는 nvm 아래 있을 수 있어 **경로를 굳혀 넣는다.** systemd 는 로그인 셸이
+# 아니라 `nvm` 이 깔아주는 PATH 가 없다 — `npm` 을 못 찾아 조용히 실패한다.
+
+[Unit]
+Description=Piper web frontend (vite dev server)
+Documentation=file://@REPO@/CLAUDE.md
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@/frontend
+Environment=PATH=@NODE_BIN@:/usr/local/bin:/usr/bin:/bin
+ExecStart=@NPM@ run dev
+
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

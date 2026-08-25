@@ -46,6 +46,12 @@ def wired(monkeypatch):
     monkeypatch.setattr(shm_arm, "ActionWriter", _FakeWriter)
     monkeypatch.setattr(shm_arm, "list_segments", lambda: [])
     monkeypatch.setattr(shm_arm, "unlink", lambda name: True)
+    # ⚠ **이 기계의 CAN 상태를 읽지 않는다.** 세션 시작이 버스를 확인하도록 만든 뒤
+    #   실기에서 can1 이 내려가 있자 단위 테스트가 우수수 깨졌다 — 로직 테스트가
+    #   하드웨어에 매이면 그때부터 아무것도 못 믿는다.
+    from app.services import teleop
+    monkeypatch.setattr(teleop, "require_healthy_bus", lambda iface: None)
+    monkeypatch.setattr(teleop, "enable_torque", lambda iface: None)
     teleop.teleop_session.stop()
 
     def _make(**kw):

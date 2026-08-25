@@ -7,6 +7,7 @@
 """
 
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -37,6 +38,12 @@ def session(monkeypatch):
     monkeypatch.setattr(shm_arm, "ActionWriter", _FakeWriter)
     monkeypatch.setattr(shm_arm, "list_segments", lambda: [])
     monkeypatch.setattr(shm_arm, "unlink", lambda name: True)
+    # ⚠ **이 기계의 CAN 상태를 읽지 않는다.** 세션 시작이 버스를 확인하도록 만든 뒤
+    #   실기에서 can1 이 내려가 있자 단위 테스트가 우수수 깨졌다 — 로직 테스트가
+    #   하드웨어에 매이면 그때부터 아무것도 못 믿는다.
+    from app.services import teleop
+    monkeypatch.setattr(teleop, "require_healthy_bus", lambda iface: None)
+    monkeypatch.setattr(teleop, "enable_torque", lambda iface: None)
     from app.services import teleop
     teleop.teleop_session.stop()
     s = JogSession()
@@ -293,3 +300,16 @@ def test_the_bus_is_not_checked_per_frame():
     publish = (Path(__file__).resolve().parents[2] / "robot" / "piper_robot"
                / "publish.py").read_text()
     assert "can_state" not in publish and "can_unhealthy_reason" not in publish
+
+
+def test_the_logic_tests_do_not_read_this_machines_can_bus():
+    """⚠ **회귀 — 실기에서 can1 이 내려가자 단위 테스트가 우수수 깨졌다.**
+
+    세션 시작이 버스를 확인하게 만들면서 테스트가 하드웨어에 매였다. 로직
+    테스트가 그 기계의 상태에 매이면 그때부터 아무것도 못 믿는다 — 실패가
+    코드 탓인지 케이블 탓인지 갈 수 없다.
+    """
+    for f in ("test_jog.py", "test_relay.py"):
+        src = (Path(__file__).parent / f).read_text()
+        assert 'monkeypatch.setattr(teleop, "require_healthy_bus"' in src, \
+            f"{f} 가 실제 CAN 을 읽는다"

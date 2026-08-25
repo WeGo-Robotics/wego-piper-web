@@ -45,6 +45,10 @@ _SOURCES: dict[str, tuple[str, ...]] = {
     "piper-camerad": ("daemons/camerad.py", "cam", "shm", "bus"),
     "piper-robotd": ("daemons/robotd.py", "robot", "shm", "bus"),
     "piper-estopd": ("daemons/estopd.py", "bus"),
+    "piper-gateway": ("backend/app", "wrapper", "bus", "shm"),
+    # ⚠ **프론트는 판정하지 않는다.** vite dev 로 도는 동안에는 소스를 고치면
+    #   그 자리에서 반영된다 — "낡았다"가 성립하지 않는다. 빌드본을 서빙하도록
+    #   바꾼다면 그때 `frontend/src` 를 여기 넣어야 한다.
 }
 _DEFAULT_SOURCES = ("daemons", "bus", "shm")
 

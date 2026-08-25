@@ -16,10 +16,17 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # conda·venv 안에서 돌리면 그쪽 인터프리터여야 piper_bus·piper_rs 가 보인다.
 # `/usr/bin/python3` 로 굳혀두면 이 저장소에서는 import 부터 실패한다.
 PY="$(command -v python3)"
+# ⚠ node 도 **지금 쉘의 것**을 쓴다. nvm 아래 있으면 systemd 의 PATH 로는 못 찾는다 —
+# `npm` 이 없어서 조용히 실패하는 대신 경로를 유닛에 굳혀 넣는다.
+NPM="$(command -v npm || true)"
+NODE_BIN="$(dirname "${NPM:-/usr/bin/npm}")"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
 DAEMONS=("$@")
 if [ ${#DAEMONS[@]} -eq 0 ]; then
+  # 게이트웨이·프론트는 기본에 안 넣는다 — 배포 대상(.120)은 컨테이너로 돌아서
+  # 여기 유닛이 붙으면 같은 포트를 두고 다툰다. 이 기계처럼 소스로 돌리는 곳만
+  # `install-daemons.sh gateway frontend` 로 따로 깐다.
   DAEMONS=(estopd robotd camerad rsd)
 fi
 
@@ -27,7 +34,8 @@ mkdir -p "$UNIT_DIR"
 for d in "${DAEMONS[@]}"; do
   src="$REPO/deploy/systemd/piper-$d.service"
   [ -f "$src" ] || { echo "✗ 유닛 파일이 없습니다: $src" >&2; exit 1; }
-  sed "s|@REPO@|$REPO|g; s|@PY@|$PY|g" "$src" > "$UNIT_DIR/piper-$d.service"
+  sed "s|@REPO@|$REPO|g; s|@PY@|$PY|g; s|@NPM@|$NPM|g; s|@NODE_BIN@|$NODE_BIN|g" \
+    "$src" > "$UNIT_DIR/piper-$d.service"
   echo "· piper-$d.service → $UNIT_DIR"
 done
 
@@ -43,7 +51,15 @@ for d in "${DAEMONS[@]}"; do
   if systemctl --user is-active --quiet "piper-$d" 2>/dev/null; then
     continue
   fi
-  if pids=$(pgrep -f "daemons/$d\.py$" 2>/dev/null); then
+  # 게이트웨이·프론트는 스크립트 경로가 아니라 명령줄로 찾는다.
+  #
+  # ⚠ **인터프리터 경로까지 넣어 좁힌다.** `uvicorn app.main:app` 만으로 찾으면
+  #   컨테이너 안에서 도는 같은 이름의 프로세스까지 잡힌다 — 호스트 PID 네임스페이스에
+  #   그대로 보이기 때문이다. 실제로 그렇게 컨테이너의 백엔드를 죽였다.
+  pat="daemons/$d\.py$"
+  [ "$d" = gateway ] && pat="^$PY -m uvicorn app.main:app"
+  [ "$d" = frontend ] && pat="^$NODE_BIN/.*[v]ite"
+  if pids=$(pgrep -af "$pat" 2>/dev/null | cut -d" " -f1); then
     echo "· 수동 실행 중인 $d 종료: $pids"
     kill $pids 2>/dev/null || true
   fi
