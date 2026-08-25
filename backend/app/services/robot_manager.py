@@ -228,8 +228,31 @@ class ArmInfo:
             "slot": self.slot,
             "side": self.side,
             "ready": self.ready,
+            # 역할과 팔의 실제 모드가 어긋났는가. **판정은 여기서** — 화면이
+            # 두 값을 놓고 직접 비교하면 규칙이 두 곳에 살게 된다.
+            "mode_mismatch": self.mode_mismatch(),
             "config": self._config_dict(),
         }
+
+    def mode_mismatch(self) -> str | None:
+        """역할과 팔 모드가 어긋나면 사람이 읽을 사유, 맞으면 None.
+
+        ⚠ 어긋나면 **조용히 안 움직인다.** 팔로워가 마스터 모드면 외부 명령을
+        통째로 무시하므로, 녹화의 텔레옵 루프가 명령을 보내도 아무 일이 없다 —
+        실기에서 에피소드 하나를 그렇게 버렸다. 전원이 나가거나 과부하로 멈추면
+        모드가 풀리는데, 화면은 라벨만 보고 멀쩡하다고 말했다.
+        """
+        if not self.connected or self.role not in ("leader", "follower") \
+                or self.is_master is None:
+            return None
+        want_master = self.role == "leader"
+        if self.is_master == want_master:
+            return None
+        if want_master:
+            return (f"{self.iface} 는 리더인데 팔이 슬레이브 모드입니다 — "
+                    "[마스터] 를 눌러 세우세요")
+        return (f"{self.iface} 는 팔로워인데 팔이 마스터 모드입니다 — "
+                "외부 명령을 무시합니다. [슬레이브] 를 눌러 세우세요")
 
     def _config_dict(self) -> dict:
         """역할에 따른 설정값."""
@@ -628,6 +651,28 @@ class RobotManager:
         # CAN 이름·bus_info 는 이 기기의 것이므로 device scope
         presets.save(PRESET_DOMAIN, name, values, scope="device")
 
+    def apply_role_mode(self, arm) -> bool:
+        """역할(라벨)을 팔의 **동작 모드**로 밀어 넣는다. 바뀌었으면 True.
+
+        ⚠ **둘은 다른 것이다.** `role` 은 우리가 붙인 라벨이라 게이트웨이 메모리와
+        프리셋에 살고, 마스터/슬레이브는 **팔 펌웨어의 모드**라 전원을 끄면 풀린다.
+        복구가 라벨만 되살리면 화면은 `leader` 인데 팔은 슬레이브인 상태가 된다 —
+        그러면 팔로워가 리더를 안 따라오고, 아무도 이유를 모른다. 실기에서 그랬다:
+        토크 과부하로 멈춘 뒤 모드가 뒤집혔는데 프리셋을 다시 불러도 그대로였다.
+
+        ⚠ **리더는 이 순간 토크가 풀려 처진다.** 마스터(示教输入臂)가 그런 모드라
+        피할 수 없다 — 사람이 잡고 끄는 팔이니 그게 제 상태이기도 하다.
+
+        읽어보고 다를 때만 세우지 않는다. 지금 모드 판정(`_classify_master`)은 CAN RX
+        유무로 **추정**하는 것이라, 그 값을 믿고 건너뛰면 틀린 채로 남는다.
+        """
+        if arm.role not in ("leader", "follower"):
+            return False
+        ok, msg = arm.set_master_slave(arm.role == "leader")
+        if not ok:
+            logger.warning("%s 모드 설정 실패 (%s): %s", arm.iface, arm.role, msg)
+        return ok
+
     def load_preset(self, name: str) -> dict | None:
         """프리셋을 현재 하드웨어에 적용한다.
 
@@ -680,6 +725,9 @@ class RobotManager:
                     arm.ready = False
                     failed.append(iface)
                     continue
+            # ⚠ **라벨만 복구하면 절반이다.** 팔의 마스터/슬레이브 모드까지 세운다 —
+            #   안 그러면 화면은 leader 인데 팔은 슬레이브로 남는다.
+            self.apply_role_mode(arm)
             # 등록 상태 복원. 없으면(옛 프리셋) 슬롯 유무로 추정한다.
             arm.ready = arm_data.get("ready", bool(arm_data.get("slot")))
             applied.append(iface)
@@ -766,6 +814,8 @@ class RobotManager:
             arm.slot = arm_data.get("slot")
             arm.side = arm_data.get("side")
             arm.update_config(arm_data.get("config", {}))
+            # 프리셋과 같은 이유로 모드까지 세운다 (`apply_role_mode` 참고)
+            self.apply_role_mode(arm)
             if arm_data.get("ready", False):
                 arm.ready = True
             restored += 1

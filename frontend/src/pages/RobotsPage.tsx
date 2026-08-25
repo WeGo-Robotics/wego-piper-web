@@ -254,6 +254,8 @@ function Spinner({ className = '' }: { className?: string }) {
 type ArmInfo = {
   iface: string; bus_info: string; state: string; connected: boolean
   role: string; ctrl_mode: string; master_slave?: 'master' | 'slave' | null
+  /** 역할과 팔 모드가 어긋난 사유. **판정은 백엔드가 한다.** */
+  mode_mismatch?: string | null
   firmware: string; slot: string | null; side?: 'left' | 'right' | null
   ready: boolean; config: Record<string, unknown>; rx_packets?: number
 }
@@ -815,6 +817,12 @@ export default function RobotsPage() {
                     {arm.role === 'leader' ? 'piper_leader' : 'piper_follower'}
                   </span>
                   {!arm.connected && <span className="text-[10px] text-amber-400">연결 끊김</span>}
+                  {/* ⚠ 어긋나면 **조용히 안 움직인다** — 팔로워가 마스터 모드면
+                      외부 명령을 통째로 무시한다. 문구는 백엔드가 만든다. */}
+                  {arm.mode_mismatch && (
+                    <span className="rounded bg-red-600/25 px-1.5 py-0.5 text-[10px] text-red-300"
+                          title={arm.mode_mismatch}>⚠ 모드 불일치</span>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   {/* 끊긴 팔을 다시 붙일 길 — 1단계 목록에서는 이미 빠졌으므로

@@ -181,6 +181,7 @@ async def start_recording(body: RecordStartRequest):
     # 팔도 같은 순서로 준비한다. `shm` 에서는 게이트웨이가 CAN 을 쥔 채로
     # 상태를 발행해야 프록시 드라이버가 붙는다.
     from app.services.robot_config import ArmPrepareError, prepare_arms
+    from app.services.robot_manager import robot_manager
 
     arm_ports = (body.robot_ports + body.teleop_ports) if bimanual \
         else [body.robot_port, body.teleop_port]
@@ -188,6 +189,16 @@ async def start_recording(body: RecordStartRequest):
         prepare_arms(arm_ports, purpose="recording")
     except ArmPrepareError as e:
         raise HTTPException(400, str(e))
+
+    # ⚠ **모드가 어긋나면 조용히 안 움직인다.** 팔로워가 마스터 모드면 외부 명령을
+    #   통째로 무시해서, 리더를 아무리 끌어도 팔로워가 안 따라온다 — 녹화는 정상으로
+    #   보이고 에피소드만 못 쓰게 된다. 실기에서 그렇게 하나를 버렸다.
+    #   전원이 나가거나 과부하로 멈추면 모드가 풀리므로 **시작할 때마다** 본다.
+    for iface in arm_ports:
+        arm = robot_manager.arms.get(iface) if iface else None
+        bad = arm.mode_mismatch() if arm else None
+        if bad:
+            raise HTTPException(409, bad)
 
     from app.services.control_bridge import control_bridge
     from app.services.preview_bridge import preview_bridge
