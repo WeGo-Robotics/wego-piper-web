@@ -26,7 +26,18 @@ export default function DashboardPage() {
                 {hf.avatar_url && <img src={hf.avatar_url} alt="" className="w-8 h-8 rounded-full" />}
                 <div className="text-sm">
                   <p className="font-medium">{hf.fullname || hf.username}</p>
-                  <p className="text-neutral-400 text-xs">{hf.username}{hf.token_name ? ` (${hf.token_name})` : ''}</p>
+                  {/* ⚠ 토큰 이름을 그냥 괄호로 붙이면 **데이터셋이나 조직명처럼
+                      읽힌다** — 실제로 `wego-hansu (yeonsei_02)` 를 보고 저게
+                      뭐냐는 질문이 나왔다. 무엇인지 밝혀서 적는다. */}
+                  <p className="text-neutral-400 text-xs">
+                    {hf.username}
+                    {hf.token_name && (
+                      <span className="ml-1.5 rounded bg-neutral-700 px-1 py-px text-[10px] text-neutral-300"
+                            title="이 기계가 쓰는 HuggingFace 액세스 토큰의 이름 (HF 설정에서 붙인 것)">
+                        토큰 {hf.token_name}
+                      </span>
+                    )}
+                  </p>
                 </div>
                 <span className="w-2 h-2 rounded-full bg-green-400" title="로그인됨" />
               </>

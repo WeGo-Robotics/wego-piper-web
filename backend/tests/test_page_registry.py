@@ -198,3 +198,14 @@ def test_param_slider_still_streams_when_no_commit_is_given():
     src = (_SRC / "components" / "ParamSlider.tsx").read_text()
     assert "onCommit?:" in src, "필수 prop 이 되면 기존 호출부가 전부 깨진다"
     assert "onCommit?.(value)" in src, "없을 때를 안 봐준다"
+
+
+def test_the_hf_token_name_is_labelled_as_a_token():
+    """⚠ **회귀** — `wego-hansu (yeonsei_02)` 를 보고 "저게 뭐냐"는 질문이 나왔다.
+
+    괄호 안의 토큰 이름은 데이터셋이나 조직명처럼 읽힌다. 계정명 옆에 그냥
+    붙이지 않고 **무엇인지 밝혀서** 적는다.
+    """
+    src = (_SRC / "pages" / "DashboardPage.tsx").read_text()
+    assert "토큰 {hf.token_name}" in src, "토큰이라고 안 밝힌다"
+    assert "` (${hf.token_name})`" not in src, "괄호로만 붙여 정체가 안 보인다"
