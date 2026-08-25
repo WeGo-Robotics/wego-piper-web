@@ -91,3 +91,33 @@ def test_the_running_log_sits_inside_the_switchable_layout():
     layout_open = running.index("layout === 'row'")
     assert running.index("LogViewer", layout_open) > layout_open, \
         "로그가 배치 컨테이너 밖에 있다 — 가로로 바꿔도 안 옮겨간다"
+
+
+# ── 녹화 미리보기 ────────────────────────────────────────────────────────────
+
+def test_every_recording_camera_is_visible_at_once():
+    """⚠ **회귀** — 2열 고정 격자라 카메라가 셋 이상이면 둘째 줄로 접혔다.
+
+    녹화 중 미리보기의 용도는 *지금 모든 카메라가 제대로 찍고 있나* 하나다.
+    한 대라도 아래로 접히면(스크롤해야 보이면) 그 확인이 안 된다 —
+    가려진 쪽이 하필 빠진 카메라다.
+    """
+    from conftest import code_only
+
+    src = (_SRC / "components" / "RecordPreview.tsx").read_text()
+    body = code_only(src)
+    assert "grid-cols-2" not in body, "미리보기가 다시 2열로 접힌다"
+    assert "flex" in body, "한 줄로 안 세운다"
+
+
+def test_the_preview_row_scrolls_instead_of_shrinking_to_nothing():
+    """한 줄이 되면 카메라가 늘수록 폭이 줄어든다. 바닥을 안 정하면
+    여섯 대쯤에서 **무엇이 찍혔는지 알아볼 수 없는 띠**가 된다.
+
+    최소 폭을 두고, 넘치면 옆으로 밀어서 본다.
+    """
+    from conftest import code_only
+
+    src = code_only((_SRC / "components" / "RecordPreview.tsx").read_text())
+    assert "min-w-[" in src, "최소 폭이 없어 무한정 납작해진다"
+    assert "overflow-x-auto" in src, "최소 폭을 넘으면 잘려서 안 보인다"

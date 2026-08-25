@@ -31,10 +31,13 @@ export default function RecordPreview() {
       {cams.length === 0 ? (
         <p className="text-xs text-neutral-500">프레임 대기 중… (녹화 루프 시작 후 표시됩니다)</p>
       ) : (
-        <div className={`grid gap-2 ${cams.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+        // ⚠ 2열 격자였다. 카메라가 셋이면 둘째 줄에 하나만 남고, 넷이면 아래 두 장이
+        //   접혀 **동시에 볼 수 없었다** — 녹화 중 미리보기의 요점이 그건데.
+        //   한 줄로 세우고, 좁아지면 늘어놓은 채로 옆으로 민다.
+        <div className="flex gap-2 overflow-x-auto pb-1">
           {cams.map(name => (
-            <div key={name} className="space-y-1">
-              <div className="text-[10px] text-neutral-400 font-mono">{name}</div>
+            <div key={name} className="space-y-1 flex-1 min-w-[7rem]">
+              <div className="text-[10px] text-neutral-400 font-mono truncate">{name}</div>
               <img
                 src={`/api/recording/preview/${encodeURIComponent(name)}?t=${ts}`}
                 alt={name}
