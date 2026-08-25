@@ -46,3 +46,48 @@ def test_recording_keeps_a_wide_preview_while_running():
     """녹화 중에는 미리보기가 주인공이라 좌우 분할이 남아 있어야 한다."""
     src = (_PAGES / "RecordingPage.tsx").read_text()
     assert "lg:grid-cols-[2fr_1fr]" in src, "녹화 중 미리보기 우선 배치가 사라졌다"
+
+
+# ── 배치 토글 (학습·비전) ────────────────────────────────────────────────────
+
+_SRC = Path(__file__).resolve().parents[2] / "frontend" / "src"
+
+
+def test_the_layout_toggle_is_one_component():
+    """같은 토글이 두 페이지에 필요해졌다. 복사하면 저장 키 규칙이나 라벨이
+    한쪽만 바뀐다 — 이 저장소에서 반복해서 난 갈라짐이다(관절 순서, 페이지 목록)."""
+    assert (_SRC / "components" / "LayoutToggle.tsx").exists()
+    for page in ("TrainingPage.tsx", "VisionPage.tsx"):
+        src = (_SRC / "pages" / page).read_text()
+        assert "LayoutToggle" in src, f"{page} 가 공용 토글을 안 쓴다"
+        assert "localStorage.getItem('vision-layout')" not in src, \
+            f"{page} 에 저장 키가 직접 박혀 있다"
+
+
+def test_training_can_switch_layout_while_running():
+    """학습 중에 보고 싶은 것이 그래프일 때도 로그일 때도 있다 —
+    화면 크기와 그때 사정이 정한다."""
+    src = (_SRC / "pages" / "TrainingPage.tsx").read_text()
+    running = src.split("      ) : (", 1)[1]
+    assert "<LayoutToggle" in running, "실행 중 화면에 토글이 없다"
+    assert "layout === 'row'" in running, "배치가 안 바뀐다"
+
+
+def test_the_layout_choice_is_remembered():
+    """매번 다시 고르게 하면 성가시다 — 배치는 취향과 화면 크기가 정한다."""
+    src = (_SRC / "components" / "LayoutToggle.tsx").read_text()
+    assert "localStorage.setItem" in src and "localStorage.getItem" in src
+
+
+def test_the_running_log_sits_inside_the_switchable_layout():
+    """⚠ 학습 **중** 로그는 좌우 분할 안에 있어도 된다 — 그게 가로 배치의 요점이다.
+
+    이 파일 위쪽 규칙("로그를 좁은 열에 넣지 말 것")과 헷갈리기 쉬운데, 다르다:
+    그쪽은 **고정** 2:1 분할이라 로그가 늘 좁았고, 여기는 사용자가 언제든 세로로
+    돌릴 수 있다. 좁으면 세로로 바꾸면 된다.
+    """
+    src = (_SRC / "pages" / "TrainingPage.tsx").read_text()
+    running = src.split("      ) : (", 1)[1]
+    layout_open = running.index("layout === 'row'")
+    assert running.index("LogViewer", layout_open) > layout_open, \
+        "로그가 배치 컨테이너 밖에 있다 — 가로로 바꿔도 안 옮겨간다"

@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../services/api'
+import LayoutToggle, { useLayout } from '../components/LayoutToggle'
 import { useSystemMessage } from '../components/SystemMessages'
 
 type DetObject = { label: string; conf: number; bbox: number[]; center: number[] }
@@ -50,13 +51,9 @@ export default function VisionPage() {
   const { notify } = useSystemMessage()
   const notifyError = (text: string) => notify({ level: 'error', text, source: '비전·판단' })
 
-  // 패널 배치 — col: 세로 스택(패널이 넓다), row: 가로 3열(한눈에 나란히)
-  const [layout, setLayout] = useState<'col' | 'row'>(
-    () => (localStorage.getItem('vision-layout') === 'row' ? 'row' : 'col'))
-  const switchLayout = (l: 'col' | 'row') => {
-    setLayout(l)
-    localStorage.setItem('vision-layout', l)
-  }
+  // 패널 배치 — col: 세로 스택(패널이 넓다), row: 가로 3열(한눈에 나란히).
+  // 학습 페이지도 같은 토글을 쓰므로 한 벌로 뺐다 (`LayoutToggle`).
+  const { layout, switchLayout } = useLayout('vision')
 
   // ── yolod ──
   const [segments, setSegments] = useState<string[]>([])
@@ -181,18 +178,7 @@ export default function VisionPage() {
 
   return (
     <div className="space-y-3">
-      {/* 배치 토글 — 값은 localStorage 에 남는다 */}
-      <div className="flex justify-end">
-        <div className="flex rounded overflow-hidden border border-neutral-700 text-xs">
-          {([['col', '세로'], ['row', '가로']] as const).map(([l, label]) => (
-            <button key={l} onClick={() => switchLayout(l)}
-              className={`px-2.5 py-1 ${layout === l
-                ? 'bg-neutral-600 text-white' : 'bg-neutral-800 text-neutral-500 hover:text-neutral-300'}`}>
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <LayoutToggle layout={layout} onChange={switchLayout} />
 
       <div className={layout === 'row' ? 'grid grid-cols-1 xl:grid-cols-3 gap-4 items-start' : 'space-y-4'}>
       {/* ── YOLO ── */}

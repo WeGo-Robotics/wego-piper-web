@@ -7,6 +7,7 @@ import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import { LOCAL_JOB_ID, type JobRecord, type ProcessState } from '../types/ws'
 import { useActivity, isStateMessage } from '../hooks/useActivity'
 import { usePolicies } from '../hooks/usePolicies'
+import LayoutToggle, { useLayout } from '../components/LayoutToggle'
 import PresetBar from '../components/PresetBar'
 import LogViewer from '../components/LogViewer'
 import TrainingMetrics, { type MetricsData, type HistoryData } from '../components/TrainingMetrics'
@@ -253,6 +254,8 @@ export default function TrainingPage() {
     return () => clearInterval(histPollRef.current)
   }, [trainState])
 
+  // 학습 중 패널 배치 — 값은 localStorage 에 남는다
+  const { layout, switchLayout } = useLayout('training')
   const isRunning = trainState === 'running' || trainState === 'starting' || trainState === 'stopping'
 
   // 권장 베이스 체크포인트 받기 — 목록이 비었을 때 유일한 탈출구다
@@ -411,13 +414,36 @@ export default function TrainingPage() {
           {/* 데이터셋 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
             <h3 className="text-sm font-semibold">데이터셋</h3>
-            <select value={selectedDataset} onChange={(e) => { setSelectedDataset(e.target.value); setCliEdited(false) }}
-              className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-              <option value="">선택...</option>
-              {datasets.map((d) => (
-                <option key={d.id} value={d.id}>{d.id} ({d.total_episodes} ep, {d.total_frames} frames)</option>
-              ))}
-            </select>
+            {/* 정책이 요구하는 feature 가 없는 데이터셋은 빼고 보여준다 — 스펙(`train.requires_features`)이
+                정한다. 조건을 여기 다시 적지 않는다. 이미 고른 것이 조건에 안 맞으면 목록엔 남기되 경고한다. */}
+            {(() => {
+              const req = policyUi.train.requires_features
+              const eligible = (d: Dataset) => req.every((k) => d.features && k in d.features)
+              const shown = datasets.filter((d) => eligible(d) || d.id === selectedDataset)
+              const hidden = datasets.length - shown.length
+              const selectedOk = !selectedDataset || datasets.find((d) => d.id === selectedDataset) == null
+                || eligible(datasets.find((d) => d.id === selectedDataset)!)
+              return (
+                <>
+                  <select value={selectedDataset} onChange={(e) => { setSelectedDataset(e.target.value); setCliEdited(false) }}
+                    className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
+                    <option value="">선택...</option>
+                    {shown.map((d) => (
+                      <option key={d.id} value={d.id}>{d.id} ({d.total_episodes} ep, {d.total_frames} frames)</option>
+                    ))}
+                  </select>
+                  {req.length > 0 && (
+                    <p className="text-xs text-neutral-500">
+                      이 정책은 <code>{req.join(', ')}</code> 가 있는 데이터셋만 받습니다
+                      {hidden > 0 && ` — ${hidden}개 숨김`}. 에피소드 화면의 [ACT-Aux용 굽기]로 만듭니다.
+                    </p>
+                  )}
+                  {!selectedOk && (
+                    <p className="text-xs text-amber-400">⚠ 선택한 데이터셋에 <code>{req.join(', ')}</code> 가 없습니다 — 이대로 시작하면 첫 배치에서 죽습니다.</p>
+                  )}
+                </>
+              )
+            })()}
           </div>
 
           {/* 데이터셋 정보 */}
@@ -820,8 +846,14 @@ export default function TrainingPage() {
         </>
       ) : (
         <>
-          {/* 학습 중 — 그래프는 넓을수록 읽기 좋다 */}
-          {/* 실행 중: 메트릭 + 체크포인트 */}
+          {/* 학습 중 배치 — 그래프는 넓을수록 읽기 좋고, 로그는 가로가 중요하다.
+              어느 쪽을 넓게 볼지는 화면 크기와 그때 보고 싶은 것이 정한다. */}
+          <LayoutToggle layout={layout} onChange={switchLayout} />
+
+          <div className={layout === 'row'
+            ? 'grid grid-cols-1 xl:grid-cols-[3fr_2fr] gap-4 items-start'
+            : 'space-y-4'}>
+          <div className="space-y-4">
           <TrainingMetrics metrics={metrics} history={history} />
 
           {/* 체크포인트 */}
@@ -843,10 +875,16 @@ export default function TrainingPage() {
             className="w-full px-4 py-2 rounded bg-red-600 hover:bg-red-500 text-white text-sm font-medium">
             학습 정지
           </button>
+          </div>
 
+          {/* ⚠ 로그는 **좌우 분할 안에 있어도 된다** — 여기서는 그게 요점이다.
+              가로 배치는 그래프와 로그를 나란히 보려는 것이고, 좁으면 세로로
+              돌리면 된다. 설정 화면의 로그와는 사정이 다르다
+              (`test_page_layout.py` 는 설정 쪽을 잠근다). */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
             <h3 className="text-sm font-semibold mb-2">로그</h3>
             <LogViewer logs={logs} onClear={() => setLogs([])} />
+          </div>
           </div>
         </>
       )}
