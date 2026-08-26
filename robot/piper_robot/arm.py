@@ -156,15 +156,26 @@ class Arm:
             return
         self.is_master = seen["groups"]["slave_fb"] == 0
 
-    def refresh_mode(self) -> None:
-        """ctrl_mode 텍스트 + 마스터/슬레이브를 라이브 갱신.
+    def refresh_mode(self, classify: bool = False) -> None:
+        """ctrl_mode 텍스트를 라이브 갱신. 마스터/슬레이브는 **요청할 때만.**
 
-        역할(leader/follower)은 게이트웨이가 해석하므로 여기서 다루지 않는다 —
-        `/robots/current` 폴링마다 불리는 함수라, 장치가 역할을 덮으면 사용자가
-        고른 값이 조용히 되돌아간다.
+        ⚠ **마스터/슬레이브는 폴링으로 확인할 값이 아니다.** 저절로 바뀌지 않는다 —
+          우리가 `set_master_slave` 로 세우거나 팔 전원이 끊길 때만 바뀐다. 그런데
+          `/robots/current` 가 1초마다 불리면서 매번 다시 판별했고, 판별은 버스를
+          0.35초 듣는 일이라 **팔 2대면 매 초의 0.7초를 여기에 쓴다.**
+
+          비싸기만 한 게 아니라 위험하다: 판별이 틀릴 창이 폴링 횟수만큼 열린다.
+          실제로 옛 규칙에서 조작 중인 리더가 매 폴링마다 슬레이브로 뒤집혔다.
+
+        그래서 판별은 **연결할 때와 우리가 모드를 세운 직후**에만 한다.
+        전원이 끊기면 CAN 도 끊겨 재연결을 타므로 그때 다시 판별된다.
+
+        역할(leader/follower)은 여기서 안 건드린다 — 게이트웨이의 해석이고,
+        장치가 덮으면 사용자가 고른 값이 조용히 되돌아간다.
         """
         mode_int = self.refresh_ctrl_mode()
-        self._classify_master(mode_int)
+        if classify:
+            self._classify_master(mode_int)
 
     def set_master_slave(self, master: bool) -> tuple[bool, str]:
         """팔을 마스터(示教输入臂, 0xFA) 또는 슬레이브(运动输出臂, 0xFC)로 설정.
@@ -180,7 +191,7 @@ class Arm:
             except Exception as e:
                 return False, str(e)
         time.sleep(0.4)  # 모드 전환 반영 대기
-        self.refresh_mode()
+        self.refresh_mode(classify=True)   # 방금 바꿨다 — 여기서는 다시 본다
         # 사용자가 명시적으로 바꿨으므로 역할도 따라간다 — 마스터로 바꿔놓고
         # 화면에 follower 로 남아 있으면 슬롯 배정에서 그대로 어긋난다.
         return True, "OK"

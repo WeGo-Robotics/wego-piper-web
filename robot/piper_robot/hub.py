@@ -72,11 +72,12 @@ class RobotHub:
 
     # ── 상태 ──
 
-    def refresh_mode(self, iface: str) -> dict:
+    def refresh_mode(self, iface: str, classify: bool = False) -> dict:
+        """`classify=True` 는 **버스를 0.35초 듣는다** — 폴링에서 부르지 않는다."""
         arm = self.arms.get(iface)
         if arm is None:
             return {}
-        arm.refresh_mode()
+        arm.refresh_mode(classify=classify)
         return arm.to_dict()
 
     def set_master_slave(self, iface: str, master: bool) -> tuple[bool, str]:

@@ -281,7 +281,7 @@ class ArmInfo:
         if ok:
             # 연결 직후 마스터/슬레이브가 정해지므로 바로 흡수해야 한다 —
             # 안 그러면 등록 화면이 판별 전 값을 보여준다
-            self.absorb(_call("refresh_mode", self.iface, default={}) or {})
+            self.absorb(_call("refresh_mode", self.iface, True, default={}) or {})
             # `is_master` 는 팔에 물어본 사실이고, 역할은 그 **해석**이다.
             # 사용자가 `set_role()` 로 언제든 뒤집을 수 있다.
             if self.role == "unknown" and self.is_master is not None:
@@ -306,8 +306,8 @@ class ArmInfo:
         """
         self.connected = False
 
-    def refresh_mode(self) -> None:
-        info = _call("refresh_mode", self.iface, default={}) or {}
+    def refresh_mode(self, classify: bool = False) -> None:
+        info = _call("refresh_mode", self.iface, classify, default={}) or {}
         # 빈 응답 = robotd 가 죽었거나 이 팔을 모른다. `absorb` 는 빈 dict 를
         # 그냥 무시하므로(실패한 RPC 가 값을 지우면 안 되니까) 여기서 갈라야 한다.
         if info:
@@ -323,7 +323,7 @@ class ArmInfo:
         r = _pair(_call("set_master_slave", self.iface, master, timeout=30), "설정 실패")
         if r[0]:
             self.role = "leader" if master else "follower"
-            self.refresh_mode()
+            self.refresh_mode(classify=True)   # 방금 바꾼 값을 확인한다
         return r
 
     def read_joints_raw(self) -> list[int] | None:
@@ -741,7 +741,9 @@ class RobotManager:
     # ── 현재 상태 ──
 
     def get_current(self) -> dict:
-        # 연결된 팔은 ctrl_mode와 마스터/슬레이브(RX 유무)를 라이브로 다시 읽어 반영
+        # ⚠ ctrl_mode 만 다시 읽는다. 마스터/슬레이브는 **연결할 때 한 번**이다 —
+        #   저절로 바뀌지 않는 값이고, 판별은 버스를 0.35초 듣는 일이라 폴링에
+        #   태우면 팔 2대에 매 초의 0.7초를 쓴다 (`Arm.refresh_mode` 주석 참고).
         for arm in self.arms.values():
             if arm.connected:
                 arm.refresh_mode()

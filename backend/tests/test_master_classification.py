@@ -87,3 +87,45 @@ def test_the_classifier_no_longer_counts_packets():
     code = "\n".join(l for l in body.splitlines() if not l.strip().startswith("#"))
     assert "_read_can_rx" not in code, "다시 RX 개수를 센다"
     assert "sniff_can_ids" in code, "프레임 ID 를 안 본다"
+
+
+# ── 언제 판별하는가 ─────────────────────────────────────────────────────────
+
+_HUB = _ROBOT / "piper_robot" / "hub.py"
+_MGR = Path(__file__).resolve().parents[1] / "app" / "services" / "robot_manager.py"
+
+
+def test_polling_does_not_reclassify():
+    """⚠ **마스터/슬레이브는 폴링으로 확인할 값이 아니다.**
+
+    저절로 바뀌지 않는다 — 우리가 세우거나 전원이 끊길 때만 바뀐다. 그런데
+    `/robots/current` 가 1초마다 불리면서 매번 다시 판별했고, 판별은 버스를
+    0.35초 듣는 일이라 팔 2대면 **매 초의 0.7초**를 여기에 썼다.
+
+    비싸기만 한 게 아니라, 판별이 틀릴 창이 폴링 횟수만큼 열린다.
+    """
+    src = _MGR.read_text()
+    body = src.split("def get_current", 1)[1].split("\n    def ", 1)[0]
+    assert "refresh_mode()" in body, "ctrl_mode 갱신까지 빠졌다"
+    assert "classify" not in body, "폴링이 아직 판별한다"
+
+
+def test_connecting_does_classify():
+    """연결이 판별하는 자리다 — 그 팔이 무엇인지 그때 정해진다."""
+    src = _MGR.read_text()
+    body = src.split("def connect(", 1)[1].split("\n    def ", 1)[0]
+    assert '"refresh_mode", self.iface, True' in body, "연결할 때 판별을 안 한다"
+
+
+def test_setting_the_mode_reclassifies():
+    """방금 바꾼 값은 확인해야 한다 — 안 그러면 실패해도 성공으로 보인다."""
+    for path, marker in ((_ROBOT / "piper_robot" / "arm.py", "def set_master_slave"),
+                         (_MGR, "def set_master_slave")):
+        body = path.read_text().split(marker, 1)[1].split("\n    def ", 1)[0]
+        assert "classify=True" in body, f"{path.name}: 세운 뒤 확인을 안 한다"
+
+
+def test_the_daemon_defaults_to_not_classifying():
+    """⚠ 기본값이 판별이면, 인자를 안 넘기는 옛 호출부가 **조용히** 비싼 경로를 탄다."""
+    body = _HUB.read_text().split("def refresh_mode", 1)[1].split("\n    def ", 1)[0]
+    assert "classify: bool = False" in body, "기본값이 판별이다"
