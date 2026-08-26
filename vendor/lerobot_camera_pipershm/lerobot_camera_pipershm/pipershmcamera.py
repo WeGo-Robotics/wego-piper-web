@@ -16,8 +16,10 @@
 
 import logging
 
+import cv2
 import numpy as np
 from lerobot.cameras.camera import Camera
+from lerobot.cameras.configs import ColorMode
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from piper_shm import SegmentError, Subscriber, list_segments
 
@@ -80,6 +82,22 @@ class PiperShmCamera(Camera):
             )
         logger.info("%s connected (%dx%d)", self, self.width, self.height)
 
+    def _to_contract(self, frame: np.ndarray) -> np.ndarray:
+        """세그먼트(BGR) → 설정한 색 순서.
+
+        ⚠ **여기가 빠져 있었다.** 세그먼트 프레임을 그대로 돌려주면 LeRobot 은
+        그걸 RGB 로 알고 데이터셋 비디오에 굽는다 — 녹화된 에피소드가 통째로
+        R/B 가 뒤바뀐 채 남는다. 학습과 추론이 **둘 다** 같은 순서라 정책은
+        돌아갔고, 그래서 사람이 화면을 보기 전까지 안 드러났다.
+        """
+        if self.config.color_mode == ColorMode.BGR:
+            return frame
+        if frame.ndim == 3 and frame.shape[2] == 3:
+            return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if frame.ndim == 3 and frame.shape[2] == 4:
+            return cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
+        return frame
+
     def read(self, color_mode=None) -> np.ndarray:
         """지금 있는 최신 프레임. 새 프레임을 기다리지 않는다."""
         if self._sub is None:
@@ -87,7 +105,7 @@ class PiperShmCamera(Camera):
         got = self._sub.read()
         if got is None:
             raise DeviceNotConnectedError(f"{self}: 프레임을 읽지 못했습니다")
-        return got[0]
+        return self._to_contract(got[0])
 
     def async_read(self, timeout_ms: float = 200) -> np.ndarray:
         """**새** 프레임을 기다렸다 반환.
@@ -100,7 +118,7 @@ class PiperShmCamera(Camera):
         got = self._sub.read_new(timeout_s=timeout_ms / 1000.0)
         if got is None:
             raise TimeoutError(f"{self}: {timeout_ms}ms 안에 새 프레임이 없습니다")
-        return got[0]
+        return self._to_contract(got[0])
 
     def disconnect(self) -> None:
         if self._sub is not None:

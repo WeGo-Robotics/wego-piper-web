@@ -12,7 +12,7 @@ LeRobot 수정은 0이다 — `CameraConfig` 가 `draccus.ChoiceRegistry` 라
 
 from dataclasses import dataclass
 
-from lerobot.cameras.configs import CameraConfig
+from lerobot.cameras.configs import CameraConfig, ColorMode
 
 
 @CameraConfig.register_subclass("shm")
@@ -30,3 +30,11 @@ class PiperShmCameraConfig(CameraConfig):
 
     # 첫 프레임을 기다리는 상한. 발행자가 아직 안 떴을 수 있다.
     warmup_s: float = 5.0
+
+    # ⚠ **세그먼트는 BGR 이고 LeRobot 은 RGB 를 기대한다.**
+    #
+    # 이 필드가 없던 동안 플러그인이 세그먼트 프레임을 그대로 돌려줬고,
+    # LeRobot 은 그걸 RGB 로 알고 데이터셋에 구웠다 — 녹화된 에피소드 전체가
+    # R 과 B 가 뒤바뀐 채 저장됐다(주황 상자가 파랗게). `OpenCVCamera` 는
+    # 같은 상황을 `color_mode` 로 다룬다. 같은 이름, 같은 기본값을 쓴다.
+    color_mode: ColorMode = ColorMode.RGB

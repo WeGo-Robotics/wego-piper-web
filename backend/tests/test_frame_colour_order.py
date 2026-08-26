@@ -64,3 +64,67 @@ def test_nobody_flips_the_channels_on_the_way_out(name):
 
     src = code_only((_SVC / name).read_text())
     assert not re.search(r"\[:,\s*:,\s*::-1\]", src), f"{name} 이 채널을 뒤집는다"
+
+
+# ── LeRobot 쪽 계약 (녹화·추론이 받는 프레임) ────────────────────────────────
+
+_PLUGIN = (Path(__file__).resolve().parents[2] / "vendor" / "lerobot_camera_pipershm"
+           / "lerobot_camera_pipershm")
+
+
+def test_the_shm_camera_hands_lerobot_rgb():
+    """⚠ **회귀, 그리고 이 저장소에서 가장 비쌌던 종류의 버그다.**
+
+    플러그인이 세그먼트 프레임(BGR)을 그대로 돌려줬고 LeRobot 은 그걸 RGB 로 알고
+    **데이터셋 비디오에 구웠다.** 화면만 틀린 게 아니라 녹화된 에피소드가 통째로
+    R/B 가 뒤바뀐 채 남았다.
+
+    학습과 추론이 둘 다 같은 순서라 정책은 돌아갔다 — 그래서 사람이 화면을 볼
+    때까지 아무 신호가 없었다. 조용한 오염이라 테스트로 잡아야 한다.
+    """
+    pytest.importorskip("cv2")
+    pytest.importorskip("lerobot")
+    from lerobot_camera_pipershm.config_pipershmcamera import PiperShmCameraConfig
+    from lerobot_camera_pipershm.pipershmcamera import PiperShmCamera
+
+    cam = PiperShmCamera.__new__(PiperShmCamera)
+    cam.config = PiperShmCameraConfig()
+
+    out = cam._to_contract(np.full((2, 2, 3), YELLOW_BGR, dtype=np.uint8))
+    r, g, b = (int(v) for v in out[0, 0])
+    assert (r, g, b) == (255, 255, 0), \
+        f"LeRobot 이 RGB 로 읽을 값이 노란색이 아니다 (R={r} G={g} B={b})"
+
+
+def test_the_shm_camera_declares_a_colour_mode():
+    """`OpenCVCamera` 는 이걸 `color_mode` 로 다룬다. 이름과 기본값을 맞춘다 —
+    갈리면 카메라 종류마다 규약이 달라진다."""
+    pytest.importorskip("lerobot")
+    from lerobot.cameras.configs import ColorMode
+    from lerobot_camera_pipershm.config_pipershmcamera import PiperShmCameraConfig
+
+    assert PiperShmCameraConfig().color_mode == ColorMode.RGB
+
+
+def test_bgr_can_still_be_asked_for_explicitly():
+    """계약을 지키는 것과 선택지를 없애는 것은 다르다 — 상류도 둘 다 둔다."""
+    pytest.importorskip("cv2")
+    pytest.importorskip("lerobot")
+    from lerobot.cameras.configs import ColorMode
+    from lerobot_camera_pipershm.config_pipershmcamera import PiperShmCameraConfig
+    from lerobot_camera_pipershm.pipershmcamera import PiperShmCamera
+
+    cam = PiperShmCamera.__new__(PiperShmCamera)
+    cam.config = PiperShmCameraConfig(color_mode=ColorMode.BGR)
+    src = np.full((2, 2, 3), YELLOW_BGR, dtype=np.uint8)
+    assert np.array_equal(cam._to_contract(src), src), "BGR 을 달라고 해도 바꿔버린다"
+
+
+def test_the_recording_preview_tap_still_assumes_rgb():
+    """녹화 프리뷰는 관측 프레임을 RGB 로 보고 BGR 로 바꿔 인코딩한다.
+
+    플러그인이 계약을 지키면 그게 맞다. 둘 중 하나만 바뀌면 프리뷰가 다시 뒤집힌다
+    — 실제로 그 상태였다.
+    """
+    src = (Path(__file__).resolve().parents[2] / "wrapper" / "start_record.py").read_text()
+    assert "COLOR_RGB2BGR" in src, "프리뷰 탭이 규약을 바꿨다 — 플러그인과 같이 봐야 한다"
