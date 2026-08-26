@@ -44,5 +44,15 @@ cam/*.egg-info/
 shm/*.egg-info/
 robot/*.egg-info/
 
-# YOLO 가중치 (yolod 가 첫 실행 때 내려받는다)
+# 검출 가중치 (검출기가 첫 실행 때 내려받는다)
 *.pt
+
+# 검출 학습 데이터·가중치 — 런타임 산출물이라 통째로 뺀다.
+#
+# `*.pt` 만으로는 부족하다: 학습 유닛이 가중치 옆에 지표 JSON 을, 라벨러가
+# 이미지와 `.txt` 라벨을 남긴다. 그것들은 `.pt` 가 아니라서 그대로 커밋에 섞인다.
+# 디렉토리 자체는 `.gitkeep` 으로 남겨 첫 실행에 mkdir 이 필요 없게 한다.
+backend/data/yolo_models/*
+backend/data/yolo_datasets/*
+!backend/data/yolo_models/.gitkeep
+!backend/data/yolo_datasets/.gitkeep

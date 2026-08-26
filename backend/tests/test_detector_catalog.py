@@ -110,3 +110,40 @@ def test_deleting_the_selected_model_falls_back_to_a_local_one():
     src = _DEMO.read_text()
     body = src.split("const handleDeleteModel", 1)[1].split("\n  const ", 1)[0]
     assert "downloaded === true" in body, "삭제 뒤 로컬 가중치를 안 고른다"
+
+
+# ── 런타임 산출물이 저장소에 안 들어가게 ────────────────────────────────────
+
+_REPO = Path(__file__).resolve().parents[2]
+
+
+def test_runtime_detection_artifacts_are_ignored():
+    """⚠ `*.pt` 만으로는 부족하다.
+
+    학습 유닛은 가중치 **옆에 지표 JSON** 을 남기고, 라벨러는 이미지와 `.txt`
+    라벨을 남긴다. 확장자로만 막으면 그것들이 그대로 커밋에 섞인다.
+    """
+    import subprocess
+
+    samples = [
+        "backend/data/yolo_models/best.pt",
+        "backend/data/yolo_models/best.json",      # 학습 지표 곁 파일
+        "backend/data/yolo_datasets/s/images/a.jpg",
+        "backend/data/yolo_datasets/s/labels/a.txt",
+    ]
+    for rel in samples:
+        r = subprocess.run(["git", "check-ignore", "-q", rel],
+                           cwd=_REPO, capture_output=True)
+        assert r.returncode == 0, f"{rel} 이 커밋에 섞일 수 있다"
+
+
+def test_the_directories_themselves_survive():
+    """디렉토리가 사라지면 첫 실행이 mkdir 부터 해야 한다 — `.gitkeep` 을 남긴다."""
+    import subprocess
+
+    for rel in ("backend/data/yolo_models/.gitkeep",
+                "backend/data/yolo_datasets/.gitkeep"):
+        assert (_REPO / rel).exists(), f"{rel} 이 없다"
+        r = subprocess.run(["git", "check-ignore", "-q", rel],
+                           cwd=_REPO, capture_output=True)
+        assert r.returncode != 0, f"{rel} 까지 무시하면 디렉토리가 안 남는다"
