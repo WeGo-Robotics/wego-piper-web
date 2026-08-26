@@ -30,14 +30,20 @@ export default function EStopButton() {
   //   늦춘다. 이 값들은 **진단용이라 실패해도 heartbeat 는 계속 나가야 한다.**
   useEffect(() => {
     let last = performance.now()
-    let rtt = 0        // 직전 요청이 **오가는 데** 걸린 시간
     let seq = 0        // 보낸 순번 — 서버가 빠진 번호로 유실을 안다
+    // ⚠ 왕복 시간은 **어느 요청 것인지 붙여서** 보낸다.
+    //
+    //   콜백이 async 라 요청들이 겹친다. 예전에는 `rtt` 변수 하나를 먼저 끝난
+    //   요청이 덮어써서, 갭 줄과 그 다음 줄이 **같은 숫자**를 찍었다 — 정작
+    //   늦은 요청의 왕복을 못 봤다. 번호를 달아야 서버가 짝을 맞출 수 있다.
+    let done = { seq: 0, ms: 0 }
     const interval = setInterval(async () => {
       const now = performance.now()
       const gap = Math.round(now - last)
       last = now
       const sent = now
       seq += 1
+      const mySeq = seq
       try {
         // ⚠ `rtt` 는 직전 값을 보낸다 — 이번 요청의 왕복 시간은 이번 요청을
         //   보낸 뒤에야 알 수 있다. 한 tick 늦지만 그래도 원인이 갈린다:
@@ -48,11 +54,16 @@ export default function EStopButton() {
         //   **도착** 간격은 2초씩 벌어졌다. 번호가 이어져 있으면 요청이 늦게
         //   도착한 것이고, 번호가 건너뛰면 그 사이 요청은 **아예 못 갔다**.
         //   둘은 고치는 곳이 다르다.
-        await api.post('/estop/heartbeat', { gap, hidden: document.hidden, rtt, seq })
+        await api.post('/estop/heartbeat', {
+          gap, hidden: document.hidden, seq,
+          rtt: done.ms, rttSeq: done.seq,
+        })
       } catch {
         // 연결 끊김 → watchdog이 타임아웃 처리
       } finally {
-        rtt = Math.round(performance.now() - sent)
+        // 늦게 끝난 요청이 먼저 끝난 요청의 기록을 덮지 않게 번호로 비교한다
+        const ms = Math.round(performance.now() - sent)
+        if (mySeq > done.seq) done = { seq: mySeq, ms }
       }
     }, 500)
     return () => clearInterval(interval)

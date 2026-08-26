@@ -33,6 +33,7 @@ class EstopBridge:
         self._last_beat: float | None = None
         self._last_seq: int | None = None
         self._log_next = False
+        self._gap_seq: int | None = None
 
     def connect(self) -> bool:
         try:
@@ -94,9 +95,19 @@ class EstopBridge:
             #   클라이언트가 아직 모른다(보낸 뒤에야 안다). 그래서 바로 다음 비트를
             #   한 줄 더 찍는다. 거기 실려 오는 값이 **늦은 요청 자신의 왕복**이다.
             self._log_next = True
+            self._gap_seq = seq
         elif self._log_next:
             self._log_next = False
-            logger.warning("  ↑ 늦었던 요청의 왕복 %sms", info.get("rtt", "?"))
+            # ⚠ 짝이 맞을 때만 의미가 있다. 겹친 요청 때문에 다른 순번의 왕복이
+            #   실려 오면 그건 늦었던 그 요청의 값이 아니다 — 그걸 모른 채 읽어서
+            #   같은 숫자를 두 번 찍고 있었다.
+            got, want = info.get("rttSeq"), self._gap_seq
+            if got is not None and want is not None and got != want:
+                logger.warning("  ↑ 늦었던 요청(#%s)의 왕복을 못 받았다 (받은 것: #%s)",
+                               want, got)
+            else:
+                logger.warning("  ↑ 늦었던 요청(#%s)의 왕복 %sms",
+                               want, info.get("rtt", "?"))
 
         if self._bus:
             try:

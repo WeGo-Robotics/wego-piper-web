@@ -32,7 +32,7 @@ def test_a_heartbeat_without_a_body_still_works():
     from app.routers.estop import HeartbeatInfo
 
     info = HeartbeatInfo()
-    assert info.gap is None and info.hidden is None and info.rtt is None
+    assert (info.gap, info.hidden, info.rtt, info.rttSeq) == (None, None, None, None)
 
 
 def test_a_normal_gap_is_not_logged(bridge, caplog):
@@ -72,8 +72,7 @@ def test_the_browser_reports_its_own_gap_and_visibility():
     src = (_FRONT / "components" / "EStopButton.tsx").read_text()
     assert "performance.now()" in src, "브라우저가 자기 간격을 안 잰다"
     assert "document.hidden" in src, "탭 백그라운드 여부를 안 보낸다"
-    assert "'/estop/heartbeat', { gap, hidden: document.hidden, rtt, seq }" in src.replace('"', "'"), \
-        "정황을 heartbeat 와 같이 안 보낸다"
+    assert "rtt: done.ms, rttSeq: done.seq," in src, "정황을 heartbeat 와 같이 안 보낸다"
 
 
 def test_the_browser_times_its_own_request():
@@ -84,7 +83,7 @@ def test_the_browser_times_its_own_request():
     전에 어딘가 걸려 있었다는 뜻이고, 그걸 보려면 왕복 시간을 재야 한다.
     """
     src = (_FRONT / "components" / "EStopButton.tsx").read_text()
-    assert "rtt = Math.round(performance.now() - sent)" in src, "왕복 시간을 안 잰다"
+    assert "const ms = Math.round(performance.now() - sent)" in src, "왕복 시간을 안 잰다"
     assert "finally" in src, "요청이 실패하면 왕복 시간이 안 갱신된다"
 
 
@@ -159,7 +158,7 @@ def test_the_late_request_reports_its_own_round_trip(bridge, caplog, monkeypatch
         t[0] += 0.5
         bridge.heartbeat({"seq": 3, "gap": 500, "rtt": 1700})  # 2번의 실제 왕복
 
-    assert "늦었던 요청의 왕복 1700ms" in caplog.text
+    assert "늦었던 요청(#2)의 왕복 1700ms" in caplog.text
 
 
 def test_the_follow_up_line_fires_once(bridge, caplog, monkeypatch):
@@ -173,7 +172,35 @@ def test_the_follow_up_line_fires_once(bridge, caplog, monkeypatch):
     bridge.heartbeat({"seq": 2})
     with caplog.at_level("WARNING"):
         t[0] += 0.5
-        bridge.heartbeat({"seq": 3, "rtt": 900})
+        bridge.heartbeat({"seq": 3, "rtt": 900, "rttSeq": 2})
         t[0] += 0.5
-        bridge.heartbeat({"seq": 4, "rtt": 7})
-    assert caplog.text.count("늦었던 요청의 왕복") == 1
+        bridge.heartbeat({"seq": 4, "rtt": 7, "rttSeq": 3})
+    assert caplog.text.count("늦었던 요청(#") == 1
+
+
+def test_a_mismatched_round_trip_is_called_out(bridge, caplog, monkeypatch):
+    """⚠ **실측에서 이걸 놓쳤다.**
+
+    콜백이 async 라 요청이 겹치고, 예전에는 `rtt` 변수 하나를 먼저 끝난 요청이
+    덮어썼다. 그래서 갭 줄과 그 다음 줄이 **같은 숫자**를 찍었고, 정작 늦었던
+    요청의 왕복은 한 번도 못 봤다 — 그런데 숫자가 있으니 본 줄 알았다.
+
+    짝이 안 맞으면 값을 읽지 말고 **못 받았다고 말해야** 한다.
+    """
+    from app.services import estop_bridge as mod
+
+    t = [100.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: t[0])
+    with caplog.at_level("WARNING"):
+        bridge.heartbeat({"seq": 1, "rtt": 5, "rttSeq": 0})
+        t[0] += 2.2
+        bridge.heartbeat({"seq": 2, "rtt": 5, "rttSeq": 1})        # 갭
+        t[0] += 0.5
+        bridge.heartbeat({"seq": 3, "rtt": 9, "rttSeq": 1})        # 2번 것이 아니다
+    assert "못 받았다" in caplog.text, "다른 순번의 왕복을 그 요청 것처럼 읽는다"
+
+
+def test_the_browser_does_not_let_a_slow_request_lose_to_a_fast_one(bridge):
+    """겹친 요청 중 **늦게 끝난 것이 먼저 끝난 것의 기록을 덮으면** 안 된다."""
+    src = (_FRONT / "components" / "EStopButton.tsx").read_text()
+    assert "if (mySeq > done.seq)" in src, "번호 비교 없이 덮어쓴다"
