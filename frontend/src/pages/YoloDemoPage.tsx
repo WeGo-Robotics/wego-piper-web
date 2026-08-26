@@ -183,7 +183,7 @@ export default function YoloDemoPage() {
       const cams = Object.fromEntries(chosen.map((s, i) => [ALIASES[i] ?? `cam${i}`, s]))
       await api.post('/vision/start', { cams, model, conf: 0.25, fps, imgsz })
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'yolod 시작 실패')
+      setError(e instanceof Error ? e.message : '검출기 시작 실패')
     } finally { setBusy(false) }
   }
 
@@ -253,7 +253,7 @@ export default function YoloDemoPage() {
     <div className="space-y-4">
       {/* ── 헤더 ── */}
       <header className="flex items-center gap-4 flex-wrap">
-        <h1 className="text-xl font-bold tracking-tight">YOLO 데모</h1>
+        <h1 className="text-xl font-bold tracking-tight">검출 데모</h1>
         <span className={`text-xs px-2 py-0.5 rounded-full ${
           running ? 'bg-green-900/70 text-green-300' : 'bg-neutral-800 text-neutral-500'}`}>
           {status?.state ?? '…'}
@@ -302,7 +302,7 @@ export default function YoloDemoPage() {
       {!running && entries.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-4 py-24 text-neutral-500">
           <div className="text-5xl">👁</div>
-          <div className="text-sm">yolod 가 꺼져 있습니다 — 구독할 세그먼트를 고르고 시작하세요</div>
+          <div className="text-sm">검출기가 꺼져 있습니다 — 구독할 세그먼트를 고르고 시작하세요</div>
           {segments.length === 0 ? (
             <div className="text-xs text-neutral-600">살아 있는 카메라 세그먼트가 없습니다 (카메라 페이지에서 연결)</div>
           ) : (

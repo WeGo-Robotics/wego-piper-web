@@ -43,7 +43,7 @@ const sourceBadge = (s: ImgSource | null) => {
 
 export default function YoloTrainPage() {
   const { notify } = useSystemMessage()
-  const notifyError = (text: string) => notify({ level: 'error', text, source: 'YOLO 학습' })
+  const notifyError = (text: string) => notify({ level: 'error', text, source: '검출 학습' })
 
   // ── 데이터셋 ──
   const [datasets, setDatasets] = useState<YoloDs[]>([])
@@ -194,7 +194,7 @@ export default function YoloTrainPage() {
         `/yolo/datasets/${current}/import-episode`,
         { dataset_id: lrId, episode, cam, stride, indices })
       notify({
-        level: 'info', source: 'YOLO 학습',
+        level: 'info', source: '검출 학습',
         text: `${r.added}장 가져옴 (전체 ${r.total_frames}프레임, ${stride}간격` +
           `${r.method === 'video' ? ', mp4 직접 추출' : ''})`,
       })
@@ -273,7 +273,7 @@ export default function YoloTrainPage() {
       const r = await api.post<{ labeled: number; boxes: number; no_match: number; targets: number }>(
         `/yolo/datasets/${current}/prelabel`, { model: plModel, conf: plConf })
       notify({
-        level: 'info', source: 'YOLO 학습',
+        level: 'info', source: '검출 학습',
         text: `사전 라벨: ${r.targets}장 중 ${r.labeled}장에 박스 ${r.boxes}개` +
           (r.no_match > 0 ? ` (이름 불일치로 버린 박스 ${r.no_match}개)` : ''),
       })
@@ -312,7 +312,7 @@ export default function YoloTrainPage() {
       await api.post('/yolo/train', {
         dataset: current, base_model: trBase, epochs: trEpochs, imgsz: trImgsz,
       })
-      notify({ level: 'info', text: `학습 시작: ${current} (${trBase}, ${trEpochs}에폭)`, source: 'YOLO 학습' })
+      notify({ level: 'info', text: `학습 시작: ${current} (${trBase}, ${trEpochs}에폭)`, source: '검출 학습' })
     } catch (e) { notifyError(e instanceof Error ? e.message : '학습 시작 실패') }
     finally { setTrBusy(false) }
   }
@@ -337,7 +337,7 @@ export default function YoloTrainPage() {
     <div className="space-y-4">
       {/* ── 데이터셋 선택/생성 ── */}
       <header className="flex items-center gap-3 flex-wrap">
-        <h1 className="text-xl font-bold tracking-tight">YOLO 학습</h1>
+        <h1 className="text-xl font-bold tracking-tight">검출 학습</h1>
         <select value={current} onChange={(e) => setCurrent(e.target.value)}
           className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1 text-sm">
           {datasets.length === 0 && <option value="">데이터셋 없음</option>}

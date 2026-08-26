@@ -1,5 +1,5 @@
 /**
- * 비전·판단 테스트 — 분리수거 파이프라인(YOLO→LLM→VLA)의 앞 두 칸을 화면에서 굴린다.
+ * 비전·판단 테스트 — 분리수거 파이프라인(검출→LLM→VLA)의 앞 두 칸을 화면에서 굴린다.
  *
  * 위: yolod 제어(세그먼트 구독·시작/정지) + 카메라별 어노테이트 프리뷰·검출 목록.
  * 아래: LLM 판단 — 검출 텍스트(버스의 `text` 그대로)를 규칙과 함께 judge 로 보내
@@ -100,9 +100,9 @@ export default function VisionPage() {
     try {
       const cams = Object.fromEntries(camRows.map((r) => [r.alias.trim() || r.camId, r.camId]))
       await api.post('/vision/start', { cams, model, conf })
-      notify({ level: 'info', text: 'yolod 시작 (모델 로드에 수 초)', source: '비전·판단' })
+      notify({ level: 'info', text: '검출기 시작 (모델 로드에 수 초)', source: '비전·판단' })
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : 'yolod 시작 실패')
+      notifyError(e instanceof Error ? e.message : '검출기 시작 실패')
     } finally { setBusy(false) }
   }
 
@@ -131,7 +131,7 @@ export default function VisionPage() {
 
   const fillFromDetections = () => {
     const lines = Object.values(detections).map((d) => d.text)
-    if (lines.length === 0) { notifyError('살아 있는 검출이 없습니다 — yolod 를 켜세요'); return }
+    if (lines.length === 0) { notifyError('살아 있는 검출이 없습니다 — 검출기를 켜세요'); return }
     setInput(lines.join('\n'))
   }
 
@@ -181,10 +181,10 @@ export default function VisionPage() {
       <LayoutToggle layout={layout} onChange={switchLayout} />
 
       <div className={layout === 'row' ? 'grid grid-cols-1 xl:grid-cols-3 gap-4 items-start' : 'space-y-4'}>
-      {/* ── YOLO ── */}
+      {/* ── 객체 검출 ── */}
       <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold">YOLO 검출</h2>
+          <h2 className="text-lg font-semibold">객체 검출</h2>
           <span className={`text-xs px-2 py-0.5 rounded ${running ? 'bg-green-900 text-green-300' : 'bg-neutral-700 text-neutral-400'}`}>
             {status?.state ?? '…'}{status?.pid ? ` · pid ${status.pid}` : ''}
           </span>

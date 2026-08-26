@@ -25,11 +25,14 @@ const EpisodesPage = lazy(() => import('../pages/EpisodesPage'))
 /**
  * 사이드바 묶음. **순서가 곧 화면 순서다** — 정렬 규칙을 따로 두지 않는다.
  *
- * 플랫폼 별로 나눈다: 하드웨어(장치) → LeRobot(모방학습 본선) → YOLO(인식)
- * → 통합(플랫폼을 엮는 파이프라인: YOLO→LLM→VLA) → 시스템.
+ * 플랫폼 별로 나눈다: 하드웨어(장치) → LeRobot(모방학습 본선) → 객체 검출(인식)
+ * → 통합(플랫폼을 엮는 파이프라인: 검출→LLM→VLA) → 시스템.
+ *
+ * ⚠ **화면에 특정 검출 모델의 이름을 쓰지 않는다.** 지금 구현이 무엇이든
+ * 갈아끼울 수 있어야 하고, 라이선스가 그 교체를 강제할 수도 있다.
  * 묶음 **안**에서는 여전히 작업 흐름 순서다 (수집하고 → 학습하고 → 돌린다).
  */
-export const PAGE_GROUPS = ['장치', 'LeRobot', 'YOLO', '통합', '시스템'] as const
+export const PAGE_GROUPS = ['장치', 'LeRobot', '객체 검출', '통합', '시스템'] as const
 export type PageGroup = (typeof PAGE_GROUPS)[number]
 
 export type PageEntry = {
@@ -138,32 +141,32 @@ export const pages: PageEntry[] = [
   // HuggingFace Hub — LeRobot 모델·데이터셋의 원격 저장소라 여기 속한다
   { path: '/hub', label: '허브', component: HubPage, nav: true, group: 'LeRobot', icon: '☁' },
 
-  // ── YOLO (인식: 데모 → 커스텀 학습) ──
+  // ── 객체 검출 (인식: 데모 → 커스텀 학습) ──
   {
     path: '/yolo-demo',
-    label: 'YOLO 데모',
+    label: '검출 데모',
     description: '시연용 대형 검출 뷰',
     component: YoloDemoPage,
     nav: true,
-    group: 'YOLO',
+    group: '객체 검출',
     icon: '🎯',
   },
   {
     path: '/yolo-train',
-    label: 'YOLO 학습',
+    label: '검출 학습',
     description: '이미지 캡처·라벨링·커스텀 가중치 학습',
     component: YoloTrainPage,
     nav: true,
-    group: 'YOLO',
+    group: '객체 검출',
     icon: '🏷',
     card: true,
   },
 
-  // ── 통합 (플랫폼을 엮는 파이프라인 — YOLO 검출 → LLM 판단 → VLA 실행) ──
+  // ── 통합 (플랫폼을 엮는 파이프라인 — 객체 검출 → LLM 판단 → VLA 실행) ──
   {
     path: '/vision',
     label: '비전·판단',
-    description: 'YOLO 검출·LLM 판단 테스트 (분리수거 파이프라인)',
+    description: '객체 검출·LLM 판단 테스트 (분리수거 파이프라인)',
     component: VisionPage,
     nav: true,
     group: '통합',

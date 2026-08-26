@@ -54,7 +54,11 @@ LABELS: dict[Activity, str] = {
     Activity.UPLOAD: "업로드/캐시 작업",
     Activity.TELEOP: "수동 조작",
     Activity.ORCHESTRATOR: "에피소드 루프",
-    Activity.YOLO_TRAIN: "YOLO 학습",
+    # ⚠ 화면에 나가는 문구다 — 상태바와 409 메시지가 **이 문자열을 그대로** 쓴다
+    #   (test_page_registry.py 가 프론트에 자기 사전을 못 두게 막는다).
+    #   특정 검출 모델 이름을 화면에 박지 않는다: 구현은 갈아끼울 수 있어야 하고,
+    #   라이선스가 그 교체를 강제할 수도 있다. 열거자 이름(YOLO_TRAIN)은 내부라 둔다.
+    Activity.YOLO_TRAIN: "검출 학습",
     Activity.ENCODER_PROBE: "인코더 프로브",
     Activity.CAMERA_ACCESS: "카메라 접근",
 }

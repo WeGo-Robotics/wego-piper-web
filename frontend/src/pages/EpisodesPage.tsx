@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../services/api'
 import { useSystemMessage } from '../components/SystemMessages'
 import PlotlyChart from '../components/PlotlyChart'
-import type { Dataset, DatasetDetail } from '../types/models'
+import type { BakedInfo, Dataset, DatasetDetail } from '../types/models'
 
 // ── 페이즈 사이드카 형태 (backend/app/routers/phase.py 응답) ──
 
@@ -88,6 +88,7 @@ export default function EpisodesPage() {
   const [videoError, setVideoError] = useState(false)
   const [cacheMissing, setCacheMissing] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
+  const [baking, setBaking] = useState(false)
 
   // ── YOLO 학습 데이터셋으로 캡처 (feature/yolo-training.md 뷰어 훅) ──
   // 동영상 모드 = canvas 캡처 (캐시 불필요, 출처에 재생 시각 t)
@@ -465,8 +466,16 @@ export default function EpisodesPage() {
     if (d) setUndoStack((u) => [...u.slice(-49), d.map((s) => [...s] as Segment)])
   }, [])
 
+  // 구운 사본(ACT-Aux 용 `_stage`)은 읽기 전용 — 여기서 고친 구간은 원본에 반영되지 않고
+  // 다음 bake 에 조용히 덮인다. 원본에서 고치고 다시 굽는다 (feature/act-aux.md §4.5).
+  const baked: BakedInfo | null = datasets.find((d) => d.id === dsId)?.baked ?? null
+
   const enterEdit = () => {
     if (!displaySegments) return
+    if (baked) {
+      notifyError(`구운 사본은 편집할 수 없습니다 — 원본(${baked.source ?? '?'})에서 고치고 다시 구우세요`)
+      return
+    }
     setPlaying(false)
     setDraft(displaySegments.map((s) => [...s] as Segment))
     setSelectedSeg(null)
@@ -613,6 +622,27 @@ export default function EpisodesPage() {
     [paramValues],
   )
 
+  const reloadDatasets = () => api.get<Dataset[]>('/datasets').then(setDatasets).catch(() => {})
+
+  // ACT-Aux 용 굽기: 사이드카 → LeRobot subtask 로 `<name>_stage` 사본 생성 (feature/act-aux.md §4)
+  const handleBake = async () => {
+    if (!dsId || baking) return
+    const eps = labels ? Object.values(labels.episodes) : []
+    const unreviewed = eps.filter((e) => !e.reviewed).length
+    const reviewedOnly = unreviewed > 0
+      && (await askConfirm(`검토 안 된 에피소드가 ${unreviewed}개 있습니다. 그 에피소드는 라벨 없음으로 굽을까요? (취소하면 전부 포함)`))
+    setBaking(true)
+    try {
+      const r = await api.post<{ output_id: string; log: string[] }>(`/phase/${dsId}/bake`, { reviewed_only: reviewedOnly, force: true })
+      notify({ level: 'info', text: `구웠습니다 → ${r.output_id} (학습 화면에서 ACT-Aux 로 선택)`, source: '에피소드' })
+      await reloadDatasets()
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : '굽기 실패')
+    } finally {
+      setBaking(false)
+    }
+  }
+
   const handleAnalyze = async () => {
     if (!dsId) return
     setAnalyzing(true)
@@ -670,7 +700,7 @@ export default function EpisodesPage() {
         >
           <option value="">데이터셋 선택…</option>
           {datasets.map((d) => (
-            <option key={d.id} value={d.id}>{d.id} ({d.total_episodes})</option>
+            <option key={d.id} value={d.id}>{d.id} ({d.total_episodes}){d.baked ? ' · 구운 사본' : ''}</option>
           ))}
         </select>
 
@@ -681,14 +711,36 @@ export default function EpisodesPage() {
                 {distText ?? '페이즈 분석 안 됨'}
                 {summary && ` (중앙값 ${summary.median_cycles})`}
               </span>
-              <button
-                onClick={() => void handleAnalyze()}
-                disabled={analyzing}
-                className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-50"
-              >
-                {analyzing ? '분석 중…' : labels ? '재분석' : '분석'}
-              </button>
+              {!baked && (
+                <span className="flex gap-1">
+                  <button
+                    onClick={() => void handleAnalyze()}
+                    disabled={analyzing}
+                    className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-50"
+                  >
+                    {analyzing ? '분석 중…' : labels ? '재분석' : '분석'}
+                  </button>
+                  {labels && (
+                    <button
+                      onClick={() => void handleBake()}
+                      disabled={baking || analyzing || draft != null}
+                      title="사이드카를 LeRobot subtask 로 구워 ACT-Aux 학습용 `_stage` 사본을 만든다 (원본 불변)"
+                      className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-emerald-600 text-neutral-300 hover:text-white disabled:opacity-50"
+                    >
+                      {baking ? '굽는 중…' : 'ACT-Aux용 굽기'}
+                    </button>
+                  )}
+                </span>
+              )}
             </div>
+            {baked && (
+              <div className="rounded border border-neutral-600 bg-neutral-900 p-2 space-y-0.5">
+                <div className="text-neutral-300">🔒 ACT-Aux용 구운 사본 — 읽기 전용</div>
+                <div className="text-neutral-500">원본: {baked.source ?? '?'}</div>
+                {baked.source_missing && <div className="text-amber-400">⚠ 원본이 없다 — 다시 구울 수 없음</div>}
+                {baked.stale && <div className="text-amber-400">⚠ 원본 라벨이 bake 뒤에 바뀜 — 원본에서 다시 구워야 학습에 반영된다</div>}
+              </div>
+            )}
             {summary && summary.outliers.length > 0 && (
               <div className="text-amber-400">⚠ 이상 에피소드 {summary.outliers.length}개 — 위로 정렬됨</div>
             )}
@@ -874,7 +926,7 @@ export default function EpisodesPage() {
                     {cam}
                     {yoloTarget && (
                       <button onClick={() => void captureToYolo(cam)}
-                        title={`이 장면을 ${yoloTarget} YOLO 데이터셋으로 캡처`}
+                        title={`이 장면을 ${yoloTarget} 검출 데이터셋으로 캡처`}
                         className="px-1.5 rounded bg-neutral-800 hover:bg-green-700 text-neutral-400 hover:text-white">
                         📸
                       </button>
