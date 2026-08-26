@@ -5,16 +5,28 @@
 """
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from app.services.estop_bridge import estop_bridge
 
 router = APIRouter(prefix="/api/estop", tags=["estop"])
 
 
+class HeartbeatInfo(BaseModel):
+    """브라우저가 스스로 잰 정황. **전부 선택이다.**
+
+    ⚠ 이게 필수가 되면 안 된다 — heartbeat 는 안전 경로라, 진단용 필드 때문에
+    422 로 거절되면 그 순간 팔이 선다.
+    """
+
+    gap: float | None = None      # 직전 tick 이후 브라우저가 잰 ms
+    hidden: bool | None = None    # 탭이 백그라운드였나
+
+
 @router.post("/heartbeat")
-async def heartbeat():
+async def heartbeat(info: HeartbeatInfo | None = None):
     """브라우저 생존 신호. estopd 가 이 시각을 보고 타임아웃을 판정한다."""
-    estop_bridge.heartbeat()
+    estop_bridge.heartbeat(info.model_dump() if info else None)
     return {"status": "ok"}
 
 

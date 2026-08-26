@@ -21,11 +21,21 @@ export default function EStopButton() {
     return () => window.removeEventListener('keydown', handler)
   }, [triggerEstop])
 
-  // 주기적 heartbeat 전송
+  // 주기적 heartbeat 전송.
+  //
+  // ⚠ 함께 **브라우저가 스스로 잰 간격**을 보낸다. estopd 가 2.1s 공백을 보고
+  //   녹화를 죽인 적이 여러 번인데, 게이트웨이는 그 사이 0.3s 넘게 걸린 적이
+  //   없었다. 늦은 곳이 여기인지 전송 구간인지 나누려면 양쪽 값이 다 필요하다.
+  //   `hidden` 은 탭이 백그라운드였는지 — 브라우저는 안 보이는 탭의 타이머를
+  //   늦춘다. 이 값들은 **진단용이라 실패해도 heartbeat 는 계속 나가야 한다.**
   useEffect(() => {
+    let last = performance.now()
     const interval = setInterval(async () => {
+      const now = performance.now()
+      const gap = Math.round(now - last)
+      last = now
       try {
-        await api.post('/estop/heartbeat')
+        await api.post('/estop/heartbeat', { gap, hidden: document.hidden })
       } catch {
         // 연결 끊김 → watchdog이 타임아웃 처리
       }

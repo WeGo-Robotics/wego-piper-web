@@ -13,6 +13,7 @@ E-stop 감시 자체는 **독립 프로세스**(`daemons/estopd.py`)가 한다. 
 """
 
 import logging
+import time
 import os
 
 from app.core.config import settings
@@ -29,6 +30,7 @@ class EstopBridge:
     def __init__(self) -> None:
         self._bus = None
         self._available = False
+        self._last_beat: float | None = None
 
     def connect(self) -> bool:
         try:
@@ -53,7 +55,31 @@ class EstopBridge:
 
     # ── 게이트웨이 → 버스 ──
 
-    def heartbeat(self) -> None:
+    # heartbeat 가 이 간격보다 벌어지면 남긴다. estopd 한도(2.0s)보다 낮게 잡아
+    # **터지기 전의 조짐**까지 본다 — 실측 실패가 2.1s 였으므로 2.0s 로는 늦다.
+    GAP_WARN_S = 1.0
+
+    def heartbeat(self, client: dict | None = None) -> None:
+        """브라우저 생존 신호. **도착 간격을 잰다.**
+
+        게이트웨이는 이 요청에 0.3s 넘게 걸린 적이 없는데도 estopd 가 2.1s 공백을
+        봤다. 그렇다면 늦은 것은 여기가 아니라 **보내는 쪽**이므로, 서버가 본
+        간격과 클라이언트가 스스로 잰 간격을 나란히 남겨 어디서 벌어졌는지 가른다:
+
+        - 둘 다 크다 → 브라우저 타이머가 멎었다 (탭 throttle, 메인 스레드 정체)
+        - 서버만 크다 → 전송 구간 (네트워크, 프록시, 서버 큐)
+        - `hidden=True` → 탭이 백그라운드였다
+        """
+        now = time.monotonic()
+        prev, self._last_beat = self._last_beat, now
+        if prev is not None:
+            gap = now - prev
+            if gap >= self.GAP_WARN_S:
+                info = client or {}
+                logger.warning(
+                    "heartbeat 간격 %.2fs (클라이언트 측정 %sms, hidden=%s)",
+                    gap, info.get("gap", "?"), info.get("hidden", "?"),
+                )
         if self._bus:
             try:
                 self._bus.beat()
