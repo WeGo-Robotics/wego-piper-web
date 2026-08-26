@@ -100,6 +100,25 @@ export type WsMessage =
   | { type: 'device_alert'; data: DeviceAlertData }
   // 연결 유지
   | { type: 'pong'; data?: undefined }
+  // ⚠ **클라이언트가 보내는** 유일한 메시지 (나머지는 전부 서버 → 화면).
+  //
+  //   E-stop heartbeat 는 원래 `POST /api/estop/heartbeat` 였는데, HTTP/1.1 은
+  //   오리진당 연결이 6개뿐이라 **카메라 프리뷰와 같은 줄에 서 있었다.**
+  //   실측: 타이머는 정시(500ms)에 만들었고 유실도 없었는데 서버가 본 도착
+  //   간격이 2.35초였다 — 만들어진 뒤 나가기 전에 대기한 것이다. 그 2.35초가
+  //   녹화를 죽였다.
+  //
+  //   WS 는 그 6개와 **다른 풀**을 쓴다. 안전 신호가 화면 갱신 트래픽에
+  //   밀리지 않게 하는 것이 요점이다.
+  | {
+      type: 'heartbeat'
+      gap?: number
+      hidden?: boolean
+      seq?: number
+      rtt?: number
+      rttSeq?: number
+      via?: 'ws' | 'http'
+    }
 
 export type WsMessageType = WsMessage['type']
 

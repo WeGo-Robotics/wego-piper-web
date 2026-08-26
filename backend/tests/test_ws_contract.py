@@ -50,13 +50,30 @@ def test_backend_and_frontend_agree():
     )
 
 
-def test_declared_types_are_actually_sent():
-    """선언만 해두고 아무도 안 보내는 타입이 있으면 죽은 계약이다.
+# 서버가 **보내지 않는** 타입들. 이유가 각자 다르므로 따로 적는다.
+_NOT_BROADCAST = {
+    M.PONG,        # `broadcast()` 가 아니라 개별 응답
+    M.HEARTBEAT,   # ⚠ 방향이 반대다 — 화면이 보내고 서버가 받는다
+}
 
-    `pong` 은 `broadcast()` 가 아니라 개별 응답이라 예외.
-    """
-    never_sent = M.ALL - _types_sent_by_router() - {M.PONG}
+
+def test_declared_types_are_actually_sent():
+    """선언만 해두고 아무도 안 보내는 타입이 있으면 죽은 계약이다."""
+    never_sent = M.ALL - _types_sent_by_router() - _NOT_BROADCAST
     assert not never_sent, f"선언됐지만 ws.py 가 보내지 않는 타입: {never_sent}"
+
+
+def test_the_inbound_type_is_actually_handled():
+    """⚠ 보내지 않는다고 빼두면, **받지도 않는데** 아무도 모르는 상태가 된다.
+
+    heartbeat 는 안전 신호다 — 화면은 보내는데 서버가 안 읽으면 E-stop 이
+    브라우저가 죽은 줄 알고 돈다.
+    """
+    from pathlib import Path
+
+    ws_src = (Path(__file__).resolve().parents[1] / "app" / "routers" / "ws.py").read_text()
+    assert "M.HEARTBEAT" in ws_src, "WS 가 heartbeat 를 안 받는다"
+    assert "estop_bridge.heartbeat(" in ws_src, "받아서 브리지로 안 넘긴다"
 
 
 def test_state_types_derived_not_hardcoded():

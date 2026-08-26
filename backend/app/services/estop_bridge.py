@@ -87,9 +87,9 @@ class EstopBridge:
                 lost = seq - prev_seq - 1
                 missed = f", 유실 {lost}건" if lost > 0 else ", 유실 없음"
             logger.warning(
-                "heartbeat 간격 %.2fs (타이머 %sms, 왕복 %sms, hidden=%s%s)",
-                now - prev, info.get("gap", "?"), info.get("rtt", "?"),
-                info.get("hidden", "?"), missed,
+                "heartbeat 간격 %.2fs (%s, 타이머 %sms, 왕복 %sms, hidden=%s%s)",
+                now - prev, info.get("via", "?"), info.get("gap", "?"),
+                info.get("rtt", "?"), info.get("hidden", "?"), missed,
             )
             # ⚠ 위 `왕복` 은 **직전** 요청 것이다 — 방금 늦은 그 요청의 왕복은
             #   클라이언트가 아직 모른다(보낸 뒤에야 안다). 그래서 바로 다음 비트를

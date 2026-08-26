@@ -72,7 +72,7 @@ def test_the_browser_reports_its_own_gap_and_visibility():
     src = (_FRONT / "components" / "EStopButton.tsx").read_text()
     assert "performance.now()" in src, "브라우저가 자기 간격을 안 잰다"
     assert "document.hidden" in src, "탭 백그라운드 여부를 안 보낸다"
-    assert "rtt: done.ms, rttSeq: done.seq," in src, "정황을 heartbeat 와 같이 안 보낸다"
+    assert "rtt: done.ms, rttSeq: done.seq" in src, "정황을 heartbeat 와 같이 안 보낸다"
 
 
 def test_the_browser_times_its_own_request():

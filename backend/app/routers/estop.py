@@ -24,6 +24,7 @@ class HeartbeatInfo(BaseModel):
     rtt: float | None = None      # 직전 요청의 왕복 ms (브라우저 큐 대기 포함)
     seq: int | None = None        # 보낸 순번. 빠진 번호 = 못 간 요청
     rttSeq: int | None = None     # 위 `rtt` 가 **어느 순번**의 왕복인지
+    via: str | None = None        # 'ws' | 'http' — 어느 경로로 왔나
 
 
 @router.post("/heartbeat")

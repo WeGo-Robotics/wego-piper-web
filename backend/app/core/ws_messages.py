@@ -54,6 +54,13 @@ DEVICE_ALERT: Final = "device_alert"
 # ── 연결 유지 ──
 PONG: Final = "pong"
 
+# ── E-stop heartbeat (⚠ **화면 → 서버**. 이 목록에서 유일하게 방향이 반대다) ──
+#
+# HTTP 로 보내던 것을 옮겨왔다. HTTP/1.1 은 오리진당 연결이 6개뿐이라 heartbeat 가
+# 카메라 프리뷰와 같은 줄에 섰고, 실측에서 타이머는 정시였는데 도착이 2.35초
+# 늦어 E-stop 이 돌았다. WS 는 그 6개와 다른 풀을 쓴다.
+HEARTBEAT: Final = "heartbeat"
+
 
 ALL: Final[frozenset[str]] = frozenset({
     LOG, STATE, TELEMETRY, LOG_SAVED,
@@ -64,6 +71,7 @@ ALL: Final[frozenset[str]] = frozenset({
     UPLOAD_LOG, UPLOAD_STATE,
     DEVICE_ALERT,
     PONG,
+    HEARTBEAT,
 })
 
 # 학습 메시지는 어느 job 것인지 반드시 밝혀야 한다 — 테스트가 이 목록을 강제한다

@@ -257,6 +257,12 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             data = await ws.receive_json()
             if data.get("type") == "ping":
                 await ws.send_json({"type": M.PONG})
+            elif data.get("type") == M.HEARTBEAT:
+                # ⚠ **응답하지 않는다.** heartbeat 는 살아 있다는 신호지 질문이
+                #   아니고, 이 소켓은 로그를 밀어내느라 이미 바쁘다.
+                #   HTTP 경로(`routers/estop.py`)와 **같은 브리지**로 들어간다 —
+                #   두 경로가 각자 세면 순번 추적이 갈린다.
+                estop_bridge.heartbeat(data)
     except WebSocketDisconnect:
         pass
     finally:
