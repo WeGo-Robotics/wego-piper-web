@@ -32,6 +32,7 @@ class EstopBridge:
         self._available = False
         self._last_beat: float | None = None
         self._last_seq: int | None = None
+        self._log_next = False
 
     def connect(self) -> bool:
         try:
@@ -89,6 +90,13 @@ class EstopBridge:
                 now - prev, info.get("gap", "?"), info.get("rtt", "?"),
                 info.get("hidden", "?"), missed,
             )
+            # ⚠ 위 `왕복` 은 **직전** 요청 것이다 — 방금 늦은 그 요청의 왕복은
+            #   클라이언트가 아직 모른다(보낸 뒤에야 안다). 그래서 바로 다음 비트를
+            #   한 줄 더 찍는다. 거기 실려 오는 값이 **늦은 요청 자신의 왕복**이다.
+            self._log_next = True
+        elif self._log_next:
+            self._log_next = False
+            logger.warning("  ↑ 늦었던 요청의 왕복 %sms", info.get("rtt", "?"))
 
         if self._bus:
             try:

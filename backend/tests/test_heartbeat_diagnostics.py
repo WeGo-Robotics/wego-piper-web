@@ -139,3 +139,41 @@ def test_a_client_without_a_sequence_does_not_break_tracking(bridge, monkeypatch
     t[0] += 0.5
     bridge.heartbeat(None)          # 구버전 탭
     assert bridge._last_seq == 7, "번호 없는 요청이 추적을 지운다"
+
+
+def test_the_late_request_reports_its_own_round_trip(bridge, caplog, monkeypatch):
+    """⚠ 갭 줄의 `왕복` 은 **직전** 요청 것이라, 정작 늦은 요청의 왕복이 아니다.
+
+    클라이언트는 요청을 보낸 **뒤에야** 그 왕복을 안다. 그래서 갭 다음 비트를
+    한 줄 더 찍는다 — 거기 실린 값이 늦었던 그 요청 자신의 왕복이다.
+    이 값이 크면 요청이 나가기 전에 대기한 것이고, 작으면 대기가 아니다.
+    """
+    from app.services import estop_bridge as mod
+
+    t = [100.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: t[0])
+    with caplog.at_level("WARNING"):
+        bridge.heartbeat({"seq": 1, "gap": 500, "rtt": 5})
+        t[0] += 2.2
+        bridge.heartbeat({"seq": 2, "gap": 500, "rtt": 5})     # 갭 — rtt 는 1번 것
+        t[0] += 0.5
+        bridge.heartbeat({"seq": 3, "gap": 500, "rtt": 1700})  # 2번의 실제 왕복
+
+    assert "늦었던 요청의 왕복 1700ms" in caplog.text
+
+
+def test_the_follow_up_line_fires_once(bridge, caplog, monkeypatch):
+    """정상 비트마다 찍으면 로그가 쓸모없어진다 — 갭 **바로 뒤** 한 번뿐이다."""
+    from app.services import estop_bridge as mod
+
+    t = [100.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: t[0])
+    bridge.heartbeat({"seq": 1})
+    t[0] += 2.2
+    bridge.heartbeat({"seq": 2})
+    with caplog.at_level("WARNING"):
+        t[0] += 0.5
+        bridge.heartbeat({"seq": 3, "rtt": 900})
+        t[0] += 0.5
+        bridge.heartbeat({"seq": 4, "rtt": 7})
+    assert caplog.text.count("늦었던 요청의 왕복") == 1
