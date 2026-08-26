@@ -77,8 +77,9 @@ class EstopBridge:
             if gap >= self.GAP_WARN_S:
                 info = client or {}
                 logger.warning(
-                    "heartbeat 간격 %.2fs (클라이언트 측정 %sms, hidden=%s)",
-                    gap, info.get("gap", "?"), info.get("hidden", "?"),
+                    "heartbeat 간격 %.2fs (타이머 %sms, 왕복 %sms, hidden=%s)",
+                    gap, info.get("gap", "?"), info.get("rtt", "?"),
+                    info.get("hidden", "?"),
                 )
         if self._bus:
             try:

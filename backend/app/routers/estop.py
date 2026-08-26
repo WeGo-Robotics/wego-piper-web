@@ -21,6 +21,7 @@ class HeartbeatInfo(BaseModel):
 
     gap: float | None = None      # 직전 tick 이후 브라우저가 잰 ms
     hidden: bool | None = None    # 탭이 백그라운드였나
+    rtt: float | None = None      # 직전 요청의 왕복 ms (브라우저 큐 대기 포함)
 
 
 @router.post("/heartbeat")
