@@ -71,3 +71,42 @@ def test_unverified_numbers_are_left_blank():
     rt = [m for m in _catalog() if m["file"].startswith("rtdetr")]
     assert rt and all(m["params_m"] is None for m in rt), "확인 안 한 수치가 적혀 있다"
     assert all(m["size_mb"] for m in rt), "실측한 용량은 있어야 한다"
+
+
+# ── 기본 선택은 이미 받아둔 가중치로 (화면) ──────────────────────────────────
+
+_DEMO = (Path(__file__).resolve().parents[2] / "frontend" / "src"
+         / "pages" / "YoloDemoPage.tsx")
+
+
+def test_the_list_still_shows_models_that_need_downloading():
+    """⚠ 목록에서 빼면 **새 기기에서 첫 모델을 받을 길이 없어진다.**
+
+    받아야 하는 것은 `(다운로드 필요)` 로 그대로 보인다 — 바뀌는 것은 기본값뿐이다.
+    """
+    src = _DEMO.read_text()
+    assert "m.downloaded === false" in src, "받아야 하는 항목 표시가 사라졌다"
+    assert ".filter((m) => m.downloaded" not in src, "목록에서 걸러내고 있다"
+
+
+def test_the_default_moves_to_a_local_weight():
+    """시작을 눌렀는데 100MB 를 받느라 멈춘 것처럼 보이지 않게."""
+    src = _DEMO.read_text()
+    body = src.split("const pickLocalDefault", 1)[1].split("\n  const ", 1)[0]
+    assert "m.downloaded === true" in body, "로컬 여부를 안 본다"
+
+
+def test_an_explicit_choice_is_not_overridden():
+    """`?model=` 는 학습 직후 단축 경로다. 고른 것을 되돌리는 화면이 제일 나쁘다."""
+    src = _DEMO.read_text()
+    body = src.split("const pickLocalDefault", 1)[1].split("\n  const ", 1)[0]
+    assert "urlModel.current" in body, "URL 로 지정한 모델을 덮어쓴다"
+    assert "defaultFixed.current" in body, "폴링 때마다 선택이 되돌아간다"
+
+
+def test_deleting_the_selected_model_falls_back_to_a_local_one():
+    """⚠ **회귀** — 삭제 뒤 'yolo11n.pt' 를 박아 넣었다. 그 파일이 이 기기에
+    없으면 선택이 곧장 '받아야 하는 모델' 로 옮겨 앉는다."""
+    src = _DEMO.read_text()
+    body = src.split("const handleDeleteModel", 1)[1].split("\n  const ", 1)[0]
+    assert "downloaded === true" in body, "삭제 뒤 로컬 가중치를 안 고른다"

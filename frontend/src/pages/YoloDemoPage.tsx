@@ -79,8 +79,11 @@ export default function YoloDemoPage() {
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [models, setModels] = useState<YoloModel[]>(FALLBACK_MODELS)
   // ?model=<file> 로 열면 그 가중치가 선택된 채 시작 (학습 완료 → 데모 단축 경로)
-  const [model, setModel] = useState(
-    () => new URLSearchParams(window.location.search).get('model') ?? 'yolo11n.pt')
+  const urlModel = useRef(new URLSearchParams(window.location.search).get('model'))
+  const [model, setModel] = useState(() => urlModel.current ?? 'yolo11n.pt')
+  // 카탈로그가 오면 기본값을 **로컬에 있는 가중치**로 한 번 맞춘다.
+  // 안 맞추면 시작을 누르는 순간 100MB 를 받느라 멈춘 것처럼 보인다.
+  const defaultFixed = useRef(false)
   const [fps, setFps] = useState(5)
   const [imgsz, setImgsz] = useState(640)
   const [uploading, setUploading] = useState(false)
@@ -170,9 +173,30 @@ export default function YoloDemoPage() {
       .then((r) => setSegments(r.segments))
       .catch(() => {})
     api.get<{ models: YoloModel[] }>('/vision/models')
-      .then((r) => setModels(r.models))
+      .then((r) => { setModels(r.models); pickLocalDefault(r.models) })
       .catch(() => {})
   }, [running])
+
+  /**
+   * 목록이 오면 기본 선택을 **이미 받아둔 가중치**로 옮긴다.
+   *
+   * ⚠ 목록에서 안 받은 것을 빼지는 않는다. 그러면 새 기기에서 목록이 통째로
+   *   비고 첫 모델을 받을 길이 사라진다 — 안 받은 것은 `(다운로드 필요)` 로
+   *   그대로 보인다. 여기서 바꾸는 것은 **기본값뿐**이다.
+   *
+   * 한 번만 한다. 그리고 `?model=` 로 지정해 왔거나(학습 직후 단축 경로)
+   * 사용자가 이미 고른 뒤면 건드리지 않는다 — 고른 것을 되돌리는 화면이
+   * 제일 나쁘다.
+   */
+  const pickLocalDefault = (list: YoloModel[]) => {
+    if (defaultFixed.current || urlModel.current) return
+    defaultFixed.current = true
+    setModel((cur) => {
+      if (list.some((m) => m.file === cur && m.downloaded === true)) return cur
+      // 카탈로그 순서를 그대로 따른다 (작은 것 → 큰 것, 표준 → 커스텀)
+      return list.find((m) => m.downloaded === true)?.file ?? cur
+    })
+  }
 
   const handleStart = async () => {
     const chosen = segments.filter((s) => picked.has(s))
@@ -188,7 +212,8 @@ export default function YoloDemoPage() {
   }
 
   const refreshModels = () =>
-    api.get<{ models: YoloModel[] }>('/vision/models').then((r) => setModels(r.models))
+    api.get<{ models: YoloModel[] }>('/vision/models')
+      .then((r) => { setModels(r.models); return r.models })
 
   const handleUpload = async (f: File) => {
     setUploading(true)
@@ -213,8 +238,10 @@ export default function YoloDemoPage() {
   const handleDeleteModel = async () => {
     try {
       await api.delete(`/vision/models/${encodeURIComponent(model)}`)
-      await refreshModels()
-      setModel('yolo11n.pt')
+      const list = await refreshModels()
+      // ⚠ 예전에는 'yolo11n.pt' 를 박아 넣었다 — 그 파일이 이 기기에 없으면
+      //   삭제한 뒤 선택이 **받아야 하는 모델**로 옮겨 앉는다. 있는 것 중에서 고른다.
+      setModel(list?.find((m) => m.downloaded === true)?.file ?? 'yolo11n.pt')
     } catch (e) {
       setError(e instanceof Error ? e.message : '삭제 실패')
     }
