@@ -54,7 +54,7 @@ def _flatten(spec: PolicySpec) -> Policy:
 
 # ⚠ 정렬 순서가 화면 목록 순서다. YAML 파일명이 아니라 **원하는 표시 순서**로
 # 고정한다 — 파일명 알파벳순이면 SmolVLA 가 ACT 뒤로 가서 목록이 뒤집힌다.
-_ORDER = ["smolvla", "act", "diffusion", "pi0", "pi05", "pi0_fast", "vqbet", "tdmpc"]
+_ORDER = ["smolvla", "act", "act_aux", "diffusion", "pi0", "pi05", "pi0_fast", "vqbet", "tdmpc"]
 
 POLICIES: dict[str, Policy] = {
     name: _flatten(SPECS[name])
@@ -152,7 +152,7 @@ def ui_spec(policy_type: str) -> dict:
         # 모르는 정책이면 빈 스펙. **막지는 않는다** — 스펙은 편의 계층이지
         # 안전 계층이 아니다. 값 검증의 정본은 백엔드 클램프에 남아 있다.
         return {"type": policy_type, "scratch_note": "",
-                "train": {"defaults": {}, "fields": [], "warnings": []},
+                "train": {"defaults": {}, "fields": [], "warnings": [], "requires_features": []},
                 "encoder_probe": {"base_label": "", "taps": [],
                                   "image_key_select": False, "note": ""}}
     t = spec.train
@@ -184,6 +184,7 @@ def ui_spec(policy_type: str) -> dict:
                 }
                 for w in t.warnings
             ],
+            "requires_features": list(t.requires_features),
         },
         "encoder_probe": {
             "base_label": spec.encoder_probe.base_label,

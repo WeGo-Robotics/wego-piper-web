@@ -38,9 +38,10 @@ def test_registry_output_is_unchanged():
     이 값들은 이관 **직전에** 실행해 받아둔 것이다. 여기가 깨지면 스펙이 아니라
     이관이 틀린 것이다.
     """
-    assert P.supported() == ["smolvla", "act"]
-    assert P.trainable() == ["smolvla", "act"]
-    assert P.inferable() == ["smolvla", "act"]
+    # act_aux 는 이관 뒤에 추가됐다 (feature/act-aux.md) — ACT 바로 뒤, 프로브는 아직 없다
+    assert P.supported() == ["smolvla", "act", "act_aux"]
+    assert P.trainable() == ["smolvla", "act", "act_aux"]
+    assert P.inferable() == ["smolvla", "act", "act_aux"]
     assert P.rtc_policies() == ["smolvla"]
     assert P.encoder_probe_policies() == {"smolvla", "act"}
     # 긴 이름이 먼저 — "pi0" 가 앞이면 "pi05_base" 가 pi0 로 잡힌다
@@ -298,7 +299,8 @@ def test_the_api_shape_did_not_change():
 
     rows = {r["key"]: r for r in spec_for_frontend()}
     assert rows["max_velocity"]["policies"] == [], "공용 파라미터에 정책이 붙었다"
-    assert rows["temporal_ensemble_coeff"]["policies"] == ["act"]
+    # act_aux 는 ACT 상속이라 같은 파라미터를 쓴다 (policies/act_aux.yaml infer.extra_params)
+    assert rows["temporal_ensemble_coeff"]["policies"] == ["act", "act_aux"]
     assert set(rows["max_guidance_weight"]["policies"]) == {"smolvla", "pi0", "pi05"}
 
 

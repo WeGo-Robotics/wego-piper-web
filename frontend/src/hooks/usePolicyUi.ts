@@ -36,7 +36,13 @@ export type PolicyUi = {
   type: string
   /** 베이스 없이 처음부터 학습할 때의 안내. 없으면 빈 문자열. */
   scratch_note: string
-  train: { defaults: Record<string, unknown>; fields: SpecField[]; warnings: SpecWarning[] }
+  train: {
+    defaults: Record<string, unknown>
+    fields: SpecField[]
+    warnings: SpecWarning[]
+    /** 데이터셋에 있어야 하는 feature 키 — 없는 데이터셋은 목록에서 빠진다 (예: ACT-Aux 의 subtask_index). */
+    requires_features: string[]
+  }
   encoder_probe: {
     base_label: string
     taps: { key: string; label: string; default: boolean }[]
@@ -49,7 +55,7 @@ export type PolicyUi = {
 const EMPTY: PolicyUi = {
   type: '',
   scratch_note: '',
-  train: { defaults: {}, fields: [], warnings: [] },
+  train: { defaults: {}, fields: [], warnings: [], requires_features: [] },
   encoder_probe: { base_label: '', taps: [], image_key_select: false, note: '' },
 }
 

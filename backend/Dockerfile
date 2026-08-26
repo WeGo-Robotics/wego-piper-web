@@ -67,7 +67,9 @@ COPY bus/ /tmp/pkg/bus/
 COPY shm/ /tmp/pkg/shm/
 COPY robot/ /tmp/pkg/robot/
 COPY phase/ /tmp/pkg/phase/
-RUN pip install --no-deps /tmp/pkg/bus /tmp/pkg/shm /tmp/pkg/robot /tmp/pkg/phase \
+# act_aux: 배포명 `lerobot_policy_act_aux` — lerobot-train 이 접두사로 자동 import 한다 (feature/act-aux.md §2)
+COPY act_aux/ /tmp/pkg/act_aux/
+RUN pip install --no-deps /tmp/pkg/bus /tmp/pkg/shm /tmp/pkg/robot /tmp/pkg/phase /tmp/pkg/act_aux \
     && pip install redis \
     && rm -rf /tmp/pkg
 

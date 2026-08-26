@@ -19,7 +19,8 @@ from pydantic import BaseModel
 
 from piper_phase import labeler as PL
 
-from app.services.dataset_scanner import find_dataset_path
+from app.core.config import settings
+from app.services.dataset_scanner import baked_info, find_dataset_path
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/phase", tags=["phase"])
@@ -27,6 +28,7 @@ router = APIRouter(prefix="/api/phase", tags=["phase"])
 # 분석은 수 분 걸릴 수 있어 요청 스레드에서 돌리지 않는다.
 # 동시에 두 분석이 돌면 사이드카를 서로 덮어쓰므로 하나만 허용한다.
 _lock = asyncio.Lock()
+_bake_lock = asyncio.Lock()
 _PARAM_FIELDS = {f.name for f in fields(Params)}
 
 
@@ -205,4 +207,56 @@ async def status(dataset_id: str):
         "episodes": len(eps),
         "reviewed": sum(1 for v in eps.values() if v.get("reviewed")),
         "params": data.get("params", {}),
+    }
+
+
+# ── ACT-Aux 용 굽기 (feature/act-aux.md §4) ──────────────────────────────────
+
+class BakeRequest(BaseModel):
+    reviewed_only: bool = False
+    force: bool = True      # 이전 bake 결과물이면 덮어쓴다 (bake 가 결과물인지 확인한다)
+
+
+@router.post("/{dataset_id:path}/bake")
+async def bake(dataset_id: str, body: BakeRequest):
+    """사이드카 → LeRobot subtask 로 구운 `<name>_stage` 데이터셋을 만든다.
+
+    백엔드는 lerobot 을 직접 import 하지 않는다 — `lerobot_policy_act_aux.bake` 를
+    학습 파이썬(`settings.grpc_python`)으로 subprocess 실행한다 (CLAUDE.md 의 CLI 래핑 원칙).
+    수십 초 걸리므로 요청 스레드에서 돌리지 않고, 동시에 둘은 허용하지 않는다.
+    """
+    ds = _dataset(dataset_id)
+    if baked_info(ds) is not None:
+        raise HTTPException(400, "이미 구운 사본입니다 — 원본 데이터셋에서 굽습니다")
+    if PL.load(ds) is None:
+        raise HTTPException(400, "아직 분석하지 않았습니다 — /analyze 를 먼저 실행하세요")
+    if _bake_lock.locked():
+        raise HTTPException(409, "다른 굽기가 진행 중입니다")
+
+    cmd = [settings.grpc_python, "-m", "lerobot_policy_act_aux.bake", str(ds)]
+    if body.reviewed_only:
+        cmd.append("--reviewed-only")
+    if body.force:
+        cmd.append("--force")
+
+    async with _bake_lock:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        try:
+            raw, _ = await asyncio.wait_for(proc.communicate(), timeout=900)
+        except TimeoutError:
+            proc.kill()
+            raise HTTPException(504, "굽기가 15분 안에 끝나지 않았습니다")
+    lines = [ln for ln in raw.decode(errors="replace").splitlines()
+             if ln.strip() and "Warning" not in ln and "warn(" not in ln]
+    if proc.returncode != 0:
+        logger.error("bake 실패 (%s): %s", dataset_id, "\n".join(lines[-20:]))
+        raise HTTPException(500, "굽기 실패: " + ("\n".join(lines[-5:]) or f"exit {proc.returncode}"))
+
+    out_id = f"{dataset_id}_stage"
+    out_path = find_dataset_path(out_id)
+    return {
+        "output_id": out_id,
+        "baked": baked_info(out_path) if out_path else None,
+        "log": lines[-30:],
     }

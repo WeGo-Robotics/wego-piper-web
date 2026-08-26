@@ -1,0 +1,46 @@
+# ACT-Aux — ACT 를 상속해 행동 + 작업 단계(stage)를 함께 내는 변형 (feature/act-aux.md).
+#
+# 기존 ACT 는 건드리지 않는다. 코드는 `act_aux/` 설치 패키지(배포명 `lerobot_policy_act_aux`)에
+# 있고 LeRobot 의 서드파티 정책 플러그인 규약으로 꽂힌다 — `pip install -e act_aux/` 가
+# 학습·추론 파이썬 양쪽에 돼 있어야 한다.
+#
+# 학습 데이터는 `python -m lerobot_policy_act_aux.bake <dataset>` 으로 구운 `_stage` 데이터셋이어야
+# 한다 (`task_stage` 컬럼). 없으면 학습 시작에서 KeyError 로 바로 죽는다 — 의도다.
+spec_version: 1
+type: act_aux
+label: ACT-Aux
+supported: true
+
+capabilities:
+  train: true
+  infer: true
+  rtc: false
+  # 백본은 ACT 와 같지만 프로브 tap 은 encoder_probe 정리가 끝난 뒤 붙인다 (act-aux.md §9)
+  encoder_probe: false
+  language: false
+
+runtime:
+  model: [lerobot_policy_act_aux.modeling_act_aux, ActAuxPolicy]
+  config: [lerobot_policy_act_aux.configuration_act_aux, ActAuxConfig]
+
+scratch_note: "ACT 와 같이 ResNet18 이 ImageNet 가중치로 시작합니다. 데이터셋은 bake 로 구운 `_stage` 여야 합니다"
+
+infer:
+  extra_params: [temporal_ensemble_coeff, n_action_steps]
+
+train:
+  defaults: { batch_size: 8, steps: 100000, optimizer_type: adam }
+  # bake 가 만든 `_stage` 데이터셋만 — 없으면 첫 배치에서 KeyError 로 죽는다 (의도)
+  requires_features: [subtask_index]
+  fields:
+    - { key: chunk_size, kind: number, min: 1, max: 200, arch: true, from_lerobot: true, default: 100 }
+    - { key: n_action_steps, kind: number, min: 1, max: 200, arch: true, from_lerobot: true, default: 100 }
+    - { key: n_obs_steps, kind: number, min: 1, max: 10, arch: true, from_lerobot: true, default: 1 }
+    - { key: dim_model, kind: number, min: 64, max: 2048, step: 64, arch: true, from_lerobot: true, default: 512 }
+    - { key: use_vae, kind: bool, arch: true, from_lerobot: true, default: true }
+    # ── stage 헤드 ──
+    # λ. 0 이면 바닐라 ACT 와 손실이 수치 동일 (A/B 대조군). 근거는 act-aux.md §8 의 A/B 뿐이다.
+    - { key: stage_loss_weight, kind: number, min: 0, max: 1, step: 0.01, from_lerobot: true, default: 0.1 }
+    - { key: label_smoothing, kind: number, min: 0, max: 0.3, step: 0.01, from_lerobot: true, default: 0.1 }
+    # 학습 중 본 라벨 빈도로 √역빈도 가중 자동 계산
+    - { key: stage_balance, kind: bool, from_lerobot: true, default: true }

@@ -192,17 +192,18 @@ def test_only_act_and_smolvla_are_supported_for_now():
 
     스키마·권장 베이스·백본 안전망이 이미 붙어 있으므로,
     되살릴 때는 `"supported": True` 한 줄이면 된다.
+    `act_aux` 는 ACT 의 상속 변형이라 같이 켜져 있다 (feature/act-aux.md).
     """
     from app.core.policies import POLICIES
 
-    assert set(policies.supported()) == {"act", "smolvla"}
+    on = {"act", "act_aux", "smolvla"}
+    assert set(policies.supported()) == on
     # 어느 목록에도 미지원 정책이 새지 않는다
     for names in (policies.trainable(), policies.inferable(),
                   policies.rtc_policies(), sorted(policies.encoder_probe_policies())):
-        assert set(names) <= {"act", "smolvla"}, f"미지원 정책이 노출된다: {names}"
-    assert {s["type"] for s in policies.spec_for_frontend()} == {"act", "smolvla"}
+        assert set(names) <= on, f"미지원 정책이 노출된다: {names}"
+    assert {s["type"] for s in policies.spec_for_frontend()} == on
 
-    # 꺼둔 것들의 정의는 지우지 않았다 — 되살릴 때 다시 쓰지 않게
     assert {"diffusion", "pi0", "pi05", "pi0_fast", "tdmpc", "vqbet"} <= set(POLICIES)
 
 

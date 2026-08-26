@@ -43,6 +43,8 @@ rs/*.egg-info/
 cam/*.egg-info/
 shm/*.egg-info/
 robot/*.egg-info/
+act_aux/*.egg-info/
+act_aux/**/__pycache__/
 
 # 검출 가중치 (검출기가 첫 실행 때 내려받는다)
 *.pt

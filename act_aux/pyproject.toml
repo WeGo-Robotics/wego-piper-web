@@ -1,0 +1,20 @@
+[project]
+# ⚠ 이름이 규약이다. LeRobot 이 `lerobot_policy_` 로 시작하는 배포를 `lerobot-train`
+# 시작 시 자동 import 한다 (lerobot/utils/import_utils.py:register_third_party_plugins).
+# 바꾸면 `--policy.type=act_aux` 가 "not available" 로 죽는다.
+name = "lerobot_policy_act_aux"
+version = "0.1.0"
+description = "ACT 를 상속해 행동 + 작업 단계(stage)를 함께 내는 정책 (feature/act-aux.md)"
+requires-python = ">=3.11"
+dependencies = ["lerobot>=0.5.0"]
+
+# 굽기(bake)는 parquet 만 만진다 — 정책 런타임에 pandas 를 끌고 오지 않는다.
+[project.optional-dependencies]
+bake = ["pyarrow>=14"]
+
+[tool.setuptools.packages.find]
+include = ["lerobot_policy_act_aux*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

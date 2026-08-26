@@ -113,6 +113,9 @@ class TrainSpec(_Strict):
     defaults: dict[str, Any] = Field(default_factory=dict)
     fields: list[TrainField] = Field(default_factory=list)
     warnings: list[Warning_] = Field(default_factory=list)
+    # 데이터셋 `features` 에 있어야 하는 키. 화면이 목록을 거르고, 없는 데이터셋으로
+    # 시작하면 학습이 첫 배치에서 죽는다 (ACT-Aux 의 `subtask_index`). 정책별 **사실**이다.
+    requires_features: list[str] = Field(default_factory=list)
 
 
 class InferSpec(_Strict):

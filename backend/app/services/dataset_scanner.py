@@ -4,6 +4,7 @@
 2. LeRobot 캐시: org/name/ (meta/info.json 직접 포함)
 """
 
+import hashlib
 import json
 import logging
 import shutil
@@ -98,8 +99,39 @@ def _scan_lerobot_datasets(lerobot_dir: Path) -> list[dict]:
                 "features": meta.get("features", {}),
                 "size_bytes": _dir_size(ds_dir),
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "baked": baked_info(ds_dir),
             })
     return results
+
+
+def baked_info(ds_path: Path) -> dict | None:
+    """`meta/act_aux.json` 이 있으면 ACT-Aux 용으로 **구운 사본**이다 (feature/act-aux.md §4.5).
+
+    사본에서 구간을 고치면 원본엔 반영되지 않고 다음 bake 에 조용히 덮인다 — 그래서
+    화면이 사본을 구분해 읽기 전용으로 두고, 원본 사이드카가 bake 뒤에 바뀌었으면
+    (`stale`) 재굽기를 알린다. 원본이 사라졌으면 `source_missing`.
+    """
+    meta_path = ds_path / "meta" / "act_aux.json"
+    if not meta_path.is_file():
+        return None
+    try:
+        meta = json.loads(meta_path.read_text())
+    except Exception:
+        return {"source": None, "stale": False, "source_missing": True, "stage_names": [], "broken": True}
+    src = Path(meta.get("source", ""))
+    labels = src / "meta" / "phase_labels.json"
+    stale, missing = False, False
+    if not labels.is_file():
+        missing = True
+    elif meta.get("source_labels_sha256"):
+        stale = hashlib.sha256(labels.read_bytes()).hexdigest() != meta["source_labels_sha256"]
+    return {
+        "source": meta.get("source_repo_id") or (f"{src.parent.name}/{src.name}" if src.name else None),
+        "stale": stale,
+        "source_missing": missing,
+        "stage_names": meta.get("stage_names", []),
+        "class_counts": meta.get("class_counts", {}),
+    }
 
 
 def scan_datasets() -> list[dict]:
