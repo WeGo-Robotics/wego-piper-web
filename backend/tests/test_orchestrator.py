@@ -28,6 +28,10 @@ def _world(monkeypatch, tmp_path):
                         lambda cams, fresh: {"top": "[top] bottle(0.91) center=(420,260)"})
     monkeypatch.setattr(orch_mod, "_last_estop_at", lambda: None)
     monkeypatch.setattr(orch_mod, "_inference_busy", lambda: True)
+    # ⚠ **무엇이 도는지도 정해야 한다.** 루프가 판단을 `task` 문장으로 내보내는데
+    #   ACT 는 그 문장을 안 읽는다 — 이 픽스처는 언어 정책(VLA)을 상정한다.
+    #   안 정하면 "확인 불가" 로 잡혀 시작이 막힌다 (그게 새 가드의 요점이다).
+    monkeypatch.setattr(orch_mod, "_language_policy", lambda: True)
 
     sent: list[dict] = []
 
@@ -158,6 +162,12 @@ def test_start_guards(_world, monkeypatch):
             await o.start(_cfg())
         # 검출 없이 실기 시작 금지
         monkeypatch.setattr(orch_mod, "_inference_busy", lambda: True)
+        # 판단이 로봇에 닿지 않는 정책이면 시작 금지 — 이 가드가 없던 동안
+        # ACT 위에서 루프가 돌면 결정이 아무 효과 없이 저널만 쌓였다
+        monkeypatch.setattr(orch_mod, "_language_policy", lambda: False)
+        with pytest.raises(RuntimeError, match="닿지 않습니다"):
+            await o.start(_cfg())
+        monkeypatch.setattr(orch_mod, "_language_policy", lambda: True)
         monkeypatch.setattr(orch_mod, "_fresh_detections", lambda c, f: {})
         with pytest.raises(RuntimeError, match="검출"):
             await o.start(_cfg())

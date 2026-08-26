@@ -18,6 +18,7 @@ from app.services.camera_config import (
 from app.services.model_scanner import scan_models, get_model, delete_model
 from app.services.robot_config import ArmPrepareError, prepare_arms, resolve_robot_type
 from app.services.param_bridge import param_bridge
+from app.services import inference_state
 from app.services.process_manager import process_manager
 from app.services.robot_manager import robot_manager
 
@@ -288,6 +289,9 @@ async def start_inference(body: InferenceStartRequest):
         await process_manager.start(args, env_extra=env_extra)
     except Exception as e:
         raise HTTPException(500, f"프로세스 시작 실패: {e}")
+    # 무엇이 도는지 남긴다 — 오케스트레이터가 `task` 를 보내도 되는 정책인지
+    # 알아야 한다 (`services/inference_state` 참고).
+    inference_state.set_running(body.policy_type, body.checkpoint_path)
     return {"status": "started", "pid": process_manager.pid, "args": args, "mode": body.inference_mode}
 
 
@@ -312,12 +316,17 @@ async def start_inference_custom(body: InferenceStartCustomRequest):
         await process_manager.start(body.args, env_extra=env_extra)
     except Exception as e:
         raise HTTPException(500, f"프로세스 시작 실패: {e}")
+    # ⚠ 손으로 편집한 인자라 **정책을 확실히 알 수 없다.** 추측해서 적으면
+    #   오케스트레이터가 그 추측 위에서 판단하게 된다 — 모른다고 남기는 편이
+    #   낫다. `policy_type=""` 이면 아래 가드가 "확인 불가" 로 막는다.
+    inference_state.set_running("", "")
     return {"status": "started", "pid": process_manager.pid, "args": body.args}
 
 
 @router.post("/inference/stop")
 async def stop_inference():
     await process_manager.stop()
+    inference_state.clear()
     # 추론 정지 후(subprocess가 CAN을 놓은 뒤) 로봇팔 에러 플래그 조회 + 무조건 클리어
     _clear_arm_errors("inference-stop")
     return {"status": "stopped"}
