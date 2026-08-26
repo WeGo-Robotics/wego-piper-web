@@ -72,6 +72,10 @@ def test_cutting_torque_survives_one_arm_failing():
     from piper_robot.hub import RobotHub
 
     class _Arm:
+        # `is_master` 로 마스터 팔을 거른다 (test_estop_torque_scope.py 참고).
+        # 여기서 보는 것은 그 갈래가 아니라 **부분 실패** 이므로 둘 다 슬레이브다.
+        is_master = False
+
         def __init__(self, ok): self._ok = ok
         def disable_torque(self):
             if not self._ok:

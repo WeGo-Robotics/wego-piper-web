@@ -202,7 +202,7 @@ class RobotHub:
         return arm.read_end_pose() if arm else None
 
     def disable_all_torque(self) -> list[str]:
-        """쥐고 있는 팔 **전부**의 토크를 끊는다. 끊은 iface 목록을 돌려준다.
+        """쥐고 있는 팔의 토크를 끊는다 — **마스터는 빼고.** 끊은 iface 목록을 돌려준다.
 
         E-stop 이 여기로 온다. 하나가 실패해도 나머지는 계속 — 부분 성공이라도
         해야 한다(estopd 가 PID 를 죽일 때와 같은 규율).
@@ -211,15 +211,32 @@ class RobotHub:
         이유는 사람이 팔에 끼었을 때 손으로 빼낼 수 있어야 하기 때문이다.
         데드맨(연결 끊김)은 반대로 그 자리에 선다 — `safety.filter_goal` 참고.
         """
-        done = []
+        done, skipped = [], []
         for iface, arm in list(self.arms.items()):
+            # ⚠ **마스터 팔은 건드리지 않는다.**
+            #
+            # 마스터(示教输入臂)는 사람이 손으로 끄는 팔이라 **이미 토크가 없다** —
+            # 여기서 얻는 안전이 0이다. 그런데 `DisablePiper()` 가 모터를 끄면서
+            # 팔의 연동 설정까지 풀어버려서, E-stop 이 날 때마다 리더가 슬레이브로
+            # 돌아갔다. 그러면 팔로워가 리더를 안 따라오고 아무 에러도 안 난다.
+            # SDK 문서에 없는 동작이라 실기에서 재현해서 확인했다.
+            #
+            # 판단은 **측정한 값**(`is_master`)으로 한다. 라벨(`role`)로 하면,
+            # leader 라고 적혀 있지만 실제로는 슬레이브인 — 즉 토크가 살아 있는 —
+            # 팔을 건너뛰게 된다. 그 어긋난 상태는 실제로 있었다.
+            # 모르면(`None`) 끊는다: 판정 불가는 안전이 아니다.
+            if arm.is_master is True:
+                skipped.append(iface)
+                continue
             try:
                 if arm.disable_torque():
                     done.append(iface)
             except Exception as exc:
                 logger.error("%s 토크 차단 실패: %s", iface, exc)
-        if done:
-            logger.warning("E-STOP → 토크 차단: %s", ", ".join(done))
+        if done or skipped:
+            logger.warning("E-STOP → 토크 차단: %s%s",
+                           ", ".join(done) or "없음",
+                           f" (마스터라 건너뜀: {', '.join(skipped)})" if skipped else "")
         return done
 
     def go_parking(self, iface: str) -> bool:
