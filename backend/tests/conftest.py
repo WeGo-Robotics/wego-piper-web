@@ -29,6 +29,15 @@ os.environ["PIPER_PROCESS_RUNNER"] = "local"
 TEST_REDIS_DB = 15
 TEST_REDIS_URL = f"redis://127.0.0.1:6379/{TEST_REDIS_DB}"
 
+# ⚠ **db 번호만으로는 안 갈린다.** Redis pub/sub 은 db 를 무시하므로, db 15 에
+#   publish 한 E-stop 을 db 0 의 robotd 가 받아 **실기 팔의 토크를 끊었다.**
+#   테스트를 한 번 돌릴 때마다 로봇이 서 버린 것이다.
+#
+#   `PREFIX` 는 **모듈 로드 때** 정해지므로 fixture 로는 늦다 — 위
+#   `PIPER_PROCESS_RUNNER` 와 같은 이유로 import 전에 박는다. 자식 프로세스도
+#   환경변수를 물려받아 같은 접두사를 쓴다.
+os.environ["PIPER_BUS_PREFIX"] = "pipertest"
+
 
 @pytest.fixture(autouse=True)
 def isolated_bus(monkeypatch):

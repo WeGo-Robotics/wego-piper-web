@@ -175,3 +175,33 @@ def test_gateway_survives_without_bus(monkeypatch):
     b.heartbeat()          # 예외 없이 no-op
     b.sync_activities()
     assert b.status()["bus_available"] is False
+
+
+def test_the_test_bus_cannot_reach_the_real_robot():
+    """⚠ **테스트가 실기 팔의 토크를 끊고 있었다.**
+
+    격리를 Redis db 번호(15)로만 했는데, **pub/sub 은 db 를 안 가린다** —
+    db 15 에 `publish` 한 E-stop 을 db 0 의 robotd 가 받아서 실제로 팔을 세웠다.
+    테스트를 한 번 돌릴 때마다 로봇이 서고, 리더암은 마스터 모드까지 풀렸다.
+
+    그래서 격리 기준을 **이름 접두사**로 옮겼다. 채널과 키가 같은 규칙을 쓰므로
+    한 번에 갈라지고, 자식 프로세스도 환경변수로 따라온다.
+    """
+    assert not C.CH_ESTOP.startswith("piper:"), \
+        f"테스트가 운영 채널({C.CH_ESTOP})로 발행한다 — 실기가 선다"
+    assert not C.ESTOP_ARMED.startswith("piper:"), \
+        f"테스트가 운영 키({C.ESTOP_ARMED})를 만진다"
+
+
+def test_the_prefix_is_fixed_before_the_contract_loads():
+    """`PREFIX` 는 모듈 로드 때 정해진다 — fixture 로 바꾸면 **이미 늦다.**
+
+    늦게 바꾸면 조용히 운영 이름으로 돌아가므로, 접두사가 실제로 먹었는지
+    본다(위 검사)와 별개로 설정 지점이 import 전인지도 못박는다.
+    """
+    conftest = (Path(__file__).parent / "conftest.py").read_text()
+    before = conftest.split("import pytest", 1)[0] + conftest.split("import pytest", 1)[1]
+    idx_env = before.index('os.environ["PIPER_BUS_PREFIX"]')
+    idx_import = before.find("from piper_bus")
+    assert idx_import == -1 or idx_env < idx_import, \
+        "piper_bus 를 import 한 뒤에 접두사를 박는다 — 안 먹는다"

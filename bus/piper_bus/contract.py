@@ -18,7 +18,17 @@ from typing import Final
 #
 # 접두사를 고정해 다른 Redis 사용자와 섞이지 않게 한다.
 
-PREFIX: Final = "piper"
+# ⚠ **pub/sub 은 Redis db 를 안 가린다.** db 15 에 publish 한 것을 db 0 의
+#   구독자가 받는다 — 테스트가 db 15 로 격리해도 채널은 안 갈라졌고, 그래서
+#   테스트를 돌릴 때마다 실기 robotd 가 E-stop 을 받아 **팔 토크를 끊었다.**
+#   (`redis-cli -n 15 publish piper:ch:estop ...` 로 재현했다.)
+#
+#   그래서 격리는 **접두사**로 한다 — 키와 채널이 같은 규칙을 쓰므로 한 번에
+#   갈라진다. 자식 프로세스(estopd, wrapper)도 환경변수를 물려받아 같이 갈린다.
+#   운영에서는 안 설정하므로 이름이 그대로다.
+import os
+
+PREFIX: Final = os.environ.get("PIPER_BUS_PREFIX") or "piper"
 
 
 def _k(*parts: str) -> str:
