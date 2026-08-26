@@ -28,16 +28,22 @@ from piper_robot.arm import Arm  # noqa: E402
 
 
 def _device_arm(monkeypatch, *, mode_int, rx_changes: bool) -> Arm:
-    """데몬 쪽 가짜 팔 — piper SDK 없이 판별 로직만 돌린다."""
+    """데몬 쪽 가짜 팔 — piper SDK 없이 판별 로직만 돌린다.
+
+    ⚠ `rx_changes` 는 이제 **"슬레이브 주기 피드백(0x2Ax)이 보이는가"** 다.
+      예전에는 RX 개수 증가였는데, 그 규칙은 조작 중인 마스터가 보내는
+      제어지령(0x15x)까지 '트래픽 있음' 으로 세어 리더를 슬레이브로 읽었다
+      (test_master_classification.py). 대역을 보는 지금은 둘이 갈린다.
+    """
     arm = Arm(iface="can0", bus_info="1-1:1.0")
     arm._piper = object()          # connect 검사 통과용
 
     monkeypatch.setattr(Arm, "refresh_ctrl_mode", lambda self: mode_int)
 
-    # RX 가 변하면 슬레이브(피드백 송신 중), 안 변하면 마스터
-    seq = iter([100, 200] if rx_changes else [100, 100])
-    monkeypatch.setattr("piper_robot.arm._read_can_rx", lambda _iface: next(seq))
-    monkeypatch.setattr("piper_robot.arm.time.sleep", lambda _s: None)
+    groups = {"slave_fb": 120 if rx_changes else 0, "master_fb": 0,
+              "master_ctrl": 0, "driver": 0, "other": 0}
+    monkeypatch.setattr("piper_robot.arm.sniff_can_ids",
+                        lambda iface, duration: {"groups": groups})
     return arm
 
 

@@ -19,7 +19,7 @@ from pathlib import Path
 
 from piper_robot.can import (
     DEFAULT_BITRATE,
-    _read_can_rx,
+    sniff_can_ids,
     init_can_interface,
 )
 from piper_robot.joints import denormalize_all, normalize_all
@@ -121,17 +121,40 @@ class Arm:
         self.ctrl_mode = mode_names.get(mode_int, f"0x{mode_int:02X}")
         return mode_int
 
-    def _classify_master(self, mode_int: int | None = None, rx_interval: float = 0.3) -> None:
-        """마스터/슬레이브 판별 (사용자 지정 규칙).
+    def _classify_master(self, mode_int: int | None = None, rx_interval: float = 0.35) -> None:
+        """마스터/슬레이브 판별 — **어떤 프레임이 오는지**로 가른다.
 
-        - RX 데이터가 있으면 슬레이브: 슬레이브 팔은 주기 피드백(0x2Ax)을 계속 송신한다.
-        - RX 데이터가 없으면 마스터: 마스터(示教输入臂)는 피드백을 송신하지 않아 RX가 비어있다.
-        - ctrl_mode 0x06(연동 示教입력)이면 명시적 마스터로 본다.
+        ⚠ 예전에는 RX **개수**만 셌다: 0.35초 동안 안 늘면 마스터, 늘면 슬레이브.
+          그런데 마스터는 사람이 팔을 움직이는 동안 제어지령(0x15x)을 **송신한다** —
+          그게 마스터의 정의다. 그 프레임이 호스트 RX 에 잡히므로, **수집하는 내내
+          리더가 슬레이브로 표시됐다.** 팔은 멀쩡한데 화면만 뒤집힌 것이라
+          토크가 실제로 풀렸을 때와 증상이 같아서 구분이 안 됐다.
+
+        대역이 다르므로 세지 말고 읽는다 (`can.sniff_can_ids`):
+
+          0x2A1~0x2A8  슬레이브의 **주기** 피드백 — 가만히 있어도 계속 온다
+          0x150~0x15F  마스터가 움직일 때 보내는 제어지령
+          0x2B1~0x2C8  마스터의 오프셋 피드백 (offset 을 준 경우)
+
+        판정 순서가 중요하다. 슬레이브 피드백은 **조건 없이 계속** 오므로 그게
+        보이면 슬레이브다. 안 보이면 마스터다 — 조작 중이든 아니든 같은 답이 나온다.
+
+        ⚠ 아무것도 안 올 때도 마스터로 본다. 조용한 마스터와 죽은 팔은 버스만
+          봐서는 구분이 안 되는데, 이쪽으로 틀리면 **명령을 안 보내는** 쪽으로
+          안전하게 실패한다(`_require_commandable`).
+
+        `ctrl_mode 0x06` 은 그대로 두되 **믿고 기대지 않는다** — 실측하면 마스터가
+        `Standby` 를 보고한다. 그래서 예전 규칙이 통째로 RX 개수에 얹혀 있었다.
         """
-        rx1 = _read_can_rx(self.iface)
-        time.sleep(rx_interval)
-        rx2 = _read_can_rx(self.iface)
-        self.is_master = (mode_int == 0x06) or (rx2 == rx1)
+        if mode_int == 0x06:
+            self.is_master = True
+            return
+        seen = sniff_can_ids(self.iface, duration=rx_interval)
+        if seen.get("error"):
+            # 버스를 못 들으면 판정하지 않는다 — 추측이 라벨로 굳는 것보다 낫다
+            self.is_master = None
+            return
+        self.is_master = seen["groups"]["slave_fb"] == 0
 
     def refresh_mode(self) -> None:
         """ctrl_mode 텍스트 + 마스터/슬레이브를 라이브 갱신.
