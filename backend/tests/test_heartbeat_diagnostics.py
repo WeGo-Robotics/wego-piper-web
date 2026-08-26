@@ -72,7 +72,7 @@ def test_the_browser_reports_its_own_gap_and_visibility():
     src = (_FRONT / "components" / "EStopButton.tsx").read_text()
     assert "performance.now()" in src, "브라우저가 자기 간격을 안 잰다"
     assert "document.hidden" in src, "탭 백그라운드 여부를 안 보낸다"
-    assert "'/estop/heartbeat', { gap, hidden: document.hidden, rtt }" in src.replace('"', "'"), \
+    assert "'/estop/heartbeat', { gap, hidden: document.hidden, rtt, seq }" in src.replace('"', "'"), \
         "정황을 heartbeat 와 같이 안 보낸다"
 
 
@@ -86,3 +86,56 @@ def test_the_browser_times_its_own_request():
     src = (_FRONT / "components" / "EStopButton.tsx").read_text()
     assert "rtt = Math.round(performance.now() - sent)" in src, "왕복 시간을 안 잰다"
     assert "finally" in src, "요청이 실패하면 왕복 시간이 안 갱신된다"
+
+
+def test_a_missing_beat_is_told_apart_from_a_late_one(bridge, caplog, monkeypatch):
+    """⚠ 이게 남은 갈림길이다.
+
+    지금까지 실측으로 지운 것: 브라우저 타이머(정시 501ms), 게이트웨이
+    이벤트 루프(p95 2ms), vite 프록시(5ms), API 클라이언트(맨 fetch, 큐 없음).
+    그런데도 서버가 본 **도착** 간격은 2.16s 였다.
+
+    번호가 이어지면 요청이 늦게 온 것이고, 번호가 건너뛰면 **아예 안 간** 것이다.
+    고쳐야 할 곳이 서로 다르므로 로그에서 갈려 있어야 한다.
+    """
+    from app.services import estop_bridge as mod
+
+    t = [100.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: t[0])
+
+    with caplog.at_level("WARNING"):
+        bridge.heartbeat({"seq": 10, "gap": 500})
+        t[0] += 2.2
+        bridge.heartbeat({"seq": 14, "gap": 500})      # 11,12,13 이 안 왔다
+    assert "유실 3건" in caplog.text, "빠진 번호를 안 센다"
+
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        t[0] += 2.2
+        bridge.heartbeat({"seq": 15, "gap": 500})      # 번호는 이어진다
+    assert "유실 없음" in caplog.text, "늦게 온 것과 안 온 것을 안 가른다"
+
+
+def test_the_sequence_keeps_up_even_when_no_gap_is_logged(bridge, monkeypatch):
+    """번호 추적이 경고 안에만 있으면, **정상 구간을 지난 뒤** 유실 수가
+    통째로 틀린다 — 갭이 날 때만 갱신되기 때문이다."""
+    from app.services import estop_bridge as mod
+
+    t = [100.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: t[0])
+    for n in (1, 2, 3):
+        t[0] += 0.5
+        bridge.heartbeat({"seq": n})
+    assert bridge._last_seq == 3, "조용한 구간에서 번호를 안 따라간다"
+
+
+def test_a_client_without_a_sequence_does_not_break_tracking(bridge, monkeypatch):
+    """예전 번들을 띄운 탭이 섞여 있어도 죽지 않아야 한다 — 안전 경로다."""
+    from app.services import estop_bridge as mod
+
+    t = [100.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: t[0])
+    bridge.heartbeat({"seq": 7})
+    t[0] += 0.5
+    bridge.heartbeat(None)          # 구버전 탭
+    assert bridge._last_seq == 7, "번호 없는 요청이 추적을 지운다"

@@ -31,18 +31,24 @@ export default function EStopButton() {
   useEffect(() => {
     let last = performance.now()
     let rtt = 0        // 직전 요청이 **오가는 데** 걸린 시간
+    let seq = 0        // 보낸 순번 — 서버가 빠진 번호로 유실을 안다
     const interval = setInterval(async () => {
       const now = performance.now()
       const gap = Math.round(now - last)
       last = now
       const sent = now
+      seq += 1
       try {
         // ⚠ `rtt` 는 직전 값을 보낸다 — 이번 요청의 왕복 시간은 이번 요청을
         //   보낸 뒤에야 알 수 있다. 한 tick 늦지만 그래도 원인이 갈린다:
         //   타이머는 정시(gap≈500)인데 서버가 본 간격이 벌어졌다면, 요청이
         //   **브라우저 안에서 대기**했다는 뜻이다. HTTP/1.1 은 오리진당 연결이
         //   6개뿐이고, 수집 화면은 카메라 프리뷰를 200ms 마다 긁는다.
-        await api.post('/estop/heartbeat', { gap, hidden: document.hidden, rtt })
+        // ⚠ `seq` 가 판별의 핵심이다. 타이머는 정시(gap≈500)인데 서버가 본
+        //   **도착** 간격은 2초씩 벌어졌다. 번호가 이어져 있으면 요청이 늦게
+        //   도착한 것이고, 번호가 건너뛰면 그 사이 요청은 **아예 못 갔다**.
+        //   둘은 고치는 곳이 다르다.
+        await api.post('/estop/heartbeat', { gap, hidden: document.hidden, rtt, seq })
       } catch {
         // 연결 끊김 → watchdog이 타임아웃 처리
       } finally {

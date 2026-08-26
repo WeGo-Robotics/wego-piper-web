@@ -31,6 +31,7 @@ class EstopBridge:
         self._bus = None
         self._available = False
         self._last_beat: float | None = None
+        self._last_seq: int | None = None
 
     def connect(self) -> bool:
         try:
@@ -72,15 +73,23 @@ class EstopBridge:
         """
         now = time.monotonic()
         prev, self._last_beat = self._last_beat, now
-        if prev is not None:
-            gap = now - prev
-            if gap >= self.GAP_WARN_S:
-                info = client or {}
-                logger.warning(
-                    "heartbeat 간격 %.2fs (타이머 %sms, 왕복 %sms, hidden=%s)",
-                    gap, info.get("gap", "?"), info.get("rtt", "?"),
-                    info.get("hidden", "?"),
-                )
+        info = client or {}
+        seq = info.get("seq")
+        prev_seq, self._last_seq = self._last_seq, seq if seq is not None else self._last_seq
+
+        if prev is not None and (now - prev) >= self.GAP_WARN_S:
+            # 빠진 번호 = 그 사이 요청이 **아예 안 왔다**. 번호가 이어지는데 간격만
+            # 벌어졌다면 늦게 온 것이다 — 둘은 고칠 곳이 다르다.
+            missed = ""
+            if seq is not None and prev_seq is not None:
+                lost = seq - prev_seq - 1
+                missed = f", 유실 {lost}건" if lost > 0 else ", 유실 없음"
+            logger.warning(
+                "heartbeat 간격 %.2fs (타이머 %sms, 왕복 %sms, hidden=%s%s)",
+                now - prev, info.get("gap", "?"), info.get("rtt", "?"),
+                info.get("hidden", "?"), missed,
+            )
+
         if self._bus:
             try:
                 self._bus.beat()
