@@ -152,9 +152,9 @@ def main() -> None:
     status("running", train=n_train, val=n_val)
 
     try:
-        from ultralytics import YOLO
+        from detector_loader import load_detector
 
-        model = YOLO(args.model)
+        model = load_detector(args.model)
         results = model.train(
             data=str(run_dir / "data.yaml"),
             epochs=args.epochs, imgsz=args.imgsz, batch=args.batch,

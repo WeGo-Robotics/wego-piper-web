@@ -72,9 +72,9 @@ def main() -> None:
         print(json.dumps({"labeled": 0, "boxes": 0, "no_match": 0, "targets": 0}))
         return
 
-    from ultralytics import YOLO
+    from detector_loader import load_detector
 
-    model = YOLO(args.model)
+    model = load_detector(args.model)
     labeled = boxes_total = no_match = 0
     for i, img in enumerate(targets):
         result = model.predict(str(img), conf=args.conf, imgsz=args.imgsz,

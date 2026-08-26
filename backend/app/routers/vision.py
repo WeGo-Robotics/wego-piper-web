@@ -54,6 +54,15 @@ _YOLO_CATALOG = [
     {"family": "YOLOv5u", "file": "yolov5nu.pt", "label": "nano",   "params_m": 2.6,  "size_mb": 5.3},
     {"family": "YOLOv5u", "file": "yolov5su.pt", "label": "small",  "params_m": 9.1,  "size_mb": 17.7},
     {"family": "YOLOv5u", "file": "yolov5mu.pt", "label": "medium", "params_m": 25.1, "size_mb": 48.2},
+    # RT-DETR — 트랜스포머 검출기. NMS 가 없어 후처리가 단순하고, 아키텍처 자체는
+    # Apache-2.0 이다. ⚠ **다만 여기서 받는 가중치는 ultralytics 배포본이라
+    # 라이선스는 나머지와 같다** — 실제로 라이선스를 바꾸려면 원 구현이나
+    # transformers 쪽 RT-DETR 로 가야 한다. 이름만 바꿔서는 안 바뀐다.
+    #
+    # `params_m` 은 비워둔다 — 확인 안 한 수치를 적느니 안 적는다.
+    # `size_mb` 는 배포 URL 에 HEAD 를 쳐서 실측한 값이다.
+    {"family": "RT-DETR", "file": "rtdetr-l.pt", "label": "large",  "params_m": None, "size_mb": 63.4},
+    {"family": "RT-DETR", "file": "rtdetr-x.pt", "label": "xlarge", "params_m": None, "size_mb": 129.5},
 ]
 
 # 가중치가 떨어져 있을 만한 곳: yolod 유닛의 작업 디렉토리(홈 — systemd-run 이

@@ -157,7 +157,7 @@ def main() -> None:
     import numpy as np  # noqa: F401  (ultralytics 가 요구)
     from piper_bus.client import Bus
     from piper_shm import Subscriber, segment_for_camera
-    from ultralytics import YOLO
+    from detector_loader import load_detector
 
     def _signal(sig, _):
         global _running
@@ -168,7 +168,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, _signal)
 
     logger.info("모델 로드: %s (device=%s)", args.model, args.device)
-    model = YOLO(args.model)
+    model = load_detector(args.model)
     bus = Bus()
     meta = _model_meta(model, args.model, args.device, args.conf, args.fps,
                        args.imgsz, cams)
