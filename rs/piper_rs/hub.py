@@ -102,6 +102,27 @@ def parse_id(cam_id: str) -> tuple[str, str] | None:
     return serial, stream
 
 
+def to_bgr(img: "np.ndarray", fmt) -> "np.ndarray":
+    """librealsense 색 프레임 → BGR (우리가 발행하는 포맷).
+
+    **무엇이 왔는지 보고 정한다.** 스트림을 여는 코드와 읽는 코드가 떨어져 있어서,
+    한쪽이 포맷을 바꿔도 다른 쪽은 모른 채 계속 같은 변환을 돌린다. 실제로 그렇게
+    노란색이 파란색이 됐다 — 색이 틀린 화면은 정책 입력으로도 그대로 틀린다.
+    """
+    import cv2  # 이 파일의 규약 — cv2 는 쓰는 자리에서 import 한다
+
+    name = str(fmt)
+    if name.endswith("rgb8"):
+        return cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    if name.endswith("rgba8"):
+        return cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+    if name.endswith("bgra8"):
+        return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+    # bgr8 — 이미 맞다. 모르는 포맷도 손대지 않는다: 잘못 바꾸는 것보다
+    # 그대로 두는 편이 원인을 찾기 쉽다.
+    return img
+
+
 class _RSDevice:
     """물리 디바이스 1대. 파이프라인 1개를 활성 스트림 집합에 맞춰 운용."""
 
@@ -114,6 +135,7 @@ class _RSDevice:
         self._active: set[str] = set()  # 현재 파이프라인이 스트리밍 중인 스트림
         self._refcount: dict[str, int] = {s: 0 for s in STREAM_TYPES}
         self._latest: dict[str, object] = {}  # stream -> numpy frame (BGR/grey)
+        self._logged_color_fmt = None  # 열린 색 포맷을 한 번만 로그로
         self._lock = threading.Lock()       # _latest 보호
         # 디바이스 작업 직렬화: 한 디바이스에 동시에 두 파이프라인을 start 할 수
         # 없고, librealsense 는 디바이스 단위로 thread-safe 하지 않다. 따라서
@@ -292,6 +314,8 @@ class _RSDevice:
                         cfg.enable_stream(rs.stream.color, got[0], got[1],
                                           rs.format.bgr8, got[2])
                     else:
+                        # 포맷을 안 건다 = librealsense 기본(보통 rgb8). 위 갈래와
+                        # 포맷이 다르다 — 읽는 쪽은 `to_bgr` 가 프레임을 보고 맞춘다.
                         cfg.enable_stream(rs.stream.color)
                 elif s == "depth":
                     # depth 는 color 를 살리려고 곁들이는 것이라 해상도를 맞추지 않는다
@@ -537,8 +561,19 @@ class _RSDevice:
                 if "color" in self._active:
                     cf = frames.get_color_frame()
                     if cf:
-                        img = np.asanyarray(cf.get_data())  # rgb8
-                        bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                        # ⚠ 포맷을 **가정하지 않는다.** 여기는 rgb8 이라고 적혀
+                        #   있었는데, 프로파일 요청이 닿게 고치면서 색 스트림이
+                        #   bgr8 로 열리기 시작했다. 그래도 RGB→BGR 을 계속 돌려
+                        #   R 과 B 를 맞바꿨다 — 노란 물체가 파랗게 나왔다.
+                        #   해상도를 지정한 카메라만 그래서 더 안 보였다.
+                        img = np.asanyarray(cf.get_data())
+                        fmt = cf.get_profile().format()
+                        if fmt != self._logged_color_fmt:
+                            # 열린 포맷을 한 번 남긴다. 이 값을 몰라서 색이 뒤집힌
+                            # 것을 한참 못 찾았다 — 로그 한 줄이면 끝날 일이었다.
+                            logger.info("색 스트림 포맷: %s (%s)", fmt, self.serial)
+                            self._logged_color_fmt = fmt
+                        bgr = to_bgr(img, fmt)
                         if aligned_depth is not None:
                             bgr = self._mask_color(bgr, aligned_depth)
                         updates["color"] = bgr

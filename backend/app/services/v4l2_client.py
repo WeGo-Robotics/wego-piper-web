@@ -106,23 +106,15 @@ class V4l2Client:
             sub.close()
 
     def get_jpeg(self, cam_id: str) -> bytes | None:
-        try:
-            sub = Subscriber(segment_for_camera(cam_id))
-        except SegmentError:
-            return None
-        try:
-            got = sub.read()
-            if got is None:
-                return None
-            import cv2
+        """세그먼트 → JPEG. **구현은 `shm_snapshot` 하나뿐이다.**
 
-            ok, buf = cv2.imencode(".jpg", got[0], [cv2.IMWRITE_JPEG_QUALITY, 80])
-            return buf.tobytes() if ok else None
-        except Exception as exc:
-            logger.warning("프리뷰 인코딩 실패 (%s): %s", cam_id, exc)
-            return None
-        finally:
-            sub.close()
+        예전엔 이 함수가 세 군데에 복사돼 있었고, 그중 하나만 채널을 뒤집게 되면서
+        그 경로로 나가는 화면에서 노란 물체가 파랗게 나왔다. 같은 세그먼트를 읽는
+        코드가 색 순서를 서로 다르게 알고 있으면 안 된다.
+        """
+        from app.services.shm_snapshot import segment_jpeg
+
+        return segment_jpeg(cam_id)
 
 
 def _pair(result, fallback: str) -> tuple[bool, str]:

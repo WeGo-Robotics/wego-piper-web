@@ -156,27 +156,16 @@ class RealSenseHub:
             sub.close()
 
     def get_jpeg(self, cam_id: str) -> bytes | None:
-        """세그먼트의 최신 프레임을 JPEG 로. 인코딩은 **여기서** 한다.
-
+        """세그먼트의 최신 프레임을 JPEG 로. 인코딩은 **게이트웨이에서** 한다 —
         데몬이 인코딩해서 보내면 그게 예전 base64-JPEG 왕복이 된다.
-        """
-        try:
-            sub = Subscriber(segment_for_camera(cam_id))
-        except SegmentError:
-            return None
-        try:
-            got = sub.read()
-            if got is None:
-                return None
-            import cv2
 
-            ok, buf = cv2.imencode(".jpg", got[0], [cv2.IMWRITE_JPEG_QUALITY, 80])
-            return buf.tobytes() if ok else None
-        except Exception as exc:
-            logger.warning("프리뷰 인코딩 실패 (%s): %s", cam_id, exc)
-            return None
-        finally:
-            sub.close()
+        구현은 `shm_snapshot` 하나뿐이다. 예전엔 세 군데에 복사돼 있었고 그중
+        하나만 채널을 뒤집게 되면서, 그 경로로 나가는 화면에서 노란 물체가 파랗게
+        나왔다. 같은 세그먼트를 읽는 코드가 색 순서를 서로 다르게 알면 안 된다.
+        """
+        from app.services.shm_snapshot import segment_jpeg
+
+        return segment_jpeg(cam_id)
 
 
 def _pair(result, fallback: str) -> tuple[bool, str]:

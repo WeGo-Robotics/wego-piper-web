@@ -23,10 +23,12 @@ def segment_jpeg(name: str, quality: int = 80) -> bytes | None:
             return None
         import cv2
 
-        frame = got[0]
-        if frame.ndim == 3 and frame.shape[2] == 3:
-            frame = frame[:, :, ::-1]  # 세그먼트는 RGB, imencode 는 BGR
-        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        # ⚠ 여기서 `frame[:, :, ::-1]` 로 채널을 뒤집었었다 — "세그먼트는 RGB" 라는
+        #   주석과 함께. **세그먼트는 BGR 이다.** rsd 는 `to_bgr` 를 거친 프레임을,
+        #   camerad 는 OpenCV 프레임을 그대로 발행한다. 그래서 이 경로로 나가는
+        #   화면만 노란 물체가 파랗게 나왔다(비전 페이지, YOLO 캡처). 같은
+        #   세그먼트를 읽는 다른 두 곳은 안 뒤집는데 여기만 달랐다.
+        ok, buf = cv2.imencode(".jpg", got[0], [cv2.IMWRITE_JPEG_QUALITY, quality])
         return buf.tobytes() if ok else None
     except Exception as exc:
         logger.warning("세그먼트 스냅샷 실패 (%s): %s", name, exc)

@@ -51,12 +51,17 @@ def test_frames_do_not_travel_over_rpc():
     for banned in ("get_frame", "get_jpeg", "has_frame"):
         assert banned not in methods, f"프레임을 RPC 로 나르고 있다: {banned}"
 
-    # 게이트웨이는 그 둘을 세그먼트에서 직접 읽어야 한다
+    # 게이트웨이는 그 둘을 세그먼트에서 직접 읽어야 한다.
+    # `get_jpeg` 는 공용 `shm_snapshot.segment_jpeg` 에 위임한다 — 예전엔 이 인코더가
+    # 세 벌이었고 한 벌만 채널을 뒤집어 색이 틀렸다. 규칙은 "shm 에서 읽어라" 지
+    # "이 함수 안에서 읽어라" 가 아니므로, 위임을 따라가서 본다.
     client = _CLIENT.read_text()
     for fn in ("def has_frame", "def get_jpeg"):
         body = client.split(fn, 1)[1].split("\n    def ", 1)[0]
-        assert "Subscriber" in body, f"{fn} 이 shm 을 안 읽는다"
         assert "rpc_call" not in body and "_call(" not in body, f"{fn} 이 RPC 를 쓴다"
+        if "segment_jpeg" in body:
+            body = (_CLIENT.parent / "shm_snapshot.py").read_text()
+        assert "Subscriber" in body, f"{fn} 이 shm 을 안 읽는다"
 
 
 def test_gateway_keeps_the_old_public_interface():
