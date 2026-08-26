@@ -313,6 +313,18 @@ export default function CamerasPage() {
   // 막는다 (RealSense 등에서 컨트롤 질의와 스트림 probe 가 충돌하면 멈춤).
   const [busyId, setBusyId] = useState<string | null>(null)
 
+  /**
+   * 프리뷰 `src`. **실시간 보기 중이면 스트림, 아니면 한 장.**
+   *
+   * ⚠ 전부 스트림으로 돌리지 않는다 — 카드마다 연결을 하나씩 물면 목록만 열어도
+   *   연결이 카메라 수만큼 열린다. 한 장짜리는 "설정을 바꿨으니 다시 보여줘"
+   *   같은 자리에 그대로 필요하다(`bumpPreview`).
+   */
+  const previewSrc = (id: string) =>
+    liveIds.has(id)
+      ? `/api/cameras/${encodeURIComponent(id)}/stream`
+      : `/api/cameras/${encodeURIComponent(id)}/preview?t=${previewTs[id] ?? 0}`
+
   // 지정한 카메라들의 프리뷰만 새로고침 (캐시버스팅 타임스탬프 갱신)
   const bumpPreview = (ids: string[]) => {
     const now = Date.now()
@@ -350,8 +362,11 @@ export default function CamerasPage() {
   // 프리뷰 자동 갱신 (실시간 보기 중인 카메라)
   useEffect(() => {
     if (liveIds.size === 0) return
-    const interval = setInterval(() => bumpPreview([...liveIds]), 200)
-    return () => clearInterval(interval)
+    // ⚠ 실시간 보기에는 타이머가 없다. 스트림이 밀어주므로 필요 없고, 주기적으로
+    //   `src` 를 건드리면 그때마다 연결이 끊겼다 다시 붙어 **오히려 끊긴다.**
+    //   발행자가 사라졌다 돌아오는 경우는 서버 쪽 `segment_reader` 가 다시 붙는다.
+    bumpPreview([...liveIds])
+    return () => {}
   }, [liveIds])
 
   // 모달은 Esc 로도 닫힌다
@@ -623,7 +638,7 @@ export default function CamerasPage() {
                     </div>
                   ) : (
                   <img
-                    src={`/api/cameras/${encodeURIComponent(cam.id)}/preview?t=${previewTs[cam.id] ?? 0}`}
+                    src={previewSrc(cam.id)}
                     alt={cam.name}
                     className="w-full aspect-[4/3] object-cover bg-neutral-900"
                     onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.2' }}
@@ -712,7 +727,7 @@ export default function CamerasPage() {
                 className="rounded-lg border border-neutral-700 bg-neutral-800 overflow-hidden hover:border-blue-500 hover:bg-blue-500/5 transition-colors group"
               >
                 {cam.has_preview ? (
-                  <img src={`/api/cameras/${encodeURIComponent(cam.id)}/preview?t=${previewTs[cam.id] ?? 0}`} alt={cam.name}
+                  <img src={previewSrc(cam.id)} alt={cam.name}
                     className="w-full aspect-[4/3] object-cover bg-neutral-900" />
                 ) : (
                   <div className="w-full aspect-[4/3] bg-neutral-900 flex items-center justify-center text-neutral-600 text-xs">
@@ -780,7 +795,7 @@ export default function CamerasPage() {
                     </div>
                   ) : (
                   <img
-                    src={`/api/cameras/${encodeURIComponent(cam.id)}/preview?t=${previewTs[cam.id] ?? 0}`}
+                    src={previewSrc(cam.id)}
                     alt={cam.name}
                     className="w-full aspect-[4/3] object-cover bg-neutral-900"
                     onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.2' }}
@@ -847,7 +862,7 @@ export default function CamerasPage() {
             <div className="relative self-start">
               <img
                 ref={previewRef}
-                src={`/api/cameras/${encodeURIComponent(settingsCamera.id)}/preview?t=${previewTs[settingsCamera.id] ?? 0}`}
+                src={previewSrc(settingsCamera.id)}
                 alt={settingsCamera.display_name ?? settingsCamera.name}
                 className="w-full max-h-[62vh] aspect-[4/3] object-contain rounded bg-neutral-900"
                 onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.2' }}

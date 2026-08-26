@@ -10,6 +10,8 @@
 3. 소비자가 라이터 버퍼를 그대로 보지 않는다 (복사)
 """
 
+import contextlib
+
 import numpy as np
 import pytest
 
@@ -649,3 +651,35 @@ def test_usb_warning_is_judged_in_one_place():
     assert _usb_warning(USB3_MBPS) is None
     # 모르는 것(0)과 느린 것은 다르다 — 모르면 경고하지 않는다
     assert _usb_warning(0) is None
+
+
+def test_a_subscriber_notices_its_segment_was_replaced():
+    """⚠ **mmap 은 unlink 를 살아남는다.**
+
+    발행자가 세그먼트를 지우고 새로 만들어도 이미 열린 매핑은 계속 읽힌다 —
+    예외도 안 나고 `read()` 도 성공하는데 **영원히 같은 프레임**이 나온다.
+    화면은 마지막 장면에서 얼어붙고 아무도 그걸 모른다.
+
+    프리뷰 스트림이 카메라 데몬 재시작 뒤에 안 돌아온 원인이 정확히 이거였다.
+    예외를 기다리는 재접속 로직은 여기서 **한 번도 안 불린다.**
+    """
+    import numpy as np
+    from piper_shm import Publisher, Subscriber
+
+    name = "orphan_probe"
+    pub = Publisher(name, width=4, height=4, channels=3)
+    try:
+        pub.publish(np.zeros((4, 4, 3), np.uint8))
+        sub = Subscriber(name)
+        try:
+            assert sub.read() is not None
+            assert sub.orphaned is False, "멀쩡한 세그먼트를 고아로 본다"
+
+            pub.close()          # unlink — 발행자 재시작 흉내
+            assert sub.read() is not None, "매핑이 살아 있는 것이 이 함정의 전제다"
+            assert sub.orphaned is True, "세그먼트가 사라진 것을 못 알아챈다"
+        finally:
+            sub.close()
+    finally:
+        with contextlib.suppress(Exception):
+            pub.close()

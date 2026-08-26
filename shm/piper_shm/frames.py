@@ -121,6 +121,24 @@ class Subscriber:
     def shape(self) -> tuple[int, int, int]:
         return (self.layout.height, self.layout.width, self.layout.channels)
 
+    @property
+    def orphaned(self) -> bool:
+        """내가 열어둔 세그먼트가 이미 사라졌는가 (발행자가 재시작했는가).
+
+        ⚠ **mmap 은 unlink 를 살아남는다.** 발행자가 세그먼트를 지우고 새로 만들어도
+        이쪽의 매핑은 멀쩡히 읽히고, 다만 **영원히 같은 프레임**을 돌려준다. 예외도
+        안 나고 `read()` 는 성공한다 — 화면은 마지막 장면에서 얼어붙는데 아무도
+        그걸 모른다. 프리뷰 스트림이 발행자 재시작 뒤에 안 돌아온 원인이 이거였다.
+
+        `Publisher.orphaned` 와 같은 방식이다 — 열린 fd 의 링크 수를 본다.
+        """
+        import os
+
+        try:
+            return os.fstat(self._fd).st_nlink == 0
+        except OSError:
+            return True
+
     def _seq(self) -> int:
         return struct.unpack("<Q", self._buf[_SEQ_OFF:_SEQ_OFF + 8])[0]
 

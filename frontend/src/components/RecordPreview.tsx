@@ -7,7 +7,6 @@ import { api } from '../services/api'
  */
 export default function RecordPreview() {
   const [cams, setCams] = useState<string[]>([])
-  const [ts, setTs] = useState(0)
 
   // 미리보기 가능한 카메라 목록 폴링 (1s)
   useEffect(() => {
@@ -18,12 +17,10 @@ export default function RecordPreview() {
     return () => clearInterval(iv)
   }, [])
 
-  // 프레임 갱신 (200ms) — 카메라가 있을 때만
-  useEffect(() => {
-    if (cams.length === 0) return
-    const iv = setInterval(() => setTs(Date.now()), 200)
-    return () => clearInterval(iv)
-  }, [cams.length])
+  // ⚠ 예전에는 200ms 마다 `?t=` 를 바꿔 새로 걸었다 = 카메라당 초당 5장.
+  //   서버가 느려서 끊긴 게 아니라(한 장에 1.2ms) **초당 5장이 설계값이었다.**
+  //   지금은 카메라당 연결 하나로 계속 받는다 — 프레임레이트가 오르고,
+  //   요청 수가 줄어 E-stop heartbeat 를 굶기던 연결 경합도 같이 준다.
 
   return (
     <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
@@ -39,7 +36,7 @@ export default function RecordPreview() {
             <div key={name} className="space-y-1 flex-1 min-w-[7rem]">
               <div className="text-[10px] text-neutral-400 font-mono truncate">{name}</div>
               <img
-                src={`/api/recording/preview/${encodeURIComponent(name)}?t=${ts}`}
+                src={`/api/recording/preview-stream/${encodeURIComponent(name)}`}
                 alt={name}
                 className="w-full aspect-[4/3] object-cover bg-neutral-900 rounded"
               />

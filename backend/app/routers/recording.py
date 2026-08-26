@@ -314,6 +314,29 @@ async def list_preview_cameras():
     return {"cameras": preview_bridge.names()}
 
 
+@router.get("/preview-stream/{name}")
+async def preview_stream(name: str, fps: float = 10.0):
+    """녹화 프리뷰 스트림.
+
+    ⚠ 프레임 출처가 카메라 페이지와 다르다 — 여기는 wrapper 가 버스에 올린
+    JPEG 이라 이미 인코딩돼 있다. 새 프레임 판정도 `seq` 가 아니라 **바이트
+    비교**다. wrapper 쪽 상한이 10fps 라 여기서 더 올려봐야 같은 것만 다시 온다.
+    """
+    from app.services import mjpeg
+    from app.services.preview_bridge import preview_bridge
+
+    last = {"jpeg": None}
+
+    def _next() -> bytes | None:
+        cur = preview_bridge.get(name)
+        if cur is None or cur == last["jpeg"]:
+            return None
+        last["jpeg"] = cur
+        return cur
+
+    return mjpeg.stream(_next, label=f"record:{name}", fps=fps)
+
+
 @router.get("/preview/{name}")
 async def get_preview_frame(name: str):
     """녹화 중 카메라 최신 프레임 (단일 JPEG)."""

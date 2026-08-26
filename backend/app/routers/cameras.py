@@ -290,6 +290,19 @@ async def reset_controls(body: CameraIdRequest):
 
 
 # path 라우트는 반드시 고정 경로 뒤에 배치
+@router.get("/{cam_id:path}/stream")
+async def preview_stream(cam_id: str, fps: float = 15.0):
+    """프리뷰를 **한 연결로** 계속 밀어준다 (`multipart/x-mixed-replace`).
+
+    한 장짜리 `/preview` 는 남겨둔다 — 캡처·썸네일처럼 한 장만 필요한 호출부와,
+    스트림을 못 여는 경우의 폴백이다.
+    """
+    from app.services import mjpeg
+    from app.services.shm_snapshot import segment_reader
+
+    return mjpeg.stream(segment_reader(cam_id), label=cam_id, fps=fps)
+
+
 @router.get("/{cam_id:path}/preview")
 async def preview(cam_id: str):
     data = camera_manager.get_preview(cam_id)
