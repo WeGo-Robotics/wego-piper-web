@@ -297,6 +297,8 @@ async def can_rename(body: CanRenameRequest):
         arm = robot_manager.arms.pop(body.old_name)
         arm.iface = body.new_name
         robot_manager.arms[body.new_name] = arm
+    # 팔의 키(iface)가 바뀌었다 — 세션은 그 이름으로 팔을 찾는다
+    robot_manager.save_session()
     return {"status": "ok", "old_name": body.old_name, "new_name": body.new_name}
 
 
@@ -332,6 +334,7 @@ class AssignRequest(BaseModel):
 async def assign_slot(body: AssignRequest):
     if not robot_manager.assign_slot(body.iface, body.slot):
         raise HTTPException(400, "Assignment failed")
+    robot_manager.save_session()   # 슬롯은 세션이 저장하는 값이다
     return {"status": "assigned", "iface": body.iface, "slot": body.slot}
 
 
@@ -561,6 +564,8 @@ class SaveConfigRequest(BaseModel):
 @router.post("/save")
 async def save_config(body: SaveConfigRequest):
     ok, msg = robot_manager.save_config(body.config_name)
+    if ok:
+        robot_manager.save_session()   # `config_name` 이 세션에 실린다
     if not ok:
         raise HTTPException(400, msg)
     return {"status": "saved"}
@@ -613,6 +618,7 @@ class RoleRequest(BaseModel):
 async def set_role(body: RoleRequest):
     if not robot_manager.set_role(body.iface, body.role):
         raise HTTPException(400, "Role change failed")
+    robot_manager.save_session()
     arm = robot_manager.arms.get(body.iface)
     return arm.to_dict() if arm else {"status": "ok"}
 
@@ -653,6 +659,7 @@ async def set_master_slave(body: MasterSlaveRequest):
     ok, msg = await loop.run_in_executor(None, arm.set_master_slave, body.master)
     if not ok:
         raise HTTPException(400, msg)
+    robot_manager.save_session()   # 이 호출은 역할도 같이 바꾼다
     return arm.to_dict()
 
 
@@ -667,6 +674,7 @@ class ArmConfigRequest(BaseModel):
 async def update_arm_config(body: ArmConfigRequest):
     if not robot_manager.update_arm_config(body.iface, body.config):
         raise HTTPException(400, "Unknown arm")
+    robot_manager.save_session()   # `config` 가 세션에 실린다
     arm = robot_manager.arms.get(body.iface)
     return arm.to_dict() if arm else {"status": "ok"}
 
@@ -705,6 +713,10 @@ async def load_preset(body: PresetLoadRequest):
     data = await loop.run_in_executor(None, robot_manager.load_preset, body.name)
     if not data:
         raise HTTPException(404, "Preset not found")
+    # ⚠ **프리셋 로드가 곧 세션이 기억해야 할 상태다.** 이게 없어서, 팔을 등록
+    #   해제했다가 프리셋으로 되살린 뒤 게이트웨이를 재시작하면 팔이 통째로
+    #   사라졌다 — 화면에는 멀쩡히 있었으므로 재시작 전까지 아무도 몰랐다.
+    robot_manager.save_session()
     return data
 
 
