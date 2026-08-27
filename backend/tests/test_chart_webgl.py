@@ -74,44 +74,32 @@ def test_the_joint_speed_chart_is_gone_but_the_signal_stays():
     assert "speed=speed" in fsm, "신호 자체가 사라졌다"
 
 
-def test_the_reveal_cannot_stall_on_a_missing_callback():
-    """⚠ **회귀** — 앞 그래프가 "다 그렸다" 고 알려줄 때만 다음을 붙였더니,
-    그 알림이 한 번이라도 안 오면 **그 아래가 통째로 멈췄다.** 순서를 지키려다
-    아예 안 그려지는 경우를 만든 셈이다.
+def test_every_chart_slot_reserves_its_height():
+    """⚠ **세 번 고치고 나서야 자리를 잡는 게 답이었다.**
 
-    시계가 민다. 순서는 그대로고, 무엇이 실패하든 다음은 붙는다.
+    Plotly 는 비동기로 그려서 그 전까지 높이가 0 이다. 열 장이 제각각 채워지면
+    그때마다 아래가 밀려 화면이 위아래로 수십 번 튄다 — 신고 그대로다.
+
+    그 사이 시도한 것들은 전부 이 문제를 못 풀었다:
+      · 순서대로 하나씩 붙이기  → 붙을 때마다 아래가 밀리는 건 그대로였고,
+                                 앞 그래프의 완료 알림이 안 오면 그 아래가 안 그려졌다
+      · 알림 대신 타이머        → 멈추지는 않지만 밀림은 그대로
+
+    최종 높이를 미리 주면 **무엇이 언제 그려지든 아무것도 안 움직인다.**
     """
     page = _EPISODES.read_text()
-    body = page.split("if (drawnUpTo >= charts.length) return", 1)[1].split("}, [", 1)[0]
-    assert "setTimeout" in body, "타이머가 없다 — 콜백에만 기댄다"
+    assert "minHeight: c.extra ? 140 : 160" in page, "자리를 미리 안 잡는다"
+
+
+def test_the_staggered_reveal_is_gone():
+    """순서대로 붙이는 방식이 밀림과 미렌더의 원인이었다 — 되살리면 안 된다."""
+    page = _EPISODES.read_text()
+    assert "drawnUpTo" not in page, "진행형 렌더가 남아 있다"
+    assert "onReady=" not in page, "완료 알림에 다시 기댄다"
 
 
 def test_the_chart_list_is_built_once():
-    """개수를 따로 세면 목록과 어긋나 타이머가 일찍 멈추고 아래가 안 붙는다."""
+    """개수를 따로 세면 목록과 어긋난다 — 한 곳에서만 만든다."""
     page = _EPISODES.read_text()
-    assert "charts.length" in page, "목록 길이를 안 쓴다"
+    assert page.count("const charts = useMemo") == 1
     assert "chartCount" not in page, "개수를 따로 센다"
-
-
-def test_charts_are_added_top_to_bottom():
-    """⚠ 전부 한 번에 붙이면 Plotly 가 비동기로 그려서 **아래 것이 먼저**
-    나타나는 등 순서가 뒤죽박죽이 된다.
-
-    각 그래프가 다 그려졌다고 알리면 그때 다음 것을 붙인다 — 한꺼번에 열몇 개를
-    만드는 부담도 같이 사라진다.
-    """
-    page = _EPISODES.read_text()
-    assert "drawnUpTo" in page, "순서 상태가 없다"
-    assert "i <= drawnUpTo" in page, "순서대로 안 붙인다"
-    assert "onReady={() => setDrawnUpTo" in page, "다 그렸다는 신호를 안 받는다"
-
-    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "components"
-           / "PlotlyChart.tsx").read_text()
-    assert "onInitialized={onReady}" in src, "그래프가 완료를 안 알린다"
-
-
-def test_switching_episode_restarts_the_order():
-    """에피소드를 바꾸면 다시 위에서부터 — 안 그러면 두 번째부터는 한꺼번에 뜬다."""
-    page = _EPISODES.read_text()
-    body = page.split("const selectEpisode", 1)[1].split("}, [askConfirm])", 1)[0]
-    assert "setDrawnUpTo(0)" in body

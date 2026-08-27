@@ -126,42 +126,7 @@ export default function EpisodesPage() {
   //   밖으로 밀려난다 — 기본은 접고, 선택은 기억한다.
   const [showJoints, setShowJoints] = useState(
     () => localStorage.getItem('episodes-show-joints') === '1')
-  // 위에서 아래로 몇 번째까지 붙였나.
-  //
-  // ⚠ **완료 콜백에만 기대면 안 된다.** 앞 그래프가 다 그려졌다고 알려줄 때만
-  //   다음을 붙였더니, 그 알림이 한 번이라도 안 오면 **그 아래가 통째로 멈췄다.**
-  //   순서를 지키려다 아예 안 그려지는 경우를 만든 셈이다.
-  //
-  //   그래서 시계로 민다. 순서는 그대로 지켜지고, 무엇이 실패하든 다음은 붙는다.
-  const [drawnUpTo, setDrawnUpTo] = useState(0)
-  /**
-   * 그릴 그래프 목록. **한 곳에서만 만든다** — 개수를 따로 세면 목록과 어긋나
-   * 타이머가 일찍 멈추고 아래 그래프가 영영 안 붙는다.
-   */
-  const charts = useMemo(() => {
-    const out: { key: string; label: string; color: string; data: number[]; extra?: Series }[] = []
-    if (!signals) return out
-    if (signals.tip_speed)
-      out.push({ key: 'tip', label: '말단 속도 (m/s)', color: '#34d399', data: signals.tip_speed })
-    out.push({ key: 'gap', label: '그리퍼 지령-실측 갭', color: '#f472b6', data: signals.gripper_gap })
-    if (signals.home_dist)
-      out.push({ key: 'home', label: '시작 자세로부터 거리 (m)', color: '#fbbf24', data: signals.home_dist })
-    if (showJoints && signals.joints)
-      signals.joints.names.forEach((name, i) => out.push({
-        key: `j${i}`, label: `${name} 실측`, color: '#60a5fa',
-        data: signals.joints!.state[i],
-        extra: { label: `${name} 지령`, color: '#f59e0b', data: signals.joints!.action[i] },
-      }))
-    return out
-  }, [signals, showJoints])
-  const jointStart = charts.findIndex((c) => c.key.startsWith('j'))
 
-  // 100ms 마다 한 장씩. 10장이면 1초 안에 다 뜨고, 순서는 항상 위에서 아래다.
-  useEffect(() => {
-    if (drawnUpTo >= charts.length) return
-    const id = setTimeout(() => setDrawnUpTo((n) => n + 1), 100)
-    return () => clearTimeout(id)
-  }, [drawnUpTo, charts.length])
   const [videoError, setVideoError] = useState(false)
   const [cacheMissing, setCacheMissing] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
@@ -303,8 +268,6 @@ export default function EpisodesPage() {
     setSelectedSeg(null)
     setUndoStack([])
     setEp(index)
-    // 에피소드를 바꾸면 다시 위에서부터 순서대로 붙인다
-    setDrawnUpTo(0)
     setFrame(0)
     setPlaying(false)
     setVideoError(false)
@@ -366,6 +329,27 @@ export default function EpisodesPage() {
   }, [ep, detail, cams])
 
   const videoActive = viewMode === 'video' && videoMeta != null && !videoError
+
+  /**
+   * 그릴 그래프 목록. **한 곳에서만 만든다** — 개수를 따로 세면 목록과 어긋난다.
+   */
+  const charts = useMemo(() => {
+    const out: { key: string; label: string; color: string; data: number[]; extra?: Series }[] = []
+    if (!signals) return out
+    if (signals.tip_speed)
+      out.push({ key: 'tip', label: '말단 속도 (m/s)', color: '#34d399', data: signals.tip_speed })
+    out.push({ key: 'gap', label: '그리퍼 지령-실측 갭', color: '#f472b6', data: signals.gripper_gap })
+    if (signals.home_dist)
+      out.push({ key: 'home', label: '시작 자세로부터 거리 (m)', color: '#fbbf24', data: signals.home_dist })
+    if (showJoints && signals.joints)
+      signals.joints.names.forEach((name, i) => out.push({
+        key: `j${i}`, label: `${name} 실측`, color: '#60a5fa',
+        data: signals.joints!.state[i],
+        extra: { label: `${name} 지령`, color: '#f59e0b', data: signals.joints!.action[i] },
+      }))
+    return out
+  }, [signals, showJoints])
+  const jointStart = charts.findIndex((c) => c.key.startsWith('j'))
 
   const phaseNames = labels?.phases ?? defaultPhases
   // 미리보기가 있으면 트랙은 그걸 보여준다 — 저장본과 파라미터를 비교하는 화면이다.
@@ -1288,7 +1272,15 @@ export default function EpisodesPage() {
                         ▾ 관절별 그래프 ({signals.joints?.names.length ?? 0}축)
                       </button>
                     )}
-                    {i <= drawnUpTo && (
+                    {/* ⚠ **자리를 미리 잡는다.** Plotly 는 비동기로 그려서 그 전까지
+                        높이가 0 인데, 열 장이 제각각 채워지면 그때마다 아래가 밀려
+                        화면이 위아래로 수십 번 튄다. 최종 높이를 미리 주면 무엇이
+                        언제 그려지든 **아무것도 안 움직인다.**
+
+                        순서대로 하나씩 붙이는 방식은 걷어냈다 — 그게 밀림의 원인이었고,
+                        앞 그래프의 완료 알림에 기대던 탓에 하나가 빠지면 그 아래가
+                        통째로 안 그려졌다. */}
+                    <div style={{ minHeight: c.extra ? 140 : 160 }}>
                       <PlotlyChart
                         x={Array.from({ length: signals.frames }, (_, k) => k)}
                         series={c.extra
@@ -1297,10 +1289,8 @@ export default function EpisodesPage() {
                         markerX={frame}
                         height={c.extra ? 140 : 160}
                         uirevision={`${dsId}/${ep}/${c.key}`}
-                        // 다 그려졌으면 앞당긴다. 안 와도 타이머가 민다.
-                        onReady={() => setDrawnUpTo((n) => Math.max(n, i + 1))}
                       />
-                    )}
+                    </div>
                   </div>
                 ))}
                 {!showJoints && signals.joints && (
