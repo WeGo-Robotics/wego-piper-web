@@ -25,7 +25,7 @@
 | 출력 | `action chunk` + `stage`(7클래스 로짓). progress 는 **안 한다** (§9) |
 | 라벨 | `meta/phase_labels.json` 세그먼트 → LeRobot **subtask**(`subtask_index` 컬럼 + `meta/subtasks.parquet`)로 **굽기** (§4). 임의 컬럼은 전처리가 버린다 |
 | 학습 | `build_train_args` 변경 없음 — `policies/act_aux.yaml` 한 장이면 화면·CLI 가 붙는다 (§5) |
-| 추론 | wrapper 에 `last_aux` 읽는 guarded 10줄 → 텔레메트리 `stage` (§6) |
+| 추론 | wrapper 에 `last_aux` 읽는 guarded 10줄 → 텔레메트리 `stage` (§6) ☑ |
 | 성공 기준 | 같은 seed 바닐라 ACT 대비 **action L1 악화 없음** + 홀드아웃 에피소드 stage 정확도 (§8) |
 
 ---
@@ -356,7 +356,10 @@ wrapper 는 큐가 `refill_threshold_pct` 까지 줄 때만 추론한다
 
 ### 6.3 UI·버스
 
-- InferencePage 텔레메트리 카드에 `stage / p` 한 줄 (ROADMAP 의 "페이즈 텔레메트리" 자리).
+- InferencePage 텔레메트리 카드에 `stage / p` 한 줄 (ROADMAP 의 "페이즈 텔레메트리" 자리). ☑
+  색은 `frontend/src/config/phases.ts` — 라벨 화면과 같은 표를 쓴다. 텔레메트리는
+  인덱스가 아니라 **이름**을 보내므로(체크포인트가 자기 `stage_names` 를 갖는다)
+  이름으로 찾고, 모르는 이름이면 회색으로 떨어뜨린다.
 - 오케스트레이터·외부 API 가 읽을 버스 키는 [episode-orchestrator](episode-orchestrator.md) 가 정한 뒤 — 여기서 정하지 않는다.
 
 ---

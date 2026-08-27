@@ -194,10 +194,14 @@ def test_the_viewer_has_a_colour_for_every_phase():
     라벨이 없는 것처럼 보이고, 아무 에러도 안 난다."""
     import re
 
-    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
-           / "EpisodesPage.tsx").read_text()
+    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "config"
+           / "phases.ts").read_text()
     body = src.split("const PHASE_COLORS = [", 1)[1].split("]", 1)[0]
     assert len(re.findall(r"'#[0-9a-fA-F]{6}'", body)) == len(PHASE_NAMES)
+    # 이름 목록도 같은 파일에 있다 — 추론 텔레메트리는 인덱스가 아니라 이름으로
+    # 색을 찾으므로, 둘이 어긋나면 단계 배지가 조용히 회색이 된다.
+    names = src.split("const DEFAULT_NAMES = [", 1)[1].split("]", 1)[0]
+    assert re.findall(r"'([A-Z]+)'", names) == list(PHASE_NAMES)
 
 
 # ── 복귀를 **관측으로** 확인 ────────────────────────────────────────────────

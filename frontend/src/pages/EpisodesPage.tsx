@@ -19,6 +19,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { PHASE_COLORS } from '../config/phases'
 import LayoutToggle, { useLayout } from '../components/LayoutToggle'
 import SplitHandle, { useMediaQuery, useSplit } from '../components/SplitPane'
 import { useSystemMessage } from '../components/SystemMessages'
@@ -73,19 +74,6 @@ type VideoWithRVFC = HTMLVideoElement & {
 }
 
 /** 페이즈 코드(0~6) 색 — 트랙·칩·범례가 같은 배열을 쓴다. */
-// ⚠ **인덱스가 곧 페이즈 코드다** (piper_phase.PHASE_NAMES 순서).
-//   페이즈를 늘리면 여기도 늘려야 한다 — 짧으면 `undefined` 가 되어 구간이
-//   **투명하게** 그려지고, 라벨이 없는 것처럼 보인다.
-const PHASE_COLORS = [
-  '#525252',  // IDLE
-  '#3b82f6',  // APPROACH
-  '#22d3ee',  // ALIGN
-  '#f59e0b',  // GRASP
-  '#22c55e',  // HOLD
-  '#a855f7',  // RELEASE
-  '#404040',  // DONE
-  '#78716c',  // PARKING — 복귀. DONE 과 이웃하되 구분되게 (둘 다 무채색 계열)
-]
 
 const PREFETCH_AHEAD = 12
 

@@ -487,6 +487,11 @@ def main() -> None:
     _latest_action_np: np.ndarray | None = None
     _action_queue: list = []  # 타임스텝 기반 액션 큐
     _obs_for_inference: dict | None = None
+    # act_aux 계열이 청크마다 내는 stage 예측. 다른 정책이면 계속 None 이다.
+    _latest_aux: dict | None = None
+    # 이름표는 체크포인트 config 에 들어 있다 — 추론이 piper_phase 를 import 하지
+    # 않고도 클래스 순서를 안다. 다른 태스크로 구운 모델이면 이름도 그 모델 것이다.
+    _stage_names: list[str] = list(getattr(policy.config, "stage_names", []) or [])
     _obs_event = threading.Event()
     _inference_running = True
     _inference_ms_shared = 0.0
@@ -497,7 +502,7 @@ def main() -> None:
 
     def _inference_thread_fn():
         """별도 스레드에서 predict_action_chunk() 실행 (서버 방식)."""
-        nonlocal _latest_action_dict, _latest_action_np, _inference_ms_shared, _action_queue, _infer_seq, _inference_in_flight, _effective_chunk_len
+        nonlocal _latest_action_dict, _latest_action_np, _inference_ms_shared, _action_queue, _infer_seq, _inference_in_flight, _effective_chunk_len, _latest_aux
         while _inference_running:
             triggered = _obs_event.wait(timeout=1.0)
             if not _inference_running:
@@ -531,6 +536,10 @@ def main() -> None:
                     observation = _prepare_observation(raw_obs)
                     # predict_action_chunk — 서버와 동일
                     action_chunk = policy.predict_action_chunk(observation)
+                    # act_aux 계열은 같은 인코더 위에서 stage 를 함께 낸다. 바닐라
+                    # 정책엔 이 속성이 없으므로 getattr 로 막는다 — 정책 타입 분기가
+                    # wrapper 로 새어 들어오지 않게 한다.
+                    aux = getattr(policy, "last_aux", None)
                     if action_chunk.ndim != 3:
                         action_chunk = action_chunk.unsqueeze(0)
                     # (B, chunk_size, action_dim) → (n, action_dim).
@@ -555,6 +564,9 @@ def main() -> None:
                         logger.info("Discarding stale inference result (reset occurred)")
                         continue
                     _action_queue = new_queue
+                    # 액션과 같은 추론에서 나온 값이므로 같은 세대 검사를 탄다.
+                    # 위에서 폐기됐으면 stage 도 공표되지 않는다.
+                    _latest_aux = aux
                     # 실제 큐에 담긴 길이 = 모델 청크로 클램핑된 값. refill_lead가 raw 슬라이더
                     # 값(클램핑 전)을 쓰면 청크보다 큰 임계치가 나와 매번 재추론하므로 이 값을 사용.
                     _effective_chunk_len = max(1, len(new_queue))
@@ -710,6 +722,15 @@ def main() -> None:
                 "action": [round(float(action_np[i]), 2) for i in range(len(action_np))] if action_np is not None else [],
                 "task": _current_task,
             }
+            # act_aux 계열만 채워진다. 청크당 한 번 갱신되므로 프레임마다 바뀌지
+            # 않고, 같은 값이 청크 길이만큼(15fps·apc 20~50 → 1~3초) 반복된다.
+            with _action_lock:
+                aux_now = _latest_aux
+            if aux_now is not None:
+                idx = aux_now.get("stage")
+                if idx is not None and 0 <= idx < len(_stage_names):
+                    telemetry["stage"] = _stage_names[idx]
+                    telemetry["stage_p"] = round(float(aux_now.get("stage_p", 0.0)), 3)
             if step % 50 == 0 and torch.cuda.is_available():
                 telemetry["gpu_mem_mb"] = round(torch.cuda.memory_allocated() / 1024 / 1024)
                 telemetry["gpu_total_mb"] = round(torch.cuda.get_device_properties(0).total_memory / 1024 / 1024)

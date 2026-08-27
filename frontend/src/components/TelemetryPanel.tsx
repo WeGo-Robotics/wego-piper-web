@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { phaseColor } from '../config/phases'
 import { JOINT_NAMES, JOINT_RANGE } from '../config/joints'
 
 export type TelemetryData = {
@@ -13,6 +14,10 @@ export type TelemetryData = {
   task: string
   gpu_mem_mb?: number
   gpu_total_mb?: number
+  /** act_aux 계열이 예측한 작업 단계. 다른 정책이면 오지 않는다. */
+  stage?: string
+  /** 그 단계의 확률(0~1). 낮으면 모델이 헷갈리는 중이다. */
+  stage_p?: number
 }
 
 
@@ -116,6 +121,28 @@ export default function TelemetryPanel({ data, targetFps, cameraNames, showTask 
               {(data.gpu_mem_mb / 1024).toFixed(1)}<span className="text-neutral-500">/{(data.gpu_total_mb / 1024).toFixed(0)}GB</span>
             </div>
             <div className="text-[10px] text-neutral-400">GPU</div>
+          </div>
+        )}
+        {data.stage && (
+          <div
+            className="text-center"
+            title={'정책이 예측한 작업 단계입니다. 청크당 한 번 갱신되므로 1~3초마다 바뀝니다.\n'
+              + '확률이 낮으면 모델이 단계를 헷갈리는 중이라는 뜻입니다.'}
+          >
+            <div className="flex items-center gap-1.5">
+              <span
+                className="inline-block w-2 h-2 rounded-sm"
+                style={{ backgroundColor: phaseColor(data.stage) }}
+              />
+              <span className="text-sm font-medium text-neutral-200">{data.stage}</span>
+              {data.stage_p !== undefined && (
+                <span className={`text-xs ${
+                  data.stage_p >= 0.7 ? 'text-neutral-400'
+                    : data.stage_p >= 0.4 ? 'text-amber-400' : 'text-red-400'
+                }`}>{Math.round(data.stage_p * 100)}%</span>
+              )}
+            </div>
+            <div className="text-[10px] text-neutral-400">단계</div>
           </div>
         )}
         <div className="text-xs text-neutral-400">
