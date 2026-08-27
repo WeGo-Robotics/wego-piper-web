@@ -200,3 +200,75 @@ def test_the_repair_routes_come_before_the_catch_all():
     상세 응답으로 먹힌다 (`/upload-status` 가 실제로 겪은 사고)."""
     src = _ROUTER.read_text()
     assert src.index('/{dataset_id:path}/consistency') < src.index('@router.get("/{dataset_id:path}")')
+
+
+# ── 되살릴 수 없는 손상 ─────────────────────────────────────────────────────
+
+def test_a_truncated_parquet_is_named_not_just_counted(tmp_path):
+    """⚠ 색인만 빠진 것과 **파일이 미완성인 것**은 다르다.
+
+    프로세스가 쓰는 도중 죽으면 parquet 은 푸터 없이 잘린다 — 푸터는 닫을 때
+    쓰기 때문이다. 그냥 "되살릴 것 없음" 으로만 보여주면 왜 복구 버튼이 없는지
+    알 수가 없다.
+    """
+    ds = _make(tmp_path, indexed=0)
+    f = ds / "data" / "chunk-000" / "file-000.parquet"
+    f.write_bytes(f.read_bytes()[:-64])          # 푸터를 잘라낸다
+    st = R.check(ds)
+    assert st["ok"] is False
+    assert any("푸터" in b for b in st["broken"]), f"잘린 파일을 안 알려준다: {st}"
+
+
+def test_unfinished_streaming_video_is_reported(tmp_path):
+    """스트리밍 인코더의 mp4 는 정상 종료 때 `videos/` 로 옮겨진다.
+    임시 폴더에 남아 있으면 `moov` 가 없어 프레임을 못 꺼낸다."""
+    ds = _make(tmp_path, indexed=5)
+    tmp = ds / "tmpabc123"
+    tmp.mkdir()
+    (tmp / "observation.images.top_streaming.mp4").write_bytes(b"\x00" * 48)
+    st = R.check(ds)
+    assert st["ok"] is False
+    assert any("moov" in b for b in st["broken"])
+    assert st["orphan_tmp_dirs"] == ["tmpabc123"]
+
+
+def test_a_healthy_dataset_reports_no_wreckage(tmp_path):
+    """멀쩡한 데이터셋에 경고가 뜨면 아무도 경고를 안 읽게 된다."""
+    st = R.check(_make(tmp_path, indexed=len(LENGTHS)))
+    assert st["ok"] and not st["broken"] and not st["orphan_tmp_dirs"]
+
+
+def test_the_screen_explains_why_there_is_no_repair_button():
+    """"복구 버튼이 어디에도 안 뜬다" 는 신고에서 나왔다 — 없는 이유를 말해야 한다."""
+    src = _PAGE.read_text()
+    assert "health.broken" in src, "무엇이 깨졌는지 안 보여준다"
+    assert "되살릴 수 있는 에피소드가 없습니다" in src, "버튼이 없는 이유를 안 밝힌다"
+
+
+# ── 애초에 안 깨지게 ────────────────────────────────────────────────────────
+
+def test_recording_survives_a_gateway_restart():
+    """⚠ **이 사고를 만든 자리다.**
+
+    녹화만 게이트웨이의 자식 프로세스로 돌아서, 게이트웨이를 재시작할 때마다
+    돌던 녹화가 같이 죽었다. 그렇게 죽으면 parquet 은 푸터 없이 잘리고 mp4 는
+    moov 없이 남아 **되살릴 방법이 없다** — 13에피소드를 그렇게 잃었다.
+
+    학습·정책서버·업로드·검출학습은 이미 유닛이다. 녹화만 빠져 있었다.
+    """
+    src = (Path(__file__).resolve().parents[1] / "app" / "services"
+           / "record_manager.py").read_text()
+    assert 'make_process("piper-record")' in src, "녹화가 아직 게이트웨이의 자식이다"
+    assert "self.pm = ProcessManager()" not in src
+
+
+def test_the_gateway_reattaches_to_a_running_recording():
+    """유닛은 사는데 게이트웨이만 idle 로 알면, 화면은 "녹화 안 함" 인데 팔은
+    계속 움직이고 배타 가드가 헛돌아 그 위에 학습·추론을 얹을 수 있게 된다."""
+    main = (Path(__file__).resolve().parents[1] / "app" / "main.py").read_text()
+    assert "record_manager.restore_running_process()" in main, "재부착을 안 한다"
+
+    src = (Path(__file__).resolve().parents[1] / "app" / "services"
+           / "record_manager.py").read_text()
+    body = src.split("def restore_running_process", 1)[1].split("\n    def ", 1)[0]
+    assert 'getattr(self.pm, "reattach"' in body, "자식 러너에서 터진다"

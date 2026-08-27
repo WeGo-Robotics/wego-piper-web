@@ -101,6 +101,9 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
     stored_episodes: number
     recoverable: number[]
     unrecoverable: number
+    /** 되살릴 수 없는 손상 — 파일 자체가 미완성인 경우. */
+    broken: string[]
+    orphan_tmp_dirs: string[]
   }
 
   /** 색인 복구. **미리 보여주고 확인받은 뒤에** 쓴다 — 남의 데이터를 고치는 일이다. */
@@ -371,7 +374,22 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
                         그중 {health.unrecoverable}개는 프레임까지 없어 되살릴 수 없습니다.
                       </p>
                     )}
-                    {health.recoverable.length > 0 && (
+                    {/* ⚠ 색인만 빠진 것과 **파일이 미완성인 것**은 다르다.
+                        후자는 되돌릴 방법이 없는데, 그냥 "되살릴 것 없음" 으로
+                        보여주면 왜 복구 버튼이 없는지 알 수가 없다 — 실제로
+                        그 질문을 받았다. 무엇이 어떻게 깨졌는지 적는다. */}
+                    {health.broken.length > 0 && (
+                      <div className="rounded bg-neutral-900/60 p-2 space-y-1">
+                        <p className="text-neutral-300">
+                          아래는 <b>파일 자체가 미완성</b>이라 되살릴 수 없습니다 —
+                          녹화가 쓰는 도중 끊겼습니다.
+                        </p>
+                        <ul className="text-[11px] text-neutral-400 font-mono space-y-0.5">
+                          {health.broken.map((b) => <li key={b}>· {b}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                    {health.recoverable.length > 0 ? (
                       <button
                         onClick={() => void handleRepair(detail.id)}
                         disabled={repairing}
@@ -379,6 +397,10 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
                       >
                         {repairing ? '복구 중…' : `색인 복구 (${health.recoverable.length}개)`}
                       </button>
+                    ) : (
+                      <p className="text-xs text-neutral-400">
+                        되살릴 수 있는 에피소드가 없습니다. 남은 파일은 위 [삭제] 로 치울 수 있습니다.
+                      </p>
                     )}
                   </div>
                 )}

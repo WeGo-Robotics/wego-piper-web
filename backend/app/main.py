@@ -118,6 +118,14 @@ async def lifespan(app: FastAPI):
             logger.info("Policy server reattached: %s", policy_server_manager.address)
     except Exception as e:
         logger.warning("Policy server restore failed: %s", e)
+    # ⚠ 녹화도 유닛이다. 상태만 잃으면 화면은 "녹화 안 함" 인데 팔은 계속
+    #   움직이고, 배타 가드가 헛돌아 그 위에 학습·추론을 얹을 수 있게 된다.
+    try:
+        from app.services.record_manager import record_manager
+        if record_manager.restore_running_process():
+            logger.info("Recording reattached (pid=%s)", record_manager.pm.pid)
+    except Exception as e:
+        logger.warning("Recording restore failed: %s", e)
     try:
         from app.services import dataset_jobs
         restored_jobs = dataset_jobs.restore_running_jobs()

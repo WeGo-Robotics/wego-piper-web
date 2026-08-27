@@ -18,7 +18,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from app.services.process_manager import ProcessManager, ProcessState
+from app.services.systemd_process import make_process, ProcessState
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,15 @@ class RecordStatus:
 
 class RecordManager:
     def __init__(self) -> None:
-        self.pm = ProcessManager()
+        # ⚠ **게이트웨이의 자식으로 두면 안 된다.** 예전에는 `ProcessManager()` 였고,
+        #   그래서 게이트웨이를 재시작할 때마다 **돌고 있던 녹화가 같이 죽었다.**
+        #   에피소드 메타는 10개씩 모아 쓰고 영상은 종료 때 마무리되므로, 그렇게
+        #   죽으면 parquet 은 푸터 없이 잘리고 mp4 는 moov 없이 남아 **되살릴
+        #   방법이 없다** — 실제로 13에피소드를 그렇게 잃었다.
+        #
+        #   학습·정책서버·업로드는 이미 유닛으로 돈다. 녹화만 빠져 있었다.
+        #   (`PIPER_PROCESS_RUNNER=local` 이면 `make_process` 가 예전 동작을 준다.)
+        self.pm = make_process("piper-record")
         self.status = RecordStatus()
         self._on_status: Callable[[dict], None] | None = None
         self._original_log_cb: Callable[[str], None] | None = None
@@ -114,6 +122,15 @@ class RecordManager:
             logger.info("Sent control command: %s", key)
         else:
             logger.warning("Control command not delivered: %s", key)
+
+    def restore_running_process(self) -> bool:
+        """게이트웨이가 재시작됐을 때 **아직 도는 녹화 유닛에 다시 붙는다.**
+
+        상태만 잃으면 화면은 "녹화 안 함" 인데 팔은 계속 움직이고, 배타 가드가
+        헛돌아 그 위에 학습·추론을 얹을 수 있게 된다.
+        """
+        reattach = getattr(self.pm, "reattach", None)   # 자식 러너에는 없다
+        return bool(reattach and reattach())
 
     def get_status(self) -> dict:
         progress = 0.0

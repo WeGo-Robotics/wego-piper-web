@@ -73,14 +73,45 @@ def check(ds_path: Path) -> dict[str, Any]:
     # 색인에 없는데 프레임은 있는 것 = 되살릴 수 있는 것
     recoverable = sorted(stored - indexed)
     return {
-        "ok": not recoverable and declared == len(indexed),
+        "ok": not recoverable and declared == len(indexed) and not _wreckage(ds_path)["broken"],
         "declared_episodes": declared,      # info.json — 화면이 개수로 보여주는 값
         "indexed_episodes": len(indexed),   # meta/episodes — 목록에 실제로 보이는 것
         "stored_episodes": len(stored),     # data — 프레임이 남아 있는 것
         "recoverable": recoverable,
         # 프레임조차 없으면 되살릴 수 없다. 숫자만 큰 경우다.
         "unrecoverable": max(0, declared - len(stored)),
+        **_wreckage(ds_path),
     }
+
+
+def _wreckage(ds_path: Path) -> dict[str, Any]:
+    """되살릴 수 없는 손상을 **이름 붙여** 알린다.
+
+    ⚠ 색인만 빠진 경우와 근본적으로 다르다. 프로세스가 쓰는 도중 죽으면
+    parquet 은 **푸터 없이** 잘리고(푸터는 닫을 때 쓴다), 스트리밍 인코더의 mp4 는
+    `moov` 없이 임시 폴더에 남는다. 둘 다 색인이 아니라 **파일 자체**가 미완성이라
+    프레임을 되찾을 방법이 없다.
+
+    이걸 "되살릴 것 없음" 으로만 보여주면 사용자는 왜 복구 버튼이 없는지 모른다 —
+    실제로 그 질문을 받았다.
+    """
+    broken: list[str] = []
+    for f in _data_files(ds_path):
+        try:
+            with f.open("rb") as fh:
+                fh.seek(-4, 2)
+                if fh.read(4) != b"PAR1":
+                    broken.append(f"{f.name}: 쓰다 잘렸습니다 (parquet 푸터 없음)")
+        except Exception as exc:
+            broken.append(f"{f.name}: 읽을 수 없습니다 ({exc})")
+
+    # 스트리밍 인코더가 남긴 임시 폴더 — 정상 종료면 `videos/` 로 옮겨진다
+    tmp = [d for d in ds_path.glob("tmp*") if d.is_dir()]
+    for d in tmp:
+        for v in d.glob("*.mp4"):
+            broken.append(f"{v.name}: 마무리 안 된 영상 ({v.stat().st_size:,}바이트, moov 없음)")
+
+    return {"broken": broken, "orphan_tmp_dirs": [d.name for d in tmp]}
 
 
 def _video_keys(info: dict) -> list[str]:
