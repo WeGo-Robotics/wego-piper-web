@@ -55,9 +55,11 @@ def _episode(*, park_frames: int, settle_frames: int, second_pick: bool = False)
         add(10, j, 34.0, 0.0)                 # 또 물었다 = 복귀가 아니다
         add(4, j, 80.0, 80.0)
 
+    # 복귀 — **시작 자세까지 실제로 되돌아간다.** 도중에 멈추면 그건 복귀가 아니고,
+    # 기하 확인(`_returns_home`)이 그걸 거른다.
     start = j[0]
-    for k in range(park_frames):              # 복귀 — 원점 방향으로 크게 이동
-        j = [start - k * 3.0] + [0.0] * 5
+    for k in range(park_frames):
+        j = [start * (1.0 - (k + 1) / max(park_frames, 1))] + [0.0] * 5
         add(1, j, 80.0, 80.0)
     add(settle_frames, j, 80.0, 80.0)         # 정지
 
@@ -196,3 +198,53 @@ def test_the_viewer_has_a_colour_for_every_phase():
            / "EpisodesPage.tsx").read_text()
     body = src.split("const PHASE_COLORS = [", 1)[1].split("]", 1)[0]
     assert len(re.findall(r"'#[0-9a-fA-F]{6}'", body)) == len(PHASE_NAMES)
+
+
+# ── 복귀를 **관측으로** 확인 ────────────────────────────────────────────────
+
+def test_a_release_that_does_not_go_home_is_not_parking():
+    """⚠ "마지막 놓기 뒤" 라는 **시간 규칙만으로는** 놓고 그냥 멈춘 것과 원점까지
+    되돌아간 것이 구분되지 않는다.
+
+    말단 좌표가 있으면 그건 관측으로 답할 수 있다. 실측(bolt_two1 50개):
+    복귀 구간 끝은 시작 자세에서 최대 2.2cm, 긴 APPROACH 는 최소 13.5cm.
+    """
+    state, action = _episode(park_frames=25, settle_frames=12)
+    # 복귀 구간을 **제자리**로 바꾼다 — 놓은 자리에 머문다
+    tail = 25 + 12
+    state[-tail:, 0] = state[-tail - 1, 0]
+    action[-tail:, 0] = state[-tail - 1, 0]
+    ph = label_episode(state, action, _P)[0]
+    assert PARKING not in ph.tolist(), "돌아가지 않았는데 복귀로 본다"
+
+
+def test_the_home_distance_is_available_as_a_signal():
+    """사용자가 **눈으로 본** 그 경향이다 — 그래프로 볼 수 있어야 한다."""
+    state, action = _episode(park_frames=25, settle_frames=12)
+    sig = compute_signals(state, action, _P)
+    assert sig.home_dist is not None
+    assert sig.home_dist[0] == pytest.approx(0.0), "시작이 원점이 아니다"
+    assert sig.home_dist[-1] < sig.home_dist.max() / 2, "끝에서 안 돌아왔다"
+
+
+def test_without_the_urdf_the_time_rule_still_stands():
+    """⚠ 서브모듈을 안 받은 체크아웃에서 PARKING 이 통째로 사라지는 편보다,
+    예전만큼만 정확한 편이 낫다."""
+    from piper_phase.fsm import Signals, _returns_home
+
+    sig = Signals(speed=np.zeros(3), gripper_gap=np.zeros(3), gripper_cmd=np.zeros(3),
+                  gripper_state=np.zeros(3), grip_rate=np.zeros(3),
+                  hold=np.zeros(3, bool), home_dist=None)
+    assert _returns_home(sig, 0, 3, _P) is True
+
+
+def test_a_pick_next_to_home_is_not_mistaken_for_parking():
+    """가까워진 것만 보면, 원점 근처에서 놓은 회차가 전부 복귀가 된다 —
+    **그만큼 실제로 이동했는지**도 봐야 한다."""
+    from piper_phase.fsm import Signals, _returns_home
+
+    near = np.array([0.02, 0.01, 0.01])          # 내내 원점 근처
+    sig = Signals(speed=np.zeros(3), gripper_gap=np.zeros(3), gripper_cmd=np.zeros(3),
+                  gripper_state=np.zeros(3), grip_rate=np.zeros(3),
+                  hold=np.zeros(3, bool), home_dist=near)
+    assert _returns_home(sig, 0, 3, _P) is False

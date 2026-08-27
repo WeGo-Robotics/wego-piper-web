@@ -87,6 +87,13 @@ class Params:
     #   멈춰 선 팔도 한두 프레임 때문에 DONE 을 못 받는다. 임계 자체를 올리면
     #   온라인 FSM 의 정지 판정까지 헐거워지므로 여기서만 봐준다.
     done_jitter: int = 3
+    # 복귀 판정 (말단 기준, m). URDF 가 있을 때만 쓴다.
+    # ⚠ 실측(bolt_two1 50개)에서 두 무리가 완전히 갈렸다:
+    #     복귀 구간 끝 = 시작 자세에서 중앙 0.5cm, 최대 2.2cm
+    #     긴 APPROACH 끝 = 중앙 29.6cm, **최소 13.5cm**
+    #   5cm 는 그 사이다 — 어느 쪽에도 붙지 않는다.
+    park_radius: float = 0.05     # 이 안으로 들어오면 시작 자세에 닿았다
+    park_travel: float = 0.15     # 그만큼은 실제로 이동했어야 한다
 
 
 @dataclass
@@ -101,6 +108,9 @@ class Signals:
     hold: np.ndarray             # bool — 물체를 물고 있는가
     wrist_diff: np.ndarray | None = None   # 손목 카메라 변화율 (비디오 필요)
     proximity: np.ndarray | None = None    # wrist_diff / speed
+    # 시작 자세로부터 말단이 떨어진 거리 (m). URDF 가 없으면 None.
+    # 복귀(PARKING)를 **추측이 아니라 관측으로** 확인하는 데 쓴다.
+    home_dist: np.ndarray | None = None
 
     def __len__(self) -> int:
         return len(self.speed)
@@ -145,8 +155,28 @@ def compute_signals(state: np.ndarray, action: np.ndarray, params: Params) -> Si
 
     return Signals(
         speed=speed, gripper_gap=gap, gripper_cmd=g_cmd, gripper_state=g_state,
-        grip_rate=grip_rate, hold=hold,
+        grip_rate=grip_rate, hold=hold, home_dist=_home_dist(joints),
     )
+
+
+def _home_dist(joints: np.ndarray) -> np.ndarray | None:
+    """말단이 **첫 프레임 자세**에서 얼마나 떨어졌나 (m).
+
+    시작 자세를 원점으로 삼는다 — 파킹 좌표를 따로 설정할 필요가 없고, 팔을
+    옮겨 달아도 그대로 맞는다. 에피소드가 원점에서 시작한다는 전제인데,
+    녹화 루프가 매 회차 리셋을 거치므로 실제로 그렇다.
+
+    URDF 서브모듈이 없으면 `None` — 이 신호만 빠지고 나머지는 그대로 돈다.
+    """
+    from . import kinematics as K
+
+    if not K.available() or joints.shape[1] < len(K.ARM_JOINTS):
+        return None
+    try:
+        xyz = K.endpoint_xyz(K.norm_to_rad(joints[:, :len(K.ARM_JOINTS)]))
+        return np.linalg.norm(xyz - xyz[0], axis=1)
+    except Exception:
+        return None
 
 
 def attach_wrist(sig: Signals, wrist_diff: np.ndarray) -> Signals:
@@ -270,6 +300,29 @@ def label_causal(sig: Signals, params: Params | None = None) -> np.ndarray:
 # ── 오프라인 보정 ─────────────────────────────────────────────────────────────
 
 
+def _returns_home(sig: Signals, start: int, end: int, p: Params) -> bool:
+    """이 구간이 **정말 시작 자세로 돌아가나.**
+
+    "마지막 놓기 뒤" 라는 시간 규칙만으로는 놓고 나서 그냥 멈춘 것과 원점까지
+    되돌아간 것이 구분되지 않는다. 말단 좌표가 있으면 그건 관측으로 답할 수 있다.
+
+    ⚠ URDF 가 없으면 **시간 규칙을 그대로 믿는다.** 서브모듈을 안 받은 체크아웃
+      에서 PARKING 이 통째로 사라지는 편보다, 예전만큼만 정확한 편이 낫다.
+
+    실측(bolt_two1 50개): 복귀 구간 끝은 시작 자세에서 최대 2.2cm, 긴 APPROACH 는
+    최소 13.5cm — 두 무리가 6배 차이로 갈렸다.
+    """
+    d = sig.home_dist
+    if d is None:
+        return True
+    seg = d[start:end]
+    if len(seg) == 0:
+        return False
+    # 가까워졌다 **그리고** 실제로 그만큼 움직였다.
+    # 뒤 조건이 없으면 원점 근처에서 놓은 회차가 전부 복귀로 잡힌다.
+    return bool(seg[-1] < p.park_radius and seg.max() - seg[-1] > p.park_travel)
+
+
 def _median_filter(x: np.ndarray, window: int) -> np.ndarray:
     """길이를 유지하는 중앙값 필터. 가장자리는 끝값으로 채운다.
 
@@ -321,8 +374,9 @@ def finalize(phases: np.ndarray, sig: Signals, params: Params | None = None) -> 
         after = int(rel[-1]) + 1
         # 그 뒤로 무는 동작이 한 번이라도 있으면 복귀가 아니라 다음 사이클이다
         if after < n and not (sig.hold[after:].any() or closing[after:].any()):
-            out[after:] = PARKING
-            parked_from = after
+            if _returns_home(sig, after, n, p):
+                out[after:] = PARKING
+                parked_from = after
 
     # 2. DONE — 끝의 정지 구간. 복귀가 있으면 그 안에서, 없으면 예전 방식대로.
     #

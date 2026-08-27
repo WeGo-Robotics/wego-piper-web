@@ -207,9 +207,30 @@ async def get_signals(dataset_id: str, episode: int):
         if tip is not None:
             out["tip_speed"] = tip
 
+    if "home_dist" in e.columns:
+        out["home_dist"] = e["home_dist"].round(4).tolist()
+    elif frames is not None:
+        hd = _home_dist_now(frames)
+        if hd is not None:
+            out["home_dist"] = hd
+
     if frames is not None:
         out["joints"] = _joint_series(frames)
     return out
+
+
+def _home_dist_now(frames) -> list[float] | None:
+    """사이드카에 없는 시작거리를 바로 구한다 (말단 속도와 같은 이유)."""
+    import numpy as np
+
+    try:
+        from piper_phase.fsm import _home_dist
+
+        d = _home_dist(np.stack(frames["observation.state"].to_numpy()))
+        return None if d is None else [round(float(x), 4) for x in d]
+    except Exception as exc:
+        logger.warning("시작거리 즉석 계산 실패: %s", exc)
+        return None
 
 
 def _episode_frames(ds_path, episode: int):

@@ -51,6 +51,8 @@ type Signals = {
   phase: number[]
   /** 말단 속도 (m/s). URDF 서브모듈이 없으면 안 온다. */
   tip_speed?: number[]
+  /** 시작 자세로부터 말단이 떨어진 거리 (m). PARKING 판정의 근거다. */
+  home_dist?: number[]
   /** 관절별 실측·지령 (정규화 단위). 축 순서는 `names` 가 정한다. */
   joints?: { names: string[]; state: number[][]; action: number[][] }
 }
@@ -1196,6 +1198,19 @@ export default function EpisodesPage() {
                   height={160}
                   uirevision={`${dsId}/${ep}/gap`}
                 />
+
+                {/* 시작 자세로부터의 거리 — PARKING 이 **왜** 거기서 시작하는지가
+                    이 선에서 보인다. 복귀 구간에서만 0 으로 수렴한다
+                    (실측: 복귀 끝 최대 2.2cm, 긴 접근 끝 최소 13.5cm). */}
+                {signals.home_dist && (
+                  <PlotlyChart
+                    x={Array.from({ length: signals.frames }, (_, i) => i)}
+                    series={[{ label: '시작 자세로부터 거리 (m)', color: '#fbbf24', data: signals.home_dist }]}
+                    markerX={frame}
+                    height={160}
+                    uirevision={`${dsId}/${ep}/home`}
+                  />
+                )}
 
                 {/* 관절별 그래프 — 축마다 하나. 실측과 지령을 겹쳐 그린다:
                     ⚠ 실측만 보면 **추종 오차가 안 보인다.** 물체에 막혀 못

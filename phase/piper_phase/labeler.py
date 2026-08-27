@@ -135,6 +135,9 @@ def analyze(
         tip = tip_speed(state, p.fps)
         if tip is not None:
             row["tip_speed"] = tip.astype(np.float32)
+        # 시작 자세로부터의 거리 — 복귀(PARKING) 판정의 근거를 화면에서도 보게 한다
+        if sig.home_dist is not None:
+            row["home_dist"] = sig.home_dist.astype(np.float32)
         signal_rows.append(pd.DataFrame(row))
 
     return {
