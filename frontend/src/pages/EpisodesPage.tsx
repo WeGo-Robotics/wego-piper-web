@@ -416,6 +416,16 @@ export default function EpisodesPage() {
     }
   }, [videoMeta, cams, videoTime])
 
+  // ⚠ **에피소드를 바꿔도 `<video>` 는 그대로일 수 있다.** v3 데이터셋은 여러
+  //   에피소드가 **한 chunk mp4 에 이어져** 있어서, 옆 에피소드로 옮겨도 src 가
+  //   같다 — 재로드도, `loadedmetadata` 도 오지 않는다. 그 이벤트에만 위치를
+  //   맡기면 그래프만 바뀌고 **화면은 이전 에피소드에 머문다** (실사고).
+  //   파일이 바뀌는 경우엔 readyState 가 0 이라 여기서 건너뛰고,
+  //   `onLoadedMetadata` 가 이어받는다.
+  useEffect(() => {
+    if (videoActive) seekVideos(frameRef.current)
+  }, [videoActive, seekVideos])
+
   /** 모든 탐색은 여기로 — 프레임 상태와 비디오 위치가 같이 움직인다. */
   const goTo = useCallback((f: number) => {
     const clamped = Math.max(0, Math.min(totalFrames - 1, f))
