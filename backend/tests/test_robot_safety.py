@@ -306,5 +306,10 @@ def test_a_narrow_calibration_is_reported_as_such():
     assert why is Reason.STATE_OUT_OF_RANGE
 
     # 자세는 멀쩡한데 명령이 범위 밖 — 명령자 문제
-    _, why = filter_goal(HOME, _pose(joint3=180.0), SafetyConfig(max_step=0.0))
+    #
+    # ⚠ joint1 을 쓴다. joint3 을 범위 밖으로 밀면 팔이 **바닥으로 내려가서**
+    #   바닥 필터가 먼저 걸린다(그게 더 강한 사유다). 여기서 가리려는 것은
+    #   범위와 상태의 구분이지 바닥이 아니므로, 높이를 안 바꾸는 관절을 쓴다 —
+    #   joint1 은 base 의 z 축 회전이라 어떤 값에서도 최저점이 그대로다.
+    _, why = filter_goal(HOME, _pose(joint1=180.0), SafetyConfig(max_step=0.0))
     assert why is Reason.CLAMPED_RANGE

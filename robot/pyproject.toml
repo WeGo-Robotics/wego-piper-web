@@ -3,7 +3,7 @@ name = "piper-robot"
 version = "0.1.0"
 description = "Piper arm CAN ownership, safety filter, shm publishing (robotd body)"
 requires-python = ">=3.11"
-dependencies = ["piper-shm", "piper-bus"]
+dependencies = ["piper-shm", "piper-bus", "numpy>=1.24"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -11,3 +11,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["piper_robot*"]
+
+# ⚠ 구운 지오메트리는 **코드가 아니라 데이터**라 이걸 안 적으면 비편집(non-editable)
+#   설치에서 통째로 빠진다. 그러면 바닥 필터가 조용히 꺼진다 — robotd 를 호스트에
+#   배포할 때 정확히 그 경로를 탄다.
+[tool.setuptools.package-data]
+piper_robot = ["data/*.npz"]

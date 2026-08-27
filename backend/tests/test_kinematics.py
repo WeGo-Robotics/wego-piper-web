@@ -19,6 +19,7 @@ sys.path.insert(0, str(_REPO / "phase"))
 sys.path.insert(0, str(_REPO / "robot"))
 
 from piper_phase import kinematics as K  # noqa: E402
+from piper_robot import kinematics as RK  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     not K.available(), reason="URDF 서브모듈 없음 (git submodule update --init)")
@@ -28,9 +29,16 @@ ZERO = np.zeros((1, 6))
 
 def test_the_chain_is_read_by_name_not_by_order():
     """URDF 가 갱신되며 순서가 바뀌어도 사슬이 조용히 뒤섞이면 안 된다 —
-    뒤섞이면 말단 위치가 **그럴듯하게** 틀린다."""
-    chain = K.load_chain()
-    assert [l.name for l in chain] == list(K.ARM_JOINTS)
+    뒤섞이면 말단 위치가 **그럴듯하게** 틀린다.
+
+    사슬은 이제 `piper_robot` 이 갖고 있다 (robotd 의 바닥 필터와 같은 것을 써야
+    분석과 안전이 같은 팔을 본다). 순서 검사는 그대로 유효하다.
+    """
+    g = RK.geometry()
+    # 뿌리(base_link) 다음 6개가 팔 관절이고, 그 순서가 곧 q 벡터의 순서다
+    moved = [g.names[i] for i in range(len(g.names)) if int(g.qidx[i]) >= 0]
+    assert [int(g.qidx[i]) for i in range(len(g.names)) if int(g.qidx[i]) >= 0] == list(range(6))
+    assert len(moved) == len(K.ARM_JOINTS)
 
 
 def test_joint1_rotates_the_endpoint_about_the_base_axis():
@@ -48,7 +56,9 @@ def test_joint1_rotates_the_endpoint_about_the_base_axis():
 
 def test_the_endpoint_stays_within_the_arm_reach():
     """링크 길이 합보다 멀리 갈 수는 없다 — 변환이 어긋나면 이 값이 폭주한다."""
-    reach = sum(float(np.linalg.norm(l.xyz)) for l in K.load_chain())
+    g = RK.geometry()
+    reach = sum(float(np.linalg.norm(g.xyz[i])) for i in range(len(g.names))
+                if int(g.qidx[i]) >= 0 or int(g.parent[i]) < 0)
     rng = np.random.default_rng(0)
     q = rng.uniform(-2.0, 2.0, size=(200, 6))
     d = np.linalg.norm(K.endpoint_xyz(q), axis=1)
@@ -100,16 +110,23 @@ def test_the_calibration_is_not_copied_here():
     """
     import ast
 
-    src = (_REPO / "phase" / "piper_phase" / "kinematics.py").read_text()
+    # 변환이 사는 곳이 `piper_robot.kinematics` 로 옮겨갔다 — 표를 베끼면 안
+    # 된다는 규칙은 그 파일에 그대로 걸린다.
+    src = (_REPO / "robot" / "piper_robot" / "kinematics.py").read_text()
     assert "from piper_robot.joints import denormalize_joint" in src
     used = {n.id for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Name)}
     used |= {n.attr for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Attribute)}
     assert "JOINT_CALIBRATION" not in used, "캘리브레이션 표를 베껴 쓴다"
 
 
-def test_a_missing_submodule_does_not_raise():
-    """서브모듈을 안 받은 체크아웃에서 페이즈 분석 전체가 죽으면 안 된다."""
-    assert K.available(Path("/nonexistent/piper.urdf")) is False
+def test_the_geometry_needs_no_submodule():
+    """서브모듈을 안 받은 체크아웃에서도 돌아야 한다.
+
+    예전에는 URDF 를 런타임에 읽어서 없으면 이 신호가 통째로 빠졌다. 이제는
+    지오메트리가 패키지에 구워져 있으므로 **항상 있다** — robotd 를 호스트에
+    가볍게 배포하려고 그렇게 만든 것이고, 페이즈 분석이 덤으로 같이 얻는다.
+    """
+    assert K.available()
 
 
 # ── 미분 방식 ───────────────────────────────────────────────────────────────
