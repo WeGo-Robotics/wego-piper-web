@@ -617,6 +617,11 @@ async def end_pose(iface: str):
 
 
 class RelayStartRequest(BaseModel):
+    # ⚠ **모르는 필드를 거절한다.** 기본값(무시)이라 옛 게이트웨이가 `mode` 를
+    #   조용히 버리고 관절 복제로 돌았다 — 화면은 6D 라고 표시하는데. 실제로
+    #   그렇게 보고됐다("6D 인데 왜 관절이 따라 돌지"). 400 이 나면 바로 안다.
+    model_config = {"extra": "forbid"}
+
     leader: str
     follower: str
     #: `joint` = 관절 복제 (안전 필터를 탄다)

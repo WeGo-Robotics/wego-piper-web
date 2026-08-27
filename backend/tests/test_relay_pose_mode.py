@@ -133,3 +133,33 @@ def test_the_screen_says_the_filters_do_not_apply():
     panel = (REPO / "frontend" / "src" / "components" / "JogPanel.tsx").read_text()
     assert "온보드 IK" in panel
     assert "걸리지 않습니다" in panel
+
+
+# ── 고른 모드가 조용히 버려지면 안 된다 ──────────────────────────────────────
+
+def test_an_unknown_field_is_refused():
+    """⚠ **실제로 났던 고장이다.** 화면은 `mode: 'pose'` 를 보냈는데 그때 돌던
+    게이트웨이에 그 필드가 없었다. Pydantic 기본값이 "모르는 필드는 무시" 라
+    200 이 돌아오고 **관절 복제로 돌았다** — 화면은 6D 라고 표시한 채로.
+
+    "6D 인데 왜 팔로워 관절이 따라 돌지" 로 보고됐다. 400 이면 바로 안다.
+    """
+    import pydantic
+
+    from app.routers.robots import RelayStartRequest
+
+    with pytest.raises(pydantic.ValidationError):
+        RelayStartRequest(leader="a", follower="b", mdoe="pose")
+
+
+def test_the_screen_shows_the_mode_the_server_reports():
+    """고른 값을 보여주면 위 거짓말을 화면이 그대로 반복한다."""
+    panel = (REPO / "frontend" / "src" / "components" / "JogPanel.tsx").read_text()
+    assert "runningMode" in panel
+    assert "runningMode !== relayMode" in panel, "불일치를 알리지 않는다"
+
+
+def test_the_status_carries_the_mode():
+    from app.services.relay import relay_session
+
+    assert "mode" in relay_session.status()

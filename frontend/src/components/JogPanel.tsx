@@ -43,6 +43,10 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
   const [relayMode, setRelayMode] = useState<'joint' | 'pose'>('joint')
   // POSE 모드가 왜 안 보내고 있나 (짐벌락·작업공간 밖·바닥·과속). 서버가 알려준다.
   const [relayBlocked, setRelayBlocked] = useState('')
+  // ⚠ **서버가 실제로 돌고 있는 모드.** 고른 것과 다를 수 있다 — 옛 백엔드가
+  //   `mode` 를 조용히 버리고 관절 복제로 돌아 "6D 인데 관절이 따라 돈다"로
+  //   보고됐다. 화면이 고른 값을 보여주면 그 거짓말을 그대로 반복한다.
+  const [runningMode, setRunningMode] = useState('')
   const relayingRef = useRef(false)
   relayingRef.current = relaying
   const [busy, setBusy] = useState(false)
@@ -82,7 +86,11 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
     let alive = true
     const read = () => {
       api.get<{ mode: string; blocked: string }>('/robots/relay/status')
-        .then((r) => { if (alive) setRelayBlocked(r.blocked || '') })
+        .then((r) => {
+          if (!alive) return
+          setRelayBlocked(r.blocked || '')
+          setRunningMode(r.mode ?? '')
+        })
         .catch(() => {})
     }
     read()
@@ -196,7 +204,11 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs text-neutral-400">
               {leader} 로 조종
-              {relaying && <span className="ml-2 text-amber-400">· 따라가는 중</span>}
+              {relaying && (
+                <span className="ml-2 text-amber-400">
+                  · {runningMode === 'pose' ? '6D 자세' : '관절 복제'}로 따라가는 중
+                </span>
+              )}
             </span>
             <button onClick={relaying ? stopRelay : startRelay} disabled={busy || running}
               title={running ? '조그를 먼저 끝내세요' : undefined}
@@ -232,6 +244,16 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
               6D 자세 모드는 팔로워 관절을 <b>팔의 온보드 IK 가</b> 정합니다 —
               바닥 필터·관절 범위·변화율 제한이 <b>걸리지 않습니다.</b>
               작업 공간 상자와 걸음 상한만 막습니다.
+            </p>
+          )}
+
+          {/* 고른 것과 실제가 다르면 **그 사실이 제일 먼저 보여야 한다.** */}
+          {relaying && runningMode && runningMode !== relayMode && (
+            <p className="rounded border border-red-500/50 bg-red-500/10 px-2 py-1.5
+                          text-[11px] text-red-300">
+              고른 모드는 <b>{relayMode === 'pose' ? '6D 자세' : '관절 복제'}</b> 인데
+              실제로는 <b>{runningMode === 'pose' ? '6D 자세' : '관절 복제'}</b> 로 돌고 있습니다.
+              백엔드가 새 코드인지 확인하세요 ([설정]-[서비스]).
             </p>
           )}
 
