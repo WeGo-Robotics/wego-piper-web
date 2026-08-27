@@ -16,6 +16,42 @@ import { api } from '../services/api'
  *   안 적으면 "-4"가 오타처럼 보인다.
  */
 
+/**
+ * 켜짐/꺼짐 슬라이드 스위치.
+ *
+ * 저장소에 아직 이런 스위치가 없어서 여기 둔다 — 쓰는 곳이 한 곳뿐이다.
+ * 두 번째가 생기면 그때 빼낸다 (`LayoutToggle` 이 그렇게 나왔다).
+ *
+ * ⚠ `<button role="switch">` 다. `<div onClick>` 으로 만들면 키보드로 못 켜고
+ *   스크린리더가 상태를 못 읽는다. 안전 스위치라 더 그렇다.
+ */
+function Switch({ on, onChange, disabled }: {
+  on: boolean
+  onChange: (v: boolean) => void
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button" role="switch" aria-checked={on} disabled={disabled}
+      onClick={() => onChange(!on)}
+      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full
+        transition-colors disabled:opacity-50
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2
+        focus-visible:ring-offset-neutral-800
+        ${on ? 'bg-green-500' : 'bg-neutral-600'}`}
+    >
+      {/* Tailwind v4 는 `translate-x-*` 를 `transform` 이 아니라 **`translate`
+          속성**으로 낸다. `transition-transform` 은 v4 에서
+          `transform, translate, scale, rotate` 를 모두 덮으므로 이대로 미끄러진다
+          (실측 0.15s). 별도 `transform` 클래스는 v4 에서 하는 일이 없다. */}
+      <span
+        className={`inline-block h-4 w-4 rounded-full bg-white shadow
+          transition-transform ${on ? 'translate-x-6' : 'translate-x-1'}`}
+      />
+    </button>
+  )
+}
+
 type Floor = {
   enabled: boolean
   min_z_cm: number
@@ -96,16 +132,13 @@ export default function FloorGuardPanel() {
             추론·녹화·수동 조작·파킹 <b>전부</b>에 걸립니다.
           </p>
         </div>
-        <button
-          onClick={() => void send({ enabled: !floor.enabled })}
-          disabled={busy}
-          className={`shrink-0 rounded px-3 py-1.5 text-sm font-medium transition-colors
-            disabled:opacity-50 ${floor.enabled
-              ? 'bg-green-600/80 text-white hover:bg-green-600'
-              : 'bg-neutral-700 text-neutral-300 hover:bg-neutral-600'}`}
-        >
-          {floor.enabled ? '켜짐' : '꺼짐'}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className={`text-sm ${floor.enabled ? 'text-green-400' : 'text-neutral-500'}`}>
+            {floor.enabled ? '켜짐' : '꺼짐'}
+          </span>
+          <Switch on={floor.enabled} disabled={busy}
+                  onChange={(v) => void send({ enabled: v })} />
+        </div>
       </div>
 
       {!floor.enabled && (
