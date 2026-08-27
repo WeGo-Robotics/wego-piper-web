@@ -165,7 +165,12 @@ def test_jog_and_relay_cannot_be_started_together_on_screen():
 
     src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "components"
            / "JogPanel.tsx").read_text()
-    assert "disabled={busy || relaying}" in src, "릴레이 중에도 조그 버튼이 살아 있다"
+    # 조건 자체가 아니라 **릴레이가 조그 버튼을 막는가**를 본다. 조건이 늘어날
+    # 수 있다 — 지금은 서버가 알려준 `blocked` 도 함께 막는다(다른 카드나 새로고침
+    # 뒤에는 로컬 `relaying` 이 비어 있어서 그것만으로는 모자란다).
+    start_btn = src.split("running ? stop : start", 1)[1].split(">", 1)[0]
+    assert "relaying" in start_btn, "릴레이 중에도 조그 버튼이 살아 있다"
+    assert "disabled=" in start_btn
     assert "disabled={busy || running}" in src, "조그 중에도 릴레이 버튼이 살아 있다"
 
 

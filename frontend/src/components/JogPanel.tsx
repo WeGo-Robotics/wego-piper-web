@@ -27,6 +27,12 @@ type Props = {
   leader?: string
 }
 
+type Teleop = { running: boolean; iface: string | null; mode: string; started: number | null }
+
+const MODE_NAMES: Record<string, string> = {
+  leader: '리더로 조종', joint: '관절 조그', endpoint: '말단 조그',
+}
+
 export default function JogPanel({ iface, commandable, reason, leader }: Props) {
   const { notify, confirm } = useSystemMessage()
   const [running, setRunning] = useState(false)
@@ -42,6 +48,28 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
   const fail = (e: unknown, fallback: string) =>
     notify({ level: 'error', source: '조그',
              text: e instanceof Error ? e.message : fallback })
+
+  // ⚠ **서버가 누구를 잡고 있는지 읽는다.** 이걸 안 보면 버튼이 거짓말한다:
+  //   릴레이를 켜 둔 채 새로고침하면 로컬 state 가 비어서 [조그 시작] 이 눌리는
+  //   것처럼 보이고, 누르면 409 만 돌아온다 — "조그가 안 된다"로 보고된 게 이 경우다.
+  const [heldBy, setHeldBy] = useState<Teleop | null>(null)
+  useEffect(() => {
+    let alive = true
+    const read = () => {
+      api.get<Teleop>('/robots/teleop/status')
+        .then((t) => {
+          if (!alive) return
+          setHeldBy(t.running ? t : null)
+          // 내 팔을 내가 잡고 있는 경우에만 로컬 state 를 켠다
+          setRunning(t.running && t.iface === iface && t.mode === 'joint')
+          setRelaying(t.running && t.iface === iface && t.mode === 'leader')
+        })
+        .catch(() => {})
+    }
+    read()
+    const id = setInterval(read, 1500)
+    return () => { alive = false; clearInterval(id) }
+  }, [iface])
 
   // 조그를 안 켠 동안에도 현재 자세를 읽어 슬라이더를 맞춰 둔다 —
   // 켜자마자 슬라이더가 엉뚱한 데 있으면 첫 조작이 큰 이동이 된다.
@@ -117,6 +145,10 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
     finally { setBusy(false) }
   }
 
+  const heldLabel = heldBy
+    ? `${heldBy.iface} ${MODE_NAMES[heldBy.mode] ?? heldBy.mode} 중`
+    : ''
+
   const send = (values: Record<string, number>) => {
     api.post('/robots/jog/goal', { iface, values }).catch((e) => {
       // 세션이 닫혔는데 계속 밀면 같은 오류가 쌓인다 — 한 번 알리고 멈춘다
@@ -124,6 +156,9 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
       fail(e, '목표를 보내지 못했습니다')
     })
   }
+
+  // 다른 조작이 팔을 잡고 있으면 **무엇이** 잡고 있는지 보여준다.
+  const blocked = heldBy && !(heldBy.iface === iface && (running || relaying))
 
   if (!commandable) {
     return (
@@ -164,14 +199,21 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
           className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-50">
           원점으로
         </button>
-        <button onClick={running ? stop : start} disabled={busy || relaying}
-          title={relaying ? '릴레이를 먼저 끝내세요' : undefined}
+        <button onClick={running ? stop : start} disabled={busy || relaying || !!blocked}
+          title={blocked ? `${heldLabel} — 먼저 멈추세요`
+                 : relaying ? '릴레이를 먼저 끝내세요' : undefined}
           className={`px-2 py-1 text-xs rounded text-white disabled:opacity-50 ${
             running ? 'bg-red-600 hover:bg-red-500' : 'bg-amber-600 hover:bg-amber-500'}`}>
           {busy ? '…' : running ? '조그 끝내기' : '조그 시작'}
         </button>
         </span>
       </div>
+
+      {blocked && (
+        <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+          {heldLabel}입니다 — 조작은 한 번에 하나입니다. 먼저 그것을 멈추세요.
+        </p>
+      )}
 
       <ManualControlPanel
         currentJoints={joints}

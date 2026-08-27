@@ -241,14 +241,36 @@ def require_idle(target: Activity) -> None:
         return
     label = LABELS[target]
     if blockers[0] == target:
+        # ⚠ **무엇이 잡고 있는지 말해야 한다.** 조그와 릴레이가 같은 세션 하나를
+        #   쓰는데, 릴레이가 돌 때 조그를 누르면 "수동 조작이 이미 실행 중입니다"
+        #   가 떴다 — 사용자는 수동 조작을 한 적이 없으니 "조그가 고장났다"로
+        #   읽는다. 실제로 그렇게 보고됐다.
         raise HTTPException(
             409, f"{label}{_josa(label, '이', '가')} 이미 실행 중입니다."
+                 + _detail(target)
         )
     names = " · ".join(LABELS[a] for a in blockers)
     raise HTTPException(
         409,
         f"{names} 실행 중입니다. 먼저 중지한 뒤 {label}{_josa(label, '을', '를')} 시작하세요.",
     )
+
+
+# 활동별로 "누가 잡고 있나"를 한 줄 덧붙인다. 상태를 가진 활동만 해당한다.
+_MODE_NAMES = {"leader": "리더로 조종", "joint": "관절 조그", "endpoint": "말단 조그"}
+
+
+def _detail(target: Activity) -> str:
+    """자기 자신이 이미 돌 때, **무엇이** 도는지. 모르면 빈 문자열."""
+    if target is not Activity.TELEOP:
+        return ""
+    from app.services.teleop import teleop_session
+
+    st = teleop_session.to_dict()
+    if not st.get("running"):
+        return ""
+    what = _MODE_NAMES.get(st.get("mode", ""), st.get("mode") or "조작")
+    return f" — {st['iface']} {what} 중입니다. 먼저 멈추세요."
 
 
 def snapshot() -> dict:

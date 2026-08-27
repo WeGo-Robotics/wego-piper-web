@@ -26,6 +26,7 @@ import logging
 import threading
 import time
 
+from app.core.joints import JOINT_ORDER
 from app.services.teleop import (
     ArmBusyError, close_action_writer, enable_torque, open_action_writer,
     require_healthy_bus, teleop_session,
@@ -44,6 +45,28 @@ IDLE_TIMEOUT_S = 300.0
 
 class JogError(RuntimeError):
     """시작을 막는 이유. 호출부가 그대로 사용자에게 보여준다."""
+
+
+def canonical_goal(values: dict) -> dict[str, float]:
+    """목표 dict 의 키를 관절 이름으로 맞춘다. 모르는 키는 **거절한다.**
+
+    저장소에 관절 이름이 두 규약으로 있다. 둘 다 정당하다:
+
+        `joint6`       piper_robot·shm·안전층 (`JOINT_ORDER`)
+        `joint6.pos`   LeRobot action dict — 프론트 `config/joints.ts` 의
+                       `actionKey` 이고 `/api/params` 의 manual_action 이 쓴다
+
+    같은 화면(`ManualControlPanel`)이 추론 경로와 조그 경로 양쪽에 쓰이므로
+    **받는 쪽에서 맞춘다.** 화면이 소비자별로 다른 키를 내게 하면 그 분기가
+    또 갈라진다.
+    """
+    out: dict[str, float] = {}
+    for key, value in values.items():
+        name = key[:-4] if key.endswith(".pos") else key
+        if name not in JOINT_ORDER:
+            raise JogError(f"모르는 관절입니다: {key}")
+        out[name] = float(value)
+    return out
 
 
 class JogSession:
@@ -122,11 +145,17 @@ class JogSession:
 
         `ActionWriter.publish` 는 전 관절을 요구한다 — 안 온 관절을 0 으로 채우면
         그게 명령이 되어 팔이 튄다.
+
+        ⚠ **모르는 키는 거절한다.** 예전에는 그냥 병합했다. 화면이 LeRobot
+          action-dict 규약(`joint6.pos`)으로 보내는데 여기 표는 `joint6` 이라,
+          목표 dict 에 아무도 안 읽는 키가 7개 더 붙고 **진짜 관절은 시작 자세에
+          그대로 머물렀다.** HTTP 200 이 돌아오고 팔은 안 움직인다 — 화면에서는
+          "조그가 반응이 없다"로 보인다. 실제로 그렇게 보고됐다.
         """
         with self._lock:
             if not self.is_running:
                 raise JogError("조그가 시작되지 않았습니다")
-            self._goal.update({k: float(v) for k, v in values.items()})
+            self._goal.update(canonical_goal(values))
             self._last_goal_at = time.time()
             goal = dict(self._goal)
         self._publish(goal)

@@ -499,6 +499,19 @@ async def jog_status():
     return jog_session.status()
 
 
+@router.get("/teleop/status")
+async def teleop_status():
+    """**누가 팔을 잡고 있나.** 조그·릴레이·말단 조그가 세션 하나를 공유한다.
+
+    ⚠ 화면이 이걸 안 보면 버튼이 거짓말한다. 릴레이를 켜 둔 채 새로고침하면
+    로컬 state 가 비어서 [조그 시작] 이 눌리는 것처럼 보이고, 누르면 409 만
+    돌아온다 — "조그가 안 된다"로 보고된 게 이 경우다.
+    """
+    from app.services.teleop import teleop_session
+
+    return teleop_session.to_dict()
+
+
 # ── 말단 조그 (feature/teleoperation.md §3-C) ──
 
 
