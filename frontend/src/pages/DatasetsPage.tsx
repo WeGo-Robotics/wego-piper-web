@@ -28,6 +28,9 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [loading, setLoading] = useState(true)
   const [detail, setDetail] = useState<DatasetDetail | null>(null)
+  // 끊긴 녹화가 남긴 반쪽 상태. `null` 은 "아직 안 봤다".
+  const [health, setHealth] = useState<Consistency | null>(null)
+  const [repairing, setRepairing] = useState(false)
   const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([])
   const [editingTask, setEditingTask] = useState<string | null>(null)  // 선택된 에피소드에 적용할 task
   const [search, setSearch] = useState('')
@@ -91,11 +94,39 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
     fetchDatasets()
   }, [])
 
+  type Consistency = {
+    ok: boolean
+    declared_episodes: number
+    indexed_episodes: number
+    stored_episodes: number
+    recoverable: number[]
+    unrecoverable: number
+  }
+
+  /** 색인 복구. **미리 보여주고 확인받은 뒤에** 쓴다 — 남의 데이터를 고치는 일이다. */
+  const handleRepair = async (id: string) => {
+    const n = health?.recoverable.length ?? 0
+    if (!await askConfirm(
+      `에피소드 ${n}개의 색인을 다시 만듭니다. 프레임은 그대로 두고 목록만 채웁니다.\n`
+      + '원본 색인은 .bak 으로 남습니다.')) return
+    setRepairing(true)
+    try {
+      await api.post(`/datasets/${id}/repair-index?apply=true`)
+      await handleSelect(id)
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : '색인 복구 실패')
+    } finally { setRepairing(false) }
+  }
+
   const handleSelect = async (id: string) => {
     try {
       const d = await api.get<DatasetDetail>(`/datasets/${id}`)
       setDetail(d)
       setSelectedEpisodes([])
+      // ⚠ 정합성을 **같이** 본다. 이것 없이 목록만 보여주면 "개수는 50인데
+      //   목록에 2개" 인 상태가 조용히 지나가고, 사용자는 데이터가 날아간 줄
+      //   알고 지운다 — 실제로 그렇게 지워졌다.
+      setHealth(await api.get<Consistency>(`/datasets/${id}/consistency`).catch(() => null))
     } catch {
       // ignore
     }
@@ -315,6 +346,42 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
                     <p>{detail.fps ?? '-'}</p>
                   </div>
                 </div>
+
+                {/* ⚠ 끊긴 녹화 경고. **목록보다 위에** 둔다 — 목록이 짧은 이유를
+                       모른 채 스크롤하면 데이터가 없어진 줄 안다. */}
+                {health && !health.ok && (
+                  <div className="rounded border border-amber-600/60 bg-amber-950/30 p-3 text-sm space-y-2">
+                    <p className="font-semibold text-amber-300">
+                      에피소드 색인이 끊겼습니다 — 녹화가 정상 종료되지 않았습니다
+                    </p>
+                    <p className="text-neutral-300">
+                      개수는 <b>{health.declared_episodes}</b>인데 목록에는{' '}
+                      <b>{health.indexed_episodes}</b>개만 있습니다.
+                      프레임은 <b>{health.stored_episodes}</b>개 남아 있습니다.
+                    </p>
+                    {health.recoverable.length > 0 && (
+                      <p className="text-neutral-400 text-xs">
+                        LeRobot 은 에피소드 목록을 10개씩 모아 쓰고 개수는 매번 씁니다.
+                        강제 종료되면 아직 안 쓴 목록이 사라집니다 —
+                        <b className="text-neutral-200"> 프레임은 그대로라 되살릴 수 있습니다.</b>
+                      </p>
+                    )}
+                    {health.unrecoverable > 0 && (
+                      <p className="text-neutral-400 text-xs">
+                        그중 {health.unrecoverable}개는 프레임까지 없어 되살릴 수 없습니다.
+                      </p>
+                    )}
+                    {health.recoverable.length > 0 && (
+                      <button
+                        onClick={() => void handleRepair(detail.id)}
+                        disabled={repairing}
+                        className="px-3 py-1.5 rounded bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-xs"
+                      >
+                        {repairing ? '복구 중…' : `색인 복구 (${health.recoverable.length}개)`}
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {/* 에피소드 목록 */}
                 {detail.episodes.length > 0 && (

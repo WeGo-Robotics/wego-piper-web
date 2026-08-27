@@ -16,6 +16,8 @@ from app.services.dataset_scanner import (
     find_dataset_path,
 )
 from app.services.dataset_jobs import edit_pm as _edit_pm, upload_pm as _upload_pm
+import asyncio
+
 from app.services.exclusivity import Activity, require_idle
 
 logger = logging.getLogger(__name__)
@@ -144,6 +146,46 @@ async def episode_video(dataset_id: str, cam: str, chunk: int, file: int):
     return FileResponse(path, media_type="video/mp4")
 
 
+@router.get("/{dataset_id:path}/consistency")
+async def dataset_consistency(dataset_id: str):
+    """개수·목록·프레임이 같은 이야기를 하는지.
+
+    끊긴 녹화는 `info.json` 만 크고 `meta/episodes` 가 작다 — LeRobot 이 에피소드
+    메타를 10개씩 모아 쓰기 때문이다. 화면은 개수를 `info.json` 에서 읽으므로
+    **개수는 뜨는데 목록에는 없는** 상태가 되고, 그걸 본 사용자는 데이터가
+    날아간 줄 알고 지운다. 실제로 그렇게 지워졌다.
+    """
+    from app.services.dataset_repair import check
+
+    ds_path = find_dataset_path(dataset_id)
+    if not ds_path:
+        raise HTTPException(404, "Dataset not found")
+    return check(ds_path)
+
+
+@router.post("/{dataset_id:path}/repair-index")
+async def dataset_repair_index(dataset_id: str, apply: bool = False):
+    """`data/` 에 남은 프레임으로 `meta/episodes` 를 다시 짓는다.
+
+    기본은 미리보기(`apply=false`) — 무엇이 되살아나는지 먼저 보여주고 나서 쓴다.
+    쓸 때는 원본을 `.bak` 으로 남긴다.
+    """
+    from app.services.dataset_repair import rebuild_index
+
+    ds_path = find_dataset_path(dataset_id)
+    if not ds_path:
+        raise HTTPException(404, "Dataset not found")
+    # ⚠ 파일을 쓰는 동안 녹화·편집이 같은 데이터셋을 만지면 안 된다
+    if apply:
+        require_idle(Activity.DATASET_EDIT)
+    out = await asyncio.to_thread(rebuild_index, ds_path, dry_run=not apply)
+    if not out.get("ok"):
+        raise HTTPException(400, out.get("error", "복구 실패"))
+    return out
+
+
+# ⚠ **아래 catch-all 보다 위에 있어야 한다** — 같은 메서드의 `:path` 가 먼저
+#   등록되면 위 경로들이 전부 상세 응답으로 먹힌다 (`/upload-status` 전례).
 @router.get("/{dataset_id:path}")
 async def dataset_detail(dataset_id: str):
     ds = get_dataset(dataset_id)
