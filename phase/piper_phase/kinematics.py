@@ -155,12 +155,40 @@ def norm_to_rad(state: np.ndarray) -> np.ndarray:
     return out
 
 
+# 미분에 쓸 반폭(프레임). ±1 = 앞뒤 한 프레임씩 보는 중심차분.
+#
+# ⚠ **한 프레임 차분은 고역통과 필터다.** 위치 자체는 매끄러운데(고주파 성분 1%)
+#   인접 두 프레임을 빼면 그 잡음 바닥이 fps 배로 증폭돼 속도가 20% 까지 거칠어진다.
+#   실측(bolt_two1 ep1, 15fps):
+#
+#       1프레임 차 : 고주파 19.1%   봉우리 0.399 m/s
+#       ±1 중심차분:        8.4%          0.378   ← 잡음 절반, 봉우리 5% 손실
+#       ±2         :        4.6%          0.332   ← 실제 봉우리까지 깎기 시작
+#
+#   ±1 이 그 사이다.
+_DERIV_HALF = 1
+
+
 def endpoint_speed(state: np.ndarray, fps: float, urdf: Path | None = None) -> np.ndarray:
     """정규화 관절값(T,7+) → 말단 속도(T,) m/s.
 
-    첫 프레임은 0 이다 (자기 자신과의 차이) — `fsm.derive_signals` 의 `speed` 와
-    같은 규약이라 두 신호를 같은 축에 겹쳐 볼 수 있다.
+    **중심차분**으로 잰다 — 위 `_DERIV_HALF` 주석 참고.
+
+    첫 프레임은 0 이다 — `fsm.compute_signals` 의 `speed` 와 같은 규약이라
+    두 신호를 같은 축에 겹쳐 볼 수 있다.
+
+    ⚠ 관절 공간 `speed` 에는 같은 처리를 **안 했다.** 그쪽은 FSM 임계값이
+      물려 있어서 매끄럽게 만들면 페이즈 경계가 통째로 움직인다. 이 신호는
+      화면 표시 전용이라 안전하다.
     """
     xyz = endpoint_xyz(norm_to_rad(np.asarray(state, dtype=float)[:, :len(ARM_JOINTS)]), urdf)
-    d = np.diff(xyz, axis=0, prepend=xyz[:1])
-    return np.linalg.norm(d, axis=1) * fps
+    n = len(xyz)
+    if n < 2:
+        return np.zeros(n)
+    i = np.arange(n)
+    lo = np.clip(i - _DERIV_HALF, 0, n - 1)
+    hi = np.clip(i + _DERIV_HALF, 0, n - 1)
+    span = (hi - lo) / fps
+    out = np.linalg.norm(xyz[hi] - xyz[lo], axis=1) / np.maximum(span, 1e-9)
+    out[0] = 0.0
+    return out

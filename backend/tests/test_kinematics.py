@@ -110,3 +110,85 @@ def test_the_calibration_is_not_copied_here():
 def test_a_missing_submodule_does_not_raise():
     """서브모듈을 안 받은 체크아웃에서 페이즈 분석 전체가 죽으면 안 된다."""
     assert K.available(Path("/nonexistent/piper.urdf")) is False
+
+
+# ── 미분 방식 ───────────────────────────────────────────────────────────────
+
+def test_frame_to_frame_jitter_is_cancelled():
+    """⚠ **한 프레임 차분은 고역통과 필터다.**
+
+    위치 자체는 매끄러운데(실측 고주파 성분 1%) 인접 두 프레임을 빼면 잡음
+    바닥이 fps 배로 증폭돼 속도가 20% 까지 거칠어진다. 사용자가 "관절 그래프는
+    부드러운데 말단만 진동이 심하다"고 본 것이 이것이다 — 실제로는 관절 **속도**도
+    똑같이 거칠었고(20.3%), 비교 대상이 **위치**였다.
+
+    실제 잡음은 프레임마다 부호가 뒤집히는 양자화 튐이다. 중심차분은 앞뒤를
+    같이 보므로 그런 성분이 서로 지워진다 — 여기서 그걸 그대로 재현한다.
+    """
+    n = 200
+    q = np.zeros((n, 7))
+    q[:, 0] = 20.0                       # 가만히 있는 팔
+    q[::2, 0] += 0.05                    # 한 프레임 걸러 튄다 (양자화 잡음)
+
+    xyz = K.endpoint_xyz(K.norm_to_rad(q[:, :6]))
+    naive = np.linalg.norm(np.diff(xyz, axis=0, prepend=xyz[:1]), axis=1) * 15
+    centred = K.endpoint_speed(q, fps=15)
+
+    assert naive[1:].mean() > 0, "잡음 모델이 아무것도 안 만든다"
+    # ⚠ 안쪽만 본다. 첫·끝 프레임은 앞이나 뒤가 없어 중심을 못 잡으므로 단순
+    #   차분으로 떨어진다 — 두 프레임 때문에 방식 전체를 부정할 일은 아니다.
+    inner = centred[2:-2]
+    assert inner.max() < naive[1:].mean() * 0.05, \
+        f"튐이 안 지워진다 (중심 {inner.max():.5f} vs 단순 {naive[1:].mean():.5f})"
+
+
+def test_the_edges_fall_back_instead_of_breaking():
+    """앞뒤가 없는 프레임에서도 값이 나와야 한다 — 그래프에 구멍이 나면 안 된다."""
+    q = np.zeros((4, 7))
+    q[:, 0] = [0.0, 5.0, 10.0, 15.0]
+    v = K.endpoint_speed(q, fps=15)
+    assert len(v) == 4 and np.all(np.isfinite(v))
+    assert v[0] == 0.0 and v[-1] > 0.0
+
+
+def test_the_peaks_survive_the_smoothing():
+    """잡음을 줄이려다 실제 봉우리를 깎으면 '빠르게 움직였다' 가 사라진다.
+
+    실측에서 ±1 은 봉우리를 5% 안에서 보존했고 ±2 부터 16% 깎였다.
+    """
+    n = 120
+    q = np.zeros((n, 7))
+    q[:, 0] = np.concatenate([np.zeros(50), np.linspace(0, 60, 20), np.full(50, 60.0)])
+    v = K.endpoint_speed(q, fps=15)
+    xyz = K.endpoint_xyz(K.norm_to_rad(q[:, :6]))
+    naive = np.linalg.norm(np.diff(xyz, axis=0, prepend=xyz[:1]), axis=1) * 15
+    assert v.max() > naive.max() * 0.9, "봉우리가 너무 깎였다"
+
+
+def test_the_joint_signal_was_left_alone():
+    """⚠ 관절 공간 `speed` 는 FSM 임계값이 물려 있다 — 매끄럽게 만들면
+    페이즈 경계가 통째로 움직인다. 표시 전용 신호만 손본다."""
+    src = (_REPO / "phase" / "piper_phase" / "fsm.py").read_text()
+    body = src.split("def compute_signals", 1)[1].split("\ndef ", 1)[0]
+    assert "np.diff(joints, axis=0, prepend=joints[:1])" in body, "관절 속도 계산이 바뀌었다"
+
+
+def test_the_sidecar_version_is_actually_read():
+    """⚠ 예전에는 쓰기만 하고 **아무도 안 읽는** 필드였다.
+
+    그래서 미분 방식을 바꿨을 때 이미 만들어둔 사이드카가 옛 값을 그대로
+    내보냈고, 화면은 안 바뀐 것처럼 보였다.
+    """
+    router = (Path(__file__).resolve().parents[1] / "app" / "routers" / "phase.py").read_text()
+    assert "SIDECAR_VERSION" in router, "버전을 안 읽는다"
+    body = router.split("def _sidecar_stale", 1)[1].split("\ndef ", 1)[0]
+    assert "except Exception:\n        return True" in body, \
+        "버전을 못 읽을 때 최신이라고 낙관한다"
+
+
+def test_stale_sidecars_recompute_display_signals_only():
+    """페이즈 라벨은 사람이 손댔을 수 있다 — 표시 전용 신호만 다시 만든다."""
+    router = (Path(__file__).resolve().parents[1] / "app" / "routers" / "phase.py").read_text()
+    assert 'need_tip = stale or "tip_speed" not in e.columns' in router
+    assert 'if not stale and "home_dist" in e.columns:' in router
+    assert '"phase": e["phase"].tolist()' in router, "라벨까지 다시 계산한다"

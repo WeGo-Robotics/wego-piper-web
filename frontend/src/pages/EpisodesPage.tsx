@@ -48,6 +48,8 @@ type PhaseSummary = {
 }
 type Signals = {
   frames: number
+  /** 사이드카가 지금 코드보다 오래됐다 — 라벨은 옛 기준이다. */
+  stale?: boolean
   speed: number[]          // 관절 공간 — 정규화 단위/초
   gripper_gap: number[]
   phase: number[]
@@ -1208,6 +1210,16 @@ export default function EpisodesPage() {
             ) : (
               <div className="rounded border border-neutral-700 bg-neutral-800 p-3 text-xs text-neutral-500">
                 페이즈 분석이 없습니다 — [분석] 을 실행하면 구간 트랙과 신호 그래프가 보입니다
+              </div>
+            )}
+
+            {/* ⚠ 표시 전용 신호는 즉석 계산으로 갱신되지만 **페이즈 라벨은
+                   옛 기준 그대로**다 — 그 차이를 안 밝히면 그래프와 구간이
+                   서로 다른 계산에서 나온 줄 모른다. */}
+            {signals?.stale && (
+              <div className="rounded border border-amber-700/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+                이 분석은 예전 버전입니다 — 그래프는 갱신해 보여주지만
+                페이즈 구간은 옛 기준입니다. [분석] 을 다시 실행하면 맞춰집니다.
               </div>
             )}
 

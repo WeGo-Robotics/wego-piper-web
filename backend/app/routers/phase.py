@@ -179,15 +179,22 @@ async def get_signals(dataset_id: str, episode: int):
     분석 1회에 같이 떨궈 UI 가 즉시 읽는다.
     """
     ds = _dataset(dataset_id)
-    _, signals_path = PL.sidecar_paths(ds)
+    labels_path, signals_path = PL.sidecar_paths(ds)
     if not signals_path.exists():
         raise HTTPException(404, "신호 캐시가 없습니다 — /analyze 를 먼저 실행하세요")
+    # ⚠ **계산이 바뀌면 캐시가 거짓말을 한다.** 말단 속도 미분 방식을 바꿨을 때
+    #   이미 만들어둔 사이드카가 옛 값을 그대로 내보냈고, 화면은 안 바뀐 것처럼
+    #   보였다. 버전이 낮으면 **표시 전용 파생 신호만** 다시 계산한다 —
+    #   페이즈 라벨은 사람이 손댔을 수 있으므로 건드리지 않는다.
+    stale = _sidecar_stale(labels_path)
     df = pd.read_parquet(signals_path)
     e = df[df.episode_index == episode]
     if e.empty:
         raise HTTPException(404, f"에피소드 {episode} 신호가 없습니다")
     out = {
         "episode": episode,
+        # 라벨은 옛 버전 그대로다 — 화면이 "다시 분석" 을 권할 수 있게 밝힌다
+        "stale": stale,
         "frames": len(e),
         "speed": e["speed"].round(3).tolist(),
         "gripper_gap": e["gripper_gap"].round(3).tolist(),
@@ -195,7 +202,7 @@ async def get_signals(dataset_id: str, episode: int):
     }
     # 사이드카에 없는 것은 데이터셋에서 바로 읽는다. **한 번만 읽고 나눠 쓴다** —
     # 관절 그래프와 말단 속도가 같은 프레임을 보므로 두 번 읽을 이유가 없다.
-    need_tip = "tip_speed" not in e.columns
+    need_tip = stale or "tip_speed" not in e.columns
     frames = _episode_frames(ds, episode)
 
     if not need_tip:
@@ -207,7 +214,7 @@ async def get_signals(dataset_id: str, episode: int):
         if tip is not None:
             out["tip_speed"] = tip
 
-    if "home_dist" in e.columns:
+    if not stale and "home_dist" in e.columns:
         out["home_dist"] = e["home_dist"].round(4).tolist()
     elif frames is not None:
         hd = _home_dist_now(frames)
@@ -231,6 +238,22 @@ def _home_dist_now(frames) -> list[float] | None:
     except Exception as exc:
         logger.warning("시작거리 즉석 계산 실패: %s", exc)
         return None
+
+
+def _sidecar_stale(labels_path) -> bool:
+    """사이드카가 **지금 코드보다 오래됐나.**
+
+    버전을 못 읽으면 오래된 것으로 본다 — 최신이라고 낙관하면 옛 값이 조용히
+    화면에 남는다. 그게 이 검사를 만든 이유다.
+    """
+    import json
+
+    from piper_phase.labeler import SIDECAR_VERSION
+
+    try:
+        return int(json.loads(labels_path.read_text()).get("version", 0)) < SIDECAR_VERSION
+    except Exception:
+        return True
 
 
 def _episode_frames(ds_path, episode: int):
