@@ -64,12 +64,33 @@ def test_the_joint_speed_chart_is_gone_but_the_signal_stays():
     움직였느냐가 다르기 때문이고, 그게 애초에 말단 신호를 만든 이유다.
     """
     page = _EPISODES.read_text()
-    assert "관절 속도" not in page.split("const charts", 1)[1], "그래프가 아직 있다"
+    # 목록을 만드는 자리에 관절 속도가 없어야 한다 (아래 FSM 주석에는 나온다)
+    body = page.split("const charts = useMemo", 1)[1].split("}, [signals, showJoints])", 1)[0]
+    assert "관절 속도" not in body, "그래프가 아직 있다"
 
     fsm = (Path(__file__).resolve().parents[2] / "phase" / "piper_phase" / "fsm.py").read_text()
     for thr in ("still_speed", "moving_speed", "align_speed"):
         assert f"p.{thr}" in fsm, f"{thr} 판정이 사라졌다"
     assert "speed=speed" in fsm, "신호 자체가 사라졌다"
+
+
+def test_the_reveal_cannot_stall_on_a_missing_callback():
+    """⚠ **회귀** — 앞 그래프가 "다 그렸다" 고 알려줄 때만 다음을 붙였더니,
+    그 알림이 한 번이라도 안 오면 **그 아래가 통째로 멈췄다.** 순서를 지키려다
+    아예 안 그려지는 경우를 만든 셈이다.
+
+    시계가 민다. 순서는 그대로고, 무엇이 실패하든 다음은 붙는다.
+    """
+    page = _EPISODES.read_text()
+    body = page.split("if (drawnUpTo >= charts.length) return", 1)[1].split("}, [", 1)[0]
+    assert "setTimeout" in body, "타이머가 없다 — 콜백에만 기댄다"
+
+
+def test_the_chart_list_is_built_once():
+    """개수를 따로 세면 목록과 어긋나 타이머가 일찍 멈추고 아래가 안 붙는다."""
+    page = _EPISODES.read_text()
+    assert "charts.length" in page, "목록 길이를 안 쓴다"
+    assert "chartCount" not in page, "개수를 따로 센다"
 
 
 def test_charts_are_added_top_to_bottom():
