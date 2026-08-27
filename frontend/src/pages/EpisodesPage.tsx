@@ -23,6 +23,7 @@ import LayoutToggle, { useLayout } from '../components/LayoutToggle'
 import SplitHandle, { useMediaQuery, useSplit } from '../components/SplitPane'
 import { useSystemMessage } from '../components/SystemMessages'
 import PlotlyChart from '../components/PlotlyChart'
+import type { Series } from '../components/PlotlyChart'
 import type { BakedInfo, Dataset, DatasetDetail } from '../types/models'
 
 // ── 페이즈 사이드카 형태 (backend/app/routers/phase.py 응답) ──
@@ -125,6 +126,8 @@ export default function EpisodesPage() {
   //   밖으로 밀려난다 — 기본은 접고, 선택은 기억한다.
   const [showJoints, setShowJoints] = useState(
     () => localStorage.getItem('episodes-show-joints') === '1')
+  // 위에서 아래로 몇 번째까지 붙였나. 각 그래프가 다 그려지면 다음이 붙는다.
+  const [drawnUpTo, setDrawnUpTo] = useState(0)
   const [videoError, setVideoError] = useState(false)
   const [cacheMissing, setCacheMissing] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
@@ -266,6 +269,8 @@ export default function EpisodesPage() {
     setSelectedSeg(null)
     setUndoStack([])
     setEp(index)
+    // 에피소드를 바꾸면 다시 위에서부터 순서대로 붙인다
+    setDrawnUpTo(0)
     setFrame(0)
     setPlaying(false)
     setVideoError(false)
@@ -1225,84 +1230,74 @@ export default function EpisodesPage() {
               </div>
             )}
 
-            {/* 신호 그래프 — 재생헤드(markerX) 공유 */}
-            {signals && (
-              <div className="space-y-2">
-                {/* ⚠ 라벨이 `deg/s` 였는데 **도가 아니다.** `observation.state` 는
-                       ±100 정규화 값이라(실측 확인) 이 신호의 단위는 정규화 단위/초다.
-                       임계값을 조정하려는 사람이 "20도/초"로 읽으면 어긋난다. */}
-                <PlotlyChart
-                  x={Array.from({ length: signals.frames }, (_, i) => i)}
-                  series={[{ label: '관절 속도 (정규화 단위/s)', color: '#60a5fa', data: signals.speed }]}
-                  markerX={frame}
-                  height={160}
-                  uirevision={`${dsId}/${ep}/speed`}
-                />
-                {/* 말단 속도 — 관절 속도와 **다른 것을 본다.** 관절 쪽은 어깨 1도와
-                    손목 1도를 같게 세지만, 말단이 실제로 움직인 거리는 크게 다르다.
-                    URDF(vendor/agx_arm_urdf)로 FK 해서 m/s 로 낸다. */}
-                {signals.tip_speed && (
-                  <PlotlyChart
-                    x={Array.from({ length: signals.frames }, (_, i) => i)}
-                    series={[{ label: '말단 속도 (m/s)', color: '#34d399', data: signals.tip_speed }]}
-                    markerX={frame}
-                    height={160}
-                    uirevision={`${dsId}/${ep}/tip`}
-                  />
-                )}
-                <PlotlyChart
-                  x={Array.from({ length: signals.frames }, (_, i) => i)}
-                  series={[{ label: '그리퍼 지령-실측 갭', color: '#f472b6', data: signals.gripper_gap }]}
-                  markerX={frame}
-                  height={160}
-                  uirevision={`${dsId}/${ep}/gap`}
-                />
+            {/* ── 신호 그래프 ──
+                ⚠ **위에서 아래로 순서대로 붙인다.** 전부 한 번에 붙이면 Plotly 가
+                  비동기로 그려서 아래 것이 먼저 나타나는 등 순서가 뒤죽박죽이 된다.
+                  각 그래프가 다 그려졌다고 알려주면 그때 다음 것을 붙인다 —
+                  한꺼번에 열몇 개를 만드는 부담도 같이 사라진다.
 
-                {/* 시작 자세로부터의 거리 — PARKING 이 **왜** 거기서 시작하는지가
-                    이 선에서 보인다. 복귀 구간에서만 0 으로 수렴한다
-                    (실측: 복귀 끝 최대 2.2cm, 긴 접근 끝 최소 13.5cm). */}
-                {signals.home_dist && (
-                  <PlotlyChart
-                    x={Array.from({ length: signals.frames }, (_, i) => i)}
-                    series={[{ label: '시작 자세로부터 거리 (m)', color: '#fbbf24', data: signals.home_dist }]}
-                    markerX={frame}
-                    height={160}
-                    uirevision={`${dsId}/${ep}/home`}
-                  />
-                )}
-
-                {/* 관절별 그래프 — 축마다 하나. 실측과 지령을 겹쳐 그린다:
-                    ⚠ 실측만 보면 **추종 오차가 안 보인다.** 물체에 막혀 못
-                    따라가는 구간이 두 선의 벌어짐으로 드러난다. */}
-                {signals.joints && (
-                  <div className="space-y-2">
+                ⚠ **관절 속도 그래프는 뺐다.** 말단 속도가 같은 질문에 더 정직하게
+                  답한다(어깨 1도와 손목 1도를 같게 세지 않는다). 다만 신호 자체는
+                  남아 있다 — FSM 의 정지/이동/감속 판정이 전부 그 값을 쓴다. */}
+            {signals && (() => {
+              const xs = Array.from({ length: signals.frames }, (_, i) => i)
+              const charts: { key: string; label: string; color: string; data: number[]; extra?: Series }[] = []
+              if (signals.tip_speed)
+                charts.push({ key: 'tip', label: '말단 속도 (m/s)', color: '#34d399', data: signals.tip_speed })
+              charts.push({ key: 'gap', label: '그리퍼 지령-실측 갭', color: '#f472b6', data: signals.gripper_gap })
+              if (signals.home_dist)
+                charts.push({ key: 'home', label: '시작 자세로부터 거리 (m)', color: '#fbbf24', data: signals.home_dist })
+              const jointStart = charts.length
+              if (showJoints && signals.joints)
+                signals.joints.names.forEach((name, i) => charts.push({
+                  key: `j${i}`, label: `${name} 실측`, color: '#60a5fa',
+                  data: signals.joints!.state[i],
+                  extra: { label: `${name} 지령`, color: '#f59e0b', data: signals.joints!.action[i] },
+                }))
+              return (
+                <div className="space-y-2">
+                  {charts.map((c, i) => (
+                    <div key={c.key}>
+                      {i === jointStart && (
+                        <button
+                          onClick={() => {
+                            const next = !showJoints
+                            setShowJoints(next)
+                            localStorage.setItem('episodes-show-joints', next ? '1' : '0')
+                          }}
+                          className="text-xs text-neutral-400 hover:text-neutral-200 mb-1"
+                        >
+                          ▾ 관절별 그래프 ({signals.joints?.names.length ?? 0}축)
+                        </button>
+                      )}
+                      {i <= drawnUpTo && (
+                        <PlotlyChart
+                          x={xs}
+                          series={c.extra
+                            ? [{ label: c.label, color: c.color, data: c.data }, c.extra]
+                            : [{ label: c.label, color: c.color, data: c.data }]}
+                          markerX={frame}
+                          height={c.extra ? 140 : 160}
+                          uirevision={`${dsId}/${ep}/${c.key}`}
+                          onReady={() => setDrawnUpTo((n) => Math.max(n, i + 1))}
+                        />
+                      )}
+                    </div>
+                  ))}
+                  {!showJoints && signals.joints && (
                     <button
                       onClick={() => {
-                        const next = !showJoints
-                        setShowJoints(next)
-                        localStorage.setItem('episodes-show-joints', next ? '1' : '0')
+                        setShowJoints(true)
+                        localStorage.setItem('episodes-show-joints', '1')
                       }}
                       className="text-xs text-neutral-400 hover:text-neutral-200"
                     >
-                      {showJoints ? '▾' : '▸'} 관절별 그래프 ({signals.joints.names.length}축)
+                      ▸ 관절별 그래프 ({signals.joints.names.length}축)
                     </button>
-                    {showJoints && signals.joints.names.map((name, i) => (
-                      <PlotlyChart
-                        key={name}
-                        x={Array.from({ length: signals.frames }, (_, k) => k)}
-                        series={[
-                          { label: `${name} 실측`, color: '#60a5fa', data: signals.joints!.state[i] },
-                          { label: `${name} 지령`, color: '#f59e0b', data: signals.joints!.action[i] },
-                        ]}
-                        markerX={frame}
-                        height={140}
-                        uirevision={`${dsId}/${ep}/j${i}`}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+                  )}
+                </div>
+              )
+            })()}
             </div>
             </div>
           </>

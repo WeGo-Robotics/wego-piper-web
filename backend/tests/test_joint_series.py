@@ -85,10 +85,10 @@ def test_the_joint_charts_start_collapsed():
     """축이 7개라 늘 펼쳐두면 신호 그래프가 화면 밖으로 밀린다."""
     src = _FRONT.read_text()
     assert "episodes-show-joints" in src, "선택을 기억하지 않는다"
-    assert "showJoints && signals.joints.names.map" in src, "접기가 안 걸려 있다"
+    assert "showJoints && signals.joints" in src, "접기가 안 걸려 있다"
 
 
 def test_both_series_are_plotted_per_joint():
     src = _FRONT.read_text()
-    block = src.split("showJoints && signals.joints.names.map", 1)[1][:700]
+    block = src.split("showJoints && signals.joints", 1)[1][:700]
     assert "실측" in block and "지령" in block, "한쪽만 그린다"

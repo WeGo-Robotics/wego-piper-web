@@ -20,13 +20,15 @@ type Props = {
   /** 줌/팬(UI) 유지 키. 값이 같으면 데이터 갱신 시에도 줌 유지, 바뀌면 오토스케일 리셋. */
   uirevision?: string
   yTitle?: string
+  /** 첫 그림이 끝났을 때. 부모가 **순서대로** 다음 그래프를 붙이는 데 쓴다. */
+  onReady?: () => void
 }
 
 /**
  * Plotly 기반 인터랙티브 라인 차트 — 박스 줌(드래그) / 휠 줌 / 팬 / 더블클릭 오토스케일 리셋.
  * 휠 줌은 기본적으로 X·Y 동시 확대. Shift+휠 = X축만, Alt+휠 = Y축만 확대.
  */
-export default function PlotlyChart({ x, series, markerX = null, height = 220, uirevision = 'chart', yTitle }: Props) {
+export default function PlotlyChart({ x, series, markerX = null, height = 220, uirevision = 'chart', yTitle, onReady }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Shift+휠 → X축만, Alt+휠 → Y축만. 수정자 키가 없으면 Plotly 기본(양축) 동작에 맡긴다.
@@ -181,6 +183,7 @@ export default function PlotlyChart({ x, series, markerX = null, height = 220, u
         config={{ scrollZoom: true, displaylogo: false, responsive: true, modeBarButtonsToRemove: ['select2d', 'lasso2d'] }}
         style={{ width: '100%' }}
         useResizeHandler
+        onInitialized={onReady}
       />
     </div>
   )

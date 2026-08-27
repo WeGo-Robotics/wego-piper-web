@@ -147,10 +147,10 @@ def test_the_charts_and_the_video_end_up_in_different_columns():
     src = (_SRC / "pages" / "EpisodesPage.tsx").read_text()
     body = src.split("layout === 'row'", 1)[1]
     cam = body.index("{/* 카메라")
-    chart = body.index("{/* 신호 그래프")
-    between = body[cam:chart]
-    assert between.count("<div className=\"space-y-3\">") >= 1 or "</div>" in between
+    chart = body.index("{/* ── 신호 그래프 ──")
     assert chart > cam, "그래프가 사진보다 앞에 있다"
+    # 사이에서 칸이 갈린다 — 사진 칸을 닫고 시간축 칸을 연다
+    assert "프레임으로 색인되는 것은" in body[cam:chart], "두 칸으로 안 갈린다"
 
 
 def test_the_cameras_always_stack():
