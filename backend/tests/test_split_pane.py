@@ -146,3 +146,30 @@ def test_an_empty_chart_reports_itself():
     body = src.split("가 비어 있습니다", 1)[1][:300]
     for key in ("컨테이너폭", "plotly생성됨", "페이지전체그래프"):
         assert key in body, f"{key} 를 안 알려준다 — 원인 구분이 안 된다"
+
+
+def test_charts_do_not_relayout_while_the_divider_is_dragged():
+    """⚠ **신고의 유력 원인.**
+
+    그래프는 컨테이너 크기를 관찰해 다시 배치하는데, 끄는 동안에는 그게
+    **프레임마다 그래프 수만큼** 일어난다 — 11개면 초당 660번. 무거운 relayout
+    이 밀리면 그리다 만 채로 남는다("그래프가 그려지다 만다").
+
+    끄는 중엔 건너뛰고 놓을 때 한 번만 잰다. 그 사이 잠깐 늘어나 보이지만
+    최종 결과는 같다.
+    """
+    pane = _PANE.read_text()
+    assert "DRAGGING_ATTR" in pane and "isSplitDragging" in pane, "끄는 중 표시가 없다"
+    down = pane.split("onPointerDown", 1)[1].split("onPointerMove", 1)[0]
+    up = pane.split("onPointerUp", 1)[1].split("onDoubleClick", 1)[0]
+    assert "setAttribute(DRAGGING_ATTR" in down, "끌기 시작을 안 알린다"
+    assert "removeAttribute(DRAGGING_ATTR)" in up, "⚠ 안 지우면 그래프가 영영 안 그려진다"
+
+    chart = _CHART.read_text()
+    assert "if (isSplitDragging()) return" in chart, "그래프가 끄는 중에도 다시 그린다"
+
+
+def test_the_flag_is_cleared_before_the_wake_up_event():
+    """⚠ 순서가 뒤집히면 안전망 리사이즈까지 건너뛴다 — 그러면 영영 옛 폭이다."""
+    up = _PANE.read_text().split("onPointerUp", 1)[1].split("onDoubleClick", 1)[0]
+    assert up.index("removeAttribute(DRAGGING_ATTR)") < up.index("new Event('resize')")

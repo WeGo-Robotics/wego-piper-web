@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import createPlotlyComponent from 'react-plotly.js/factory'
 import Plotly from 'plotly.js-dist-min'
 import type { Data, Layout } from 'plotly.js'
+import { isSplitDragging } from './SplitPane'
 
 // dist-min 번들로 Plot 컴포넌트 생성 (소스에서 plotly 빌드 회피)
 const Plot = createPlotlyComponent(Plotly)
@@ -91,6 +92,10 @@ export default function PlotlyChart({ x, series, markerX = null, height = 220, u
       // 리사이즈 중에는 초당 수십 번 온다. 프레임당 한 번으로 묶는다.
       cancelAnimationFrame(raf)
       raf = requestAnimationFrame(() => {
+        // ⚠ 분할바를 끄는 동안은 건너뛴다. 그때는 프레임마다 그래프 수만큼
+        //   relayout 이 걸려(11개면 초당 660번) 밀리면 그리다 만 채로 남는다.
+        //   놓는 순간 `SplitPane` 이 창 리사이즈를 쏘므로 한 번에 맞춰진다.
+        if (isSplitDragging()) return
         const gd = container.querySelector<HTMLElement>('.js-plotly-plot')
         // 폭 0 에서 부르면 Plotly 가 0 크기로 자리를 잡아 버린다 — 기다린다.
         if (gd && container.clientWidth > 0) {

@@ -9,6 +9,21 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * 같은 조건을 CSS 와 JS 가 따로 판단하다 어긋난 전례가 이 화면에 있다.
  */
 
+/**
+ * 끄는 중임을 페이지 전체에 알리는 표시.
+ *
+ * ⚠ 그래프는 컨테이너 크기를 관찰해 매번 다시 배치하는데, 끄는 동안에는 그게
+ * **프레임마다 그래프 수만큼** 일어난다 (11개면 초당 660번). 무거운 relayout 이
+ * 밀리면 그리다 만 채로 남는다 — "그래프가 그려지다 만다" 는 신고가 그 모양이다.
+ *
+ * 끄는 동안은 건너뛰고, 놓을 때 한 번만 제대로 잰다. 끄는 중에는 그래프가 잠깐
+ * 늘어나 보이지만, 그건 원래 최종 결과와 같아진다.
+ */
+export const DRAGGING_ATTR = 'data-split-dragging'
+
+export const isSplitDragging = () =>
+  document.documentElement.hasAttribute(DRAGGING_ATTR)
+
 const MIN_PCT = 20        // 한쪽이 이보다 좁아지면 내용이 읽히지 않는다
 const MAX_PCT = 80
 
@@ -77,11 +92,13 @@ export default function SplitHandle({
         }
         // 끄는 동안 텍스트가 잡히면 커서가 I-빔이 되고 선택이 번진다
         document.body.style.userSelect = 'none'
+        document.documentElement.setAttribute(DRAGGING_ATTR, '')
       }}
       onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) move(e) }}
       onPointerUp={(e) => {
         e.currentTarget.releasePointerCapture(e.pointerId)
         document.body.style.userSelect = ''
+        document.documentElement.removeAttribute(DRAGGING_ATTR)
         onCommit(last.current)   // 여기서 한 번만 상태로 옮긴다
         // ⚠ **안전망.** 각 그래프가 자기 컨테이너를 관찰하고 있지만, 관찰이
         //   어떤 이유로 놓치면 옛 폭 그대로 굳고 되돌아올 계기가 없다.
