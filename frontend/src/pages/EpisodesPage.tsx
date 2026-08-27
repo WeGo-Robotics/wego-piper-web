@@ -924,15 +924,19 @@ export default function EpisodesPage() {
             <div className="flex justify-end">
               <LayoutToggle layout={layout} onChange={switchLayout} />
             </div>
-            {/* 가로 배치에서는 왼쪽에 사진·재생·페이즈 트랙, 오른쪽에 그래프.
-                세로면 예전처럼 위에서 아래로 쌓인다. */}
+            {/* 가로 배치는 **사진 | 시간축** 이다.
+                오른쪽 칸에는 프레임으로 색인되는 것이 전부 들어간다 —
+                진행바·페이즈 트랙·신호 그래프가 같은 x축을 쓴다. */}
             <div className={layout === 'row'
               ? 'grid grid-cols-1 2xl:grid-cols-2 gap-4 items-start' : 'space-y-3'}>
             <div className="space-y-3">
-            {/* 카메라 — 동영상 또는 프레임 캐시 */}
-            <div className="flex gap-3 flex-wrap">
+            {/* 카메라 — 동영상 또는 프레임 캐시.
+                배치 축을 따라간다: 세로면 한 대씩 크게 쌓고, 가로면 나란히. */}
+            <div className={layout === 'row' ? 'flex gap-3 flex-wrap' : 'flex flex-col gap-3'}>
               {cams.map((cam) => (
-                <figure key={cam} className="flex-1 min-w-[240px] max-w-[520px]">
+                <figure key={cam} className={layout === 'row'
+                  ? 'flex-1 min-w-[240px] max-w-[520px]'
+                  : 'w-full max-w-[720px]'}>
                   {videoActive ? (
                     <video
                       ref={(el) => { videoRefs.current[cam] = el as VideoWithRVFC | null }}
@@ -1042,6 +1046,12 @@ export default function EpisodesPage() {
               )}
             </div>
 
+            </div>
+
+            {/* ⚠ 프레임으로 색인되는 것은 **전부 이쪽**이다 — 진행바·페이즈 트랙·
+                신호 그래프가 같은 x축(프레임)을 공유하므로, 사진과 갈라놓으면
+                가로 배치에서 재생헤드가 두 칸에 흩어진다. */}
+            <div className="space-y-3">
             <input
               type="range"
               min={0}
@@ -1178,9 +1188,6 @@ export default function EpisodesPage() {
               </div>
             )}
 
-            </div>
-
-            <div className="space-y-3">
             {/* 신호 그래프 — 재생헤드(markerX) 공유 */}
             {signals && (
               <div className="space-y-2">

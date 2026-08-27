@@ -151,3 +151,25 @@ def test_the_charts_and_the_video_end_up_in_different_columns():
     between = body[cam:chart]
     assert between.count("<div className=\"space-y-3\">") >= 1 or "</div>" in between
     assert chart > cam, "그래프가 사진보다 앞에 있다"
+
+
+def test_the_cameras_follow_the_layout_axis():
+    """세로면 한 대씩 크게 쌓고, 가로면 나란히 — 좁은 칸에 억지로 나란히 두면
+    둘 다 알아볼 수 없게 작아진다."""
+    src = (_SRC / "pages" / "EpisodesPage.tsx").read_text()
+    body = src.split("{/* 카메라 —", 1)[1][:600]
+    assert "flex flex-col gap-3" in body, "세로에서 안 쌓인다"
+    assert "layout === 'row'" in body, "배치를 안 본다"
+
+
+def test_everything_indexed_by_frame_shares_a_column():
+    """⚠ 진행바·페이즈 트랙·신호 그래프는 **같은 x축(프레임)** 을 쓴다.
+
+    사진 쪽에 남겨두면 가로 배치에서 재생헤드가 두 칸에 흩어진다.
+    """
+    src = (_SRC / "pages" / "EpisodesPage.tsx").read_text()
+    right = src.split("프레임으로 색인되는 것은", 1)[1]
+    for marker in ('type="range"', "페이즈 트랙", "신호 그래프"):
+        assert marker in right, f"{marker} 가 시간축 칸에 없다"
+    left = src.split("프레임으로 색인되는 것은", 1)[0]
+    assert 'type="range"' not in left, "진행바가 사진 쪽에 남아 있다"
