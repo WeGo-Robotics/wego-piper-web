@@ -186,13 +186,39 @@ async def get_signals(dataset_id: str, episode: int):
     e = df[df.episode_index == episode]
     if e.empty:
         raise HTTPException(404, f"에피소드 {episode} 신호가 없습니다")
-    return {
+    out = {
         "episode": episode,
         "frames": len(e),
         "speed": e["speed"].round(3).tolist(),
         "gripper_gap": e["gripper_gap"].round(3).tolist(),
         "phase": e["phase"].tolist(),
     }
+    # 말단 속도. 사이드카에 있으면 그대로, 없으면 **즉석 계산**한다 —
+    # 이 신호가 생기기 전에 분석해둔 데이터셋이 여섯 개 있었고, 그것 때문에
+    # 재분석을 강요하면 아무도 안 켠다.
+    tip = (e["tip_speed"].round(4).tolist() if "tip_speed" in e.columns
+           else _tip_speed_now(ds, episode))
+    if tip is not None:
+        out["tip_speed"] = tip
+    return out
+
+
+def _tip_speed_now(ds_path, episode: int) -> list[float] | None:
+    """사이드카에 없는 말단 속도를 데이터셋에서 바로 구한다."""
+    import numpy as np
+
+    try:
+        from piper_phase.labeler import dataset_fps, load_frames, tip_speed
+
+        df = load_frames(ds_path)
+        e = df[df.episode_index == episode]
+        if e.empty:
+            return None
+        v = tip_speed(np.stack(e["observation.state"].to_numpy()), dataset_fps(ds_path))
+        return None if v is None else [round(float(x), 4) for x in v]
+    except Exception as exc:
+        logger.warning("말단 속도 즉석 계산 실패 (%s ep%s): %s", ds_path, episode, exc)
+        return None
 
 
 @router.get("/{dataset_id:path}/status")

@@ -44,7 +44,14 @@ type PhaseSummary = {
   median_cycles: number
   outliers: PhaseOutlier[]
 }
-type Signals = { frames: number; speed: number[]; gripper_gap: number[]; phase: number[] }
+type Signals = {
+  frames: number
+  speed: number[]          // 관절 공간 — 정규화 단위/초
+  gripper_gap: number[]
+  phase: number[]
+  /** 말단 속도 (m/s). URDF 서브모듈이 없으면 안 온다. */
+  tip_speed?: number[]
+}
 
 /** 에피소드의 캠별 비디오 위치 (meta/episodes 의 videos/{key}/* 컬럼) */
 type VideoMeta = { chunk: number; file: number; from: number; to: number }
@@ -1142,13 +1149,28 @@ export default function EpisodesPage() {
             {/* 신호 그래프 — 재생헤드(markerX) 공유 */}
             {signals && (
               <div className="space-y-2">
+                {/* ⚠ 라벨이 `deg/s` 였는데 **도가 아니다.** `observation.state` 는
+                       ±100 정규화 값이라(실측 확인) 이 신호의 단위는 정규화 단위/초다.
+                       임계값을 조정하려는 사람이 "20도/초"로 읽으면 어긋난다. */}
                 <PlotlyChart
                   x={Array.from({ length: signals.frames }, (_, i) => i)}
-                  series={[{ label: '관절 속도 (deg/s)', color: '#60a5fa', data: signals.speed }]}
+                  series={[{ label: '관절 속도 (정규화 단위/s)', color: '#60a5fa', data: signals.speed }]}
                   markerX={frame}
                   height={160}
                   uirevision={`${dsId}/${ep}/speed`}
                 />
+                {/* 말단 속도 — 관절 속도와 **다른 것을 본다.** 관절 쪽은 어깨 1도와
+                    손목 1도를 같게 세지만, 말단이 실제로 움직인 거리는 크게 다르다.
+                    URDF(vendor/agx_arm_urdf)로 FK 해서 m/s 로 낸다. */}
+                {signals.tip_speed && (
+                  <PlotlyChart
+                    x={Array.from({ length: signals.frames }, (_, i) => i)}
+                    series={[{ label: '말단 속도 (m/s)', color: '#34d399', data: signals.tip_speed }]}
+                    markerX={frame}
+                    height={160}
+                    uirevision={`${dsId}/${ep}/tip`}
+                  />
+                )}
                 <PlotlyChart
                   x={Array.from({ length: signals.frames }, (_, i) => i)}
                   series={[{ label: '그리퍼 지령-실측 갭', color: '#f472b6', data: signals.gripper_gap }]}

@@ -42,6 +42,19 @@ SIGNALS_FILE = "phase_signals.parquet"
 SIDECAR_VERSION = 1
 
 
+def tip_speed(state, fps: float):
+    """말단 속도(m/s). URDF 를 못 읽으면 `None` — 페이즈 분석은 계속돼야 한다."""
+    from . import kinematics as K
+
+    if not K.available():
+        return None
+    try:
+        return K.endpoint_speed(state, fps)
+    except Exception as exc:      # 축 수가 안 맞는 팔 등
+        logger.warning("말단 속도 계산 실패: %s", exc)
+        return None
+
+
 def sidecar_paths(ds_path: Path) -> tuple[Path, Path]:
     meta = ds_path / "meta"
     return meta / LABELS_FILE, meta / SIGNALS_FILE
@@ -110,13 +123,19 @@ def analyze(
             "edited_by": "auto",
             "note": "",
         }
-        signal_rows.append(pd.DataFrame({
+        row = {
             "episode_index": np.int32(ep),
             "frame_index": np.arange(len(phases), dtype=np.int32),
             "speed": sig.speed.astype(np.float32),
             "gripper_gap": sig.gripper_gap.astype(np.float32),
             "phase": phases.astype(np.int8),
-        }))
+        }
+        # 말단 속도(m/s). ⚠ `speed` 와 **다른 물건**이다 — 저쪽은 관절 공간이라
+        # 어깨 1도와 손목 1도를 같게 센다. URDF 서브모듈이 없으면 그냥 빠진다.
+        tip = tip_speed(state, p.fps)
+        if tip is not None:
+            row["tip_speed"] = tip.astype(np.float32)
+        signal_rows.append(pd.DataFrame(row))
 
     return {
         "version": SIDECAR_VERSION,

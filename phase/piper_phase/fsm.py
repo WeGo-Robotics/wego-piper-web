@@ -51,8 +51,13 @@ class Params:
     """임계값. 로봇·태스크마다 다르므로 전부 밖으로 뺀다."""
 
     fps: float = 15.0
-    still_speed: float = 2.0      # deg/s 이하 = 정지
-    moving_speed: float = 20.0    # deg/s 초과 = 이동 중
+    # ⚠ 단위는 **정규화 단위/초** 다. `deg/s` 라고 적혀 있었는데 도가 아니다 —
+    #   `observation.state` 는 ±100 정규화 값이다(실측: 관절별 범위가 ±100 에서
+    #   잘린다). 값 자체는 같은 단위로 튜닝돼 있어 동작은 맞지만, 조정하려는
+    #   사람이 "20도/초"로 읽으면 어긋난다.
+    #   도(°) 나 m/s 로 보고 싶으면 `kinematics.endpoint_speed` 쪽이다.
+    still_speed: float = 2.0      # 이하 = 정지
+    moving_speed: float = 20.0    # 초과 = 이동 중
     align_speed: float = 12.0     # 이하로 감속하면 미세 접근
     hold_gap: float = -15.0       # 지령-실측 갭이 이보다 작으면 물체가 물려 있다
     hold_cmd_max: float = 20.0    # 그 때 지령은 거의 닫힘이어야 한다
@@ -75,7 +80,7 @@ class Params:
 class Signals:
     """프레임별 신호. 전부 parquet 만으로 계산된다 (손목 변화율 제외)."""
 
-    speed: np.ndarray            # 관절 속도 (deg/s)
+    speed: np.ndarray            # 관절 속도 (정규화 단위/초 — 위 주석 참고)
     gripper_gap: np.ndarray      # action[6] - state[6]
     gripper_cmd: np.ndarray
     gripper_state: np.ndarray
