@@ -132,3 +132,17 @@ def test_a_failed_resize_is_reported():
     src = _CHART.read_text()
     body = src.split("Plots.resize", 1)[1][:400]
     assert "console.warn" in body, "실패를 삼킨다"
+
+
+def test_an_empty_chart_reports_itself():
+    """⚠ "그래프 몇 개가 안 보인다" 를 어느 조건에서도 재현하지 못했다 —
+    원격 주소·GPU·같은 뷰포트까지 맞춰 헤드리스로 11/11 이었다.
+
+    재현이 안 되면 화면이 대신 말해줘야 한다. **콘솔에 아무것도 안 뜨는 것**이
+    지금 원인 추적의 가장 큰 벽이다.
+    """
+    src = _CHART.read_text()
+    assert "가 비어 있습니다" in src, "빈 그래프가 조용히 넘어간다"
+    body = src.split("가 비어 있습니다", 1)[1][:300]
+    for key in ("컨테이너폭", "plotly생성됨", "페이지전체그래프"):
+        assert key in body, f"{key} 를 안 알려준다 — 원인 구분이 안 된다"

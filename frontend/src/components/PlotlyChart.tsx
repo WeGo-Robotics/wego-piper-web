@@ -109,6 +109,28 @@ export default function PlotlyChart({ x, series, markerX = null, height = 220, u
     return () => { cancelAnimationFrame(raf); ro.disconnect() }
   }, [])
 
+  // ⚠ **안 그려졌으면 스스로 신고한다.**
+  //
+  //   "그래프 몇 개가 안 보인다" 는 신고를 어느 조건에서도 재현하지 못했다
+  //   (헤드리스로 원격 주소·GPU·같은 뷰포트까지 맞춰 11/11). 재현이 안 되면
+  //   화면이 대신 말해줘야 한다 — 콘솔에 아무것도 안 뜨는 것이 지금 가장 큰 벽이다.
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const id = setTimeout(() => {
+      const gd = container.querySelector<HTMLElement>('.js-plotly-plot')
+      const traces = gd?.querySelectorAll('.scatterlayer .trace').length ?? 0
+      if (traces > 0) return
+      const all = document.querySelectorAll('.js-plotly-plot').length
+      console.warn(
+        `[PlotlyChart] "${series[0]?.label ?? '?'}" 가 비어 있습니다 —`,
+        { 컨테이너폭: container.clientWidth, plotly생성됨: !!gd,
+          점수: series[0]?.data.length ?? 0, 페이지전체그래프: all },
+      )
+    }, 1500)
+    return () => clearTimeout(id)
+  }, [series])
+
   const data = useMemo<Data[]>(
     () =>
       series.map((s) => ({
