@@ -193,32 +193,84 @@ async def get_signals(dataset_id: str, episode: int):
         "gripper_gap": e["gripper_gap"].round(3).tolist(),
         "phase": e["phase"].tolist(),
     }
-    # 말단 속도. 사이드카에 있으면 그대로, 없으면 **즉석 계산**한다 —
-    # 이 신호가 생기기 전에 분석해둔 데이터셋이 여섯 개 있었고, 그것 때문에
-    # 재분석을 강요하면 아무도 안 켠다.
-    tip = (e["tip_speed"].round(4).tolist() if "tip_speed" in e.columns
-           else _tip_speed_now(ds, episode))
-    if tip is not None:
-        out["tip_speed"] = tip
+    # 사이드카에 없는 것은 데이터셋에서 바로 읽는다. **한 번만 읽고 나눠 쓴다** —
+    # 관절 그래프와 말단 속도가 같은 프레임을 보므로 두 번 읽을 이유가 없다.
+    need_tip = "tip_speed" not in e.columns
+    frames = _episode_frames(ds, episode)
+
+    if not need_tip:
+        out["tip_speed"] = e["tip_speed"].round(4).tolist()
+    elif frames is not None:
+        # 이 신호가 생기기 전에 분석해둔 데이터셋 때문에 재분석을 강요하면
+        # 아무도 안 켠다 — 즉석 계산으로 메운다.
+        tip = _tip_speed_now(ds, frames)
+        if tip is not None:
+            out["tip_speed"] = tip
+
+    if frames is not None:
+        out["joints"] = _joint_series(frames)
     return out
 
 
-def _tip_speed_now(ds_path, episode: int) -> list[float] | None:
+def _episode_frames(ds_path, episode: int):
+    """이 에피소드의 `observation.state` / `action` 만 읽는다.
+
+    ⚠ `labeler.load_frames` 는 데이터셋 **전체**를 읽는다. 에피소드를 고를 때마다
+    부르는 자리라 필요한 열만, 필요한 행만 가져온다.
+    """
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    cols = ["episode_index", "observation.state", "action"]
+    try:
+        parts = []
+        for f in sorted((ds_path / "data").rglob("*.parquet")):
+            t = pq.read_table(f, columns=cols).to_pandas()
+            sel = t[t.episode_index == episode]
+            if not sel.empty:
+                parts.append(sel)
+        return pd.concat(parts, ignore_index=True) if parts else None
+    except Exception as exc:
+        logger.warning("에피소드 프레임 읽기 실패 (%s ep%s): %s", ds_path, episode, exc)
+        return None
+
+
+def _tip_speed_now(ds_path, frames) -> list[float] | None:
     """사이드카에 없는 말단 속도를 데이터셋에서 바로 구한다."""
     import numpy as np
 
     try:
-        from piper_phase.labeler import dataset_fps, load_frames, tip_speed
+        from piper_phase.labeler import dataset_fps, tip_speed
 
-        df = load_frames(ds_path)
-        e = df[df.episode_index == episode]
-        if e.empty:
-            return None
-        v = tip_speed(np.stack(e["observation.state"].to_numpy()), dataset_fps(ds_path))
+        v = tip_speed(np.stack(frames["observation.state"].to_numpy()),
+                      dataset_fps(ds_path))
         return None if v is None else [round(float(x), 4) for x in v]
     except Exception as exc:
-        logger.warning("말단 속도 즉석 계산 실패 (%s ep%s): %s", ds_path, episode, exc)
+        logger.warning("말단 속도 즉석 계산 실패 (%s): %s", ds_path, exc)
         return None
+
+
+def _joint_series(frames) -> dict:
+    """관절별 실측·지령. 그래프가 축마다 하나씩 그린다.
+
+    ⚠ 실측만 그리면 **추종 오차가 안 보인다.** 그리퍼 갭 그래프가 지령과 실측을
+    같이 보여주는 것과 같은 이유다 — 물체에 막혀 못 따라가는 것이 거기서 보인다.
+    """
+    import numpy as np
+
+    from piper_phase.fsm import GRIPPER_IDX
+
+    st = np.stack(frames["observation.state"].to_numpy())
+    ac = np.stack(frames["action"].to_numpy())
+    width = min(st.shape[1], ac.shape[1])
+    names = [f"joint{i + 1}" for i in range(width)]
+    if width > GRIPPER_IDX:
+        names[GRIPPER_IDX] = "gripper"      # 마지막 채널은 관절이 아니다
+    return {
+        "names": names,
+        "state": [np.round(st[:, i], 2).tolist() for i in range(width)],
+        "action": [np.round(ac[:, i], 2).tolist() for i in range(width)],
+    }
 
 
 @router.get("/{dataset_id:path}/status")

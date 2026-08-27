@@ -51,6 +51,8 @@ type Signals = {
   phase: number[]
   /** 말단 속도 (m/s). URDF 서브모듈이 없으면 안 온다. */
   tip_speed?: number[]
+  /** 관절별 실측·지령 (정규화 단위). 축 순서는 `names` 가 정한다. */
+  joints?: { names: string[]; state: number[][]; action: number[][] }
 }
 
 /** 에피소드의 캠별 비디오 위치 (meta/episodes 의 videos/{key}/* 컬럼) */
@@ -104,6 +106,10 @@ export default function EpisodesPage() {
   const [frame, setFrame] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [viewMode, setViewMode] = useState<'video' | 'frames'>('video')
+  // ⚠ 관절 그래프는 축마다 하나씩 = 7개다. 늘 펼쳐두면 신호 그래프가 화면
+  //   밖으로 밀려난다 — 기본은 접고, 선택은 기억한다.
+  const [showJoints, setShowJoints] = useState(
+    () => localStorage.getItem('episodes-show-joints') === '1')
   const [videoError, setVideoError] = useState(false)
   const [cacheMissing, setCacheMissing] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
@@ -1190,6 +1196,37 @@ export default function EpisodesPage() {
                   height={160}
                   uirevision={`${dsId}/${ep}/gap`}
                 />
+
+                {/* 관절별 그래프 — 축마다 하나. 실측과 지령을 겹쳐 그린다:
+                    ⚠ 실측만 보면 **추종 오차가 안 보인다.** 물체에 막혀 못
+                    따라가는 구간이 두 선의 벌어짐으로 드러난다. */}
+                {signals.joints && (
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => {
+                        const next = !showJoints
+                        setShowJoints(next)
+                        localStorage.setItem('episodes-show-joints', next ? '1' : '0')
+                      }}
+                      className="text-xs text-neutral-400 hover:text-neutral-200"
+                    >
+                      {showJoints ? '▾' : '▸'} 관절별 그래프 ({signals.joints.names.length}축)
+                    </button>
+                    {showJoints && signals.joints.names.map((name, i) => (
+                      <PlotlyChart
+                        key={name}
+                        x={Array.from({ length: signals.frames }, (_, k) => k)}
+                        series={[
+                          { label: `${name} 실측`, color: '#60a5fa', data: signals.joints!.state[i] },
+                          { label: `${name} 지령`, color: '#f59e0b', data: signals.joints!.action[i] },
+                        ]}
+                        markerX={frame}
+                        height={140}
+                        uirevision={`${dsId}/${ep}/j${i}`}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </>
