@@ -76,6 +76,32 @@ export default function PlotlyChart({ x, series, markerX = null, height = 220, u
     [series],
   )
 
+  // ⚠ **컨테이너 크기를 직접 관찰한다.**
+  //
+  //   Plotly 의 `responsive` 와 `useResizeHandler` 는 **창 리사이즈 이벤트**만
+  //   듣는다. 좌우 분할바를 끌면 컨테이너 폭만 바뀌고 그 이벤트는 안 나므로
+  //   Plotly 는 옛 픽셀 폭 그대로 남는다. 폭이 한 번이라도 0 으로 잡히면 아무것도
+  //   안 그린 채 굳고, 되돌아올 계기도 없다 — 그래프가 사라져 보이던 원인이다.
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container || typeof ResizeObserver === 'undefined') return
+
+    let raf = 0
+    const ro = new ResizeObserver(() => {
+      // 리사이즈 중에는 초당 수십 번 온다. 프레임당 한 번으로 묶는다.
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        const gd = container.querySelector<HTMLElement>('.js-plotly-plot')
+        // 폭 0 에서 부르면 Plotly 가 0 크기로 자리를 잡아 버린다 — 기다린다.
+        if (gd && container.clientWidth > 0) {
+          try { (Plotly as any).Plots.resize(gd) } catch { /* 아직 안 그려짐 */ }
+        }
+      })
+    })
+    ro.observe(container)
+    return () => { cancelAnimationFrame(raf); ro.disconnect() }
+  }, [])
+
   const data = useMemo<Data[]>(
     () =>
       series.map((s) => ({

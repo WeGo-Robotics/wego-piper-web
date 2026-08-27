@@ -942,9 +942,12 @@ export default function EpisodesPage() {
               //   좁은 화면에서 접히지 않고 두 칸이 찌그러진 채 남는다 —
               //   카메라 배치에서 똑같이 어긋났던 자리다.
               className={splitOn ? 'flex items-start' : 'space-y-3'}
+              // 폭은 CSS 변수로 전달한다 — 끄는 동안 핸들이 이 값만 바꾸므로
+              // 그래프가 매 프레임 다시 그려지지 않는다 (`SplitPane` 주석).
+              style={splitOn ? ({ '--split': `${split.pct}%` } as React.CSSProperties) : undefined}
             >
             <div className={splitOn ? 'space-y-3 min-w-0' : 'space-y-3'}
-                 style={splitOn ? { width: `${split.pct}%` } : undefined}>
+                 style={splitOn ? { width: 'var(--split)' } : undefined}>
             {/* 카메라 — 동영상 또는 프레임 캐시. **항상 세로로 쌓는다.**
 
                 배치 토글과 무관하다. 가로 배치에서도 사진 칸은 세로로 길고, 거기에
@@ -1067,8 +1070,7 @@ export default function EpisodesPage() {
             {splitOn && (
               <SplitHandle
                 containerRef={splitRef}
-                onDrag={split.setPct}
-                onCommit={split.commit}
+                onCommit={(pct) => { split.setPct(pct); split.commit(pct) }}
                 onReset={split.reset}
               />
             )}

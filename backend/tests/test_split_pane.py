@@ -64,3 +64,43 @@ def test_the_drag_releases_the_text_selection_lock():
 def test_there_is_a_way_back_to_even():
     """끌어서 망가뜨렸을 때 되돌릴 길이 있어야 한다."""
     assert "onDoubleClick={onReset}" in _PANE.read_text()
+
+
+# ── 리사이즈·드래그에 그래프가 사라지던 문제 ────────────────────────────────
+
+_CHART = Path(__file__).resolve().parents[2] / "frontend" / "src" / "components" / "PlotlyChart.tsx"
+
+
+def test_the_chart_watches_its_container_not_just_the_window():
+    """⚠ Plotly 의 `responsive` 는 **창 리사이즈 이벤트**만 듣는다.
+
+    분할바를 끌면 컨테이너 폭만 바뀌고 그 이벤트는 안 난다 — Plotly 는 옛 픽셀
+    폭 그대로 남고, 한 번이라도 폭 0 으로 잡히면 빈 채로 굳는다. 그래프가
+    사라져 보이던 원인이다.
+    """
+    src = _CHART.read_text()
+    assert "ResizeObserver" in src, "컨테이너를 안 본다"
+    assert "Plots.resize" in src, "관찰만 하고 다시 그리지 않는다"
+
+
+def test_resizing_is_batched_and_skips_zero_width():
+    """리사이즈 중에는 초당 수십 번 온다. 그리고 폭 0 에서 부르면 Plotly 가
+    0 크기로 자리를 잡아 버린다."""
+    src = _CHART.read_text()
+    body = src.split("new ResizeObserver", 1)[1].split("ro.observe", 1)[0]
+    assert "requestAnimationFrame" in body and "cancelAnimationFrame" in body, "묶지 않는다"
+    assert "clientWidth > 0" in body, "폭 0 에서도 부른다"
+
+
+def test_dragging_does_not_re_render_the_page():
+    """⚠ 폭을 상태로 두면 포인터 이벤트마다 페이지가 다시 그려지고, 그래프
+    열 몇 개가 매 프레임 재생성된다 — 무겁고, 그리는 도중 폭이 0 으로 잡히면
+    빈 채로 굳는다."""
+    pane = _PANE.read_text()
+    move = pane.split("const move = ", 1)[1].split("return (", 1)[0]
+    assert "setProperty('--split'" in move, "CSS 변수로 안 쓴다"
+    assert "onDrag" not in pane, "끌면서 상태를 올린다"
+
+    page = _PAGE.read_text()
+    assert "'--split'" in page, "페이지가 CSS 변수를 안 받는다"
+    assert "width: 'var(--split)'" in page, "폭이 변수에 안 묶였다"

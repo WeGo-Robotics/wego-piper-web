@@ -37,21 +37,28 @@ export function useSplit(key: string, initial = 50) {
 }
 
 export default function SplitHandle({
-  onDrag, onCommit, onReset, containerRef,
+  onCommit, onReset, containerRef,
 }: {
-  onDrag: (pct: number) => void
   onCommit: (pct: number) => void
   onReset: () => void
   containerRef: React.RefObject<HTMLDivElement | null>
 }) {
   const last = useRef(50)
 
+  /**
+   * ⚠ **끄는 동안 React 상태를 건드리지 않는다.**
+   *
+   * 폭을 상태로 두면 포인터 이벤트마다 페이지가 다시 그려지고, 그 안의 그래프
+   * 열 몇 개가 매 프레임 재생성된다 — 무겁고, 그리는 도중 폭이 0 으로 잡히면
+   * 빈 채로 굳는다. 대신 CSS 변수만 직접 쓰고, 상태는 **놓을 때** 한 번 맞춘다.
+   */
   const move = (e: React.PointerEvent) => {
-    const box = containerRef.current?.getBoundingClientRect()
-    if (!box || box.width === 0) return
+    const el = containerRef.current
+    const box = el?.getBoundingClientRect()
+    if (!el || !box || box.width === 0) return
     const pct = Math.min(MAX_PCT, Math.max(MIN_PCT, ((e.clientX - box.left) / box.width) * 100))
     last.current = pct
-    onDrag(pct)
+    el.style.setProperty('--split', `${pct}%`)
   }
 
   return (
@@ -68,7 +75,7 @@ export default function SplitHandle({
       onPointerUp={(e) => {
         e.currentTarget.releasePointerCapture(e.pointerId)
         document.body.style.userSelect = ''
-        onCommit(last.current)
+        onCommit(last.current)   // 여기서 한 번만 상태로 옮긴다
       }}
       onDoubleClick={onReset}
       className="group relative w-2 shrink-0 cursor-col-resize self-stretch"
