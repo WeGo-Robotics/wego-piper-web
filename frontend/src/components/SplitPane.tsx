@@ -68,6 +68,13 @@ export default function SplitHandle({
       title="끌어서 폭 조절 · 더블클릭으로 반반"
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId)
+        // ⚠ 지금 폭에서 시작한다. 안 그러면 **움직이지 않고 누르기만 해도**
+        //   초기값(50%)이 커밋돼 배치가 튄다 — 눌렀다 뗀 것뿐인데.
+        const box = containerRef.current?.getBoundingClientRect()
+        const handle = e.currentTarget.getBoundingClientRect()
+        if (box && box.width > 0) {
+          last.current = ((handle.left + handle.width / 2 - box.left) / box.width) * 100
+        }
         // 끄는 동안 텍스트가 잡히면 커서가 I-빔이 되고 선택이 번진다
         document.body.style.userSelect = 'none'
       }}
@@ -76,6 +83,11 @@ export default function SplitHandle({
         e.currentTarget.releasePointerCapture(e.pointerId)
         document.body.style.userSelect = ''
         onCommit(last.current)   // 여기서 한 번만 상태로 옮긴다
+        // ⚠ **안전망.** 각 그래프가 자기 컨테이너를 관찰하고 있지만, 관찰이
+        //   어떤 이유로 놓치면 옛 폭 그대로 굳고 되돌아올 계기가 없다.
+        //   창 리사이즈 이벤트는 Plotly 자신의 `responsive` 경로를 깨우므로,
+        //   놓는 순간 한 번 쏴서 전부 다시 재게 한다. 비용은 그 한 번뿐이다.
+        requestAnimationFrame(() => window.dispatchEvent(new Event('resize')))
       }}
       onDoubleClick={onReset}
       className="group relative w-2 shrink-0 cursor-col-resize self-stretch"

@@ -94,7 +94,14 @@ export default function PlotlyChart({ x, series, markerX = null, height = 220, u
         const gd = container.querySelector<HTMLElement>('.js-plotly-plot')
         // 폭 0 에서 부르면 Plotly 가 0 크기로 자리를 잡아 버린다 — 기다린다.
         if (gd && container.clientWidth > 0) {
-          try { (Plotly as any).Plots.resize(gd) } catch { /* 아직 안 그려짐 */ }
+          try {
+            ;(Plotly as any).Plots.resize(gd)
+          } catch (err) {
+            // ⚠ 조용히 삼키면 **그래프가 안 그려진 이유가 어디에도 안 남는다.**
+            //   여기서 실패하면 그 그래프는 옛 폭 그대로 굳는데, 사용자는
+            //   원인을 볼 방법이 없다. 한 번은 남긴다.
+            console.warn('[PlotlyChart] resize 실패 — 그래프가 옛 크기로 남습니다', err)
+          }
         }
       })
     })

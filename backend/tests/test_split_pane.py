@@ -104,3 +104,31 @@ def test_dragging_does_not_re_render_the_page():
     page = _PAGE.read_text()
     assert "'--split'" in page, "페이지가 CSS 변수를 안 받는다"
     assert "width: 'var(--split)'" in page, "폭이 변수에 안 묶였다"
+
+
+def test_pressing_without_moving_keeps_the_current_width():
+    """⚠ 커밋 값이 초기값(50%)에서 시작하면 **누르기만 해도** 배치가 튄다.
+
+    끌 생각 없이 손잡이를 건드린 것뿐인데 폭이 돌아가 버린다.
+    """
+    src = _PANE.read_text()
+    down = src.split("onPointerDown", 1)[1].split("onPointerMove", 1)[0]
+    assert "last.current =" in down, "지금 폭에서 시작하지 않는다"
+
+
+def test_releasing_wakes_plotly_even_if_the_observer_missed_it():
+    """⚠ 관찰이 어떤 이유로든 놓치면 그래프가 옛 폭으로 굳고 **되돌아올 계기가 없다.**
+
+    창 리사이즈 이벤트는 Plotly 자신의 `responsive` 경로를 깨우므로, 놓는 순간
+    한 번 쏴서 안전망을 둔다.
+    """
+    src = _PANE.read_text()
+    up = src.split("onPointerUp", 1)[1].split("onDoubleClick", 1)[0]
+    assert "new Event('resize')" in up, "안전망이 없다"
+
+
+def test_a_failed_resize_is_reported():
+    """조용히 삼키면 **그래프가 안 그려진 이유가 어디에도 안 남는다.**"""
+    src = _CHART.read_text()
+    body = src.split("Plots.resize", 1)[1][:400]
+    assert "console.warn" in body, "실패를 삼킨다"
