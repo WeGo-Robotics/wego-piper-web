@@ -19,6 +19,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../services/api'
+import LayoutToggle, { useLayout } from '../components/LayoutToggle'
 import { useSystemMessage } from '../components/SystemMessages'
 import PlotlyChart from '../components/PlotlyChart'
 import type { BakedInfo, Dataset, DatasetDetail } from '../types/models'
@@ -107,6 +108,9 @@ export default function EpisodesPage() {
   const [signals, setSignals] = useState<Signals | null>(null)
   const [frame, setFrame] = useState(0)
   const [playing, setPlaying] = useState(false)
+  // ⚠ 에피소드 목록(왼쪽)은 이 선택과 무관하다 — 목록은 늘 옆에 붙어 있어야
+  //   J/K 로 오가며 비교할 수 있다. 바뀌는 것은 **사진과 그래프의 관계**뿐이다.
+  const { layout, switchLayout } = useLayout('episodes')
   const [viewMode, setViewMode] = useState<'video' | 'frames'>('video')
   // ⚠ 관절 그래프는 축마다 하나씩 = 7개다. 늘 펼쳐두면 신호 그래프가 화면
   //   밖으로 밀려난다 — 기본은 접고, 선택은 기억한다.
@@ -917,6 +921,14 @@ export default function EpisodesPage() {
           </div>
         ) : (
           <>
+            <div className="flex justify-end">
+              <LayoutToggle layout={layout} onChange={switchLayout} />
+            </div>
+            {/* 가로 배치에서는 왼쪽에 사진·재생·페이즈 트랙, 오른쪽에 그래프.
+                세로면 예전처럼 위에서 아래로 쌓인다. */}
+            <div className={layout === 'row'
+              ? 'grid grid-cols-1 2xl:grid-cols-2 gap-4 items-start' : 'space-y-3'}>
+            <div className="space-y-3">
             {/* 카메라 — 동영상 또는 프레임 캐시 */}
             <div className="flex gap-3 flex-wrap">
               {cams.map((cam) => (
@@ -1166,6 +1178,9 @@ export default function EpisodesPage() {
               </div>
             )}
 
+            </div>
+
+            <div className="space-y-3">
             {/* 신호 그래프 — 재생헤드(markerX) 공유 */}
             {signals && (
               <div className="space-y-2">
@@ -1244,6 +1259,8 @@ export default function EpisodesPage() {
                 )}
               </div>
             )}
+            </div>
+            </div>
           </>
         )}
       </main>

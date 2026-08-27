@@ -121,3 +121,33 @@ def test_the_preview_row_scrolls_instead_of_shrinking_to_nothing():
     src = code_only((_SRC / "components" / "RecordPreview.tsx").read_text())
     assert "min-w-[" in src, "최소 폭이 없어 무한정 납작해진다"
     assert "overflow-x-auto" in src, "최소 폭을 넘으면 잘려서 안 보인다"
+
+
+def test_the_episode_viewer_can_switch_layout():
+    """사진과 그래프 중 무엇을 넓게 볼지는 그때 사정이 정한다 —
+    프레임을 뜯어볼 때와 신호를 훑을 때가 다르다."""
+    src = (_SRC / "pages" / "EpisodesPage.tsx").read_text()
+    assert "LayoutToggle" in src, "공용 토글을 안 쓴다"
+    assert "useLayout('episodes')" in src, "저장 키가 페이지별로 안 갈린다"
+    assert "layout === 'row'" in src, "배치가 안 바뀐다"
+
+
+def test_the_episode_list_is_not_part_of_the_switch():
+    """⚠ 목록은 늘 옆에 붙어 있어야 한다 — J/K 로 오가며 비교하는 화면이다.
+
+    바뀌는 것은 **사진과 그래프의 관계**뿐이다.
+    """
+    src = (_SRC / "pages" / "EpisodesPage.tsx").read_text()
+    aside = src.split("<aside", 1)[1].split("</aside>", 1)[0]
+    assert "layout" not in aside, "목록이 배치 선택에 딸려간다"
+
+
+def test_the_charts_and_the_video_end_up_in_different_columns():
+    """가로 배치의 요점이다 — 둘이 같은 칸에 들어가면 넓어지지 않는다."""
+    src = (_SRC / "pages" / "EpisodesPage.tsx").read_text()
+    body = src.split("layout === 'row'", 1)[1]
+    cam = body.index("{/* 카메라")
+    chart = body.index("{/* 신호 그래프")
+    between = body[cam:chart]
+    assert between.count("<div className=\"space-y-3\">") >= 1 or "</div>" in between
+    assert chart > cam, "그래프가 사진보다 앞에 있다"
