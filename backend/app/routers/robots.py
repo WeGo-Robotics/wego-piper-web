@@ -619,6 +619,9 @@ async def end_pose(iface: str):
 class RelayStartRequest(BaseModel):
     leader: str
     follower: str
+    #: `joint` = 관절 복제 (안전 필터를 탄다)
+    #: `pose`  = 리더 말단 6D 를 FK 로 읽어 팔로워를 MoveP 로 (필터를 **안** 탄다)
+    mode: str = "joint"
 
 
 @router.post("/relay/start")
@@ -627,6 +630,14 @@ async def relay_start(body: RelayStartRequest):
 
     ⚠ 리더에게는 **아무것도 안 보낸다** — 읽기만 한다. 마스터는 외부 명령을
     무시하므로 보낼 이유도 없다.
+
+    모드는 둘이다:
+
+      `joint`  리더 관절을 그대로 복제한다. robotd 의 안전 필터를 탄다.
+      `pose`   리더 말단 6D 를 **FK 로** 구해(마스터 팔은 자기 말단 자세를 안
+               알려준다) 팔로워에 MoveP 로 준다. 관절을 팔의 온보드 IK 가
+               정하므로 **관절 안전 필터가 안 걸린다** — 막는 것은 전부
+               `relay._send_pose` 에 있다.
     """
     from app.services.exclusivity import Activity, require_idle
     from app.services.relay import RelayError, relay_session
@@ -641,7 +652,7 @@ async def relay_start(body: RelayStartRequest):
             409, f"{body.leader} 는 리더가 아닙니다 — [찾기] 로 판별하거나 "
                  "마스터로 설정하세요")
     try:
-        relay_session.start(body.leader, body.follower)
+        relay_session.start(body.leader, body.follower, body.mode)
     except RelayError as e:
         raise HTTPException(409, str(e))
     return {"status": "started", **relay_session.status()}

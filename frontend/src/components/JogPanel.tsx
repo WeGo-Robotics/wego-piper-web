@@ -39,6 +39,10 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
   // 시작 자세. **슬라이더의 출발점**이라, 0 이면 첫 조작에 팔이 튄다.
   const [joints, setJoints] = useState<number[]>([])
   const [relaying, setRelaying] = useState(false)
+  // 릴레이 모드. **기본은 관절 복제** — 그쪽만 안전 필터를 탄다.
+  const [relayMode, setRelayMode] = useState<'joint' | 'pose'>('joint')
+  // POSE 모드가 왜 안 보내고 있나 (짐벌락·작업공간 밖·바닥·과속). 서버가 알려준다.
+  const [relayBlocked, setRelayBlocked] = useState('')
   const relayingRef = useRef(false)
   relayingRef.current = relaying
   const [busy, setBusy] = useState(false)
@@ -70,6 +74,21 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
     const id = setInterval(read, 1500)
     return () => { alive = false; clearInterval(id) }
   }, [iface])
+
+  // POSE 모드는 조건이 안 맞으면 **말없이 안 보낸다** — 이유를 화면에 내야
+  // 사용자가 "릴레이가 고장났다"고 읽지 않는다.
+  useEffect(() => {
+    if (!relaying) { setRelayBlocked(''); return }
+    let alive = true
+    const read = () => {
+      api.get<{ mode: string; blocked: string }>('/robots/relay/status')
+        .then((r) => { if (alive) setRelayBlocked(r.blocked || '') })
+        .catch(() => {})
+    }
+    read()
+    const id = setInterval(read, 700)
+    return () => { alive = false; clearInterval(id) }
+  }, [relaying])
 
   // 조그를 안 켠 동안에도 현재 자세를 읽어 슬라이더를 맞춰 둔다 —
   // 켜자마자 슬라이더가 엉뚱한 데 있으면 첫 조작이 큰 이동이 된다.
@@ -130,7 +149,7 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
     if (!leader) return
     setBusy(true)
     try {
-      await api.post('/robots/relay/start', { leader, follower: iface })
+      await api.post('/robots/relay/start', { leader, follower: iface, mode: relayMode })
       setRelaying(true)
     } catch (e) { fail(e, '릴레이를 시작하지 못했습니다') }
     finally { setBusy(false) }
@@ -173,17 +192,55 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
       {/* 리더 릴레이 — 같은 명령 경로를 쓰므로 조그와 **동시에 못 켠다**.
           백엔드의 teleop 세션이 그걸 지키고, 여기서는 서로 가려 둔다. */}
       {leader && (
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs text-neutral-400">
-            {leader} 로 조종
-            {relaying && <span className="ml-2 text-amber-400">· 따라가는 중</span>}
-          </span>
-          <button onClick={relaying ? stopRelay : startRelay} disabled={busy || running}
-            title={running ? '조그를 먼저 끝내세요' : undefined}
-            className={`px-2 py-1 text-xs rounded text-white disabled:opacity-50 ${
-              relaying ? 'bg-red-600 hover:bg-red-500' : 'bg-purple-700 hover:bg-purple-600'}`}>
-            {relaying ? '릴레이 끝내기' : '리더로 조종'}
-          </button>
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-neutral-400">
+              {leader} 로 조종
+              {relaying && <span className="ml-2 text-amber-400">· 따라가는 중</span>}
+            </span>
+            <button onClick={relaying ? stopRelay : startRelay} disabled={busy || running}
+              title={running ? '조그를 먼저 끝내세요' : undefined}
+              className={`px-2 py-1 text-xs rounded text-white disabled:opacity-50 ${
+                relaying ? 'bg-red-600 hover:bg-red-500' : 'bg-purple-700 hover:bg-purple-600'}`}>
+              {relaying ? '릴레이 끝내기' : '리더로 조종'}
+            </button>
+          </div>
+
+          {/* 모드는 시작 전에만 고른다 — 도는 중에 바꾸면 팔이 관절 모드와
+              MoveP 사이에서 한 번 튄다. */}
+          <div className="flex items-center gap-1">
+            {([['joint', '관절 복제'], ['pose', '6D 자세']] as const).map(([m, label]) => (
+              <button key={m} onClick={() => setRelayMode(m)} disabled={relaying || busy}
+                className={`px-2 py-0.5 text-[11px] rounded border transition-colors
+                  disabled:opacity-40 ${relayMode === m
+                    ? 'border-purple-500 bg-purple-500/20 text-purple-200'
+                    : 'border-neutral-700 text-neutral-500 hover:text-neutral-300'}`}>
+                {label}
+              </button>
+            ))}
+            <span className="ml-1 text-[11px] text-neutral-600">
+              {relayMode === 'joint'
+                ? '리더 관절을 그대로 복제합니다'
+                : '리더 말단 자세를 팔로워가 자기 IK 로 따라갑니다'}
+            </span>
+          </div>
+
+          {/* ⚠ 이 경고가 없으면 두 모드가 그냥 취향 차이로 보인다. */}
+          {relayMode === 'pose' && (
+            <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5
+                          text-[11px] leading-relaxed text-amber-300">
+              6D 자세 모드는 팔로워 관절을 <b>팔의 온보드 IK 가</b> 정합니다 —
+              바닥 필터·관절 범위·변화율 제한이 <b>걸리지 않습니다.</b>
+              작업 공간 상자와 걸음 상한만 막습니다.
+            </p>
+          )}
+
+          {relaying && relayBlocked && (
+            <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5
+                          text-[11px] text-amber-300">
+              멈춤: {relayBlocked}
+            </p>
+          )}
         </div>
       )}
 

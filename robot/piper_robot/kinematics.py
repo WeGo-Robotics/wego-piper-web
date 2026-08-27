@@ -181,3 +181,62 @@ def norm_to_rad(state: np.ndarray) -> np.ndarray:
     for i, name in enumerate(ARM_JOINTS):
         raw[:, i] = [denormalize_joint(name, v) for v in s[:, i]]
     return np.radians(raw / MILLIDEG_PER_DEG)
+
+
+# ── 말단 6D 자세 (텔레오퍼레이션 POSE 모드) ─────────────────────────────────
+#
+# ⚠ **리더 팔은 말단 자세를 안 보낸다.** 마스터로 설정된 팔은 피드백(0x2Ax)을
+#   내지 않아 `GetArmEndPoseMsgs` 가 0,0,0,0,0,0 을 돌려준다(실측). 그래서
+#   리더의 자세는 FK 로 구하는 수밖에 없다.
+#
+#   다행히 그래도 된다 — 팔로워에서 대조한 결과 우리 FK 가 팔이 스스로 보고하는
+#   값과 **위치 0.08mm, 자세 0.00°** 로 맞는다. 원점(link6 플랜지)도 회전 규약
+#   (RPY = Rz·Ry·Rx)도 같다.
+
+UM_PER_MM = 1000.0        # SDK 선형 단위 0.001mm
+MDEG_PER_DEG = 1000.0     # SDK 각 단위 0.001도
+
+# 짐벌락 판정. |pitch| 가 90°에 이만큼 가까우면 rx·rz 로 나누는 것이 불안정해진다 —
+# 관절이 조금 움직여도 두 값이 크게 튀고, 그게 MoveP 명령이 되면 팔이 홱 돈다.
+GIMBAL_MARGIN_DEG = 5.0
+
+
+def rpy_from_matrix(rot: np.ndarray) -> tuple[float, float, float]:
+    """회전행렬 → (roll, pitch, yaw) 도. URDF·팔과 같은 `Rz·Ry·Rx` 규약이다."""
+    pitch = math.asin(max(-1.0, min(1.0, -float(rot[2, 0]))))
+    if abs(math.cos(pitch)) > 1e-8:
+        roll = math.atan2(rot[2, 1], rot[2, 2])
+        yaw = math.atan2(rot[1, 0], rot[0, 0])
+    else:                       # 짐벌락 — roll·yaw 를 나눌 수 없다. 하나로 몰아준다.
+        roll = math.atan2(-rot[1, 2], rot[1, 1])
+        yaw = 0.0
+    return tuple(math.degrees(v) for v in (roll, pitch, yaw))
+
+
+def end_pose(q_rad: np.ndarray) -> dict[str, int]:
+    """관절각 (6,) → 말단 자세 **SDK 단위**(0.001mm / 0.001도).
+
+    `arm.read_end_pose()` 와 같은 형태라 그대로 `EndPoseCtrl` 에 넣을 수 있다.
+    """
+    q = np.atleast_2d(np.asarray(q_rad, dtype=float))
+    tf = link_transforms(q)[0, geometry().index("link6")]
+    x, y, z = tf[:3, 3] * 1000.0                     # m → mm
+    roll, pitch, yaw = rpy_from_matrix(tf[:3, :3])
+    return {
+        "x": int(round(x * UM_PER_MM)), "y": int(round(y * UM_PER_MM)),
+        "z": int(round(z * UM_PER_MM)),
+        "rx": int(round(roll * MDEG_PER_DEG)), "ry": int(round(pitch * MDEG_PER_DEG)),
+        "rz": int(round(yaw * MDEG_PER_DEG)),
+    }
+
+
+def near_gimbal_lock(q_rad: np.ndarray) -> bool:
+    """이 자세에서 rx·rz 분해가 불안정한가.
+
+    불안정한 구간에서 나온 rx·rz 를 MoveP 목표로 보내면 **팔이 홱 돈다** —
+    사람은 리더를 조금 움직였을 뿐인데. 그럴 때는 보내지 않는 편이 낫다.
+    """
+    q = np.atleast_2d(np.asarray(q_rad, dtype=float))
+    tf = link_transforms(q)[0, geometry().index("link6")]
+    pitch = math.degrees(math.asin(max(-1.0, min(1.0, -float(tf[2, 0])))))
+    return abs(abs(pitch) - 90.0) < GIMBAL_MARGIN_DEG

@@ -200,6 +200,18 @@ class RobotHub:
 
     # ── 하드웨어 영점 ──
 
+    def stream_end_pose(self, iface: str, target: dict) -> dict:
+        """POSE 모드 텔레오퍼레이션이 초당 수십 번 부른다.
+
+        ⚠ 범위 판단은 **부르는 쪽**이 끝내고 온다 — 이 경로는 관절 안전 필터를
+          안 탄다. 여기서 또 검사하면 두 곳이 되고, 둘이 어긋난다.
+        """
+        arm = self.arms.get(iface)
+        if arm is None:
+            return {"ok": False, "error": f"{iface} 를 모릅니다"}
+        ok, why = arm.stream_end_pose(target)
+        return {"ok": ok, "error": None if ok else why}
+
     def read_raw_all(self, iface: str) -> dict:
         """관절+그리퍼 raw. 영점 창이 폴링한다."""
         arm = self.arms.get(iface)

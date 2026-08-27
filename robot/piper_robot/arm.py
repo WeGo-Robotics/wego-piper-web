@@ -415,6 +415,31 @@ class Arm:
                 return False, f"말단 명령 실패: {e}"
         return True, "OK"
 
+    def stream_end_pose(self, target: dict[str, int]) -> tuple[bool, str]:
+        """`move_end_pose` 의 **스트리밍용**. 텔레오퍼레이션 POSE 모드가 쓴다.
+
+        ⚠ `EnablePiper()` 와 그 뒤 200ms 대기를 **빼는 것이 요점이다.** 한 걸음
+          조그에서는 그게 맞지만 초당 수십 번 보내는 경로에서는 그 200ms 가
+          주기를 통째로 잡아먹는다 — 30Hz 로 보내려는데 한 번에 200ms 를 쉬면
+          5Hz 도 안 나온다. 토크는 세션을 열 때 한 번 켠다.
+
+        ⚠ 이 경로도 `safety.filter_goal` 을 **타지 않는다** — 관절을 팔의 온보드
+          IK 가 정하기 때문이다. 막는 것은 전부 호출부(작업공간 상자·걸음 상한·
+          짐벌락)에 있고, 그게 통과한 뒤에야 명령이 나간다.
+        """
+        with self._lock:
+            if not self._piper:
+                return False, "연결되지 않음"
+            try:
+                # MOVE P = 점대점 말단 제어. 매번 세우는 이유는 관절 명령이
+                # 중간에 끼면 모드가 MOVE J 로 바뀌어 있기 때문이다.
+                self._piper.ModeCtrl(0x01, 0x00, self.END_POSE_SPEED, 0x00)
+                self._piper.EndPoseCtrl(target["x"], target["y"], target["z"],
+                                        target["rx"], target["ry"], target["rz"])
+            except Exception as e:
+                return False, f"말단 명령 실패: {e}"
+        return True, "OK"
+
     # ── 명령 반응으로 마스터/슬레이브 가리기 ──
 
     # 어느 관절을 건드리나. **손목(joint6)** 이다 — 질량이 가장 작고 팔의 도달
