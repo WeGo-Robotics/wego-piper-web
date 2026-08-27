@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../services/api'
 import LayoutToggle, { useLayout } from '../components/LayoutToggle'
+import SplitHandle, { useMediaQuery, useSplit } from '../components/SplitPane'
 import { useSystemMessage } from '../components/SystemMessages'
 import PlotlyChart from '../components/PlotlyChart'
 import type { BakedInfo, Dataset, DatasetDetail } from '../types/models'
@@ -111,6 +112,12 @@ export default function EpisodesPage() {
   // ⚠ 에피소드 목록(왼쪽)은 이 선택과 무관하다 — 목록은 늘 옆에 붙어 있어야
   //   J/K 로 오가며 비교할 수 있다. 바뀌는 것은 **사진과 그래프의 관계**뿐이다.
   const { layout, switchLayout } = useLayout('episodes')
+  // 두 칸이 **실제로** 그려질 때만 폭 조절이 뜻이 있다 — CSS 와 JS 가 같은
+  // 조건을 봐야 한다 (`SplitPane` 주석: 이 화면에서 어긋난 전례가 있다).
+  const twoCols = useMediaQuery('(min-width: 1536px)')
+  const split = useSplit('episodes')
+  const splitRef = useRef<HTMLDivElement>(null)
+  const splitOn = layout === 'row' && twoCols
   const [viewMode, setViewMode] = useState<'video' | 'frames'>('video')
   // ⚠ 관절 그래프는 축마다 하나씩 = 7개다. 늘 펼쳐두면 신호 그래프가 화면
   //   밖으로 밀려난다 — 기본은 접고, 선택은 기억한다.
@@ -927,9 +934,15 @@ export default function EpisodesPage() {
             {/* 가로 배치는 **사진 | 시간축** 이다.
                 오른쪽 칸에는 프레임으로 색인되는 것이 전부 들어간다 —
                 진행바·페이즈 트랙·신호 그래프가 같은 x축을 쓴다. */}
-            <div className={layout === 'row'
-              ? 'grid grid-cols-1 2xl:grid-cols-2 gap-4 items-start' : 'space-y-3'}>
-            <div className="space-y-3">
+            <div
+              ref={splitRef}
+              // ⚠ 두 칸이 **실제로** 그려질 때만 flex 로 나눈다. `layout` 만 보면
+              //   좁은 화면에서 접히지 않고 두 칸이 찌그러진 채 남는다 —
+              //   카메라 배치에서 똑같이 어긋났던 자리다.
+              className={splitOn ? 'flex items-start' : 'space-y-3'}
+            >
+            <div className={splitOn ? 'space-y-3 min-w-0' : 'space-y-3'}
+                 style={splitOn ? { width: `${split.pct}%` } : undefined}>
             {/* 카메라 — 동영상 또는 프레임 캐시. **항상 세로로 쌓는다.**
 
                 배치 토글과 무관하다. 가로 배치에서도 사진 칸은 세로로 길고, 거기에
@@ -1049,10 +1062,19 @@ export default function EpisodesPage() {
 
             </div>
 
+            {splitOn && (
+              <SplitHandle
+                containerRef={splitRef}
+                onDrag={split.setPct}
+                onCommit={split.commit}
+                onReset={split.reset}
+              />
+            )}
+
             {/* ⚠ 프레임으로 색인되는 것은 **전부 이쪽**이다 — 진행바·페이즈 트랙·
                 신호 그래프가 같은 x축(프레임)을 공유하므로, 사진과 갈라놓으면
                 가로 배치에서 재생헤드가 두 칸에 흩어진다. */}
-            <div className="space-y-3">
+            <div className={splitOn ? 'space-y-3 flex-1 min-w-0 pl-2' : 'space-y-3'}>
             <input
               type="range"
               min={0}
