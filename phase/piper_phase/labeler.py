@@ -42,8 +42,9 @@ SIGNALS_FILE = "phase_signals.parquet"
 # ⚠ 파생 신호의 **계산이 바뀌면 올린다.** 예전에는 쓰기만 하고 아무도 안 읽는
 # 죽은 필드였다 — 그래서 말단 속도 미분 방식을 바꿨을 때, 이미 만들어둔
 # 사이드카가 옛 값을 그대로 내보내고 아무도 그걸 몰랐다.
-#   1 → 2: 말단 속도를 중심차분으로 (kinematics._DERIV_HALF)
-SIDECAR_VERSION = 2
+#   1 → 2: 말단 속도를 중심차분으로
+#   2 → 3: 말단 속도를 Savitzky–Golay 도함수로 (kinematics._SG_WINDOW)
+SIDECAR_VERSION = 3
 
 
 def tip_speed(state, fps: float):

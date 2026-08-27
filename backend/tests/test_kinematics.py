@@ -192,3 +192,38 @@ def test_stale_sidecars_recompute_display_signals_only():
     assert 'need_tip = stale or "tip_speed" not in e.columns' in router
     assert 'if not stale and "home_dist" in e.columns:' in router
     assert '"phase": e["phase"].tolist()' in router, "라벨까지 다시 계산한다"
+
+
+def test_the_derivative_fits_a_polynomial_instead_of_subtracting_two_points():
+    """⚠ 차분은 **두 점의 잡음이 그대로** 들어간다. 국소 다항식을 맞추면 창 전체를
+    쓰면서도 곡률을 허용해 봉우리를 안 깎는다.
+
+    실측(bolt_two1 ep1): ±2 중심차분과 SG 창5 는 봉우리가 같은데(0.332/0.331)
+    고주파는 4.6% 대 2.7% 다 — 같은 값을 주고 잡음만 절반이다.
+    """
+    src = (_REPO / "phase" / "piper_phase" / "kinematics.py").read_text()
+    assert "_sg_kernel" in src and "np.vander" in src, "다항식 적합이 아니다"
+    body = src.split("def endpoint_speed", 1)[1]
+    assert "_sg_derivative" in body, "속도가 SG 를 안 쓴다"
+
+
+def test_the_kernel_differentiates_exactly_on_a_straight_line():
+    """직선 궤적의 기울기는 정확히 나와야 한다 — 필터가 값을 줄이면 안 된다."""
+    n, v = 60, np.zeros((60, 3))
+    v[:, 0] = np.arange(n) * 0.01          # 프레임당 1cm
+    d = K._sg_derivative(v, fps=15)
+    assert d[10:-10, 0] == pytest.approx(0.01 * 15, rel=1e-9)
+
+
+def test_a_short_trace_still_gets_a_derivative():
+    """창보다 짧은 에피소드도 값이 나와야 한다 — 그래프에 구멍이 나면 안 된다."""
+    v = np.zeros((3, 3)); v[:, 0] = [0.0, 0.01, 0.02]
+    assert np.all(np.isfinite(K._sg_derivative(v, fps=15)))
+
+
+def test_changing_the_computation_bumps_the_sidecar_version():
+    """⚠ 안 올리면 이미 만들어둔 사이드카가 옛 값을 그대로 내보낸다 —
+    실제로 한 번 그랬다."""
+    src = (_REPO / "phase" / "piper_phase" / "labeler.py").read_text()
+    assert "SIDECAR_VERSION = 3" in src
+    assert "Savitzky" in src, "무엇이 바뀌어 올렸는지 안 적혀 있다"
