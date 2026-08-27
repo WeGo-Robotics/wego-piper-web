@@ -200,6 +200,29 @@ MDEG_PER_DEG = 1000.0     # SDK 각 단위 0.001도
 # 관절이 조금 움직여도 두 값이 크게 튀고, 그게 MoveP 명령이 되면 팔이 홱 돈다.
 GIMBAL_MARGIN_DEG = 5.0
 
+# 손목 특이점 판정. **위 짐벌락과 다른 물건이다.**
+#
+#   짐벌락      RPY **표현**의 문제 — pitch 가 ±90°면 roll·yaw 를 나눌 수 없다
+#   손목 특이점 **기구학**의 문제 — joint5 가 0 이면 joint4 와 joint6 의 축이
+#               겹쳐(실측 사이각 0.00°) 같은 자세를 두 관절 어느 쪽으로도 낼 수 있다
+#
+# 둘은 거의 겹치지 않는다: joint5≈0 인 자세 3000개 중 짐벌락 가드가 잡은 것은
+# **0.2%** 뿐이었다. 따로 봐야 한다.
+#
+# 왜 위험한가 — 팔로워의 IK 가 joint4/joint6 분배를 **자유롭게** 고른다.
+# 리더가 이 구간을 지나면 팔로워가 손목을 홱 뒤집을 수 있는데, 자세는 거의
+# 안 변하므로 **자세 기준 걸음 상한에 안 걸린다.** 실측 (joint4 +20°, joint6 -20° 뒤집기):
+#
+#       joint5     0°  →  자세 변화 0.00°   ← 완전히 공짜
+#                  1°  →           0.41°
+#                  5°  →           1.91°
+#                 10°  →           3.42°   ← 여기를 경계로 잡는다
+#                 20°  →           5.69°
+#
+# 10° 아래에서는 40°짜리 손목 뒤집기가 자세 3.4° 값도 안 된다 — 조작자는 거의
+# 못 느끼는데 팔은 크게 돈다.
+WRIST_SINGULAR_DEG = 10.0
+
 
 def rpy_from_matrix(rot: np.ndarray) -> tuple[float, float, float]:
     """회전행렬 → (roll, pitch, yaw) 도. URDF·팔과 같은 `Rz·Ry·Rx` 규약이다."""
@@ -228,6 +251,17 @@ def end_pose(q_rad: np.ndarray) -> dict[str, int]:
         "rx": int(round(roll * MDEG_PER_DEG)), "ry": int(round(pitch * MDEG_PER_DEG)),
         "rz": int(round(yaw * MDEG_PER_DEG)),
     }
+
+
+def near_wrist_singularity(q_rad: np.ndarray) -> bool:
+    """joint5 가 0 근처인가 — joint4 와 joint6 이 같은 축이 되는 자리.
+
+    거기서는 **같은 말단 자세를 두 관절 어느 쪽으로도 낼 수 있다.** 팔로워의
+    온보드 IK 가 리더와 다른 쪽을 고를 수 있고, 지나가는 동안 분배가 바뀌면
+    손목이 홱 돈다. 자세는 거의 안 변하므로 걸음 상한이 못 잡는다.
+    """
+    q = np.atleast_1d(np.asarray(q_rad, dtype=float)).ravel()
+    return abs(math.degrees(q[4])) < WRIST_SINGULAR_DEG
 
 
 def near_gimbal_lock(q_rad: np.ndarray) -> bool:

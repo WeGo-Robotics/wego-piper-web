@@ -163,3 +163,50 @@ def test_the_status_carries_the_mode():
     from app.services.relay import relay_session
 
     assert "mode" in relay_session.status()
+
+
+# ── 손목 특이점 — 짐벌락과 **다른 조건** ────────────────────────────────────
+
+def test_the_wrist_singularity_is_a_separate_guard():
+    """⚠ 실측: `joint5 ≈ 0` 인 자세 3000개 중 짐벌락 가드가 잡은 것은 **0.2%**.
+
+    짐벌락은 RPY **표현**의 문제(pitch ±90°), 손목 특이점은 **기구학**의
+    문제(joint4·joint6 축이 겹침)다. 하나로 뭉치면 99.8% 를 놓친다.
+    """
+    q = np.array([0.3, 1.0, -0.8, 0.2, 0.0, 0.1])       # joint5 = 0
+    assert K.near_wrist_singularity(q)
+    assert not K.near_gimbal_lock(q), "이 자세는 짐벌락이 아니다 — 그래서 따로 필요하다"
+
+
+def test_joint4_and_joint6_are_coaxial_at_the_singularity():
+    """가드의 근거. joint5=0 에서 두 축 사이각이 0 이어야 한다."""
+    g = K.geometry()
+    q = np.zeros(6)
+    tf = K.link_transforms(q[None, :])[0]
+    a4 = tf[4, :3, :3] @ np.array(g.axis[4])
+    a6 = tf[6, :3, :3] @ np.array(g.axis[6])
+    assert abs(abs(float(a4 @ a6)) - 1.0) < 1e-9, "동축이 아니다"
+
+
+def test_a_wrist_flip_costs_almost_nothing_at_the_singularity():
+    """왜 걸음 상한이 이걸 못 잡는지. joint4 +20°/joint6 -20° 를 해도
+    자세가 **거의 안 변하므로** 자세 기준 상한을 통과한다."""
+    def pose(q):
+        p = K.end_pose(np.array(q))
+        return np.array([p["rx"], p["ry"], p["rz"]]) / 1000.0
+
+    base = [0.3, 1.0, -0.8, 0.2, 0.0, 0.1]
+    flip = [*base[:3], base[3] + math.radians(20), base[4], base[5] - math.radians(20)]
+    moved = np.abs(((pose(flip) - pose(base) + 180) % 360) - 180).max()
+    assert moved < 0.1, f"자세가 {moved:.2f}° 변했다 — 이 테스트의 전제가 틀렸다"
+
+
+def test_the_threshold_leaves_a_real_margin():
+    """10° 는 40°짜리 손목 뒤집기가 자세 3.4° 값이 되는 지점이다(실측).
+    0 으로 두면 가드가 사실상 없다."""
+    assert K.WRIST_SINGULAR_DEG >= 5.0
+
+
+def test_the_relay_checks_it():
+    body = RELAY.read_text().split("def _send_pose", 1)[1].split("\n    def ", 1)[0]
+    assert "near_wrist_singularity" in body

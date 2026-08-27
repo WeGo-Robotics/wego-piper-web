@@ -242,10 +242,20 @@ class RelaySession:
 
         # 1. 짐벌락 — 여기서 나온 rx·rz 를 보내면 팔이 홱 돈다
         if K.near_gimbal_lock(q):
-            self._block("리더가 짐벌락 근처입니다 — 손목을 조금 돌리세요")
+            self._block("리더가 짐벌락 근처입니다 (RPY pitch ≈ ±90°) — 손목을 조금 돌리세요")
             return
 
-        # 2. 바닥. **근사다** — 팔로워의 관절은 온보드 IK 가 정하므로 우리가 모른다.
+        # 2. 손목 특이점 — **위와 다른 조건이다.** joint5 가 0 이면 joint4 와
+        #    joint6 축이 겹쳐(실측 0.00°) 같은 자세를 두 관절 어느 쪽으로도 낼 수
+        #    있다. 팔로워 IK 가 리더와 다른 쪽을 고르면 손목이 홱 도는데,
+        #    자세는 거의 안 변하므로 **아래 걸음 상한이 못 잡는다.**
+        if K.near_wrist_singularity(q):
+            self._block(f"리더 joint5 가 0 근처입니다 "
+                        f"(±{K.WRIST_SINGULAR_DEG:.0f}° 안) — 손목 관절을 꺾으세요. "
+                        f"여기서는 팔로워가 손목을 반대로 풀 수 있습니다")
+            return
+
+        # 3. 바닥. **근사다** — 팔로워의 관절은 온보드 IK 가 정하므로 우리가 모른다.
         #    같은 팔이 같은 자세를 만드는 관절값이 리더의 것이니, 그게 바닥을
         #    뚫으면 팔로워도 뚫을 가능성이 높다. 보장은 아니고 유일하게 가능한 검사다.
         floor = _call("get_safety") or {}
@@ -258,14 +268,14 @@ class RelaySession:
 
         target = K.end_pose(q)
 
-        # 3. 작업 공간 상자 — 말단 조그와 **같은 상자**를 쓴다
+        # 4. 작업 공간 상자 — 말단 조그와 **같은 상자**를 쓴다
         ok, why = WorkspaceBox().contains(target["x"] / 1000.0, target["y"] / 1000.0,
                                           target["z"] / 1000.0)
         if not ok:
             self._block(why)
             return
 
-        # 4. 한 걸음 상한. 리더가 튀면(낡은 상태 복구 직후 등) 큰 MoveP 한 방이
+        # 5. 한 걸음 상한. 리더가 튀면(낡은 상태 복구 직후 등) 큰 MoveP 한 방이
         #    나가는데, 그건 사람이 반응할 수 없는 속도로 팔이 도는 것이다.
         if self._last_pose is not None:
             step_mm = max(abs(target[a] - self._last_pose[a]) for a in "xyz") / 1000.0
