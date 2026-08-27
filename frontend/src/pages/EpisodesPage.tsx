@@ -930,19 +930,14 @@ export default function EpisodesPage() {
             <div className={layout === 'row'
               ? 'grid grid-cols-1 2xl:grid-cols-2 gap-4 items-start' : 'space-y-3'}>
             <div className="space-y-3">
-            {/* 카메라 — 동영상 또는 프레임 캐시. **기본은 세로로 쌓는다.**
-                한 대가 넓게 보이는 편이 프레임을 뜯어보기에 낫다.
+            {/* 카메라 — 동영상 또는 프레임 캐시. **항상 세로로 쌓는다.**
 
-                ⚠ 나란히 놓는 것은 가로 배치 **그리고 화면이 실제로 두 칸일 때**뿐이다.
-                  `layout` 은 상태이고 두 칸 여부는 `2xl` 브레이크포인트가 정하는데,
-                  전에는 카메라가 상태만 봐서 **한 칸인 화면에서도 나란히** 놓였다.
-                  두 판단이 같은 조건을 써야 어긋나지 않는다. */}
-            <div className={layout === 'row'
-              ? 'flex flex-col 2xl:flex-row gap-3 2xl:flex-wrap' : 'flex flex-col gap-3'}>
+                배치 토글과 무관하다. 가로 배치에서도 사진 칸은 세로로 길고, 거기에
+                카메라를 나란히 두면 폭을 반씩 나눠 갖고 **아래는 통째로 빈다.**
+                쌓으면 각자 칸 폭을 다 쓴다 — 프레임을 뜯어보는 화면이라 그게 낫다. */}
+            <div className="flex flex-col gap-3">
               {cams.map((cam) => (
-                <figure key={cam} className={layout === 'row'
-                  ? 'w-full max-w-[720px] 2xl:flex-1 2xl:min-w-[240px] 2xl:max-w-[520px]'
-                  : 'w-full max-w-[720px]'}>
+                <figure key={cam} className="w-full max-w-[720px]">
                   {videoActive ? (
                     <video
                       ref={(el) => { videoRefs.current[cam] = el as VideoWithRVFC | null }}

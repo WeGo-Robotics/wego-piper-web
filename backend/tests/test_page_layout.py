@@ -153,21 +153,19 @@ def test_the_charts_and_the_video_end_up_in_different_columns():
     assert chart > cam, "그래프가 사진보다 앞에 있다"
 
 
-def test_the_cameras_stack_unless_the_screen_really_has_two_columns():
-    """⚠ **회귀** — 카메라는 `layout` 상태만 보고 나란히 놓였는데, 두 칸이
-    되는지는 `2xl` 브레이크포인트가 정한다. 그래서 1536px 미만 화면에서
-    **한 칸인데 카메라만 나란히** 놓였다.
+def test_the_cameras_always_stack():
+    """⚠ 두 번 틀렸던 자리다.
 
-    두 판단이 같은 조건을 써야 어긋나지 않는다.
+    처음엔 배치와 무관하게 늘 나란히였고, 다음엔 `layout` 상태만 보게 했는데
+    두 칸이 되는지는 브레이크포인트가 정하므로 좁은 화면에서 어긋났다.
+
+    실제로는 **어느 배치에서도 쌓는 게 맞다.** 가로 배치의 사진 칸은 세로로 긴데,
+    거기에 나란히 두면 폭을 반씩 나눠 갖고 아래가 통째로 빈다.
     """
     src = (_SRC / "pages" / "EpisodesPage.tsx").read_text()
-    cam = src.split("{/* 카메라 —", 1)[1][:900]
-    grid = src.split("layout === 'row'", 1)[1][:200]
-
-    bp = "2xl:"
-    assert bp in grid, "칸 나누기가 브레이크포인트를 쓴다는 전제가 깨졌다"
-    assert "flex flex-col" in cam, "기본이 세로 쌓기가 아니다"
-    assert f"{bp}flex-row" in cam, "카메라가 같은 브레이크포인트를 안 본다"
+    cam = src.split("{/* 카메라 —", 1)[1][:700]
+    assert 'className="flex flex-col gap-3"' in cam, "세로 쌓기가 아니다"
+    assert "layout ===" not in cam, "배치 토글에 다시 묶였다"
 
 
 def test_everything_indexed_by_frame_shares_a_column():
