@@ -198,6 +198,24 @@ class RobotHub:
             return None
         return "그 방향으로는 못 갑니다 (직전 명령이 도달하지 못했습니다)"
 
+    # ── 하드웨어 영점 ──
+
+    def read_raw_all(self, iface: str) -> dict:
+        """관절+그리퍼 raw. 영점 창이 폴링한다."""
+        arm = self.arms.get(iface)
+        return arm.read_raw_all() if arm else {}
+
+    def set_hardware_zero(self, iface: str, joint: str) -> dict:
+        """지금 위치를 그 관절의 하드웨어 영점으로 굽는다. **되돌릴 수 없다.**
+
+        ⚠ 소프트웨어 캘리브레이션(`joints.JOINT_CALIBRATION`)이 아니다.
+          모터 플래시에 쓰는 것이라 전원을 꺼도 남고, raw 값의 의미가 바뀐다.
+        """
+        arm = self.arms.get(iface)
+        if arm is None:
+            return {"ok": False, "error": f"{iface} 를 모릅니다"}
+        return arm.set_hardware_zero(joint)
+
     # ── 안전 설정 ──
     #
     # 브리지가 아니라 **매니저**가 들고 있다 (팔을 뽑았다 꽂아도 유지돼야 한다).

@@ -101,6 +101,11 @@ def _pair(result, fallback: str) -> tuple[bool, str]:
 
 # ── 라우터가 직접 부르는 하드웨어 조작 (RPC) ──
 
+def set_hardware_zero(iface: str, joint: str) -> dict | None:
+    """하드웨어 영점 — CAN 을 쥔 robotd 만 할 수 있다."""
+    return _call("set_hardware_zero", iface, joint)
+
+
 def get_safety() -> dict | None:
     """바닥 필터 설정. robotd 가 없으면 `None` — 화면이 "데몬 없음"을 보여준다.
 

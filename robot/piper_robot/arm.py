@@ -284,6 +284,98 @@ class Arm:
                 logger.error("go_parking error: %s", e)
                 return False
 
+    # ── 하드웨어 영점 ──
+    #
+    # ⚠ **소프트웨어 영점과 전혀 다른 물건이다. 헷갈리면 팔을 망친다.**
+    #
+    #   소프트웨어 영점  `joints.JOINT_CALIBRATION` — raw 엔코더 범위를 정규화
+    #                    -100..100 으로 옮기는 **우리 파일 안의 표**다. 고쳐도
+    #                    팔은 아무것도 모른다. 파킹 자세(`~/.piper/parking/*.json`)
+    #                    도 이쪽이다.
+    #
+    #   하드웨어 영점    `JointConfig(set_zero=0xAE)` — CAN 0x475 로 모터
+    #                    드라이버에 지금 위치를 0 으로 **플래시에 굽는다.**
+    #                    전원을 꺼도 남고, 되돌리는 명령이 없다.
+    #                    raw 값의 의미 자체가 바뀐다.
+    #
+    # 그래서 이걸 한 번 누르면 **위쪽 소프트웨어 표가 통째로 어긋난다** —
+    # 정규화·FK·바닥 필터·이미 녹화한 데이터셋의 뜻까지. 부르는 쪽이 그걸
+    # 사용자에게 말해야 한다.
+
+    #: 관절 이름 → 모터 번호 (SDK 규약: 1~6 관절, 7 그리퍼)
+    ZERO_MOTOR = {"joint1": 1, "joint2": 2, "joint3": 3,
+                  "joint4": 4, "joint5": 5, "joint6": 6, "gripper": 7}
+
+    def set_hardware_zero(self, joint: str) -> dict:
+        """지금 위치를 그 관절의 **하드웨어 영점**으로 굽는다.
+
+        되돌릴 수 없다. SDK 에 "영점 해제" 명령이 없다 — 되돌리려면 팔을 원래
+        자세로 되돌려 놓고 다시 굽는 수밖에 없는데, 그 "원래 자세"를 아무도
+        기록해 두지 않았다면 못 찾는다.
+
+        성공 판정은 **팔이 보내는 응답**으로 한다(`is_set_zero_successfully`).
+        보내고 성공했다고 치면, CAN 이 반쯤 죽었을 때 조용히 실패한다.
+        """
+        motor = self.ZERO_MOTOR.get(joint)
+        if motor is None:
+            return {"ok": False, "error": f"모르는 관절입니다: {joint}"}
+        with self._lock:
+            if not self._piper:
+                return {"ok": False, "error": "연결되지 않음"}
+            before = self._raw_of(joint)
+            try:
+                # ⚠ 먼저 지운다. 안 지우면 **이전 명령의 성공 응답**을 읽고
+                #   이번 것도 성공했다고 보고한다.
+                self._piper.ClearRespSetInstruction()
+                if joint == "gripper":
+                    self._piper.GripperCtrl(0, 1000, 0x01, 0xAE)
+                else:
+                    self._piper.JointConfig(joint_num=motor, set_zero=0xAE)
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
+        time.sleep(0.5)          # 응답이 올 시간. 락 밖에서 쉰다
+        with self._lock:
+            try:
+                resp = self._piper.GetRespInstruction()
+                flag = int(resp.instruction_response.is_set_zero_successfully)
+            except Exception as exc:
+                return {"ok": False, "error": f"응답을 읽지 못했습니다: {exc}"}
+            after = self._raw_of(joint)
+        if flag == 1:
+            logger.warning("하드웨어 영점 설정: %s %s (모터 %d) raw %s → %s",
+                           self.iface, joint, motor, before, after)
+            return {"ok": True, "joint": joint, "motor": motor,
+                    "raw_before": before, "raw_after": after}
+        if flag == 0:
+            return {"ok": False, "error": "팔이 실패로 응답했습니다", "joint": joint}
+        # -1 = 응답 없음. **성공으로 치지 않는다** — 명령이 나갔는지도 모른다.
+        return {"ok": False, "joint": joint,
+                "error": "팔이 응답하지 않았습니다 — 설정됐는지 확인할 수 없습니다. "
+                         "raw 값을 보고 판단하세요.",
+                "raw_before": before, "raw_after": after}
+
+    def read_raw_all(self) -> dict[str, int | None]:
+        """관절 + 그리퍼의 raw 값. **영점 창이 보는 숫자다.**
+
+        정규화가 아니라 raw 인 이유: 정규화는 `JOINT_CALIBRATION` 을 거친 것이라
+        하드웨어 영점을 옮기면 같이 흔들린다. 무엇을 굽는지 보려면 팔이 직접
+        말하는 숫자여야 한다.
+        """
+        with self._lock:
+            if not self._piper:
+                return {}
+            return {j: self._raw_of(j) for j in self.ZERO_MOTOR}
+
+    def _raw_of(self, joint: str) -> int | None:
+        """그 관절의 raw 값. 영점이 실제로 옮겨졌는지 눈으로 확인하는 근거다."""
+        try:
+            if joint == "gripper":
+                return int(self._piper.GetArmGripperMsgs().gripper_state.grippers_angle)
+            j = self._piper.GetArmJointMsgs().joint_state
+            return int(getattr(j, f"joint_{self.ZERO_MOTOR[joint]}"))
+        except Exception:
+            return None
+
     # ── 말단 자세 (온보드 IK) ──
 
     def read_end_pose(self) -> dict[str, int] | None:

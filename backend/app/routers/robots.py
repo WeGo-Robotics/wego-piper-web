@@ -221,6 +221,65 @@ async def scan_can():
     return robot_manager.scan()
 
 
+@router.get("/joints/raw/{iface}")
+async def read_joints_raw(iface: str):
+    """관절 raw 값 (밀리도). 영점 창이 이걸 본다.
+
+    ⚠ **정규화가 아니라 raw 다.** 정규화 값은 `JOINT_CALIBRATION` 을 거친 것이라
+      하드웨어 영점을 옮기면 같이 흔들린다 — 무엇을 굽는지 보려면 팔이 직접
+      말하는 숫자여야 한다.
+    """
+    arm = robot_manager.arms.get(iface)
+    if not arm or not arm.connected:
+        raise HTTPException(404, f"{iface} 가 연결되어 있지 않습니다")
+    raw = robot_manager_mod._call("read_raw_all", iface)
+    if not raw:
+        raise HTTPException(503, "관절값을 읽지 못했습니다")
+    return raw
+
+
+# ── 하드웨어 영점 (모터 플래시) ──
+#
+# ⚠ **소프트웨어 캘리브레이션과 다른 물건이다.**
+#   `/parking/save` 는 우리 파일에 자세를 적는다. 여기는 **모터 드라이버 플래시**에
+#   지금 위치를 0 으로 굽는다 — 전원을 꺼도 남고 되돌리는 명령이 없다.
+
+
+class ZeroRequest(BaseModel):
+    iface: str
+    #: joint1~6 또는 gripper
+    joint: str
+
+
+@router.post("/zero")
+async def set_hardware_zero(body: ZeroRequest):
+    """지금 위치를 그 관절의 하드웨어 영점으로 굽는다. **되돌릴 수 없다.**
+
+    ⚠ 팔이 움직이는 중이면 **엉뚱한 자세가 영점이 된다.** 추론·녹화·조그가
+      돌고 있으면 거절한다 — 되돌릴 수 없는 조작이라 나중에 알아차려도 늦다.
+    """
+    from app.services.exclusivity import LABELS, Activity, running
+
+    # 팔을 움직이는 것들. `require_idle` 을 안 쓰는 이유는 영점이 활동이 아니라
+    # 한 번의 조작이라서다 — 표에 항목을 늘리면 배타 규칙까지 따라 붙는다.
+    movers = [a for a in (Activity.INFERENCE, Activity.RECORDING, Activity.TELEOP)
+              if a in running()]
+    if movers:
+        names = " · ".join(LABELS[a] for a in movers)
+        raise HTTPException(
+            409, f"{names} 실행 중입니다 — 팔이 움직이는 동안 영점을 굽으면 "
+                 f"엉뚱한 자세가 영점이 됩니다. 먼저 멈추세요.")
+    arm = robot_manager.arms.get(body.iface)
+    if not arm or not arm.connected:
+        raise HTTPException(404, f"{body.iface} 가 연결되어 있지 않습니다")
+    out = robot_manager_mod.set_hardware_zero(body.iface, body.joint)
+    if out is None:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    if not out.get("ok"):
+        raise HTTPException(409, out.get("error", "영점 설정에 실패했습니다"))
+    return out
+
+
 # ── 안전(바닥 필터) 설정 ──
 
 class SafetyRequest(BaseModel):

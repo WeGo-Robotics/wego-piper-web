@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import JogPanel from '../components/JogPanel'
+import ZeroCalibrationModal from '../components/ZeroCalibrationModal'
 import { JOINT_NAMES } from '../config/joints'
 
 // ── 파킹 보정 모달 ──
@@ -305,6 +306,7 @@ export default function RobotsPage() {
   const [motionIface, setMotionIface] = useState<string | null>(null)
   const [motionStatus, setMotionStatus] = useState<MotionStatus | null>(null)
   const motionPollRef = useRef<ReturnType<typeof setInterval>>(undefined)
+  const [zeroIface, setZeroIface] = useState<string | null>(null)
   const [parkingIface, setParkingIface] = useState<string | null>(null)
   const [usbModalOpen, setUsbModalOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -859,6 +861,12 @@ export default function RobotsPage() {
                   {/* ⚠ 조작 패널을 여는 자리. 등록된 팔이 **여기** 그려지는데
                       패널을 미등록 목록에만 붙였다가 화면에서 통째로 안 보였다. */}
                   {arm.connected && (
+                    <button onClick={() => setZeroIface(arm.iface)}
+                      title="모터 플래시에 영점을 굽습니다 — 되돌릴 수 없습니다"
+                      className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">
+                      영점(HW)</button>
+                  )}
+                  {arm.connected && (
                     <button onClick={() => setExpandedArm(expandedArm === arm.iface ? null : arm.iface)}
                       className={`px-3 py-1 text-xs rounded ${expandedArm === arm.iface
                         ? 'bg-amber-600 text-white' : 'bg-neutral-700 hover:bg-amber-600 text-neutral-300 hover:text-white'}`}>
@@ -885,6 +893,11 @@ export default function RobotsPage() {
           </div>
         )}
       </div>
+
+      {/* 하드웨어 영점 모달 — 파킹 보정(소프트웨어)과 **다른 물건**이다 */}
+      {zeroIface && (
+        <ZeroCalibrationModal iface={zeroIface} onClose={() => setZeroIface(null)} />
+      )}
 
       {/* 파킹 보정 모달 */}
       {parkingIface && (

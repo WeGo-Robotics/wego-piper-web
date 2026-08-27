@@ -52,6 +52,7 @@ _METHODS = {
     "start_motion_detect", "motion_status", "start_identify",
     "jog_end_pose", "read_end_pose",
     "get_safety", "set_safety",
+    "set_hardware_zero", "read_raw_all",
     "init_interface", "check_active", "sniff_ids", "rename_interface", "recover_usb", "usb_info",
     "lost",
 }
