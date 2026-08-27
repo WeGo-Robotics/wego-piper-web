@@ -930,12 +930,18 @@ export default function EpisodesPage() {
             <div className={layout === 'row'
               ? 'grid grid-cols-1 2xl:grid-cols-2 gap-4 items-start' : 'space-y-3'}>
             <div className="space-y-3">
-            {/* 카메라 — 동영상 또는 프레임 캐시.
-                배치 축을 따라간다: 세로면 한 대씩 크게 쌓고, 가로면 나란히. */}
-            <div className={layout === 'row' ? 'flex gap-3 flex-wrap' : 'flex flex-col gap-3'}>
+            {/* 카메라 — 동영상 또는 프레임 캐시. **기본은 세로로 쌓는다.**
+                한 대가 넓게 보이는 편이 프레임을 뜯어보기에 낫다.
+
+                ⚠ 나란히 놓는 것은 가로 배치 **그리고 화면이 실제로 두 칸일 때**뿐이다.
+                  `layout` 은 상태이고 두 칸 여부는 `2xl` 브레이크포인트가 정하는데,
+                  전에는 카메라가 상태만 봐서 **한 칸인 화면에서도 나란히** 놓였다.
+                  두 판단이 같은 조건을 써야 어긋나지 않는다. */}
+            <div className={layout === 'row'
+              ? 'flex flex-col 2xl:flex-row gap-3 2xl:flex-wrap' : 'flex flex-col gap-3'}>
               {cams.map((cam) => (
                 <figure key={cam} className={layout === 'row'
-                  ? 'flex-1 min-w-[240px] max-w-[520px]'
+                  ? 'w-full max-w-[720px] 2xl:flex-1 2xl:min-w-[240px] 2xl:max-w-[520px]'
                   : 'w-full max-w-[720px]'}>
                   {videoActive ? (
                     <video
