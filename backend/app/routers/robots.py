@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.services import robot_manager as robot_manager_mod
 from app.services.robot_manager import robot_manager, CONFIGS, _save_custom_parking, _load_custom_parking
 
 router = APIRouter(prefix="/api/robots", tags=["robots"])
@@ -218,6 +219,30 @@ async def get_current():
 @router.get("/can")
 async def scan_can():
     return robot_manager.scan()
+
+
+# ── 안전(바닥 필터) 설정 ──
+
+class SafetyRequest(BaseModel):
+    enabled: bool | None = None
+    min_z_cm: float | None = None
+
+
+@router.get("/safety")
+async def get_safety():
+    """바닥 필터 설정. robotd 가 없으면 `null` 을 담아 보낸다."""
+    return {"floor": robot_manager_mod.get_safety()}
+
+
+@router.post("/safety")
+async def set_safety(body: SafetyRequest):
+    patch = body.model_dump(exclude_none=True)
+    if not patch:
+        raise HTTPException(400, "바꿀 값이 없습니다")
+    out = robot_manager_mod.set_safety(patch)
+    if out is None:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    return {"floor": out}
 
 
 # ── USB 진단 / 복구 ──

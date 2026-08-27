@@ -29,7 +29,12 @@ import time
 
 from piper_robot.can import iface_exists
 from piper_robot.joints import denormalize_all
-from piper_robot.safety import Reason, SafetyConfig, filter_goal
+from dataclasses import replace
+
+from piper_robot import safety_store
+from piper_robot.safety import (
+    FloorConfig, Reason, SafetyConfig, filter_goal,
+)
 from piper_shm import ActionReader, ArmSegmentError, StateWriter
 from piper_shm import arm as A
 
@@ -288,13 +293,33 @@ class ArmBridgeManager:
 
     def __init__(self) -> None:
         self.bridges: dict[str, ArmBridge] = {}
+        # 바닥 필터 설정은 **매니저가 들고 있다.** 브리지마다 따로 두면 팔을
+        # 뽑았다 꽂을 때 기본값으로 돌아가고, 그러면 꺼둔 줄 알았던 필터가
+        # 조용히 다시 켜진다.
+        self._floor = safety_store.load()
 
     def start(self, arm) -> ArmBridge:
         b = self.bridges.get(arm.iface)
         if b is None:
-            b = self.bridges[arm.iface] = ArmBridge(arm)
+            b = self.bridges[arm.iface] = ArmBridge(
+                arm, SafetyConfig(floor=self._floor))
         b.start()
         return b
+
+    def floor_config(self) -> "FloorConfig":
+        return self._floor
+
+    def set_floor(self, patch: dict) -> "FloorConfig":
+        """바닥 필터 설정을 바꾸고 **살아 있는 브리지에 곧바로 적용**한다.
+
+        저장만 하고 적용을 안 하면 다음 연결까지 안 바뀌는데, 사용자는 화면에서
+        바꿨으니 바뀐 줄 안다 — 안전 설정에서 그 어긋남은 위험하다.
+        """
+        self._floor = safety_store._apply(self._floor, patch)
+        safety_store.save(self._floor)
+        for b in self.bridges.values():
+            b.safety = replace(b.safety, floor=self._floor)
+        return self._floor
 
     def stop(self, iface: str) -> None:
         b = self.bridges.pop(iface, None)

@@ -101,6 +101,20 @@ def _pair(result, fallback: str) -> tuple[bool, str]:
 
 # ── 라우터가 직접 부르는 하드웨어 조작 (RPC) ──
 
+def get_safety() -> dict | None:
+    """바닥 필터 설정. robotd 가 없으면 `None` — 화면이 "데몬 없음"을 보여준다.
+
+    ⚠ 게이트웨이가 기본값을 **지어내지 않는다.** 여기서 `FloorConfig()` 를 흉내내면
+    robotd 가 내려간 동안 화면이 "켜짐 -4cm" 라고 말하는데, 실제로는 팔에 아무것도
+    안 걸려 있다. 모르는 것은 모른다고 해야 한다.
+    """
+    return _call("get_safety")
+
+
+def set_safety(patch: dict) -> dict | None:
+    return _call("set_safety", patch)
+
+
 def lost_arms() -> list[dict]:
     """**robotd 가 판정한** 사라진 팔. 게이트웨이가 세그먼트로 추론하지 않는다.
 

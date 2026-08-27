@@ -69,6 +69,10 @@ def test_the_list_covers_every_mutating_post():
         "/jog/goal", "/jog/home", "/presets/save", "/can/up", "/usb/recover",
         "/end-pose/jog", "/end-pose/home", "/relay/start", "/relay/stop",
         "/errors/clear", "/save-config", "/load-config",
+        # 바닥 필터 설정 — 세션(팔 슬롯·역할·config)이 아니라 **robotd 가**
+        # 자기 `safety.json` 에 따로 저장한다. 게이트웨이 세션에 실으면
+        # 저장이 두 곳이 되고, 둘이 어긋나면 화면과 실제 필터가 달라진다.
+        "/safety",
     }
     new = posts - known
     assert not new, f"세션에 실리는 값을 건드리는지 판단이 필요한 새 라우트: {sorted(new)}"

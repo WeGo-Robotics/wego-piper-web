@@ -198,6 +198,26 @@ class RobotHub:
             return None
         return "그 방향으로는 못 갑니다 (직전 명령이 도달하지 못했습니다)"
 
+    # ── 안전 설정 ──
+    #
+    # 브리지가 아니라 **매니저**가 들고 있다 (팔을 뽑았다 꽂아도 유지돼야 한다).
+    # 허브는 그 앞의 RPC 창구일 뿐이다.
+
+    def get_safety(self) -> dict:
+        from piper_robot import publish, safety_store
+        return safety_store.as_dict(publish.arm_bridge_manager.floor_config())
+
+    def set_safety(self, patch: dict) -> dict:
+        """바닥 필터 설정 변경. `cm` 로 받아 `m` 로 저장한다."""
+        from piper_robot import publish, safety_store
+
+        out = dict(patch)
+        # UI 는 cm 로 말한다 — 여기서 한 번만 바꾼다. 양쪽에서 바꾸면 언젠가
+        # 100 배 틀린 값이 저장된다.
+        if "min_z_cm" in out:
+            out["min_z"] = float(out.pop("min_z_cm")) / 100.0
+        return safety_store.as_dict(publish.arm_bridge_manager.set_floor(out))
+
     def read_end_pose(self, iface: str) -> dict | None:
         arm = self.arms.get(iface)
         return arm.read_end_pose() if arm else None

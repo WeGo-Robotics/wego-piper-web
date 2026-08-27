@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import FloorGuardPanel from '../components/FloorGuardPanel'
 import ServicesPanel from '../components/ServicesPanel'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
@@ -12,6 +13,7 @@ import { api } from '../services/api'
 
 const TABS = [
   { id: 'general', label: '일반' },
+  { id: 'safety', label: '안전' },
   { id: 'services', label: '서비스' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
@@ -67,6 +69,12 @@ export default function SettingsPage() {
           </button>
         ))}
       </div>
+
+      {tab === 'safety' && (
+        <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5">
+          <FloorGuardPanel />
+        </div>
+      )}
 
       {tab === 'services' && (
         <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5">

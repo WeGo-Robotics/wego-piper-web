@@ -51,6 +51,7 @@ _METHODS = {
     "clear_errors", "read_error", "enable_torque", "disable_torque", "go_parking",
     "start_motion_detect", "motion_status", "start_identify",
     "jog_end_pose", "read_end_pose",
+    "get_safety", "set_safety",
     "init_interface", "check_active", "sniff_ids", "rename_interface", "recover_usb", "usb_info",
     "lost",
 }
