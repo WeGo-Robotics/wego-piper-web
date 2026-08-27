@@ -6,6 +6,9 @@ import type { Data, Layout } from 'plotly.js'
 // dist-min 번들로 Plot 컴포넌트 생성 (소스에서 plotly 빌드 회피)
 const Plot = createPlotlyComponent(Plotly)
 
+/** 이 점수를 넘을 때만 WebGL 을 쓴다 — 그 아래는 SVG 가 더 안전하다 (위 주석). */
+const GL_MIN_POINTS = 4000
+
 export type Series = { label: string; color: string; data: (number | null)[]; dash?: boolean }
 
 type Props = {
@@ -60,10 +63,23 @@ export default function PlotlyChart({ x, series, markerX = null, height = 220, u
     return () => container.removeEventListener('wheel', onWheel, { capture: true } as any)
   }, [])
 
+  // ⚠ **WebGL 컨텍스트는 브라우저당 몇 개뿐이다** (크롬 기준 십수 개).
+  //
+  //   `scattergl` 은 그래프마다 하나씩 잡는다. 한도를 넘으면 브라우저가 **오래된
+  //   것부터 버리고**, 버려진 그래프는 하얗게 남는다 — 에러도 안 난다. 에피소드
+  //   화면에서 관절 그래프(7축)를 펼치자 위쪽 속도 그래프들이 그렇게 비었다.
+  //
+  //   점이 많을 때만 GL 이 값을 한다. 이 화면의 신호는 에피소드당 수백 점이라
+  //   SVG 로 충분하고, 그러면 컨텍스트를 아예 안 쓴다.
+  const kind = useMemo(
+    () => (series.some((s) => s.data.length > GL_MIN_POINTS) ? 'scattergl' : 'scatter'),
+    [series],
+  )
+
   const data = useMemo<Data[]>(
     () =>
       series.map((s) => ({
-        type: 'scattergl',
+        type: kind,
         mode: 'lines',
         name: s.label,
         x,
@@ -72,7 +88,7 @@ export default function PlotlyChart({ x, series, markerX = null, height = 220, u
         line: { color: s.color, width: 1.6, dash: s.dash ? 'dash' : 'solid' },
         hovertemplate: `${s.label}: %{y:.3f}<extra></extra>`,
       })),
-    [x, series],
+    [x, series, kind],
   )
 
   const layout = useMemo<Partial<Layout>>(
