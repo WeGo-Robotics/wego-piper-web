@@ -14,7 +14,8 @@ from lerobot.policies.act.configuration_act import ACTConfig
 POOL_CHOICES = ("mean", "state")
 # = piper_phase.PHASE_NAMES. 정책 패키지가 piper_phase 를 import 하지 않는 이유: 학습 머신·컨테이너에
 # phase 패키지가 없어도 정책은 돌아야 한다. 대신 테스트가 두 목록을 대조한다.
-DEFAULT_STAGE_NAMES = ("IDLE", "APPROACH", "ALIGN", "GRASP", "HOLD", "RELEASE", "DONE")
+DEFAULT_STAGE_NAMES = ("IDLE", "APPROACH", "ALIGN", "GRASP", "HOLD", "RELEASE",
+                       "DONE", "PARKING")
 SUBTASK_KEY = "subtask"              # LeRobot 이 배치에 넣어주는 프레임별 하위작업 이름 (§4.1)
 
 

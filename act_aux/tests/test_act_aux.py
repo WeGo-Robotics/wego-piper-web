@@ -84,7 +84,7 @@ def test_config_validates():
         ActAuxConfig(**_small(stage_names=["a", "b", "c"], stage_class_weights=[1.0, 2.0]))
     with pytest.raises(ValueError):
         ActAuxConfig(**_small(stage_names=["a", "a"]))
-    assert ActAuxConfig(**_small()).n_stages == 7
+    assert ActAuxConfig(**_small()).n_stages == 8
     with pytest.raises(ValueError):
         ActAuxConfig(**_small(temperature=0))
 

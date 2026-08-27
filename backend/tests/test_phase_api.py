@@ -59,7 +59,12 @@ def test_catch_all_still_resolves_real_datasets(client):
 def test_defaults_expose_params_and_phases(client):
     r = client.get("/api/phase/defaults").json()
     assert "hold_gap" in r["params"] and "fps" in r["params"]
-    assert r["phases"][0] == "IDLE" and r["phases"][-1] == "DONE"
+    # 목록 전체를 대조한다 — 마지막 이름을 박아두면 페이즈를 하나 붙일 때마다
+    # 실패한다. 검사의 뜻은 "정본을 그대로 내보내는가" 다.
+    from piper_phase import PHASE_NAMES
+
+    assert r["phases"] == list(PHASE_NAMES)
+    assert r["phases"][0] == "IDLE", "IDLE 은 0 이어야 한다 (사이드카가 정수로 저장)"
 
 
 def test_unknown_param_is_rejected_not_ignored(client):

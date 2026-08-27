@@ -37,9 +37,14 @@ GRASP = 3
 HOLD = 4
 RELEASE = 5
 DONE = 6
+# 마지막 놓기 뒤 **원점으로 돌아가는** 구간. 예전에는 이것도 APPROACH 였다 —
+# 다음 물체로 접근하는 것과 구분이 안 됐고, 그 바람에 DONE 이 쓸 꼬리까지 먹었다.
+PARKING = 7
 
+# ⚠ **끝에만 붙인다.** 사이드카는 페이즈를 **정수**로 저장한다. 중간에 끼우면
+#   이미 라벨링해둔 데이터셋의 뜻이 조용히 바뀐다 — HOLD 였던 4가 다른 것이 된다.
 PHASE_NAMES: tuple[str, ...] = (
-    "IDLE", "APPROACH", "ALIGN", "GRASP", "HOLD", "RELEASE", "DONE",
+    "IDLE", "APPROACH", "ALIGN", "GRASP", "HOLD", "RELEASE", "DONE", "PARKING",
 )
 
 GRIPPER_IDX = 6  # state/action 의 마지막 채널
@@ -74,6 +79,14 @@ class Params:
     # 20이면 절반이 DONE 을 못 받아 라벨이 에피소드마다 들쭉날쭉해진다.
     # "끝까지 아무 일 없음" 이 이미 강한 조건이므로 길이 요구는 낮게 둔다.
     done_still: int = 5
+    # 정지 판정 전에 속도에 씌우는 중앙값 창(프레임, 홀수). 1이면 끔.
+    # 5는 15fps 에서 3분의 1초 — 지터는 지우고 실제 정지 시점은 거의 안 움직인다.
+    still_window: int = 5
+    # 끝 정지 구간을 되짚을 때 눈감아 줄 비정지 프레임 수.
+    # ⚠ 잔여 지터가 임계(2.0) **바로 위**에 있다 — 실측 2.4~4.2. 연속을 요구하면
+    #   멈춰 선 팔도 한두 프레임 때문에 DONE 을 못 받는다. 임계 자체를 올리면
+    #   온라인 FSM 의 정지 판정까지 헐거워지므로 여기서만 봐준다.
+    done_jitter: int = 3
 
 
 @dataclass
@@ -257,6 +270,23 @@ def label_causal(sig: Signals, params: Params | None = None) -> np.ndarray:
 # ── 오프라인 보정 ─────────────────────────────────────────────────────────────
 
 
+def _median_filter(x: np.ndarray, window: int) -> np.ndarray:
+    """길이를 유지하는 중앙값 필터. 가장자리는 끝값으로 채운다.
+
+    한 프레임짜리 스파이크를 지우는 것이 목적이다. 창을 키우면 정지 시점이 뒤로
+    밀리므로 짧게 쓴다.
+    """
+    if window <= 1 or len(x) < window:
+        return x
+    half = window // 2
+    # ⚠ 가장자리를 **반사**로 채운다. `edge` 로 채우면 마지막 값이 창의 과반이 되어
+    #   자기 자신이 중앙값이 된다 — 끝 프레임의 지터가 그대로 살아남는다.
+    #   실측: 멈춘 팔의 마지막 한 프레임이 2.4 라 DONE 이 통째로 날아갔다.
+    padded = np.pad(x, half, mode="reflect")
+    view = np.lib.stride_tricks.sliding_window_view(padded, window)
+    return np.median(view, axis=-1)
+
+
 def finalize(phases: np.ndarray, sig: Signals, params: Params | None = None) -> np.ndarray:
     """오프라인 전용 보정. **미래를 참조하므로 온라인에서 쓰면 안 된다.**
 
@@ -268,13 +298,52 @@ def finalize(phases: np.ndarray, sig: Signals, params: Params | None = None) -> 
     out = phases.copy()
     n = len(out)
 
-    # 1. DONE — 뒤에서부터 "이후로 hold/closing 이 전혀 없는" 정지 구간을 찾는다
     closing = sig.grip_rate < -p.grip_rate
-    still = sig.speed < p.still_speed
-    tail = n
-    while tail > 0 and still[tail - 1] and not sig.hold[tail - 1] and not closing[tail - 1]:
+    # ⚠ **지터를 먼저 걷어낸다.** 뒤에서부터 정지 구간을 찾을 때 끊기지 않은 연속을
+    #   요구하는데, 멈춰 선 팔도 엔코더 잡음으로 한 프레임씩 임계를 넘는다.
+    #   실측(bolt_two1): 마지막 20프레임 중 19개가 정지인데 **맨 끝 한 프레임이
+    #   2.4**(임계 2.0)라 스캔이 즉시 멈추고 DONE 이 통째로 날아갔다. 50개 중
+    #   16개가 그랬다.
+    #
+    #   평균이 아니라 **중앙값**이다 — 평균은 경계를 뭉개서 정지 시점을 앞당긴다.
+    still = _median_filter(sig.speed, p.still_window) < p.still_speed
+
+    # 1. PARKING — **마지막 놓기 뒤로 다시 집지 않으면** 그 이후는 복귀다.
+    #
+    # 예전에는 이 구간이 APPROACH 였다. FSM 의 RELEASE→APPROACH 전이가
+    # `gripper_open and moving` 이라, 원점으로 돌아가는 움직임과 다음 물체로
+    # 접근하는 움직임을 구분할 수 없었기 때문이다. 온라인에서는 정말 구분이
+    # 안 된다 — 다음에 집을지 말지는 미래다. 그래서 **오프라인 전용**이고,
+    # DONE 이 이미 그런 것과 같은 이유다.
+    rel = np.flatnonzero(out == RELEASE)
+    parked_from = None
+    if len(rel):
+        after = int(rel[-1]) + 1
+        # 그 뒤로 무는 동작이 한 번이라도 있으면 복귀가 아니라 다음 사이클이다
+        if after < n and not (sig.hold[after:].any() or closing[after:].any()):
+            out[after:] = PARKING
+            parked_from = after
+
+    # 2. DONE — 끝의 정지 구간. 복귀가 있으면 그 안에서, 없으면 예전 방식대로.
+    #
+    # ⚠ 복귀를 갈라내기 전에는 이 스캔이 **복귀 동작에서 멈췄다.** 팔이 움직이는
+    #   중이라 `still` 이 거짓이니 꼬리가 0이 되고, DONE 이 아예 안 붙는
+    #   에피소드가 흔했다. 이제 정지한 부분만 남으므로 제대로 잡힌다.
+    # ⚠ **끝 프레임은 반드시 정지여야 한다.** 아래 지터 허용이 여기까지 번지면
+    #   가속 중에 끝난 에피소드에도 DONE 이 붙는다 — 실측에서 마지막 속도가
+    #   33.9 인 에피소드가 DONE 을 받았다. 봐주기는 구간 **안쪽**의 튐만이다.
+    floor = parked_from if parked_from is not None else 0
+    if n == 0 or not still[n - 1]:
+        return _absorb_short_segments(out, p.min_segment)
+    tail, bad = n, 0
+    while tail > floor and not sig.hold[tail - 1] and not closing[tail - 1]:
+        if not still[tail - 1]:
+            if bad >= p.done_jitter:
+                break
+            bad += 1
         tail -= 1
-    if n - tail >= p.done_still:
+    # 눈감아 준 프레임은 **빼고** 센다 — 봐주기가 길이 요구를 대신하면 안 된다
+    if (n - tail) - bad >= p.done_still:
         out[tail:] = DONE
 
     # 2. 최소 구간 길이 — 앞 구간에 흡수

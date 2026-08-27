@@ -82,8 +82,11 @@ def test_finalize_is_the_only_future_reader():
     final = finalize(causal, sig, _P)
     diff = np.flatnonzero(causal != final)
     if len(diff):
-        # 바뀐 곳은 DONE 이거나 짧은 구간 흡수뿐
-        assert set(final[diff].tolist()) <= {DONE} | set(causal.tolist())
+        # 바뀐 곳은 **오프라인 전용 라벨**이거나 짧은 구간 흡수뿐.
+        # PARKING 도 미래를 봐야 안다 — 다음에 또 집을지는 온라인에서 알 수 없다.
+        from piper_phase.fsm import PARKING
+
+        assert set(final[diff].tolist()) <= {DONE, PARKING} | set(causal.tolist())
 
 
 # ── 신호 ──
