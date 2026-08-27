@@ -200,6 +200,14 @@ class RobotHub:
 
     # ── 하드웨어 영점 ──
 
+    def read_motion_status(self, iface: str) -> dict | None:
+        """팔이 보고하는 운동 상태 (`0x02 无解`, `0x03 奇异点` …).
+
+        말단 명령이 안 먹을 때 **이유를 추측하지 않기 위한** 것이다.
+        """
+        arm = self.arms.get(iface)
+        return arm.read_motion_status() if arm else None
+
     def stream_end_pose(self, iface: str, target: dict) -> dict:
         """POSE 모드 텔레오퍼레이션이 초당 수십 번 부른다.
 

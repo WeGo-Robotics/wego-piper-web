@@ -291,9 +291,22 @@ class RelaySession:
         if not out or not out.get("ok"):
             self._block((out or {}).get("error") or "robotd 가 응답하지 않습니다")
             return
-        self._last_pose = target
-        self._blocked = ""
+
+        # ⚠ **명령이 나갔다는 것과 팔이 갈 수 있다는 것은 다르다.** 팔은 자기가
+        #   못 푼 것을 `arm_status` 로 말한다 (0x02 无解, 0x03 奇异点). 그걸 안
+        #   읽으면 "왜 안 가지" 를 우리가 추측하게 된다 — 팔은 알고 있는데.
+        #
+        #   ⚠ 리더가 그 자세에 서 있다는 것은 **자세가 도달 가능하다는 증거이지
+        #     팔로워의 IK 가 그 해를 찾는다는 보장이 아니다.** 온보드 IK 는 해석해라
+        #     가지(branch)를 하나 고르고, 특이점 위나 경계에서는 해가 없다고 답한다.
         self._sent += 1
+        self._last_pose = target
+        st = _call("read_motion_status", self._follower)
+        if st and st.get("bad"):
+            self._block(f"팔로워가 못 간다고 합니다: {st['text']} "
+                        f"(리더는 그 자세에 서 있어도 팔로워의 IK 는 다른 해를 고릅니다)")
+            return
+        self._blocked = ""
 
     def _block(self, why: str) -> None:
         """보내지 않고 이유를 남긴다. **바뀔 때만** 로그에 쓴다 — 15Hz 로 뱉으면 묻힌다."""

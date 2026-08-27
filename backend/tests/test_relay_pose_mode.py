@@ -210,3 +210,43 @@ def test_the_threshold_leaves_a_real_margin():
 def test_the_relay_checks_it():
     body = RELAY.read_text().split("def _send_pose", 1)[1].split("\n    def ", 1)[0]
     assert "near_wrist_singularity" in body
+
+
+# ── 팔이 못 간다고 할 때 ────────────────────────────────────────────────────
+
+def test_the_arm_reports_its_own_failure():
+    """⚠ 팔은 `GetArmStatus().arm_status` 로 IK 실패를 **직접 말한다**
+    (0x02 无解, 0x03 奇异点). 우리는 같은 메시지에서 `ctrl_mode` 와 `err_code`
+    만 읽고 이걸 안 봤다 — 그래서 "왜 안 가지" 를 추측했다."""
+    from piper_robot.arm import Arm
+
+    assert Arm.MOTION_STATUS[0x02] and Arm.MOTION_STATUS[0x03]
+    assert 0x02 in Arm.MOTION_BAD and 0x03 in Arm.MOTION_BAD
+    assert 0x00 not in Arm.MOTION_BAD, "정상을 실패로 세면 항상 막힌다"
+
+
+def test_pose_mode_asks_the_arm_instead_of_guessing():
+    body = RELAY.read_text().split("def _send_pose", 1)[1].split("\n    def ", 1)[0]
+    assert "read_motion_status" in body
+    # 보낸 **뒤에** 물어야 의미가 있다
+    assert body.index("stream_end_pose") < body.index("read_motion_status")
+
+
+def test_the_workspace_box_is_not_ik():
+    """⚠ "작업 공간 밖" 은 IK 실패가 아니다 — 우리 상자다.
+
+    실측: URDF 관절한계 안 무작위 자세 60,000개 중 상자 안은 **10.1%** 뿐이다.
+    리더가 상자 밖 자세에 서 있는 것은 이상한 일이 아니라 당연한 일이다.
+    """
+    from piper_robot.endpose import WorkspaceBox
+
+    box = WorkspaceBox()
+    lim = np.array([(-2.6179938, 2.6179938), (0, 3.1415926), (-2.9670597, 0),
+                    (-1.7453292, 1.7453292), (-1.2217304, 1.2217304), (-2.0943951, 2.0943951)])
+    rng = np.random.default_rng(0)
+    q = rng.uniform(lim[:, 0], lim[:, 1], size=(4000, 6))
+    xyz = K.endpoint_xyz(q) * 1000.0
+    inside = ((xyz[:, 0] >= box.x[0]) & (xyz[:, 0] <= box.x[1])
+              & (xyz[:, 1] >= box.y[0]) & (xyz[:, 1] <= box.y[1])
+              & (xyz[:, 2] >= box.z[0]) & (xyz[:, 2] <= box.z[1]))
+    assert inside.mean() < 0.3, "상자가 넓어졌다 — 이 테스트의 근거를 다시 재라"

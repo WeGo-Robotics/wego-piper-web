@@ -284,6 +284,51 @@ class Arm:
                 logger.error("go_parking error: %s", e)
                 return False
 
+    # ── 팔이 말하는 운동 상태 ──
+    #
+    # ⚠ **팔이 IK 실패를 직접 보고한다.** `GetArmStatus()` (CAN 0x2A1) 의
+    #   `arm_status` 가 그 자리인데, 우리는 지금까지 같은 메시지에서
+    #   `ctrl_mode` 와 `err_code` 만 읽고 이걸 안 봤다.
+    #
+    #   그래서 말단 명령이 안 먹을 때 이유를 우리가 **추측**했다. 팔은 알고 있다.
+
+    #: `arm_status` 코드 → 사람 말. SDK 문서(0x2A1)에서 그대로 옮겼다.
+    MOTION_STATUS = {
+        0x00: "정상",
+        0x01: "급정지",
+        0x02: "IK 해가 없습니다",          # 无解
+        0x03: "특이점입니다",              # 奇异点
+        0x04: "목표 각도가 관절 한계를 넘습니다",
+        0x05: "관절 통신 이상",
+        0x06: "관절 브레이크가 안 풀렸습니다",
+        0x07: "충돌이 감지됐습니다",
+        0x08: "교시 중 과속",
+        0x09: "관절 상태 이상",
+        0x0A: "기타 이상",
+        0x0B: "교시 기록 중", 0x0C: "교시 실행 중", 0x0D: "교시 일시정지",
+        0x0E: "주제어 NTC 과열", 0x0F: "방전저항 NTC 과열",
+    }
+    #: 말단 명령이 **실패한** 상태들. 나머지는 정상이거나 다른 이야기다.
+    MOTION_BAD = (0x02, 0x03, 0x04, 0x07)
+
+    def read_motion_status(self) -> dict | None:
+        """팔이 보고하는 운동 상태. `None` 이면 못 읽었다."""
+        with self._lock:
+            if not self._piper:
+                return None
+            try:
+                st = self._piper.GetArmStatus().arm_status
+                code = int(st.arm_status)
+                return {
+                    "code": code,
+                    "text": self.MOTION_STATUS.get(code, f"알 수 없음(0x{code:02X})"),
+                    "bad": code in self.MOTION_BAD,
+                    "mode_feed": int(st.mode_feed),   # 0 = MOVE P, 1 = MOVE J
+                }
+            except Exception as exc:
+                logger.debug("read_motion_status 실패 (%s): %s", self.iface, exc)
+                return None
+
     # ── 하드웨어 영점 ──
     #
     # ⚠ **소프트웨어 영점과 전혀 다른 물건이다. 헷갈리면 팔을 망친다.**
