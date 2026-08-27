@@ -358,6 +358,33 @@ LeRobot 정책이 관절 공간 대신 엔드이펙터 공간으로 액션을 �
 줄자 한 번이면 갈린다: 장착면(베이스 밑면)에서 작업면까지의 높이. 그 전까지
 `min_z` 는 **실측 경계이지 물리적 사실이 아니다.**
 
+### 무엇에 걸리나 — 전부가 아니다
+
+문서 본문은 "CAN 으로 나가는 모든 명령이 한 곳을 통과한다"고 적었는데, 실제로는
+**두 곳이 빠져 있고 한 곳은 설정에 달렸다.** 전수 조사 결과:
+
+| 경로 | CAN 까지 | 필터 |
+|---|---|---|
+| LeRobot 녹화 텔레오퍼레이션 | `piper_follower_shm` → shm → `filter_goal` | ✅ `robot_transport=shm` 일 때만 |
+| LeRobot 정책 추론 | 같음 | ✅ 같은 조건 |
+| 웹 릴레이 (`relay.py`) | shm → `filter_goal` | ✅ |
+| 웹 관절 조그 (`jog.py`) | shm → `filter_goal` | ✅ |
+| **파킹** (`arm.go_parking`) | `JointCtrl` **직접** | ❌ |
+| **말단 조그** (`arm.jog_end_pose`) | `EndPoseCtrl` **직접** | ❌ |
+
+- **`robot_transport`** 가 `direct` 면 LeRobot subprocess 가 CAN 을 **직접 열어**
+  녹화·추론이 통째로 필터를 안 지난다. **코드 기본값이 `direct` 다**
+  ([config.py](../backend/app/core/config.py) — "실기로 제어 지연을 비교한 뒤에 바꾼다").
+  이 머신은 `.env` 에 `PIPER_ROBOT_TRANSPORT=shm` 이 있어서 걸린다.
+  그래서 [설정]-[안전] 화면이 **실제 전송 방식을 읽어서** 적용 범위를 표시한다 —
+  안 걸리는 상태에서 "걸립니다"라고 말하는 것이 여기서 제일 나쁜 고장이다.
+- **말단 조그**는 온보드 IK 라 관절 목표를 우리가 정하지 않는다. 걸 자리가 없고,
+  [`endpose`](../robot/piper_robot/endpose.py) 의 작업공간 상자가 대신 막는다.
+  `hub.jog_end_pose` 머리말이 이미 "관절 안전 필터가 안 걸리는 유일한 경로"라고
+  적어 뒀다 — 파킹까지 세면 유일하지도 않다.
+- **파킹**은 저장된 자세로 곧바로 명령한다. 커스텀 파킹 자세가 바닥 아래면 막을
+  것이 없다. 고치기 제일 쉬운 쪽이다(`go_parking` 이 브리지를 지나게 하면 된다).
+
 ### 설정 — [설정]-[안전] 탭
 
 `robot/piper_robot/safety_store.py` 가 `~/.piper/safety.json` 에 저장하고,

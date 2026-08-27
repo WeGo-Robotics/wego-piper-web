@@ -52,6 +52,60 @@ function Switch({ on, onChange, disabled }: {
   )
 }
 
+/**
+ * 무엇에 걸리고 무엇에 안 걸리나.
+ *
+ * ⚠ **"전부에 걸립니다" 라고 적어뒀다가 틀렸다.** 두 가지를 놓쳤다:
+ *
+ *   1. 파킹과 말단 조그는 `filter_goal` 을 안 지난다 — 각각 `JointCtrl` 과
+ *      `EndPoseCtrl` 을 직접 부른다. 말단 조그는 온보드 IK 라 관절 목표를
+ *      우리가 정하지 않으므로 애초에 걸 수가 없고, `endpose` 의 작업공간
+ *      상자가 대신 막는다.
+ *   2. LeRobot 녹화·추론이 걸리는지는 `robot_transport` 가 정한다. `shm` 이면
+ *      robotd 를 지나 걸리고, `direct` 면 subprocess 가 CAN 을 **직접 열어**
+ *      안 걸린다. 코드 기본값은 `direct` 다.
+ *
+ * 그래서 화면이 실제 전송 방식을 읽어서 말한다. 안전 화면이 안 걸리는 것을
+ * 걸린다고 말하는 것이 여기서 제일 나쁜 고장이다.
+ */
+function Coverage({ transport, enabled }: { transport: string; enabled: boolean }) {
+  const shm = transport === 'shm'
+  const rows: [string, boolean, string][] = [
+    ['녹화 텔레오퍼레이션 (리더→팔로워)', shm,
+     shm ? '' : 'robot_transport=direct — subprocess 가 CAN 을 직접 엽니다'],
+    ['정책 추론', shm,
+     shm ? '' : 'robot_transport=direct — subprocess 가 CAN 을 직접 엽니다'],
+    ['웹 릴레이·관절 조그', true, ''],
+    ['파킹', false, '저장된 파킹 자세로 곧바로 명령합니다'],
+    ['말단(EndPose) 조그', false, '온보드 IK — 관절 목표를 우리가 정하지 않습니다'],
+  ]
+  return (
+    <div className="space-y-1">
+      <div className="text-sm text-neutral-300">
+        적용 범위
+        {!shm && transport && (
+          <span className="ml-2 text-xs text-amber-400">
+            전송 방식 {transport}
+          </span>
+        )}
+      </div>
+      <ul className="space-y-0.5 text-xs">
+        {rows.map(([label, covered, why]) => (
+          <li key={label} className="flex items-baseline gap-2">
+            <span className={covered && enabled ? 'text-green-400' : 'text-neutral-600'}>
+              {covered ? '●' : '○'}
+            </span>
+            <span className={covered && enabled ? 'text-neutral-300' : 'text-neutral-500'}>
+              {label}
+            </span>
+            {why && <span className="text-neutral-600">— {why}</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 type Floor = {
   enabled: boolean
   min_z_cm: number
@@ -62,14 +116,16 @@ type Floor = {
 export default function FloorGuardPanel() {
   const { notify } = useSystemMessage()
   const [floor, setFloor] = useState<Floor | null>(null)
+  const [transport, setTransport] = useState<string>('')
   const [loaded, setLoaded] = useState(false)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
 
   const refresh = useCallback(() => {
-    api.get<{ floor: Floor | null }>('/robots/safety')
+    api.get<{ floor: Floor | null; transport: string }>('/robots/safety')
       .then((r) => {
         setFloor(r.floor)
+        setTransport(r.transport)
         if (r.floor) setDraft(String(r.floor.min_z_cm))
       })
       .catch(() => setFloor(null))
@@ -129,7 +185,6 @@ export default function FloorGuardPanel() {
           <h2 className="text-lg font-semibold">바닥 필터</h2>
           <p className="text-sm text-neutral-400">
             팔이 정해둔 높이 아래로 내려가는 명령을 <b>접촉 직전까지</b>로 줄입니다.
-            추론·녹화·수동 조작·파킹 <b>전부</b>에 걸립니다.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -188,6 +243,8 @@ export default function FloorGuardPanel() {
           <p className="text-xs text-red-400">{lo} ~ {hi} 사이여야 합니다</p>
         )}
       </div>
+
+      <Coverage transport={transport} enabled={floor.enabled} />
 
       {/* ⚠ 이 문단이 없으면 음수 기본값이 오타로 보인다. 숫자가 실측에서 나왔다는
           것과, 그 3cm 이 아직 안 풀렸다는 것을 같이 적는다. */}

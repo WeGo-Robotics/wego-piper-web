@@ -55,3 +55,44 @@ def test_the_state_is_also_written_out():
     """색만으로는 색각 이상에서 안 읽힌다 — 글자도 같이 낸다."""
     src = _src()
     assert "'켜짐' : '꺼짐'" in src
+
+
+# ── 적용 범위 (화면이 거짓말하지 않는가) ──────────────────────────────────────
+
+def test_the_panel_does_not_claim_to_cover_everything():
+    """⚠ **실제로 틀렸던 문구다.** 두 가지를 놓쳤다:
+
+    1. 파킹(`arm.go_parking`)과 말단 조그(`arm.jog_end_pose`)는 `filter_goal` 을
+       안 지나고 `JointCtrl`/`EndPoseCtrl` 을 **직접** 부른다
+    2. LeRobot 녹화·추론이 걸리는지는 `robot_transport` 가 정한다 —
+       `direct` 면 subprocess 가 CAN 을 직접 연다. **코드 기본값이 `direct` 다**
+
+    안전 화면이 안 걸리는 것을 걸린다고 말하는 것이 여기서 제일 나쁜 고장이다.
+    """
+    # ⚠ `code_only` 로 주석을 걷어낸다 — 왜 그 문구를 안 쓰는지 설명하는 주석이
+    #   그 문구를 금지하는 검사에 걸린다. 이 저장소에서 네 번째다.
+    assert "전부에 걸립니다" not in code_only(_src())
+    assert "Coverage" in _src(), "적용 범위를 보여주는 곳이 없다"
+
+
+def test_coverage_follows_the_actual_transport():
+    """`direct` 로 바꾸면 녹화·추론 줄이 꺼져야 한다 — 화면이 설정을 읽어야 한다."""
+    src = _src()
+    assert "transport === 'shm'" in src
+    body = src.split("function Coverage", 1)[1].split("\n}", 1)[0]
+    assert body.count("shm,") >= 2, "녹화와 추론이 전송 방식에 안 걸려 있다"
+
+
+def test_the_uncovered_paths_are_named():
+    """안 걸리는 것은 **이름과 이유를 같이** 적는다 — 목록에서 빠지면
+    걸리는 줄 안다."""
+    body = _src().split("function Coverage", 1)[1].split("\n}", 1)[0]
+    for name in ("파킹", "말단"):
+        assert name in body, f"{name} 이 적용 범위 목록에 없다"
+    assert "온보드 IK" in body
+
+
+def test_the_endpoint_reports_the_transport():
+    """화면이 추측하지 않게 서버가 알려준다."""
+    router = (Path(__file__).resolve().parents[1] / "app" / "routers" / "robots.py").read_text()
+    assert '"transport": settings.robot_transport' in router

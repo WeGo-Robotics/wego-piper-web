@@ -230,8 +230,18 @@ class SafetyRequest(BaseModel):
 
 @router.get("/safety")
 async def get_safety():
-    """바닥 필터 설정. robotd 가 없으면 `null` 을 담아 보낸다."""
-    return {"floor": robot_manager_mod.get_safety()}
+    """바닥 필터 설정 + **무엇에 걸리는지.**
+
+    ⚠ 필터가 걸리는 범위는 `robot_transport` 가 정한다. `shm` 이면 LeRobot
+    녹화·추론이 robotd 를 지나므로 걸리고, `direct` 면 subprocess 가 CAN 을
+    **직접 열어** 안 걸린다. 화면이 그 차이를 모르면 안 걸리는 상태에서도
+    "전부에 걸립니다" 라고 말한다 — 안전 화면에서 그건 거짓말이다.
+    """
+    from app.core.config import settings
+    return {
+        "floor": robot_manager_mod.get_safety(),
+        "transport": settings.robot_transport,
+    }
 
 
 @router.post("/safety")
