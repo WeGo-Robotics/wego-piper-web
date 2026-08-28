@@ -3,7 +3,10 @@ name = "piper_phase"
 version = "0.1.0"
 description = "작업 단계 라벨러 (백엔드 라벨러 ↔ wrapper 온라인 추정기 공유)"
 requires-python = ">=3.11"
-dependencies = ["numpy>=1.24"]
+# ⚠ `piper-robot` 은 **최상위 import** 다 (`kinematics` 가 FK 를 거기서 가져온다).
+#   선언 안 하면 깨끗한 환경에서 `pip install -e phase/` 가 성공한 뒤
+#   `import piper_phase.kinematics` 에서 죽는다.
+dependencies = ["numpy>=1.24", "piper-robot"]
 
 # 인과 코어(fsm)는 numpy 만. 배치 라벨러(labeler)와 CLI 만 parquet 의존이 있다.
 [project.optional-dependencies]

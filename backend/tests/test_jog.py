@@ -302,12 +302,37 @@ def test_the_end_pose_command_checks_the_bus_before_sending():
 
 
 def test_the_bus_is_not_checked_per_frame():
-    """`ip` 호출은 3~4ms 다. 명령마다는 괜찮지만 발행 루프에 들어가면 안 된다."""
+    """`ip` 호출은 3~4ms 다. 명령마다는 괜찮지만 **프레임마다는** 안 된다.
+
+    ⚠ 금지가 아니라 **간격**이 요점이다. 오류 카운터 감시(`error_counters`)가
+      같은 `ip` 를 쓰는데, 그건 10초에 한 번이라 괜찮다 — 발행 루프 안에서
+      매 프레임 부르는 것만 막는다.
+    """
+    import re
     from pathlib import Path
 
     publish = (Path(__file__).resolve().parents[2] / "robot" / "piper_robot"
                / "publish.py").read_text()
-    assert "can_state" not in publish and "can_unhealthy_reason" not in publish
+    # 상태 조회는 여전히 금지 — 명령 경로에서 프레임마다 불렸던 전례가 있다.
+    # ⚠ **docstring 을 떼고 본다.** 왜 그걸 안 쓰는지 설명하는 글이 그 이름을
+    #   적는다 — 이 저장소에서 여섯 번째다.
+    import ast
+
+    tree = ast.parse(publish)
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    names |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    names |= {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+              for a in n.names}
+    assert "can_state" not in names and "can_unhealthy_reason" not in names
+
+    loop = publish.split("def _publish_loop", 1)[1].split("\n    def ", 1)[0]
+    for call in re.findall(r"self\.(_sample_can_errors|_declare_lost)\(", loop):
+        if call != "_sample_can_errors":
+            continue
+        # 간격 변수로 감싸여 있어야 한다
+        guard = loop.split("self._sample_can_errors(", 1)[0][-200:]
+        assert "next_err" in guard and "ERR_SAMPLE_S" in guard, \
+            "오류 카운터 조회가 프레임마다 돈다"
 
 
 def test_the_logic_tests_do_not_read_this_machines_can_bus():

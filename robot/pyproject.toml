@@ -9,6 +9,11 @@ dependencies = ["piper-shm", "piper-bus", "numpy>=1.24"]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+# 하드웨어를 실제로 만질 때만 필요하다 — `arm.py` 가 가드된 import 로 받고,
+# 없으면 "piper_sdk not installed" 를 돌려준다. 안전층·기구학 테스트는 이것 없이 돈다.
+[project.optional-dependencies]
+hardware = ["piper_sdk"]
+
 [tool.setuptools.packages.find]
 include = ["piper_robot*"]
 

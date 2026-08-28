@@ -9,18 +9,56 @@ LeRobot 웹 인터페이스 — 로봇 모방학습 프레임워크를 웹에서
 - Node.js 20+ (nvm use 24 권장)
 - Python 3.11+
 - LeRobot 0.5+ (`pip install lerobot`)
+- **Redis** — 데몬끼리 만나는 버스다. 없으면 웹이 "데몬 없음"만 띄운다
+- `video`·`dialout` 그룹 — 카메라와 USB-CAN 접근
+
 ### 설치
 
 ```bash
-# 프론트엔드
-cd frontend && npm install
-
-# 백엔드 (pyproject.toml 기반, 의존성 자동 설치)
-cd backend && pip install -e ".[dev]"
-
-# matplotlib 분석 도구 (선택)
-pip install -e ".[analysis]"
+./deploy/install.sh          # 설치
+./deploy/install.sh --check  # 확인만
 ```
+
+sudo 가 필요한 것(시스템 패키지·그룹·udev)은 **명령을 찍어 주고 사람이 실행**한다.
+스크립트가 몰래 sudo 를 쓰면 무엇이 바뀌었는지 아무도 모른다.
+
+<details>
+<summary>스크립트가 하는 일 (수동으로 하려면)</summary>
+
+```bash
+# 1. 서브모듈 — URDF. 지오메트리를 **다시 구울 때만** 필요하다(구운 npz 는 저장소에 있다)
+git submodule update --init --recursive
+
+# 2. 파이썬 패키지 — **순서가 있다**
+#    ⚠ `pip install -e backend/` 만으로는 안 된다. backend 는 아래 것들에
+#      의존하지 않으므로 하나도 안 딸려온다.
+for p in bus shm robot cam rs phase act_aux \
+         vendor/wego_piper vendor/lerobot_robot_piper \
+         vendor/lerobot_robot_pipershm vendor/lerobot_camera_pipershm; do
+  pip install -e "$p"
+done
+pip install -e "backend[dev]"
+
+# 3. 설정 — ⚠ **코드 기본값이 `direct` 라 안전층이 빠진다**
+cp deploy/env.example backend/.env
+
+# 4. udev — CAN 어댑터 이름 고정 + RealSense 접근
+sudo cp deploy/udev/99-piper-can.rules backend/udev/99-realsense-libusb.rules /etc/udev/rules.d/
+sudo udevadm control --reload
+
+# 5. 데몬 + 로그아웃해도 살아남게
+./deploy/install-daemons.sh estopd robotd camerad rsd gateway frontend
+sudo loginctl enable-linger $USER
+
+# 6. 프론트엔드
+cd frontend && npm install
+```
+</details>
+
+⚠ **CAN 어댑터 이름은 udev 로 고정해야 한다.** 규칙이 없으면 커널이 열거 순서대로
+`can0..can3` 을 붙이고, 그 순서는 다시 꽂을 때마다 바뀐다 — 어제의 `can1` 이 오늘은
+다른 팔이 된다. `deploy/udev/99-piper-can.rules` 는 **시리얼로** 이름을 박는다.
+어댑터를 늘렸으면 `deploy/udev/list-can-adapters.py` 로 시리얼을 뽑아 규칙에 추가한다.
 
 ### 개발 서버 (백엔드 + 프론트엔드 동시)
 
