@@ -428,7 +428,8 @@ class _RSDevice:
 
         return all(segment_path(f"rs_{self.serial}_{s}").exists() for s in streams)
 
-    def _stop_pipeline(self, unlink_segments: bool = True) -> None:
+    def _stop_pipeline(self, unlink_segments: bool = True,
+                       device_gone: bool = False) -> None:
         from piper_rs.publish import stop as stop_publish
 
         stopping = set(self._active)
@@ -452,10 +453,31 @@ class _RSDevice:
         for stream in stopping:
             stop_publish(f"rs:{self.serial}:{stream}", unlink_segment=unlink_segments)
         if self._pipeline is not None:
-            try:
-                self._pipeline.stop()
-            except Exception:
-                pass
+            # ⚠ **장치가 이미 사라졌으면 `stop()` 을 부르지 않는다.**
+            #
+            #   librealsense 가 없는 USB 장치의 전송을 정리하려다 힙을 깨뜨린다.
+            #   그건 파이썬 예외가 아니라 **SIGABRT** 라 `except` 로 못 잡고,
+            #   프로세스가 통째로 코어덤프한다 — 카메라 한 대가 빠졌을 뿐인데
+            #   **나머지 두 대까지 같이 죽는다.** 실측(2026-08-28):
+            #
+            #       [WARNING] 335122271186: USB 노드가 사라졌습니다
+            #       free(): corrupted unsorted chunks
+            #       piper-rsd.service: Main process exited, code=dumped, status=6/ABRT
+            #
+            #   같은 날 `double free or corruption (!prev)` 로도 한 번 죽었다.
+            #
+            #   그래서 참조만 버린다. **파이프라인 하나를 흘리는 셈이지만**,
+            #   장치가 없으니 그게 붙잡고 있는 USB 자원도 이미 없다. 데몬이
+            #   살아서 나머지 카메라를 계속 발행하는 편이 낫다 — 재연결은
+            #   어차피 새 파이프라인을 연다.
+            if device_gone:
+                logger.warning("RealSense %s: 장치가 없어 파이프라인 정리를 "
+                               "건너뜁니다 (librealsense 가 죽습니다)", self.serial)
+            else:
+                try:
+                    self._pipeline.stop()
+                except Exception:
+                    pass
             self._pipeline = None
         self._active = set()
         self._running_profile = {}
@@ -652,8 +674,11 @@ class _RSDevice:
         logger.warning("RealSense %s: %s — 발행을 중단합니다", self.serial, why)
         self.lost_at = time.time()
         self._running = False
+        # 노드가 진짜 사라졌는지 다시 본다 — "프레임이 안 온다" 는 장치가 아직
+        # 있을 수도 있고, 그때는 정리를 해야 자원이 돌아온다.
+        gone = not self._device_present()
         try:
-            self._stop_pipeline()
+            self._stop_pipeline(device_gone=gone)
         except Exception as exc:
             logger.warning("파이프라인 정지 실패 (%s): %s", self.serial, exc)
         with self._lock:

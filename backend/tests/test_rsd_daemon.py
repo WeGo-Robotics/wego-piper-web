@@ -142,8 +142,16 @@ def test_probe_keeps_the_thumbnail_segment():
     assert "_stop_pipeline(unlink_segments=False)" in src, (
         "probe 되돌리기가 썸네일 세그먼트를 지운다"
     )
-    # 반대로 명시적 해제는 지워야 한다 — 안 지우면 "멈춘 화면"이 남는다
-    assert "def _stop_pipeline(self, unlink_segments: bool = True)" in src
+    # 반대로 명시적 해제는 지워야 한다 — 안 지우면 "멈춘 화면"이 남는다.
+    # 시그니처 문자열이 아니라 **기본값**을 본다 (인자가 늘 수 있다 —
+    # `device_gone` 이 그렇게 붙었다).
+    import ast
+
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "_stop_pipeline")
+    args = [a.arg for a in fn.args.args]
+    defaults = dict(zip(args[len(args) - len(fn.args.defaults):], fn.args.defaults))
+    assert defaults["unlink_segments"].value is True, "기본이 세그먼트를 남긴다"
 
 
 def test_probe_settles_before_keeping_the_frame():
