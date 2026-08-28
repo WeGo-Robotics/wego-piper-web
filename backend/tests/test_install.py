@@ -121,3 +121,72 @@ def test_the_installer_never_runs_sudo():
         if stripped.startswith("echo") or '"' in stripped.split("sudo")[0]:
             continue
         assert not re.match(r"^\s*sudo\s", stripped), f"sudo 를 직접 실행한다: {stripped}"
+
+
+# ── 도커 ────────────────────────────────────────────────────────────────────
+
+COMPOSE = REPO / "docker-compose.yml"
+
+
+def _compose() -> dict:
+    yaml = pytest.importorskip("yaml")
+    return yaml.safe_load(COMPOSE.read_text())
+
+
+def _docker_section() -> str:
+    return README.read_text().split("## Docker 배포", 1)[1].split("\n## ", 1)[0]
+
+
+def test_the_readme_volume_table_matches_the_compose_file():
+    """⚠ **실제로 어긋나 있었다.** README 표는 `~/.cache/huggingface` 등 네 개를
+    적었는데, 컴포즈는 그것들을 **일부러 안 마운트한다**(호스트 절대경로가
+    컨테이너로 새는 것을 막으려고). 그대로 따르면 없는 볼륨을 찾게 된다.
+    """
+    mounts = {v.split(":")[-1] for v in _compose()["services"]["backend"]["volumes"]}
+    assert mounts == {"/data", "/run/redis"}, f"컴포즈 마운트가 바뀌었다: {mounts}"
+
+    table = [ln for ln in _docker_section().splitlines() if ln.startswith("|")]
+    named = " ".join(table)
+    for gone in ("/root/.cache/huggingface", "/app/backend/data", "/app/backend/outputs"):
+        assert gone not in named, f"README 가 없는 볼륨을 적는다: {gone}"
+
+
+def test_the_readme_does_not_claim_host_network():
+    """⚠ 컴포즈는 `network_mode: host` 를 뺐다 — 브리지 + 서비스 이름을 쓴다.
+    README 마지막 줄이 아직 "(host network)" 라고 적고 있었다."""
+    compose = COMPOSE.read_text()
+    assert "network_mode: host" not in compose.replace("`network_mode: host`", "")
+    assert "host network" not in _docker_section()
+
+
+def test_the_readme_says_the_daemons_run_on_the_host():
+    """⚠ 이게 빠지면 웹은 뜨는데 **카메라도 팔도 안 보인다.** 컨테이너는 장치를
+    하나도 안 열기 때문이다."""
+    sec = _docker_section()
+    assert "install-daemons.sh" in sec
+    assert "robotd" in sec and "rsd" in sec
+
+
+def test_the_readme_says_redis_needs_a_unix_socket():
+    """기본 `redis.conf` 는 `unixsocket` 이 주석 처리돼 있다 — 켜지 않으면
+    컨테이너가 버스에 못 붙는다."""
+    sec = _docker_section()
+    assert "unixsocket" in sec
+    url = _compose()["services"]["backend"]["environment"]
+    assert any("unix:///run/redis" in e for e in url), "컴포즈가 소켓을 안 쓴다"
+
+
+def test_the_container_opens_no_devices():
+    """⚠ `privileged` 나 `/dev` 마운트가 돌아왔다면 **무언가가 아직 장치를
+    직접 열고 있다는 뜻이다.** 그걸 찾아야지 권한을 되돌리면 안 된다."""
+    be = _compose()["services"]["backend"]
+    assert not be.get("privileged")
+    assert not any(v.startswith("/dev/") for v in be["volumes"] if v != "/run/redis:/run/redis")
+    assert be.get("ipc") == "host", "shm 세그먼트를 못 본다"
+
+
+def test_the_transports_match_the_missing_privileges():
+    """⚠ 권한을 뺀 것과 한 묶음이다. `direct` 면 컨테이너가 장치를 열려다 죽는다."""
+    env = _compose()["services"]["backend"]["environment"]
+    assert "PIPER_CAMERA_TRANSPORT=shm" in env
+    assert "PIPER_ROBOT_TRANSPORT=shm" in env

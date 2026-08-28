@@ -96,11 +96,28 @@ npx tsc --noEmit    # 타입 체크
 
 ### 사전 요구사항 (호스트)
 
+⚠ **컨테이너는 장치를 하나도 안 연다.** 카메라도 팔도 **호스트 데몬**이 쥐고,
+컨테이너는 `/dev/shm` 세그먼트와 Redis 로만 붙는다. 그래서 아래가 다 갖춰지지
+않으면 웹은 뜨지만 **카메라도 팔도 안 보인다.**
+
 - Docker + Docker Compose v2
 - [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) (GPU 패스스루)
-- CAN 인터페이스(`can_follower1` 등) 호스트에서 구성/기동 — 커널/네트워크 레벨이라 컨테이너 밖
+- **하드웨어 데몬을 호스트에서 기동** — 이게 빠지면 아무것도 안 보인다
+  ```bash
+  ./deploy/install-daemons.sh estopd robotd camerad rsd
+  sudo loginctl enable-linger $USER
+  ```
+- **호스트 redis 에 유닉스 소켓 켜기** (`/etc/redis/redis.conf`) — 기본값은 주석 처리돼 있다
+  ```
+  unixsocket /run/redis/redis-server.sock
+  unixsocketperm 770
+  ```
+  TCP 로 안 여는 이유: 버스가 **E-stop heartbeat 을 나른다.**
+- 데이터 루트: `sudo mkdir -p /srv/piper-data` (경로는 `PIPER_DATA_ROOT` 로 바꾼다)
+- CAN 인터페이스 호스트에서 구성 — 커널/네트워크 레벨이라 컨테이너 밖.
+  udev 규칙으로 이름을 고정한다(위 [설치](#설치) 참고)
 - `v4l2loopback` 커널 모듈 호스트에 로드 — 커널 모듈은 컨테이너에서 삽입 불가
-- RealSense udev 규칙 설치: `sudo cp backend/udev/99-realsense-libusb.rules /etc/udev/rules.d/ && sudo udevadm control --reload`
+- RealSense udev 규칙: `sudo cp backend/udev/99-realsense-libusb.rules /etc/udev/rules.d/ && sudo udevadm control --reload`
 
 ### 내부 패키지 (vendor/)
 
@@ -115,19 +132,36 @@ docker compose logs -f backend    # 백엔드 로그
 docker compose down               # 정지
 ```
 
-브라우저에서 `http://<호스트IP>/` 접속 (nginx `:80` → backend `:8000` 프록시).
+브라우저에서 `http://<호스트IP>/` 접속 (nginx `:80` → bridge 네트워크의 `backend:8000` 프록시).
 
-### 볼륨 (영속화)
+### 볼륨 — **두 개뿐이다**
 
-| 호스트 경로 | 컨테이너 | 용도 |
-|-------------|----------|------|
-| `~/.cache/huggingface` | `/root/.cache/huggingface` | 모델·데이터셋·lerobot 캐시 |
-| `~/.config/piper-web` | `/root/.config/piper-web` | `model_paths.json` 등 사용자 설정 |
-| `./backend/data` | `/app/backend/data` | 로그/평가 데이터 |
-| `./backend/outputs` | `/app/backend/outputs` | 학습 체크포인트 |
+| 호스트 | 컨테이너 | 용도 |
+|---|---|---|
+| `${PIPER_DATA_ROOT:-/srv/piper-data}` | `/data` | 데이터 전부 (hf 캐시·outputs·logs·config) |
+| `/run/redis` | `/run/redis` | 버스 유닉스 소켓 |
+
+⚠ **호스트의 `~/.cache/huggingface` 와 `~/.config/piper-web` 은 일부러 안 마운트한다.**
+호스트 절대경로가 컨테이너로 새어 들어가면 환경마다 경로가 갈린다. 내부 레이아웃과
+각 `PIPER_*` 경로는 `backend/Dockerfile` 의 "데이터 경로 계약" ENV 에 있다.
+
+`ipc: host` 로 `/dev/shm` 을 호스트와 공유한다 — 이게 없으면 세그먼트가 안 보인다
+(`/dev/shm` 은 컨테이너마다 격리된다).
+
+### 호스트 설치와 무엇이 다른가
+
+| | 호스트 설치 | 도커 |
+|---|---|---|
+| 게이트웨이·프론트 | systemd 유닛 | **컨테이너** |
+| estopd·robotd·camerad·rsd | systemd 유닛 | **똑같이 호스트 systemd 유닛** |
+| Redis | TCP | **유닉스 소켓** (버스를 네트워크에 안 연다) |
+| 파이썬 패키지 | `./deploy/install.sh` | 이미지 안에 구움 |
+
+즉 **도커는 게이트웨이·프론트만 감싼다.** 하드웨어 층은 어느 쪽이든 호스트다 —
+CAN·USB·커널 모듈은 컨테이너가 다룰 수 있는 것이 아니다.
 
 > GPU가 안 잡히면 compose 의 `deploy.resources...` 대신 `runtime: nvidia` 를 사용한다.
-> 호스트 `:80`/`:8000` 이 이미 사용 중이면 충돌하므로 비워둔다 (host network).
+> 호스트 `:80` 이 이미 사용 중이면 충돌한다 (frontend 가 그 포트만 낸다).
 
 ## 추론 로그
 
