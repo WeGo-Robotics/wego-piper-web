@@ -539,7 +539,11 @@ export default function RobotsPage() {
   const readyArms = arms.filter((a) => a.ready)
   // ⚠ **전체에서 찾는다.** `connectedArms` 는 `!ready` 라 등록하는 순간 빠지는데,
   //   거기서 리더를 찾으면 등록된 팔끼리는 릴레이 버튼이 영영 안 뜬다.
-  const leaderIface = arms.find((a) => a.role === 'leader' && a.connected)?.iface
+  // ⚠ **같은 쪽 리더만 짝이 된다.** 예전에는 연결된 첫 리더를 아무 팔에나
+  //   넘겼는데, 팔이 넷이면 왼팔을 오른쪽 리더로 끌 수 있었다.
+  const leaderFor = (side: string | null | undefined) =>
+    side ? arms.find((a) => a.role === 'leader' && a.connected && a.side === side)?.iface
+         : undefined
   const connectedArms = arms.filter((a) => a.connected && !a.ready)
   const unconnectedArms = arms.filter((a) => !a.connected && !a.ready)
 
@@ -733,7 +737,8 @@ export default function RobotsPage() {
                       <JogPanel
                         iface={arm.iface}
                         commandable={arm.connected && arm.role === 'follower'}
-                        leader={leaderIface}
+                        leader={leaderFor(arm.side)}
+                        side={arm.side}
                         reason={
                           !arm.connected ? '연결되지 않아 조작할 수 없습니다'
                           : arm.role === 'leader'
@@ -885,7 +890,8 @@ export default function RobotsPage() {
                     reason={arm.role === 'leader'
                       ? '마스터(리더)는 외부 명령을 무시합니다 — 이 팔로 팔로워를 끄세요'
                       : '역할을 모릅니다 — 먼저 [찾기] 로 판별하세요'}
-                    leader={leaderIface} />
+                    leader={leaderFor(arm.side)}
+                    side={arm.side} />
                 </div>
               )}
               </div>

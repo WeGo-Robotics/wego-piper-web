@@ -166,6 +166,19 @@ def test_every_method_the_gateway_calls_is_registered(daemon, hub_cls):
     assert not missing, f"{daemon} 의 _METHODS 에 없다 — 조용히 거부된다: {missing}"
 
 
+def test_the_pad_shows_direction_by_position():
+    """⚠ 예전에는 축 라벨 옆에 작은 −/+ 두 개였다. 어느 쪽이 앞인지 매번 라벨을
+    읽어야 했고 버튼이 손가락보다 작았다 — "답답하다"로 보고됐다.
+    십자 배치는 누르기 전에 방향이 보인다."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "components"
+           / "EndPosePanel.tsx").read_text()
+    assert "function Pad(" in src
+    assert "grid-cols-3 grid-rows-3" in src, "십자 배치가 아니다"
+    assert "h-11 w-11" in src, "버튼이 손가락만큼 크지 않다"
+
+
 def test_the_screen_offers_steps_not_coordinates():
     """절대 좌표 입력란이 생기면 오타 하나가 큰 이동이 된다."""
     from pathlib import Path
@@ -173,7 +186,12 @@ def test_the_screen_offers_steps_not_coordinates():
     src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "components"
            / "EndPosePanel.tsx").read_text()
     assert "end-pose/jog" in src and "delta" in src
-    assert "axis, -(step" in src and "axis, step" in src, "±버튼이 아니다"
+    # 절대 좌표를 안 받는지가 요점이다 — 모든 호출이 **부호 있는 걸음**이어야 한다.
+    # (버튼 모양은 십자 패드로 바뀌었다. 위 `test_the_pad_shows_direction_by_position`.)
+    import re
+    calls = re.findall(r"jog\('(\w+)', (-?)step(Mm|Deg)\)", src)
+    assert calls, "걸음 단위 호출이 없다"
+    assert {sign for _, sign, _ in calls} == {"", "-"}, "한 방향으로만 갈 수 있다"
 
 
 def test_the_screen_shows_the_workspace_box():

@@ -439,6 +439,23 @@ class Arm:
     # 속도가 사람이 반응할 수 있는 범위를 넘으면 안 된다.
     END_POSE_SPEED = 20
 
+    #: `EnablePiper()` 를 다시 부르기까지의 최소 간격 (초).
+    #
+    # ⚠ **매번 부르면 조그가 답답해진다.** 그 뒤에 반영 대기 200ms 가 붙어서
+    #   버튼 한 번에 최소 200ms 가 깔린다 — 사람이 연타하는 조작에서 그건
+    #   "반응이 느리다"로 느껴진다. 한 번 켜 두면 계속 켜져 있으므로 매번
+    #   부를 이유가 없다.
+    ENABLE_TTL_S = 5.0
+
+    def _ensure_enabled(self) -> None:
+        """최근에 안 켰으면 켠다. 락 안에서 부른다."""
+        now = time.monotonic()
+        if now - getattr(self, "_enabled_at", 0.0) < self.ENABLE_TTL_S:
+            return
+        self._piper.EnablePiper()
+        time.sleep(0.2)          # 반영 대기 — 켤 때만 낸다
+        self._enabled_at = now
+
     def move_end_pose(self, target: dict[str, int]) -> tuple[bool, str]:
         """말단을 목표로 보낸다. **관절은 팔의 온보드 IK 가 정한다.**
 
@@ -450,8 +467,7 @@ class Arm:
             if not self._piper:
                 return False, "연결되지 않음"
             try:
-                self._piper.EnablePiper()
-                time.sleep(0.2)
+                self._ensure_enabled()
                 # MOVE P = 점대점 말단 제어. 관절 모드(MOVE J)와 다른 모드다.
                 self._piper.ModeCtrl(0x01, 0x00, self.END_POSE_SPEED, 0x00)
                 self._piper.EndPoseCtrl(target["x"], target["y"], target["z"],

@@ -482,6 +482,45 @@ async def motion_detect_status(slot: str):
 # ── 웹 조그 (feature/manual-control.md §2) ──
 
 
+SIDE_NAMES = {"left": "왼쪽", "right": "오른쪽"}
+
+
+def _side_label(side: str | None) -> str:
+    return SIDE_NAMES.get(side or "", "미지정")
+
+
+def _leader_on_side(side: str | None):
+    """그 쪽의 리더 팔. 없으면 None.
+
+    ⚠ **한 쪽에 리더는 하나뿐이다.** 둘이면 어느 쪽이 끄는지가 호출 순서에
+      달리는데, 그건 사용자가 볼 수 없는 것이다 — 그래서 세는 쪽이 거절한다.
+    """
+    found = [a for a in robot_manager.arms.values()
+             if a.role == "leader" and a.connected and a.side == side]
+    if len(found) > 1:
+        raise HTTPException(
+            409, f"{_side_label(side)}에 리더 팔이 {len(found)}개입니다 "
+                 f"({', '.join(a.iface for a in found)}) — 한 쪽에 하나여야 합니다.")
+    return found[0] if found else None
+
+
+def _require_paired(iface: str):
+    """텔레오퍼레이션에 쓸 수 있는 팔인가 — **좌/우가 지정돼 있어야 한다.**
+
+    ⚠ 지정 안 된 팔은 짝을 정할 수가 없다. 그런 팔로 릴레이를 열면 "아무 리더나"
+      붙는 셈이고, 팔이 셋 이상이면 어느 것이 끄는지 화면으로는 알 수 없다.
+      수동 조작(조그)은 짝이 필요 없으므로 그대로 쓴다.
+    """
+    arm = robot_manager.arms.get(iface)
+    if arm is None or not arm.connected:
+        raise HTTPException(400, f"{iface} 가 연결돼 있지 않습니다")
+    if arm.side not in ("left", "right"):
+        raise HTTPException(
+            409, f"{iface} 는 좌/우가 지정되지 않았습니다 — [좌/우?] 로 정하세요. "
+                 f"지정 전에는 수동 조작(조그)만 됩니다.")
+    return arm
+
+
 def _require_commandable(iface: str):
     """이 팔에 명령을 보내도 되는가. 아니면 **이유를 말하고 막는다.**
 
@@ -652,13 +691,20 @@ async def relay_start(body: RelayStartRequest):
 
     require_idle(Activity.TELEOP)
     _require_commandable(body.follower)
-    leader = robot_manager.arms.get(body.leader)
-    if leader is None or not leader.connected:
-        raise HTTPException(400, f"{body.leader} 가 연결돼 있지 않습니다")
-    if leader.role != "leader":
+    follower = _require_paired(body.follower)
+
+    # ⚠ **같은 쪽 리더만 쓴다.** 왼팔을 오른쪽 리더로 끄는 것은 조작자의 손과
+    #   팔의 방향이 뒤집힌다는 뜻이고, 그건 사람이 실수하는 자리다.
+    same = _leader_on_side(follower.side)
+    if same is None:
         raise HTTPException(
-            409, f"{body.leader} 는 리더가 아닙니다 — [찾기] 로 판별하거나 "
-                 "마스터로 설정하세요")
+            409, f"{_side_label(follower.side)}에 리더 팔이 없습니다 — "
+                 f"그 쪽 팔 하나를 [마스터] 로 설정하세요.")
+    if same.iface != body.leader:
+        raise HTTPException(
+            409, f"{_side_label(follower.side)}의 리더는 {same.iface} 입니다 "
+                 f"({body.leader} 아님) — 같은 쪽 리더만 쓸 수 있습니다.")
+    leader = same
     try:
         relay_session.start(body.leader, body.follower, body.mode,
                             body.leader_arm, body.follower_arm)
@@ -790,11 +836,24 @@ class MasterSlaveRequest(BaseModel):
 
 @router.post("/master-slave")
 async def set_master_slave(body: MasterSlaveRequest):
-    """팔을 마스터(示教输入) 또는 슬레이브(运动输出)로 설정."""
+    """팔을 마스터(示教输入) 또는 슬레이브(运动输出)로 설정.
+
+    ⚠ **한 쪽에 마스터는 하나뿐이다.** 둘이면 텔레오퍼레이션에서 어느 것이 끄는지가
+      호출 순서에 달리는데, 그건 화면에 안 보인다. 세우는 자리에서 막는 것이
+      릴레이를 시작할 때 막는 것보다 낫다 — 그때는 이미 둘 다 마스터라
+      하나를 되돌려야 한다.
+    """
     import asyncio
     arm = robot_manager.arms.get(body.iface)
     if not arm:
         raise HTTPException(404, "Unknown arm")
+    if body.master and arm.side in ("left", "right"):
+        other = [a for a in robot_manager.arms.values()
+                 if a is not arm and a.role == "leader" and a.side == arm.side]
+        if other:
+            raise HTTPException(
+                409, f"{_side_label(arm.side)}에 이미 리더가 있습니다 "
+                     f"({other[0].iface}) — 먼저 그 팔을 슬레이브로 바꾸세요.")
     loop = asyncio.get_event_loop()
     ok, msg = await loop.run_in_executor(None, arm.set_master_slave, body.master)
     if not ok:

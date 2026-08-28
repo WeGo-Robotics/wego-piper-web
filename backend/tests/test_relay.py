@@ -205,11 +205,18 @@ def test_registered_arms_get_the_controls_too():
 def test_the_leader_is_looked_up_across_all_arms():
     """`connectedArms` 에서 찾으면 **등록된 팔끼리는 릴레이 버튼이 영영 안 뜬다.**"""
     src = _page()
-    assert "const leaderIface = arms.find(" in src
+    assert "arms.find((a) => a.role === 'leader'" in src
     assert "leader={connectedArms.find" not in src
 
 
-def test_both_panels_use_the_same_leader_value():
-    """두 목록이 서로 다른 리더를 보면 한쪽에서만 릴레이가 뜬다."""
+def test_the_leader_must_be_on_the_same_side():
+    """⚠ 왼팔을 오른쪽 리더로 끌면 조작자의 손 방향과 팔 방향이 뒤집힌다 —
+    사람이 실수하는 자리다. 예전에는 연결된 **첫** 리더를 아무 팔에나 넘겼다."""
     src = _page()
-    assert src.count("leader={leaderIface}") == 2
+    assert "a.side === side" in src, "같은 쪽을 안 본다"
+    assert src.count("leader={leaderFor(arm.side)}") == 2, "두 목록이 같은 규칙을 써야 한다"
+
+
+def test_the_side_is_passed_so_the_panel_can_explain():
+    """좌/우 미지정 팔은 짝을 정할 수 없다 — 화면이 그 이유를 말해야 한다."""
+    assert _page().count("side={arm.side}") == 2

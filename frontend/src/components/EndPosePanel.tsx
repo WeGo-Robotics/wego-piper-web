@@ -10,16 +10,36 @@ import { api } from '../services/api'
  * 버튼을 누른 만큼만(±mm/±도) 간다. 상자 밖이면 백엔드가 거절하고 이유를 말한다.
  */
 
-const LINEAR = [
-  { axis: 'x', label: 'X (앞뒤)' },
-  { axis: 'y', label: 'Y (좌우)' },
-  { axis: 'z', label: 'Z (위아래)' },
-]
-const ANGULAR = [
-  { axis: 'rx', label: 'RX' },
-  { axis: 'ry', label: 'RY' },
-  { axis: 'rz', label: 'RZ' },
-]
+type Key = { label: string; hint: string; on: () => void }
+
+/** 십자 패드 하나. 빈 자리는 그리지 않는다 — 눌리지 않는 칸이 있으면
+ *  어디가 살아 있는지 매번 확인하게 된다. */
+function Pad({ title, unit, up, down, left, right, centre }: {
+  title: string; unit: string
+  up?: Key; down?: Key; left?: Key; right?: Key; centre?: Key
+}) {
+  const key = (k: Key | undefined, cls: string) => (
+    k ? (
+      <button onClick={k.on} title={k.hint}
+        className={`${cls} flex h-11 w-11 flex-col items-center justify-center rounded-lg
+                    border border-neutral-600 bg-neutral-700 text-sm font-medium
+                    text-neutral-100 transition-colors hover:bg-blue-600 active:bg-blue-500`}>
+        <span>{k.label}</span>
+        {k.hint && <span className="text-[9px] font-normal text-neutral-400">{k.hint}</span>}
+      </button>
+    ) : <span className={cls} />
+  )
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <span className="text-[10px] text-neutral-500">{title} <span className="text-neutral-600">{unit}</span></span>
+      <div className="grid grid-cols-3 grid-rows-3 gap-1">
+        <span />{key(up, '')}<span />
+        {key(left, '')}{key(centre, '')}{key(right, '')}
+        <span />{key(down, '')}<span />
+      </div>
+    </div>
+  )
+}
 
 type Pose = Record<string, number>
 type Box = { x: number[]; y: number[]; z: number[] }
@@ -111,20 +131,25 @@ export default function EndPosePanel({ iface, enabled }: { iface: string; enable
         <span>도</span>
       </div>
 
-      {[[LINEAR, stepMm, 'mm'], [ANGULAR, stepDeg, '°']].map(([axes, step, unit], gi) => (
-        <div key={gi} className="grid grid-cols-3 gap-1">
-          {(axes as { axis: string; label: string }[]).map(({ axis, label }) => (
-            <div key={axis} className="flex items-center gap-1">
-              <span className="flex-1 text-[10px] text-neutral-500">{label}</span>
-              <button onClick={() => jog(axis, -(step as number))}
-                className="rounded bg-neutral-700 px-1.5 py-0.5 text-xs hover:bg-neutral-600 disabled:opacity-40">−</button>
-              <button onClick={() => jog(axis, step as number)}
-                className="rounded bg-neutral-700 px-1.5 py-0.5 text-xs hover:bg-neutral-600 disabled:opacity-40">+</button>
-            </div>
-          ))}
-          <span className="col-span-3 text-[9px] text-neutral-600">단위 {unit as string}</span>
-        </div>
-      ))}
+      {/* ⚠ **방향을 자리로 읽게 한다.** 예전에는 축 라벨 옆에 작은 −/+ 두 개가
+          있었는데, 어느 쪽이 앞인지 매번 라벨을 읽어야 했고 버튼이 손가락보다
+          작았다. 십자 배치는 누르기 전에 방향이 보인다. */}
+      <div className="flex flex-wrap items-start justify-center gap-4 py-1">
+        <Pad title="이동" unit={`${stepMm}mm`}
+             up={{ label: '↑', hint: 'X 앞', on: () => jog('x', stepMm) }}
+             down={{ label: '↓', hint: 'X 뒤', on: () => jog('x', -stepMm) }}
+             left={{ label: '←', hint: 'Y 좌', on: () => jog('y', stepMm) }}
+             right={{ label: '→', hint: 'Y 우', on: () => jog('y', -stepMm) }} />
+        <Pad title="높이" unit={`${stepMm}mm`}
+             up={{ label: '▲', hint: 'Z 위', on: () => jog('z', stepMm) }}
+             down={{ label: '▼', hint: 'Z 아래', on: () => jog('z', -stepMm) }} />
+        <Pad title="손목" unit={`${stepDeg}°`}
+             up={{ label: 'RY+', hint: '', on: () => jog('ry', stepDeg) }}
+             down={{ label: 'RY−', hint: '', on: () => jog('ry', -stepDeg) }}
+             left={{ label: 'RZ+', hint: '', on: () => jog('rz', stepDeg) }}
+             right={{ label: 'RZ−', hint: '', on: () => jog('rz', -stepDeg) }}
+             centre={{ label: 'RX', hint: '', on: () => jog('rx', stepDeg) }} />
+      </div>
 
       {box && (
         <p className="text-[10px] text-neutral-600">

@@ -23,18 +23,22 @@ type Props = {
   /** 이 팔에 명령을 보낼 수 있나. 마스터거나 역할을 모르면 못 보낸다. */
   commandable: boolean
   reason?: string
-  /** 짝이 될 리더 팔. 있으면 "리더로 조종" 도 제공한다. */
+  /** **같은 쪽** 리더 팔. 없으면 릴레이를 못 연다. */
   leader?: string
+  /** 이 팔의 좌/우. 미지정이면 텔레오퍼레이션을 못 쓴다 — 짝을 정할 수 없다. */
+  side?: string | null
 }
 
 type Teleop = { running: boolean; iface: string | null; mode: string; started: number | null }
+
+const SIDE_LABEL: Record<string, string> = { left: '왼쪽', right: '오른쪽' }
 
 const MODE_NAMES: Record<string, string> = {
   leader: '리더로 조종', joint: '관절 조그', endpoint: '말단 조그',
 }
 
-export default function JogPanel({ iface, commandable, reason, leader }: Props) {
-  const { notify, confirm } = useSystemMessage()
+export default function JogPanel({ iface, commandable, reason, leader, side }: Props) {
+  const { notify } = useSystemMessage()
   const [running, setRunning] = useState(false)
   // 시작 자세. **슬라이더의 출발점**이라, 0 이면 첫 조작에 팔이 튄다.
   const [joints, setJoints] = useState<number[]>([])
@@ -115,7 +119,11 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
     let alive = true
     const read = () => {
       api.get<Record<string, number>>(`/robots/parking/joints/${iface}`)
-        .then((d) => { if (alive) setJoints(JOINTS.map((j) => d[j.actionKey] ?? 0)) })
+        // ⚠ **`actionKey` 가 아니라 `name` 이다.** `/parking/joints` 는 평문
+        //   이름(`joint1`)을 주는데 `actionKey` 는 LeRobot 규약(`joint1.pos`)이라,
+        //   찾으면 전부 `undefined` 가 되고 `?? 0` 이 **슬라이더를 0 으로 굳혔다.**
+        //   조그를 켜면 그 0 이 첫 목표가 되어 팔이 엉뚱한 자세로 기어갔다.
+        .then((d) => { if (alive) setJoints(JOINTS.map((j) => d[j.name] ?? 0)) })
         .catch(() => {})
     }
     read()
@@ -124,11 +132,9 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
     return () => { alive = false; clearInterval(id) }
   }, [iface, commandable])
 
+  // 확인창을 안 띄운다 — 사용자가 지웠다. 대신 버튼 위 `title` 이 경고를 남긴다.
+  // 되돌릴 수 있는 조작이고(다시 조그하면 된다) 자주 누르는 버튼이다.
   const goHome = async () => {
-    const yes = await confirm(
-      `${iface} 를 파킹(원점) 자세로 보냅니다.\n\n` +
-      '팔이 지금 자세에서 파킹까지 **한 번에** 움직입니다 — 경로 위가 비어 있는지 확인하세요.')
-    if (!yes) return
     setBusy(true)
     try {
       await api.post('/robots/parking/go', { iface })
@@ -212,7 +218,24 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
     <div className="space-y-2">
       {/* 리더 릴레이 — 같은 명령 경로를 쓰므로 조그와 **동시에 못 켠다**.
           백엔드의 teleop 세션이 그걸 지키고, 여기서는 서로 가려 둔다. */}
-      {leader && (
+      {/* ⚠ **텔레오퍼레이션은 같은 쪽 리더로만 한다.** 좌우가 뒤집히면 조작자의
+          손 방향과 팔 방향이 어긋나고, 그건 사람이 실수하는 자리다.
+          좌/우 미지정 팔은 짝을 정할 수 없으므로 수동 조작만 쓴다. */}
+      {!side && (
+        <p className="rounded border border-neutral-700 bg-neutral-800 px-3 py-2
+                      text-xs text-neutral-500">
+          좌/우가 지정되지 않아 <b>수동 조작만</b> 됩니다 — [좌/우?] 로 정하면
+          같은 쪽 리더로 조종할 수 있습니다.
+        </p>
+      )}
+      {side && !leader && (
+        <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2
+                      text-xs text-amber-300">
+          {SIDE_LABEL[side] ?? side}에 리더 팔이 없습니다 — 그 쪽 팔 하나를
+          [마스터] 로 설정하면 조종할 수 있습니다.
+        </p>
+      )}
+      {side && leader && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs text-neutral-400">
