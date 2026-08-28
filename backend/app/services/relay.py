@@ -89,6 +89,18 @@ POSE_MAX_STEP_DEG = 20.0
 _POSE_MODE = object()
 
 
+def _transport_mismatch(model) -> str:
+    """팔로워 모델이 지금 전송 계층에 실릴 수 있나. 못 실으면 이유를 돌려준다."""
+    from piper_robot import kinematics as K
+
+    if model.dof != len(K.ARM_JOINTS):
+        return (f"{model.name} 은 {model.dof}축인데 팔로워 명령 경로는 "
+                f"{len(K.ARM_JOINTS)}축(Piper)입니다. 기구학 모델은 준비돼 있지만 "
+                f"그 팔의 전송 계층이 아직 없습니다 — 지금은 관절 수가 같은 "
+                f"모델만 쓸 수 있습니다.")
+    return ""
+
+
 def _norm_from_rad(q_rad) -> dict:
     """라디안 관절각 → 정규화 dict. `kinematics.norm_to_rad` 의 역이다.
 
@@ -195,6 +207,18 @@ class RelaySession:
                 except (FileNotFoundError, ValueError) as exc:
                     reader.close(); teleop_session.stop()
                     raise RelayError(str(exc)) from exc
+                # ⚠ **모델과 하드웨어가 맞는지 시작할 때 본다.** 안 보면 루프
+                #   안에서 터지는데, 그때는 이미 세션이 열려 있고 사용자는
+                #   "릴레이가 죽었다"만 본다.
+                #
+                #   ⚠ 쓰기 경로는 아직 **Piper 전용**이다 — 명령 세그먼트가
+                #     `joints.JOINT_ORDER`(Piper 6축+그리퍼) 로 되어 있다.
+                #     다른 팔을 실제로 붙이려면 그 팔의 전송 계층이 따로 필요하다.
+                #     기구학 모델만 준비된 상태다.
+                why = _transport_mismatch(self._follower_model)
+                if why:
+                    reader.close(); teleop_session.stop()
+                    raise RelayError(why)
             self._sent, self._stale_since = 0, 0.0
             self._stop.clear()
             self._thread = threading.Thread(target=self._loop, daemon=True,
@@ -364,7 +388,9 @@ class RelaySession:
             if rec is None:
                 return None
             v = rec["values"]
-            return K.norm_to_rad(np.array([[v[j] for j in K.ARM_JOINTS]], float))[0]
+            q = K.norm_to_rad(np.array([[v[j] for j in K.ARM_JOINTS]], float))[0]
+            # 모델과 축 수가 다르면 시드로 못 쓴다 — `home()` 으로 떨어진다
+            return q if len(q) == self._follower_model.dof else None
         except Exception as exc:
             logger.debug("팔로워 시드 읽기 실패: %s", exc)
             return None

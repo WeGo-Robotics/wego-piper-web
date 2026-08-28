@@ -56,6 +56,10 @@ class Geometry:
         self.pts = npz["pts"].astype(np.float64)
         self.pt_link = npz["pt_link"]
         self.radius = float(npz["radius"])
+        # ⚠ 말단 링크는 **팔마다 다르다.** Piper 는 `link6`(손목 플랜지), SO-101 은
+        #   `gripper_frame_link` 다. 하드코딩하면 그 팔 하나에만 맞는다.
+        #   옛 파일에는 없으므로 Piper 기본값으로 떨어진다.
+        self.tip = str(npz["tip"]) if "tip" in npz.files else "link6"
         # 부모→자식 고정 변환은 관절값과 무관하다 — 한 번 만들어 둔다
         self.fixed = np.stack([_fixed(self.xyz[i], self.rpy[i])
                                for i in range(len(self.names))])
@@ -76,6 +80,10 @@ class Geometry:
 
     def index(self, name: str) -> int:
         return self.names.index(name)
+
+    @property
+    def tip_index(self) -> int:
+        return self.names.index(self.tip)
 
 
 @lru_cache(maxsize=1)
@@ -155,7 +163,7 @@ def endpoint_xyz(q_rad: np.ndarray, geom: "Geometry | None" = None) -> np.ndarra
     기준으로는 오히려 나쁘다. (바닥 검사는 그리퍼까지 본다 — `lowest_z`.)
     """
     g = geom or geometry()
-    return link_transforms(q_rad, g)[:, g.index("link6"), :3, 3]
+    return link_transforms(q_rad, g)[:, g.tip_index, :3, 3]
 
 
 def lowest_z(q_rad: np.ndarray, geom: "Geometry | None" = None) -> np.ndarray:
@@ -249,7 +257,7 @@ def end_pose(q_rad: np.ndarray, geom: "Geometry | None" = None) -> dict[str, int
     """
     g = geom or geometry()
     q = np.atleast_2d(np.asarray(q_rad, dtype=float))
-    tf = link_transforms(q, g)[0, g.index("link6")]
+    tf = link_transforms(q, g)[0, g.tip_index]
     x, y, z = tf[:3, 3] * 1000.0                     # m → mm
     roll, pitch, yaw = rpy_from_matrix(tf[:3, :3])
     return {
@@ -279,7 +287,7 @@ def near_gimbal_lock(q_rad: np.ndarray, geom: "Geometry | None" = None) -> bool:
     """
     g = geom or geometry()
     q = np.atleast_2d(np.asarray(q_rad, dtype=float))
-    tf = link_transforms(q, g)[0, g.index("link6")]
+    tf = link_transforms(q, g)[0, g.tip_index]
     pitch = math.degrees(math.asin(max(-1.0, min(1.0, -float(tf[2, 0])))))
     return abs(abs(pitch) - 90.0) < GIMBAL_MARGIN_DEG
 
@@ -323,7 +331,7 @@ def jacobian(q_rad: np.ndarray, geom: "Geometry | None" = None) -> np.ndarray:
     g = geom or geometry()
     tf = link_transforms(np.atleast_2d(q_rad), g)[0]
     axes, origins = _joint_axes_and_origins(tf, g)
-    p_e = tf[g.index("link6"), :3, 3]
+    p_e = tf[g.tip_index, :3, 3]
     lin = np.cross(axes, p_e - origins)
     return np.vstack([lin.T, axes.T])
 
@@ -360,29 +368,38 @@ def pose_matrix(pose: dict) -> np.ndarray:
 
 
 def ik(target: np.ndarray, seed: np.ndarray, limits: np.ndarray | None = None,
-       *, geom: "Geometry | None" = None,
-       damping: float = IK_DAMPING, max_iters: int = IK_MAX_ITERS) -> dict:
+       *, geom: "Geometry | None" = None, weights: np.ndarray | None = None,
+       damping: float = IK_DAMPING, max_iters: int = IK_MAX_ITERS,
+       tol_mm: float = IK_TOL_MM, tol_deg: float = IK_TOL_DEG) -> dict:
     """목표 4x4 → 관절각. **`seed` 에서 출발한다** — 그게 이어짐을 만든다.
+
+    `weights` 는 6D 오차의 축별 가중 (위치3 + 자세3). **자유도가 6 미만인 팔에서
+    무엇을 포기할지 정하는 자리다** — SO-101 은 5축이라 임의 6D 를 원리적으로 못
+    맞춘다(실측: 무가중이면 잔차 중앙 190mm/10°). 위치를 무겁게 주면 위치를 맞추고
+    자세를 양보한다. `None` 이면 균등.
 
     반환: `{"ok", "q", "iters", "pos_mm", "rot_deg"}`.
     `ok` 가 False 면 허용오차 안에 못 들어온 것이다 — 그 자세를 못 가는 것이지
     코드가 고장난 것이 아니다. 부르는 쪽이 그 구분을 사용자에게 전해야 한다.
     """
     g = geom or geometry()
-    idx = g.index("link6")
+    idx = g.tip_index
     q = np.array(seed, dtype=float).copy()
     lim = limits if limits is not None else joint_limits()
+    w = np.ones(6) if weights is None else np.asarray(weights, dtype=float)
     for i in range(max_iters):
         tf = link_transforms(q[None, :], g)[0, idx]
         err = _pose_error(tf, target)
         pos_mm = float(np.linalg.norm(err[:3]) * 1000.0)
         rot_deg = float(math.degrees(np.linalg.norm(err[3:])))
-        if pos_mm < IK_TOL_MM and rot_deg < IK_TOL_DEG:
+        if pos_mm < tol_mm and rot_deg < tol_deg:
             return {"ok": True, "q": q, "iters": i, "pos_mm": pos_mm, "rot_deg": rot_deg}
         j = jacobian(q, g)
         # 감쇠 최소자승: (JᵀJ + λ²I)⁻¹ Jᵀ e. 특이점에서 pinv 가 폭주하는 것을 막는다.
-        jt = j.T
-        dq = jt @ np.linalg.solve(j @ jt + (damping ** 2) * np.eye(6), err)
+        # 가중은 오차와 야코비안 양쪽에 같이 건다 — 한쪽만 걸면 최소화하는 것이
+        # 가중 오차가 아니게 되어 가중이 방향만 바꾸고 크기는 안 바꾼다.
+        jw, ew = j * w[:, None], err * w
+        dq = jw.T @ np.linalg.solve(jw @ jw.T + (damping ** 2) * np.eye(6), ew)
         q = np.clip(q + dq, lim[:, 0], lim[:, 1])
     tf = link_transforms(q[None, :], g)[0, idx]
     err = _pose_error(tf, target)

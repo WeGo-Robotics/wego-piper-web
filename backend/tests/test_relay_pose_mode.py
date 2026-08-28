@@ -19,6 +19,7 @@ import pytest
 
 pytest.importorskip("piper_robot")
 from piper_robot import kinematics as K  # noqa: E402
+from piper_robot.armmodel import ArmModel  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 RELAY = REPO / "backend" / "app" / "services" / "relay.py"
@@ -279,10 +280,12 @@ def test_the_model_is_loaded_by_name():
 
 
 def test_an_unregistered_arm_says_how_to_add_it():
+    """없는 팔은 **어떻게 추가하는지** 말해야 한다 — 파일명만 던지면
+    다음 사람이 그 명령을 다시 찾아야 한다."""
     from piper_robot.armmodel import ArmModel
 
     with pytest.raises(FileNotFoundError, match="build_arm_geometry"):
-        ArmModel.load("so101")
+        ArmModel.load("no_such_arm")
 
 
 def test_the_geometry_carries_joint_limits():
@@ -336,3 +339,78 @@ def test_ik_stays_on_one_branch_through_the_singularity():
             worst = max(worst, float(np.abs(np.degrees(sol.q - seed)).max()))
             seed = sol.q
     assert worst < 15.0, f"특이점에서 {worst:.0f}° 튀었다 — 가지가 바뀐다"
+
+
+# ── SO-101 (관절 구성이 다른 팔) ─────────────────────────────────────────────
+
+def _so101():
+    from piper_robot.armmodel import ArmModel
+
+    try:
+        return ArmModel.load("so101")
+    except FileNotFoundError:
+        pytest.skip("so101 지오메트리가 없다")
+
+
+def test_so101_is_five_dof_with_its_own_tip():
+    """⚠ 말단 링크를 `link6` 로 하드코딩하면 Piper 밖에 못 쓴다.
+    SO-101 의 말단은 `gripper_frame_link` 이고 메시가 없는 순수 좌표계다."""
+    m = _so101()
+    assert m.dof == 5
+    assert m.geom.tip == "gripper_frame_link"
+
+
+def test_the_chain_is_built_topologically_not_in_document_order():
+    """⚠ SO-101 URDF 는 관절을 **말단부터** 적어 두었다. 문서 순서대로 읽으면
+    사슬이 거꾸로 서고 FK 가 그럴듯하게 틀린다."""
+    m = _so101()
+    order = [m.geom.names[k] for k in range(len(m.geom.names)) if int(m.geom.qidx[k]) >= 0]
+    assert order[0] == "shoulder_link" and order[-1] == "gripper_link"
+
+
+def test_an_under_actuated_arm_gives_up_orientation_not_position():
+    """⚠ 5축은 임의 6D 를 **원리적으로** 못 맞춘다 (무가중 실측 잔차 190mm/10°).
+    무엇을 포기할지 정해야 하고, 텔레오퍼레이션에서는 위치가 먼저다."""
+    m = _so101()
+    assert m.weights[0] > m.weights[3], "자세보다 위치를 무겁게 줘야 한다"
+    assert m.tol_deg > K.IK_TOL_DEG, "자세 허용오차를 안 풀면 늘 실패로 답한다"
+
+
+def test_so101_ik_works_under_teleop_conditions():
+    """연속 궤적에서 시드를 이어가는 것이 실제 조건이다 —
+    실측: 200스텝 실패 0회, 위치 0.31mm, 한 스텝 최대 5.4°."""
+    m = _so101()
+    rng = np.random.default_rng(0)
+    q = m.home().copy()
+    seed = q.copy()
+    fails = 0
+    worst_step = 0.0
+    for _ in range(120):
+        q = np.clip(q + rng.normal(0, 0.03, m.dof), m.limits[:, 0], m.limits[:, 1])
+        sol = m.ik(m.fk(q), seed)
+        if not sol.ok:
+            fails += 1
+            continue
+        worst_step = max(worst_step, float(np.abs(np.degrees(sol.q - seed)).max()))
+        seed = sol.q
+    assert fails == 0, f"연속 궤적에서 {fails}회 실패"
+    assert worst_step < 20.0, f"한 스텝에 {worst_step:.0f}° 튀었다"
+
+
+def test_the_transport_is_still_piper_only_and_says_so():
+    """⚠ 기구학 모델은 팔 무관이지만 **명령 세그먼트는 아직 Piper 6축이다.**
+    조용히 시작해서 루프 안에서 터지면 사용자는 '릴레이가 죽었다'만 본다."""
+    from app.services.relay import _transport_mismatch
+
+    assert not _transport_mismatch(ArmModel.load("piper"))
+    why = _transport_mismatch(_so101())
+    assert "5축" in why and "전송 계층" in why
+
+
+def test_the_collision_origin_is_applied():
+    """⚠ Piper 는 충돌 origin 이 전부 0 이라 그동안 무시해도 됐다. SO-101 은
+    링크마다 다르다 — 무시하면 메시가 엉뚱한 자리에 놓여 **바닥 판정이 통째로
+    틀린다.**"""
+    builder = (REPO / "tools" / "build_arm_geometry.py").read_text()
+    assert "_rot(pose[\"rpy\"])" in builder
+    assert 'coll.find("origin")' in builder

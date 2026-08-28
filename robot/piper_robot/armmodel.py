@@ -29,6 +29,7 @@ Piper 의 관절값을 직접 대입할 수는 없다.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -84,7 +85,9 @@ class ArmModel:
             lim = z["limits"] if "limits" in z else None
         if lim is None:
             raise ValueError(f"{path} 에 관절 한계(limits)가 없습니다 — 다시 구우세요")
-        return cls(name, geom, np.asarray(lim, dtype=float))
+        # Piper 와 같은 이유로 여유를 준다 — 실제 팔은 명목 한계 밖에 앉는다.
+        m = math.radians(K.IK_LIMIT_MARGIN_DEG)
+        return cls(name, geom, np.asarray(lim, dtype=float) + np.array([-m, m]))
 
     @staticmethod
     def available() -> list[str]:
@@ -100,6 +103,16 @@ class ArmModel:
 
     # ── 기구학 ──
 
+    #: 허용 오차. 자유도가 모자란 팔은 자세를 다 못 맞추므로 그쪽을 풀어 준다 —
+    #: 안 풀면 **닿을 수 있는 자세인데도 늘 실패**라고 답한다.
+    @property
+    def tol_mm(self) -> float:
+        return K.IK_TOL_MM
+
+    @property
+    def tol_deg(self) -> float:
+        return K.IK_TOL_DEG if self.dof >= 6 else 25.0
+
     @property
     def dof(self) -> int:
         return int((self.geom.qidx >= 0).sum())
@@ -107,7 +120,7 @@ class ArmModel:
     def fk(self, q_rad: np.ndarray) -> np.ndarray:
         """관절각 → 말단 4x4."""
         return K.link_transforms(np.atleast_2d(q_rad), self.geom)[
-            0, self.geom.index("link6")]
+            0, self.geom.tip_index]
 
     def end_pose(self, q_rad: np.ndarray) -> dict[str, int]:
         """관절각 → SDK 단위 6D 자세."""
@@ -120,9 +133,20 @@ class ArmModel:
     def near_gimbal_lock(self, q_rad: np.ndarray) -> bool:
         return K.near_gimbal_lock(q_rad, self.geom)
 
+    #: 6D 오차의 축별 가중 (위치3 + 자세3). **자유도가 모자란 팔에서 무엇을
+    #: 포기할지 정하는 자리다.** 6축이면 다 맞출 수 있으므로 균등이 맞다.
+    #: 5축(SO-101)은 임의 6D 를 원리적으로 못 맞춘다 — 위치를 우선한다.
+    WEIGHTS_FULL = np.ones(6)
+    WEIGHTS_POSITION_FIRST = np.array([1.0, 1.0, 1.0, 0.2, 0.2, 0.2])
+
+    @property
+    def weights(self) -> np.ndarray:
+        return self.WEIGHTS_FULL if self.dof >= 6 else self.WEIGHTS_POSITION_FIRST
+
     def ik(self, target: np.ndarray, seed: np.ndarray) -> Solution:
         """말단 4x4 → 관절각. **`seed` 에서 출발한다** — 이어짐이 거기서 나온다."""
-        r = K.ik(target, seed, self.limits, geom=self.geom)
+        r = K.ik(target, seed, self.limits, geom=self.geom, weights=self.weights,
+                 tol_mm=self.tol_mm, tol_deg=self.tol_deg)
         return Solution(bool(r["ok"]), np.asarray(r["q"]), int(r["iters"]),
                         float(r["pos_mm"]), float(r["rot_deg"]))
 

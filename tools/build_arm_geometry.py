@@ -90,73 +90,159 @@ def _triple(s: str | None, default=(0.0, 0.0, 0.0)) -> tuple[float, float, float
     return (x, y, z)
 
 
-def build(cell: float, urdf: Path | None = None,
-          chain: tuple[str, ...] | None = None) -> dict:
+def _chain_from(root, base: str, tip: str | None) -> tuple[list, str]:
+    """`base` 에서 말단까지 관절을 **위상 순서로** 잇는다.
+
+    ⚠ **문서 순서를 믿으면 안 된다.** SO-101 URDF 는 관절을 말단부터 적어 두었다 —
+      그대로 읽으면 사슬이 거꾸로 서고 FK 가 그럴듯하게 틀린다.
+    """
+    joints = list(root.findall("joint"))
+    by_parent: dict[str, list] = {}
+    for j in joints:
+        by_parent.setdefault(j.find("parent").get("link"), []).append(j)
+
+    def walk(link: str, acc: list) -> list | None:
+        if tip is not None and link == tip:
+            return acc
+        kids = by_parent.get(link, [])
+        if not kids:
+            return acc if tip is None else None
+        for j in kids:
+            got = walk(j.find("child").get("link"), acc + [j])
+            if got is not None:
+                return got
+        return None
+
+    path = walk(base, [])
+    if path is None:
+        raise SystemExit(f"{base} 에서 {tip} 로 가는 사슬을 못 찾았습니다")
+    end = path[-1].find("child").get("link") if path else base
+    return path, (tip or end)
+
+
+def _mesh_path(link, urdf_dir: Path, meshes_dir: Path) -> tuple[Path | None, dict]:
+    """링크의 충돌 메시 파일과 그 **origin**.
+
+    ⚠ 충돌 origin 을 무시하면 안 된다. Piper 는 전부 0 이라 그동안 문제가 없었는데,
+      SO-101 은 링크마다 다르다 — 무시하면 메시가 엉뚱한 자리에 놓여 바닥 판정이
+      통째로 틀린다.
+    """
+    coll = link.find("collision")
+    if coll is None:
+        return None, {}
+    mesh = coll.find("geometry/mesh")
+    if mesh is None:
+        return None, {}
+    name = (mesh.get("filename") or "").replace("package://", "")
+    cand = [urdf_dir / name, urdf_dir.parent / name, meshes_dir / Path(name).name]
+    o = coll.find("origin")
+    pose = {"xyz": _triple(o.get("xyz") if o is not None else None),
+            "rpy": _triple(o.get("rpy") if o is not None else None)}
+    for c in cand:
+        if c.is_file():
+            return c, pose
+    return None, pose
+
+
+def _rot(rpy) -> np.ndarray:
+    r, p, y = rpy
+    cr, sr, cp, sp, cy, sy = (math.cos(r), math.sin(r), math.cos(p),
+                              math.sin(p), math.cos(y), math.sin(y))
+    return np.array([
+        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+        [-sp,     cp * sr,                cp * cr],
+    ])
+
+
+def build(cell: float, urdf: Path | None = None, chain: tuple[str, ...] | None = None,
+          base: str = "base_link", tip: str | None = None) -> dict:
     """URDF + 메시 → 지오메트리 dict.
 
-    ⚠ **관절 한계를 같이 굽는다.** IK 가 그걸 쓴다(`armmodel.ArmModel`). 없으면
-      새 팔을 붙였을 때 IK 가 한계를 모르고 도달 불가능한 해를 낸다.
+    ⚠ **관절 한계와 말단 링크 이름을 같이 굽는다.** IK 가 둘 다 쓴다
+      (`armmodel.ArmModel`). 말단을 `link6` 으로 하드코딩하면 Piper 밖에 못 쓴다.
     """
-    root = ET.parse(urdf or ARM_URDF).getroot()
-    joints = {j.get("name"): j for j in root.findall("joint")}
-    if chain is None:
-        chain = (ARM_JOINTS if (urdf is None or urdf == ARM_URDF)
-                 else tuple(j.get("name") for j in root.findall("joint")
-                            if j.get("type") in ("revolute", "continuous")))
+    urdf_path = urdf or ARM_URDF
+    urdf_dir = urdf_path.parent
+    meshes_dir = urdf_dir.parent / "meshes" if urdf is None else urdf_dir / "assets"
+    root = ET.parse(urdf_path).getroot()
+    is_piper = urdf is None or urdf_path == ARM_URDF
 
-    names: list[str] = ["base_link"]
+    if chain is not None:
+        by_name = {j.get("name"): j for j in root.findall("joint")}
+        path = [by_name[n] for n in chain]
+        end_link = path[-1].find("child").get("link")
+    elif is_piper:
+        by_name = {j.get("name"): j for j in root.findall("joint")}
+        path = [by_name[n] for n in ARM_JOINTS]
+        end_link = "link6"
+    else:
+        path, end_link = _chain_from(root, base, tip)
+        path = [j for j in path if j.get("type") in ("revolute", "continuous", "fixed")]
+
+    links = {L.get("name"): L for L in root.findall("link")}
+
+    names: list[str] = [base]
     parent: list[int] = [-1]
     xyz: list[tuple] = [(0.0, 0.0, 0.0)]
     rpy: list[tuple] = [(0.0, 0.0, 0.0)]
     axis: list[tuple] = [(0.0, 0.0, 0.0)]
     qidx: list[int] = [-1]
-    meshes: list[str | None] = ["base_link.stl"]
-
     limits: list[tuple[float, float]] = []
-    for i, jn in enumerate(chain):
-        j = joints[jn]
+
+    n_moving = 0
+    for j in path:
         o = j.find("origin")
         names.append(j.find("child").get("link"))
         parent.append(len(names) - 2)
         xyz.append(_triple(o.get("xyz") if o is not None else None))
         rpy.append(_triple(o.get("rpy") if o is not None else None))
+        moving = j.get("type") in ("revolute", "continuous")
         a = j.find("axis")
-        axis.append(_triple(a.get("xyz") if a is not None else None, (0.0, 0.0, 1.0)))
-        qidx.append(i)
-        meshes.append(f"{names[-1]}.stl")
-        lm = j.find("limit")
-        limits.append((float(lm.get("lower")), float(lm.get("upper")))
-                      if lm is not None and lm.get("lower") is not None
-                      else (-math.pi, math.pi))
+        axis.append(_triple(a.get("xyz") if a is not None else None, (0.0, 0.0, 1.0))
+                    if moving else (0.0, 0.0, 0.0))
+        qidx.append(n_moving if moving else -1)
+        if moving:
+            n_moving += 1
+            lm = j.find("limit")
+            limits.append((float(lm.get("lower")), float(lm.get("upper")))
+                          if lm is not None and lm.get("lower") is not None
+                          else (-math.pi, math.pi))
 
-    # 그리퍼 사슬은 Piper 전용이다 — 다른 팔이면 그 팔 URDF 가 이미 갖고 있다
-    for name, par, t, r, mesh in (GRIPPER if (urdf is None or urdf == ARM_URDF) else []):
-        names.append(name)
-        parent.append(names.index(par))
-        xyz.append(t)
-        rpy.append(r)
-        axis.append((0.0, 0.0, 0.0))
-        qidx.append(-1)
-        meshes.append(mesh)
+    if is_piper:
+        for name, par, t, r, mesh in GRIPPER:
+            names.append(name); parent.append(names.index(par))
+            xyz.append(t); rpy.append(r); axis.append((0.0, 0.0, 0.0)); qidx.append(-1)
 
     pts: list[np.ndarray] = []
     pt_link: list[np.ndarray] = []
-    for k, mesh in enumerate(meshes):
-        if mesh is None:
+    missing: list[str] = []
+    for k, name in enumerate(names):
+        if is_piper:
+            stem = {"flange_link": "flange", "gripper_base": "gripper_base",
+                    "gripper_link1": "gripper_link1", "gripper_link2": "gripper_link2"
+                    }.get(name, name)
+            path_m, pose = MESHES / f"{stem}.stl", {}
+            if not path_m.is_file():
+                path_m = None
+        else:
+            path_m, pose = _mesh_path(links.get(name), urdf_dir, meshes_dir) \
+                if links.get(name) is not None else (None, {})
+        if path_m is None:
+            missing.append(name)
             continue
-        p = MESHES / mesh
-        if not p.is_file():
-            raise SystemExit(f"메시가 없습니다: {p}")
-        v = load_stl(p)
-        if names[k] in ("gripper_link1", "gripper_link2"):
-            # 손가락은 행정 전체를 훑는다 — 그 축은 링크 로컬 z 다
-            v = np.concatenate([
-                v + np.array([0.0, 0.0, s])
-                for s in np.linspace(0.0, FINGER_TRAVEL, FINGER_SAMPLES)
-            ])
+        v = load_stl(path_m)
+        if pose:
+            v = v @ _rot(pose["rpy"]).T + np.array(pose["xyz"])
+        if name in ("gripper_link1", "gripper_link2"):
+            v = np.concatenate([v + np.array([0.0, 0.0, s])
+                                for s in np.linspace(0.0, FINGER_TRAVEL, FINGER_SAMPLES)])
         c = cover(v, cell)
         pts.append(c)
         pt_link.append(np.full(len(c), k, dtype=np.int32))
+
+    if missing:
+        print(f"  ⚠ 메시 없는 링크(바닥 검사에서 빠짐): {', '.join(missing)}")
 
     return {
         "names": np.array(names),
@@ -165,11 +251,12 @@ def build(cell: float, urdf: Path | None = None,
         "rpy": np.array(rpy, dtype=np.float64),
         "axis": np.array(axis, dtype=np.float64),
         "qidx": np.array(qidx, dtype=np.int32),
-        "pts": np.concatenate(pts),
-        "pt_link": np.concatenate(pt_link),
+        "pts": np.concatenate(pts) if pts else np.zeros((0, 3), np.float32),
+        "pt_link": np.concatenate(pt_link) if pt_link else np.zeros(0, np.int32),
         "radius": np.array(cell * np.sqrt(3) / 2),
         "cell": np.array(cell),
         "limits": np.array(limits, dtype=np.float64),
+        "tip": np.array(end_link),
     }
 
 
@@ -180,20 +267,26 @@ def main() -> int:
     ap.add_argument("--urdf", type=Path, default=None,
                     help="다른 팔의 URDF (SO-101 등). 생략하면 Piper")
     ap.add_argument("--joints", default=None,
-                    help="사슬 관절 이름을 쉼표로. 생략하면 URDF 순서대로 revolute 전부")
+                    help="사슬 관절 이름을 쉼표로. 생략하면 base→tip 위상 순서")
+    ap.add_argument("--base", default="base_link", help="뿌리 링크")
+    ap.add_argument("--tip", default=None, help="말단 링크. 생략하면 사슬 끝")
     args = ap.parse_args()
 
     if not ARM_URDF.is_file():
         raise SystemExit(f"URDF 가 없습니다: {ARM_URDF}\n"
                          "  git submodule update --init vendor/agx_arm_urdf")
     data = build(args.cell, args.urdf,
-                 tuple(args.joints.split(",")) if args.joints else None)
+                 tuple(args.joints.split(",")) if args.joints else None,
+                 args.base, args.tip)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(args.out, **data)
 
-    print(f"{args.out.relative_to(REPO)}  ({args.out.stat().st_size / 1024:.0f}KB)")
-    print(f"  링크 {len(data['names'])}개, 점 {len(data['pts'])}개, "
-          f"반지름 {float(data['radius']) * 100:.2f}cm")
+    out = args.out.resolve()
+    label = out.relative_to(REPO) if out.is_relative_to(REPO) else out
+    print(f"{label}  ({out.stat().st_size / 1024:.0f}KB)")
+    print(f"  링크 {len(data['names'])}개, 자유도 {int((data['qidx'] >= 0).sum())}, "
+          f"점 {len(data['pts'])}개, 반지름 {float(data['radius']) * 100:.2f}cm")
+    print(f"  말단 링크: {data['tip']}")
     for i, n in enumerate(data["names"]):
         k = int((data["pt_link"] == i).sum())
         print(f"    {n:14s} {k:5d}점")
