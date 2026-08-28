@@ -111,22 +111,39 @@ def watch_estop(bus: Bus, hub, stop) -> None:
             logger.warning("E-stop(%s) → 토크 차단", event.get("reason", "?"))
 
 
+def heartbeat(bus: Bus, name: str, stop: threading.Event) -> None:
+    """생존 표시를 **RPC 루프와 따로** 낸다.
+
+    ⚠ **긴 RPC 하나가 데몬을 죽은 것으로 만든다.** 루프 안에서 표시하면 그
+      표시가 처리 시간만큼 늦고, 게이트웨이의 판정 기준(`DAEMON_ALIVE_TTL_MS`)은
+      3초다. 실측으로 넘긴 것:
+
+          회색 카드 보정 = 안정화 2.0초 + 자동끄기 0.4초 + 3라운드 × 0.4초
+                        = **최소 3.6초** > 3.0초
+
+      그래서 보정할 때마다 "rsd 응답 없음"이 떴다 — 데몬은 멀쩡히 일하는 중인데.
+      로그에 그 상관이 그대로 남아 있다(11:04:05 응답없음 → 11:04:06 보정 완료).
+
+      느린 것과 죽은 것은 다르고, 그 둘을 섞으면 진짜 죽었을 때를 못 알아본다.
+    """
+    period = C.DAEMON_ALIVE_TTL_MS / 3000
+    while not stop.wait(period):
+        try:
+            bus.mark_alive(name)
+        except Exception as exc:
+            logger.warning("생존 표시 실패: %s", exc)
+
+
 def serve(bus: Bus, hub: _Serving) -> None:
     logger.info("로봇 데몬 시작")
     # E-stop 은 늦으면 의미가 없다 — RPC 루프와 **따로** 듣는다.
     stop = threading.Event()
     threading.Thread(target=watch_estop, args=(bus, hub, stop),
                      daemon=True, name="estop-watch").start()
-    last_beat = 0.0
+    # 심박도 따로 낸다 — 긴 RPC 하나가 데몬을 죽은 것으로 만들면 안 된다
+    threading.Thread(target=heartbeat, args=(bus, C.ROBOTD, stop),
+                     daemon=True, name="robotd-beat").start()
     while _running:
-        now = time.monotonic()
-        if now - last_beat > C.DAEMON_ALIVE_TTL_MS / 3000:
-            try:
-                bus.mark_alive(C.ROBOTD)
-            except Exception as exc:
-                logger.warning("생존 표시 실패: %s", exc)
-            last_beat = now
-
         try:
             req = bus.rpc_next_request(C.ROBOTD, timeout=1)
         except Exception as exc:
@@ -145,6 +162,9 @@ def serve(bus: Bus, hub: _Serving) -> None:
         except Exception as exc:
             logger.warning("%s 실패: %s", method, exc)
             bus.rpc_reply(rid, False, error=str(exc))
+    # 심박·E-stop 감시를 세운다. 데몬 스레드라 프로세스가 죽으면 어차피 끝나지만,
+    # 종료 경로에서 **생존 표시를 계속 내는 것**은 거짓말이다.
+    stop.set()
 
 
 def main() -> int:

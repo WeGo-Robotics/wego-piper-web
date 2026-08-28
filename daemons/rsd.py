@@ -28,6 +28,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 
 from piper_bus import contract as C
@@ -54,19 +55,35 @@ _METHODS = {
 }
 
 
+def heartbeat(bus: Bus, name: str, stop: threading.Event) -> None:
+    """생존 표시를 **RPC 루프와 따로** 낸다.
+
+    ⚠ **긴 RPC 하나가 데몬을 죽은 것으로 만든다.** 루프 안에서 표시하면 그
+      표시가 처리 시간만큼 늦고, 게이트웨이의 판정 기준(`DAEMON_ALIVE_TTL_MS`)은
+      3초다. 실측으로 넘긴 것:
+
+          회색 카드 보정 = 안정화 2.0초 + 자동끄기 0.4초 + 3라운드 × 0.4초
+                        = **최소 3.6초** > 3.0초
+
+      그래서 보정할 때마다 "rsd 응답 없음"이 떴다 — 데몬은 멀쩡히 일하는 중인데.
+      로그에 그 상관이 그대로 남아 있다(11:04:05 응답없음 → 11:04:06 보정 완료).
+
+      느린 것과 죽은 것은 다르고, 그 둘을 섞으면 진짜 죽었을 때를 못 알아본다.
+    """
+    period = C.DAEMON_ALIVE_TTL_MS / 3000
+    while not stop.wait(period):
+        try:
+            bus.mark_alive(name)
+        except Exception as exc:
+            logger.warning("생존 표시 실패: %s", exc)
+
+
 def serve(bus: Bus, hub: RealSenseHub) -> None:
     logger.info("RealSense 데몬 시작 (pyrealsense2=%s)", rs_available())
-    last_beat = 0.0
+    stop = threading.Event()
+    threading.Thread(target=heartbeat, args=(bus, C.RSD, stop),
+                     daemon=True, name="rsd-beat").start()
     while _running:
-        # 생존 표시 — 게이트웨이가 "데몬 없음"을 즉시 알아야 한다
-        now = time.monotonic()
-        if now - last_beat > C.DAEMON_ALIVE_TTL_MS / 3000:
-            try:
-                bus.mark_alive(C.RSD)
-            except Exception as exc:
-                logger.warning("생존 표시 실패: %s", exc)
-            last_beat = now
-
         try:
             req = bus.rpc_next_request(C.RSD, timeout=1)
         except Exception as exc:
@@ -87,6 +104,7 @@ def serve(bus: Bus, hub: RealSenseHub) -> None:
         except Exception as exc:
             logger.warning("%s 실패: %s", method, exc)
             bus.rpc_reply(rid, False, error=str(exc))
+    stop.set()
 
 
 def main() -> int:
