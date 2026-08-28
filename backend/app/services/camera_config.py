@@ -171,11 +171,25 @@ def _shm_dims(cam_id: str, width: int | None, height: int | None,
 FIRST_FRAME_TIMEOUT_S = 10.0
 
 
-def _wait_for_frame(cam_id: str, timeout_s: float = FIRST_FRAME_TIMEOUT_S) -> bool:
-    """세그먼트가 생기고 **프레임이 들어올 때까지** 기다린다.
+def _wait_for_frame(cam_id: str, timeout_s: float = FIRST_FRAME_TIMEOUT_S,
+                    want_wh: tuple[int, int] | None = None) -> bool:
+    """세그먼트가 생기고 **요청한 크기의 프레임이 들어올 때까지** 기다린다.
 
     세그먼트 파일이 생기는 것과 프레임이 담기는 것은 다르다 — 파일만 보고 넘기면
     소비자가 빈 세그먼트를 읽어 `None` 을 받는다.
+
+    ⚠ **크기까지 봐야 한다.** 해상도를 바꿔 다시 여는 경우, 재시작이 끝나기 전에도
+      세그먼트에는 **직전 해상도의 프레임**이 그대로 남아 있다. 그걸 보고 넘기면
+      뒤따르는 `build_cameras_json` 이 옛 크기를 읽어 CLI 에 박고, 정작 녹화가
+      붙을 때는 새 크기라 LeRobot 이 첫 프레임에서 죽는다:
+
+          WARNING PiperShmCamera(rs_335122270699_color):
+                  세그먼트가 640x480 인데 설정은 848x480 — 세그먼트 값을 따릅니다
+          ValueError: The feature 'observation.images.right_hand' of shape
+                      '(480, 640, 3)' does not have the expected shape '(480, 848, 3)'
+
+      카메라는 세그먼트를 따라가는데 **데이터셋 스키마는 못 따라간다** — 그쪽은
+      시작할 때 한 번 정해진다. 그래서 여기서 맞을 때까지 기다린다.
     """
     import time
 
@@ -191,7 +205,11 @@ def _wait_for_frame(cam_id: str, timeout_s: float = FIRST_FRAME_TIMEOUT_S) -> bo
             continue
         try:
             if sub.read() is not None:
-                return True
+                if want_wh is None:
+                    return True
+                h, w = sub.shape[0], sub.shape[1]
+                if (w, h) == want_wh:
+                    return True
         finally:
             sub.close()
         time.sleep(0.05)
@@ -253,8 +271,18 @@ def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str,
         # 세그먼트는 첫 프레임이 발행될 때 생긴다. 여기서 안 기다리면 곧바로 뜨는
         # subprocess 가 아직 없는 세그먼트를 열어 `SegmentError` 로 죽는다 —
         # 실제로 파이프라인을 다시 세워야 했던 D435 만 이 경합에 걸렸다.
-        if not _wait_for_frame(cam_id):
+        # 요청한 크기가 있으면 **그 크기가 실제로 나올 때까지** 기다린다.
+        # 장치가 못 내는 조합이면 근사로 열리므로 실행값(`got`)을 기준으로 본다 —
+        # 요청값을 기준으로 하면 영원히 안 맞아 타임아웃이 난다.
+        want_wh = None
+        if got.get("width") and got.get("height"):
+            want_wh = (int(got["width"]), int(got["height"]))
+        if not _wait_for_frame(cam_id, want_wh=want_wh):
             raise CameraPrepareError(
+                f"카메라가 프레임을 내지 않습니다 ({cam_id}): "
+                f"{FIRST_FRAME_TIMEOUT_S}초 안에 세그먼트가 "
+                f"{want_wh[0]}x{want_wh[1]} 로 채워지지 않았습니다"
+                if want_wh else
                 f"카메라가 프레임을 내지 않습니다 ({cam_id}): "
                 f"{FIRST_FRAME_TIMEOUT_S}초 안에 세그먼트가 채워지지 않았습니다"
             )
