@@ -58,3 +58,4 @@ backend/data/yolo_models/*
 backend/data/yolo_datasets/*
 !backend/data/yolo_models/.gitkeep
 !backend/data/yolo_datasets/.gitkeep
+dist/
