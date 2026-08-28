@@ -285,3 +285,46 @@ def test_the_wheel_attaches_when_the_layer_appears_not_at_mount():
     assert "const surfaceRef = useCallback((node: HTMLDivElement | null)" in src, \
         "콜백 ref 가 아니면 층이 없는 동안 붙일 기회를 놓친다"
     assert "detachWheel" in src, "떼는 경로가 없다 — 리스너가 샌다"
+
+
+# ── 보정 값이 언제 사라지는가 ────────────────────────────────────────────────
+
+def test_the_profile_reapplies_on_every_connect():
+    """⚠ **의도된 동작이다** (feature/gray-card-calibration.md §4: "저장은 안 한다
+    — 프로파일이 한다"). 연결은 활성 프로파일의 컨트롤을 함께 넘긴다.
+
+    문제는 그게 아니라 **말해주지 않은 것**이었다: 보정으로 좋은 값을 얻고
+    [실시간 보기] 를 누르면 그 버튼이 `connect` 를 부르고, 프로파일 값이 다시
+    걸려 "다시 어두워진다". 실측(D435, 프리셋 '주간 사무실'):
+
+        보정 후     exposure = 8000
+        실시간 보기 exposure = 93     ← 프리셋 값
+    """
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "backend" / "app" / "services"
+           / "camera_manager.py").read_text()
+    body = src.split("    def connect(self,", 1)[1].split("\n    def ", 1)[0]
+    assert "_active_controls(self)" in body, "연결이 프로파일을 안 건다 — 설계가 바뀌었다"
+
+
+def test_the_live_button_connects_first():
+    """[실시간 보기] 가 `connect` 를 부르는 것이 위 경로의 방아쇠다."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+            / "CamerasPage.tsx").read_text()
+    live = page.split("'중단' : '실시간 보기'", 1)[0][-1200:]
+    assert "/cameras/connect" in live
+
+
+def test_the_result_box_says_it_is_not_saved():
+    """⚠ 안내가 보정 **전** 문단에만 있었다 — 조준을 시작하면 사라졌다.
+    결과를 본 직후가 저장이 가장 필요한 순간이다."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+            / "CamerasPage.tsx").read_text()
+    box = page.split("{grayCard && (", 1)[1].split("</div>", 1)[0]
+    assert "장치에만" in box, "결과 상자가 임시값임을 말하지 않는다"
+    assert "실시간 보기" in box, "무엇이 되돌리는지 말하지 않는다"

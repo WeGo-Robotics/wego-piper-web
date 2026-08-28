@@ -981,6 +981,18 @@ export default function CamerasPage() {
                       <b>{grayCard.after.neutral_error_pct}%</b> · 노출{' '}
                       {(grayCard.exposure_us / 1000).toFixed(1)}ms
                     </p>
+                    {/* ⚠ **결과를 본 직후가 저장이 가장 필요한 순간이다.** 이
+                        안내는 보정 **전** 문단에만 있었고, 조준을 시작하면
+                        사라졌다. 그래서 좋은 값을 얻고도 [실시간 보기] 를 누르는
+                        순간 프로파일 값으로 덮여 "다시 어두워진다"로 보고됐다.
+                        연결할 때 프로파일을 다시 거는 것은 의도된 동작이다
+                        (feature/gray-card-calibration.md §4) — 말해주지 않은 것이
+                        문제였다. */}
+                    <p className="mt-1 border-t border-current/20 pt-1 text-[10px] text-amber-300">
+                      아직 <b>장치에만</b> 올라가 있습니다. 아래 프로파일로 저장하지
+                      않으면 <b>다음에 카메라를 열 때</b>(실시간 보기·녹화·추론)
+                      프로파일 값으로 되돌아갑니다.
+                    </p>
                   </div>
                 )}
               </div>
