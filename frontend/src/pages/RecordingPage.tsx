@@ -56,6 +56,13 @@ export default function RecordingPage() {
   const [leftLeader, setLeftLeader] = useState(_saved.leftLeader || '')
   const [rightLeader, setRightLeader] = useState(_saved.rightLeader || '')
   const [cameraMapping, setCameraMapping] = useState<Record<string, string>>(_saved.cameraMapping || {})
+  // ⚠ **무접두사 카메라는 전부 왼팔로 간다.** 규칙은 아래에 적혀 있지만, 그
+  //   결과로 오른팔이 카메라 없이 녹화되는 것은 아무도 말해주지 않았다 —
+  //   실제로 `two_arm_test` 가 `left_top`·`left_hand` 둘뿐인 채로 남았다.
+  //   정책은 못 본 팔을 학습할 수 없고, 그 사실은 추론 때야 드러난다.
+  const rightArmBlind = armMode === 'bimanual'
+    && Object.entries(cameraMapping).some(([, id]) => id)
+    && !Object.entries(cameraMapping).some(([k, id]) => id && k.startsWith('right_'))
   const [camWidth, setCamWidth] = useState(_saved.camWidth ?? 480)
   const [camHeight, setCamHeight] = useState(_saved.camHeight ?? 360)
   const [repoId, setRepoId] = useState(_saved.repoId || '')
@@ -355,6 +362,15 @@ export default function RecordingPage() {
               <p className="col-span-2 text-[10px] text-neutral-500">
                 좌/우는 로봇 페이지의 등록(side)에서 프리필됩니다. 카메라 키는 left_/right_ 접두사로 팔에 배정되고, 무접두사(top 등)는 왼팔 소속이 됩니다.
               </p>
+              {rightArmBlind && (
+                <p className="col-span-2 rounded border border-amber-500/40 bg-amber-500/10
+                              px-2 py-1.5 text-[11px] leading-relaxed text-amber-300">
+                  <b>오른팔에 배정된 카메라가 없습니다.</b> 지금 매핑은 전부 왼팔로
+                  들어갑니다 — 정책은 오른팔이 무엇을 하는지 못 봅니다.
+                  오른팔 카메라 키에 <code>right_</code> 접두사를 붙이세요
+                  (예: <code>right_hand</code>).
+                </p>
+              )}
             </div>
             )}
             {/* 카메라 */}
