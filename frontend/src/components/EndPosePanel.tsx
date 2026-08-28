@@ -143,12 +143,16 @@ export default function EndPosePanel({ iface, enabled }: { iface: string; enable
         <Pad title="높이" unit={`${stepMm}mm`}
              up={{ label: '▲', hint: 'Z 위', on: () => jog('z', stepMm) }}
              down={{ label: '▼', hint: 'Z 아래', on: () => jog('z', -stepMm) }} />
+        {/* ⚠ RX 를 십자 **가운데**에 두었더니 한 방향밖에 안 됐다. 가운데는
+            자리가 하나뿐인데 축은 양방향이 필요하다 — 롤은 따로 뺀다. */}
         <Pad title="손목" unit={`${stepDeg}°`}
-             up={{ label: 'RY+', hint: '', on: () => jog('ry', stepDeg) }}
-             down={{ label: 'RY−', hint: '', on: () => jog('ry', -stepDeg) }}
-             left={{ label: 'RZ+', hint: '', on: () => jog('rz', stepDeg) }}
-             right={{ label: 'RZ−', hint: '', on: () => jog('rz', -stepDeg) }}
-             centre={{ label: 'RX', hint: '', on: () => jog('rx', stepDeg) }} />
+             up={{ label: 'RY+', hint: '숙임', on: () => jog('ry', stepDeg) }}
+             down={{ label: 'RY−', hint: '젖힘', on: () => jog('ry', -stepDeg) }}
+             left={{ label: 'RZ+', hint: '좌', on: () => jog('rz', stepDeg) }}
+             right={{ label: 'RZ−', hint: '우', on: () => jog('rz', -stepDeg) }} />
+        <Pad title="롤 (RX)" unit={`${stepDeg}°`}
+             left={{ label: '↺', hint: 'RX−', on: () => jog('rx', -stepDeg) }}
+             right={{ label: '↻', hint: 'RX+', on: () => jog('rx', stepDeg) }} />
       </div>
 
       {box && (

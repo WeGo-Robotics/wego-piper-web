@@ -189,9 +189,26 @@ def test_the_screen_offers_steps_not_coordinates():
     # 절대 좌표를 안 받는지가 요점이다 — 모든 호출이 **부호 있는 걸음**이어야 한다.
     # (버튼 모양은 십자 패드로 바뀌었다. 위 `test_the_pad_shows_direction_by_position`.)
     import re
-    calls = re.findall(r"jog\('(\w+)', (-?)step(Mm|Deg)\)", src)
+    calls = re.findall(r"jog\('(\w+)', (-?)step(?:Mm|Deg)\)", src)
     assert calls, "걸음 단위 호출이 없다"
-    assert {sign for _, sign, _ in calls} == {"", "-"}, "한 방향으로만 갈 수 있다"
+
+
+def test_every_axis_can_go_both_ways():
+    """⚠ **축별로** 봐야 한다. 전체 부호 집합만 세면 다섯 축이 양방향이라
+    한 축이 한 방향뿐이어도 통과한다 — 실제로 RX 를 십자 **가운데**에 넣어
+    그렇게 됐다. 가운데는 자리가 하나인데 축은 양방향이 필요하다.
+    """
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "components"
+           / "EndPosePanel.tsx").read_text()
+    by: dict[str, set[str]] = {}
+    for axis, sign in re.findall(r"jog\('(\w+)', (-?)step(?:Mm|Deg)\)", src):
+        by.setdefault(axis, set()).add(sign or "+")
+    assert set(by) == {"x", "y", "z", "rx", "ry", "rz"}, f"빠진 축: {by.keys()}"
+    for axis, signs in sorted(by.items()):
+        assert signs == {"+", "-"}, f"{axis} 는 {sorted(signs)} 방향뿐이다"
 
 
 def test_the_screen_shows_the_workspace_box():
