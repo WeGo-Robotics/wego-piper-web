@@ -624,9 +624,12 @@ class RelayStartRequest(BaseModel):
 
     leader: str
     follower: str
-    #: `joint` = 관절 복제 (안전 필터를 탄다)
-    #: `pose`  = 리더 말단 6D 를 FK 로 읽어 팔로워를 MoveP 로 (필터를 **안** 탄다)
+    #: `joint` = 리더 관절을 그대로 복제
+    #: `pose`  = 리더 관절 → FK → 말단 6D → **우리 IK** → 팔로워 관절
     mode: str = "joint"
+    #: 기구학 모델. `pose` 모드에서만 쓴다 — **양쪽이 달라도 된다**(SO-101 등).
+    leader_arm: str = "piper"
+    follower_arm: str = "piper"
 
 
 @router.post("/relay/start")
@@ -639,10 +642,10 @@ async def relay_start(body: RelayStartRequest):
     모드는 둘이다:
 
       `joint`  리더 관절을 그대로 복제한다. robotd 의 안전 필터를 탄다.
-      `pose`   리더 말단 6D 를 **FK 로** 구해(마스터 팔은 자기 말단 자세를 안
-               알려준다) 팔로워에 MoveP 로 준다. 관절을 팔의 온보드 IK 가
-               정하므로 **관절 안전 필터가 안 걸린다** — 막는 것은 전부
-               `relay._send_pose` 에 있다.
+      `pose`   리더 관절 → FK → 말단 6D → **우리 IK** → 팔로워 관절.
+               가운데 6D 자세만 건너가므로 **양쪽 팔이 달라도 된다**
+               (`leader_arm`/`follower_arm`). 관절 목표로 끝나므로 robotd 의
+               안전 필터를 그대로 탄다.
     """
     from app.services.exclusivity import Activity, require_idle
     from app.services.relay import RelayError, relay_session
@@ -657,10 +660,24 @@ async def relay_start(body: RelayStartRequest):
             409, f"{body.leader} 는 리더가 아닙니다 — [찾기] 로 판별하거나 "
                  "마스터로 설정하세요")
     try:
-        relay_session.start(body.leader, body.follower, body.mode)
+        relay_session.start(body.leader, body.follower, body.mode,
+                            body.leader_arm, body.follower_arm)
     except RelayError as e:
         raise HTTPException(409, str(e))
     return {"status": "started", **relay_session.status()}
+
+
+@router.get("/relay/arms")
+async def relay_arms():
+    """붙일 수 있는 기구학 모델 목록. 6D 자세 모드에서 리더·팔로워를 고른다.
+
+    새 팔은 URDF 를 구워서 늘린다:
+        python3 tools/build_arm_geometry.py --urdf <그 팔 URDF> \
+            --out robot/piper_robot/data/so101_geometry.npz
+    """
+    from piper_robot.armmodel import ArmModel
+
+    return {"arms": ArmModel.available()}
 
 
 @router.post("/relay/stop")

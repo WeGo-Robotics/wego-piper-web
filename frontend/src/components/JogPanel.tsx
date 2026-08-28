@@ -47,6 +47,10 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
   //   `mode` 를 조용히 버리고 관절 복제로 돌아 "6D 인데 관절이 따라 돈다"로
   //   보고됐다. 화면이 고른 값을 보여주면 그 거짓말을 그대로 반복한다.
   const [runningMode, setRunningMode] = useState('')
+  // 붙일 수 있는 기구학 모델. 6D 모드에서 팔로워 모델을 고른다 —
+  // 관절 구성이 다른 팔(SO-101 등)을 붙이려는 것이 이 모드의 이유다.
+  const [arms, setArms] = useState<string[]>([])
+  const [followerArm, setFollowerArm] = useState('piper')
   const relayingRef = useRef(false)
   relayingRef.current = relaying
   const [busy, setBusy] = useState(false)
@@ -78,6 +82,12 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
     const id = setInterval(read, 1500)
     return () => { alive = false; clearInterval(id) }
   }, [iface])
+
+  useEffect(() => {
+    api.get<{ arms: string[] }>('/robots/relay/arms')
+      .then((r) => setArms(r.arms ?? []))
+      .catch(() => {})
+  }, [])
 
   // POSE 모드는 조건이 안 맞으면 **말없이 안 보낸다** — 이유를 화면에 내야
   // 사용자가 "릴레이가 고장났다"고 읽지 않는다.
@@ -157,7 +167,10 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
     if (!leader) return
     setBusy(true)
     try {
-      await api.post('/robots/relay/start', { leader, follower: iface, mode: relayMode })
+      await api.post('/robots/relay/start', {
+        leader, follower: iface, mode: relayMode,
+        leader_arm: 'piper', follower_arm: followerArm,
+      })
       setRelaying(true)
     } catch (e) { fail(e, '릴레이를 시작하지 못했습니다') }
     finally { setBusy(false) }
@@ -233,18 +246,35 @@ export default function JogPanel({ iface, commandable, reason, leader }: Props) 
             <span className="ml-1 text-[11px] text-neutral-600">
               {relayMode === 'joint'
                 ? '리더 관절을 그대로 복제합니다'
-                : '리더 말단 자세를 팔로워가 자기 IK 로 따라갑니다'}
+                : 'FK → 6D 자세 → IK → 팔로워 관절 (다른 팔도 가능)'}
             </span>
           </div>
 
-          {/* ⚠ 이 경고가 없으면 두 모드가 그냥 취향 차이로 보인다. */}
+          {/* 6D 모드는 관절 구성이 다른 팔을 팔로워로 붙이기 위한 것이다.
+              관절 목표로 끝나므로 안전 필터는 관절 복제와 똑같이 걸린다. */}
           {relayMode === 'pose' && (
-            <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5
-                          text-[11px] leading-relaxed text-amber-300">
-              6D 자세 모드는 팔로워 관절을 <b>팔의 온보드 IK 가</b> 정합니다 —
-              바닥 필터·관절 범위·변화율 제한이 <b>걸리지 않습니다.</b>
-              작업 공간 상자와 걸음 상한만 막습니다.
-            </p>
+            <div className="space-y-1 rounded border border-neutral-700 bg-neutral-900/60
+                            px-2 py-1.5 text-[11px] leading-relaxed text-neutral-400">
+              <p>
+                리더 관절 → FK → <b>말단 6D 자세</b> → IK → 팔로워 관절.
+                가운데 자세만 건너가므로 <b>관절 구성이 다른 팔</b>도 팔로워로 쓸 수 있습니다.
+              </p>
+              <p>
+                관절 목표로 끝나므로 바닥 필터·관절 범위·변화율 제한이
+                관절 복제와 <b>똑같이 걸립니다.</b>
+              </p>
+              {arms.length > 1 && (
+                <div className="flex items-center gap-1 pt-0.5">
+                  <span>팔로워 모델</span>
+                  <select value={followerArm} onChange={(e) => setFollowerArm(e.target.value)}
+                    disabled={relaying}
+                    className="rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5
+                               text-[11px] text-neutral-200 disabled:opacity-40">
+                    {arms.map((a) => <option key={a} value={a}>{a}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
           )}
 
           {/* 고른 것과 실제가 다르면 **그 사실이 제일 먼저 보여야 한다.** */}

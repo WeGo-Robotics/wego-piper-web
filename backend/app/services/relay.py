@@ -24,9 +24,18 @@ robotd ─shm state→ [리더]  ──읽기──  [RelaySession]  ──쓰�
 | | 관절 복제 (`joint`) | 6D 자세 (`pose`) |
 |---|---|---|
 | 리더에서 읽는 것 | 관절값 | 관절값 → **FK** → 말단 6D |
-| 팔로워에 주는 것 | 관절 목표 (shm) | 말단 목표 (`EndPoseCtrl`, MOVE P) |
-| 팔로워 관절을 정하는 것 | 우리 | **팔의 온보드 IK** |
-| robotd 안전 필터 | ✅ 탄다 | ❌ **안 탄다** |
+| 가운데 | — | **6D 자세만 건너간다** |
+| 팔로워 관절을 정하는 것 | 리더가 (그대로 복제) | **우리 IK** (`armmodel`) |
+| 팔로워에 주는 것 | 관절 목표 (shm) | 관절 목표 (shm) |
+| robotd 안전 필터 | ✅ 탄다 | ✅ **탄다** |
+| 양쪽 팔이 달라도 되나 | ❌ | ✅ |
+
+**6D 자세만 건너가는 것이 요점이다.** 관절 구성이 다른 팔(SO-101 등)을 팔로워로
+붙이려면 관절값을 직접 대입할 수 없다 — 축 수도 길이도 다르다. 자세는 건너간다.
+
+IK 를 **우리가** 푸는 이유가 하나 더 있다: 팔의 온보드 IK 를 쓰면 관절을 우리가
+안 정하므로 `filter_goal` 이 걸 자리가 없었다(바닥·범위·변화율이 전부 빠졌다).
+이제는 우리가 관절을 정하므로 예전 경로로 되돌아온다.
 
 ⚠ **리더는 자기 말단 자세를 안 알려준다.** 마스터로 설정된 팔은 피드백(0x2Ax)을
 내지 않아 `GetArmEndPoseMsgs` 가 0,0,0 을 돌려준다(실측). 그래서 POSE 모드는
@@ -37,9 +46,9 @@ FK 로 구한다 — 팔로워에서 대조한 결과 위치 0.08mm·자세 0.00
 관절 복제는 조그와 같다: 범위·변화율·데드맨은 CAN 을 쥔 robotd 것이고, 이 루프는
 그 앞에 목표를 놓을 뿐이라 **robotd 변경 0줄**이다.
 
-**`pose` 모드는 다르다.** 관절을 우리가 안 정하므로 `filter_goal` 이 걸 자리가
-없다 — 바닥 필터도, 관절 범위도, 변화율 상한도 전부 빠진다. 그래서 막는 것을
-**여기 다 둔다**: 작업공간 상자, 한 걸음 상한, 짐벌락, 바닥 근사 검사.
+`pose` 모드도 이제 같다 — IK 로 관절을 정해서 같은 세그먼트에 쓰므로 robotd 의
+필터를 그대로 탄다. 여기 남은 검사는 **IK 이전** 문제들이다: 리더가 특이점에
+있는가, 해가 안 나오는가, 한 번에 너무 많이 움직였는가.
 """
 
 from __future__ import annotations
@@ -65,18 +74,38 @@ STALE_S = 0.5
 
 # ── POSE 모드 전용 ──
 #
-# 말단 목표는 MOVE P 로 나가고 팔이 스스로 보간한다. 관절 스트림보다 느려도
-# 되고, 오히려 너무 빠르면 팔이 직전 목표에 닿기 전에 다음 것이 덮어써 떨린다.
-POSE_HZ = 15.0
+# IK 한 번이 실측 2.8ms 라 관절 모드와 같은 30Hz 도 되지만, 여유를 둔다 —
+# 리더가 빨리 움직일 때 IK 반복이 늘고, 그때 주기를 못 지키면 목표가 밀린다.
+POSE_HZ = 20.0
 
-# 한 주기에 허용할 말단 이동. 리더가 튀거나(낡은 상태 복구 직후) 짐벌 근처를
-# 지날 때 **큰 MoveP 한 방**이 나가는 것을 막는다.
+# 한 주기에 허용할 **말단** 이동. 리더가 튀면(낡은 상태 복구 직후) IK 가 먼
+# 목표를 풀고, 그 관절 목표는 robotd 의 변화율 상한에 잘려 팔이 엉뚱하게 기어간다.
+# 여기서 먼저 막는 편이 정직하다.
 POSE_MAX_STEP_MM = 30.0
 POSE_MAX_STEP_DEG = 20.0
 
 
 #: POSE 모드에는 명령 세그먼트가 없다. `_writer` 자리에 이걸 넣어 "열려 있음"만 표시한다.
 _POSE_MODE = object()
+
+
+def _norm_from_rad(q_rad) -> dict:
+    """라디안 관절각 → 정규화 dict. `kinematics.norm_to_rad` 의 역이다.
+
+    변환은 저장소 정본(`piper_robot.joints`)을 쓴다 — 여기서 식을 다시 적으면
+    캘리브레이션이 두 벌이 된다.
+    """
+    import numpy as np
+
+    from piper_robot import kinematics as K
+    from piper_robot.joints import JOINT_CALIBRATION, normalize_joint
+
+    out = {}
+    for i, name in enumerate(K.ARM_JOINTS):
+        raw = float(np.degrees(q_rad[i]) * K.MILLIDEG_PER_DEG)
+        out[name] = float(normalize_joint(name, raw))
+        _ = JOINT_CALIBRATION
+    return out
 
 
 class RelayError(RuntimeError):
@@ -95,7 +124,13 @@ class RelaySession:
         self._sent = 0
         self._stale_since = 0.0
         self._mode = "joint"
-        self._last_pose: dict | None = None
+        #: 직전 IK 해. 다음 번 시드가 되어 **같은 가지에 머무르게** 한다.
+        self._seed = None
+        #: 직전 목표(4x4). 걸음 상한을 재는 기준이다.
+        self._last_target = None
+        self._ik_iters = 0
+        self._leader_model = None
+        self._follower_model = None
         #: POSE 모드에서 왜 안 보내고 있나. 화면이 그대로 보여준다.
         self._blocked = ""
 
@@ -103,7 +138,8 @@ class RelaySession:
     def is_running(self) -> bool:
         return self._writer is not None
 
-    def start(self, leader: str, follower: str, mode: str = "joint") -> None:
+    def start(self, leader: str, follower: str, mode: str = "joint",
+              leader_arm: str = "piper", follower_arm: str = "piper") -> None:
         from piper_shm import arm as shm_arm
 
         with self._lock:
@@ -129,21 +165,17 @@ class RelaySession:
             if not ok:
                 reader.close()
                 raise RelayError(why)
-            # ⚠ **POSE 모드에서는 명령 세그먼트를 열지 않는다.** 열어 놓고 관절
-            #   목표를 안 쓰면 robotd 의 데드맨이 "현재 자세 유지"를 JointCtrl 로
-            #   내려보내고, 그게 우리 MoveP 와 힘겨루기를 한다.
-            if mode == "joint":
-                try:
-                    self._writer = open_action_writer(follower, DEADMAN_MS)
-                except ArmBusyError as exc:
-                    reader.close(); teleop_session.stop()
-                    raise RelayError(str(exc)) from exc
-                except Exception as exc:
-                    reader.close(); teleop_session.stop()
-                    raise RelayError(f"명령 경로를 열지 못했습니다: {exc}") from exc
-            else:
-                # 세션이 열려 있다는 표시가 필요하다 — `is_running` 이 이걸 본다
-                self._writer = _POSE_MODE
+            # 두 모드 다 **관절 목표**로 끝나므로 같은 세그먼트를 쓴다.
+            # (온보드 IK 로 MoveP 를 쏘던 때는 pose 모드가 이걸 안 열었다 —
+            #  데드맨이 JointCtrl 로 힘겨루기를 했기 때문이다. 이제는 아니다.)
+            try:
+                self._writer = open_action_writer(follower, DEADMAN_MS)
+            except ArmBusyError as exc:
+                reader.close(); teleop_session.stop()
+                raise RelayError(str(exc)) from exc
+            except Exception as exc:
+                reader.close(); teleop_session.stop()
+                raise RelayError(f"명령 경로를 열지 못했습니다: {exc}") from exc
 
             # 버스가 죽어 있으면 여기서 말한다 — 안 그러면 슬라이더는
             # 움직이는데 팔만 안 움직여 소프트웨어를 의심하게 된다
@@ -152,8 +184,17 @@ class RelaySession:
             enable_torque(follower)
             self._reader, self._leader, self._follower = reader, leader, follower
             self._mode = mode
-            self._last_pose = None
+            self._seed = self._last_target = None
+            self._ik_iters = 0
             self._blocked = ""
+            if mode == "pose":
+                from piper_robot.armmodel import ArmModel
+                try:
+                    self._leader_model = ArmModel.load(leader_arm)
+                    self._follower_model = ArmModel.load(follower_arm)
+                except (FileNotFoundError, ValueError) as exc:
+                    reader.close(); teleop_session.stop()
+                    raise RelayError(str(exc)) from exc
             self._sent, self._stale_since = 0, 0.0
             self._stop.clear()
             self._thread = threading.Thread(target=self._loop, daemon=True,
@@ -168,8 +209,7 @@ class RelaySession:
             leader, follower = self._leader, self._follower
             self._writer = self._reader = None
             self._leader = self._follower = None
-        if writer is not _POSE_MODE:
-            close_action_writer(writer, follower)
+        close_action_writer(writer, follower)
         if reader is not None:
             try:
                 reader.close()
@@ -222,91 +262,112 @@ class RelaySession:
     # ── POSE 모드 ───────────────────────────────────────────────────────────
 
     def _send_pose(self, values: dict) -> None:
-        """리더 관절 → FK → 말단 6D → 팔로워 MoveP.
+        """리더 관절 → FK → 말단 6D → **우리 IK** → 팔로워 관절 → shm.
 
-        ⚠ **막는 것이 전부 여기 있다.** 이 경로는 관절을 팔의 온보드 IK 가
-          정하므로 `filter_goal` 이 걸 자리가 없다 — 바닥 필터도 관절 범위도
-          변화율 상한도 안 걸린다. 하나라도 여기서 빠뜨리면 아무것도 안 막는다.
+        가운데 6D 자세만 건너가므로 양쪽 팔이 달라도 된다. 관절 목표로 끝나므로
+        robotd 의 `filter_goal`(바닥·범위·변화율·데드맨)을 그대로 탄다.
         """
         import numpy as np
         from piper_robot import kinematics as K
-        from piper_robot.endpose import WorkspaceBox
 
         from app.services.robot_manager import _call
 
+        lm, fm = self._leader_model, self._follower_model
         try:
-            q = K.norm_to_rad(np.array([[values[j] for j in K.ARM_JOINTS]], float))[0]
+            q_lead = K.norm_to_rad(
+                np.array([[values[j] for j in K.ARM_JOINTS]], float))[0]
         except (KeyError, ValueError) as exc:
             self._block(f"리더 관절값을 읽지 못했습니다: {exc}")
             return
 
-        # 1. 짐벌락 — 여기서 나온 rx·rz 를 보내면 팔이 홱 돈다
-        if K.near_gimbal_lock(q):
+        # 1. 리더가 특이점에 있으면 **6D 자세 자체가 못 미덥다** — joint4·joint6 이
+        #    같은 축이라 자세가 관절을 결정하지 못한다. IK 이전 문제라 여기서 본다.
+        if lm.near_gimbal_lock(q_lead):
             self._block("리더가 짐벌락 근처입니다 (RPY pitch ≈ ±90°) — 손목을 조금 돌리세요")
             return
 
-        # 2. 손목 특이점 — **위와 다른 조건이다.** joint5 가 0 이면 joint4 와
-        #    joint6 축이 겹쳐(실측 0.00°) 같은 자세를 두 관절 어느 쪽으로도 낼 수
-        #    있다. 팔로워 IK 가 리더와 다른 쪽을 고르면 손목이 홱 도는데,
-        #    자세는 거의 안 변하므로 **아래 걸음 상한이 못 잡는다.**
-        if K.near_wrist_singularity(q):
-            self._block(f"리더 joint5 가 0 근처입니다 "
-                        f"(±{K.WRIST_SINGULAR_DEG:.0f}° 안) — 손목 관절을 꺾으세요. "
-                        f"여기서는 팔로워가 손목을 반대로 풀 수 있습니다")
-            return
+        target = lm.fk(q_lead)
 
-        # 3. 바닥. **근사다** — 팔로워의 관절은 온보드 IK 가 정하므로 우리가 모른다.
-        #    같은 팔이 같은 자세를 만드는 관절값이 리더의 것이니, 그게 바닥을
-        #    뚫으면 팔로워도 뚫을 가능성이 높다. 보장은 아니고 유일하게 가능한 검사다.
-        floor = _call("get_safety") or {}
-        if floor.get("enabled") and floor.get("min_z_cm") is not None:
-            low_cm = float(K.lowest_z(q[None, :])[0]) * 100.0
-            if low_cm < float(floor["min_z_cm"]):
-                self._block(f"리더 자세가 바닥 한계 아래입니다 "
-                            f"({low_cm:.1f}cm < {floor['min_z_cm']}cm)")
-                return
-
-        target = K.end_pose(q)
-
-        # 4. 작업 공간 상자 — 말단 조그와 **같은 상자**를 쓴다
-        ok, why = WorkspaceBox().contains(target["x"] / 1000.0, target["y"] / 1000.0,
-                                          target["z"] / 1000.0)
-        if not ok:
-            self._block(why)
-            return
-
-        # 5. 한 걸음 상한. 리더가 튀면(낡은 상태 복구 직후 등) 큰 MoveP 한 방이
-        #    나가는데, 그건 사람이 반응할 수 없는 속도로 팔이 도는 것이다.
-        if self._last_pose is not None:
-            step_mm = max(abs(target[a] - self._last_pose[a]) for a in "xyz") / 1000.0
-            step_deg = max(abs(target[a] - self._last_pose[a])
-                           for a in ("rx", "ry", "rz")) / 1000.0
+        # 2. 한 걸음 상한 — 리더가 튀면 IK 가 먼 목표를 풀고, 그 관절 목표는
+        #    robotd 변화율 상한에 잘려 팔이 엉뚱하게 기어간다. 먼저 막는다.
+        if self._last_target is not None:
+            d = target[:3, 3] - self._last_target[:3, 3]
+            step_mm = float(np.linalg.norm(d)) * 1000.0
+            rot = target[:3, :3] @ self._last_target[:3, :3].T
+            import math
+            step_deg = math.degrees(
+                math.acos(max(-1.0, min(1.0, (np.trace(rot) - 1.0) / 2.0))))
             if step_mm > POSE_MAX_STEP_MM or step_deg > POSE_MAX_STEP_DEG:
                 self._block(f"리더가 한 번에 너무 많이 움직였습니다 "
                             f"({step_mm:.0f}mm / {step_deg:.0f}°) — 천천히 움직이세요")
-                self._last_pose = None      # 다음 프레임부터 다시 기준을 잡는다
+                self._last_target = None
+                self._seed = None
                 return
 
-        out = _call("stream_end_pose", self._follower, target)
-        if not out or not out.get("ok"):
-            self._block((out or {}).get("error") or "robotd 가 응답하지 않습니다")
+        # 3. IK. **직전 해에서 출발한다** — 그게 같은 가지를 유지해 손목이 홱
+        #    뒤집히지 않게 한다(실측: 특이점을 지나도 한 스텝 최대 1.15°).
+        #
+        #    첫 프레임에는 직전 해가 없다. 그때는 **팔로워가 지금 있는 자세**에서
+        #    출발한다 — 거기서 이어가는 것이 자연스럽고, 한계 가운데(`home()`)에서
+        #    출발하면 먼 곳에서 시작해 엉뚱한 가지로 수렴한다.
+        seed = self._seed
+        if seed is None:
+            seed = self._follower_seed()
+        if seed is None:
+            seed = fm.home()
+        sol = fm.ik(target, seed)
+        if not sol.ok:
+            # ⚠ **리더가 그 자세에 서 있다는 것은 도달 가능하다는 증거이지,
+            #   팔로워가 갈 수 있다는 뜻이 아니다.** 팔이 다르면 작업공간도 다르고,
+            #   같은 팔이어도 관절 한계 경계에서는 해가 없다.
+            self._block(f"{fm.name} 로는 그 자세에 못 갑니다 — {sol.reason}")
             return
 
-        # ⚠ **명령이 나갔다는 것과 팔이 갈 수 있다는 것은 다르다.** 팔은 자기가
-        #   못 푼 것을 `arm_status` 로 말한다 (0x02 无解, 0x03 奇异点). 그걸 안
-        #   읽으면 "왜 안 가지" 를 우리가 추측하게 된다 — 팔은 알고 있는데.
-        #
-        #   ⚠ 리더가 그 자세에 서 있다는 것은 **자세가 도달 가능하다는 증거이지
-        #     팔로워의 IK 가 그 해를 찾는다는 보장이 아니다.** 온보드 IK 는 해석해라
-        #     가지(branch)를 하나 고르고, 특이점 위나 경계에서는 해가 없다고 답한다.
-        self._sent += 1
-        self._last_pose = target
-        st = _call("read_motion_status", self._follower)
-        if st and st.get("bad"):
-            self._block(f"팔로워가 못 간다고 합니다: {st['text']} "
-                        f"(리더는 그 자세에 서 있어도 팔로워의 IK 는 다른 해를 고릅니다)")
+        # 4. 바닥. 이제는 **근사가 아니다** — 팔로워 관절을 우리가 알기 때문이다.
+        #    (온보드 IK 를 쓰던 때는 몰라서 리더 자세로 대신 봤다.)
+        floor = _call("get_safety") or {}
+        if floor.get("enabled") and floor.get("min_z_cm") is not None:
+            low_cm = fm.lowest_z(sol.q) * 100.0
+            if low_cm < float(floor["min_z_cm"]):
+                self._block(f"팔로워가 바닥 한계 아래로 갑니다 "
+                            f"({low_cm:.1f}cm < {floor['min_z_cm']}cm)")
+                return
+
+        goal = _norm_from_rad(sol.q)
+        # 그리퍼는 IK 를 안 탄다 — 자세와 무관하게 리더 것을 그대로 준다
+        if "gripper" in values:
+            goal["gripper"] = float(values["gripper"])
+        try:
+            self._writer.publish(goal)
+        except Exception as exc:
+            self._block(f"목표 발행 실패: {exc}")
             return
+        self._seed = sol.q
+        self._last_target = target
         self._blocked = ""
+        self._sent += 1
+        self._ik_iters = sol.iters
+
+    def _follower_seed(self):
+        """팔로워의 지금 관절각 (라디안). 첫 IK 의 출발점이다."""
+        import numpy as np
+        from piper_shm import arm as shm_arm
+
+        from piper_robot import kinematics as K
+
+        try:
+            reader = shm_arm.StateReader(self._follower)
+            try:
+                rec = reader.read()
+            finally:
+                reader.close()
+            if rec is None:
+                return None
+            v = rec["values"]
+            return K.norm_to_rad(np.array([[v[j] for j in K.ARM_JOINTS]], float))[0]
+        except Exception as exc:
+            logger.debug("팔로워 시드 읽기 실패: %s", exc)
+            return None
 
     def _block(self, why: str) -> None:
         """보내지 않고 이유를 남긴다. **바뀔 때만** 로그에 쓴다 — 15Hz 로 뱉으면 묻힌다."""
@@ -318,7 +379,10 @@ class RelaySession:
         return {"running": self.is_running, "leader": self._leader,
                 "follower": self._follower, "sent": self._sent,
                 "stale": bool(self._stale_since),
-                "mode": self._mode, "blocked": self._blocked}
+                "mode": self._mode, "blocked": self._blocked,
+                "ik_iters": self._ik_iters,
+                "leader_arm": getattr(self._leader_model, "name", None),
+                "follower_arm": getattr(self._follower_model, "name", None)}
 
 
 relay_session = RelaySession()

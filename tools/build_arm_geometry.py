@@ -31,6 +31,7 @@ robotd 는 **호스트에 가볍게** 배포된다. 런타임에 XML 을 파싱�
 from __future__ import annotations
 
 import argparse
+import math
 import struct
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -89,9 +90,19 @@ def _triple(s: str | None, default=(0.0, 0.0, 0.0)) -> tuple[float, float, float
     return (x, y, z)
 
 
-def build(cell: float) -> dict:
-    root = ET.parse(ARM_URDF).getroot()
+def build(cell: float, urdf: Path | None = None,
+          chain: tuple[str, ...] | None = None) -> dict:
+    """URDF + 메시 → 지오메트리 dict.
+
+    ⚠ **관절 한계를 같이 굽는다.** IK 가 그걸 쓴다(`armmodel.ArmModel`). 없으면
+      새 팔을 붙였을 때 IK 가 한계를 모르고 도달 불가능한 해를 낸다.
+    """
+    root = ET.parse(urdf or ARM_URDF).getroot()
     joints = {j.get("name"): j for j in root.findall("joint")}
+    if chain is None:
+        chain = (ARM_JOINTS if (urdf is None or urdf == ARM_URDF)
+                 else tuple(j.get("name") for j in root.findall("joint")
+                            if j.get("type") in ("revolute", "continuous")))
 
     names: list[str] = ["base_link"]
     parent: list[int] = [-1]
@@ -101,7 +112,8 @@ def build(cell: float) -> dict:
     qidx: list[int] = [-1]
     meshes: list[str | None] = ["base_link.stl"]
 
-    for i, jn in enumerate(ARM_JOINTS):
+    limits: list[tuple[float, float]] = []
+    for i, jn in enumerate(chain):
         j = joints[jn]
         o = j.find("origin")
         names.append(j.find("child").get("link"))
@@ -112,8 +124,13 @@ def build(cell: float) -> dict:
         axis.append(_triple(a.get("xyz") if a is not None else None, (0.0, 0.0, 1.0)))
         qidx.append(i)
         meshes.append(f"{names[-1]}.stl")
+        lm = j.find("limit")
+        limits.append((float(lm.get("lower")), float(lm.get("upper")))
+                      if lm is not None and lm.get("lower") is not None
+                      else (-math.pi, math.pi))
 
-    for name, par, t, r, mesh in GRIPPER:
+    # 그리퍼 사슬은 Piper 전용이다 — 다른 팔이면 그 팔 URDF 가 이미 갖고 있다
+    for name, par, t, r, mesh in (GRIPPER if (urdf is None or urdf == ARM_URDF) else []):
         names.append(name)
         parent.append(names.index(par))
         xyz.append(t)
@@ -152,6 +169,7 @@ def build(cell: float) -> dict:
         "pt_link": np.concatenate(pt_link),
         "radius": np.array(cell * np.sqrt(3) / 2),
         "cell": np.array(cell),
+        "limits": np.array(limits, dtype=np.float64),
     }
 
 
@@ -159,12 +177,17 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cell", type=float, default=0.01, help="복셀 한 변 (m)")
     ap.add_argument("--out", type=Path, default=OUT)
+    ap.add_argument("--urdf", type=Path, default=None,
+                    help="다른 팔의 URDF (SO-101 등). 생략하면 Piper")
+    ap.add_argument("--joints", default=None,
+                    help="사슬 관절 이름을 쉼표로. 생략하면 URDF 순서대로 revolute 전부")
     args = ap.parse_args()
 
     if not ARM_URDF.is_file():
         raise SystemExit(f"URDF 가 없습니다: {ARM_URDF}\n"
                          "  git submodule update --init vendor/agx_arm_urdf")
-    data = build(args.cell)
+    data = build(args.cell, args.urdf,
+                 tuple(args.joints.split(",")) if args.joints else None)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(args.out, **data)
 

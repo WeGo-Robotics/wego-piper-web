@@ -125,12 +125,18 @@ def _about_axis(axis, q: np.ndarray) -> np.ndarray:
     return out
 
 
-def link_transforms(q_rad: np.ndarray) -> np.ndarray:
-    """관절각 (T,6 라디안) → 링크별 자세 (T,L,4,4), base_link 기준."""
+def link_transforms(q_rad: np.ndarray, geom: "Geometry | None" = None) -> np.ndarray:
+    """관절각 (T,N 라디안) → 링크별 자세 (T,L,4,4), base_link 기준.
+
+    ⚠ `geom` 을 받는 이유: 리더와 팔로워가 **다른 팔**일 수 있다
+    (`armmodel.ArmModel`). 예전에는 지오메트리가 모듈 전역 하나뿐이었는데,
+    그 전제는 팔이 둘이 되는 순간 깨진다.
+    """
     q = np.atleast_2d(np.asarray(q_rad, dtype=float))
-    if q.shape[1] != len(ARM_JOINTS):
-        raise ValueError(f"(T,{len(ARM_JOINTS)}) 이어야 합니다: {q.shape}")
-    g = geometry()
+    g = geom or geometry()
+    dof = int((g.qidx >= 0).sum())
+    if q.shape[1] != dof:
+        raise ValueError(f"(T,{dof}) 이어야 합니다: {q.shape}")
     t = len(q)
     out = np.empty((t, len(g.names), 4, 4))
     for k in range(len(g.names)):
@@ -142,17 +148,17 @@ def link_transforms(q_rad: np.ndarray) -> np.ndarray:
     return out
 
 
-def endpoint_xyz(q_rad: np.ndarray) -> np.ndarray:
+def endpoint_xyz(q_rad: np.ndarray, geom: "Geometry | None" = None) -> np.ndarray:
     """말단 좌표 (T,3 m). 말단은 `link6` 원점 — 손목 플랜지다.
 
     그리퍼 끝이 아닌 이유는 **여닫으면 움직이기 때문**이다. 팔의 이동을 재는
     기준으로는 오히려 나쁘다. (바닥 검사는 그리퍼까지 본다 — `lowest_z`.)
     """
-    g = geometry()
-    return link_transforms(q_rad)[:, g.index("link6"), :3, 3]
+    g = geom or geometry()
+    return link_transforms(q_rad, g)[:, g.index("link6"), :3, 3]
 
 
-def lowest_z(q_rad: np.ndarray) -> np.ndarray:
+def lowest_z(q_rad: np.ndarray, geom: "Geometry | None" = None) -> np.ndarray:
     """팔 전체에서 **가장 낮은 점**의 높이 (T,), base_link 기준 m.
 
     그리퍼까지 포함한다 — 바닥에 먼저 닿는 것이 그리퍼다. 덮개 반지름을 빼므로
@@ -236,13 +242,14 @@ def rpy_from_matrix(rot: np.ndarray) -> tuple[float, float, float]:
     return tuple(math.degrees(v) for v in (roll, pitch, yaw))
 
 
-def end_pose(q_rad: np.ndarray) -> dict[str, int]:
+def end_pose(q_rad: np.ndarray, geom: "Geometry | None" = None) -> dict[str, int]:
     """관절각 (6,) → 말단 자세 **SDK 단위**(0.001mm / 0.001도).
 
     `arm.read_end_pose()` 와 같은 형태라 그대로 `EndPoseCtrl` 에 넣을 수 있다.
     """
+    g = geom or geometry()
     q = np.atleast_2d(np.asarray(q_rad, dtype=float))
-    tf = link_transforms(q)[0, geometry().index("link6")]
+    tf = link_transforms(q, g)[0, g.index("link6")]
     x, y, z = tf[:3, 3] * 1000.0                     # m → mm
     roll, pitch, yaw = rpy_from_matrix(tf[:3, :3])
     return {
@@ -264,13 +271,147 @@ def near_wrist_singularity(q_rad: np.ndarray) -> bool:
     return abs(math.degrees(q[4])) < WRIST_SINGULAR_DEG
 
 
-def near_gimbal_lock(q_rad: np.ndarray) -> bool:
+def near_gimbal_lock(q_rad: np.ndarray, geom: "Geometry | None" = None) -> bool:
     """이 자세에서 rx·rz 분해가 불안정한가.
 
     불안정한 구간에서 나온 rx·rz 를 MoveP 목표로 보내면 **팔이 홱 돈다** —
     사람은 리더를 조금 움직였을 뿐인데. 그럴 때는 보내지 않는 편이 낫다.
     """
+    g = geom or geometry()
     q = np.atleast_2d(np.asarray(q_rad, dtype=float))
-    tf = link_transforms(q)[0, geometry().index("link6")]
+    tf = link_transforms(q, g)[0, g.index("link6")]
     pitch = math.degrees(math.asin(max(-1.0, min(1.0, -float(tf[2, 0])))))
     return abs(abs(pitch) - 90.0) < GIMBAL_MARGIN_DEG
+
+
+# ── 역기구학 ────────────────────────────────────────────────────────────────
+#
+# ## 왜 수치해인가
+#
+# Piper 는 **구형 손목이 아니다** — joint6 원점이 joint4·5 에서 91mm 떨어져 있어
+# (실측) Pieper 분해가 안 된다. 해석해를 쓰려면 이 팔 전용으로 유도해야 한다.
+#
+# 그런데 이 IK 를 만드는 이유가 **다른 팔(SO-101 등)을 팔로워로 붙이는 것**이다.
+# 팔마다 유도하면 그 목적이 사라진다. 사슬만 주면 도는 수치해가 맞다.
+#
+# ## 이어짐(continuity)이 정확도만큼 중요하다
+#
+# 직전 해에서 출발한다. 그러면 같은 가지(branch)에 머물러 **손목이 홱 뒤집히지
+# 않는다** — 팔의 온보드 IK 를 쓸 때 못 막던 바로 그 문제다(joint5≈0 에서
+# joint4/joint6 분배가 자유로워 자세는 그대로인데 관절이 40도 도는 것).
+
+#: 감쇠 최소자승의 감쇠 계수. 특이점 근처에서 해가 폭주하는 것을 막는다.
+#: 크면 안정적이고 느리며, 작으면 빠르고 특이점에서 튄다.
+IK_DAMPING = 0.05
+IK_MAX_ITERS = 60
+IK_TOL_MM = 0.5
+IK_TOL_DEG = 0.3
+
+
+def _joint_axes_and_origins(tf: np.ndarray, geom: "Geometry | None" = None
+                            ) -> tuple[np.ndarray, np.ndarray]:
+    """움직이는 관절들의 월드 회전축과 원점. `tf` 는 `link_transforms` 한 프레임."""
+    g = geom or geometry()
+    ks = [k for k in range(len(g.names)) if int(g.qidx[k]) >= 0]
+    axes = np.stack([tf[k, :3, :3] @ g.axis[k] for k in ks])
+    origins = np.stack([tf[k, :3, 3] for k in ks])
+    return axes, origins
+
+
+def jacobian(q_rad: np.ndarray, geom: "Geometry | None" = None) -> np.ndarray:
+    """말단(link6)의 기하 야코비안 (6,N). 위 3행 선속도, 아래 3행 각속도."""
+    g = geom or geometry()
+    tf = link_transforms(np.atleast_2d(q_rad), g)[0]
+    axes, origins = _joint_axes_and_origins(tf, g)
+    p_e = tf[g.index("link6"), :3, 3]
+    lin = np.cross(axes, p_e - origins)
+    return np.vstack([lin.T, axes.T])
+
+
+def _pose_error(tf_now: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """현재 → 목표의 6D 오차 (m, rad). 회전은 축각으로 낸다 —
+    오일러각 차분은 짐벌 근처에서 **크기가 뻥튀기된다.**"""
+    err = np.empty(6)
+    err[:3] = target[:3, 3] - tf_now[:3, 3]
+    r = target[:3, :3] @ tf_now[:3, :3].T
+    angle = math.acos(max(-1.0, min(1.0, (np.trace(r) - 1.0) / 2.0)))
+    if angle < 1e-9:
+        err[3:] = 0.0
+    else:
+        axis = np.array([r[2, 1] - r[1, 2], r[0, 2] - r[2, 0], r[1, 0] - r[0, 1]])
+        err[3:] = axis / (2.0 * math.sin(angle)) * angle
+    return err
+
+
+def pose_matrix(pose: dict) -> np.ndarray:
+    """SDK 단위 6D 자세 dict → 4x4. `end_pose` 의 역이다."""
+    t = np.eye(4)
+    t[:3, 3] = [pose["x"] / UM_PER_MM / 1000.0, pose["y"] / UM_PER_MM / 1000.0,
+                pose["z"] / UM_PER_MM / 1000.0]
+    r, p, y = (math.radians(pose[k] / MDEG_PER_DEG) for k in ("rx", "ry", "rz"))
+    cr, sr, cp, sp, cy, sy = (math.cos(r), math.sin(r), math.cos(p),
+                              math.sin(p), math.cos(y), math.sin(y))
+    t[:3, :3] = [
+        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+        [-sp,     cp * sr,                cp * cr],
+    ]
+    return t
+
+
+def ik(target: np.ndarray, seed: np.ndarray, limits: np.ndarray | None = None,
+       *, geom: "Geometry | None" = None,
+       damping: float = IK_DAMPING, max_iters: int = IK_MAX_ITERS) -> dict:
+    """목표 4x4 → 관절각. **`seed` 에서 출발한다** — 그게 이어짐을 만든다.
+
+    반환: `{"ok", "q", "iters", "pos_mm", "rot_deg"}`.
+    `ok` 가 False 면 허용오차 안에 못 들어온 것이다 — 그 자세를 못 가는 것이지
+    코드가 고장난 것이 아니다. 부르는 쪽이 그 구분을 사용자에게 전해야 한다.
+    """
+    g = geom or geometry()
+    idx = g.index("link6")
+    q = np.array(seed, dtype=float).copy()
+    lim = limits if limits is not None else joint_limits()
+    for i in range(max_iters):
+        tf = link_transforms(q[None, :], g)[0, idx]
+        err = _pose_error(tf, target)
+        pos_mm = float(np.linalg.norm(err[:3]) * 1000.0)
+        rot_deg = float(math.degrees(np.linalg.norm(err[3:])))
+        if pos_mm < IK_TOL_MM and rot_deg < IK_TOL_DEG:
+            return {"ok": True, "q": q, "iters": i, "pos_mm": pos_mm, "rot_deg": rot_deg}
+        j = jacobian(q, g)
+        # 감쇠 최소자승: (JᵀJ + λ²I)⁻¹ Jᵀ e. 특이점에서 pinv 가 폭주하는 것을 막는다.
+        jt = j.T
+        dq = jt @ np.linalg.solve(j @ jt + (damping ** 2) * np.eye(6), err)
+        q = np.clip(q + dq, lim[:, 0], lim[:, 1])
+    tf = link_transforms(q[None, :], g)[0, idx]
+    err = _pose_error(tf, target)
+    return {"ok": False, "q": q, "iters": max_iters,
+            "pos_mm": float(np.linalg.norm(err[:3]) * 1000.0),
+            "rot_deg": float(math.degrees(np.linalg.norm(err[3:])))}
+
+
+# IK 가 관절 한계 밖으로 이만큼은 나가도 된다.
+#
+# ⚠ **실제 팔은 URDF 한계 밖에 앉아 있다.** 실측(두 대, 접힌 자세):
+#
+#       joint3   +2.9°  (한계 -170~0)
+#       joint2   -0.6°  (한계 0~180)
+#
+# 기계적 스토퍼와 명목 사양이 정확히 같지 않아서다. 여유 없이 잘라내면 **리더가
+# 지금 서 있는 자세를 IK 가 못 푼다** — 실제로 그래서 "IK 가 목표에 못 닿았습니다
+# (12mm 남음)" 가 떴다.
+#
+# 이 여유는 **해를 표현하게 해줄 뿐**이고, 실제로 나가는 명령은 robotd 의
+# `filter_goal` 이 정규화 ±100 으로 다시 자른다. 안전 경계를 넓히는 것이 아니다.
+IK_LIMIT_MARGIN_DEG = 5.0
+
+
+@lru_cache(maxsize=1)
+def joint_limits() -> np.ndarray:
+    """관절 한계 (N,2 라디안) + 위 여유. URDF 값에서 온다."""
+    urdf = np.array([(-2.6179938, 2.6179938), (0.0, 3.1415926), (-2.9670597, 0.0),
+                     (-1.7453292, 1.7453292), (-1.2217304, 1.2217304),
+                     (-2.0943951, 2.0943951)])
+    m = math.radians(IK_LIMIT_MARGIN_DEG)
+    return urdf + np.array([-m, m])

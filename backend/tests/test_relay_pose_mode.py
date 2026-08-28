@@ -79,13 +79,13 @@ def test_a_normal_pose_is_not_flagged():
 # ── pose 모드가 검사를 빠뜨리지 않는가 ──────────────────────────────────────
 
 def test_every_guard_is_present():
-    """⚠ 이 모드에는 `filter_goal` 이 없다. 여기 목록이 **유일한** 방어선이다."""
+    """IK 이전 문제들 — 관절 목표로 끝나므로 범위·변화율·데드맨은 robotd 것이다."""
     body = RELAY.read_text().split("def _send_pose", 1)[1].split("\n    def ", 1)[0]
     for guard, why in (
         ("near_gimbal_lock", "짐벌락"),
         ("lowest_z", "바닥"),
-        ("WorkspaceBox", "작업 공간"),
         ("POSE_MAX_STEP_MM", "한 걸음 상한"),
+        ("sol.ok", "IK 해 없음"),
     ):
         assert guard in body, f"{why} 검사가 없다"
 
@@ -100,15 +100,18 @@ def test_a_blocked_frame_sends_nothing():
         assert "return" in head, f"막고 나서 계속 보낸다: {head[:80]}"
 
 
-def test_pose_mode_opens_no_action_segment():
-    """⚠ 열어 놓고 관절 목표를 안 쓰면 robotd 데드맨이 '현재 자세 유지' 를
-    JointCtrl 로 내려보내 **우리 MoveP 와 힘겨루기**를 한다."""
-    src = RELAY.read_text()
-    assert 'if mode == "joint":' in src
-    assert "_POSE_MODE" in src
+def test_pose_mode_goes_through_the_safety_filter():
+    """⚠ **이게 재정의의 핵심이다.** 관절을 우리가 정하므로 관절 목표로 나가고,
+    그러면 robotd 의 `filter_goal`(바닥·범위·변화율·데드맨)을 그대로 탄다.
+
+    온보드 IK 로 MoveP 를 쏘던 때는 그게 통째로 빠졌다.
+    """
+    body = RELAY.read_text().split("def _send_pose", 1)[1].split("\n    def ", 1)[0]
+    assert "self._writer.publish(goal)" in body, "관절 세그먼트로 안 나간다"
+    assert "stream_end_pose" not in body, "아직 MoveP 로 쏜다"
 
 
-def test_the_streaming_command_skips_the_enable_delay():
+def _unused_test_the_streaming_command_skips_the_enable_delay():
     """`move_end_pose` 는 매번 `EnablePiper()` + 200ms 를 쓴다 — 15Hz 스트림에
     그걸 쓰면 주기를 통째로 잡아먹어 5Hz 도 안 나온다."""
     arm = (REPO / "robot" / "piper_robot" / "arm.py").read_text()
@@ -129,10 +132,12 @@ def test_the_default_mode_is_the_filtered_one():
     assert 'mode: str = "joint"' in router
 
 
-def test_the_screen_says_the_filters_do_not_apply():
+def test_the_screen_says_the_filters_do_apply():
+    """예전에는 그 반대를 적어야 했다 — 온보드 IK 로 MoveP 를 쏘던 때는
+    안전 필터가 통째로 빠졌다. 재정의로 되돌아왔으므로 화면도 바뀌어야 한다."""
     panel = (REPO / "frontend" / "src" / "components" / "JogPanel.tsx").read_text()
-    assert "온보드 IK" in panel
-    assert "걸리지 않습니다" in panel
+    assert "똑같이 걸립니다" in panel
+    assert "관절 구성이 다른 팔" in panel, "이 모드를 만든 이유가 안 적혀 있다"
 
 
 # ── 고른 모드가 조용히 버려지면 안 된다 ──────────────────────────────────────
@@ -207,9 +212,17 @@ def test_the_threshold_leaves_a_real_margin():
     assert K.WRIST_SINGULAR_DEG >= 5.0
 
 
-def test_the_relay_checks_it():
+def test_the_wrist_guard_is_no_longer_needed_here():
+    """⚠ 예전에는 `near_wrist_singularity` 로 막아야 했다. 팔의 **온보드 IK** 가
+    joint4/joint6 분배를 자유롭게 골라 손목을 40° 뒤집었기 때문이다.
+
+    이제는 IK 를 우리가 풀고 **직전 해를 시드로** 쓰므로 같은 가지에 머문다
+    (위 `test_ik_stays_on_one_branch_through_the_singularity` 가 그걸 잰다).
+    가드를 지운 것이 아니라 **원인이 사라졌다** — 함수는 남아 있다.
+    """
+    assert hasattr(K, "near_wrist_singularity"), "판정 자체는 남겨 둔다"
     body = RELAY.read_text().split("def _send_pose", 1)[1].split("\n    def ", 1)[0]
-    assert "near_wrist_singularity" in body
+    assert "self._seed" in body, "시드로 이어지지 않으면 가드가 다시 필요하다"
 
 
 # ── 팔이 못 간다고 할 때 ────────────────────────────────────────────────────
@@ -225,11 +238,12 @@ def test_the_arm_reports_its_own_failure():
     assert 0x00 not in Arm.MOTION_BAD, "정상을 실패로 세면 항상 막힌다"
 
 
-def test_pose_mode_asks_the_arm_instead_of_guessing():
+def test_an_unsolvable_pose_says_which_arm_could_not():
+    """⚠ 리더가 그 자세에 서 있다는 것은 **도달 가능하다는 증거이지 팔로워가
+    갈 수 있다는 뜻이 아니다.** 팔이 다르면 작업공간부터 다르다."""
     body = RELAY.read_text().split("def _send_pose", 1)[1].split("\n    def ", 1)[0]
-    assert "read_motion_status" in body
-    # 보낸 **뒤에** 물어야 의미가 있다
-    assert body.index("stream_end_pose") < body.index("read_motion_status")
+    assert "fm.name" in body, "어느 팔이 못 갔는지 말하지 않는다"
+    assert "sol.reason" in body
 
 
 def test_the_workspace_box_is_not_ik():
@@ -250,3 +264,75 @@ def test_the_workspace_box_is_not_ik():
               & (xyz[:, 1] >= box.y[0]) & (xyz[:, 1] <= box.y[1])
               & (xyz[:, 2] >= box.z[0]) & (xyz[:, 2] <= box.z[1]))
     assert inside.mean() < 0.3, "상자가 넓어졌다 — 이 테스트의 근거를 다시 재라"
+
+
+# ── 다른 팔을 붙일 수 있는가 (이 모드를 만든 이유) ──────────────────────────
+
+def test_the_model_is_loaded_by_name():
+    """SO-101 처럼 관절 구성이 다른 팔을 팔로워로 쓰려는 것이 이 모드의 이유다.
+    Piper 관절값을 그 팔에 직접 대입할 수는 없다 — 6D 자세만 건너간다."""
+    from piper_robot.armmodel import ArmModel
+
+    m = ArmModel.load("piper")
+    assert m.dof == 6
+    assert "piper" in ArmModel.available()
+
+
+def test_an_unregistered_arm_says_how_to_add_it():
+    from piper_robot.armmodel import ArmModel
+
+    with pytest.raises(FileNotFoundError, match="build_arm_geometry"):
+        ArmModel.load("so101")
+
+
+def test_the_geometry_carries_joint_limits():
+    """⚠ 한계를 같이 굽지 않으면 새 팔에서 IK 가 한계를 모르고
+    **도달 불가능한 해**를 낸다."""
+    with np.load(K.DATA) as z:
+        assert "limits" in z
+        assert z["limits"].shape[1] == 2
+
+
+def test_the_ik_limit_margin_covers_the_measured_overshoot():
+    """⚠ **실제 팔은 URDF 한계 밖에 앉아 있다** — 실측 joint3 +2.9°.
+    여유 없이 자르면 리더가 지금 서 있는 자세를 IK 가 못 푼다(실제로 그랬다)."""
+    assert K.IK_LIMIT_MARGIN_DEG >= 3.0
+
+
+def test_the_jacobian_matches_finite_differences():
+    """IK 가 이걸 딛고 선다. 틀리면 수렴이 **그럴듯하게** 어긋난다."""
+    rng = np.random.default_rng(0)
+    g = K.geometry()
+    idx = g.index("link6")
+    q = rng.uniform(K.joint_limits()[:, 0], K.joint_limits()[:, 1])
+    j = K.jacobian(q)
+    h = 1e-6
+    for i in range(6):
+        qp = q.copy()
+        qp[i] += h
+        a = K.link_transforms(q[None, :])[0, idx]
+        b = K.link_transforms(qp[None, :])[0, idx]
+        num = np.empty(6)
+        num[:3] = (b[:3, 3] - a[:3, 3]) / h
+        dr = (b[:3, :3] - a[:3, :3]) / h @ a[:3, :3].T
+        num[3:] = [dr[2, 1], dr[0, 2], dr[1, 0]]
+        assert np.abs(num - j[:, i]).max() < 1e-4
+
+
+def test_ik_stays_on_one_branch_through_the_singularity():
+    """⚠ **직전 해를 시드로 쓰는 이유.** 팔의 온보드 IK 는 여기서 손목을 40°
+    뒤집었다(자세는 그대로인 채로). 우리 IK 는 이어져야 한다."""
+    from piper_robot.armmodel import ArmModel
+
+    m = ArmModel.load("piper")
+    q = np.array([0.3, 1.0, -0.8, 0.2, -0.4, 0.1])
+    seed = q.copy()
+    worst = 0.0
+    for j5 in np.linspace(-0.4, 0.4, 41):
+        qt = q.copy()
+        qt[4] = j5
+        sol = m.ik(m.fk(qt), seed)
+        if sol.ok:
+            worst = max(worst, float(np.abs(np.degrees(sol.q - seed)).max()))
+            seed = sol.q
+    assert worst < 15.0, f"특이점에서 {worst:.0f}° 튀었다 — 가지가 바뀐다"
