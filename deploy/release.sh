@@ -105,6 +105,16 @@ if [ $need_daemons = 1 ]; then
   tar czf "$OUT/daemons.tar.gz" daemons deploy/systemd deploy/install-daemons.sh
 fi
 
+# ── compose + env 예시 — **항상 넣는다** ──────────────────────────────────
+# ⚠ 이게 없으면 호스트가 컨테이너를 띄울 수가 없다. 레이어 판정과 무관하게
+#   늘 필요하고 몇 KB 라, "바뀌었을 때만" 으로 아낄 이유가 없다.
+#
+# ⚠ `docker-compose.override.yml` 은 **안 보낸다.** 그건 그 호스트의 사정이다 —
+#   192.168.0.120 은 :80 을 WMS 가, :8080 을 다른 node 앱이 쓰고 있어 8081 로
+#   빼 두었다. 번들이 덮으면 그 설정이 조용히 사라지고 포트 충돌로 안 뜬다.
+cp docker-compose.yml "$OUT/"
+cp deploy/env.example "$OUT/backend.env.example"
+
 # ── 적용 스크립트와 매니페스트 ────────────────────────────────────────────
 cp "$REPO/deploy/apply.sh" "$OUT/apply.sh"; chmod +x "$OUT/apply.sh"
 cat > "$OUT/manifest.txt" <<EOF

@@ -135,3 +135,28 @@ def test_the_manifest_records_what_shipped():
     src = RELEASE.read_text()
     for key in ("version=", "prev=", "images=", "wheels=", "daemons="):
         assert key in src, f"매니페스트에 {key} 가 없다"
+
+
+def test_the_bundle_ships_the_compose_file():
+    """⚠ **번들에 빠져 있었다.** 호스트는 이걸로 컨테이너를 띄우는데, 초안은
+    `daemons/`·`deploy/systemd/` 만 담았다 — 첫 설치가 컨테이너 없이 끝난다."""
+    src = RELEASE.read_text()
+    assert 'cp docker-compose.yml "$OUT/"' in src
+
+
+def test_the_bundle_never_ships_the_override():
+    """⚠ `docker-compose.override.yml` 은 **그 호스트의 사정**이다.
+    192.168.0.120 은 :80 을 WMS 가, :8080 을 다른 node 앱이 쓰고 있어 8081 로
+    빼 두었다. 번들이 덮으면 그 설정이 조용히 사라지고 포트 충돌로 안 뜬다."""
+    from conftest import code_only
+
+    src = code_only(RELEASE.read_text())
+    assert "docker-compose.override.yml" not in src, "번들이 override 를 담는다"
+
+
+def test_apply_preserves_an_existing_override():
+    src = APPLY.read_text()
+    block = src.split("override 는 손대지 않는다", 1)[1][:400]
+    assert "if [ -f" in block and "override 보존" in block
+    # 덮어쓰는 cp 가 없어야 한다
+    assert 'cp "$HERE/docker-compose.override.yml"' not in src

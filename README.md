@@ -163,6 +163,92 @@ CAN·USB·커널 모듈은 컨테이너가 다룰 수 있는 것이 아니다.
 > GPU가 안 잡히면 compose 의 `deploy.resources...` 대신 `runtime: nvidia` 를 사용한다.
 > 호스트 `:80` 이 이미 사용 중이면 충돌한다 (frontend 가 그 포트만 낸다).
 
+## 실기 배포 — 따라 하기
+
+빌드 머신에서 번들을 만들고, 로봇 호스트에서 한 번 적용한다.
+**어느 레이어를 올릴지는 사람이 정하지 않는다** — 직전 태그와의 diff 가 정한다.
+
+### 1. 빌드 머신
+
+```bash
+./deploy/release.sh v0.3.9 --dry-run   # 무엇이 올라갈지 먼저 본다
+./deploy/release.sh v0.3.9             # 번들 하나 (dist/piper-web-v0.3.9.tar.gz)
+scp dist/piper-web-v0.3.9.tar.gz <호스트>:~/
+```
+
+`--dry-run` 이 이렇게 답한다:
+
+```
+릴리스 v0.3.9  (직전 v0.3.8, 파일 171 개 변경)
+  backend 이미지 : 예
+  frontend 이미지: 예
+  데몬 wheel     : bus cam robot rs shm
+  데몬 소스·유닛 : 예
+```
+
+### 2. 로봇 호스트
+
+```bash
+tar xzf piper-web-v0.3.9.tar.gz
+./v0.3.9/apply.sh            # 첫 설치·업데이트 **같은 명령**
+```
+
+sudo 가 필요한 것이 남아 있으면 **명령을 찍고 멈춘다.** 그것만 실행하고 다시 부른다:
+
+```bash
+sudo mkdir -p /srv/piper-data && sudo chown $USER /srv/piper-data
+sudo sed -i 's|^# *unixsocket |unixsocket |' /etc/redis/redis.conf
+sudo systemctl restart redis-server
+sudo loginctl enable-linger $USER
+./v0.3.9/apply.sh
+```
+
+### 3. 확인
+
+```bash
+./v0.3.9/apply.sh --check    # 아무것도 안 바꾸고 상태만 본다
+```
+
+### 처음부터 다시 깔려면
+
+⚠ **데이터를 지우지 않는다.** 아래 둘은 그대로 둔다:
+
+| 경로 | 내용 |
+|---|---|
+| `/srv/piper-data` | 컨테이너가 쓰는 모델·설정·로그 |
+| `~/.cache/huggingface/lerobot` | **녹화한 데이터셋** |
+
+```bash
+# 1. 세운다
+docker compose -p current down 2>/dev/null || docker rm -f piper-web-backend piper-web-frontend
+systemctl --user stop piper-{estopd,robotd,camerad,rsd}
+systemctl --user disable piper-{estopd,robotd,camerad,rsd}
+
+# 2. 지운다 — 데이터는 위 두 경로라 여기 없다
+rm -rf ~/piper-web-deploy ~/.venvs/piper-daemons
+rm -f  ~/.config/systemd/user/piper-*.service
+systemctl --user daemon-reload
+docker images -q --filter reference='piper-web-*' | sort -u | xargs -r docker rmi -f
+
+# 3. 다시 깐다 — 위 2단계와 같다
+./v0.3.9/apply.sh
+```
+
+### 세 레이어가 있는 이유
+
+컨테이너는 **장치를 하나도 안 연다.** CAN·USB·커널 모듈은 컨테이너가 다룰 수
+있는 것이 아니라, 하드웨어는 호스트 데몬이 쥐고 컨테이너는 `/dev/shm` 과
+Redis 로만 붙는다. 그래서 올릴 것이 셋이다:
+
+| 레이어 | 무엇이 바뀌면 | 어디로 |
+|---|---|---|
+| 이미지 | `backend/ frontend/ wrapper/ policies/ phase/ vendor/ act_aux/` | `docker load` |
+| 데몬 wheel | `bus/ shm/ robot/ cam/ rs/` | 호스트 venv |
+| 데몬 소스·유닛 | `daemons/ deploy/systemd/` | `~/piper-daemons` + systemd |
+
+`bus`·`shm`·`robot` 은 **양쪽**이다 — 이미지 안에도 들어가고 호스트 venv 에도
+깔린다. 한쪽만 올리면 컨테이너와 데몬이 같은 라이브러리의 다른 코드로 돈다.
+
 ## 추론 로그
 
 ### CSV 로깅

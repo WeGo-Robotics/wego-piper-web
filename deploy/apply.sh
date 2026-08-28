@@ -94,7 +94,7 @@ else
 fi
 
 # ── 3. 데몬 소스 + 유닛 ───────────────────────────────────────────────────
-SRC="$HOME/piper-daemons"
+SRC="$HOME/piper-web-deploy/current"
 if [ -n "${daemons:-}" ]; then
   say "3. 데몬 소스·유닛"
   if [ $CHECK = 1 ]; then
@@ -110,14 +110,31 @@ else
   say "3. 데몬 소스·유닛 — 이번 릴리스에 없음"
 fi
 
+# ── 3b. compose 파일 ──────────────────────────────────────────────────────
+say "3b. compose"
+mkdir -p "$SRC"
+if [ $CHECK = 1 ]; then
+  [ -f "$SRC/docker-compose.yml" ] && ok "docker-compose.yml" || bad "docker-compose.yml 없음"
+else
+  cp "$HERE/docker-compose.yml" "$SRC/" && ok "docker-compose.yml"
+  # env 예시는 참고용으로만 둔다 — 실제 `.env` 는 사람이 만든 것이라 안 덮는다
+  cp "$HERE/backend.env.example" "$SRC/" 2>/dev/null || true
+fi
+# ⚠ **override 는 손대지 않는다.** 그 호스트의 사정(포트 충돌 회피)이 거기 있다.
+if [ -f "$SRC/docker-compose.override.yml" ]; then
+  ok "override 보존: $(grep -oE '"[0-9]+:[0-9]+"' "$SRC/docker-compose.override.yml" | tr '\n' ' ')"
+else
+  warn "override 없음 — :80 이 비어 있는지 확인하세요 (ss -ltnp)"
+fi
+
 # ── 4. 기동 ───────────────────────────────────────────────────────────────
 say "4. 기동"
 if [ $CHECK = 0 ]; then
   # 데몬이 먼저다 — 컨테이너는 세그먼트와 버스가 있어야 뭔가 보인다.
   for d in estopd robotd camerad rsd; do systemctl --user restart "piper-$d" 2>/dev/null || true; done
   ok "데몬 재시작"
-  ( cd "$SRC" 2>/dev/null || cd "$HOME"; docker compose up -d 2>/dev/null ) || \
-    warn "docker compose 는 compose 파일이 있는 곳에서 직접 실행하세요"
+  ( cd "$SRC" && docker compose up -d ) && ok "컨테이너 기동" || \
+    bad "docker compose 실패 — $SRC 에서 직접 보세요"
 fi
 for d in estopd robotd camerad rsd; do
   systemctl --user is-active --quiet "piper-$d" && ok "piper-$d" || bad "piper-$d 안 돎"
