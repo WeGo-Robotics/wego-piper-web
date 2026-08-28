@@ -112,6 +112,12 @@ def _apply_arm_params(params: dict, *, cam_w: int, cam_h: int, cam_fps: int) -> 
     if len(robot_ports) >= 2:
         params.pop("robot_port", None)
         params.pop("teleop_port", None)
+        # ⚠ **양팔 설정에는 최상위 `cameras` 가 없다.** 카메라는 팔별
+        #   (`left_arm_config.cameras`)로 들어간다. 안 지우면 빈 dict 라도
+        #   `--robot.cameras={}` 가 나가고 draccus 가
+        #   "The fields `cameras` are not valid for BiPiperShmFollowerConfig" 로
+        #   죽는다 — 카메라를 하나도 안 붙여도 그렇다.
+        params.pop("robot_cameras", None)
         params["left_robot_port"], params["right_robot_port"] = robot_ports[0], robot_ports[1]
         if len(teleop_ports) >= 2:
             params["left_teleop_port"], params["right_teleop_port"] = teleop_ports[0], teleop_ports[1]

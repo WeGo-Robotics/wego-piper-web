@@ -458,6 +458,12 @@ def build_record_args(params: dict) -> list[str]:
         if isinstance(value, bool):
             args.append(f"{cli_flag}={'true' if value else 'false'}")
         elif isinstance(value, dict):
+            # ⚠ 빈 dict 는 **안 싣는다.** LeRobot 쪽 기본값이 어차피 `{}` 라
+            #   뜻이 같은데, 실으면 그 필드가 없는 설정(양팔의 `cameras`)에서
+            #   "필드가 유효하지 않다" 로 죽는다. 없는 것과 비어 있는 것을
+            #   구분할 이유가 여기엔 없다.
+            if not value:
+                continue
             import json
             args.append(f"{cli_flag}={json.dumps(value, separators=(',', ':'))}")
         else:
