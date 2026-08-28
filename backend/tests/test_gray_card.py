@@ -10,6 +10,7 @@
 
 import numpy as np
 import pytest
+from pathlib import Path
 
 pytest.importorskip("piper_cam")
 from piper_cam import graycard as G  # noqa: E402
@@ -328,3 +329,41 @@ def test_the_result_box_says_it_is_not_saved():
     box = page.split("{grayCard && (", 1)[1].split("</div>", 1)[0]
     assert "장치에만" in box, "결과 상자가 임시값임을 말하지 않는다"
     assert "실시간 보기" in box, "무엇이 되돌리는지 말하지 않는다"
+
+
+def test_the_save_button_is_inside_the_modal():
+    """⚠ 설정 패널은 `fixed inset-0` 모달이라 **페이지 본문을 덮는다.**
+    프로파일 바는 그 아래에 있어서 "아래에서 저장하세요" 는 못 누르는 곳을
+    가리키는 말이었다."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+            / "CamerasPage.tsx").read_text()
+    modal = page.split("{settingsCamera && (", 1)[1]
+    assert "captureProfile(activeProfile)" in modal, "모달 안에 저장 경로가 없다"
+    assert "fixed inset-0" in modal.split("\n", 2)[1], "모달이 아니라면 이 테스트를 다시 판단하라"
+
+
+def test_the_button_names_where_it_saves():
+    """"프로파일로 저장" 만으로는 **어느** 프로파일인지 알 수 없다."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+            / "CamerasPage.tsx").read_text()
+    assert "'${activeProfile}' 에 저장" in page
+
+
+def test_no_active_profile_says_what_to_do_instead():
+    """활성 프로파일이 없으면 덮어쓸 대상이 없다 — 그때는 이름을 지어야 한다."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+            / "CamerasPage.tsx").read_text()
+    assert "활성 프로파일이 없습니다" in page
+
+
+def test_the_active_name_is_readable_without_changing_it():
+    """예전에는 POST 만 이름을 돌려줬다 — 알려면 바꿔야 했다."""
+    router = (Path(__file__).resolve().parents[2] / "backend" / "app" / "routers"
+              / "cameras.py").read_text()
+    assert '@router.get("/profiles/active")' in router

@@ -219,6 +219,19 @@ class ProfileActiveRequest(BaseModel):
     name: str = ""
 
 
+@router.get("/profiles/active")
+async def get_active_profile():
+    """지금 자동 적용되는 프로파일 이름. 없으면 빈 문자열.
+
+    ⚠ 화면이 이걸 알아야 **어디에 저장할지** 말해줄 수 있다. 회색 카드 보정은
+      장치에만 값을 올리고, 다음 연결에서 이 프로파일이 그걸 덮는다 — 그 이름을
+      모르면 "프로파일로 저장하세요" 가 어디를 가리키는지 알 수 없다.
+    """
+    from app.services import camera_profiles
+
+    return {"active": camera_profiles.active_name()}
+
+
 @router.post("/profiles/active")
 async def set_active_profile(body: ProfileActiveRequest):
     """연결 시 자동 적용할 프로파일. 빈 이름이면 자동 적용을 끈다."""

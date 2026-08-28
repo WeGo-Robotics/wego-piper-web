@@ -171,9 +171,20 @@ export default function CamerasPage() {
   // 프로파일 — 노출·화이트밸런스 같은 컨트롤 값을 이름 붙여 저장한다.
   // 적용 자체는 **데몬이 카메라를 열 때** 하므로 여기는 저장·수동적용·결과 표시만 한다.
   const [profileReport, setProfileReport] = useState<ProfileReport | null>(null)
+  // ⚠ 보정 결과를 **어디에** 저장할지 말해주려면 활성 프로파일 이름이 필요하다.
+  //   모르면 "프로파일로 저장하세요" 가 어디를 가리키는지 알 수 없고, 실제로
+  //   설정 모달이 화면을 덮고 있어 아래 프로파일 바는 손이 닿지도 않는다.
+  const [activeProfile, setActiveProfile] = useState('')
+  const [savingProfile, setSavingProfile] = useState(false)
 
   /** 지금 장치에 들어 있는 값을 읽어 저장한다. 화면 상태가 아니라 **장치**가 출처다 —
    *  그래서 공통 프리셋 저장 API 를 그대로 못 쓰고 전용 엔드포인트를 탄다. */
+  useEffect(() => {
+    api.get<{ active: string }>('/cameras/profiles/active')
+      .then((r) => setActiveProfile(r.active || ''))
+      .catch(() => {})
+  }, [])
+
   const captureProfile = async (name: string) => {
     const r = await api.post<{ values: { cameras: unknown[] } }>(
       '/cameras/profiles/capture', { name })
@@ -988,11 +999,39 @@ export default function CamerasPage() {
                         연결할 때 프로파일을 다시 거는 것은 의도된 동작이다
                         (feature/gray-card-calibration.md §4) — 말해주지 않은 것이
                         문제였다. */}
-                    <p className="mt-1 border-t border-current/20 pt-1 text-[10px] text-amber-300">
-                      아직 <b>장치에만</b> 올라가 있습니다. 아래 프로파일로 저장하지
-                      않으면 <b>다음에 카메라를 열 때</b>(실시간 보기·녹화·추론)
-                      프로파일 값으로 되돌아갑니다.
-                    </p>
+                    <div className="mt-1 space-y-1 border-t border-current/20 pt-1">
+                      <p className="text-[10px] text-amber-300">
+                        아직 <b>장치에만</b> 올라가 있습니다. 저장하지 않으면
+                        <b> 다음에 카메라를 열 때</b>(실시간 보기·녹화·추론)
+                        프로파일 값으로 되돌아갑니다.
+                      </p>
+                      {/* ⚠ 저장 버튼이 **여기** 있어야 한다. 프로파일 바는 페이지
+                          본문에 있는데 이 설정 패널이 `fixed inset-0` 모달이라
+                          화면을 덮는다 — "아래에서 저장하세요" 는 못 누르는 곳을
+                          가리키는 말이었다. */}
+                      {activeProfile ? (
+                        <button
+                          onClick={async () => {
+                            setSavingProfile(true)
+                            try {
+                              notify({ level: 'info', source: '카메라',
+                                       text: await captureProfile(activeProfile) })
+                            } catch (e) {
+                              notifyError(e instanceof Error ? e.message : '저장 실패')
+                            } finally { setSavingProfile(false) }
+                          }}
+                          disabled={savingProfile}
+                          className="rounded bg-emerald-600 px-2 py-1 text-[11px] text-white
+                                     hover:bg-emerald-500 disabled:opacity-40">
+                          {savingProfile ? '저장 중…' : `'${activeProfile}' 에 저장 (덮어쓰기)`}
+                        </button>
+                      ) : (
+                        <p className="text-[10px] text-neutral-400">
+                          활성 프로파일이 없습니다 — 이 창을 닫고 페이지 위쪽
+                          [프로파일] 에서 이름을 지어 저장하세요.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
