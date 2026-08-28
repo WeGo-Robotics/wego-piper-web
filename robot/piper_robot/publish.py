@@ -78,6 +78,8 @@ class ArmBridge:
         self.published = 0
         self.filtered = 0                 # 안전층이 명령을 바꾼 횟수
         self.last_reason = Reason.OK
+        #: 직전 CAN 오류 카운터. 증가분만 로그로 낸다 (절대값은 재열거에서 0이 된다).
+        self._err_counters: dict | None = None
         self._deadman_held = False
         self._last_logged = Reason.OK
 
@@ -126,10 +128,40 @@ class ArmBridge:
     # 인터페이스는 남아 있는데 읽기만 계속 실패하는 경우의 상한 (100Hz 기준 ~2초).
     MAX_READ_FAILS = 200
 
+    #: CAN 오류 카운터를 다시 볼 간격 (초). `ip` 호출이 3~4ms 라 자주 부르면 안 된다.
+    ERR_SAMPLE_S = 10.0
+
+    def _sample_can_errors(self) -> None:
+        """오류 카운터가 **올랐을 때만** 로그에 남긴다.
+
+        ⚠ `can_state()` 는 *지금* 나쁜지만 본다. 잠깐 error-passive 로 내려갔다
+          돌아오는 버스는 물어보는 순간마다 늘 ERROR-ACTIVE 라 영영 안 잡힌다 —
+          실측(can3)에서 누적 **34,794회**였는데 상태 조회로는 한 번도 안 걸렸다.
+
+          "통신이 좀 불안정한 것 같다" 를 숫자로 바꾸는 자리다. 절대값은 인터페이스를
+          다시 열면 0 이 되므로 **증가분만** 뜻이 있다.
+        """
+        from piper_robot.can import error_counters
+
+        now = error_counters(self.iface)
+        if not now:
+            return
+        before = self._err_counters
+        self._err_counters = now
+        if before is None:
+            return
+        grew = {k: now[k] - before[k] for k in now if now[k] > before.get(k, 0)}
+        if grew:
+            logger.warning("CAN 오류가 늘었습니다 (%s, 최근 %.0f초): %s — "
+                           "케이블·종단저항·허브를 보세요",
+                           self.iface, self.ERR_SAMPLE_S,
+                           ", ".join(f"{k} +{v}" for k, v in sorted(grew.items())))
+
     def _publish_loop(self) -> None:
         period = 1.0 / STATE_HZ
         next_diag = 0.0
         next_presence = 0.0
+        next_err = 0.0
         fails = 0
         err_code = ctrl_mode = 0
         while self._running:
@@ -137,6 +169,9 @@ class ArmBridge:
             # ⚠ **인터페이스가 사라진 것이 결정적 증거다.** USB-CAN 어댑터를 뽑으면
             # 커널이 `can0` 을 즉시 지운다 — 카메라의 `/dev/videoN` 과 같은 신호다.
             # 읽기 실패는 버스가 조용한 것일 수도 있어 그것만으로는 판정하지 않는다.
+            if t0 >= next_err:
+                next_err = t0 + self.ERR_SAMPLE_S
+                self._sample_can_errors()
             if t0 >= next_presence:
                 next_presence = t0 + self.PRESENCE_S
                 if not iface_exists(self.iface):

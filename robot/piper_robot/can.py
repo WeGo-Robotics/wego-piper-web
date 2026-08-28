@@ -98,6 +98,35 @@ def can_state(iface: str) -> str | None:
     return m.group(1) if m else None
 
 
+#: `ip -details -statistics` 의 오류 카운터 이름 (그 줄의 순서 그대로).
+ERROR_COUNTERS = ("restarts", "bus_errors", "arbitration_lost",
+                  "error_warning", "error_passive", "bus_off")
+
+
+def error_counters(iface: str) -> dict[str, int]:
+    """CAN 오류 카운터. 못 읽으면 빈 dict.
+
+    ⚠ **`can_state()` 와 다른 것을 본다.** 그쪽은 *지금* 나쁜지 보고, 이건
+      *얼마나 자주* 나빴는지 본다. 순간값만 보면 잠깐 error-passive 로
+      내려갔다 돌아오는 버스를 영영 못 잡는다 — 실측(can3)에서 누적
+      **34,794회**였는데 물어보는 순간에는 늘 ERROR-ACTIVE 였다.
+
+      카운터는 인터페이스를 다시 열 때 0 으로 돌아간다. 그래서 **절대값끼리
+      비교하면 안 된다** — 같은 시각에 올라온 것끼리만 뜻이 있다(실측: can2 와
+      can3 이 1초 차이로 올라왔고 각각 0 과 34,794였다).
+    """
+    try:
+        out = subprocess.run(["ip", "-details", "-statistics", "link", "show", iface],
+                             capture_output=True, text=True, timeout=2).stdout
+    except Exception:
+        return {}
+    m = re.search(r"re-started bus-errors arbit-lost error-warn error-pass bus-off\s*\n\s*"
+                  r"(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)", out)
+    if not m:
+        return {}
+    return dict(zip(ERROR_COUNTERS, (int(g) for g in m.groups())))
+
+
 def can_unhealthy_reason(iface: str) -> str | None:
     """버스가 나쁘면 사람이 읽을 사유, 괜찮으면 None."""
     state = can_state(iface)
