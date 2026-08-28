@@ -211,28 +211,52 @@ sudo loginctl enable-linger $USER
 
 ### 처음부터 다시 깔려면
 
-⚠ **데이터를 지우지 않는다.** 아래 둘은 그대로 둔다:
+⚠ **데이터를 지우지 않는다.** 아래 셋은 그대로 둔다:
 
 | 경로 | 내용 |
 |---|---|
 | `/srv/piper-data` | 컨테이너가 쓰는 모델·설정·로그 |
 | `~/.cache/huggingface/lerobot` | **녹화한 데이터셋** |
+| `~/.config/piper-web` | 사용자 설정 |
+
+⚠ **`docker-compose.override.yml` 을 먼저 빼돌린다.** 그 호스트의 포트 사정이
+거기 있다 — 192.168.0.120 은 `:80` 을 WMS 가 쓰고 있어 8081 로 빼 두었다.
+빠뜨리면 frontend 가 `:80` 에 붙는다(실제로 그렇게 됐다).
 
 ```bash
+# 0. 호스트 사정 백업
+cp ~/piper-web-deploy/current/docker-compose.override.yml ~/override.keep.yml
+
 # 1. 세운다
-docker compose -p current down 2>/dev/null || docker rm -f piper-web-backend piper-web-frontend
-systemctl --user stop piper-{estopd,robotd,camerad,rsd}
+cd ~/piper-web-deploy/current && docker compose down
+systemctl --user stop    piper-{estopd,robotd,camerad,rsd}
 systemctl --user disable piper-{estopd,robotd,camerad,rsd}
 
-# 2. 지운다 — 데이터는 위 두 경로라 여기 없다
+# 2. 지운다 — 데이터는 위 표의 경로라 여기 없다
 rm -rf ~/piper-web-deploy ~/.venvs/piper-daemons
 rm -f  ~/.config/systemd/user/piper-*.service
 systemctl --user daemon-reload
 docker images -q --filter reference='piper-web-*' | sort -u | xargs -r docker rmi -f
 
-# 3. 다시 깐다 — 위 2단계와 같다
+# 3. 다시 깐다 — 평소 업데이트와 **같은 명령**
 ./v0.3.9/apply.sh
 ```
+
+`apply.sh` 는 `~/override.keep.yml` 이 있으면 알아서 되돌린다.
+
+### 실제로 해 본 기록 (2026-08-28, v0.3.9)
+
+| 단계 | 실측 |
+|---|---|
+| 번들 빌드 | 3.5GB (backend·frontend + wheel 5 + 데몬 + compose) |
+| 전송 | 2분 31초 (LAN) |
+| 정리 | 유닛·컨테이너·이미지 전부 0, 디스크 **175G → 243G** |
+| `docker load` | 11GB — 이 단계가 제일 오래 걸린다 |
+| 재설치 | 데몬 4개 active, 컨테이너 2개 up |
+| 확인 | `/health` 200, 카메라 1대 인식 |
+
+`~/piper-web-deploy` 가 **58GB** 였다 — 릴리스마다 이미지 tar 가 쌓인다.
+정기적으로 지울 값어치가 있다.
 
 ### 세 레이어가 있는 이유
 
@@ -244,7 +268,7 @@ Redis 로만 붙는다. 그래서 올릴 것이 셋이다:
 |---|---|---|
 | 이미지 | `backend/ frontend/ wrapper/ policies/ phase/ vendor/ act_aux/` | `docker load` |
 | 데몬 wheel | `bus/ shm/ robot/ cam/ rs/` | 호스트 venv |
-| 데몬 소스·유닛 | `daemons/ deploy/systemd/` | `~/piper-daemons` + systemd |
+| 데몬 소스·유닛 | `daemons/ deploy/systemd/` | `~/piper-web-deploy/current` + systemd |
 
 `bus`·`shm`·`robot` 은 **양쪽**이다 — 이미지 안에도 들어가고 호스트 venv 에도
 깔린다. 한쪽만 올리면 컨테이너와 데몬이 같은 라이브러리의 다른 코드로 돈다.

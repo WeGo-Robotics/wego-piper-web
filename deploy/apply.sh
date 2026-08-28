@@ -123,6 +123,12 @@ fi
 # ⚠ **override 는 손대지 않는다.** 그 호스트의 사정(포트 충돌 회피)이 거기 있다.
 if [ -f "$SRC/docker-compose.override.yml" ]; then
   ok "override 보존: $(grep -oE '"[0-9]+:[0-9]+"' "$SRC/docker-compose.override.yml" | tr '\n' ' ')"
+elif [ -f "$HOME/override.keep.yml" ]; then
+  # ⚠ **정리하면서 백업해 둔 것이 있으면 되돌린다.** 실측: 재설치 뒤 이걸
+  #   빠뜨려 frontend 가 :80 에 붙었다 — 이 호스트는 :80 을 WMS 가 쓰므로
+  #   그 서비스가 마침 안 떠 있어서 충돌만 안 났을 뿐이다.
+  cp "$HOME/override.keep.yml" "$SRC/docker-compose.override.yml"
+  ok "override 복원: ~/override.keep.yml"
 else
   warn "override 없음 — :80 이 비어 있는지 확인하세요 (ss -ltnp)"
 fi

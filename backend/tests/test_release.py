@@ -160,3 +160,31 @@ def test_apply_preserves_an_existing_override():
     assert "if [ -f" in block and "override 보존" in block
     # 덮어쓰는 cp 가 없어야 한다
     assert 'cp "$HERE/docker-compose.override.yml"' not in src
+
+
+def test_apply_restores_a_backed_up_override():
+    """⚠ **실측으로 나온 구멍.** 재설치 뒤 override 를 안 되돌려 frontend 가
+    `:80` 에 붙었다 — 그 호스트는 :80 을 WMS 가 쓴다. 마침 그 서비스가 안 떠
+    있어서 충돌만 안 났을 뿐, 다음엔 안 뜬다."""
+    src = APPLY.read_text()
+    assert '"$HOME/override.keep.yml"' in src
+    assert "override 복원" in src
+
+
+def test_the_readme_wipe_backs_up_the_override_first():
+    from pathlib import Path
+
+    readme = (Path(__file__).resolve().parents[2] / "README.md").read_text()
+    wipe = readme.split("### 처음부터 다시 깔려면", 1)[1].split("###", 1)[0]
+    assert "override.keep.yml" in wipe
+    assert wipe.index("override.keep.yml") < wipe.index("rm -rf"), \
+        "지우기 전에 백업하지 않는다"
+
+
+def test_the_readme_names_the_data_that_survives():
+    from pathlib import Path
+
+    readme = (Path(__file__).resolve().parents[2] / "README.md").read_text()
+    wipe = readme.split("### 처음부터 다시 깔려면", 1)[1].split("###", 1)[0]
+    for keep in ("/srv/piper-data", "huggingface/lerobot", ".config/piper-web"):
+        assert keep in wipe, f"보존 목록에 {keep} 이 없다"

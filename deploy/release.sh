@@ -102,7 +102,10 @@ fi
 #   패키지가 아니라 엔트리포인트다.
 if [ $need_daemons = 1 ]; then
   echo "· 데몬 소스 묶기"
-  tar czf "$OUT/daemons.tar.gz" daemons deploy/systemd deploy/install-daemons.sh
+  # ⚠ `__pycache__` 는 빼고 묶는다. 빌드 머신은 py3.13, 호스트는 py3.12 라
+  #   그 `.pyc` 는 호스트에서 쓰이지도 않는다 — 번들만 지저분해진다.
+  tar czf "$OUT/daemons.tar.gz" --exclude='__pycache__' --exclude='*.pyc' \
+      daemons deploy/systemd deploy/install-daemons.sh
 fi
 
 # ── compose + env 예시 — **항상 넣는다** ──────────────────────────────────
@@ -117,13 +120,16 @@ cp deploy/env.example "$OUT/backend.env.example"
 
 # ── 적용 스크립트와 매니페스트 ────────────────────────────────────────────
 cp "$REPO/deploy/apply.sh" "$OUT/apply.sh"; chmod +x "$OUT/apply.sh"
+# ⚠ **값에 따옴표를 씌운다.** `apply.sh` 가 `source` 하는데, `images=backend frontend`
+#   는 셸에서 "images=backend 를 환경으로 두고 frontend 를 실행" 이다 —
+#   실제로 `frontend: command not found` 로 깨졌다.
 cat > "$OUT/manifest.txt" <<EOF
-version=$VERSION
-prev=$PREV
-built_at=$(date -Is)
-images=$([ ${#IMAGES[@]} -gt 0 ] && echo "${IMAGES[*]}" || echo "")
-wheels=$([ $need_wheels = 1 ] && echo "${WHEEL_PKGS[*]}" || echo "")
-daemons=$([ $need_daemons = 1 ] && echo yes || echo "")
+version="$VERSION"
+prev="$PREV"
+built_at="$(date -Is)"
+images="$([ ${#IMAGES[@]} -gt 0 ] && echo "${IMAGES[*]}" || echo "")"
+wheels="$([ $need_wheels = 1 ] && echo "${WHEEL_PKGS[*]}" || echo "")"
+daemons="$([ $need_daemons = 1 ] && echo yes || echo "")"
 EOF
 
 BUNDLE="$REPO/dist/piper-web-$VERSION.tar.gz"
