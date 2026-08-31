@@ -81,19 +81,31 @@ def test_declared_dependencies_match_what_is_imported():
                             f"{pkg} 가 {m} 을 최상위 import 하는데 선언에 없다 ({f.name})"
 
 
-def test_the_readme_does_not_promise_the_short_version():
-    """⚠ "backend 만 깔면 된다" 는 **틀린 안내**였다."""
-    body = README.read_text().split("### 설치", 1)[1].split("###", 1)[0]
-    assert "deploy/install.sh" in body, "설치 스크립트를 안 가리킨다"
-    assert "backend" in body and "bus shm robot" in body.replace("\\\n", " "), \
-        "로컬 패키지 목록이 안 보인다"
+def test_the_readme_documents_exactly_one_install_path():
+    """⚠ 예전 README 는 설치를 **세 가지**로 설명했다 — 저장소에서 직접, 도커
+    수동, 번들 배포. 받는 사람은 어느 것이 자기 경우인지 모르고, 셋 중 하나만
+    낡아도 그걸 따라 하다 막힌다. 지금은 **스크립트 하나**뿐이다.
+
+    ⚠ 그리고 그 하나는 "backend 만 깔면 된다" 같은 **짧은 거짓말**이면 안 된다.
+    스크립트가 전제 확인부터 데몬·컨테이너까지 실제로 다 해야 한다.
+    """
+    body = README.read_text()
+    section = body.split("## 설치", 1)[1].split("\n## ", 1)[0]
+    assert "piper-install.sh" in section, "설치 스크립트를 안 가리킨다"
+    # 없어진 경로들을 다시 설명하기 시작하면 걸린다
+    for gone in ("deploy/install.sh", "deploy/setup.sh", "docker compose up",
+                 "pip install -e"):
+        assert gone not in section, f"설치 절이 다른 경로도 설명한다: {gone}"
+    assert "docs/INSTALL.md" not in body, "지운 문서를 가리킨다"
 
 
 def test_the_readme_names_redis_and_the_env_file():
     """둘 다 없으면 아무것도 안 도는데 예전 README 에는 한 줄도 없었다."""
     src = README.read_text()
     assert "Redis" in src
-    assert "deploy/env.example" in src
+    # ⚠ `deploy/env.example` 은 더 이상 README 가 말하지 않는다. 사용자는 그 파일을
+    #   만질 일이 없고(`apply.sh` 가 놓는다), 배포자용 내용은 체크리스트로 갔다.
+    assert "deploy/env.example" not in src, "사용자 문서에 배포자용 파일이 남았다"
 
 
 def test_the_env_example_exists_and_carries_no_secret():
@@ -134,7 +146,11 @@ def _compose() -> dict:
 
 
 def _docker_section() -> str:
-    return README.read_text().split("## Docker 배포", 1)[1].split("\n## ", 1)[0]
+    """⚠ 예전에는 `## Docker 배포` 절만 잘라 봤다. README 가 "스크립트 하나" 로
+    줄면서 그 절이 없어졌다 — 이제 문서 전체가 그만큼 짧으므로 전체를 본다.
+    지키려는 것은 "README 가 실제 구성과 어긋나지 않는다" 이지 절 이름이 아니다.
+    """
+    return README.read_text()
 
 
 def test_the_readme_volume_table_matches_the_compose_file():
@@ -163,7 +179,10 @@ def test_the_readme_says_the_daemons_run_on_the_host():
     """⚠ 이게 빠지면 웹은 뜨는데 **카메라도 팔도 안 보인다.** 컨테이너는 장치를
     하나도 안 열기 때문이다."""
     sec = _docker_section()
-    assert "install-daemons.sh" in sec
+    # ⚠ `install-daemons.sh` 는 내부 도구라 README 에서 뺐다. 지켜야 할 사실은
+    #   **"하드웨어 데몬은 컨테이너가 아니라 호스트에서 돈다"** 는 것뿐이다 —
+    #   이걸 모르면 "왜 컨테이너만 재시작해도 팔이 안 붙나"에서 막힌다.
+    assert "호스트 systemd" in sec, "데몬이 어디서 도는지 안 적혀 있다"
     assert "robotd" in sec and "rsd" in sec
 
 
@@ -171,7 +190,10 @@ def test_the_readme_says_redis_needs_a_unix_socket():
     """기본 `redis.conf` 는 `unixsocket` 이 주석 처리돼 있다 — 켜지 않으면
     컨테이너가 버스에 못 붙는다."""
     sec = _docker_section()
-    assert "unixsocket" in sec
+    # ⚠ `unixsocket` 은 **redis.conf 의 설정 키**라 사용자가 직접 칠 일이 없다 —
+    #   `apply.sh` 가 소켓이 없으면 그 sed 명령을 찍어 준다. README 가 지켜야 할
+    #   사실은 "버스가 TCP 가 아니라 유닉스 소켓으로 간다" 는 것이다.
+    assert "유닉스 소켓" in sec, "버스가 소켓으로 간다는 사실이 없다"
     url = _compose()["services"]["backend"]["environment"]
     assert any("unix:///run/redis" in e for e in url), "컴포즈가 소켓을 안 쓴다"
 

@@ -10,6 +10,8 @@ LeRobot(로봇 모방학습 프레임워크)을 원격으로 제어하는 웹 �
 
 ## 빌드 및 실행
 
+설치는 **스크립트 하나**다 — [README](README.md#설치). 아래는 저장소에서 직접 돌릴 때의 명령이다.
+
 ```bash
 # 프론트엔드 의존성 설치 (Node 20+ 필요, nvm use 24 권장)
 cd frontend && npm install

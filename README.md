@@ -2,163 +2,94 @@
 
 LeRobot 웹 인터페이스 — 로봇 모방학습 프레임워크를 웹에서 제어.
 
-## 실행 방법
+데이터 수집(에피소드 녹화), 추론·평가(체크포인트 배포, 실시간 파라미터 튜닝),
+학습 모니터링, 비전 검출, E-stop 안전 정지.
 
-### 요구사항
+## 설치
 
-- Node.js 20+ (nvm use 24 권장)
-- Python 3.11+
-- LeRobot 0.5+ (`pip install lerobot`)
-- **Redis** — 데몬끼리 만나는 버스다. 없으면 웹이 "데몬 없음"만 띄운다
-- `video`·`dialout` 그룹 — 카메라와 USB-CAN 접근
-
-### 설치
+**스크립트 하나를 받아서 실행한다. 그게 전부다.**
 
 ```bash
-./deploy/install.sh          # 설치
-./deploy/install.sh --check  # 확인만
+curl -fsSLO https://raw.githubusercontent.com/WeGo-Robotics/wego-piper-web/master/deploy/piper-install.sh
+chmod +x piper-install.sh
+./piper-install.sh
 ```
 
-sudo 가 필요한 것(시스템 패키지·그룹·udev)은 **명령을 찍어 주고 사람이 실행**한다.
-스크립트가 몰래 sudo 를 쓰면 무엇이 바뀌었는지 아무도 모른다.
+> ⚠ **아직 올라가지 않았다.** 저장소는 공개지만 `master` 가 비어 있고, 이미지도
+> 아직 발행 전이다 — 위 명령은 그 둘이 올라간 뒤에 동작한다. 그 전에는 주소를
+> 직접 넘긴다: `PIPER_IMAGE=<레지스트리>/piper-web-backend ./piper-install.sh`
 
-<details>
-<summary>스크립트가 하는 일 (수동으로 하려면)</summary>
+나머지는 전부 이미지 안에 있다 — 데몬·wheel·udev 규칙·compose·설치 스크립트까지.
+파일을 여러 개 주면 하나를 빠뜨리고, 빠뜨린 것은 늘 나중에 엉뚱한 증상으로 드러난다.
+
+스크립트가 하는 일:
+
+1. **도커를 확인한다** — 없으면 설치 명령을 찍고 멈춘다
+2. **이미지를 받는다** (`docker pull`) — 이미 가진 레이어는 안 받는다
+3. **호스트 코드를 꺼낸다** — `docker create` 로 컨테이너를 **실행하지 않고** 파일만
+4. **설치한다** — 꺼낸 `apply.sh` 가 전제 확인·udev·데몬 유닛·컨테이너까지
+
+⚠ **전제가 빠져 있으면 명령을 찍고 멈춘다.** sudo 가 필요한 것은 스크립트가 직접
+하지 않는다 — 무엇이 바뀌었는지 모르는 채로 설치가 끝나는 편이 더 나쁘다.
+그 명령만 실행하고 다시 부르면 된다.
+
+### 업데이트도 같은 명령이다
 
 ```bash
-# 1. 서브모듈 — URDF. 지오메트리를 **다시 구울 때만** 필요하다(구운 npz 는 저장소에 있다)
-git submodule update --init --recursive
-
-# 2. 파이썬 패키지 — **순서가 있다**
-#    ⚠ `pip install -e backend/` 만으로는 안 된다. backend 는 아래 것들에
-#      의존하지 않으므로 하나도 안 딸려온다.
-for p in bus shm robot cam rs phase act_aux \
-         vendor/wego_piper vendor/lerobot_robot_piper \
-         vendor/lerobot_robot_pipershm vendor/lerobot_camera_pipershm; do
-  pip install -e "$p"
-done
-pip install -e "backend[dev]"
-
-# 3. 설정 — ⚠ **코드 기본값이 `direct` 라 안전층이 빠진다**
-cp deploy/env.example backend/.env
-
-# 4. udev — CAN 어댑터 이름 고정 + RealSense 접근
-sudo cp deploy/udev/99-piper-can.rules backend/udev/99-realsense-libusb.rules /etc/udev/rules.d/
-sudo udevadm control --reload
-
-# 5. 데몬 + 로그아웃해도 살아남게
-./deploy/install-daemons.sh estopd robotd camerad rsd gateway frontend
-sudo loginctl enable-linger $USER
-
-# 6. 프론트엔드
-cd frontend && npm install
+./piper-install.sh              # 최신
+./piper-install.sh v0.3.10      # 특정 버전
+./piper-install.sh --check      # 아무것도 안 바꾸고 상태만
 ```
-</details>
 
-⚠ **CAN 어댑터 이름은 udev 로 고정해야 한다.** 규칙이 없으면 커널이 열거 순서대로
-`can0..can3` 을 붙이고, 그 순서는 다시 꽂을 때마다 바뀐다 — 어제의 `can1` 이 오늘은
-다른 팔이 된다. `deploy/udev/99-piper-can.rules` 는 **시리얼로** 이름을 박는다.
-어댑터를 늘렸으면 `deploy/udev/list-can-adapters.py` 로 시리얼을 뽑아 규칙에 추가한다.
+이미 돼 있는 것은 건너뛴다. 두 번 돌려도 같다. 두 번째 설치부터는 바뀐 레이어만
+받으므로 **~100MB** 다.
 
-### 개발 서버 (백엔드 + 프론트엔드 동시)
+### 스크립트가 확인하는 것
+
+못 맞추면 멈추고 무엇을 해야 하는지 찍는다.
+
+| 항목 | 기준 | 못 맞추면 |
+|---|---|---|
+| docker · docker compose v2 | 있을 것 | `apt install docker.io docker-compose-v2` |
+| docker 그룹 | 사용자가 속할 것 | `usermod -aG docker $USER` + **다시 로그인** |
+| python3-venv · redis-server | 있을 것 | `apt install python3-venv redis-server` |
+| **GPU 컴퓨트 능력** | **7.5 이상** (Turing / RTX 20xx·T4) | **GPU 를 바꿔야 한다** — Pascal·Volta 는 드라이버를 올려도 안 된다 |
+| 드라이버 CUDA | **13.0 이상** | `apt install nvidia-driver-580` + 재부팅 |
+| nvidia-container-toolkit | 있을 것 | NVIDIA 저장소를 먼저 붙여야 한다 (Ubuntu 아카이브에 없다) |
+| udev 규칙 2종 | 설치돼 있을 것 | 번들에 들어 있다 — `cp` 명령을 찍어 준다 |
+| redis 유닉스 소켓 · linger | 켜져 있을 것 | 설정 명령을 찍어 준다 |
+
+⚠ **GPU 하한이 있다.** 이미지의 torch 는 cu130 빌드라 컴파일된 아키텍처가
+`sm_75·80·86·90·100·120` 뿐이고 **PTX 가 없어 JIT 으로도 못 메꾼다.** 값이 바뀌면
+컨테이너에 직접 물어서 확인한다:
 
 ```bash
-./dev.sh
+docker run --rm --gpus all --entrypoint python piper-web-backend:latest \
+  -c 'import torch; print(torch.cuda.get_arch_list())'
 ```
 
-브라우저에서 http://localhost:5173 접속.
-
-### 개별 실행
+⚠ **CAN 어댑터 이름은 udev 로 고정한다.** 규칙이 없으면 커널 열거 순서대로 붙어
+포트를 바꿔 꽂는 순간 **두 팔의 이름이 뒤바뀐다** — 저장된 등록이 반대 팔을 가리킨다.
+규칙에는 시리얼이 박혀 있어서, 어댑터가 다르면 `apply.sh` 가 대조해 경고한다:
 
 ```bash
-# 백엔드
-cd backend
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# 프론트엔드 (별도 터미널)
-cd frontend
-npm run dev
+python3 ~/piper-web-deploy/<버전>/udev/list-can-adapters.py --watch
 ```
 
-### 빌드
+## 무엇이 어디서 도는가
 
-```bash
-cd frontend
-npm run build       # 프로덕션 빌드
-npx tsc --noEmit    # 타입 체크
-```
+**도커는 게이트웨이와 프론트만 감싼다.** 하드웨어 층은 어느 쪽이든 호스트다 —
+CAN·USB·커널 모듈은 컨테이너가 다룰 수 있는 것이 아니다.
 
-## Docker 배포
+| | 어디서 |
+|---|---|
+| 게이트웨이 · 프론트엔드 | **컨테이너** |
+| estopd · robotd · camerad · rsd | **호스트 systemd 유닛** |
+| Redis | 호스트 (유닉스 소켓 — 버스를 네트워크에 안 연다) |
 
-전체 스택(백엔드 + LeRobot + Piper 플러그인 + 프론트엔드)을 컨테이너로 제공한다.
-호스트 환경(Python 3.13 / torch 2.11.0+cu130 / lerobot 0.5.0)을 그대로 재현하며,
-**로봇이 물리적으로 연결된 호스트**에서만 실행한다 (하드웨어 직접 접근이 필요).
+셋은 서로 `/dev/shm` 세그먼트와 Redis 버스로만 만난다.
 
-### 사전 요구사항 (호스트)
-
-⚠ **컨테이너는 장치를 하나도 안 연다.** 카메라도 팔도 **호스트 데몬**이 쥐고,
-컨테이너는 `/dev/shm` 세그먼트와 Redis 로만 붙는다. 그래서 아래가 다 갖춰지지
-않으면 웹은 뜨지만 **카메라도 팔도 안 보인다.**
-
-- Docker + Docker Compose v2
-- [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) (GPU 패스스루)
-- **하드웨어 데몬을 호스트에서 기동** — 이게 빠지면 아무것도 안 보인다
-  ```bash
-  ./deploy/install-daemons.sh estopd robotd camerad rsd
-  sudo loginctl enable-linger $USER
-  ```
-- **호스트 redis 에 유닉스 소켓 켜기** (`/etc/redis/redis.conf`) — 기본값은 주석 처리돼 있다
-  ```
-  unixsocket /run/redis/redis-server.sock
-  unixsocketperm 770
-  ```
-  TCP 로 안 여는 이유: 버스가 **E-stop heartbeat 을 나른다.**
-- 데이터 루트: `sudo mkdir -p /srv/piper-data` (경로는 `PIPER_DATA_ROOT` 로 바꾼다)
-- CAN 인터페이스 호스트에서 구성 — 커널/네트워크 레벨이라 컨테이너 밖.
-  udev 규칙으로 이름을 고정한다(위 [설치](#설치) 참고)
-- `v4l2loopback` 커널 모듈 호스트에 로드 — 커널 모듈은 컨테이너에서 삽입 불가
-- RealSense udev 규칙: `sudo cp backend/udev/99-realsense-libusb.rules /etc/udev/rules.d/ && sudo udevadm control --reload`
-
-### 내부 패키지 (vendor/)
-
-`lerobot_robot_piper`, `wego_piper` 는 공개 PyPI에 없어 `vendor/` 에 스냅샷으로 포함되어 있다.
-소스가 바뀌면 [vendor/README.md](vendor/README.md) 의 갱신 방법을 따라 다시 떠야 한다.
-
-### 이미지가 둘로 갈라져 있다
-
-| 파일 | 만드는 것 | 내용 | 언제 다시 굽나 |
-|---|---|---|---|
-| [backend/Dockerfile.base](backend/Dockerfile.base) | `piper-web-base:<BASE_VERSION>` | 데비안·apt·venv·lerobot·torch(cu130)·piper_sdk·grpcio — **서드파티만, ~7GB** | 서드파티 스택이 바뀔 때만 |
-| [backend/Dockerfile](backend/Dockerfile) | `piper-web-backend` | bus·shm·robot·vendor·backend·wrapper·policies — **회사 코드만, ~390MB** | 릴리스마다 |
-
-⚠ **베이스에는 `COPY` 를 넣지 마라.** [build-base.sh](deploy/build-base.sh) 가 컨텍스트 없이
-굽기 때문에 넣는 순간 빌드가 실패한다 — 회사 코드가 안 섞여야 이 이미지를 공개
-레지스트리에 올릴 수 있다.
-
-⚠ **베이스는 다이제스트로 박혀 있다.** `python:3.13-slim-bookworm` 은 뜬 태그라
-데비안 패치마다 다른 이미지가 되고, 그러면 1번 레이어부터 갈려 아래 전부가 다시
-구워진다. 실제로 그랬다 — v0.3.8 과 v0.3.9 는 **레이어 24개 중 24개가 달랐다.**
-베이스를 올릴 때는 `BASE_VERSION` 과 다이제스트를 같이 바꾼다:
-
-```bash
-docker buildx imagetools inspect python:3.13-slim-bookworm | grep Digest
-```
-
-### 실행
-
-```bash
-./deploy/build-base.sh            # 베이스 (없을 때만 굽는다. 낡았으면 알아서 다시)
-docker compose up -d --build      # 앱 빌드 + 기동
-docker compose logs -f backend    # 백엔드 로그
-docker compose down               # 정지
-```
-
-⚠ 베이스 없이 `docker compose build` 를 부르면 `pull access denied for
-piper-web-base` 로 죽는다. `release.sh` 는 알아서 먼저 확인한다.
-
-브라우저에서 `http://<호스트IP>/` 접속 (nginx `:80` → bridge 네트워크의 `backend:8000` 프록시).
-
-### 볼륨 — **두 개뿐이다**
+## 데이터는 한 곳이다
 
 | 호스트 | 컨테이너 | 용도 |
 |---|---|---|
@@ -169,231 +100,10 @@ piper-web-base` 로 죽는다. `release.sh` 는 알아서 먼저 확인한다.
 호스트 절대경로가 컨테이너로 새어 들어가면 환경마다 경로가 갈린다. 내부 레이아웃과
 각 `PIPER_*` 경로는 `backend/Dockerfile` 의 "데이터 경로 계약" ENV 에 있다.
 
-`ipc: host` 로 `/dev/shm` 을 호스트와 공유한다 — 이게 없으면 세그먼트가 안 보인다
-(`/dev/shm` 은 컨테이너마다 격리된다).
+`ipc: host` 로 `/dev/shm` 을 호스트와 공유한다 — 이게 없으면 세그먼트가 안 보인다.
 
-### 호스트 설치와 무엇이 다른가
-
-| | 호스트 설치 | 도커 |
-|---|---|---|
-| 게이트웨이·프론트 | systemd 유닛 | **컨테이너** |
-| estopd·robotd·camerad·rsd | systemd 유닛 | **똑같이 호스트 systemd 유닛** |
-| Redis | TCP | **유닉스 소켓** (버스를 네트워크에 안 연다) |
-| 파이썬 패키지 | `./deploy/install.sh` | 이미지 안에 구움 |
-
-즉 **도커는 게이트웨이·프론트만 감싼다.** 하드웨어 층은 어느 쪽이든 호스트다 —
-CAN·USB·커널 모듈은 컨테이너가 다룰 수 있는 것이 아니다.
-
-> GPU가 안 잡히면 compose 의 `deploy.resources...` 대신 `runtime: nvidia` 를 사용한다.
-> 호스트 `:80` 이 이미 사용 중이면 충돌한다 (frontend 가 그 포트만 낸다).
-
-## 실기 배포 — 따라 하기
-
-빌드 머신에서 번들을 만들고, 로봇 호스트에서 한 번 적용한다.
-**어느 레이어를 올릴지는 사람이 정하지 않는다** — 직전 태그와의 diff 가 정한다.
-
-### 1. 빌드 머신
-
-**레지스트리로 보내기 (망이 있을 때 — 권장)**
-
-```bash
-./deploy/registry.sh                        # 사설 레지스트리 (한 번만) — 127.0.0.1 전용
-export PIPER_REGISTRY=piper-build:5000       # 호스트가 받을 **이름**
-./deploy/release.sh v0.3.10 --dry-run       # 무엇이 올라갈지 먼저 본다
-./deploy/release.sh v0.3.10                 # 이미지는 push, 번들은 240KB
-scp dist/piper-web-v0.3.10.tar.gz <호스트>:~/
-```
-
-**tar 로 보내기 (망 없는 현장 — USB)**
-
-```bash
-./deploy/release.sh v0.3.10 --offline       # 번들 하나 (3.46GB)
-```
-
-⚠ **왜 레지스트리인가.** `docker save` 는 자식 이미지를 저장해도 **부모 레이어를
-전부 담는다**(측정: 부모 28MB → 한 줄 얹은 자식 28MB). 그래서 베이스/앱을 갈라놔도
-tar 인 한 매번 3.46GB 가 통째로 간다. 레지스트리는 호스트에 없는 레이어만 준다:
-
-| | 전송량 |
-|---|---|
-| tar (`--offline`) | **3.46 GB** — 무엇을 고쳤든 매번 |
-| 레지스트리 (실측) | **104.5 MB** — v0.3.9 를 가진 호스트가 다음 릴리스에 받는 양 |
-
-⚠ **미는 주소와 받는 주소가 다르다.** 도커는 `127.0.0.0/8` 만 기본으로 평문
-레지스트리로 인정한다. 빌드 머신이 자기 LAN IP 로 밀면 `server gave HTTP response
-to HTTPS client` 로 거부당하므로 미는 쪽은 `localhost` 를 쓴다 — 그래서 빌드
-머신에는 `daemon.json` 설정이 필요 없다. `PIPER_REGISTRY` 에는 **호스트가 받을**
-주소를 넣는다. 같은 레지스트리라 다이제스트는 같다.
-
-⚠ **기본은 로컬 전용이다.** `registry:2` 에는 **인증이 없다** — 밖에 열면 같은 망의
-누구나 `piper-web-backend:v0.3.10` 을 밀어넣을 수 있고 로봇 호스트는 그것을 받아
-**그대로 실행한다.** 빌드 머신에서 굽고 미는 데는 루프백으로 충분하다(`release.sh`
-도 `localhost` 로 민다). 로봇 호스트에 배포할 때만 의식적으로 연다:
-
-```bash
-./deploy/registry.sh --stop
-PIPER_REGISTRY_BIND=0.0.0.0 ./deploy/registry.sh
-sudo ufw allow from <로봇호스트IP> to any port 5000 proto tcp   # 그 호스트만
-sudo ufw deny 5000/tcp
-```
-
-`./deploy/registry.sh --status` 가 **지금 어디에 열려 있는지** 보여준다.
-
-⚠ **IP 를 박지 말 것.** 빌드 머신 주소는 DHCP 로 받는다(이 머신은 WiFi 라 더
-잘 바뀐다). IP 를 쓰면 바뀌는 날 호스트의 `daemon.json` 과 **이미 만들어 둔 모든
-번들의 매니페스트가 동시에** 죽는다. 이름을 하나 두면 고칠 곳이 한 줄이다:
-
-```bash
-# 로봇 호스트에서 한 번만
-echo "192.168.0.42  piper-build" | sudo tee -a /etc/hosts   # 주소 바뀌면 이 줄만 고친다
-# /etc/docker/daemon.json 에  {"insecure-registries": ["piper-build:5000"]}
-sudo systemctl restart docker                                # 이건 다시 할 일이 없다
-```
-
-공유기에서 빌드 머신에 **DHCP 예약**을 걸면 위 첫 줄도 다시 손댈 일이 없다.
-
-⚠ 그래도 주소가 어긋났다면 **번들을 다시 굽지 않는다.** 매니페스트 값을 덮어쓴다:
-
-```bash
-PIPER_REGISTRY=<새주소>:5000 ./v0.3.10/apply.sh
-```
-
-망 밖으로 낼 거면 TLS 부터 붙인다.
-
-`--dry-run` 이 이렇게 답한다:
-
-```
-릴리스 v0.3.9  (직전 v0.3.8, 파일 171 개 변경)
-  backend 이미지 : 예
-  frontend 이미지: 예
-  데몬 wheel     : bus cam robot rs shm
-  데몬 소스·유닛 : 예
-```
-
-### 2. 로봇 호스트
-
-```bash
-tar xzf piper-web-v0.3.9.tar.gz
-./v0.3.9/apply.sh            # 첫 설치·업데이트 **같은 명령**
-```
-
-sudo 가 필요한 것이 남아 있으면 **명령을 찍고 멈춘다.** 그것만 실행하고 다시 부른다:
-
-```bash
-sudo apt update && sudo apt install -y docker.io docker-compose-v2 python3-venv redis-server
-sudo usermod -aG docker $USER          # 다시 로그인해야 반영된다
-sudo mkdir -p /srv/piper-data && sudo chown $USER /srv/piper-data
-sudo sed -i 's|^# *unixsocket |unixsocket |' /etc/redis/redis.conf
-sudo systemctl restart redis-server
-sudo loginctl enable-linger $USER
-sudo cp ~/v0.3.9/udev/*.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules && sudo udevadm trigger
-./v0.3.9/apply.sh
-```
-
-⚠ **`nvidia-container-toolkit` 은 위 apt 한 줄에 없다.** Ubuntu 아카이브에 없어서
-[NVIDIA 저장소](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)를
-먼저 붙여야 한다 — 같이 넣으면 "패키지를 찾을 수 없음" 으로 **그 줄 전체가 실패해**
-docker 도 redis 도 안 깔린다. 없으면 compose 의 GPU 예약이 실패한다.
-
-⚠ **GPU 에 하한이 있다.** 이미지가 싣는 torch 는 cu130 빌드라 컴파일된 아키텍처가
-`sm_75·80·86·90·100·120` 뿐이고 **PTX 가 없어 JIT 으로도 못 메꾼다.**
-
-| 항목 | 기준 | 못 맞추면 |
-|---|---|---|
-| 컴퓨트 능력 | **7.5 이상** (Turing / RTX 20xx·T4) | **GPU 를 바꿔야 한다.** Pascal(GTX 10xx)·Volta(V100)는 드라이버를 올려도 안 된다 |
-| 드라이버 CUDA | **13.0 이상** | `sudo apt install nvidia-driver-580` + 재부팅 |
-
-`apply.sh` 가 둘 다 확인하고 **처방을 갈라서** 찍는다 — 드라이버만 올려보다 시간을
-버리는 일이 없도록. 값이 바뀌면 컨테이너에 직접 물어서 고친다:
-
-```bash
-docker run --rm --gpus all --entrypoint python piper-web-backend:latest \
-  -c 'import torch; print(torch.cuda.get_arch_list())'
-```
-
-⚠ **udev 규칙은 번들에 들어 있다** — 저장소를 안 받아도 된다. 없으면 조용히
-실패한다: RealSense 는 libusb 로 장치를 못 열어 **카메라가 0개**로 잡히고, CAN 은
-`can0`/`can1` 로 붙어 **저장된 팔 등록이 반대 팔을 가리킨다.**
-
-⚠ **CAN 규칙의 시리얼은 번들을 구운 머신의 배선이다.** 어댑터가 다르면 어느 줄도
-매칭되지 않는데 udev 는 그걸 에러로 안 친다 — `apply.sh` 가 꽂힌 어댑터와 대조해
-경고한다. 경고가 나오면 규칙을 이 머신에 맞게 고친다:
-
-```bash
-python3 v0.3.9/udev/list-can-adapters.py           # 시리얼 ↔ 인터페이스
-python3 v0.3.9/udev/list-can-adapters.py --watch   # 팔을 움직여 어느 쪽인지 확인
-```
-
-### 3. 확인
-
-```bash
-./v0.3.9/apply.sh --check    # 아무것도 안 바꾸고 상태만 본다
-```
-
-### 처음부터 다시 깔려면
-
-⚠ **데이터를 지우지 않는다.** 아래 셋은 그대로 둔다:
-
-| 경로 | 내용 |
-|---|---|
-| `/srv/piper-data` | 컨테이너가 쓰는 모델·설정·로그 |
-| `~/.cache/huggingface/lerobot` | **녹화한 데이터셋** |
-| `~/.config/piper-web` | 사용자 설정 |
-
-⚠ **`docker-compose.override.yml` 을 먼저 빼돌린다.** 그 호스트의 포트 사정이
-거기 있다 — 192.168.0.120 은 `:80` 을 WMS 가 쓰고 있어 8081 로 빼 두었다.
-빠뜨리면 frontend 가 `:80` 에 붙는다(실제로 그렇게 됐다).
-
-```bash
-# 0. 호스트 사정 백업
-cp ~/piper-web-deploy/current/docker-compose.override.yml ~/override.keep.yml
-
-# 1. 세운다
-cd ~/piper-web-deploy/current && docker compose down
-systemctl --user stop    piper-{estopd,robotd,camerad,rsd}
-systemctl --user disable piper-{estopd,robotd,camerad,rsd}
-
-# 2. 지운다 — 데이터는 위 표의 경로라 여기 없다
-rm -rf ~/piper-web-deploy ~/.venvs/piper-daemons
-rm -f  ~/.config/systemd/user/piper-*.service
-systemctl --user daemon-reload
-docker images -q --filter reference='piper-web-*' | sort -u | xargs -r docker rmi -f
-
-# 3. 다시 깐다 — 평소 업데이트와 **같은 명령**
-./v0.3.9/apply.sh
-```
-
-`apply.sh` 는 `~/override.keep.yml` 이 있으면 알아서 되돌린다.
-
-### 실제로 해 본 기록 (2026-08-28, v0.3.9)
-
-| 단계 | 실측 |
-|---|---|
-| 번들 빌드 | 3.5GB (backend·frontend + wheel 5 + 데몬 + compose) |
-| 전송 | 2분 31초 (LAN) |
-| 정리 | 유닛·컨테이너·이미지 전부 0, 디스크 **175G → 243G** |
-| `docker load` | 11GB — 이 단계가 제일 오래 걸린다 |
-| 재설치 | 데몬 4개 active, 컨테이너 2개 up |
-| 확인 | `/health` 200, 카메라 1대 인식 |
-
-`~/piper-web-deploy` 가 **58GB** 였다 — 릴리스마다 이미지 tar 가 쌓인다.
-정기적으로 지울 값어치가 있다.
-
-### 세 레이어가 있는 이유
-
-컨테이너는 **장치를 하나도 안 연다.** CAN·USB·커널 모듈은 컨테이너가 다룰 수
-있는 것이 아니라, 하드웨어는 호스트 데몬이 쥐고 컨테이너는 `/dev/shm` 과
-Redis 로만 붙는다. 그래서 올릴 것이 셋이다:
-
-| 레이어 | 무엇이 바뀌면 | 어디로 |
-|---|---|---|
-| 이미지 | `backend/ frontend/ wrapper/ policies/ phase/ vendor/ act_aux/` | `docker load` |
-| 데몬 wheel | `bus/ shm/ robot/ cam/ rs/` | 호스트 venv |
-| 데몬 소스·유닛 | `daemons/ deploy/systemd/` | `~/piper-web-deploy/current` + systemd |
-
-`bus`·`shm`·`robot` 은 **양쪽**이다 — 이미지 안에도 들어가고 호스트 venv 에도
-깔린다. 한쪽만 올리면 컨테이너와 데몬이 같은 라이브러리의 다른 코드로 돈다.
+⚠ **다시 깔아도 데이터는 안 지운다.** `/srv/piper-data`,
+`~/.cache/huggingface/lerobot`(녹화한 데이터셋), `~/.config/piper-web` 셋은 그대로 둔다.
 
 ## 추론 로그
 
@@ -464,3 +174,11 @@ joint1.pos                           0.456      2.345
 | `*_overview.png` | 관절별 target / filtered / actual 비교 |
 | `*_error.png` | 관절별 추적 오차 (target - actual) |
 | `*_fps_queue.png` | FPS + 액션 큐 사이즈 시계열 |
+
+## 그 밖
+
+| | 어디 |
+|---|---|
+| 개발 (저장소에서 직접 실행) | [CLAUDE.md](CLAUDE.md) |
+| 릴리스 (이미지 굽기·배포) | [deploy/RELEASE-CHECKLIST.md](deploy/RELEASE-CHECKLIST.md) |
+| 라이선스 | [LICENSE](LICENSE) (Apache-2.0) · [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) |

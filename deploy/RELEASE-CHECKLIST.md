@@ -33,13 +33,39 @@
 
 ## 원터치 — 이 두 줄이 절차다
 
-```bash
-./deploy/release.sh v0.3.9              # 빌드 머신: 번들 하나
-scp dist/piper-web-v0.3.9.tar.gz 호스트:~/
+⚠ **태그가 빌드보다 먼저다.** `release.sh` 는 `git tag --sort=-v:refname` 의 첫 줄을
+직전 버전으로 삼아 diff 로 레이어를 정한다. 태그 없이 구우면 기준이 뒤로 밀려
+이미 배포한 것까지 다시 담는다 — 실측으로 "173 파일 변경" 이던 판정이 태그를 찍자
+**5 파일**이 됐다.
 
-# 호스트
-tar xzf piper-web-v0.3.9.tar.gz && ./v0.3.9/apply.sh
+```bash
+git push && git tag -a v0.3.10 -m "..." && git push origin v0.3.10
+
+# 레지스트리로 (망이 있을 때 — 권장)
+./deploy/registry.sh --stop
+PIPER_REGISTRY_BIND=0.0.0.0 ./deploy/registry.sh    # 배포할 때만 연다
+export PIPER_REGISTRY=piper-build:5000
+./deploy/release.sh v0.3.10 --dry-run               # 무엇이 올라갈지 먼저
+./deploy/release.sh v0.3.10                         # 이미지 push
+
+# 망 없는 현장 (USB)
+./deploy/release.sh v0.3.10 --offline                # 3.46GB tar
 ```
+
+호스트는 **스크립트 하나**로 받는다 — [README](../README.md#설치). 이미지 안에
+데몬·wheel·udev·compose·`apply.sh` 가 다 들어 있다.
+
+| | 전송량 |
+|---|---|
+| tar (`--offline`) | **3.46 GB** — 무엇을 고쳤든 매번 |
+| 레지스트리 (실측) | **104.5 MB** — 직전 버전을 가진 호스트가 받는 양 |
+
+⚠ `docker save` 는 **자식 이미지를 저장해도 부모 레이어를 전부 담는다**(측정: 부모
+28MB → 한 줄 얹은 자식 28MB). 그래서 베이스/앱을 갈라놔도 tar 로 보내는 한 매번
+전부 간다 — 전송량이 줄려면 레지스트리여야 한다.
+
+⚠ 베이스 이미지(서드파티 ~7GB)는 `release.sh` 가 **없거나 낡을 때만** 굽는다.
+`Dockerfile.base` 를 고치면 내용 해시가 달라져 자동으로 다시 굽는다.
 
 **어느 레이어가 필요한지 사람이 판단하지 않는다.** `release.sh` 가 직전 태그와의
 diff 로 정한다. 아래 [절차](#절차-수동)는 그 스크립트가 하는 일을 풀어 쓴 것이고,
@@ -221,6 +247,51 @@ git tag --sort=-v:refname | head -1     # 예: v0.3.1 → 다음은 v0.3.2
 | v4l2loopback | 불필요 (shm 방식 채택으로 대체됨) |
 
 ---
+
+## 처음부터 다시 깔려면
+
+⚠ **데이터를 지우지 않는다.** 아래 셋은 그대로 둔다:
+
+| 경로 | 내용 |
+|---|---|
+| `/srv/piper-data` | 컨테이너가 쓰는 모델·설정·로그 |
+| `~/.cache/huggingface/lerobot` | **녹화한 데이터셋** |
+| `~/.config/piper-web` | 사용자 설정 |
+
+⚠ **`docker-compose.override.yml` 을 먼저 빼돌린다.** 그 호스트의 포트 사정이
+거기 있다 — 192.168.0.120 은 `:80` 을 WMS 가 쓰고 있어 8081 로 빼 두었다.
+빠뜨리면 frontend 가 `:80` 에 붙는다(실제로 그렇게 됐다).
+
+```bash
+# 0. 호스트 사정 백업
+cp ~/piper-web-deploy/current/docker-compose.override.yml ~/override.keep.yml
+
+# 1. 세운다
+cd ~/piper-web-deploy/current && docker compose down
+systemctl --user stop    piper-{estopd,robotd,camerad,rsd}
+systemctl --user disable piper-{estopd,robotd,camerad,rsd}
+
+# 2. 지운다 — 데이터는 위 표의 경로라 여기 없다
+rm -rf ~/piper-web-deploy ~/.venvs/piper-daemons
+rm -f  ~/.config/systemd/user/piper-*.service
+systemctl --user daemon-reload
+docker images -q --filter reference='piper-web-*' | sort -u | xargs -r docker rmi -f
+
+# 3. 다시 깐다 — 평소 업데이트와 **같은 명령**
+./v0.3.9/apply.sh
+```
+
+`apply.sh` 는 `~/override.keep.yml` 이 있으면 알아서 되돌린다.
+
+### 실제로 해 본 기록 (2026-08-28, v0.3.9)
+
+| 단계 | 실측 |
+|---|---|
+| 번들 빌드 | 3.5GB (backend·frontend + wheel 5 + 데몬 + compose) |
+
+⚠ **이 절은 README 에 있었다.** README 는 이제 "스크립트 하나" 만 설명한다 —
+받는 사람이 볼 것과 배포하는 사람이 볼 것은 다르고, 섞여 있으면 받는 사람이
+자기 경우가 아닌 절차를 따라 하다 막힌다.
 
 ## 배포 이력
 

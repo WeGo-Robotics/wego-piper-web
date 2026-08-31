@@ -11,9 +11,9 @@
 #   PIPER_IMAGE=<주소>/piper-web-backend ./piper-install.sh   # 다른 곳에서 받기
 set -euo pipefail
 
-# ⚠ **아직 정해지지 않았다.** 공개 레지스트리 네임스페이스가 정해지면 이 줄을
-#   바꾼다. 그 전에는 `PIPER_IMAGE` 로 넘겨야 한다.
-IMAGE="${PIPER_IMAGE:-wego/piper-web-backend}"
+# GitHub 조직과 같은 곳에 둔다 — 공개 패키지는 무료이고, 저장소를 볼 수 있으면
+# 이미지도 볼 수 있다. 다른 곳에서 받으려면 `PIPER_IMAGE` 로 넘긴다.
+IMAGE="${PIPER_IMAGE:-ghcr.io/wego-robotics/piper-web-backend}"
 VERSION="${1:-latest}"
 WORK="${PIPER_WORK:-$HOME/piper-web-deploy}"
 

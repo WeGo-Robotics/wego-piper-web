@@ -166,6 +166,15 @@ APP_DF = REPO / "backend" / "Dockerfile"
 
 
 REGISTRY_SH = REPO / "deploy" / "registry.sh"
+CHECKLIST = REPO / "deploy" / "RELEASE-CHECKLIST.md"
+
+
+def _wipe_section() -> str:
+    """⚠ 이 절은 **README 에 있었다.** README 가 "스크립트 하나"만 설명하도록
+    줄면서 배포자용 절차는 체크리스트로 옮겼다 — 받는 사람이 볼 것과 배포하는
+    사람이 볼 것은 다르다. 내용 자체는 실기에서 겪어 얻은 것이라 지우지 않았다.
+    """
+    return CHECKLIST.read_text().split("## 처음부터 다시 깔려면", 1)[1].split("\n## ", 1)[0]
 
 
 def test_the_offline_path_still_exists():
@@ -533,7 +542,7 @@ def test_the_readme_wipe_backs_up_the_override_first():
     from pathlib import Path
 
     readme = (Path(__file__).resolve().parents[2] / "README.md").read_text()
-    wipe = readme.split("### 처음부터 다시 깔려면", 1)[1].split("###", 1)[0]
+    wipe = _wipe_section()
     assert "override.keep.yml" in wipe
     assert wipe.index("override.keep.yml") < wipe.index("rm -rf"), \
         "지우기 전에 백업하지 않는다"
@@ -543,6 +552,6 @@ def test_the_readme_names_the_data_that_survives():
     from pathlib import Path
 
     readme = (Path(__file__).resolve().parents[2] / "README.md").read_text()
-    wipe = readme.split("### 처음부터 다시 깔려면", 1)[1].split("###", 1)[0]
+    wipe = _wipe_section()
     for keep in ("/srv/piper-data", "huggingface/lerobot", ".config/piper-web"):
         assert keep in wipe, f"보존 목록에 {keep} 이 없다"
