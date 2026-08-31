@@ -144,6 +144,191 @@ def test_the_bundle_ships_the_compose_file():
     assert 'cp docker-compose.yml "$OUT/"' in src
 
 
+def test_apply_checks_every_host_tool_it_uses():
+    """⚠ **가장 큰 전제가 안 걸리고 있었다.** 이 스크립트의 설계는 "sudo 가 필요한
+    것은 찍어 주고 멈춘다"인데, 정작 `docker`·`docker compose`·`python3 -m venv` 는
+    확인조차 안 해서 한참 뒤 `command not found` 로 깨졌다. 새 호스트에서 가장
+    먼저 부딪히는 곳이 거기다."""
+    from conftest import code_only
+
+    src = code_only(APPLY.read_text())
+    head = src.split("if [ ${#NEED_APT[@]}", 1)[0]        # 0절: 전제 확인
+    body = src.split("if [ ${#NEED_APT[@]}", 1)[1]        # 그 뒤: 실제로 쓰는 곳
+    for tool, probe in (("docker load", "command -v docker"),
+                        ("docker compose", "docker compose version"),
+                        ("python3 -m venv", 'python3 -c "import venv"')):
+        assert tool in body, f"{tool} 을 안 쓴다 — 테스트가 낡았다"
+        assert probe in head, f"{tool} 을 쓰면서 확인은 안 한다"
+
+
+BASE_DF = REPO / "backend" / "Dockerfile.base"
+APP_DF = REPO / "backend" / "Dockerfile"
+
+
+def test_the_base_image_is_pinned_by_digest():
+    """⚠ `python:3.13-slim-bookworm` 은 **뜬 태그**다. 데비안 보안 패치가 들어갈
+    때마다 다른 이미지가 되고, 그러면 1번 레이어부터 갈려 아래 전부가 다시
+    구워진다. **실제로 그랬다** — v0.3.8 과 v0.3.9 는 레이어 24개 중 24개가
+    달랐다. 현장마다 다른 이미지가 도는데 그 차이를 아무도 모른다."""
+    import re as _re
+
+    m = _re.search(r"^FROM\s+(\S+)", BASE_DF.read_text(), _re.M)
+    assert m, "베이스에 FROM 이 없다"
+    assert "@sha256:" in m.group(1), f"다이제스트로 안 박혀 있다: {m.group(1)}"
+
+
+def test_the_base_holds_no_company_code():
+    """⚠ 베이스에 `COPY` 가 생기면 회사 코드가 섞일 수 있고, 그러면 이 이미지를
+    **공개 레지스트리에 올릴 수 없다** — 베이스를 가른 이유의 절반이 사라진다.
+    `build-base.sh` 가 컨텍스트 없이 굽기 때문에 빌드도 같이 실패하지만,
+    그 실패는 20분 뒤에 나므로 여기서 먼저 잡는다."""
+    from conftest import code_only
+
+    for line in code_only(BASE_DF.read_text()).splitlines():
+        assert not line.strip().upper().startswith(("COPY", "ADD")), \
+            f"베이스가 컨텍스트를 읽는다: {line.strip()}"
+
+
+def test_the_base_tag_is_single_sourced():
+    """`Dockerfile` 의 `ARG BASE_TAG` 기본값과 `BASE_VERSION` 이 갈라지면,
+    손으로 `docker build` 한 것과 `build-base.sh` 가 만든 것이 다른 이미지를
+    가리킨다 — 그런데 둘 다 성공해서 아무도 모른다."""
+    import re as _re
+
+    want = (REPO / "backend" / "BASE_VERSION").read_text().strip()
+    m = _re.search(r"^ARG BASE_TAG=(\S+)", APP_DF.read_text(), _re.M)
+    assert m, "Dockerfile 에 ARG BASE_TAG 가 없다"
+    assert m.group(1) == want, f"BASE_VERSION={want} 인데 ARG 기본값은 {m.group(1)}"
+
+
+def test_the_app_image_builds_on_the_base():
+    """앱 이미지가 베이스를 안 쓰고 원본 파이썬으로 되돌아가면, 갈라놓은 의미가
+    없어지는데 빌드는 멀쩡히 성공한다."""
+    import re as _re
+
+    m = _re.search(r"^FROM\s+(\S+)", APP_DF.read_text(), _re.M)
+    assert m and "piper-web-base" in m.group(1), f"베이스 위에 안 얹혔다: {m and m.group(1)}"
+
+
+def test_a_stale_base_is_rebuilt_not_skipped():
+    """⚠ **태그만 보고 건너뛰면 낡은 베이스가 남는다.** `Dockerfile.base` 를
+    고치고 `BASE_VERSION` 을 안 올리면, 아무도 눈치 못 챈 채 옛 스택 위에 앱이
+    얹힌다. 내용 해시를 라벨로 박아 대조한다."""
+    src = (REPO / "deploy" / "build-base.sh").read_text()
+    assert "sha256sum" in src, "베이스 내용을 해시하지 않는다"
+    assert "piper.base.sha" in src, "해시를 라벨로 안 박는다"
+    assert 'image inspect' in src and 'Labels' in src, "기존 이미지의 라벨과 대조하지 않는다"
+
+
+def test_release_builds_the_base_before_the_app():
+    """베이스가 없으면 `docker compose build` 가 죽는다 — 릴리스 도중에."""
+    src = RELEASE.read_text()
+    i_base = src.find("build-base.sh")
+    i_app = src.find('docker compose build "${IMAGES[@]}"')
+    assert i_base != -1, "release 가 베이스를 확인하지 않는다"
+    assert i_base < i_app, "베이스를 앱 빌드 뒤에 굽는다"
+
+
+def test_the_gpu_floor_matches_the_torch_wheel_in_the_dockerfile():
+    """⚠ `apply.sh` 의 `MIN_CUDA` 는 **이미지가 싣는 CUDA 런타임**과 같아야 한다.
+    Dockerfile 이 `--index-url .../cu130` 으로 torch 를 받으므로 그 값이 근거다.
+    휠을 cu126 으로 바꾸면서 이 상수를 안 고치면, 돌아갈 머신을 못 돌아간다고
+    막거나(과잉) 못 돌 머신을 통과시킨다(과소)."""
+    import re as _re
+
+    dockerfile = BASE_DF.read_text()
+    m = _re.search(r"download\.pytorch\.org/whl/cu(\d{3,4})", dockerfile)
+    assert m, "Dockerfile 에서 torch 휠의 CUDA 버전을 못 찾았다"
+    d = m.group(1)                       # cu130 → 13.0, cu126 → 12.6
+    expected = f"{d[:2]}.{d[2:]}"
+    mc = _re.search(r"^MIN_CUDA=([0-9.]+)", APPLY.read_text(), _re.M)
+    assert mc, "MIN_CUDA 가 없다"
+    assert mc.group(1) == expected, f"휠은 cu{d}({expected}) 인데 MIN_CUDA={mc.group(1)} 이다"
+
+
+def test_the_gpu_and_the_driver_get_different_prescriptions():
+    """⚠ **처방이 다르다.** 드라이버가 낮은 건 `apt install` 한 줄로 끝나지만,
+    컴퓨트 능력이 낮은 건 **GPU 를 바꿔야 한다** — torch 휠에 sm_75 미만 큐빈이
+    없고 PTX 도 없어 JIT 으로도 못 메꾼다. 둘을 같은 ✗ 로 뭉뚱그리면 현장에서
+    드라이버만 올려보다 시간을 버린다."""
+    src = APPLY.read_text()
+    cc_block = src.split("MIN_CC 이상만 돈다", 1)[0].rsplit("while IFS=,", 1)[1]
+    assert "NEED_APT" not in cc_block and "NEED_SUDO" not in cc_block, \
+        "컴퓨트 능력이 낮은 걸 설치로 고칠 수 있는 것처럼 안내한다"
+    drv_block = src.split("이 이미지는 $MIN_CUDA 이상이 필요하다", 1)[1][:300]
+    assert "NEED_APT+=(nvidia-driver" in drv_block, "드라이버는 고칠 방법을 줘야 한다"
+
+
+def test_apply_never_installs_packages_itself():
+    """설치는 **사람이 한다.** 스크립트가 몰래 apt 를 돌리면 그 머신에 무엇이
+    깔렸는지 아무도 모른다 — `test_apply_never_runs_sudo_itself` 와 같은 이유다."""
+    from conftest import code_only
+
+    for line in code_only(APPLY.read_text()).splitlines():
+        s = line.strip()
+        if s.startswith(("echo", "NEED_APT+=", "NEED_SUDO+=")) or "echo " in s:
+            continue
+        assert not re.search(r"\bapt(-get)?\s+install\b", s), f"직접 설치한다: {s}"
+
+
+def test_the_nvidia_toolkit_is_not_in_the_apt_line():
+    """⚠ `nvidia-container-toolkit` 은 **Ubuntu 아카이브에 없다** — NVIDIA 저장소를
+    먼저 붙여야 한다. `NEED_APT` 에 넣으면 "패키지를 찾을 수 없음" 으로 **그 한 줄
+    전체가 실패해** redis·docker 까지 같이 안 깔린다."""
+    from conftest import code_only
+
+    src = code_only(APPLY.read_text())
+    assert "nvidia-ctk" in src, "GPU 툴킷을 확인조차 안 한다"
+    # ⚠ **툴킷만** 막는다. `nvidia-driver-580` 은 우분투 아카이브에 있으므로
+    #   apt 한 줄에 들어가는 게 맞다 — 넓게 막으면 그것까지 잡는다.
+    assert "NEED_APT+=(nvidia-container-toolkit" not in src.replace(" ", ""), \
+        "툴킷이 apt 한 줄에 섞였다 — NVIDIA 저장소가 없으면 그 줄 전체가 실패한다"
+
+
+def test_apply_skips_the_redis_config_when_redis_is_absent():
+    """redis 가 아직 없는데 `/etc/redis/redis.conf` 에 sed 를 걸라고 시키면 그
+    명령이 실패하고, 사람은 왜 실패했는지 모른다."""
+    src = APPLY.read_text()
+    block = src.split("redis 유닉스 소켓", 1)[0]
+    assert 'if command -v redis-server' in block[-400:], "redis 유무로 안 감싼다"
+
+
+def test_the_bundle_ships_the_udev_rules():
+    """⚠ **번들에 빠져 있었다.** 없으면 새 머신에서 RealSense 는 libusb 로 장치를
+    못 열어 **카메라 0개**가 되고, CAN 은 `can0`/`can1` 로 붙어 **저장된 팔
+    등록이 반대 팔을 가리킨다.** 셋 합쳐 8KB 라 아낄 이유가 없다.
+
+    `list-can-adapters.py` 도 같이 간다 — 규칙의 시리얼이 그 머신 것이 아닐 때
+    무엇으로 고쳐야 하는지 알려면 그게 필요하다."""
+    src = RELEASE.read_text()
+    for name in ("99-piper-can.rules", "99-realsense-libusb.rules",
+                 "list-can-adapters.py"):
+        assert f'"$OUT/udev/"' in src and name in src, f"번들에 {name} 이 없다"
+    # 저장소에 실제로 있어야 `cp` 가 성립한다
+    for rel in ("deploy/udev/99-piper-can.rules",
+                "backend/udev/99-realsense-libusb.rules",
+                "deploy/udev/list-can-adapters.py"):
+        assert (REPO / rel).is_file(), f"{rel} 이 없다"
+
+
+def test_apply_checks_the_can_serials_against_what_is_attached():
+    """⚠ CAN 규칙에는 **번들을 구운 머신의 시리얼**이 박혀 있다. 어댑터가 다른
+    머신에서는 어느 줄도 매칭되지 않는데 **udev 는 그걸 에러로 치지 않는다** —
+    증상은 "팔 0개" 뿐이라 원인을 찾기 어렵다. 그래서 apply 가 대조한다."""
+    src = APPLY.read_text()
+    assert "/sys/bus/usb/devices" in src, "꽂힌 어댑터를 안 읽는다"
+    assert "1d50" in src and "606f" in src, "gs_usb 장치를 안 고른다"
+    assert "list-can-adapters.py" in src, "고치는 방법을 안 알려준다"
+
+
+def test_apply_tolerates_a_bundle_without_udev():
+    """옛 번들에는 `udev/` 가 없다. `set -u`·`set -e` 아래에서 빈 글롭이
+    스크립트를 죽이면 **업데이트가 통째로 막힌다.**"""
+    src = APPLY.read_text()
+    block = src.split('for r in "$HERE"/udev/*.rules', 1)[1][:200]
+    assert "continue" in block, "빈 글롭을 안 걸러낸다"
+
+
 def test_the_bundle_never_ships_the_override():
     """⚠ `docker-compose.override.yml` 은 **그 호스트의 사정**이다.
     192.168.0.120 은 :80 을 WMS 가, :8080 을 다른 node 앱이 쓰고 있어 8081 로

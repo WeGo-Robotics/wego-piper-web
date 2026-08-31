@@ -75,6 +75,9 @@ IMAGES=()
 [ $need_backend  = 1 ] && IMAGES+=(backend)
 [ $need_frontend = 1 ] && IMAGES+=(frontend)
 if [ ${#IMAGES[@]} -gt 0 ]; then
+  # ⚠ 앱 이미지는 베이스 위에 얹힌다 — 없거나 낡으면 compose build 가 죽는다.
+  #   릴리스마다 굽는 게 아니라, 없을 때만 굽는다(build-base.sh 가 판단).
+  case " ${IMAGES[*]} " in *" backend "*) "$REPO/deploy/build-base.sh" ;; esac
   echo "· 이미지 빌드: ${IMAGES[*]}"
   docker compose build "${IMAGES[@]}"
   TAGS=()
@@ -117,6 +120,19 @@ fi
 #   빼 두었다. 번들이 덮으면 그 설정이 조용히 사라지고 포트 충돌로 안 뜬다.
 cp docker-compose.yml "$OUT/"
 cp deploy/env.example "$OUT/backend.env.example"
+
+# ── udev 규칙 — **항상 넣는다** ───────────────────────────────────────────
+# ⚠ 이게 빠져 있었다. 새 머신에서는 RealSense 가 libusb 로 장치를 못 열어
+#   **카메라가 0개**로 잡히고, CAN 은 `can0`/`can1` 로 붙어 **저장된 팔 등록이
+#   반대 팔을 가리킨다.** 셋 합쳐 8KB 라 레이어 판정에서 뺄 이유가 없다.
+#
+# ⚠ CAN 규칙에는 **이 배선의 시리얼이 박혀 있다.** 어댑터가 다른 머신에 그대로
+#   깔면 아무 줄도 매칭되지 않아 이름이 조용히 안 붙는다 — 그래서
+#   `list-can-adapters.py` 를 같이 보내고 `apply.sh` 가 꽂힌 어댑터와 대조한다.
+mkdir -p "$OUT/udev"
+cp deploy/udev/99-piper-can.rules         "$OUT/udev/"
+cp backend/udev/99-realsense-libusb.rules "$OUT/udev/"
+cp deploy/udev/list-can-adapters.py       "$OUT/udev/"
 
 # ── 적용 스크립트와 매니페스트 ────────────────────────────────────────────
 cp "$REPO/deploy/apply.sh" "$OUT/apply.sh"; chmod +x "$OUT/apply.sh"

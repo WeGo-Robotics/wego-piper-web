@@ -138,5 +138,9 @@ def test_the_image_ships_grpc():
     """lerobot 의 async_inference 는 들어 있는데 `grpc` 가 없어서 막혔다."""
     from pathlib import Path
 
-    dockerfile = (Path(__file__).resolve().parents[2] / "backend" / "Dockerfile").read_text()
+    # ⚠ 이미지는 **두 파일**로 만들어진다 — 서드파티는 `Dockerfile.base`, 우리
+    #   코드는 `Dockerfile`. grpcio 는 서드파티라 베이스로 옮겨갔다. 한쪽만 보면
+    #   옮겼을 뿐인데 "빠졌다"고 잘못 말한다.
+    root = Path(__file__).resolve().parents[2] / "backend"
+    dockerfile = (root / "Dockerfile.base").read_text() + (root / "Dockerfile").read_text()
     assert "grpcio" in dockerfile, "이미지에 grpc 가 없으면 원격 추론이 안 뜬다"

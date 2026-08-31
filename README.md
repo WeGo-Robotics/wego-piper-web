@@ -124,13 +124,37 @@ npx tsc --noEmit    # 타입 체크
 `lerobot_robot_piper`, `wego_piper` 는 공개 PyPI에 없어 `vendor/` 에 스냅샷으로 포함되어 있다.
 소스가 바뀌면 [vendor/README.md](vendor/README.md) 의 갱신 방법을 따라 다시 떠야 한다.
 
+### 이미지가 둘로 갈라져 있다
+
+| 파일 | 만드는 것 | 내용 | 언제 다시 굽나 |
+|---|---|---|---|
+| [backend/Dockerfile.base](backend/Dockerfile.base) | `piper-web-base:<BASE_VERSION>` | 데비안·apt·venv·lerobot·torch(cu130)·piper_sdk·grpcio — **서드파티만, ~7GB** | 서드파티 스택이 바뀔 때만 |
+| [backend/Dockerfile](backend/Dockerfile) | `piper-web-backend` | bus·shm·robot·vendor·backend·wrapper·policies — **회사 코드만, ~390MB** | 릴리스마다 |
+
+⚠ **베이스에는 `COPY` 를 넣지 마라.** [build-base.sh](deploy/build-base.sh) 가 컨텍스트 없이
+굽기 때문에 넣는 순간 빌드가 실패한다 — 회사 코드가 안 섞여야 이 이미지를 공개
+레지스트리에 올릴 수 있다.
+
+⚠ **베이스는 다이제스트로 박혀 있다.** `python:3.13-slim-bookworm` 은 뜬 태그라
+데비안 패치마다 다른 이미지가 되고, 그러면 1번 레이어부터 갈려 아래 전부가 다시
+구워진다. 실제로 그랬다 — v0.3.8 과 v0.3.9 는 **레이어 24개 중 24개가 달랐다.**
+베이스를 올릴 때는 `BASE_VERSION` 과 다이제스트를 같이 바꾼다:
+
+```bash
+docker buildx imagetools inspect python:3.13-slim-bookworm | grep Digest
+```
+
 ### 실행
 
 ```bash
-docker compose up -d --build      # 빌드 + 기동
+./deploy/build-base.sh            # 베이스 (없을 때만 굽는다. 낡았으면 알아서 다시)
+docker compose up -d --build      # 앱 빌드 + 기동
 docker compose logs -f backend    # 백엔드 로그
 docker compose down               # 정지
 ```
+
+⚠ 베이스 없이 `docker compose build` 를 부르면 `pull access denied for
+piper-web-base` 로 죽는다. `release.sh` 는 알아서 먼저 확인한다.
 
 브라우저에서 `http://<호스트IP>/` 접속 (nginx `:80` → bridge 네트워크의 `backend:8000` 프록시).
 
@@ -196,11 +220,49 @@ tar xzf piper-web-v0.3.9.tar.gz
 sudo 가 필요한 것이 남아 있으면 **명령을 찍고 멈춘다.** 그것만 실행하고 다시 부른다:
 
 ```bash
+sudo apt update && sudo apt install -y docker.io docker-compose-v2 python3-venv redis-server
+sudo usermod -aG docker $USER          # 다시 로그인해야 반영된다
 sudo mkdir -p /srv/piper-data && sudo chown $USER /srv/piper-data
 sudo sed -i 's|^# *unixsocket |unixsocket |' /etc/redis/redis.conf
 sudo systemctl restart redis-server
 sudo loginctl enable-linger $USER
+sudo cp ~/v0.3.9/udev/*.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
 ./v0.3.9/apply.sh
+```
+
+⚠ **`nvidia-container-toolkit` 은 위 apt 한 줄에 없다.** Ubuntu 아카이브에 없어서
+[NVIDIA 저장소](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)를
+먼저 붙여야 한다 — 같이 넣으면 "패키지를 찾을 수 없음" 으로 **그 줄 전체가 실패해**
+docker 도 redis 도 안 깔린다. 없으면 compose 의 GPU 예약이 실패한다.
+
+⚠ **GPU 에 하한이 있다.** 이미지가 싣는 torch 는 cu130 빌드라 컴파일된 아키텍처가
+`sm_75·80·86·90·100·120` 뿐이고 **PTX 가 없어 JIT 으로도 못 메꾼다.**
+
+| 항목 | 기준 | 못 맞추면 |
+|---|---|---|
+| 컴퓨트 능력 | **7.5 이상** (Turing / RTX 20xx·T4) | **GPU 를 바꿔야 한다.** Pascal(GTX 10xx)·Volta(V100)는 드라이버를 올려도 안 된다 |
+| 드라이버 CUDA | **13.0 이상** | `sudo apt install nvidia-driver-580` + 재부팅 |
+
+`apply.sh` 가 둘 다 확인하고 **처방을 갈라서** 찍는다 — 드라이버만 올려보다 시간을
+버리는 일이 없도록. 값이 바뀌면 컨테이너에 직접 물어서 고친다:
+
+```bash
+docker run --rm --gpus all --entrypoint python piper-web-backend:latest \
+  -c 'import torch; print(torch.cuda.get_arch_list())'
+```
+
+⚠ **udev 규칙은 번들에 들어 있다** — 저장소를 안 받아도 된다. 없으면 조용히
+실패한다: RealSense 는 libusb 로 장치를 못 열어 **카메라가 0개**로 잡히고, CAN 은
+`can0`/`can1` 로 붙어 **저장된 팔 등록이 반대 팔을 가리킨다.**
+
+⚠ **CAN 규칙의 시리얼은 번들을 구운 머신의 배선이다.** 어댑터가 다르면 어느 줄도
+매칭되지 않는데 udev 는 그걸 에러로 안 친다 — `apply.sh` 가 꽂힌 어댑터와 대조해
+경고한다. 경고가 나오면 규칙을 이 머신에 맞게 고친다:
+
+```bash
+python3 v0.3.9/udev/list-can-adapters.py           # 시리얼 ↔ 인터페이스
+python3 v0.3.9/udev/list-can-adapters.py --watch   # 팔을 움직여 어느 쪽인지 확인
 ```
 
 ### 3. 확인
