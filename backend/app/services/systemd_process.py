@@ -83,6 +83,9 @@ class SystemdProcess:
         self._log_thread: threading.Thread | None = None
         self._log_proc: subprocess.Popen | None = None
         self._log_stop = threading.Event()
+        # 이 게이트웨이가 이 유닛을 띄운 적이 있는가. 없으면 저널의 옛 줄은
+        # **남의 실행 기록**이라 사유로 보여주면 안 된다.
+        self._started_once = False
 
     # ── 상태 ──
 
@@ -116,6 +119,27 @@ class SystemdProcess:
         except (IndexError, ValueError):
             return None
         return pid or None
+
+    def recent_log(self, lines: int = 20) -> list[str]:
+        """이 유닛의 저널 마지막 몇 줄. **죽은 이유를 보여주는 유일한 단서다.**
+
+        ⚠ `start()` 가 `--collect` 로 띄우므로 유닛은 **끝나는 즉시 사라진다.**
+        그래서 `is-active` 는 실패한 종료도 `inactive` 로 답하고, 우리 상태는
+        정상 종료(IDLE)로 읽는다 — 화면에는 "그냥 꺼졌다"만 뜬다. 종료 코드도
+        `Result` 도 남지 않으므로, 사후에 남는 것은 저널뿐이다.
+
+        ⚠ 유닛 이름으로 읽으므로 **지난 실행의 줄이 섞일 수 있다.** 그래서
+        이 게이트웨이가 띄운 적이 있을 때만 돌려준다 — 그 전 것은 남의 기록이다.
+        """
+        if not self._started_once:
+            return []
+        try:
+            out = subprocess.run(
+                ["journalctl", "--user", "-u", self.unit, "--lines", str(lines), "-o", "cat"],
+                capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return []
+        return [ln for ln in out.splitlines() if ln.strip()]
 
     def _set_state(self, state: ProcessState) -> None:
         self._state = state
@@ -164,6 +188,7 @@ class SystemdProcess:
             self._set_state(ProcessState.ERROR)
             raise RuntimeError(f"유닛 시작 실패: {(out or b'').decode(errors='replace')}")
 
+        self._started_once = True
         self._set_state(ProcessState.RUNNING)
         self._start_log_stream()
         logger.info("유닛 시작: %s", self.unit)

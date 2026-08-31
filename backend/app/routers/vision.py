@@ -224,8 +224,16 @@ async def yolod_status():
         names, meta = [], None
     # model: yolod 가 버스에 발행하는 자기소개 (모델·디바이스·클래스 수 등).
     # 프로세스는 도는데 아직 None 이면 모델 로드 중이라는 뜻이다.
-    return {"state": _yolod_pm.state.value, "pid": _yolod_pm.pid, "cams": names,
-            "model": meta}
+    # ⚠ **죽었으면 왜 죽었는지 같이 준다.** 유닛이 `--collect` 로 뜨므로 실패한
+    #   종료도 흔적 없이 사라지고, 화면에는 "꺼졌다"만 남는다 — 모델 이름이
+    #   틀렸는지 GPU 가 없는지 사용자가 알 길이 없었다. 저널 꼬리가 유일한 단서다.
+    state = _yolod_pm.state
+    out = {"state": state.value, "pid": _yolod_pm.pid, "cams": names, "model": meta}
+    if not _yolod_pm.is_running:
+        tail = _yolod_pm.recent_log()
+        if tail:
+            out["log"] = tail[-20:]
+    return out
 
 
 # ── 검출 조회 ──

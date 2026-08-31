@@ -4,6 +4,7 @@ subprocess.Popen으로 CLI를 실행하고 stdout/stderr를 실시간 파싱.
 """
 
 import asyncio
+from collections import deque
 import enum
 import logging
 import signal
@@ -65,6 +66,10 @@ class ProcessManager:
         self._on_state_change: Callable[[ProcessState], None] | None = None
         self._log_task: asyncio.Task | None = None
         self._current_cmd: list[str] = []
+        # ⚠ **죽은 이유는 마지막 몇 줄에 있다.** 없으면 화면에 "꺼졌다"만 남고
+        #   모델 이름이 틀렸는지 GPU 가 없는지 알 길이 없다. `systemd_process`
+        #   쪽과 같은 표면을 유지한다 — 둘은 같은 자리에 들어간다.
+        self._log_tail: deque[str] = deque(maxlen=200)
 
     @property
     def state(self) -> ProcessState:
@@ -73,6 +78,14 @@ class ProcessManager:
     @property
     def pid(self) -> int | None:
         return self._process.pid if self._process else None
+
+    @property
+    def is_running(self) -> bool:
+        return self._state in (ProcessState.RUNNING, ProcessState.STARTING)
+
+    def recent_log(self, lines: int = 20) -> list[str]:
+        """마지막 출력 몇 줄. 죽은 이유를 보여주는 단서다."""
+        return list(self._log_tail)[-lines:]
 
     def set_log_callback(self, cb: Callable[[str], None]) -> None:
         self._on_log = cb
@@ -138,8 +151,10 @@ class ProcessManager:
         try:
             async for line_bytes in self._process.stderr:
                 line = line_bytes.decode("utf-8", errors="replace").rstrip()
-                if line and self._on_log:
-                    self._on_log(line)
+                if line:
+                    self._log_tail.append(line)
+                    if self._on_log:
+                        self._on_log(line)
         except asyncio.CancelledError:
             pass
 
@@ -149,6 +164,8 @@ class ProcessManager:
         try:
             async for line_bytes in self._process.stdout:
                 line = line_bytes.decode("utf-8", errors="replace").rstrip()
+                if line:
+                    self._log_tail.append(line)
                 if self._on_log:
                     self._on_log(line)
             # 프로세스 종료 대기

@@ -59,7 +59,7 @@ class RTDetr:
         return self
 
     def predict(self, image, conf: float = 0.25, device: str | None = None,
-                verbose: bool = False, **_ignored):
+                verbose: bool = False, **_ignored) -> list["_Result"]:
         """⚠ `imgsz` 는 받기만 하고 쓰지 않는다. RT-DETR 은 전처리기가 자기
         입력 크기로 맞추므로, 밖에서 정한 값을 억지로 넣으면 정확도만 떨어진다.
         인자를 지우지 않는 이유는 호출부를 안 고치기 위해서다.
@@ -90,8 +90,12 @@ class RTDetr:
         r = self.processor.post_process_object_detection(
             out, target_sizes=torch.tensor([[h, w]], device=self.device),
             threshold=conf)[0]
-        return _Result(self.names,
-                       _Boxes(r["boxes"].cpu(), r["scores"].cpu(), r["labels"].cpu()))
+        # ⚠ **리스트로 돌려준다.** ultralytics 는 이미지 배치별 결과 리스트를 주고,
+        #   호출부가 `model.predict(...)[0]` 으로 첫 장을 꺼낸다. 하나만 돌려주면
+        #   `TypeError: '_Result' object is not subscriptable` 로 죽는다 —
+        #   실기에서 그렇게 걸렸다. 모양을 흉내 내는 어댑터의 일이다.
+        return [_Result(self.names,
+                        _Boxes(r["boxes"].cpu(), r["scores"].cpu(), r["labels"].cpu()))]
 
 
 def load_detector(weights: str, device: str = "cpu"):

@@ -157,3 +157,21 @@ def test_the_directories_themselves_survive():
         r = subprocess.run(["git", "check-ignore", "-q", rel],
                            cwd=_REPO, capture_output=True)
         assert r.returncode != 0, f"{rel} 까지 무시하면 디렉토리가 안 남는다"
+
+
+def test_predict_returns_a_list_like_ultralytics():
+    """⚠ **회귀.** ultralytics 는 이미지별 결과 **리스트**를 주고, 두 데몬 모두
+    `model.predict(...)[0]` 으로 첫 장을 꺼낸다. 어댑터가 하나만 돌려주자
+    `TypeError: '_Result' object is not subscriptable` 로 검출이 즉사했다 —
+    모델은 멀쩡히 로드된 뒤였으므로 "켜자마자 꺼진다"로만 보였다.
+    """
+    import inspect
+
+    from detector_loader import RTDetr
+
+    src = inspect.getsource(RTDetr.predict)
+    assert "return [" in src, "리스트로 안 돌려준다"
+    for daemon in ("yolod.py", "yolo_prelabel.py"):
+        body = (_DAEMONS / daemon).read_text()
+        if "model.predict(" in body:
+            assert ")[0]" in body, f"{daemon} 의 호출 형태가 바뀌었다 — 어댑터도 같이 봐야 한다"
