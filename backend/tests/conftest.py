@@ -40,6 +40,30 @@ os.environ["PIPER_BUS_PREFIX"] = "pipertest"
 
 
 @pytest.fixture(autouse=True)
+def healthy_can(monkeypatch):
+    """**이 기계의 CAN 상태를 아무 테스트도 읽지 않는다.**
+
+    ⚠ 실기에서 `can1` 이 ERROR-PASSIVE 로 넘어가자 단위 테스트 9개가 우수수
+    깨졌다. 로직 테스트가 그 기계의 상태에 매이면 그때부터 아무것도 못 믿는다 —
+    실패가 코드 탓인지 케이블 탓인지 가릴 수 없고, CI 에서는 아예 못 돈다.
+
+    ⚠ **막는 자리가 `require_healthy_bus` 면 안 된다.** `jog`·`relay` 가
+    `from app.services.teleop import require_healthy_bus` 로 이름을 미리 묶으므로
+    `teleop` 쪽을 패치해도 안 먹는다. 실제로 두 파일이 그렇게 패치하고 있었고,
+    **문자열만 보는 메타 테스트까지 있어서 아무도 안 먹는 줄 몰랐다.**
+
+    그래서 기계를 읽는 **가장 아래**를 막는다. `can_unhealthy_reason` 은 순수
+    로직이라 그대로 두고(그것도 테스트 대상이다), `can_state` 만 고정한다.
+    특정 버스 상태를 보고 싶은 테스트는 스스로 다시 패치하면 된다.
+    """
+    try:
+        from piper_robot import can
+    except Exception:
+        return          # piper_robot 미설치 — 관련 테스트는 어차피 skip 된다
+    monkeypatch.setattr(can, "can_state", lambda iface: can.CAN_HEALTHY)
+
+
+@pytest.fixture(autouse=True)
 def isolated_bus(monkeypatch):
     """모든 테스트(와 그 자식 프로세스)를 테스트 DB 로 돌린다.
 

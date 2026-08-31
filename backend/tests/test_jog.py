@@ -40,11 +40,11 @@ def session(monkeypatch):
     monkeypatch.setattr(shm_arm, "ActionWriter", _FakeWriter)
     monkeypatch.setattr(shm_arm, "list_segments", lambda: [])
     monkeypatch.setattr(shm_arm, "unlink", lambda name: True)
-    # ⚠ **이 기계의 CAN 상태를 읽지 않는다.** 세션 시작이 버스를 확인하도록 만든 뒤
-    #   실기에서 can1 이 내려가 있자 단위 테스트가 우수수 깨졌다 — 로직 테스트가
-    #   하드웨어에 매이면 그때부터 아무것도 못 믿는다.
+    # ⚠ CAN 상태는 **conftest 의 `healthy_can`** 이 막는다. 여기서
+    #   `teleop.require_healthy_bus` 를 패치하는 건 효과가 없다 — jog·relay 가
+    #   그 이름을 `from ... import` 로 미리 묶기 때문이다. 실제로 그렇게 적혀
+    #   있었고 아무도 안 먹는 줄 몰랐다.
     from app.services import teleop
-    monkeypatch.setattr(teleop, "require_healthy_bus", lambda iface: None)
     monkeypatch.setattr(teleop, "enable_torque", lambda iface: None)
     from app.services import teleop
     teleop.teleop_session.stop()
@@ -278,8 +278,9 @@ def test_a_dead_bus_is_reported_instead_of_a_silent_success():
     from piper_robot.can import CAN_HEALTHY, can_unhealthy_reason
 
     assert CAN_HEALTHY == "ERROR-ACTIVE"
-    # 모르는 인터페이스는 판정하지 않는다 — 모르는 것과 나쁜 것은 다르다
-    assert can_unhealthy_reason("canX_없음") is None
+    # 모르는 인터페이스 경로는 `test_an_unknown_interface_is_not_called_bad` 가 본다 —
+    # conftest 가 버스를 건강하게 고정하므로 여기서 부르면 단언이 공허해진다
+    assert can_unhealthy_reason is not None
 
 
 def test_sessions_refuse_to_start_on_a_dead_bus():
@@ -341,8 +342,28 @@ def test_the_logic_tests_do_not_read_this_machines_can_bus():
     세션 시작이 버스를 확인하게 만들면서 테스트가 하드웨어에 매였다. 로직
     테스트가 그 기계의 상태에 매이면 그때부터 아무것도 못 믿는다 — 실패가
     코드 탓인지 케이블 탓인지 갈 수 없다.
+
+    ⚠ **이 테스트는 예전에 문자열만 봤다.** 두 파일에
+    `monkeypatch.setattr(teleop, "require_healthy_bus", ...)` 가 있는지만 확인했는데,
+    `jog`·`relay` 가 그 이름을 `from ... import` 로 미리 묶으므로 **그 패치는 아무
+    효과가 없었다.** 문자열은 있고 보호는 없는 상태로 통과했고, 실기 `can1` 이
+    나빠지자 9개가 깨져서야 드러났다. 이제 **실제로 막히는지**를 본다.
     """
-    for f in ("test_jog.py", "test_relay.py"):
-        src = (Path(__file__).parent / f).read_text()
-        assert 'monkeypatch.setattr(teleop, "require_healthy_bus"' in src, \
-            f"{f} 가 실제 CAN 을 읽는다"
+    from app.services.teleop import require_healthy_bus
+    from piper_robot import can
+
+    # 이 기계에 실재하는 인터페이스 이름으로 불러도 통과해야 한다
+    require_healthy_bus("can0")
+    require_healthy_bus("can1")
+
+    # 그리고 그 통과가 "우연히 건강해서"가 아니라 conftest 가 고정했기 때문이다
+    assert can.can_state("아무거나") == can.CAN_HEALTHY
+
+
+def test_an_unknown_interface_is_not_called_bad(monkeypatch):
+    """모르는 것과 나쁜 것은 다르다. conftest 가 버스를 건강하게 고정하므로,
+    이 경로를 보려면 **여기서 직접** 모르는 상태를 만들어야 한다."""
+    from piper_robot import can
+
+    monkeypatch.setattr(can, "can_state", lambda iface: None)
+    assert can.can_unhealthy_reason("canX_없음") is None

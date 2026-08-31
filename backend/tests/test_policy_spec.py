@@ -229,10 +229,17 @@ def test_probe_wrapper_derives_taps_from_the_spec():
     assert 'choices=["siglip", "connector"]' not in code
     assert 'args.tap if args.policy_type' not in code, "기본 tap 을 정책 이름으로 고른다"
     assert "default_tap(args.policy_type)" in code
-    # ⚠ `run_smolvla` / `run_act` 갈림은 **남아야 한다.** 아키텍처마다 특징을 뽑는
-    # 코드가 다르고, 그건 데이터가 아니라 로직이다. 스펙에 담으려 하면 YAML 안에
+    # ⚠ smolvla / act 갈림은 **남아야 한다.** 아키텍처마다 특징을 뽑는 코드가
+    # 다르고, 그건 데이터가 아니라 로직이다. 스펙에 담으려 하면 YAML 안에
     # 프로그램이 생긴다 — 문서가 말하는 "표현이 안 되면 진짜 로직" 이 이 경우다.
-    assert "run_smolvla(args, rgb)" in code
+    #
+    # ⚠ **호출 문자열로 고정하지 않는다.** 예전에는 `run_smolvla(args, rgb)` 를
+    #   그대로 찾았는데, e8120a1 이 "이미지마다 실행"을 "한 번 로드하고 encode
+    #   클로저를 돌려준다"로 바꾸면서 `load_smolvla(args)` 가 됐다. 갈림은 그대로
+    #   남았는데 테스트만 깨졌다 — 지키려는 건 **갈림의 존재**지 그 호출 형태가 아니다.
+    assert re.search(r"def (run|load)_smolvla\b", code), "smolvla 전용 경로가 없다"
+    assert re.search(r"def (run|load)_act\b", code), "act 전용 경로가 없다"
+    assert re.search(r'args\.policy_type == "smolvla"', code), "둘을 가르는 곳이 없다"
 
 
 def test_bootstrap_and_wrapper_share_one_class_table():

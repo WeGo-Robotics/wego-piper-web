@@ -46,11 +46,11 @@ def wired(monkeypatch):
     monkeypatch.setattr(shm_arm, "ActionWriter", _FakeWriter)
     monkeypatch.setattr(shm_arm, "list_segments", lambda: [])
     monkeypatch.setattr(shm_arm, "unlink", lambda name: True)
-    # ⚠ **이 기계의 CAN 상태를 읽지 않는다.** 세션 시작이 버스를 확인하도록 만든 뒤
-    #   실기에서 can1 이 내려가 있자 단위 테스트가 우수수 깨졌다 — 로직 테스트가
-    #   하드웨어에 매이면 그때부터 아무것도 못 믿는다.
+    # ⚠ CAN 상태는 **conftest 의 `healthy_can`** 이 막는다. 여기서
+    #   `teleop.require_healthy_bus` 를 패치하는 건 효과가 없다 — jog·relay 가
+    #   그 이름을 `from ... import` 로 미리 묶기 때문이다. 실제로 그렇게 적혀
+    #   있었고 아무도 안 먹는 줄 몰랐다.
     from app.services import teleop
-    monkeypatch.setattr(teleop, "require_healthy_bus", lambda iface: None)
     monkeypatch.setattr(teleop, "enable_torque", lambda iface: None)
     teleop.teleop_session.stop()
 
