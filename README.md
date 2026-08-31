@@ -194,11 +194,40 @@ CAN·USB·커널 모듈은 컨테이너가 다룰 수 있는 것이 아니다.
 
 ### 1. 빌드 머신
 
+**레지스트리로 보내기 (망이 있을 때 — 권장)**
+
 ```bash
-./deploy/release.sh v0.3.9 --dry-run   # 무엇이 올라갈지 먼저 본다
-./deploy/release.sh v0.3.9             # 번들 하나 (dist/piper-web-v0.3.9.tar.gz)
-scp dist/piper-web-v0.3.9.tar.gz <호스트>:~/
+./deploy/registry.sh                        # 사설 레지스트리 (한 번만)
+export PIPER_REGISTRY=192.168.0.42:5000     # 호스트가 받을 주소
+./deploy/release.sh v0.3.10 --dry-run       # 무엇이 올라갈지 먼저 본다
+./deploy/release.sh v0.3.10                 # 이미지는 push, 번들은 240KB
+scp dist/piper-web-v0.3.10.tar.gz <호스트>:~/
 ```
+
+**tar 로 보내기 (망 없는 현장 — USB)**
+
+```bash
+./deploy/release.sh v0.3.10 --offline       # 번들 하나 (3.46GB)
+```
+
+⚠ **왜 레지스트리인가.** `docker save` 는 자식 이미지를 저장해도 **부모 레이어를
+전부 담는다**(측정: 부모 28MB → 한 줄 얹은 자식 28MB). 그래서 베이스/앱을 갈라놔도
+tar 인 한 매번 3.46GB 가 통째로 간다. 레지스트리는 호스트에 없는 레이어만 준다:
+
+| | 전송량 |
+|---|---|
+| tar (`--offline`) | **3.46 GB** — 무엇을 고쳤든 매번 |
+| 레지스트리 (실측) | **104.5 MB** — v0.3.9 를 가진 호스트가 다음 릴리스에 받는 양 |
+
+⚠ **미는 주소와 받는 주소가 다르다.** 도커는 `127.0.0.0/8` 만 기본으로 평문
+레지스트리로 인정한다. 빌드 머신이 자기 LAN IP 로 밀면 `server gave HTTP response
+to HTTPS client` 로 거부당하므로 미는 쪽은 `localhost` 를 쓴다 — 그래서 빌드
+머신에는 `daemon.json` 설정이 필요 없다. `PIPER_REGISTRY` 에는 **호스트가 받을**
+주소를 넣는다. 같은 레지스트리라 다이제스트는 같다.
+
+⚠ **로봇 호스트는 그 주소를 신뢰해야 한다.** `/etc/docker/daemon.json` 에
+`{"insecure-registries": ["192.168.0.42:5000"]}` 를 넣고 도커를 재시작한다 —
+`apply.sh` 가 확인하고 안 돼 있으면 명령을 찍는다. 망 밖으로 낼 거면 TLS 부터 붙인다.
 
 `--dry-run` 이 이렇게 답한다:
 

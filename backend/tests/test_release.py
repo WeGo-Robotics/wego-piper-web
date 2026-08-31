@@ -165,6 +165,63 @@ BASE_DF = REPO / "backend" / "Dockerfile.base"
 APP_DF = REPO / "backend" / "Dockerfile"
 
 
+REGISTRY_SH = REPO / "deploy" / "registry.sh"
+
+
+def test_the_offline_path_still_exists():
+    """⚠ **현장 USB 배포를 버리면 안 된다.** 레지스트리가 전송량을 33배 줄이지만
+    (실측 3.46GB → 104.5MB), 망이 없는 현장이 실재한다. `PIPER_REGISTRY` 가 비었거나
+    `--offline` 이면 예전처럼 tar 를 만들어야 한다."""
+    src = RELEASE.read_text()
+    assert "--offline" in src, "오프라인 강제 수단이 없다"
+    assert "docker save" in src, "tar 경로가 사라졌다"
+    assert 'if [ -n "${PIPER_REGISTRY:-}" ] && [ $OFFLINE = 0 ]' in src, \
+        "레지스트리를 조건 없이 쓴다 — 망 없는 현장이 막힌다"
+
+
+def test_the_push_address_and_the_pull_address_are_separate():
+    """⚠ 도커는 `127.0.0.0/8` 만 기본으로 평문 레지스트리로 인정한다. 빌드 머신이
+    자기 LAN IP 로 밀면 **"server gave HTTP response to HTTPS client"** 로 거부당한다
+    (실제로 그렇게 막혔다). 미는 쪽은 `localhost`, 매니페스트에는 호스트가 받을
+    LAN 주소 — 같은 레지스트리라 다이제스트는 같다."""
+    src = RELEASE.read_text()
+    assert "PIPER_REGISTRY_PUSH" in src and "localhost:" in src, "미는 주소를 안 가른다"
+    assert 'registry="$REGISTRY"' in src, "호스트가 받을 주소를 매니페스트에 안 적는다"
+
+
+def test_apply_picks_pull_or_load_from_the_manifest():
+    """번들에 `images.tar.gz` 가 없을 수 있다 — 그때는 매니페스트의 `registry` 가
+    유일한 단서다. 잘못 고르면 없는 tar 를 풀려다 죽는다."""
+    from conftest import code_only
+
+    # ⚠ **주석을 걷어내고 본다.** 이 파일은 왜 그렇게 했는지를 주석으로 길게
+    #   적어 두므로, 첫 등장으로 순서를 재면 설명문을 코드로 착각한다.
+    src = code_only(APPLY.read_text())
+    i_pull = src.find("docker pull -q")
+    i_load = src.find("docker load")
+    assert i_pull != -1 and i_load != -1, "두 경로가 다 있어야 한다"
+    assert 'elif [ -n "${registry:-}" ]' in APPLY.read_text(), "매니페스트로 안 가른다"
+    assert i_pull < i_load, "레지스트리보다 tar 를 먼저 본다"
+
+
+def test_apply_checks_the_registry_is_trusted():
+    """⚠ 평문 레지스트리를 `daemon.json` 에 안 적으면 pull 이
+    "server gave HTTP response to HTTPS client" 로 죽는데, 그 메시지만 보고
+    무엇을 고칠지 알기 어렵다. 설치 때 잡는다."""
+    src = APPLY.read_text()
+    assert "insecure-registries" in src, "신뢰 설정을 확인하지 않는다"
+    # 루프백은 도커가 기본으로 믿는다 — 그걸 문제라고 하면 거짓 경보다
+    assert 'localhost:*' in src or "127." in src, "루프백 예외가 없다"
+
+
+def test_the_registry_keeps_its_data_outside_the_container():
+    """컨테이너를 지웠다고 이미지가 사라지면 호스트들이 다음 pull 에서 통째로
+    다시 받는다 — 레지스트리를 둔 이유가 사라진다."""
+    src = REGISTRY_SH.read_text()
+    assert "-v " in src and "/var/lib/registry" in src, "저장소를 호스트에 안 붙인다"
+    assert "restart=always" in src, "재부팅하면 사라진다"
+
+
 def test_the_base_image_is_pinned_by_digest():
     """⚠ `python:3.13-slim-bookworm` 은 **뜬 태그**다. 데비안 보안 패치가 들어갈
     때마다 다른 이미지가 되고, 그러면 1번 레이어부터 갈려 아래 전부가 다시

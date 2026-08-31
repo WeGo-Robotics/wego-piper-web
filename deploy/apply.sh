@@ -106,6 +106,25 @@ else
   warn "NVIDIA GPU 가 안 보인다 — 학습·추론은 못 돈다"
 fi
 
+# ⚠ 평문 레지스트리는 **daemon.json 에 적어야만** 붙는다. 안 적으면 pull 이
+#   "server gave HTTP response to HTTPS client" 로 죽는데, 그 메시지만 보고
+#   무엇을 고쳐야 하는지 알기 어렵다. 도커는 `127.0.0.0/8` 만 기본으로 믿는다.
+if [ -n "${registry:-}" ]; then
+  # 도커는 루프백을 기본으로 믿는다 — 그건 확인할 것이 없다
+  if [[ "$registry" == localhost:* || "$registry" == 127.* ]]; then
+    ok "레지스트리 $registry (루프백 — 기본 신뢰)"
+  elif docker info 2>/dev/null | grep -qF " $registry"; then
+    ok "레지스트리 신뢰됨 ($registry)"
+  else
+    bad "레지스트리 $registry 가 insecure-registries 에 없다 — pull 이 실패한다"
+    echo "       /etc/docker/daemon.json 에 넣고 도커를 재시작하세요:"
+    echo "         {\"insecure-registries\": [\"$registry\"]}"
+    NEED_SUDO+=("systemctl restart docker   # daemon.json 을 고친 뒤")
+  fi
+  curl -fsS --max-time 5 "http://$registry/v2/" >/dev/null 2>&1 \
+    && ok "레지스트리 응답" || bad "레지스트리 $registry 가 응답하지 않는다 — 빌드 머신에서 ./deploy/registry.sh"
+fi
+
 [ -d "$DATA" ] && ok "데이터 루트 $DATA" || { bad "$DATA 없음"; NEED_SUDO+=("mkdir -p $DATA && chown $USER $DATA"); }
 # ⚠ 컨테이너는 유닉스 소켓으로만 버스에 붙는다. 설정만 하고 redis 를 재시작 안 하면
 #   소켓 파일이 없어 backend 가 "E-stop 버스에 연결할 수 없습니다" 로 뜬다(실제 사고).
@@ -182,6 +201,17 @@ if [ -n "${images:-}" ]; then
     for s in $images; do
       docker image inspect "piper-web-$s:$version" >/dev/null 2>&1 \
         && ok "piper-web-$s:$version" || bad "piper-web-$s:$version 미적용"
+    done
+  elif [ -n "${registry:-}" ]; then
+    # ⚠ **이미 있는 레이어는 안 받는다.** 그게 tar 를 버린 이유다 — 실측으로
+    #   v0.3.9 를 가진 호스트가 다음 릴리스에서 받는 양이 3.46GB → 104.5MB 였다.
+    for s in $images; do
+      docker pull -q "$registry/piper-web-$s:$version"
+      # 로컬 이름으로 옮긴다. compose 는 `image: piper-web-backend` 로 참조하므로
+      # `:latest` 가 없으면 **다시 빌드하려 든다.**
+      docker tag "$registry/piper-web-$s:$version" "piper-web-$s:$version"
+      docker tag "$registry/piper-web-$s:$version" "piper-web-$s:latest"
+      ok "pull piper-web-$s:$version → :latest"
     done
   else
     gunzip -c "$HERE/images.tar.gz" | docker load

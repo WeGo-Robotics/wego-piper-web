@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# 빌드 머신에 사설 레지스트리를 띄운다. **LAN 전용이다.**
+#
+# ## 왜 필요한가
+#
+# `docker save` 는 **자식 이미지를 저장해도 부모 레이어를 전부 담는다**(측정:
+# 부모 28MB → 한 줄 얹은 자식 28MB). 그래서 베이스/앱을 갈라놔도 tar 로 보내는 한
+# 매번 3.46GB 가 통째로 간다. 레지스트리는 **호스트에 없는 레이어만** 준다 —
+# 베이스 7GB 는 처음 한 번, 이후 릴리스는 우리 코드 390MB 뿐이다.
+#
+# ⚠ **평문(HTTP)이다.** 사내 LAN 이라 그렇게 둔다. 호스트에서 이 주소를
+#   `insecure-registries` 에 넣어야 붙는다 — `apply.sh` 가 확인하고 명령을 찍는다.
+#   망 밖으로 낼 거면 TLS 부터 붙여야 한다.
+#
+# 사용:  ./deploy/registry.sh [--stop|--status]
+set -euo pipefail
+NAME=registry
+PORT="${PIPER_REGISTRY_PORT:-5000}"
+# ⚠ 기본값이 `/srv/...` 가 아니다. 빌드 머신의 레지스트리는 **개발자 것**이라
+#   설치에 sudo 를 요구할 이유가 없다. 공용 서버에 둘 거면 `PIPER_REGISTRY_DATA`
+#   로 옮기면 된다.
+DATA="${PIPER_REGISTRY_DATA:-$HOME/.local/share/piper-registry}"
+
+case "${1:-}" in
+  --stop)   docker rm -f "$NAME" >/dev/null 2>&1 && echo "멈췄다" || echo "안 돌고 있었다"; exit 0 ;;
+  --status) docker ps --filter "name=^${NAME}$" --format '{{.Names}} {{.Status}} {{.Ports}}' | grep . \
+              || { echo "안 돌고 있다"; exit 1; }; exit 0 ;;
+esac
+
+if docker ps --filter "name=^${NAME}$" --format '{{.Names}}' | grep -q .; then
+  echo "이미 돌고 있다: $NAME :$PORT"
+else
+  # ⚠ 데이터는 **볼륨 밖 호스트 경로**에 둔다. 컨테이너를 지웠다고 이미지가
+  #   사라지면 호스트들이 다음 pull 에서 통째로 다시 받는다.
+  mkdir -p "$DATA" 2>/dev/null || { echo "✗ $DATA 를 못 만든다 — sudo mkdir -p $DATA && sudo chown $USER $DATA"; exit 1; }
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  docker run -d --restart=always --name "$NAME" -p "$PORT:5000" \
+    -v "$DATA:/var/lib/registry" registry:2 >/dev/null
+  echo "띄웠다: $NAME :$PORT  (저장소 $DATA)"
+fi
+
+IP="$(ip -4 -br addr show 2>/dev/null | grep -v '^lo' | grep -v '^docker\|^br-' | head -1 | awk '{print $3}' | cut -d/ -f1)"
+echo
+echo "빌드 머신에서:  export PIPER_REGISTRY=${IP:-<이 머신 IP>}:$PORT"
+echo "로봇 호스트에서: /etc/docker/daemon.json 에"
+echo "                {\"insecure-registries\": [\"${IP:-<이 머신 IP>}:$PORT\"]}"
+echo "                넣고 sudo systemctl restart docker"

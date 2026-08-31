@@ -16,8 +16,15 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 
 VERSION="${1:-}"
-DRY=0; [ "${2:-}" = "--dry-run" ] && DRY=1
-[ -n "$VERSION" ] || { echo "사용: $0 vX.Y.Z [--dry-run]"; exit 1; }
+DRY=0; OFFLINE=0; REGISTRY=""
+for a in "${@:2}"; do
+  case "$a" in
+    --dry-run) DRY=1 ;;
+    # ⚠ 현장 USB 배포용. 레지스트리가 떠 있어도 tar 를 만든다.
+    --offline) OFFLINE=1 ;;
+  esac
+done
+[ -n "$VERSION" ] || { echo "사용: $0 vX.Y.Z [--dry-run] [--offline]"; exit 1; }
 
 PREV="$(git tag --sort=-v:refname | head -1)"
 [ -n "$PREV" ] || { echo "✗ 직전 태그가 없습니다 — 첫 배포는 --all 로 하세요"; exit 1; }
@@ -85,8 +92,36 @@ if [ ${#IMAGES[@]} -gt 0 ]; then
     docker tag "piper-web-$s:latest" "piper-web-$s:$VERSION"
     TAGS+=("piper-web-$s:$VERSION")
   done
-  echo "· 이미지 저장 (몇 GB, 몇 분)"
-  docker save "${TAGS[@]}" | gzip > "$OUT/images.tar.gz"
+  # ── 레지스트리로 보낼 수 있으면 tar 를 안 만든다 ───────────────────────
+  # ⚠ `docker save` 는 **부모 레이어를 전부 담는다**(측정: 부모 28MB → 한 줄 얹은
+  #   자식 28MB). 그래서 베이스/앱을 갈라놔도 tar 인 한 매번 3.46GB 가 통째로 간다.
+  #   레지스트리는 호스트에 없는 레이어만 준다 — 그게 이 분기의 전부다.
+  #
+  # ⚠ **오프라인 경로는 남긴다.** 현장에 USB 로 들고 가는 배포가 실재한다.
+  #   `PIPER_REGISTRY` 가 비었거나 `--offline` 이면 예전처럼 tar 를 만든다.
+  if [ -n "${PIPER_REGISTRY:-}" ] && [ $OFFLINE = 0 ]; then
+    # ⚠ **주소가 둘인 데는 이유가 있다.** 도커는 `127.0.0.0/8` 만 기본으로 평문
+    #   레지스트리로 인정한다. 빌드 머신이 자기 LAN IP 로 밀면
+    #   "server gave HTTP response to HTTPS client" 로 거부당하므로, 미는 쪽은
+    #   `localhost` 를 쓴다 — 그러면 빌드 머신에는 daemon.json 설정이 필요 없다.
+    #   매니페스트에는 **호스트가 받을 주소**(LAN IP)를 적는다. 같은 레지스트리라
+    #   다이제스트는 동일하다.
+    PUSH_TO="${PIPER_REGISTRY_PUSH:-localhost:${PIPER_REGISTRY##*:}}"
+    if ! curl -fsS --max-time 3 "http://$PUSH_TO/v2/" >/dev/null 2>&1; then
+      echo "✗ 레지스트리 $PUSH_TO 에 못 붙습니다 — ./deploy/registry.sh 로 띄우거나 --offline 을 쓰세요"
+      exit 1
+    fi
+    echo "· 레지스트리로 push: $PUSH_TO  (호스트가 받을 주소: $PIPER_REGISTRY)"
+    for s in "${IMAGES[@]}"; do
+      docker tag "piper-web-$s:$VERSION" "$PUSH_TO/piper-web-$s:$VERSION"
+      docker push -q "$PUSH_TO/piper-web-$s:$VERSION"
+      echo "  → piper-web-$s:$VERSION"
+    done
+    REGISTRY="$PIPER_REGISTRY"
+  else
+    echo "· 이미지 저장 (몇 GB, 몇 분)"
+    docker save "${TAGS[@]}" | gzip > "$OUT/images.tar.gz"
+  fi
 fi
 
 # ── 데몬 wheel ────────────────────────────────────────────────────────────
@@ -146,6 +181,7 @@ built_at="$(date -Is)"
 images="$([ ${#IMAGES[@]} -gt 0 ] && echo "${IMAGES[*]}" || echo "")"
 wheels="$([ $need_wheels = 1 ] && echo "${WHEEL_PKGS[*]}" || echo "")"
 daemons="$([ $need_daemons = 1 ] && echo yes || echo "")"
+registry="$REGISTRY"
 EOF
 
 BUNDLE="$REPO/dist/piper-web-$VERSION.tar.gz"
