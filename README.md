@@ -197,7 +197,7 @@ CAN·USB·커널 모듈은 컨테이너가 다룰 수 있는 것이 아니다.
 **레지스트리로 보내기 (망이 있을 때 — 권장)**
 
 ```bash
-./deploy/registry.sh                        # 사설 레지스트리 (한 번만)
+./deploy/registry.sh                        # 사설 레지스트리 (한 번만) — 127.0.0.1 전용
 export PIPER_REGISTRY=piper-build:5000       # 호스트가 받을 **이름**
 ./deploy/release.sh v0.3.10 --dry-run       # 무엇이 올라갈지 먼저 본다
 ./deploy/release.sh v0.3.10                 # 이미지는 push, 번들은 240KB
@@ -224,6 +224,20 @@ tar 인 한 매번 3.46GB 가 통째로 간다. 레지스트리는 호스트에 
 to HTTPS client` 로 거부당하므로 미는 쪽은 `localhost` 를 쓴다 — 그래서 빌드
 머신에는 `daemon.json` 설정이 필요 없다. `PIPER_REGISTRY` 에는 **호스트가 받을**
 주소를 넣는다. 같은 레지스트리라 다이제스트는 같다.
+
+⚠ **기본은 로컬 전용이다.** `registry:2` 에는 **인증이 없다** — 밖에 열면 같은 망의
+누구나 `piper-web-backend:v0.3.10` 을 밀어넣을 수 있고 로봇 호스트는 그것을 받아
+**그대로 실행한다.** 빌드 머신에서 굽고 미는 데는 루프백으로 충분하다(`release.sh`
+도 `localhost` 로 민다). 로봇 호스트에 배포할 때만 의식적으로 연다:
+
+```bash
+./deploy/registry.sh --stop
+PIPER_REGISTRY_BIND=0.0.0.0 ./deploy/registry.sh
+sudo ufw allow from <로봇호스트IP> to any port 5000 proto tcp   # 그 호스트만
+sudo ufw deny 5000/tcp
+```
+
+`./deploy/registry.sh --status` 가 **지금 어디에 열려 있는지** 보여준다.
 
 ⚠ **IP 를 박지 말 것.** 빌드 머신 주소는 DHCP 로 받는다(이 머신은 WiFi 라 더
 잘 바뀐다). IP 를 쓰면 바뀌는 날 호스트의 `daemon.json` 과 **이미 만들어 둔 모든

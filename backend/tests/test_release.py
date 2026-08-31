@@ -214,6 +214,26 @@ def test_apply_checks_the_registry_is_trusted():
     assert 'localhost:*' in src or "127." in src, "루프백 예외가 없다"
 
 
+def test_the_registry_is_loopback_until_someone_opens_it():
+    """⚠ `registry:2` 에는 **인증이 없다.** 밖에 열면 같은 망의 누구나
+    `piper-web-backend:v0.3.10` 을 밀어넣을 수 있고, 로봇 호스트는 그것을 받아
+    **그대로 실행한다.** 처음엔 `-p 5000:5000` 이라 0.0.0.0 에 열려 있었다 —
+    LAN 에서 `/v2/_catalog` 가 그대로 읽혔다. 여는 것은 의식적인 선택이어야 한다."""
+    src = REGISTRY_SH.read_text()
+    assert 'PIPER_REGISTRY_BIND:-127.0.0.1' in src, "기본이 루프백이 아니다"
+    assert '-p "$BIND:$PORT:5000"' in src, "바인드 주소를 안 쓴다"
+    assert "인증이 없다" in src, "열 때의 위험을 말하지 않는다"
+    assert "ufw" in src, "열었을 때 좁히는 방법을 안 알려준다"
+
+
+def test_the_registry_says_where_it_is_actually_listening():
+    """"잠갔다고 생각했는데 0.0.0.0 이더라"가 실제로 있었다. 이미 돌고 있으면
+    지금 열린 곳과 요청한 곳이 다른지 말해야 한다 — 재시작 없이는 안 바뀐다."""
+    src = REGISTRY_SH.read_text()
+    assert "docker port" in src, "지금 어디에 열려 있는지 안 본다"
+    assert "--stop" in src.split("이미 돌고 있다", 1)[1][:600], "바꾸는 방법을 안 찍는다"
+
+
 def test_a_stale_registry_address_can_be_overridden():
     """⚠ **매니페스트에 박힌 주소는 늙는다.** 빌드 머신이 DHCP·WiFi 면 IP 가 바뀌고,
     그러면 이미 만들어 둔 번들이 전부 죽은 주소를 가리킨다. 그때 번들을 다시 굽게
