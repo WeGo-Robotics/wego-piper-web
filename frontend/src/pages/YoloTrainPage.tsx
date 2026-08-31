@@ -255,7 +255,7 @@ export default function YoloTrainPage() {
   }
 
   // ── 사전 라벨 ──
-  const [plModel, setPlModel] = useState('yolo11n.pt')
+  const [plModel, setPlModel] = useState('PekingU/rtdetr_v2_r18vd')
   const [plModels, setPlModels] = useState<string[]>([])
   const [plConf, setPlConf] = useState(0.25)
   const [plBusy, setPlBusy] = useState(false)
@@ -285,7 +285,7 @@ export default function YoloTrainPage() {
 
   // ── 학습 탭 ──
   const [trainStatus, setTrainStatus] = useState<TrainStatus | null>(null)
-  const [trBase, setTrBase] = useState('yolo11n.pt')
+  const [trBase, setTrBase] = useState('PekingU/rtdetr_v2_r18vd')
   const [trEpochs, setTrEpochs] = useState(50)
   const [trImgsz, setTrImgsz] = useState(640)
   const [trBusy, setTrBusy] = useState(false)

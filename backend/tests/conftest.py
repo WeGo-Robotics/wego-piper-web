@@ -99,3 +99,27 @@ def code_only(src: str) -> str:
     # `//` 는 URL(`https://`) 안에도 나온다 — 앞이 `:` 가 아닐 때만 주석으로 본다
     src = re.sub(r"(?<!:)//.*$", "", src, flags=re.M)
     return src
+
+
+def python_code_only(src: str) -> str:
+    """주석 **과 docstring** 을 걷어낸 파이썬 소스.
+
+    ⚠ `code_only` 는 `#` 만 지운다. 파이썬에서는 "왜 이렇게 안 했는지"를
+    docstring 에 적는 일이 흔한데, 그걸 코드로 세면 **설명문 때문에 검사가
+    실패한다** — 실제로 "ultralytics 를 안 쓴다"는 검사가 "ultralytics 는
+    AGPL 이라 걷어냈다"는 docstring 에 걸렸다.
+    """
+    import ast
+
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                 ast.AsyncFunctionDef)):
+            continue
+        body = node.body
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
+                and isinstance(body[0].value.value, str):
+            body.pop(0)
+            if not body:
+                body.append(ast.Pass())
+    return ast.unparse(ast.fix_missing_locations(tree))

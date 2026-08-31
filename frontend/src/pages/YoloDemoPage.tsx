@@ -52,19 +52,8 @@ type YoloModel = {
 
 /** 서버 카탈로그(/vision/models)가 정본 — 못 받았을 때(구버전 게이트웨이 등)만 쓰는 폴백. */
 const FALLBACK_MODELS: YoloModel[] = [
-  { file: 'yolo11n.pt', family: 'YOLO11', label: 'nano' },
-  { file: 'yolo11s.pt', family: 'YOLO11', label: 'small' },
-  { file: 'yolo11m.pt', family: 'YOLO11', label: 'medium' },
-  { file: 'yolo11l.pt', family: 'YOLO11', label: 'large' },
-  { file: 'yolo11x.pt', family: 'YOLO11', label: 'xlarge' },
-  { file: 'yolov8n.pt', family: 'YOLOv8', label: 'nano' },
-  { file: 'yolov8s.pt', family: 'YOLOv8', label: 'small' },
-  { file: 'yolov8m.pt', family: 'YOLOv8', label: 'medium' },
-  { file: 'yolov8l.pt', family: 'YOLOv8', label: 'large' },
-  { file: 'yolov8x.pt', family: 'YOLOv8', label: 'xlarge' },
-  { file: 'yolov5nu.pt', family: 'YOLOv5u', label: 'nano' },
-  { file: 'yolov5su.pt', family: 'YOLOv5u', label: 'small' },
-  { file: 'yolov5mu.pt', family: 'YOLOv5u', label: 'medium' },
+  { file: 'PekingU/rtdetr_v2_r18vd', family: 'RT-DETRv2', label: 'r18' },
+  { file: 'PekingU/rtdetr_v2_r50vd', family: 'RT-DETRv2', label: 'r50' },
 ]
 
 const ALIASES = ['top', 'hand', 'side', 'extra']
@@ -80,14 +69,12 @@ export default function YoloDemoPage() {
   const [models, setModels] = useState<YoloModel[]>(FALLBACK_MODELS)
   // ?model=<file> 로 열면 그 가중치가 선택된 채 시작 (학습 완료 → 데모 단축 경로)
   const urlModel = useRef(new URLSearchParams(window.location.search).get('model'))
-  const [model, setModel] = useState(() => urlModel.current ?? 'yolo11n.pt')
+  const [model, setModel] = useState(() => urlModel.current ?? 'PekingU/rtdetr_v2_r18vd')
   // 카탈로그가 오면 기본값을 **로컬에 있는 가중치**로 한 번 맞춘다.
   // 안 맞추면 시작을 누르는 순간 100MB 를 받느라 멈춘 것처럼 보인다.
   const defaultFixed = useRef(false)
   const [fps, setFps] = useState(5)
   const [imgsz, setImgsz] = useState(640)
-  const [uploading, setUploading] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -215,33 +202,13 @@ export default function YoloDemoPage() {
     api.get<{ models: YoloModel[] }>('/vision/models')
       .then((r) => { setModels(r.models); return r.models })
 
-  const handleUpload = async (f: File) => {
-    setUploading(true)
-    setError(null)
-    try {
-      // raw 바디 PUT — api 헬퍼는 JSON 전용이라 직접 fetch
-      const res = await fetch(`/api/vision/models/${encodeURIComponent(f.name)}`, {
-        method: 'PUT', body: f,
-      })
-      if (!res.ok) {
-        let detail = `${res.status} ${res.statusText}`
-        try { detail = (await res.json()).detail ?? detail } catch { /* 비 JSON 에러 */ }
-        throw new Error(detail)
-      }
-      await refreshModels()
-      setModel(f.name) // 방금 올린 걸 바로 선택
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '업로드 실패')
-    } finally { setUploading(false) }
-  }
-
   const handleDeleteModel = async () => {
     try {
       await api.delete(`/vision/models/${encodeURIComponent(model)}`)
       const list = await refreshModels()
-      // ⚠ 예전에는 'yolo11n.pt' 를 박아 넣었다 — 그 파일이 이 기기에 없으면
+      // ⚠ 예전에는 특정 가중치를 박아 넣었다 — 그 모델이 이 기기에 없으면
       //   삭제한 뒤 선택이 **받아야 하는 모델**로 옮겨 앉는다. 있는 것 중에서 고른다.
-      setModel(list?.find((m) => m.downloaded === true)?.file ?? 'yolo11n.pt')
+      setModel(list?.find((m) => m.downloaded === true)?.file ?? 'PekingU/rtdetr_v2_r18vd')
     } catch (e) {
       setError(e instanceof Error ? e.message : '삭제 실패')
     }
@@ -407,16 +374,6 @@ export default function YoloDemoPage() {
               ))}
             </select>
           </label>
-          <input ref={fileRef} type="file" accept=".pt" className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0]
-              e.target.value = '' // 같은 파일 재선택도 change 가 뜨게
-              if (f) void handleUpload(f)
-            }} />
-          <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading}
-            className="px-3 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white disabled:opacity-50">
-            {uploading ? '업로드 중…' : '＋ 가중치 업로드 (.pt)'}
-          </button>
           {models.find((m) => m.file === model)?.family === '커스텀' && (
             <button type="button" onClick={() => void handleDeleteModel()}
               className="text-sm text-neutral-500 hover:text-red-400">

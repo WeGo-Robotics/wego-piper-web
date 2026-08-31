@@ -29,3 +29,5 @@ docs
 tools
 *.md
 !vendor/**/README.md
+# ⚠ ultralytics 가중치(AGPL). 실수로 이미지에 실려 배포되던 것을 막는다.
+*.pt

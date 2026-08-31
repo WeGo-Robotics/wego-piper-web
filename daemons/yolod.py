@@ -141,7 +141,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="YOLO detection publisher (shm → bus)")
     parser.add_argument("--cam", action="append", required=True, metavar="ALIAS=CAM_ID",
                         help="구독할 카메라 (반복 가능). ALIAS 는 버스 키 이름")
-    parser.add_argument("--model", default="yolo11n.pt")
+    parser.add_argument("--model", default="PekingU/rtdetr_v2_r18vd")
     parser.add_argument("--fps", type=float, default=5.0, help="검출 주기 (프레임 주기와 무관)")
     parser.add_argument("--conf", type=float, default=0.25)
     parser.add_argument("--imgsz", type=int, default=640,
@@ -154,7 +154,7 @@ def main() -> None:
 
     # 무거운 import 는 여기서 — _payload/detections_text 는 torch 없이 테스트된다
     import cv2
-    import numpy as np  # noqa: F401  (ultralytics 가 요구)
+    import numpy as np  # noqa: F401  (프레임 배열 처리에 필요)
     from piper_bus.client import Bus
     from piper_shm import Subscriber, segment_for_camera
     from detector_loader import load_detector

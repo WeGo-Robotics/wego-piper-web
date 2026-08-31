@@ -7,7 +7,7 @@
 #   `release.sh` 는 알아서 확인한다.
 # ⚠ **아래 기본값은 `backend/BASE_VERSION` 과 같아야 한다.** 테스트가 강제한다
 #   (`test_release.py::test_the_base_tag_is_single_sourced`).
-ARG BASE_TAG=cu130-1
+ARG BASE_TAG=cu130-2
 FROM piper-web-base:${BASE_TAG}
 
 # ── 버스·shm 계약 패키지 ──
@@ -41,6 +41,13 @@ COPY wrapper/ /app/wrapper/
 # 정책 스펙 — `core/policy_spec.py` 가 저장소 루트(/app)의 `policies/` 에서 읽는다.
 # 빠뜨리면 정책 목록이 **통째로 비고**, 학습·추론 화면이 아무것도 못 고른다.
 COPY policies/ /app/policies/
+# ⚠ **이게 없어서 컨테이너에서 비전 기능이 통째로 죽어 있었다.** 라우터가
+#   `parents[3]/daemons/<name>.py` 를 subprocess 로 실행하는데(=`/app/daemons/`),
+#   이미지에는 그 디렉토리가 아예 없었다. 개발 머신처럼 저장소에서 게이트웨이를
+#   띄운 경우에만 동작했다.
+#   ※ `/opt/piper-host/daemons` 와 내용은 같지만 쓰임이 다르다 — 저쪽은 호스트로
+#     꺼내 쓰는 것이고, 이쪽은 이 컨테이너가 직접 실행하는 것이다.
+COPY daemons/ /app/daemons/
 
 # ── 데이터 경로 계약 ──
 # 컨테이너 내부 경로는 호스트와 무관한 고정 상수다. 호스트 디렉토리는 compose 가

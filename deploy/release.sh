@@ -47,7 +47,11 @@ while read -r f; do
   esac
   case "$f" in
     frontend/*) need_frontend=1 ;;
-    daemons/*|deploy/systemd/*|deploy/install-daemons.sh) need_daemons=1 ;;
+    # ⚠ `daemons/` 는 **양쪽**이다 — 호스트 유닛으로도 돌고, 컨테이너가
+    #   `/app/daemons` 에서 subprocess 로도 실행한다(비전·학습). 한쪽만 올리면
+    #   컨테이너 안 데몬이 옛 코드로 돈다.
+    daemons/*) need_daemons=1; need_backend=1 ;;
+    deploy/systemd/*|deploy/install-daemons.sh) need_daemons=1 ;;
   esac
   # `bus/ shm/ robot/` 은 **양쪽**이다 — 이미지 안에도 들어가고 호스트 venv 에도 깔린다
   case "$f" in

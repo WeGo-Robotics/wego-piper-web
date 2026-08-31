@@ -325,7 +325,7 @@ _PRELABEL_SCRIPT = Path(__file__).resolve().parents[3] / "daemons" / "yolo_prela
 
 
 class PrelabelRequest(BaseModel):
-    model: str = "yolo11n.pt"
+    model: str = "PekingU/rtdetr_v2_r18vd"
     conf: float = Field(default=0.25, ge=0.0, le=1.0)
     overwrite: bool = False
 
@@ -372,7 +372,7 @@ _TRAIN_SCRIPT = Path(__file__).resolve().parents[3] / "daemons" / "yolo_traind.p
 
 class TrainRequest(BaseModel):
     dataset: str
-    base_model: str = "yolo11n.pt"
+    base_model: str = "PekingU/rtdetr_v2_r18vd"
     epochs: int = Field(default=50, ge=1, le=1000)
     imgsz: int = Field(default=640, ge=160, le=1920)
     batch: int = Field(default=16, ge=1, le=128)

@@ -86,6 +86,10 @@ def test_the_model_catalogue_still_names_the_real_files():
     다르다. 후자는 사용자가 무엇을 내려받는지도, 그 라이선스가 무엇인지도 알 수
     없게 만든다.
     """
-    from app.routers.vision import _YOLO_CATALOG as cat
+    from app.routers.vision import _DETECTOR_CATALOG as cat
 
-    assert [m for m in cat if m["file"].endswith(".pt")], "모델 파일명이 사라졌다"
+    # ⚠ 예전에는 `.pt` 파일명이 식별자였다. 이제는 **배포자/모델 id** 다
+    #   (`PekingU/rtdetr_v2_r18vd`). 오히려 더 정확하다 — 어느 배포본을 받는지가
+    #   드러나야 라이선스를 알 수 있고, 그게 이 검사의 원래 목적이다.
+    assert cat, "카탈로그가 비었다"
+    assert all("/" in m["file"] for m in cat), "어느 배포본인지 알 수 없다"

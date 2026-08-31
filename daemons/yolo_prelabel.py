@@ -11,7 +11,7 @@ feature/yolo-training.md 2단계. 게이트웨이는 torch 를 import 하지 않
 채워진다. 애매한 유사 매칭은 조용히 틀린 라벨을 만든다 — 안 한다.
 
 사용:
-  python daemons/yolo_prelabel.py --dataset <dir> --model yolo11n.pt [--conf 0.25]
+  python daemons/yolo_prelabel.py --dataset <dir> --model PekingU/rtdetr_v2_r18vd [--conf 0.25]
                                   [--overwrite] [--device cuda:0]
 
 마지막 stdout 줄이 결과 JSON 이다 (게이트웨이가 파싱한다):
@@ -53,7 +53,7 @@ def txt_lines(
 def main() -> None:
     parser = argparse.ArgumentParser(description="YOLO prelabel (dataset batch)")
     parser.add_argument("--dataset", required=True, help="yolo_datasets/<name> 디렉토리")
-    parser.add_argument("--model", default="yolo11n.pt")
+    parser.add_argument("--model", default="PekingU/rtdetr_v2_r18vd")
     parser.add_argument("--conf", type=float, default=0.25)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--device", default="cuda:0")

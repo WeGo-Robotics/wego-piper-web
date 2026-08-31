@@ -60,7 +60,7 @@ export default function VisionPage() {
   const [status, setStatus] = useState<YoloStatus | null>(null)
   const [detections, setDetections] = useState<Record<string, DetPayload>>({})
   const [camRows, setCamRows] = useState<CamRow[]>([])
-  const [model, setModel] = useState('yolo11n.pt')
+  const [model, setModel] = useState('PekingU/rtdetr_v2_r18vd')
   const [conf, setConf] = useState(0.25)
   const [busy, setBusy] = useState(false)
   const [tick, setTick] = useState(0) // 프리뷰 이미지 캐시 버스터

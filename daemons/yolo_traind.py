@@ -8,14 +8,14 @@
 
 진행 상태는 파일로 남긴다:
 - `<datasets-root>/_training.json` — 시작/완료/실패 (게이트웨이가 읽는다)
-- `<dataset>/runs/<run>/results.csv` — ultralytics 가 에폭마다 쓴다
+- `<dataset>/runs/<run>/results.csv` — 학습 루프가 에폭마다 쓴다
 
 val 분할은 **출처 그룹 단위**다. 같은 에피소드의 프레임이 train 과 val 에
 나뉘면 사실상 같은 그림으로 검증해 mAP 가 부풀려진다 — 지표는 좋은데
 현장에서 약한 모델이 나오는 함정.
 
 사용:
-  python daemons/yolo_traind.py --dataset <dir> --model yolo11n.pt \
+  python daemons/yolo_traind.py --dataset <dir> --model PekingU/rtdetr_v2_r18vd \
       --epochs 50 --imgsz 640 --weights-out <yolo_models_dir> --run-name t0820
 """
 
@@ -98,8 +98,13 @@ def read_sources(ds: Path) -> dict[str, dict]:
     return out
 
 
-def write_split(ds: Path, run_dir: Path, classes: list[str]) -> tuple[int, int]:
-    """data.yaml + train/val 파일 리스트 생성. (train 수, val 수) 반환."""
+def write_split(ds: Path, run_dir: Path) -> tuple[list[Path], list[Path]]:
+    """그룹 단위 train/val 분할. (train 파일들, val 파일들) 반환.
+
+    ⚠ 예전에는 여기서 `data.yaml` 도 만들었다 — ultralytics 가 읽는 형식이다.
+    학습을 직접 하게 되면서 필요 없어졌다. 목록 파일(`train.txt`/`val.txt`)은
+    **남긴다**: 무엇으로 학습했는지 나중에 확인할 유일한 흔적이다.
+    """
     labeled = [
         p.name for p in sorted((ds / "images").glob("*.jpg"))
         if (ds / "labels" / p.name).with_suffix(".txt").exists()
@@ -111,21 +116,15 @@ def write_split(ds: Path, run_dir: Path, classes: list[str]) -> tuple[int, int]:
     train, val = split_by_group(labeled, groups)
 
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "train.txt").write_text(
-        "\n".join(str(ds / "images" / f) for f in train) + "\n")
-    (run_dir / "val.txt").write_text(
-        "\n".join(str(ds / "images" / f) for f in val) + "\n")
-    # ultralytics 는 이미지 경로에서 images/→labels/ 치환으로 라벨을 찾는다
-    (run_dir / "data.yaml").write_text(
-        f"path: {ds}\ntrain: {run_dir / 'train.txt'}\nval: {run_dir / 'val.txt'}\n"
-        + "names:\n" + "".join(f"  {i}: {c}\n" for i, c in enumerate(classes)))
-    return len(train), len(val)
+    (run_dir / "train.txt").write_text("\n".join(str(ds / "images" / f) for f in train) + "\n")
+    (run_dir / "val.txt").write_text("\n".join(str(ds / "images" / f) for f in val) + "\n")
+    return [ds / "images" / f for f in train], [ds / "images" / f for f in val]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="YOLO custom training unit")
     parser.add_argument("--dataset", required=True)
-    parser.add_argument("--model", default="yolo11n.pt")
+    parser.add_argument("--model", default="PekingU/rtdetr_v2_r18vd")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--batch", type=int, default=16)
@@ -147,38 +146,33 @@ def main() -> None:
         }, ensure_ascii=False))
 
     classes = json.loads((ds / "classes.json").read_text())
-    n_train, n_val = write_split(ds, run_dir, classes)
+    train_files, val_files = write_split(ds, run_dir)
+    n_train, n_val = len(train_files), len(val_files)
     print(f"분할: train {n_train} / val {n_val} (그룹 단위)", flush=True)
     status("running", train=n_train, val=n_val)
 
     try:
-        from detector_loader import load_detector
+        import rtdetr_train
 
-        model = load_detector(args.model)
-        results = model.train(
-            data=str(run_dir / "data.yaml"),
-            epochs=args.epochs, imgsz=args.imgsz, batch=args.batch,
-            device=args.device, project=str(ds / "runs"), name=args.run_name,
-            exist_ok=True, plots=False,
+        # ⚠ **결과물이 디렉토리다.** `.pt` 단일 파일은 ultralytics 형식이고, 그걸
+        #   열려면 AGPL 라이브러리가 필요하다. HF 형식은 config+safetensors+전처리기
+        #   가 한 디렉토리에 들어간다 — `load_detector` 가 경로로 그대로 연다.
+        out_root = Path(args.weights_out)
+        stamp = time.strftime("%m%d-%H%M")
+        weight_name = f"{ds.name}-{stamp}"
+        weight_dir = out_root / weight_name
+
+        metrics = rtdetr_train.train(
+            model_id=args.model, train_files=train_files, val_files=val_files,
+            labels_dir=ds / "labels", classes=classes,
+            epochs=args.epochs, batch=args.batch, device=args.device,
+            out_dir=weight_dir, results_csv=run_dir / "results.csv",
+            log=lambda m: print(m, flush=True),
         )
 
-        # ── 수확 — 유닛의 마지막 스텝 ──
-        best = run_dir / "weights" / "best.pt"
-        if not best.is_file():
-            raise RuntimeError("best.pt 가 없습니다 — 학습이 1에폭도 못 돌았습니까?")
-        out_dir = Path(args.weights_out)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%m%d-%H%M")
-        weight_name = f"{ds.name}-{stamp}.pt"
-        shutil.copy2(best, out_dir / weight_name)
-
-        rd = getattr(results, "results_dict", {}) or {}
-        metrics = {
-            "map50": round(float(rd.get("metrics/mAP50(B)", 0)), 4),
-            "map50_95": round(float(rd.get("metrics/mAP50-95(B)", 0)), 4),
-        }
-        # 곁 JSON — 카탈로그가 드롭다운 설명에 쓴다 (4단계)
-        (out_dir / weight_name).with_suffix(".json").write_text(json.dumps({
+        # 곁 JSON — 카탈로그가 드롭다운 설명에 쓴다 (4단계).
+        # ⚠ 디렉토리 **안**에 둔다. 밖에 두면 가중치를 지울 때 남는다.
+        (weight_dir / "piper_meta.json").write_text(json.dumps({
             "dataset": ds.name, "base_model": args.model, "epochs": args.epochs,
             "imgsz": args.imgsz, "classes": classes,
             "train": n_train, "val": n_val, **metrics,

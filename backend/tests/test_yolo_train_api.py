@@ -298,10 +298,13 @@ def test_read_progress_parses_results_csv(root, monkeypatch):
 
     run = root / "d" / "runs" / "t1"
     run.mkdir(parents=True)
+    # ⚠ 열 이름이 예전에는 **ultralytics 형식**('train/box_loss', 'metrics/mAP50(B)')
+    #   이었다. 학습을 직접 하게 되면서 우리 이름으로 바뀌었다 — 파서가 못 읽으면
+    #   `except KeyError: continue` 가 모든 행을 조용히 버려 그래프가 빈 채로 뜬다.
     (run / "results.csv").write_text(
-        "epoch, train/box_loss, metrics/mAP50(B), metrics/mAP50-95(B)\n"
-        "1, 1.5, 0.30, 0.20\n"
-        "2, 1.2, 0.45, 0.31\n"
+        "epoch,train_loss,map50,map50_95\n"
+        "1,1.5,0.30,0.20\n"
+        "2,1.2,0.45,0.31\n"
     )
     rows = read_progress("d", "t1")
     assert rows == [

@@ -15,52 +15,52 @@ sys.path.insert(0, str(_DAEMONS))
 
 
 def _catalog():
-    from app.routers.vision import _YOLO_CATALOG
+    from app.routers.vision import _DETECTOR_CATALOG
 
-    return _YOLO_CATALOG
-
-
-def test_rtdetr_is_offered():
-    """요청받은 대로 목록에 있어야 한다."""
-    files = [m["file"] for m in _catalog()]
-    assert any(f.startswith("rtdetr") for f in files), "RT-DETR 가 목록에 없다"
+    return _DETECTOR_CATALOG
 
 
-def test_every_catalogued_model_has_a_loader():
-    """⚠ **카탈로그와 로더는 같이 움직여야 한다.**
-
-    아키텍처마다 클래스가 다르다. 목록에만 추가하면 화면에서는 보이는데
-    시작하는 순간 죽는다.
-    """
-    from detector_loader import load_detector
-    import inspect
-
-    src = inspect.getsource(load_detector)
+def test_the_catalog_offers_only_rtdetr():
+    """⚠ **ultralytics 는 AGPL-3.0 이다.** 목록에 YOLO 계열이 하나라도 남으면,
+    그걸 고르는 순간 AGPL 라이브러리가 필요해진다 — 라이선스를 정리한 의미가
+    사라진다. 그래서 "RT-DETR 이 있다"가 아니라 **"그것뿐이다"** 를 본다."""
+    fams = {m["family"] for m in _catalog()}
+    assert fams and all("RT-DETR" in f for f in fams), f"YOLO 계열이 남아 있다: {fams}"
     for m in _catalog():
-        stem = m["file"].lower()
-        if stem.startswith("rtdetr"):
-            assert "RTDETR" in src, f"{m['file']} 을 열 클래스가 없다"
-        else:
-            assert "YOLO" in src, f"{m['file']} 을 열 클래스가 없다"
+        assert not m["file"].endswith(".pt"), f"{m['file']} 은 ultralytics 형식이다"
 
 
-def test_the_loader_picks_by_weight_name():
-    """이름으로 고른다 — 확장자만 보면 전부 `.pt` 라 구분이 안 된다."""
-    import inspect
+def test_the_weights_come_from_the_original_publisher():
+    """⚠ **아키텍처가 Apache 인 것과 가중치가 Apache 인 것은 다르다.** 예전
+    `rtdetr-l.pt` 는 아키텍처만 Apache 이고 가중치는 ultralytics 배포본이라
+    AGPL 이었다. 출처를 안 바꾸면 이름만 바뀐다."""
+    for m in _catalog():
+        assert m["file"].startswith("PekingU/"), \
+            f"{m['file']}: 원 배포본이 아니다"
+
+
+def test_the_loader_does_not_touch_ultralytics():
+    """로더가 AGPL 라이브러리를 부르면 그 한 줄로 전부 되돌아간다."""
+    from conftest import python_code_only
+
+    # ⚠ docstring 까지 걷어낸다 — 이 파일은 **왜** ultralytics 를 버렸는지
+    #   설명하느라 그 낱말을 여러 번 쓴다. 설명문을 코드로 세면 안 된다.
+    src = python_code_only((_DAEMONS / "detector_loader.py").read_text())
+    # ⚠ **낱말이 아니라 import 를 본다.** 이 파일은 `.pt` 를 거절하면서 그 이유를
+    #   사용자에게 말하느라 "ultralytics" 를 **메시지 안에** 쓴다. 낱말로 세면
+    #   친절한 에러 문구가 검사를 실패시킨다.
+    assert "import ultralytics" not in src and "from ultralytics" not in src, \
+        "로더가 아직 ultralytics 를 import 한다"
+    assert "transformers" in src, "무엇으로 여는지 알 수 없다"
+
+
+def test_the_loader_refuses_ultralytics_weights():
+    """⚠ 조용히 무시하면 "왜 내 가중치가 안 먹지"로 돌아온다. `.pt` 는 열 수
+    없다고 **말해야** 한다 — 그 형식을 열려면 AGPL 라이브러리가 필요하다."""
     from detector_loader import load_detector
 
-    src = inspect.getsource(load_detector)
-    assert 'startswith("rtdetr")' in src, "RT-DETR 를 안 가려낸다"
-    # 경로가 붙어 와도(커스텀 가중치는 절대경로다) 파일명으로 판단해야 한다
-    assert 'rsplit("/", 1)[-1]' in src, "경로가 붙으면 판정이 틀어진다"
-
-
-@pytest.mark.parametrize("daemon", ["yolod.py", "yolo_prelabel.py", "yolo_traind.py"])
-def test_all_three_daemons_share_the_loader(daemon):
-    """한 곳만 고치면 데모에서는 되는데 학습에서는 안 되는 식으로 갈린다."""
-    src = (_DAEMONS / daemon).read_text()
-    assert "load_detector" in src, f"{daemon} 이 공용 로더를 안 쓴다"
-    assert "YOLO(args.model)" not in src, f"{daemon} 이 아직 직접 연다"
+    with pytest.raises(ValueError, match="ultralytics"):
+        load_detector("yolo11n.pt")
 
 
 def test_unverified_numbers_are_left_blank():
@@ -68,9 +68,19 @@ def test_unverified_numbers_are_left_blank():
 
     UI 는 `params_m == null` 을 이미 견딘다 — 지어내는 것보다 비우는 게 낫다.
     """
-    rt = [m for m in _catalog() if m["file"].startswith("rtdetr")]
-    assert rt and all(m["params_m"] is None for m in rt), "확인 안 한 수치가 적혀 있다"
-    assert all(m["size_mb"] for m in rt), "실측한 용량은 있어야 한다"
+    cat = _catalog()
+    assert cat and all(m["params_m"] is None for m in cat), "확인 안 한 수치가 적혀 있다"
+    assert all(m["size_mb"] for m in cat), "실측한 용량은 있어야 한다"
+
+
+@pytest.mark.parametrize("daemon", ["yolod.py", "yolo_prelabel.py", "yolo_traind.py"])
+def test_all_three_daemons_share_the_loader(daemon):
+    """한 곳만 고치면 데모에서는 되는데 학습에서는 안 되는 식으로 갈린다."""
+    from conftest import python_code_only
+
+    src = python_code_only((_DAEMONS / daemon).read_text())
+    assert "load_detector" in src or "rtdetr_train" in src, f"{daemon} 이 공용 조각을 안 쓴다"
+    assert "ultralytics" not in src, f"{daemon} 이 아직 ultralytics 를 쓴다"
 
 
 # ── 기본 선택은 이미 받아둔 가중치로 (화면) ──────────────────────────────────

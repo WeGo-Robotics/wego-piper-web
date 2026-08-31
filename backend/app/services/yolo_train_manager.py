@@ -38,11 +38,14 @@ def read_status() -> dict | None:
 
 
 def read_progress(dataset: str, run_name: str) -> list[dict]:
-    """ultralytics results.csv → [{epoch, box_loss, map50, map50_95}].
+    """results.csv → [{epoch, box_loss, map50, map50_95}].
 
-    파일이 아직 없으면(1에폭 전) 빈 목록. 열 이름은 ultralytics 형식
-    ('train/box_loss', 'metrics/mAP50(B)')이고 버전에 따라 공백이 붙어
-    strip 해서 찾는다.
+    파일이 아직 없으면(1에폭 전) 빈 목록.
+
+    ⚠ 예전 열 이름은 **ultralytics 형식**('train/box_loss', 'metrics/mAP50(B)')
+    이었다. 학습을 직접 하게 되면서 우리가 쓰는 이름('train_loss', 'map50')으로
+    바뀌었다 — 파서를 안 고치면 진행 그래프가 **아무 말 없이 빈 채로** 뜬다.
+    `except KeyError: continue` 가 모든 행을 조용히 버리기 때문이다.
     """
     csv_path = settings.yolo_datasets_dir / dataset / "runs" / run_name / "results.csv"
     if not csv_path.is_file():
@@ -55,9 +58,9 @@ def read_progress(dataset: str, run_name: str) -> list[dict]:
                 try:
                     out.append({
                         "epoch": int(float(row["epoch"])),
-                        "box_loss": round(float(row["train/box_loss"]), 4),
-                        "map50": round(float(row["metrics/mAP50(B)"]), 4),
-                        "map50_95": round(float(row["metrics/mAP50-95(B)"]), 4),
+                        "box_loss": round(float(row["train_loss"]), 4),
+                        "map50": round(float(row["map50"]), 4),
+                        "map50_95": round(float(row["map50_95"]), 4),
                     })
                 except (KeyError, ValueError):
                     continue

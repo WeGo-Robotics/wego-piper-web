@@ -7,6 +7,8 @@ yolod 는 정책 서버와 같은 "필요할 때 켜는 유닛"이다 — `make_
 
 import json
 import logging
+import os
+import shutil
 import time
 from pathlib import Path
 
@@ -37,91 +39,102 @@ from app.services.orchestrator import DEFAULT_RULES, JudgeSlots  # noqa: E402
 # 시작 UI 에 보여줄 표준 검출 모델 (COCO 80 클래스). 로컬에 없어도 목록에 나온다 —
 # ultralytics 가 없는 가중치를 첫 로드 때 자동 다운로드하므로 전부 쓸 수 있고,
 # `downloaded` 는 "첫 시작이 다운로드만큼 느릴지"를 미리 알려주는 표시일 뿐이다.
-_YOLO_CATALOG = [
-    # 현행 세대 (2024)
-    {"family": "YOLO11",  "file": "yolo11n.pt",  "label": "nano",   "params_m": 2.6,  "size_mb": 5.4},
-    {"family": "YOLO11",  "file": "yolo11s.pt",  "label": "small",  "params_m": 9.4,  "size_mb": 18.4},
-    {"family": "YOLO11",  "file": "yolo11m.pt",  "label": "medium", "params_m": 20.1, "size_mb": 38.8},
-    {"family": "YOLO11",  "file": "yolo11l.pt",  "label": "large",  "params_m": 25.3, "size_mb": 49.0},
-    {"family": "YOLO11",  "file": "yolo11x.pt",  "label": "xlarge", "params_m": 56.9, "size_mb": 109.3},
-    # 가장 널리 쓰인 세대 (2023) — 기존 자료·비교 기준이 대부분 이쪽이다
-    {"family": "YOLOv8",  "file": "yolov8n.pt",  "label": "nano",   "params_m": 3.2,  "size_mb": 6.2},
-    {"family": "YOLOv8",  "file": "yolov8s.pt",  "label": "small",  "params_m": 11.2, "size_mb": 21.5},
-    {"family": "YOLOv8",  "file": "yolov8m.pt",  "label": "medium", "params_m": 25.9, "size_mb": 49.7},
-    {"family": "YOLOv8",  "file": "yolov8l.pt",  "label": "large",  "params_m": 43.7, "size_mb": 83.7},
-    {"family": "YOLOv8",  "file": "yolov8x.pt",  "label": "xlarge", "params_m": 68.2, "size_mb": 130.5},
-    # v5 아키텍처의 ultralytics 재릴리스(u) — 구형 대비·저사양 확인용
-    {"family": "YOLOv5u", "file": "yolov5nu.pt", "label": "nano",   "params_m": 2.6,  "size_mb": 5.3},
-    {"family": "YOLOv5u", "file": "yolov5su.pt", "label": "small",  "params_m": 9.1,  "size_mb": 17.7},
-    {"family": "YOLOv5u", "file": "yolov5mu.pt", "label": "medium", "params_m": 25.1, "size_mb": 48.2},
-    # RT-DETR — 트랜스포머 검출기. NMS 가 없어 후처리가 단순하고, 아키텍처 자체는
-    # Apache-2.0 이다. ⚠ **다만 여기서 받는 가중치는 ultralytics 배포본이라
-    # 라이선스는 나머지와 같다** — 실제로 라이선스를 바꾸려면 원 구현이나
-    # transformers 쪽 RT-DETR 로 가야 한다. 이름만 바꿔서는 안 바뀐다.
-    #
-    # `params_m` 은 비워둔다 — 확인 안 한 수치를 적느니 안 적는다.
-    # `size_mb` 는 배포 URL 에 HEAD 를 쳐서 실측한 값이다.
-    {"family": "RT-DETR", "file": "rtdetr-l.pt", "label": "large",  "params_m": None, "size_mb": 63.4},
-    {"family": "RT-DETR", "file": "rtdetr-x.pt", "label": "xlarge", "params_m": None, "size_mb": 129.5},
+# ⚠ **ultralytics 를 걷어냈다.** AGPL-3.0 이라 배포물 전체를 물들이고, 비상업
+# 조건을 붙이는 것도 막는다(AGPL §7). RT-DETR 은 아키텍처가 Apache-2.0 이고
+# `transformers` 에 구현이 있어, 가중치까지 원 배포본(PekingU/*, Apache-2.0)으로
+# 받으면 카피레프트가 남지 않는다.
+#
+# ⚠ **아키텍처가 Apache 인 것과 가중치가 Apache 인 것은 다르다.** 예전 카탈로그의
+# `rtdetr-l.pt`·`rtdetr-x.pt` 는 아키텍처만 Apache 이고 가중치는 ultralytics
+# 배포본이라 AGPL 이었다. 이름만 바꿔서는 안 바뀐다 — 출처를 바꿔야 한다.
+#
+# `file` 이라는 키 이름은 그대로 둔다. 이제 파일명이 아니라 **모델 id** 지만,
+# 프론트가 이 키로 읽고 있어 이름만 바꾸면 화면이 통째로 빈다.
+# `size_mb` 는 배포 URL 에 HEAD 를 쳐서 실측한 값이다. `params_m` 은 확인 안 한
+# 수치를 적느니 비워둔다.
+_DETECTOR_CATALOG = [
+    # v2 — 같은 크기에서 v1 보다 낫다. 기본값은 여기서 고른다.
+    {"family": "RT-DETRv2", "file": "PekingU/rtdetr_v2_r18vd",  "label": "r18",  "params_m": None, "size_mb": 80.9},
+    {"family": "RT-DETRv2", "file": "PekingU/rtdetr_v2_r34vd",  "label": "r34",  "params_m": None, "size_mb": 126.0},
+    {"family": "RT-DETRv2", "file": "PekingU/rtdetr_v2_r50vd",  "label": "r50",  "params_m": None, "size_mb": 172.2},
+    {"family": "RT-DETRv2", "file": "PekingU/rtdetr_v2_r101vd", "label": "r101", "params_m": None, "size_mb": 307.3},
+    # v1 — 기존 자료·비교 기준이 이쪽인 경우가 있다
+    {"family": "RT-DETR",   "file": "PekingU/rtdetr_r18vd",     "label": "r18",  "params_m": None, "size_mb": 80.9},
+    {"family": "RT-DETR",   "file": "PekingU/rtdetr_r50vd",     "label": "r50",  "params_m": None, "size_mb": 172.2},
+    {"family": "RT-DETR",   "file": "PekingU/rtdetr_r101vd",    "label": "r101", "params_m": None, "size_mb": 307.3},
 ]
 
-# 가중치가 떨어져 있을 만한 곳: yolod 유닛의 작업 디렉토리(홈 — systemd-run 이
-# WorkingDirectory 를 안 정하므로), 개발 실행이 받아둔 저장소 루트·backend.
-_WEIGHT_DIRS = [Path.home(), Path(__file__).resolve().parents[3], Path.cwd()]
+DEFAULT_DETECTOR = "PekingU/rtdetr_v2_r18vd"
 
-_STANDARD_FILES = {m["file"] for m in _YOLO_CATALOG}
+_STANDARD_FILES = {m["file"] for m in _DETECTOR_CATALOG}
 
-# 업로드 상한. 표준 최대(yolo11x, ~110MB)의 몇 배면 커스텀도 넉넉하다 —
-# 무제한이면 잘못 올린 파일이 디스크를 채운다.
-_UPLOAD_LIMIT_MB = 500
+
+def _in_hf_cache(model_id: str) -> bool:
+    """이미 받아둔 모델인가. HF 는 `models--<org>--<name>` 으로 캐시한다.
+
+    ⚠ 예전에는 홈·저장소 루트에서 `.pt` 파일을 찾았다. 이제 가중치는 HF 캐시로
+    가므로 그 자리를 봐야 한다 — 안 고치면 전부 "안 받음"으로 떠서 매번 다시
+    받는 줄 알게 된다.
+    """
+    hub = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
+    return (hub / f"models--{model_id.replace('/', '--')}").is_dir()
 
 
 def _custom_models() -> list[dict]:
-    """업로드·학습된 커스텀 가중치.
+    """학습된 커스텀 가중치.
 
-    학습 유닛(yolo_traind)이 남긴 곁 JSON(<stem>.json)이 있으면 지표를 싣는다 —
-    드롭다운에서 "어느 데이터셋으로 얼마나 나온 가중치인지"가 보인다.
-    없으면(직접 업로드) 수정일만.
+    ⚠ **디렉토리다, 파일이 아니다.** HF 형식은 config+safetensors+전처리기가 한
+    디렉토리에 들어간다. `.pt` 단일 파일은 ultralytics 형식이라 더 이상 안 쓴다.
+
+    ⚠ **`piper_meta.json` 이 있는 것만 센다.** 학습이 중간에 죽으면 최고 에폭까지
+    저장된 반쪽 디렉토리가 남는데, 그것도 모델처럼 보여서 목록에 뜨면 사용자가
+    고르고 나서야 이상하다는 걸 안다. 메타는 **완료 시점에만** 쓰이므로 그 존재가
+    곧 "끝까지 돈 학습"의 표시다.
     """
     d = settings.yolo_models_dir
     if not d.is_dir():
         return []
     out = []
-    for p in sorted(d.glob("*.pt")):
-        st = p.stat()
+    for p in sorted(x for x in d.iterdir() if x.is_dir()):
+        meta_f = p / "piper_meta.json"
+        if not meta_f.is_file():
+            continue
+        size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
         entry = {
             "family": "커스텀",
             "file": p.name,
-            "label": time.strftime("%Y-%m-%d", time.localtime(st.st_mtime)),
-            "size_mb": round(st.st_size / 1e6, 1),
+            "label": time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime)),
+            "size_mb": round(size / 1e6, 1),
             "downloaded": True,
         }
-        sidecar = p.with_suffix(".json")
-        if sidecar.is_file():
-            try:
-                meta = json.loads(sidecar.read_text())
-                entry.update({
-                    "map50": meta.get("map50"),
-                    "classes_n": len(meta.get("classes", [])) or None,
-                    "trained_on": meta.get("dataset"),
-                })
-            except ValueError:
-                pass
+        try:
+            meta = json.loads(meta_f.read_text())
+            entry.update({
+                "map50": meta.get("map50"),
+                "classes_n": len(meta.get("classes", [])) or None,
+                "trained_on": meta.get("dataset"),
+            })
+        except ValueError:
+            pass
         out.append(entry)
     return out
 
 
 def _resolve_model(name: str) -> str:
-    """모델 이름 → yolod 에 넘길 값. **클라이언트가 보낸 값을 경로로 쓰지 않는다.**
+    """모델 이름 → 데몬에 넘길 값. **클라이언트가 보낸 값을 경로로 쓰지 않는다.**
 
-    커스텀 디렉토리에 있으면 그 절대경로, 아니면 이름 그대로 — ultralytics 가
-    표준 에셋 이름이면 자동 다운로드하고 모르는 이름이면 로드에서 실패한다.
-    경로 문자가 섞인 이름만 여기서 자른다 (임의 파일 로드 방지).
+    ⚠ 예전에는 "`/` 가 들어 있으면 거절" 이었다. 그런데 HF 모델 id 는
+    `PekingU/rtdetr_v2_r18vd` 처럼 **`/` 를 포함한다** — 그대로 두면 카탈로그의
+    모든 모델이 거절된다. 그래서 **화이트리스트**로 바꾼다: 카탈로그에 있거나
+    커스텀 디렉토리에 있는 것만 통과한다. 막는 쪽이 아니라 허용하는 쪽을 적는
+    편이 안전하다 — 새 우회 문자를 뒤늦게 알아채는 일이 없다.
     """
-    if "/" in name or "\\" in name or name.startswith("."):
-        raise HTTPException(400, "모델 이름에 경로를 쓸 수 없습니다")
-    p = settings.yolo_models_dir / name
-    return str(p) if p.is_file() else name
+    if name in _STANDARD_FILES:
+        return name
+    p = settings.yolo_models_dir / Path(name).name
+    if p.is_dir() and (p / "piper_meta.json").is_file():
+        return str(p)
+    raise HTTPException(400, f"모르는 모델입니다: {name}")
 
 
 @router.get("/models")
@@ -129,49 +142,21 @@ async def list_yolo_models():
     """표준 카탈로그 + 업로드된 커스텀 가중치 (시작 UI 의 선택지)."""
     return {
         "models": [
-            {**m, "downloaded": any((d / m["file"]).exists() for d in _WEIGHT_DIRS)}
-            for m in _YOLO_CATALOG
+            {**m, "downloaded": _in_hf_cache(m["file"])}
+            for m in _DETECTOR_CATALOG
         ] + _custom_models()
     }
-
-
-@router.put("/models/{name}")
-async def upload_yolo_model(name: str, request: Request):
-    """커스텀 가중치 업로드 — raw 바디 (.pt). multipart 의존성 없이 스트리밍으로 받는다."""
-    if "/" in name or "\\" in name or name.startswith("."):
-        raise HTTPException(400, "파일명에 경로를 쓸 수 없습니다")
-    if not name.endswith(".pt"):
-        raise HTTPException(400, ".pt 파일만 받습니다")
-    if name in _STANDARD_FILES:
-        raise HTTPException(400, "표준 모델과 같은 이름입니다 — 파일명을 바꿔서 올리세요")
-
-    settings.yolo_models_dir.mkdir(parents=True, exist_ok=True)
-    dest = settings.yolo_models_dir / name
-    tmp = dest.with_suffix(".pt.part")  # 반쯤 올라간 파일이 목록에 뜨면 안 된다
-    size = 0
-    try:
-        with tmp.open("wb") as f:
-            async for chunk in request.stream():
-                size += len(chunk)
-                if size > _UPLOAD_LIMIT_MB * 1_000_000:
-                    raise HTTPException(413, f"{_UPLOAD_LIMIT_MB}MB 를 넘습니다")
-                f.write(chunk)
-        if size == 0:
-            raise HTTPException(400, "빈 파일입니다")
-        tmp.replace(dest)
-    finally:
-        tmp.unlink(missing_ok=True)
-    return {"file": name, "size_mb": round(size / 1e6, 1)}
 
 
 @router.delete("/models/{name}")
 async def delete_yolo_model(name: str):
     """커스텀 가중치 삭제. 표준 카탈로그는 대상이 아니다 (어차피 여기 없다)."""
+    # ⚠ 이제 디렉토리다. `Path(name).name` 으로 경로 성분을 먼저 자른다 —
+    #   그게 없으면 `../..` 같은 이름으로 남의 디렉토리를 지울 수 있다.
     p = settings.yolo_models_dir / Path(name).name
-    if not p.is_file():
+    if not p.is_dir():
         raise HTTPException(404, "그런 커스텀 모델이 없습니다")
-    p.unlink()
-    p.with_suffix(".json").unlink(missing_ok=True)  # 학습 곁 JSON 도 같이
+    shutil.rmtree(p)
     return {"deleted": p.name}
 
 
@@ -200,7 +185,7 @@ async def segment_snapshot(name: str):
 
 class StartRequest(BaseModel):
     cams: dict[str, str]          # alias → 세그먼트 cam_id
-    model: str = "yolo11n.pt"
+    model: str = "PekingU/rtdetr_v2_r18vd"
     fps: float = 5.0
     conf: float = 0.25
     # 추론 입력 크기(긴 변). ultralytics 가 32 배수로 맞춘다 — 상하한만 막는다

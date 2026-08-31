@@ -72,3 +72,13 @@ RUN pip install piper_sdk==0.6.1 python-can==4.6.1
 # gRPC — 원격 추론(정책 서버 ↔ 클라이언트). lerobot 의 async_inference 모듈은
 # 들어 있는데 `grpc` 자체가 없어서, .120 에서 원격 추론을 붙이려다 막혔다.
 RUN pip install grpcio
+
+# ── 검출 학습 평가 (mAP) ──
+# ⚠ **직접 구현하지 않는다.** mAP 는 IoU 스윕·클래스별 AP·101점 보간에 함정이
+#   많아 손으로 짜면 "그럴듯하지만 틀린 숫자"가 나온다. 학습 유닛이 val 분할을
+#   그룹 단위로 하는 이유가 지표를 믿기 위해서인데, 지표 계산이 틀리면 그 노력이
+#   통째로 무의미해진다. torchmetrics(Apache-2.0) + pycocotools(BSD) 를 쓴다.
+# ⚠ `scipy` 는 **학습에만** 필요하다 — RT-DETR 의 헝가리안 매처가 쓴다. 추론만
+#   할 때는 안 불리므로, 없어도 검출은 되고 학습에서만 ImportError 로 죽는다.
+#   그래서 여기서 같이 깐다(BSD-3).
+RUN pip install "torchmetrics[detection]" scipy
