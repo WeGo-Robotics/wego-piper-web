@@ -3,6 +3,7 @@ name = "piper-shm"
 version = "0.1.0"
 description = "Piper /dev/shm frame transport contract (gateway ↔ camerad ↔ LeRobot plugin)"
 requires-python = ">=3.11"
+license = "Apache-2.0"
 dependencies = ["numpy"]
 
 [build-system]

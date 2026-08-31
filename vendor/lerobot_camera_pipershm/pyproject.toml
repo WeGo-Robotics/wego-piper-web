@@ -3,6 +3,7 @@ name = "lerobot_camera_pipershm"
 version = "0.1.0"
 description = "LeRobot camera plugin reading frames from /dev/shm (piper)"
 requires-python = ">=3.11"
+license = "Apache-2.0"
 dependencies = ["numpy", "piper-shm"]
 
 [build-system]

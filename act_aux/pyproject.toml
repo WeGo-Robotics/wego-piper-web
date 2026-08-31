@@ -6,6 +6,7 @@ name = "lerobot_policy_act_aux"
 version = "0.1.0"
 description = "ACT 를 상속해 행동 + 작업 단계(stage)를 함께 내는 정책 (feature/act-aux.md)"
 requires-python = ">=3.11"
+license = "Apache-2.0"
 dependencies = ["lerobot>=0.5.0"]
 
 # 굽기(bake)는 parquet 만 만진다 — 정책 런타임에 pandas 를 끌고 오지 않는다.

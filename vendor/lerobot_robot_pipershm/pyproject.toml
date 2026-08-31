@@ -3,6 +3,7 @@ name = "lerobot_robot_pipershm"
 version = "0.1.0"
 description = "LeRobot robot plugin talking to piper-robotd over /dev/shm"
 requires-python = ">=3.11"
+license = "Apache-2.0"
 dependencies = ["piper-shm", "lerobot_robot_piper"]
 
 [build-system]

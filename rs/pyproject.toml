@@ -3,6 +3,7 @@ name = "piper-rs"
 version = "0.1.0"
 description = "Piper RealSense daemon core (owns pyrealsense2 pipelines)"
 requires-python = ">=3.11"
+license = "Apache-2.0"
 # ⚠ piper-cam 은 **v4l2 장치를 쓰려는 게 아니다** — `piper_cam.controls` 의
 # 자동 모드 순서 로직(순수 함수)을 공유한다. 두 벌이면 한쪽만 고쳐진다.
 dependencies = ["numpy", "piper-shm", "piper-cam"]

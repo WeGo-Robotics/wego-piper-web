@@ -3,6 +3,7 @@ name = "piper_bus"
 version = "0.1.0"
 description = "Piper 게이트웨이·데몬 공유 버스 계약 (Redis)"
 requires-python = ">=3.11"
+license = "Apache-2.0"
 dependencies = ["redis>=5.0"]
 
 [tool.setuptools.packages.find]

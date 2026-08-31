@@ -3,6 +3,7 @@ name = "piper-cam"
 version = "0.1.0"
 description = "Piper v4l2 camera daemon core (owns /dev/video*)"
 requires-python = ">=3.11"
+license = "Apache-2.0"
 dependencies = ["numpy", "piper-shm"]
 
 [build-system]
