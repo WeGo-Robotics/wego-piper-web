@@ -261,6 +261,83 @@ def test_the_registry_keeps_its_data_outside_the_container():
     assert "restart=always" in src, "재부팅하면 사라진다"
 
 
+STAGE_SH = REPO / "deploy" / "stage-hostside.sh"
+BOOTSTRAP = REPO / "deploy" / "piper-install.sh"
+
+
+def test_the_image_carries_the_code_that_runs_outside_it():
+    """사용자에게는 스크립트 하나만 준다. 그러려면 도커 **바깥**에서 도는
+    것들(데몬·wheel·udev·compose·apply.sh)도 이미지 안에 있어야 한다.
+    실측 207KB — 앱 이미지 3.7GB 의 0.0057% 다."""
+    assert "COPY .hostside/ /opt/piper-host/" in APP_DF.read_text(), \
+        "이미지가 호스트 코드를 안 싣는다"
+
+
+def test_the_host_code_is_the_last_layer():
+    """⚠ 이게 위로 올라가면 데몬 한 줄에 그 아래가 전부 다시 구워진다.
+    ENV·WORKDIR·EXPOSE·CMD 는 0B 메타라 뒤에 와도 레이어를 안 만든다."""
+    from conftest import code_only
+
+    # ⚠ **줄 이어짐(`\\`)을 먼저 잇는다.** 안 이으면 `ENV A=1 \\` 다음 줄이
+    #   별개 명령으로 보여, 멀쩡한 Dockerfile 을 틀렸다고 한다.
+    joined, buf = [], ""
+    for l in code_only(APP_DF.read_text()).splitlines():
+        buf += l.rstrip("\\") if l.rstrip().endswith("\\") else l
+        if not l.rstrip().endswith("\\"):
+            if buf.strip():
+                joined.append(" ".join(buf.split()))
+            buf = ""
+    lines = joined
+    i = next(n for n, l in enumerate(lines) if l.startswith("COPY .hostside/"))
+    for l in lines[i + 1:]:
+        assert l.split()[0] in {"ENV", "WORKDIR", "EXPOSE", "CMD", "ENTRYPOINT", "LABEL"}, \
+            f"호스트 코드 뒤에 레이어를 만드는 것이 있다: {l}"
+
+
+def test_staging_takes_every_daemon_wheel():
+    """⚠ **다섯 개 전부 담는다.** 이미지가 곧 배포 단위이므로 "바뀐 것만" 담으면
+    호스트에 옛 wheel 이 남는다. 다 합쳐 155KB 라 아낄 이유가 없다."""
+    src = STAGE_SH.read_text()
+    line = next(l for l in src.splitlines() if l.strip().startswith("for p in"))
+    for pkg in ("bus", "shm", "robot", "cam", "rs"):
+        assert pkg in line, f"{pkg} wheel 이 빠진다: {line.strip()}"
+
+
+def test_release_stages_the_host_code_before_baking():
+    """순서가 뒤집히면 **옛 데몬이 실린 이미지가 나가는데 아무 에러도 안 난다.**"""
+    src = RELEASE.read_text()
+    i_stage = src.find("stage-hostside.sh")
+    i_build = src.find('docker compose build "${IMAGES[@]}"')
+    assert i_stage != -1 and i_stage < i_build, "이미지를 굽고 나서 호스트 코드를 모은다"
+    # 매니페스트도 이미지 안으로 들어가야 한다 — 굽기 전에 써야 한다는 뜻이다
+    assert src.find('write_manifest "$REPO/.hostside/manifest.txt"') < i_build, \
+        "매니페스트가 이미지 안에 빈 채로 들어간다"
+
+
+def test_the_bootstrap_only_checks_docker():
+    """⚠ 전제 확인은 `apply.sh` 한 곳에 있어야 갈리지 않는다. 부트스트랩이
+    도커만 보는 것은 그것이 **나머지를 꺼내오는 수단**이기 때문이다 —
+    없으면 apply.sh 자체를 못 꺼낸다."""
+    from conftest import code_only
+
+    # ⚠ **주석은 뺀다.** 무엇을 이미지에 실었는지 설명하느라 `udev` 같은 낱말이
+    #   머리말에 나온다 — 그걸 검사로 세면 설명문을 코드로 착각한다.
+    src = code_only(BOOTSTRAP.read_text())
+    assert "command -v docker" in src, "도커를 안 본다"
+    for other in ("redis-server", "python3-venv", "nvidia-smi", "compute_cap", "udev"):
+        assert other not in src, f"apply.sh 의 검사를 여기서 또 한다: {other}"
+
+
+def test_the_bootstrap_does_not_run_the_image_to_unpack_it():
+    """⚠ 설치 **전에** 남의 코드를 실행할 이유가 없다. `docker create` 는
+    컨테이너를 만들기만 하고 돌리지 않는다."""
+    from conftest import code_only
+
+    src = code_only(BOOTSTRAP.read_text())
+    assert "docker create" in src, "꺼내려고 컨테이너를 돌린다"
+    assert "docker run" not in src, "이미지를 실행해서 꺼낸다"
+
+
 def test_the_base_image_is_pinned_by_digest():
     """⚠ `python:3.13-slim-bookworm` 은 **뜬 태그**다. 데비안 보안 패치가 들어갈
     때마다 다른 이미지가 되고, 그러면 1번 레이어부터 갈려 아래 전부가 다시

@@ -74,8 +74,29 @@ if [ $((need_backend + need_frontend + need_wheels + need_daemons)) -eq 0 ]; the
   echo "✗ 바뀐 것이 없습니다 — 배포할 이유가 없습니다"; exit 1
 fi
 
+# ⚠ **값에 따옴표를 씌운다.** `apply.sh` 가 `source` 하는데, `images=backend frontend`
+#   는 셸에서 "images=backend 를 환경으로 두고 frontend 를 실행" 이다 —
+#   실제로 `frontend: command not found` 로 깨졌다.
+# ⚠ 이미지 안과 번들에 **같은 것**이 들어가야 한다. 두 군데서 따로 만들면 갈린다.
+write_manifest() {
+  cat > "$1" <<EOF
+version="$VERSION"
+prev="$PREV"
+built_at="$BUILT_AT"
+images="$([ ${#IMAGES[@]} -gt 0 ] && echo "${IMAGES[*]}" || echo "")"
+wheels="$([ $need_wheels = 1 ] && echo "${WHEEL_PKGS[*]}" || echo "")"
+daemons="$([ $need_daemons = 1 ] && echo yes || echo "")"
+registry="$REGISTRY"
+EOF
+}
+BUILT_AT="$(date -Is)"
+
 OUT="$REPO/dist/$VERSION"
 rm -rf "$OUT"; mkdir -p "$OUT"
+
+# ⚠ 매니페스트가 **이미지 안으로** 들어가므로, 어디서 받을지를 굽기 전에 정해야
+#   한다. 나중에 정하면 이미지 안의 매니페스트가 비어 나간다.
+if [ -n "${PIPER_REGISTRY:-}" ] && [ $OFFLINE = 0 ]; then REGISTRY="$PIPER_REGISTRY"; fi
 
 # ── 이미지 ────────────────────────────────────────────────────────────────
 IMAGES=()
@@ -85,6 +106,10 @@ if [ ${#IMAGES[@]} -gt 0 ]; then
   # ⚠ 앱 이미지는 베이스 위에 얹힌다 — 없거나 낡으면 compose build 가 죽는다.
   #   릴리스마다 굽는 게 아니라, 없을 때만 굽는다(build-base.sh 가 판단).
   case " ${IMAGES[*]} " in *" backend "*) "$REPO/deploy/build-base.sh" ;; esac
+  # ⚠ 호스트 코드는 **이미지 안에** 들어간다. 이미지를 굽기 전에 모아야 한다 —
+  #   순서가 뒤집히면 옛 데몬이 실린 이미지가 나가는데 아무 에러가 안 난다.
+  "$REPO/deploy/stage-hostside.sh"
+  write_manifest "$REPO/.hostside/manifest.txt"
   echo "· 이미지 빌드: ${IMAGES[*]}"
   docker compose build "${IMAGES[@]}"
   TAGS=()
@@ -171,18 +196,8 @@ cp deploy/udev/list-can-adapters.py       "$OUT/udev/"
 
 # ── 적용 스크립트와 매니페스트 ────────────────────────────────────────────
 cp "$REPO/deploy/apply.sh" "$OUT/apply.sh"; chmod +x "$OUT/apply.sh"
-# ⚠ **값에 따옴표를 씌운다.** `apply.sh` 가 `source` 하는데, `images=backend frontend`
-#   는 셸에서 "images=backend 를 환경으로 두고 frontend 를 실행" 이다 —
-#   실제로 `frontend: command not found` 로 깨졌다.
-cat > "$OUT/manifest.txt" <<EOF
-version="$VERSION"
-prev="$PREV"
-built_at="$(date -Is)"
-images="$([ ${#IMAGES[@]} -gt 0 ] && echo "${IMAGES[*]}" || echo "")"
-wheels="$([ $need_wheels = 1 ] && echo "${WHEEL_PKGS[*]}" || echo "")"
-daemons="$([ $need_daemons = 1 ] && echo yes || echo "")"
-registry="$REGISTRY"
-EOF
+
+write_manifest "$OUT/manifest.txt"
 
 BUNDLE="$REPO/dist/piper-web-$VERSION.tar.gz"
 tar czf "$BUNDLE" -C "$REPO/dist" "$VERSION"

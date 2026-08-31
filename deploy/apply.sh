@@ -119,8 +119,13 @@ fi
 #   "server gave HTTP response to HTTPS client" 로 죽는데, 그 메시지만 보고
 #   무엇을 고쳐야 하는지 알기 어렵다. 도커는 `127.0.0.0/8` 만 기본으로 믿는다.
 if [ -n "${registry:-}" ]; then
+  # ⚠ **`wego/...` 같은 값은 주소가 아니라 도커 허브 네임스페이스다.** HTTPS 로
+  #   가므로 insecure 설정과 무관하다. 포트가 없으면 그 경우로 본다 — 이걸 안
+  #   가르면 공개 배포에서 매번 거짓 경보가 난다.
+  if [[ "$registry" != *:* ]]; then
+    ok "공개 레지스트리 ($registry)"
   # 도커는 루프백을 기본으로 믿는다 — 그건 확인할 것이 없다
-  if [[ "$registry" == localhost:* || "$registry" == 127.* ]]; then
+  elif [[ "$registry" == localhost:* || "$registry" == 127.* ]]; then
     ok "레지스트리 $registry (루프백 — 기본 신뢰)"
   elif docker info 2>/dev/null | grep -qF " $registry"; then
     ok "레지스트리 신뢰됨 ($registry)"
@@ -130,7 +135,9 @@ if [ -n "${registry:-}" ]; then
     echo "         {\"insecure-registries\": [\"$registry\"]}"
     NEED_SUDO+=("systemctl restart docker   # daemon.json 을 고친 뒤")
   fi
-  if curl -fsS --max-time 5 "http://$registry/v2/" >/dev/null 2>&1; then
+  if [[ "$registry" != *:* ]]; then
+    :   # 공개 레지스트리 — 살아 있는지는 pull 이 말해 준다
+  elif curl -fsS --max-time 5 "http://$registry/v2/" >/dev/null 2>&1; then
     ok "레지스트리 응답 ($registry)"
   else
     bad "레지스트리 $registry 가 응답하지 않는다"
@@ -229,6 +236,11 @@ if [ -n "${images:-}" ]; then
       docker tag "$registry/piper-web-$s:$version" "piper-web-$s:latest"
       ok "pull piper-web-$s:$version → :latest"
     done
+  elif [ ! -f "$HERE/images.tar.gz" ]; then
+    # ⚠ 이미지를 가져올 방법이 없다. 예전에는 없는 tar 를 풀려다 gunzip 오류로
+    #   죽어서, 무엇이 잘못됐는지 알 수 없었다.
+    bad "이미지를 가져올 방법이 없습니다 — 번들에 tar 도 없고 매니페스트에 registry 도 없습니다"
+    exit 1
   else
     gunzip -c "$HERE/images.tar.gz" | docker load
     # ⚠ compose 는 `image: piper-web-backend` (태그 생략=latest) 로 참조한다.

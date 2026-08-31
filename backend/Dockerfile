@@ -65,6 +65,22 @@ RUN pip install -e "/app/backend[realsense]"
 #  빌드 시점엔 /data 가 아직 없어 dangling 이므로 pip install 이후에 만든다)
 RUN ln -s /data/outputs /app/backend/outputs
 
+# ── 호스트 쪽 코드 — **도커 바깥에서 도는 것들** ──────────────────────────
+# 데몬·wheel·udev·compose·apply.sh. 설치할 때 꺼내서 호스트에 깐다.
+#
+# ⚠ **사용자에게는 스크립트 하나만 준다.** 나머지는 전부 `docker pull` 로 온다.
+#   파일을 여러 개 주면 하나를 빠뜨리고, 빠뜨린 것은 늘 나중에 엉뚱한 증상으로
+#   드러난다. 비용은 실측 **207KB**(이 이미지의 0.0057%)다.
+#
+# ⚠ **맨 마지막이다.** 여기가 위로 올라가면 데몬 한 줄에 그 아래 레이어가 전부
+#   다시 구워진다. ENV·WORKDIR·CMD 는 0B 메타라 뒤에 와도 상관없다.
+#
+# ⚠ `.hostside/` 는 `deploy/stage-hostside.sh` 가 만든다(gitignore 됨).
+#   없으면 이 COPY 가 실패한다 — 그게 맞다. 빈 채로 구워 놓고 설치 때
+#   "파일이 없다"로 만나는 것보다 여기서 죽는 편이 낫다.
+#   `release.sh` 는 알아서 먼저 부른다.
+COPY .hostside/ /opt/piper-host/
+
 # 두 python 진입점 모두 이 venv 를 가리키게 함 (compose 에서 override 가능)
 ENV PIPER_LOCAL_PYTHON=/opt/venv/bin/python \
     PIPER_GRPC_PYTHON=/opt/venv/bin/python
