@@ -198,7 +198,7 @@ CAN·USB·커널 모듈은 컨테이너가 다룰 수 있는 것이 아니다.
 
 ```bash
 ./deploy/registry.sh                        # 사설 레지스트리 (한 번만)
-export PIPER_REGISTRY=192.168.0.42:5000     # 호스트가 받을 주소
+export PIPER_REGISTRY=piper-build:5000       # 호스트가 받을 **이름**
 ./deploy/release.sh v0.3.10 --dry-run       # 무엇이 올라갈지 먼저 본다
 ./deploy/release.sh v0.3.10                 # 이미지는 push, 번들은 240KB
 scp dist/piper-web-v0.3.10.tar.gz <호스트>:~/
@@ -225,9 +225,26 @@ to HTTPS client` 로 거부당하므로 미는 쪽은 `localhost` 를 쓴다 —
 머신에는 `daemon.json` 설정이 필요 없다. `PIPER_REGISTRY` 에는 **호스트가 받을**
 주소를 넣는다. 같은 레지스트리라 다이제스트는 같다.
 
-⚠ **로봇 호스트는 그 주소를 신뢰해야 한다.** `/etc/docker/daemon.json` 에
-`{"insecure-registries": ["192.168.0.42:5000"]}` 를 넣고 도커를 재시작한다 —
-`apply.sh` 가 확인하고 안 돼 있으면 명령을 찍는다. 망 밖으로 낼 거면 TLS 부터 붙인다.
+⚠ **IP 를 박지 말 것.** 빌드 머신 주소는 DHCP 로 받는다(이 머신은 WiFi 라 더
+잘 바뀐다). IP 를 쓰면 바뀌는 날 호스트의 `daemon.json` 과 **이미 만들어 둔 모든
+번들의 매니페스트가 동시에** 죽는다. 이름을 하나 두면 고칠 곳이 한 줄이다:
+
+```bash
+# 로봇 호스트에서 한 번만
+echo "192.168.0.42  piper-build" | sudo tee -a /etc/hosts   # 주소 바뀌면 이 줄만 고친다
+# /etc/docker/daemon.json 에  {"insecure-registries": ["piper-build:5000"]}
+sudo systemctl restart docker                                # 이건 다시 할 일이 없다
+```
+
+공유기에서 빌드 머신에 **DHCP 예약**을 걸면 위 첫 줄도 다시 손댈 일이 없다.
+
+⚠ 그래도 주소가 어긋났다면 **번들을 다시 굽지 않는다.** 매니페스트 값을 덮어쓴다:
+
+```bash
+PIPER_REGISTRY=<새주소>:5000 ./v0.3.10/apply.sh
+```
+
+망 밖으로 낼 거면 TLS 부터 붙인다.
 
 `--dry-run` 이 이렇게 답한다:
 

@@ -24,6 +24,15 @@ say()  { printf "\n\033[1m%s\033[0m\n" "$1"; }
 source "$HERE/manifest.txt"
 echo "piper-web $version  (직전 $prev, 빌드 $built_at)"
 
+# ⚠ **매니페스트에 박힌 주소는 늙는다.** 빌드 머신이 DHCP·WiFi 면 IP 가 바뀌고,
+#   그러면 이미 만든 번들의 `registry=` 가 죽은 주소를 가리킨다. 번들을 다시
+#   굽지 않고 넘어갈 수 있어야 한다:
+#       PIPER_REGISTRY=새주소:5000 ./apply.sh
+if [ -n "${PIPER_REGISTRY:-}" ] && [ "${PIPER_REGISTRY}" != "${registry:-}" ]; then
+  echo "  레지스트리 주소를 덮어씁니다: ${registry:-<없음>} → $PIPER_REGISTRY"
+  registry="$PIPER_REGISTRY"
+fi
+
 VENV="$HOME/.venvs/piper-daemons"
 DATA="${PIPER_DATA_ROOT:-/srv/piper-data}"
 
@@ -121,8 +130,15 @@ if [ -n "${registry:-}" ]; then
     echo "         {\"insecure-registries\": [\"$registry\"]}"
     NEED_SUDO+=("systemctl restart docker   # daemon.json 을 고친 뒤")
   fi
-  curl -fsS --max-time 5 "http://$registry/v2/" >/dev/null 2>&1 \
-    && ok "레지스트리 응답" || bad "레지스트리 $registry 가 응답하지 않는다 — 빌드 머신에서 ./deploy/registry.sh"
+  if curl -fsS --max-time 5 "http://$registry/v2/" >/dev/null 2>&1; then
+    ok "레지스트리 응답 ($registry)"
+  else
+    bad "레지스트리 $registry 가 응답하지 않는다"
+    echo "       빌드 머신에서 레지스트리가 도는지:  ./deploy/registry.sh --status"
+    echo "       빌드 머신 주소가 바뀌었다면 (DHCP·WiFi 면 바뀐다):"
+    echo "         이 호스트의 /etc/hosts 에서 그 이름의 IP 를 고치거나,"
+    echo "         한 번만 넘어가려면:  PIPER_REGISTRY=<새주소>:5000 ./apply.sh"
+  fi
 fi
 
 [ -d "$DATA" ] && ok "데이터 루트 $DATA" || { bad "$DATA 없음"; NEED_SUDO+=("mkdir -p $DATA && chown $USER $DATA"); }

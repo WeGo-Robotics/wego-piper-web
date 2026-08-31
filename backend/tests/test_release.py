@@ -214,6 +214,25 @@ def test_apply_checks_the_registry_is_trusted():
     assert 'localhost:*' in src or "127." in src, "루프백 예외가 없다"
 
 
+def test_a_stale_registry_address_can_be_overridden():
+    """⚠ **매니페스트에 박힌 주소는 늙는다.** 빌드 머신이 DHCP·WiFi 면 IP 가 바뀌고,
+    그러면 이미 만들어 둔 번들이 전부 죽은 주소를 가리킨다. 그때 번들을 다시 굽게
+    만들면 안 된다 — 3.46GB 를 다시 만드는 일이다."""
+    src = APPLY.read_text()
+    assert 'registry="$PIPER_REGISTRY"' in src, "환경변수로 못 덮는다"
+    # 덮어쓴 것을 말해야 한다. 조용히 다른 데서 받아오면 그게 더 무섭다
+    assert "덮어씁니다" in src, "덮어쓴 사실을 안 알린다"
+
+
+def test_the_registry_guidance_does_not_hand_out_a_raw_ip():
+    """IP 를 그대로 쓰면 바뀌는 날 **호스트의 daemon.json 과 모든 번들의
+    매니페스트가 동시에** 죽는다. 이름을 하나 두면 고칠 곳이 `/etc/hosts` 한 줄이다."""
+    src = REGISTRY_SH.read_text()
+    assert "/etc/hosts" in src, "이름을 쓰라고 안 한다"
+    assert "DHCP" in src, "주소가 바뀐다는 걸 말하지 않는다"
+    assert "PIPER_REGISTRY=$NAME:$PORT" in src, "이름이 아니라 IP 를 내보내게 한다"
+
+
 def test_the_registry_keeps_its_data_outside_the_container():
     """컨테이너를 지웠다고 이미지가 사라지면 호스트들이 다음 pull 에서 통째로
     다시 받는다 — 레지스트리를 둔 이유가 사라진다."""

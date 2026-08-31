@@ -40,8 +40,28 @@ else
 fi
 
 IP="$(ip -4 -br addr show 2>/dev/null | grep -v '^lo' | grep -v '^docker\|^br-' | head -1 | awk '{print $3}' | cut -d/ -f1)"
+NAME="${PIPER_REGISTRY_NAME:-piper-build}"
 echo
-echo "빌드 머신에서:  export PIPER_REGISTRY=${IP:-<이 머신 IP>}:$PORT"
-echo "로봇 호스트에서: /etc/docker/daemon.json 에"
-echo "                {\"insecure-registries\": [\"${IP:-<이 머신 IP>}:$PORT\"]}"
-echo "                넣고 sudo systemctl restart docker"
+echo "이 머신의 LAN 주소: ${IP:-<못 찾음>}"
+cat <<TXT
+
+⚠ **IP 를 그대로 쓰지 마세요.** 이 주소는 DHCP 로 받은 것이라 바뀝니다. 바뀌면
+  호스트의 daemon.json 과 **이미 만들어 둔 번들의 매니페스트가 동시에** 죽습니다.
+  이름을 하나 정해 호스트가 소유하게 하면, 주소가 바뀌어도 고칠 곳이 한 줄입니다.
+
+로봇 호스트에서 (한 번만):
+
+  # 1) 이름 → 주소.  나중에 IP 가 바뀌면 **이 줄만** 고친다
+  echo "${IP:-<이 머신 IP>}  $NAME" | sudo tee -a /etc/hosts
+
+  # 2) 평문 레지스트리를 신뢰.  이름을 쓰므로 다시 고칠 일이 없다
+  #    /etc/docker/daemon.json 에  {"insecure-registries": ["$NAME:$PORT"]}
+  sudo systemctl restart docker
+
+빌드 머신에서:
+
+  export PIPER_REGISTRY=$NAME:$PORT
+
+⚠ 더 확실히 하려면 공유기에서 이 머신에 **DHCP 예약**을 걸어 주소를 고정하세요.
+  그러면 위 1) 도 다시 손댈 일이 없습니다.
+TXT
