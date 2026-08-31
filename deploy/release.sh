@@ -26,7 +26,10 @@ for a in "${@:2}"; do
 done
 [ -n "$VERSION" ] || { echo "사용: $0 vX.Y.Z [--dry-run] [--offline]"; exit 1; }
 
-PREV="$(git tag --sort=-v:refname | head -1)"
+# ⚠ **지금 굽는 버전은 빼고 고른다.** 절차가 "태그 먼저, 그다음 빌드" 인데,
+#   그냥 최신 태그를 잡으면 **방금 찍은 그 태그**가 직전 버전이 된다 — diff 가
+#   비고 "바뀐 것이 없다" 가 된다. 실제로 v0.4.0 에서 그렇게 막혔다.
+PREV="$(git tag --sort=-v:refname | grep -vFx "$VERSION" | head -1)"
 [ -n "$PREV" ] || { echo "✗ 직전 태그가 없습니다 — 첫 배포는 --all 로 하세요"; exit 1; }
 
 # ── 무엇이 바뀌었나 ───────────────────────────────────────────────────────
@@ -36,8 +39,11 @@ PREV="$(git tag --sort=-v:refname | head -1)"
 #   도는 것을 바꾸지 않는데, 그것 때문에 11GB 를 다시 굽고 3.4GB 를 전송하는 건
 #   낭비다. 실측: v0.3.5 는 `backend/tests/test_system_messages.py` 하나 때문에
 #   backend 이미지가 필요하다고 판정됐는데, 그 릴리스는 frontend 만 올렸다.
+# ⚠ **`|| true` 가 없으면 조용히 죽는다.** 걸러낸 결과가 비면 `grep` 이 1 을
+#   돌려주고, `set -e` 아래의 명령 치환은 그걸로 스크립트를 끝낸다 — 에러도
+#   메시지도 없이. 실제로 v0.4.0 에서 아무 출력 없이 종료됐다.
 CHANGED="$(git diff --name-only "$PREV" HEAD \
-  | grep -vE '(^|/)tests?/|_test\.py$|\.md$|^(refactor|feature|docs)/')"
+  | grep -vE '(^|/)tests?/|_test\.py$|\.md$|^(refactor|feature|docs)/' || true)"
 need_backend=0 need_frontend=0 need_wheels=0 need_daemons=0
 WHEEL_PKGS=()
 while read -r f; do
@@ -135,10 +141,19 @@ if [ ${#IMAGES[@]} -gt 0 ]; then
     #   `localhost` 를 쓴다 — 그러면 빌드 머신에는 daemon.json 설정이 필요 없다.
     #   매니페스트에는 **호스트가 받을 주소**(LAN IP)를 적는다. 같은 레지스트리라
     #   다이제스트는 동일하다.
-    PUSH_TO="${PIPER_REGISTRY_PUSH:-localhost:${PIPER_REGISTRY##*:}}"
-    if ! curl -fsS --max-time 3 "http://$PUSH_TO/v2/" >/dev/null 2>&1; then
-      echo "✗ 레지스트리 $PUSH_TO 에 못 붙습니다 — ./deploy/registry.sh 로 띄우거나 --offline 을 쓰세요"
-      exit 1
+    # ⚠ **공개 레지스트리와 사설 평문 레지스트리는 다르게 다룬다.**
+    #   `ghcr.io/...` 처럼 포트가 없으면 HTTPS 공개 레지스트리다 — `localhost`
+    #   우회도, 평문 점검도 하면 안 된다(`localhost:ghcr.io/...` 라는 엉뚱한
+    #   주소가 만들어진다). 살아 있는지는 push 가 말해 준다.
+    if [[ "$PIPER_REGISTRY" == *:[0-9]* ]]; then
+      # 사설 평문: 도커가 `127.0.0.0/8` 만 기본으로 믿으므로 미는 쪽은 localhost
+      PUSH_TO="${PIPER_REGISTRY_PUSH:-localhost:${PIPER_REGISTRY##*:}}"
+      if ! curl -fsS --max-time 3 "http://$PUSH_TO/v2/" >/dev/null 2>&1; then
+        echo "✗ 레지스트리 $PUSH_TO 에 못 붙습니다 — ./deploy/registry.sh 로 띄우거나 --offline 을 쓰세요"
+        exit 1
+      fi
+    else
+      PUSH_TO="${PIPER_REGISTRY_PUSH:-$PIPER_REGISTRY}"
     fi
     echo "· 레지스트리로 push: $PUSH_TO  (호스트가 받을 주소: $PIPER_REGISTRY)"
     for s in "${IMAGES[@]}"; do

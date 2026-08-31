@@ -177,6 +177,33 @@ def _wipe_section() -> str:
     return CHECKLIST.read_text().split("## 처음부터 다시 깔려면", 1)[1].split("\n## ", 1)[0]
 
 
+def test_the_version_being_built_is_not_its_own_predecessor():
+    """⚠ **문서와 스크립트가 어긋나 있었다.** 절차는 "태그 먼저, 그다음 빌드"인데
+    `PREV` 를 그냥 최신 태그로 잡으면 **방금 찍은 그 태그**가 직전 버전이 된다.
+    diff 가 비고 릴리스가 통째로 안 만들어진다 — v0.4.0 에서 실제로 막혔다.
+    """
+    src = RELEASE.read_text()
+    line = next(l for l in src.splitlines() if l.startswith("PREV="))
+    assert '-vFx "$VERSION"' in line, f"굽는 버전을 직전으로 잡는다: {line.strip()}"
+
+
+def test_an_empty_diff_does_not_kill_the_script_silently():
+    """⚠ `set -e` 아래에서 `grep` 이 아무것도 못 찾으면 1 을 돌려주고, 명령 치환은
+    그걸로 스크립트를 끝낸다 — **에러도 메시지도 없이**. v0.4.0 빌드가 아무 출력
+    없이 종료됐고, 원인을 찾는 데 그 침묵이 가장 오래 걸렸다."""
+    src = RELEASE.read_text()
+    block = src.split('CHANGED="$(git diff', 1)[1].split(')"', 1)[0]
+    assert "|| true" in block, "빈 diff 에서 조용히 죽는다"
+
+
+def test_a_public_registry_is_not_pushed_through_localhost():
+    """⚠ 사설 평문 레지스트리는 도커가 `127.0.0.0/8` 만 믿어서 `localhost` 로 민다.
+    그 우회를 공개 레지스트리에도 적용하면 `localhost:ghcr.io/...` 라는 엉뚱한
+    주소가 만들어진다. 포트 유무로 가른다."""
+    src = RELEASE.read_text()
+    assert '"$PIPER_REGISTRY" == *:[0-9]*' in src, "공개/사설을 안 가른다"
+
+
 def test_the_offline_path_still_exists():
     """⚠ **현장 USB 배포를 버리면 안 된다.** 레지스트리가 전송량을 33배 줄이지만
     (실측 3.46GB → 104.5MB), 망이 없는 현장이 실재한다. `PIPER_REGISTRY` 가 비었거나
