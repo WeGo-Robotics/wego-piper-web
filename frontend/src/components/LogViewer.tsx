@@ -25,7 +25,9 @@ export default function LogViewer({
   const xtermRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const searchRef = useRef<SearchAddon | null>(null)
-  const prevLenRef = useRef(0)
+  // 직전 렌더의 logs 배열. 길이만 기억하면 링버퍼(`slice(-MAX)`)가 꽉 찬 뒤에는
+  // 길이가 고정돼 "새 줄 없음"으로 오판하고 화면이 얼어붙는다 (학습 step 1K 근처에서 재현).
+  const prevLogsRef = useRef<string[]>([])
   const [copied, setCopied] = useState(false)
   const [search, setSearch] = useState('')
 
@@ -59,7 +61,7 @@ export default function LogViewer({
     xtermRef.current = term
     fitRef.current = fit
     searchRef.current = srch
-    prevLenRef.current = 0
+    prevLogsRef.current = []
 
     // ResizeObserver로 자동 fit
     const ro = new ResizeObserver(() => fit.fit())
@@ -71,7 +73,7 @@ export default function LogViewer({
       xtermRef.current = null
       fitRef.current = null
       searchRef.current = null
-      prevLenRef.current = 0
+      prevLogsRef.current = []
     }
   }, [])
 
@@ -80,37 +82,40 @@ export default function LogViewer({
     const term = xtermRef.current
     if (!term) return
 
-    const prev = prevLenRef.current
-    if (logs.length === 0 && prev > 0) {
-      // 클리어됨
-      term.clear()
+    const prev = prevLogsRef.current
+    prevLogsRef.current = logs
+    if (logs === prev) return
+
+    if (logs.length === 0) {
+      if (prev.length > 0) {
+        // 클리어됨
+        term.clear()
+      }
       term.write(`\x1b[90m${placeholder}\x1b[0m`)
-      prevLenRef.current = 0
       return
     }
 
-    if (logs.length < prev) {
-      // 로그가 줄었으면 (새 세션 등) 전체 다시 쓰기
+    // 호출부는 `[...prev, line].slice(-MAX)` 로 앞을 잘라낸다. 그러면 prev 의 꼬리가
+    // logs 의 머리와 겹치고, 겹친 구간 뒤가 새 줄이다. 겹침이 전혀 없으면(새 세션·
+    // 과거 로그 로드) 전부 다시 쓴다.
+    let overlap = -1
+    for (let k = 0; k <= prev.length; k++) {
+      const m = prev.length - k
+      if (m > logs.length) continue
+      let same = true
+      for (let i = 0; i < m; i++) {
+        if (prev[k + i] !== logs[i]) { same = false; break }
+      }
+      if (same) { overlap = m; break }
+    }
+
+    if (overlap <= 0) {
+      // 이어지는 내용이 아니다 (또는 placeholder 만 떠 있다) → 전체 다시 쓰기
       term.reset()
-      for (const line of logs) {
-        term.writeln(line)
-      }
-      prevLenRef.current = logs.length
+      for (const line of logs) term.writeln(line)
       return
     }
-
-    // 새로 추가된 라인만 쓰기
-    if (prev === 0 && logs.length === 0) {
-      term.write(`\x1b[90m${placeholder}\x1b[0m`)
-    }
-    for (let i = prev; i < logs.length; i++) {
-      if (i === 0 && prev === 0) {
-        // placeholder 덮어쓰기
-        term.reset()
-      }
-      term.writeln(logs[i])
-    }
-    prevLenRef.current = logs.length
+    for (let i = overlap; i < logs.length; i++) term.writeln(logs[i])
   }, [logs, placeholder])
 
   // 검색
