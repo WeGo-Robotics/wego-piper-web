@@ -8,7 +8,9 @@ import json
 
 import pytest
 
-from app.core.cli_mapping import apply_dim_overrides, build_train_args, resolve_rename_map
+from app.core.cli_mapping import (
+    apply_dim_overrides, build_train_args, checkpoint_feature_dims, resolve_rename_map,
+)
 from app.services.training import TrainJobSpec, train_manager
 from app.services.training.metrics import MetricsTracker
 from app.services.training.runners.base import TrainRunner
@@ -128,6 +130,35 @@ def test_apply_dim_overrides_is_the_only_writer(fake_checkpoint):
     assert cfg["output_features"]["action"]["shape"] == [8]
     # 차원을 안 주면 아무것도 안 한다
     assert apply_dim_overrides(str(fake_checkpoint), 0, 0) is False
+
+
+def _write_normalizer(ckpt, state_dim, action_dim):
+    """safetensors 헤더만 있으면 된다 — 8바이트 길이 + JSON + (빈) 데이터."""
+    import struct
+
+    header = {
+        "observation.state.mean": {"dtype": "F32", "shape": [state_dim], "data_offsets": [0, 4 * state_dim]},
+        "action.mean": {"dtype": "F32", "shape": [action_dim],
+                        "data_offsets": [4 * state_dim, 4 * (state_dim + action_dim)]},
+    }
+    raw = json.dumps(header).encode()
+    (ckpt / "policy_preprocessor_step_3_normalizer_processor.safetensors").write_bytes(
+        struct.pack("<Q", len(raw)) + raw + b"\0" * (4 * (state_dim + action_dim))
+    )
+
+
+def test_apply_dim_overrides_refuses_dims_that_differ_from_weights(fake_checkpoint):
+    """실화(2026-08-28): 프론트 localStorage 의 옛 state_dim=7 이 14차원 두 팔 체크포인트의
+    config.json 을 7로 덮어써 이어학습이 size mismatch 로 매번 죽었다."""
+    _write_normalizer(fake_checkpoint, 14, 14)
+    assert checkpoint_feature_dims(str(fake_checkpoint)) == {"observation.state": 14, "action": 14}
+    before = (fake_checkpoint / "config.json").read_text()
+    assert apply_dim_overrides(str(fake_checkpoint), 7, 7) is False
+    assert (fake_checkpoint / "config.json").read_text() == before
+    # 가중치와 같은 값은 여전히 쓴다 (config.json 이 이미 오염된 체크포인트 복구 경로)
+    assert apply_dim_overrides(str(fake_checkpoint), 14, 14) is True
+    cfg = json.loads((fake_checkpoint / "config.json").read_text())
+    assert cfg["input_features"]["observation.state"]["shape"] == [14]
 
 
 def test_pretrained_skips_policy_type():

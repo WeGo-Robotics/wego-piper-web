@@ -273,12 +273,46 @@ def resolve_rename_map(pretrained_path: str) -> str:
     return ""
 
 
+def checkpoint_feature_dims(pretrained_path: str) -> dict[str, int]:
+    """체크포인트가 **실제로 학습된** state/action 차원. `{"observation.state": 14, "action": 14}`.
+
+    `config.json` 이 아니라 normalizer 통계(`policy_preprocessor_step_*_normalizer_processor.safetensors`)
+    의 텐서 shape 에서 읽는다 — config.json 은 아래 `apply_dim_overrides` 가 덮어쓸 수
+    있어 믿을 수 없고, 통계 텐서는 가중치와 함께 저장돼 정책 종류와 무관하게 같은 키를 쓴다.
+    safetensors 헤더(8바이트 길이 + JSON)만 읽으므로 torch 없이도 동작한다.
+    파일이 없거나(옛 체크포인트) 못 읽으면 빈 dict.
+    """
+    import json
+    import struct
+
+    dims: dict[str, int] = {}
+    for f in sorted(Path(pretrained_path).glob("policy_preprocessor_step_*_normalizer_processor.safetensors")):
+        try:
+            with f.open("rb") as fh:
+                (n,) = struct.unpack("<Q", fh.read(8))
+                header = json.loads(fh.read(n))
+            for key in ("observation.state", "action"):
+                shape = header.get(f"{key}.mean", {}).get("shape")
+                if shape and len(shape) == 1:
+                    dims[key] = int(shape[0])
+        except Exception:
+            continue
+        if dims:
+            break
+    return dims
+
+
 def apply_dim_overrides(pretrained_path: str, state_dim: int, action_dim: int) -> bool:
     """체크포인트의 `config.json` 을 **수정한다**. 바꿨으면 True.
 
     ⚠ 파괴적이다. 이전에는 `build_train_args()` 안에 있어서
     **`/training/preview`(미리보기)도 체크포인트를 수정했다.**
     이제 학습 시작 경로에서만 호출한다.
+
+    ⚠ 가중치와 다른 차원은 **거부한다**. config.json 만 바꿔서는 `load_state_dict` 가
+    size mismatch 로 죽을 뿐이다 — 실제로 프론트 localStorage 에 남은 옛 `state_dim=7`
+    이 14차원 두 팔 체크포인트의 config 를 7로 덮어써 이어학습이 매번 실패했다
+    (2026-08-28). 통계 텐서를 못 읽는 옛 체크포인트는 예전처럼 그냥 쓴다.
 
     ⚠ 원격 학습에서는 체크포인트가 원격에 있어 불가능하다 —
     러너가 지원하지 않으면 **명시적으로 에러를 내야 한다** (조용한 무시 금지).
@@ -289,6 +323,21 @@ def apply_dim_overrides(pretrained_path: str, state_dim: int, action_dim: int) -
         return False
     config_path = Path(pretrained_path) / "config.json"
     if not config_path.exists():
+        return False
+    log = logging.getLogger(__name__)
+    actual = checkpoint_feature_dims(pretrained_path)
+    for key, want in (("observation.state", state_dim), ("action", action_dim)):
+        have = actual.get(key)
+        if want and have and want != have:
+            log.warning(
+                "config.json %s 차원 덮어쓰기 거부: 요청 %d, 가중치 %d (%s)",
+                key, want, have, pretrained_path,
+            )
+            if key == "observation.state":
+                state_dim = 0
+            else:
+                action_dim = 0
+    if not (state_dim or action_dim):
         return False
     try:
         cfg = json.loads(config_path.read_text())

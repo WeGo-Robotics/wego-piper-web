@@ -58,8 +58,10 @@ export default function TrainingPage() {
   const [wandbProject, setWandbProject] = useState(_saved.wandbProject || '')
   const [resume, setResume] = useState(_saved.resume ?? false)
   const [usePolicyPreset, setUsePolicyPreset] = useState(_saved.usePolicyPreset ?? true)
-  const [stateDim] = useState(_saved.stateDim ?? 0)
-  const [actionDim] = useState(_saved.actionDim ?? 0)
+  // UI 에 입력란이 없으니 항상 0(=체크포인트/데이터셋 차원 그대로). 예전엔 localStorage 에
+  // 남은 옛 값(단일 팔 7)을 되살려 백엔드가 두 팔 체크포인트 config.json 을 7로 덮어썼다.
+  const stateDim = 0
+  const actionDim = 0
   const [renameMap, setRenameMap] = useState(_saved.renameMap || '')
   // 저장값을 스키마 기본값 위에 덮어쓴다. 스키마에 필드가 추가되면 저장값에 없던 키가
   // 그대로 누락되어(=CLI 인자 미생성) LeRobot 기본값으로 학습되는 것을 막기 위함.
