@@ -10,7 +10,7 @@
 #
 # 그래서 여기서는 **직전 태그와의 diff 로 정한다.** 사람은 버전만 준다.
 #
-# 사용:  ./deploy/release.sh v0.3.9 [--dry-run]
+# 사용:  ./deploy/release.sh v0.3.10 [--dry-run] [--offline]
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
