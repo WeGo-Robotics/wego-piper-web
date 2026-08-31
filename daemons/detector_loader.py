@@ -32,10 +32,44 @@ class _Boxes:
 
 
 class _Result:
-    __slots__ = ("names", "boxes")
+    __slots__ = ("names", "boxes", "_rgb", "speed")
 
-    def __init__(self, names, boxes):
-        self.names, self.boxes = names, boxes
+    def __init__(self, names, boxes, rgb=None, speed=None):
+        self.names, self.boxes, self._rgb = names, boxes, rgb
+        self.speed = speed
+
+    def plot(self):
+        """상자를 그린 **BGR** 이미지. ultralytics `Result.plot()` 자리다.
+
+        ⚠ **BGR 로 돌려준다.** 호출부가 `cv2.imencode` 에 그대로 넘기는데, RGB 를
+        주면 에러 없이 **파랑·빨강이 뒤바뀐 프리뷰**가 나온다 — 조용히 틀리는 쪽이라
+        더 나쁘다. `predict` 가 받은 것은 RGB 이므로 여기서 뒤집는다.
+
+        ⚠ 색은 클래스 id 로 정한다. 매번 무작위면 같은 물체가 프레임마다 다른
+        색이 되어 눈으로 좇을 수가 없다.
+        """
+        import cv2
+        import numpy as np
+
+        if self._rgb is None:
+            raise RuntimeError("그릴 원본이 없습니다")
+        img = np.ascontiguousarray(self._rgb[..., ::-1])      # RGB → BGR
+        xyxy = self.boxes.xyxy.tolist()
+        confs = self.boxes.conf.tolist()
+        clss = self.boxes.cls.int().tolist()
+        for (x1, y1, x2, y2), cf, c in zip(xyxy, confs, clss):
+            c = int(c)
+            color = (int(37 * c % 255), int(17 * c + 90) % 255, int(97 * c + 40) % 255)
+            p1, p2 = (int(x1), int(y1)), (int(x2), int(y2))
+            cv2.rectangle(img, p1, p2, color, 2)
+            text = f"{self.names.get(c, c)} {cf:.2f}"
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            # 라벨 배경 — 밝은 화면에서 흰 글씨만 두면 안 보인다
+            cv2.rectangle(img, (p1[0], max(0, p1[1] - th - 6)),
+                          (p1[0] + tw + 4, p1[1]), color, -1)
+            cv2.putText(img, text, (p1[0] + 2, max(th, p1[1] - 4)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        return img
 
 
 class RTDetr:
@@ -52,6 +86,16 @@ class RTDetr:
         self.to(device)
         # ultralytics 는 `model.names` 로 클래스표를 준다. 같은 이름으로 맞춘다.
         self.names = {int(k): v for k, v in self.model.config.id2label.items()}
+        # ultralytics 의 `model.task` 자리. RT-DETR 은 객체 검출 전용이다.
+        self.task = "detect"
+
+    @property
+    def n_params(self) -> int:
+        return sum(p.numel() for p in self.model.parameters())
+
+    @property
+    def n_layers(self) -> int:
+        return sum(1 for _ in self.model.modules())
 
     def to(self, device: str):
         self.device = device or "cpu"
@@ -80,9 +124,18 @@ class RTDetr:
         if hasattr(image, "strides") and any(st < 0 for st in image.strides):
             import numpy as np
             image = np.ascontiguousarray(image)
+        # ⚠ 단계별 ms 는 **재서** 준다. 화면이 이 값으로 병목을 본다 —
+        #   지어내면 "전처리가 느리다" 같은 잘못된 결론을 만든다.
+        import time as _t
+
+        t0 = _t.perf_counter()
         inputs = self.processor(images=image, return_tensors="pt").to(self.device)
+        t1 = _t.perf_counter()
         with torch.no_grad():
             out = self.model(**inputs)
+        if self.device.startswith("cuda"):
+            torch.cuda.synchronize()      # 동기화 없이 재면 추론 시간이 0 에 가깝게 나온다
+        t2 = _t.perf_counter()
         # 원본 크기로 되돌려 좌표를 낸다. PIL 은 (w,h), numpy 는 (h,w,...) 다 —
         # 뒤바꾸면 좌표가 통째로 어긋나는데 그림 없이는 알아채기 어렵다.
         h, w = (image.shape[0], image.shape[1]) if hasattr(image, "shape") \
@@ -94,8 +147,14 @@ class RTDetr:
         #   호출부가 `model.predict(...)[0]` 으로 첫 장을 꺼낸다. 하나만 돌려주면
         #   `TypeError: '_Result' object is not subscriptable` 로 죽는다 —
         #   실기에서 그렇게 걸렸다. 모양을 흉내 내는 어댑터의 일이다.
+        t3 = _t.perf_counter()
+        rgb = image if hasattr(image, "shape") else __import__("numpy").asarray(image)
+        speed = {"preprocess": round((t1 - t0) * 1000, 1),
+                 "inference": round((t2 - t1) * 1000, 1),
+                 "postprocess": round((t3 - t2) * 1000, 1)}
         return [_Result(self.names,
-                        _Boxes(r["boxes"].cpu(), r["scores"].cpu(), r["labels"].cpu()))]
+                        _Boxes(r["boxes"].cpu(), r["scores"].cpu(), r["labels"].cpu()),
+                        rgb, speed)]
 
 
 def load_detector(weights: str, device: str = "cpu"):

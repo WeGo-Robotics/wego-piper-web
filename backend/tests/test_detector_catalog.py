@@ -175,3 +175,59 @@ def test_predict_returns_a_list_like_ultralytics():
         body = (_DAEMONS / daemon).read_text()
         if "model.predict(" in body:
             assert ")[0]" in body, f"{daemon} 의 호출 형태가 바뀌었다 — 어댑터도 같이 봐야 한다"
+
+
+def test_the_adapter_covers_everything_the_daemons_use():
+    """⚠ **같은 사고가 세 번 났다.** 어댑터가 ultralytics 모양을 흉내 내는데,
+    흉내가 부족한 자리를 **실행해 봐야만** 알았다:
+
+    - `predict(...)[0]` → 리스트가 아니라 즉사 (`not subscriptable`)
+    - `result.plot()` → 프리뷰 그릴 때 즉사 (`--no-preview` 로 시험해 놓쳤다)
+    - `model.task` / `speed` → 안 죽지만 화면 정보가 빈다
+
+    그래서 **호출부 소스에서 쓰는 이름을 뽑아** 어댑터에 있는지 본다. 새 속성을
+    쓰기 시작하면 여기서 걸린다 — 실기에서 만나기 전에.
+    """
+    import re
+
+    from conftest import python_code_only
+    from detector_loader import RTDetr, _Result
+
+    used_model, used_result = set(), set()
+    for daemon in ("yolod.py", "yolo_prelabel.py"):
+        # ⚠ **주석·docstring 을 걷어내고 본다.** 이 파일들은 "예전에는
+        #   `model.info()` 에서 읽었다" 같은 설명을 남기는데, 그걸 요구로 세면
+        #   이미 없앤 것을 도로 만들라고 한다.
+        src = python_code_only((_DAEMONS / daemon).read_text())
+        used_model |= set(re.findall(r"\bmodel\.([a-zA-Z_]+)", src))
+        used_model |= set(re.findall(r"getattr\(model, *['\"]([a-zA-Z_]+)", src))
+        used_result |= set(re.findall(r"\bresult\.([a-zA-Z_]+)", src))
+        used_result |= set(re.findall(r"getattr\(result, *['\"]([a-zA-Z_]+)", src))
+
+    # ⚠ **인스턴스 속성까지 센다.** `names`·`task` 는 `__init__` 에서 붙으므로
+    #   클래스만 보면 "없다"고 나온다. 모델을 실제로 만들면 가중치를 받게 되므로
+    #   (테스트에서 네트워크를 쓸 수는 없다) 소스에서 `self.X =` 를 읽는다.
+    loader_src = (_DAEMONS / "detector_loader.py").read_text()
+    provided = set(dir(RTDetr)) | set(re.findall(r"self\.([a-zA-Z_]+)[ ,)]*=", loader_src))
+
+    # ⚠ 정규식이 아무것도 못 찾으면 빈 집합이라 **무조건 통과한다.** 호출 형태가
+    #   바뀌었을 때 조용히 검사가 꺼지는 것이 이 테스트의 유일한 실패 방식이다.
+    assert {"predict", "names"} <= used_model, f"호출부를 못 읽었다: {used_model}"
+    assert {"boxes", "plot"} <= used_result, f"호출부를 못 읽었다: {used_result}"
+
+    missing_m = sorted(used_model - provided)
+    assert not missing_m, f"어댑터에 없는 model 속성: {missing_m}"
+    r_provided = set(_Result.__slots__) | set(dir(_Result))
+    missing_r = sorted(used_result - r_provided)
+    assert not missing_r, f"어댑터에 없는 result 속성: {missing_r}"
+
+
+def test_the_preview_comes_back_as_bgr():
+    """⚠ 호출부가 `cv2.imencode` 에 그대로 넘긴다. RGB 를 주면 **에러 없이**
+    파랑·빨강이 뒤바뀐 프리뷰가 나온다 — 조용히 틀리는 쪽이 더 나쁘다."""
+    import inspect
+
+    from detector_loader import _Result
+
+    src = inspect.getsource(_Result.plot)
+    assert "[..., ::-1]" in src, "RGB→BGR 변환이 없다"

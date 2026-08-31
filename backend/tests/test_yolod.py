@@ -105,37 +105,43 @@ def test_parse_cams_alias_and_bare(yolod):
     }
 
 
-def test_model_meta_reads_ultralytics_shape(yolod):
-    """자기소개 계약 — 화면(YOLO 데모)이 그리는 필드들. torch 없이 가짜 모델로."""
+def test_model_meta_reads_the_detector_shape(yolod):
+    """자기소개 계약 — 화면(검출 데모)이 그리는 필드들. torch 없이 가짜 모델로.
+
+    ⚠ 예전에는 ultralytics 의 `model.info()` 튜플에서 읽고 **GFLOPs** 도 실었다.
+    RT-DETR 로 옮기면서 모델이 값을 직접 준다. GFLOPs 는 **뺐다** — 우리가 못
+    재는 값이라 0 을 넣으면 화면이 "0 GFLOPs" 라고 조용히 거짓말한다.
+    """
     class FakeModel:
         task = "detect"
         names = {0: "person", 39: "bottle"}
+        n_params = 2_616_248
+        n_layers = 100
 
-        def info(self, verbose=True):
-            return (100, 2_616_248, 0, 6.55)
-
-    meta = yolod._model_meta(FakeModel(), "yolo11n.pt", "cuda:0", 0.25, 5.0, 640,
-                             {"top": "rs_1_color"})
+    meta = yolod._model_meta(FakeModel(), "PekingU/rtdetr_v2_r18vd", "cuda:0",
+                             0.25, 5.0, 640, {"top": "rs_1_color"})
     assert meta == {
-        "model": "yolo11n.pt", "device": "cuda:0", "conf": 0.25, "fps": 5.0,
+        "model": "rtdetr_v2_r18vd", "device": "cuda:0", "conf": 0.25, "fps": 5.0,
         "imgsz": 640, "cams": {"top": "rs_1_color"}, "task": "detect", "classes": 2,
-        "layers": 100, "params": 2_616_248, "gflops": 6.5,
+        "layers": 100, "params": 2_616_248,
     }
+    assert "gflops" not in meta, "못 재는 값을 적고 있다"
 
-    # 커스텀 가중치는 절대경로로 들어온다 — 화면에는 파일명만
-    broken = yolod._model_meta(FakeModel(), "/a/b/best.pt", "cpu", 0.5, 1.0, 320)
-    assert broken["model"] == "best.pt"
-    assert broken["cams"] == {}
+    # 커스텀 가중치는 절대경로로 들어온다 — 화면에는 마지막 조각만
+    short = yolod._model_meta(FakeModel(), "/a/b/best-0831", "cpu", 0.5, 1.0, 320)
+    assert short["model"] == "best-0831"
+    assert short["cams"] == {}
 
 
 def test_model_meta_survives_broken_model(yolod):
-    """info() 가 죽어도 기본 필드는 남는다 — 표시용 정보가 데몬을 죽이면 안 된다."""
+    """모델에서 못 읽어도 기본 필드는 남는다 — 표시용 정보가 데몬을 죽이면 안 된다."""
     class BrokenModel:
-        def info(self, verbose=True):
+        @property
+        def names(self):
             raise RuntimeError("no")
 
-    meta = yolod._model_meta(BrokenModel(), "m.pt", "cpu", 0.5, 1.0, 640)
-    assert meta["model"] == "m.pt"
+    meta = yolod._model_meta(BrokenModel(), "m", "cpu", 0.5, 1.0, 640)
+    assert meta["model"] == "m"
     assert "params" not in meta
 
 

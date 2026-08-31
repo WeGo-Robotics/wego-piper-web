@@ -121,8 +121,11 @@ def _model_meta(model, model_file: str, device: str, conf: float, fps: float,
     try:
         meta["task"] = getattr(model, "task", None)
         meta["classes"] = len(getattr(model, "names", None) or {})
-        layers, params, _grads, gflops = model.info(verbose=False)
-        meta.update(layers=layers, params=params, gflops=round(gflops, 1))
+        # ⚠ 예전에는 ultralytics 의 `model.info()` 튜플에서 읽었다. 이제는 모델이
+        #   직접 준다 — **GFLOPs 는 빠졌다.** 그건 우리가 못 재는 값이고, 0 을
+        #   넣으면 화면이 "0 GFLOPs" 라고 조용히 거짓말한다. 없는 편이 낫다.
+        meta["params"] = getattr(model, "n_params", None)
+        meta["layers"] = getattr(model, "n_layers", None)
     except Exception as e:
         logger.warning("모델 정보 읽기 실패 (표시만 빠진다): %s", e)
     return meta
