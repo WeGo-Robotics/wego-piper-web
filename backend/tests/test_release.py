@@ -520,6 +520,26 @@ def test_the_bundle_ships_the_udev_rules():
         assert (REPO / rel).is_file(), f"{rel} 이 없다"
 
 
+def test_apply_never_overwrites_an_existing_udev_rule():
+    """⚠ **실기에서 잡았다.** 번들의 udev 규칙은 아무것도 없는 새 머신을 위한
+    것이지 기존 호스트를 고치는 물건이 아니다. 192.168.0.120 에 v0.4.0 을 깔 때
+    `apply.sh` 가 두 규칙을 덮어쓰라고 시켰는데, 시키는 대로 했다면:
+
+    - CAN 규칙이 **빌드 머신의 시리얼**을 가리켜 그 호스트의 팔이 영영 이름을
+      못 얻었을 것이다. `piper-can-up.service` 트리거 줄도 함께 지워졌을 것이다
+    - RealSense 규칙은 호스트 쪽이 **88줄 더 많았다**(Intel 공식). 덮는 것은 다운그레이드다
+
+    `docker-compose.override.yml` 과 같은 규칙이다: **그 호스트의 사정은 그 호스트가
+    안다.** 없을 때만 넣고, 다르면 알려만 준다.
+    """
+    src = APPLY.read_text()
+    block = src.split('cmp -s "$r" "/etc/udev/rules.d/$n"', 1)[1].split("done", 1)[0]
+    assert 'elif [ -f "/etc/udev/rules.d/$n" ]' in block, "있는 것과 없는 것을 안 가른다"
+    exists = block.split('elif [ -f "/etc/udev/rules.d/$n" ]', 1)[1].split("else", 1)[0]
+    assert "NEED_SUDO" not in exists, "이미 있는 규칙을 덮으라고 시킨다"
+    assert "diff " in exists, "무엇이 다른지 볼 방법을 안 준다"
+
+
 def test_apply_checks_the_can_serials_against_what_is_attached():
     """⚠ CAN 규칙에는 **번들을 구운 머신의 시리얼**이 박혀 있다. 어댑터가 다른
     머신에서는 어느 줄도 매칭되지 않는데 **udev 는 그걸 에러로 치지 않는다** —

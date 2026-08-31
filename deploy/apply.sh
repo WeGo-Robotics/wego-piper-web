@@ -174,8 +174,20 @@ for r in "$HERE"/udev/*.rules; do
   n="$(basename "$r")"
   if cmp -s "$r" "/etc/udev/rules.d/$n"; then
     ok "udev $n"
+  elif [ -f "/etc/udev/rules.d/$n" ]; then
+    # ⚠ **이미 있는 규칙은 덮지 않는다. 그건 그 호스트의 것이다** —
+    #   `docker-compose.override.yml` 과 같은 이유다. 실측으로 확인했다:
+    #     · CAN 규칙에는 **그 호스트 어댑터의 시리얼**이 박혀 있다. 번들 것으로
+    #       덮으면 빌드 머신의 시리얼을 가리켜 팔이 영영 이름을 못 얻는다.
+    #       120 에는 `piper-can-up.service` 트리거 줄까지 있었는데 그것도 지워졌을 것이다
+    #     · RealSense 규칙은 120 쪽이 **88줄 더 많았다**(Intel 공식 규칙). 우리 것은
+    #       손으로 추린 부분집합이라, 덮는 것은 다운그레이드다
+    #   번들의 규칙은 **아무것도 없는 새 머신**을 위한 것이지 기존 호스트를 고치는
+    #   물건이 아니다. 그래서 여기서는 알려만 주고 넘어간다.
+    warn "udev $n 이 번들과 다르다 — **호스트 것을 그대로 둔다**"
+    echo "       다른 점을 보려면:  diff /etc/udev/rules.d/$n $HERE/udev/$n"
   else
-    [ -f "/etc/udev/rules.d/$n" ] && bad "udev $n 내용이 다름" || bad "udev $n 없음"
+    bad "udev $n 없음"
     NEED_SUDO+=("cp $HERE/udev/$n /etc/udev/rules.d/")
     UDEV_RELOAD=1
   fi
