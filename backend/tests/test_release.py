@@ -553,7 +553,7 @@ def test_the_bundle_ships_the_udev_rules():
 
 def test_apply_never_overwrites_an_existing_udev_rule():
     """⚠ **실기에서 잡았다.** 번들의 udev 규칙은 아무것도 없는 새 머신을 위한
-    것이지 기존 호스트를 고치는 물건이 아니다. 192.168.0.120 에 v0.4.0 을 깔 때
+    것이지 기존 호스트를 고치는 물건이 아니다. 로봇 호스트 에 v0.4.0 을 깔 때
     `apply.sh` 가 두 규칙을 덮어쓰라고 시켰는데, 시키는 대로 했다면:
 
     - CAN 규칙이 **빌드 머신의 시리얼**을 가리켜 그 호스트의 팔이 영영 이름을
@@ -619,7 +619,7 @@ def test_apply_tolerates_a_bundle_without_udev():
 
 def test_the_bundle_never_ships_the_override():
     """⚠ `docker-compose.override.yml` 은 **그 호스트의 사정**이다.
-    192.168.0.120 은 :80 을 WMS 가, :8080 을 다른 node 앱이 쓰고 있어 8081 로
+    로봇 호스트 은 :80 을 WMS 가, :8080 을 다른 node 앱이 쓰고 있어 8081 로
     빼 두었다. 번들이 덮으면 그 설정이 조용히 사라지고 포트 충돌로 안 뜬다."""
     from conftest import code_only
 

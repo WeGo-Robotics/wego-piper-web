@@ -141,7 +141,7 @@ class Settings(BaseSettings):
     # 하드웨어가 여기 있으므로 따라가지 않는다. `process_runner` 와 별개의 레버인
     # 이유가 이것이다.
     #
-    #   PIPER_TRAIN_SSH_HOST=sw-han@192.168.0.120
+    #   PIPER_TRAIN_SSH_HOST=<사용자>@<로봇호스트>
     #
     # ⚠ 데이터셋을 옮기지 않는다. 원격이 데이터셋을 **이미 볼 수 있어야** 한다
     # (사내 GPU 서버·NFS·미리 복사). 전송은 cloud-training 5~7단계다.

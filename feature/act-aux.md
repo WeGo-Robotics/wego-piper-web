@@ -59,16 +59,16 @@ act_aux/
 
 ### 2.1 자동 탐색
 
-[lerobot_train.py:549-551](file:///home/sw-han/miniconda3/lib/python3.13/site-packages/lerobot/scripts/lerobot_train.py#L549-L551):
+[lerobot_train.py:549-551](lerobot/scripts/lerobot_train.py#L549-L551):
 `main()` 이 **draccus 파싱보다 먼저** `register_third_party_plugins()` 를 부른다.
 이 함수는 설치된 배포 중 이름이 `lerobot_policy_` 로 시작하는 것을 전부 import 한다
-([import_utils.py:146-174](file:///home/sw-han/miniconda3/lib/python3.13/site-packages/lerobot/utils/import_utils.py#L146-L174)).
+([import_utils.py:146-174](lerobot/utils/import_utils.py#L146-L174)).
 import 만 되면 `@PreTrainedConfig.register_subclass("act_aux")` 가 실행돼 `--policy.type=act_aux` 가 풀린다.
 
 ### 2.2 이름 규약 — 반드시 지킨다
 
 팩토리의 if/elif 체인에 없는 타입은 폴백으로 **이름에서 클래스를 유도**한다
-([factory.py:531-562](file:///home/sw-han/miniconda3/lib/python3.13/site-packages/lerobot/policies/factory.py#L531-L562), [:565-590](file:///home/sw-han/miniconda3/lib/python3.13/site-packages/lerobot/policies/factory.py#L565-L590)):
+([factory.py:531-562](lerobot/policies/factory.py#L531-L562), [:565-590](lerobot/policies/factory.py#L565-L590)):
 
 | 것 | 규칙 | 우리 값 |
 |---|---|---|
@@ -103,7 +103,7 @@ saved type: act_aux / reload ok: ActAuxPolicy
 
 ACT 에는 "현재 관측 벡터 `h`" 가 없다. 트랜스포머 인코더 출력 `encoder_out` 은
 `(S, B, 512)` 토큰 시퀀스 — `[latent, robot_state, 카메라별 15×20 특징 토큰 …]` 이다
-([modeling_act.py:459-491](file:///home/sw-han/miniconda3/lib/python3.13/site-packages/lerobot/policies/act/modeling_act.py#L459-L491)).
+([modeling_act.py:459-491](lerobot/policies/act/modeling_act.py#L459-L491)).
 그리고 `ACT.forward` 는 이걸 밖으로 내주지 않는다.
 
 꺼내는 방법 둘:
@@ -117,7 +117,7 @@ ACT 에는 "현재 관측 벡터 `h`" 가 없다. 트랜스포머 인코더 출�
 `state`(robot_state 토큰 = `encoder_out[1]`). CLS 토큰은 §8 A/B 에서 `mean` 이 부족할 때만 2단계로.
 
 ⚠ **VAE 인코더(`vae_encoder`)에 붙이면 안 된다.** 학습 때는 정답 액션을 보고 만들어지고
-추론 때는 `latent_sample = zeros` 다 ([:452](file:///home/sw-han/miniconda3/lib/python3.13/site-packages/lerobot/policies/act/modeling_act.py#L452)). 제안서의 "ACT latent 512" 는 `dim_model`(512)이지 `latent_dim`(32)이 아니다.
+추론 때는 `latent_sample = zeros` 다 ([:452](lerobot/policies/act/modeling_act.py#L452)). 제안서의 "ACT latent 512" 는 `dim_model`(512)이지 `latent_dim`(32)이 아니다.
 
 ### 3.2 헤드·손실
 
@@ -218,13 +218,13 @@ YOLO 의 confidence(objectness × class prob)처럼 stage 헤드도 `softmax.max
 ### 4.1 왜 사이드카를 직접 못 읽나 — 그리고 왜 임의 컬럼도 안 되나
 
 `LeRobotDataset.__getitem__` 은 parquet 컬럼을 전부 배치에 넣지만
-([lerobot_dataset.py:1085](file:///home/sw-han/miniconda3/lib/python3.13/site-packages/lerobot/datasets/lerobot_dataset.py#L1085)),
+([lerobot_dataset.py:1085](lerobot/datasets/lerobot_dataset.py#L1085)),
 **`meta/info.json` features 에 선언된 컬럼만** HF 스키마에 산다. 그리고 `lerobot-train` 이
 데이터셋을 직접 만들므로 로더에 끼어들 자리가 없다. → 새 데이터셋으로 굽는다.
 
 **실측으로 하나 더 드러났다:** 로더를 통과해도 학습 전처리 파이프라인이 배치를 transition 으로
 바꿀 때 **화이트리스트**만 남긴다 — `*_is_pad`, `task`, `subtask`, `index`, `task_index`, `episode_index`
-([converters.py:157-175](file:///home/sw-han/miniconda3/lib/python3.13/site-packages/lerobot/processor/converters.py#L157-L175)).
+([converters.py:157-175](lerobot/processor/converters.py#L157-L175)).
 처음 만든 `task_stage` 컬럼은 굽기 검증(로더)은 통과했지만 정책 forward 에서 KeyError 로 죽었다.
 
 그래서 **LeRobot `subtask`** 를 쓴다. v3 의 정식 프레임별 하위작업 개념이다: `subtask_index` int64
@@ -319,7 +319,7 @@ lerobot-train 은 `loss_dict` 를 **wandb 로만** 보내고 로그 줄(`step: �
 `--policy.path=<act 체크포인트>` 는 config `type: act` 라 `ActAuxPolicy` 로 안 열린다.
 `act_aux/tools/from_act.py`: `config.json` 의 `type` 을 `act_aux` 로 바꾸고 새 필드를 기본값으로 채워
 새 폴더에 쓴다. 가중치는 그대로 — `from_pretrained(strict=False)` 가 기본이라
-([pretrained.py:87](file:///home/sw-han/miniconda3/lib/python3.13/site-packages/lerobot/policies/pretrained.py#L87))
+([pretrained.py:87](lerobot/policies/pretrained.py#L87))
 헤드만 무작위로 시작한다. 2단계.
 
 ---

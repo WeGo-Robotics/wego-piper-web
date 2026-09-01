@@ -201,7 +201,7 @@ fi
 #   늘 필요하고 몇 KB 라, "바뀌었을 때만" 으로 아낄 이유가 없다.
 #
 # ⚠ `docker-compose.override.yml` 은 **안 보낸다.** 그건 그 호스트의 사정이다 —
-#   192.168.0.120 은 :80 을 WMS 가, :8080 을 다른 node 앱이 쓰고 있어 8081 로
+#   로봇 호스트 은 :80 을 WMS 가, :8080 을 다른 node 앱이 쓰고 있어 8081 로
 #   빼 두었다. 번들이 덮으면 그 설정이 조용히 사라지고 포트 충돌로 안 뜬다.
 cp docker-compose.yml "$OUT/"
 cp deploy/env.example "$OUT/backend.env.example"

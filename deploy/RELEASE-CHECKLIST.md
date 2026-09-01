@@ -1,7 +1,7 @@
-# 배포 절차 — 192.168.0.120 실기 배포 기록
+# 배포 절차 — 로봇 호스트 실기 배포 기록
 
 > 2026-08-13에 사전 점검을 남겼고, 2026-08-14에 `v0.2.0`을 실제로 이 절차대로
-> `192.168.0.120`(sw-han-Thin-15-B13VE)에 배포해서 끝까지 검증했다. 아래 절차는
+> 로봇 호스트에 배포해서 끝까지 검증했다. 아래 절차는
 > 그 실행 순서 그대로이고, [겪은 문제](#겪은-문제와-해결) 절이 다음 배포 때 반복하지
 > 않아도 되게 남긴 함정들이다.
 
@@ -228,13 +228,12 @@ git tag --sort=-v:refname | head -1     # 예: v0.3.1 → 다음은 v0.3.2
 | 문제 | 원인 | 해결 |
 |---|---|---|
 | GPU 드라이버는 깔려 있는데 `nvidia-smi`가 커널과 통신 실패 | `nvidia-driver-580-open` 메타패키지가 특정 커널 버전용 `linux-modules-nvidia-580-open-<kernel>` 패키지에 의존하는데, 호스트가 커널을 여러 번 업데이트하는 동안 **현재 실행 중인 커널(6.17.0-35)용 모듈 패키지가 한 번도 설치된 적이 없었음** (dkms 자체도 미설치라 자동 재빌드도 안 됨) | `apt install dkms nvidia-dkms-580-open` (dkms 기반 패키지로 전환 — 커널이 또 바뀌어도 자동 재빌드됨) → `depmod -a && modprobe nvidia` — **재부팅 불필요**, 새로 빌드된 모듈을 바로 올릴 수 있었다 |
-| `docker compose up`에서 frontend가 포트 바인딩 실패 | 이 호스트(192.168.0.120)가 로봇 전용이 아니라 다목적 워크스테이션 — :80은 별개 운영 서비스(WMS), :8080은 다른 node 프로세스가 이미 사용 중 | 사용 중이지 않은 포트(8081)로 `docker-compose.override.yml`에서 재배정. `ports:` 병합이 append라 `!override` YAML 태그로 명시해야 실제로 바뀜 |
+| `docker compose up`에서 frontend가 포트 바인딩 실패 | 이 호스트가 로봇 전용이 아니라 다목적 워크스테이션 — :80은 별개 운영 서비스(WMS), :8080은 다른 node 프로세스가 이미 사용 중 | 사용 중이지 않은 포트(8081)로 `docker-compose.override.yml`에서 재배정. `ports:` 병합이 append라 `!override` YAML 태그로 명시해야 실제로 바뀜 |
 | backend가 redis/E-stop 버스에 못 붙음 | `redis.conf`에 `unixsocket` 설정을 append만 하고 `systemctl restart redis-server`를 빠뜨림 — 컨테이너가 이미 그 상태에서 떠서 소켓 파일 자체가 없었음 | `systemctl restart redis-server`로 소켓 생성 확인 후 `docker compose restart backend` |
 
 ---
 
-## 2026-08-14 배포 후 상태 (192.168.0.120)
-
+## 2026-08-14 배포 후 상태 
 | 항목 | 상태 |
 |---|---|
 | `piper-web-backend/frontend:v0.2.0` | `docker load` 완료, `:latest`로도 태깅 |
@@ -259,7 +258,7 @@ git tag --sort=-v:refname | head -1     # 예: v0.3.1 → 다음은 v0.3.2
 | `~/.config/piper-web` | 사용자 설정 |
 
 ⚠ **`docker-compose.override.yml` 을 먼저 빼돌린다.** 그 호스트의 포트 사정이
-거기 있다 — 192.168.0.120 은 `:80` 을 WMS 가 쓰고 있어 8081 로 빼 두었다.
+거기 있다 — 로봇 호스트는 `:80` 을 WMS 가 쓰고 있어 8081 로 빼 두었다.
 빠뜨리면 frontend 가 `:80` 에 붙는다(실제로 그렇게 됐다).
 
 ```bash
@@ -333,7 +332,7 @@ curl -X POST localhost:8000/api/policy-server/start \
 
 # .120 — 닿는지 먼저 본다. TCP 만 열려도 gRPC 가 안 될 수 있다(모듈 없음)
 curl -X POST http://localhost:8081/api/policy-server/check-remote \
-     -H 'content-type: application/json' -d '{"address":"192.168.0.42:8088"}'
+     -H 'content-type: application/json' -d '{"address":"<정책서버IP>:8088"}'
 ```
 
 ⚠ **모델은 서버가 로드한다** — 체크포인트 경로는 **.42 기준**이어야 한다.
