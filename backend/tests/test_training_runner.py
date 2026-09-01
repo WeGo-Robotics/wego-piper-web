@@ -165,3 +165,72 @@ def test_pretrained_skips_policy_type():
     """`--policy.path` 와 `--policy.type` 은 동시 사용 불가."""
     args = build_train_args({"pretrained_path": "/m", "policy_type": "act"})
     assert not any(a.startswith("--policy.type=") for a in args)
+
+
+# ── 로스 곡선 ───────────────────────────────────────────────────────────────
+
+
+def test_the_same_step_does_not_become_a_vertical_line():
+    """⚠ **실기에서 그래프가 톱니로 보였다.** LeRobot 은 step 을 `step:25K` 처럼
+    **1000 단위로 반올림해** 찍는데 `log_freq` 는 그보다 작다 — 실측으로
+    `step:25K` 가 연속 5번 나왔다. 그대로 쌓으면 같은 x 에 서로 다른 loss 가
+    찍혀 **수직선**이 서고, 사람이 보기엔 학습이 발산하는 것처럼 보인다.
+    실제 히스토리는 50점 중 39점이 중복이었다.
+    """
+    from app.services.training.metrics import TrainHistory
+
+    h = TrainHistory()
+    for loss in (0.10, 0.09, 0.11, 0.08, 0.095):
+        h.append(25000, loss, 1.0, 1e-5)
+    for loss in (0.088, 0.092):
+        h.append(26000, loss, 1.0, 1e-5)
+
+    assert h.steps == [25000, 26000], f"중복 step 이 남았다: {h.steps}"
+    # 같은 구간에서는 **마지막 값**을 남긴다 — 화면의 "현재 loss" 와 같은 값이다
+    assert h.losses == [0.095, 0.092]
+
+
+def test_the_curve_never_goes_backwards():
+    """x 가 뒤로 가면 선이 되짚어 그어진다 — 곡선이 아니라 그물이 된다.
+
+    ⚠ 게이트웨이를 재시작하면 저널을 **처음부터 다시 읽어** 히스토리를 새로
+    쌓는다(재부착). 그때 옛 줄이 새 줄 뒤에 붙으면 정확히 이 모양이 된다.
+    """
+    from app.services.training.metrics import TrainHistory
+
+    h = TrainHistory()
+    for st in (1000, 2000, 3000, 2000, 1000, 4000):
+        h.append(st, 0.1, 1.0, 1e-5)
+    assert all(b > a for a, b in zip(h.steps, h.steps[1:])), f"뒤로 간다: {h.steps}"
+
+
+def test_the_k_suffix_is_read_as_thousands():
+    """`step:38K` 는 38000 이다. 이걸 38 로 읽으면 그래프가 원점에 뭉친다."""
+    from app.services.training.metrics import METRIC_RE, parse_num
+
+    line = ("INFO 2026-09-01 10:58:26 ot_train.py:439 step:38K smpl:301K ep:854 "
+            "epch:17.09 loss:0.092 grdn:6.860 lr:1.0e-05 updt_s:0.068 data_s:0.011")
+    m = METRIC_RE.search(line)
+    assert m, "실기 로그 줄을 못 읽는다"
+    assert parse_num(m.group(1)) == 38000
+    assert float(m.group(5)) == 0.092
+
+
+def test_reattach_keeps_the_replayed_history():
+    """⚠ **재부착이 채운 것을 그 직후에 지우고 있었다.**
+
+    `runner.restore()` 는 저널을 처음부터 다시 읽는 스레드를 띄운다 — 게이트웨이가
+    없던 동안의 진행을 화면에 채우려는 것이다. 그런데 그 뒤에 `tracker.reset()` 을
+    부르면 방금 채운 히스토리가 통째로 사라진다. 실측으로 재시작 뒤 로스 곡선에
+    점이 2개만 남았다.
+
+    비우는 것은 **재부착보다 먼저**여야 하고, 총 스텝은 지우지 않고 채워야 한다.
+    """
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "app" / "services" / "training"
+           / "manager.py").read_text()
+    body = src.split("def restore_running_process", 1)[1].split("\n    def ", 1)[0]
+    assert body.index("self.tracker.reset()") < body.index("self.runner.restore()"), \
+        "재부착 뒤에 비운다 — 재생된 히스토리가 사라진다"
+    assert "reset(total_steps=" not in body, "총 스텝을 넣으면서 다시 비운다"

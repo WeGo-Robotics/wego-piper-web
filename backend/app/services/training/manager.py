@@ -83,6 +83,12 @@ class TrainManager:
         self._original_log_cb: Callable[[str], None] | None = None
         self._original_state_cb: Callable[[ProcessState], None] | None = None
         self.tracker.set_update_callback(self._emit_metrics)
+        # ⚠ **여기서 건다. WS 연결 때가 아니다.** 예전에는 `set_log_callback` 이
+        #   `ws.py` 에서만 불렸다 — 즉 **브라우저가 붙어야** 메트릭이 쌓였다.
+        #   재부착이 저널을 처음부터 재생해도 받을 사람이 없어 전부 버려졌고
+        #   (실측: 저널에 233줄, 히스토리엔 2점), 학습 도중 화면을 열면 그
+        #   순간부터의 몇 점만 보였다.
+        self.runner.set_log_callback(self._intercept_log)
 
     # ── 상태 (실행 방식 무관) ──
 
@@ -116,8 +122,12 @@ class TrainManager:
         self._on_metrics = cb
 
     def set_log_callback(self, cb: Callable[[str], None]) -> None:
+        """WS 가 로그를 받아 갈 곳을 등록한다.
+
+        ⚠ 러너 연결은 **생성 때 이미 끝났다** — 여기서 다시 걸면 그전까지 쌓던
+        것을 잃지는 않지만, "브라우저가 붙어야 시작된다" 는 오해를 남긴다.
+        """
         self._original_log_cb = cb
-        self.runner.set_log_callback(self._intercept_log)
 
     def set_state_callback(self, cb: Callable[[ProcessState], None]) -> None:
         self._original_state_cb = cb
@@ -161,6 +171,9 @@ class TrainManager:
             record.total_steps = self.tracker.metrics.total_steps
         if metrics is not None:
             record.metrics = metrics
+        # 곡선도 함께 남긴다. 1000스텝당 1점이라 100K 학습이 100점 — 부담이 없다.
+        if self.tracker.history.steps:
+            record.history = self.tracker.history.to_dict()
         self.registry.put(record)
 
     # ── 실행 ──
@@ -196,6 +209,18 @@ class TrainManager:
         레지스트리도 함께 맞춘다. 안 맞추면 프로세스는 죽었는데 레코드만
         `running` 으로 남아 UI 가 영원히 "학습 중"이라고 말한다.
         """
+        # ⚠ **비우는 것이 먼저다.** `runner.restore()` 는 재부착하면서 저널을
+        #   **처음부터 다시 읽는 스레드**를 띄운다 — 없던 동안의 진행을 화면에
+        #   채우려는 것이다. 그런데 그 뒤에 `reset()` 을 부르면 방금 채운 히스토리를
+        #   통째로 지운다. 실측: 재시작 뒤 로스 곡선에 점이 2개만 남았다.
+        self.tracker.reset()
+        # ⚠ **저장된 곡선을 먼저 되살린다.** 저널 재생만 믿으면 로그가 순환됐거나
+        #   유닛이 재시작된 뒤에는 앞부분이 통째로 없다. 재생분은 이 위에 이어진다
+        #   — `append` 가 뒤로 가는 값을 버리므로 겹쳐도 안전하다.
+        saved = self.registry.get(self.job_id)
+        if saved and saved.history:
+            self.tracker.history.load(saved.history)
+            logger.info("저장된 로스 곡선 복원: %d점", len(self.tracker.history.steps))
         spec = self.runner.restore()
         if spec is None:
             stale = self.registry.get(self.job_id)
@@ -203,7 +228,8 @@ class TrainManager:
                 logger.info("죽은 학습 job 레코드를 정리한다: %s", self.job_id)
                 self._sync_record(state=ProcessState.IDLE.value)
             return False
-        self.tracker.reset(total_steps=spec.total_steps)
+        # 총 스텝만 채운다 — **여기서 다시 비우면** 재생된 히스토리가 사라진다
+        self.tracker.metrics.total_steps = spec.total_steps
         self.output_dir = spec.output_dir
         self._sync_record()
         return True

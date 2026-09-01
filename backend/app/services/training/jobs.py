@@ -68,6 +68,11 @@ class JobRecord:
     output_dir: str = ""
     total_steps: int = 0
     metrics: dict = field(default_factory=dict)
+    # ⚠ **로스 곡선은 여기 남는다.** 예전에는 게이트웨이 메모리에만 있어서,
+    #   학습 도중에 브라우저를 열면 그 순간부터의 몇 점만 보였고 재시작하면
+    #   통째로 사라졌다. 6시간짜리 학습에서 그건 사실상 곡선이 없는 것이다.
+    #   step 을 1000 단위로 모으므로 100K 스텝 학습이 100점 — 저장이 싸다.
+    history: dict = field(default_factory=dict)
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
     # 원격 전용 — 로컬에서는 비어 있다. 지금 자리를 잡아두면 4단계가 필드 추가로 끝난다.

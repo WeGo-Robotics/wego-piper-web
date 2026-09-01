@@ -49,6 +49,29 @@ class TrainHistory:
     max_points: int = 5000  # 메모리 제한
 
     def append(self, step: int, loss: float, grad_norm: float, lr: float) -> None:
+        """⚠ **같은 step 이 여러 번 온다.** LeRobot 은 step 을 `step:25K` 처럼
+        **1000 단위로 반올림해서** 찍는데 `log_freq` 는 그보다 작다 — 실측으로
+        `step:25K` 가 연속 5번 나왔다. 그대로 쌓으면 **같은 x 에 서로 다른 loss** 가
+        찍혀 그래프에 수직선이 서고, 곡선이 톱니처럼 보인다(실제로 그렇게 보였다:
+        50점 중 39점이 중복이었다).
+
+        더 정밀한 step 은 로그 어디에도 없다. tqdm 의 `37600/100000` 은 **다른
+        줄**이라 이 줄에서 못 얻는다(83줄 중 0줄에만 같이 있었다). 그래서
+        **x 해상도가 1000 스텝인 것을 그대로 인정하고**, 같은 step 이 다시 오면
+        마지막 점을 갱신한다 — 없는 해상도를 지어내지 않는다.
+        """
+        if self.steps and step < self.steps[-1]:
+            # ⚠ **뒤로 가는 값은 버린다.** 게이트웨이를 재시작하면 저널을 처음부터
+            #   다시 읽으므로(재부착), 옛 줄이 새 줄 뒤에 붙을 수 있다. 마지막 점에
+            #   덮어쓰면 x 가 되돌아가 선이 되짚어 그어진다 — 곡선이 아니라 그물이
+            #   된다. 이 검사가 없을 때 테스트가 정확히 그걸 잡았다.
+            return
+        if self.steps and step == self.steps[-1]:
+            self.steps[-1] = step
+            self.losses[-1] = loss
+            self.grad_norms[-1] = grad_norm
+            self.lrs[-1] = lr
+            return
         if len(self.steps) >= self.max_points:
             # 오래된 절반 버리기
             half = self.max_points // 2
@@ -68,6 +91,22 @@ class TrainHistory:
             "grad_norms": self.grad_norms,
             "lrs": self.lrs,
         }
+
+    def load(self, d: dict) -> None:
+        """저장된 곡선을 되살린다. 형식이 이상하면 **조용히 비운다** —
+        곡선 하나 때문에 학습 화면이 통째로 안 뜨는 편이 더 나쁘다."""
+        try:
+            steps = [int(x) for x in d.get("steps", [])]
+            losses = [float(x) for x in d.get("losses", [])]
+            grads = [float(x) for x in d.get("grad_norms", [])]
+            lrs = [float(x) for x in d.get("lrs", [])]
+        except (TypeError, ValueError):
+            return
+        n = min(len(steps), len(losses), len(grads), len(lrs))
+        if not n:
+            return
+        self.steps, self.losses = steps[:n], losses[:n]
+        self.grad_norms, self.lrs = grads[:n], lrs[:n]
 
     def clear(self) -> None:
         self.steps.clear()
