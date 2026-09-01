@@ -30,7 +30,9 @@ backend/.env
 Thumbs.db
 
 # Claude plans
-.claude/plans/
+# 개인 도구 설정 — `settings.json` 에는 홈 절대경로가 들어간다. 공유할 것이 아니다.
+# (`plans/` 만 막고 있었는데, 그 아래 것만 걸러져서 `settings.json` 이 공개 저장소로 나갔다)
+.claude/
 
 # Temp
 /tmp/
