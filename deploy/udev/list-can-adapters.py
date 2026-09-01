@@ -64,11 +64,48 @@ def watch() -> int:
         return 0
 
 
+def _rule_text(rows) -> str:
+    """**이 머신의** udev 규칙. 시리얼은 실제로 꽂힌 것에서 읽는다.
+
+    ⚠ **규칙 파일을 배포물에 넣어 나눠 줄 수 없다.** 시리얼은 어댑터마다 다르므로
+    남의 시리얼이 든 규칙은 그 머신에서 **아무 줄도 매칭되지 않는다** — 그런데
+    udev 는 그걸 에러로 치지 않아서, 증상이 "팔 0개" 뿐이고 원인을 찾기 어렵다.
+    그래서 규칙은 **쓰는 머신에서 만든다.**
+
+    ⚠ 역할(leader/follower)은 여기서 정할 수 없다. 펌웨어도 시리얼도 그걸 말해
+    주지 않는다 — `--watch` 로 팔을 움직여 본 사람만 안다. 그래서 `can_arm1`,
+    `can_arm2` 로 내보내고 고치라고 적는다. 그럴듯한 이름을 지어내면 **반대 팔에
+    명령이 가는** 쪽이 더 위험하다.
+    """
+    lines = [
+        "# Piper CAN 어댑터 이름 고정 — **이 머신에서 생성됨**",
+        "#",
+        "# `can0`/`can1` 은 커널 열거 순서다. 포트를 바꿔 꽂거나 부팅 순서가 달라지면",
+        "# 두 팔의 이름이 서로 뒤바뀌고, 등록·슬롯·프리셋이 이름을 키로 쓰므로",
+        "# **저장된 설정이 반대 팔을 가리킨다.**",
+        "#",
+        "# ⚠ 아래 이름(can_arm1, can_arm2)은 **임시다.** 어느 쪽이 어느 팔인지는",
+        "#   움직여 봐야 안다:  python3 list-can-adapters.py --watch",
+        "#   확인한 뒤 이름을 고치세요 (예: can_leader1 / can_follower1).",
+        "#",
+        "# 다시 만들려면:",
+        "#   python3 list-can-adapters.py --write-rule | sudo tee /etc/udev/rules.d/99-piper-can.rules",
+        "#   sudo udevadm control --reload-rules && 어댑터를 다시 꽂거나 재부팅",
+        "",
+    ]
+    for i, (_usb, serial, _iface) in enumerate(rows, 1):
+        lines.append(
+            'SUBSYSTEM=="net", ACTION=="add", ATTRS{idVendor}=="1d50", '
+            f'ATTRS{{idProduct}}=="606f", ATTRS{{serial}}=="{serial}", NAME="can_arm{i}"')
+    return "\n".join(lines) + "\n"
+
+
 def main() -> int:
     import sys
 
     if "--watch" in sys.argv:
         return watch()
+    write_rule = "--write-rule" in sys.argv
     # 인터페이스 → USB 노드
     iface_of: dict[str, str] = {}
     for net in Path("/sys/class/net").iterdir():
@@ -99,10 +136,14 @@ def main() -> int:
             state = out[1] if len(out) > 1 else ""
         print(f"{usb:<10} {serial:<26} {iface:<16} {state}")
 
+    if write_rule:
+        print()
+        print(_rule_text(rows), end="")
+        return 0
+
     print("\n⚠ 어느 팔인지는 이 표로 알 수 없습니다 — `--watch` 로 움직여서 확인하세요.")
-    print("\n규칙 한 줄 형식:")
-    print('  SUBSYSTEM=="net", ACTION=="add", ATTRS{idVendor}=="1d50", '
-          'ATTRS{idProduct}=="606f", ATTRS{serial}=="<시리얼>", NAME="can_<역할><번호>"')
+    print("\n이 머신의 규칙을 만들려면:")
+    print("  python3 list-can-adapters.py --write-rule | sudo tee /etc/udev/rules.d/99-piper-can.rules")
     return 0
 
 

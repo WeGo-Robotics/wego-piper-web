@@ -68,13 +68,26 @@ docker run --rm --gpus all --entrypoint python piper-web-backend:latest \
   -c 'import torch; print(torch.cuda.get_arch_list())'
 ```
 
-⚠ **CAN 어댑터 이름은 udev 로 고정한다.** 규칙이 없으면 커널 열거 순서대로 붙어
-포트를 바꿔 꽂는 순간 **두 팔의 이름이 뒤바뀐다** — 저장된 등록이 반대 팔을 가리킨다.
-규칙에는 시리얼이 박혀 있어서, 어댑터가 다르면 `apply.sh` 가 대조해 경고한다:
+⚠ **팔을 쓴다면 CAN 이름 규칙을 만들어야 한다.** 규칙이 없으면 인터페이스가
+커널 열거 순서대로 붙어, 포트를 바꿔 꽂거나 부팅 순서가 달라지는 순간 **두 팔의
+이름이 뒤바뀐다** — 등록·슬롯·프리셋이 이름을 키로 쓰므로 **저장된 설정이 반대
+팔을 가리킨다.**
+
+⚠ **규칙은 배포물에 안 들어 있다.** 시리얼이 어댑터마다 달라서, 남의 시리얼이 든
+규칙은 이 머신에서 아무 줄도 매칭되지 않는다 — 그런데 udev 는 그걸 에러로 치지
+않아 증상이 "팔 0개" 뿐이다. **이 머신에서 만든다:**
 
 ```bash
-python3 ~/piper-web-deploy/<버전>/udev/list-can-adapters.py --watch
+cd ~/piper-web-deploy/<버전>/udev
+python3 list-can-adapters.py --watch     # 팔을 움직여 어느 쪽이 어느 팔인지 확인
+python3 list-can-adapters.py --write-rule | sudo tee /etc/udev/rules.d/99-piper-can.rules
+sudo nano /etc/udev/rules.d/99-piper-can.rules   # can_arm1/2 → can_leader1/can_follower1
+sudo udevadm control --reload-rules              # 그 뒤 어댑터를 다시 꽂는다
 ```
+
+⚠ 이름(`can_arm1`)은 **임시다.** 어느 쪽이 어느 팔인지는 시리얼로도 펌웨어로도
+알 수 없다 — 움직여 본 사람만 안다. 그럴듯한 이름을 지어내는 것보다 임시 이름을
+두고 고치게 하는 편이 안전하다.
 
 ## 무엇이 어디서 도는가
 

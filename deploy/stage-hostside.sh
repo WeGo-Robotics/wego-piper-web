@@ -44,7 +44,8 @@ cp docker-compose.yml "$OUT/"
 cp deploy/env.example "$OUT/backend.env.example"
 
 # ── udev ──────────────────────────────────────────────────────────────────
-cp deploy/udev/99-piper-can.rules deploy/udev/list-can-adapters.py "$OUT/udev/"
+# ⚠ CAN 규칙 파일이 아니라 **만드는 도구**를 싣는다 (release.sh 의 같은 주석 참고)
+cp deploy/udev/list-can-adapters.py "$OUT/udev/"
 cp backend/udev/99-realsense-libusb.rules "$OUT/udev/"
 
 # `install-daemons.sh` 는 이제 tarball 안이라 여기서 못 만진다 — 실행 비트는

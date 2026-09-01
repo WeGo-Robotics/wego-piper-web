@@ -194,30 +194,27 @@ for r in "$HERE"/udev/*.rules; do
 done
 [ $UDEV_RELOAD = 1 ] && NEED_SUDO+=("udevadm control --reload-rules && sudo udevadm trigger")
 
-# ⚠ CAN 규칙의 시리얼은 **번들을 구운 머신의 배선**이다. 어댑터가 다른 머신에서는
-#   어느 줄도 매칭되지 않는데, 그 실패가 "팔 0개" 로만 보인다 — udev 는 매칭
-#   안 된 규칙을 에러로 치지 않는다. 그래서 꽂혀 있는 것과 대조해 둔다.
-CAN_RULE="$HERE/udev/99-piper-can.rules"
+# ⚠ **CAN 규칙은 그 머신에서 만들어야 한다.** 시리얼은 어댑터마다 다르므로 번들에
+#   담아 나눠 주면 받는 머신에서 아무 줄도 매칭되지 않는다 — udev 는 그걸 에러로
+#   안 쳐서 증상이 "팔 0개" 뿐이고 원인을 찾기 어렵다. 그래서 규칙 대신 **만드는
+#   도구**를 싣고, 없으면 만들라고 안내한다.
+CAN_RULE="/etc/udev/rules.d/99-piper-can.rules"
 if [ -f "$CAN_RULE" ]; then
-  ATTACHED=""
-  for d in /sys/bus/usb/devices/*/; do
-    [ -f "$d/idVendor" ] || continue
-    [ "$(cat "$d/idVendor")" = "1d50" ] && [ "$(cat "$d/idProduct" 2>/dev/null)" = "606f" ] \
-      && ATTACHED="$ATTACHED $(cat "$d/serial" 2>/dev/null)"
-  done
-  if [ -z "${ATTACHED// /}" ]; then
-    warn "USB-CAN 어댑터가 안 꽂혀 있다 — 시리얼 대조를 건너뛴다"
-  else
-    while read -r sn; do
-      [ -n "$sn" ] || continue
-      case " $ATTACHED " in
-        *" $sn "*) ok "CAN 시리얼 $sn" ;;
-        *) warn "CAN 시리얼 $sn 이 이 머신에 없다 — 규칙이 이 배선의 것이 아니다.
-       꽂힌 어댑터를 보고 규칙을 고치세요:  python3 $HERE/udev/list-can-adapters.py" ;;
-      esac
-    done < <(sed -n 's/.*ATTRS{serial}=="\([^"]*\)".*/\1/p' "$CAN_RULE")
-  fi
+  ok "CAN 이름 규칙 (이 머신의 것)"
+elif ! ls /sys/bus/usb/devices/*/idVendor >/dev/null 2>&1 \
+     || ! grep -qls 1d50 /sys/bus/usb/devices/*/idVendor 2>/dev/null; then
+  warn "USB-CAN 어댑터가 안 꽂혀 있다 — 팔을 쓸 때 규칙을 만드세요"
+else
+  bad "CAN 이름 규칙이 없다 — 어댑터는 꽂혀 있다"
+  echo "       없으면 인터페이스가 can0/can1 로 붙어, 포트를 바꿔 꽂는 순간"
+  echo "       **두 팔의 이름이 뒤바뀐다**(저장된 등록이 반대 팔을 가리킨다)."
+  echo "       이 머신의 규칙을 만드세요:"
+  echo "         python3 $HERE/udev/list-can-adapters.py --watch        # 어느 쪽이 어느 팔인지"
+  echo "         python3 $HERE/udev/list-can-adapters.py --write-rule \\"
+  echo "           | sudo tee $CAN_RULE"
+  echo "         sudo udevadm control --reload-rules   # 그 뒤 어댑터를 다시 꽂는다"
 fi
+
 
 if [ ${#NEED_APT[@]} -gt 0 ] || [ ${#NEED_SUDO[@]} -gt 0 ]; then
   echo

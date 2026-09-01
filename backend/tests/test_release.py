@@ -543,12 +543,10 @@ def test_the_bundle_ships_the_udev_rules():
     `list-can-adapters.py` 도 같이 간다 — 규칙의 시리얼이 그 머신 것이 아닐 때
     무엇으로 고쳐야 하는지 알려면 그게 필요하다."""
     src = RELEASE.read_text()
-    for name in ("99-piper-can.rules", "99-realsense-libusb.rules",
-                 "list-can-adapters.py"):
+    for name in ("99-realsense-libusb.rules", "list-can-adapters.py"):
         assert f'"$OUT/udev/"' in src and name in src, f"번들에 {name} 이 없다"
     # 저장소에 실제로 있어야 `cp` 가 성립한다
-    for rel in ("deploy/udev/99-piper-can.rules",
-                "backend/udev/99-realsense-libusb.rules",
+    for rel in ("backend/udev/99-realsense-libusb.rules",
                 "deploy/udev/list-can-adapters.py"):
         assert (REPO / rel).is_file(), f"{rel} 이 없다"
 
@@ -573,14 +571,42 @@ def test_apply_never_overwrites_an_existing_udev_rule():
     assert "diff " in exists, "무엇이 다른지 볼 방법을 안 준다"
 
 
-def test_apply_checks_the_can_serials_against_what_is_attached():
-    """⚠ CAN 규칙에는 **번들을 구운 머신의 시리얼**이 박혀 있다. 어댑터가 다른
-    머신에서는 어느 줄도 매칭되지 않는데 **udev 는 그걸 에러로 치지 않는다** —
-    증상은 "팔 0개" 뿐이라 원인을 찾기 어렵다. 그래서 apply 가 대조한다."""
+def test_the_can_rule_is_never_shipped():
+    """⚠ **고객에게 우리 시리얼을 보내고 있었다.** CAN 규칙에는 그 머신 어댑터의
+    시리얼이 박힌다. 남의 시리얼이 든 규칙은 받는 머신에서 아무 줄도 매칭되지
+    않는데 **udev 는 그걸 에러로 치지 않는다** — 증상은 "팔 0개" 뿐이라 원인을
+    찾을 수 없다. 게다가 `apply.sh` 는 규칙이 없는 새 머신에 그것을 **설치하라고
+    시켰다.** 규칙 대신 **만드는 도구**를 보낸다.
+    """
+    from conftest import code_only
+
+    for f in (RELEASE, STAGE_SH):
+        src = code_only(f.read_text())
+        assert "99-piper-can.rules" not in src, f"{f.name} 이 CAN 규칙을 싣는다"
+        assert "list-can-adapters.py" in src, f"{f.name} 이 만드는 도구를 안 싣는다"
+    assert not (REPO / "deploy" / "udev" / "99-piper-can.rules").exists(), \
+        "우리 시리얼이 든 규칙이 저장소에 남아 있다"
+
+
+def test_the_tool_can_write_the_rule_for_this_machine():
+    """규칙을 안 보내면 만들 방법을 줘야 한다 — 안 그러면 "만드세요" 가 빈말이 된다.
+
+    ⚠ 역할(leader/follower)은 **지어내면 안 된다.** 시리얼도 펌웨어도 그걸 말해
+    주지 않는다. 그럴듯한 이름을 붙이면 반대 팔에 명령이 가는 쪽이 더 위험하다.
+    """
+    tool = (REPO / "deploy" / "udev" / "list-can-adapters.py").read_text()
+    assert "--write-rule" in tool, "규칙 생성 기능이 없다"
+    assert "can_arm" in tool, "역할을 임의로 정하고 있다"
+    assert "--watch" in tool, "어느 팔인지 확인할 방법을 안 가리킨다"
+
+
+def test_apply_tells_you_to_make_the_rule_when_adapters_are_plugged_in():
+    """⚠ 어댑터가 꽂혀 있는데 규칙이 없으면 **이름이 뒤바뀔 수 있는 상태**다.
+    조용히 넘어가면 포트를 바꿔 꽂는 날 저장된 등록이 반대 팔을 가리킨다."""
     src = APPLY.read_text()
-    assert "/sys/bus/usb/devices" in src, "꽂힌 어댑터를 안 읽는다"
-    assert "1d50" in src and "606f" in src, "gs_usb 장치를 안 고른다"
-    assert "list-can-adapters.py" in src, "고치는 방법을 안 알려준다"
+    block = src.split("CAN 규칙은 그 머신에서 만들어야 한다", 1)[1].split("\nfi\n", 1)[0]
+    assert "--write-rule" in block, "만드는 방법을 안 알려준다"
+    assert "--watch" in block, "어느 팔인지 확인할 방법을 안 알려준다"
 
 
 def test_apply_tolerates_a_bundle_without_udev():

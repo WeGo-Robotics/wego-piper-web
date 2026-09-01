@@ -214,8 +214,11 @@ cp deploy/env.example "$OUT/backend.env.example"
 # ⚠ CAN 규칙에는 **이 배선의 시리얼이 박혀 있다.** 어댑터가 다른 머신에 그대로
 #   깔면 아무 줄도 매칭되지 않아 이름이 조용히 안 붙는다 — 그래서
 #   `list-can-adapters.py` 를 같이 보내고 `apply.sh` 가 꽂힌 어댑터와 대조한다.
+# ⚠ **CAN 규칙 파일은 안 보낸다.** 시리얼은 어댑터마다 다르므로 남의 시리얼이
+#   든 규칙은 받는 머신에서 **아무 줄도 매칭되지 않는다** — 그런데 udev 는 그걸
+#   에러로 안 쳐서 증상이 "팔 0개" 뿐이다. 대신 **만드는 도구**를 보낸다.
+#   RealSense 규칙은 vendor/product ID 라 머신과 무관하므로 그대로 보낸다.
 mkdir -p "$OUT/udev"
-cp deploy/udev/99-piper-can.rules         "$OUT/udev/"
 cp backend/udev/99-realsense-libusb.rules "$OUT/udev/"
 cp deploy/udev/list-can-adapters.py       "$OUT/udev/"
 
