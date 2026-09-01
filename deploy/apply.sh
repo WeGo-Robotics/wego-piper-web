@@ -296,7 +296,15 @@ if [ -n "${daemons:-}" ]; then
   if [ $CHECK = 1 ]; then
     [ -d "$SRC/daemons" ] && ok "$SRC" || bad "$SRC 없음"
   else
-    mkdir -p "$SRC" && tar xzf "$HERE/daemons.tar.gz" -C "$SRC" && ok "풀었다: $SRC"
+    # ⚠ **`&&` 로 이으면 조용히 넘어간다.** tar 가 실패해도 `set -e` 는 `&&` 리스트의
+    #   중간 명령을 봐주므로, 그 다음 줄이 **옛 `$SRC` 의 설치 스크립트로 낡은
+    #   데몬을 깔았다.** 실기에서 그렇게 됐다 — 화면에는 "유닛 설치·기동 ✓" 만 떴다.
+    mkdir -p "$SRC"
+    if ! tar xzf "$HERE/daemons.tar.gz" -C "$SRC"; then
+      bad "데몬 소스를 못 풀었습니다: $HERE/daemons.tar.gz"
+      exit 1
+    fi
+    ok "풀었다: $SRC"
     # ⚠ 설치 스크립트는 **지금 셸의 python3** 를 유닛에 박는다. venv 를 켜고 불러야
     #   데몬이 wheel 을 볼 수 있다 (deploy/install-daemons.sh 참고).
     ( . "$VENV/bin/activate" && "$SRC/deploy/install-daemons.sh" estopd robotd camerad rsd )

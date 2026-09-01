@@ -29,10 +29,15 @@ done
 rm -rf bus/build shm/build robot/build cam/build rs/build 2>/dev/null || true
 
 # ── 데몬 소스·유닛·설치 스크립트 ──────────────────────────────────────────
+# ⚠ **번들과 똑같은 모양으로 싣는다.** 예전에는 `daemons/`·`systemd/` 를 디렉토리로
+#   풀어 놨는데, `apply.sh` 는 `daemons.tar.gz` 를 기대한다 — 이미지로 설치하면
+#   3절이 "Cannot open: No such file or directory" 로 실패하고, 그런데도 **그 다음
+#   줄이 옛 `$SRC` 의 스크립트로 유닛을 설치했다.** 즉 낡은 데몬이 깔렸다.
+#   `/opt/piper-host` 가 곧 번들이면 `apply.sh` 는 한 경로만 알면 된다.
 # ⚠ `__pycache__` 는 뺀다. 빌드 머신과 호스트의 파이썬이 달라 쓰이지도 않는다.
-tar cf - --exclude='__pycache__' --exclude='*.pyc' daemons | (cd "$OUT" && tar xf -)
-cp -r deploy/systemd "$OUT/systemd"
-cp deploy/install-daemons.sh deploy/apply.sh "$OUT/"
+tar czf "$OUT/daemons.tar.gz" --exclude='__pycache__' --exclude='*.pyc' \
+    daemons deploy/systemd deploy/install-daemons.sh
+cp deploy/apply.sh "$OUT/"
 
 # ── compose · env 예시 ────────────────────────────────────────────────────
 cp docker-compose.yml "$OUT/"

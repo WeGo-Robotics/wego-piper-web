@@ -204,6 +204,39 @@ def test_a_public_registry_is_not_pushed_through_localhost():
     assert '"$PIPER_REGISTRY" == *:[0-9]*' in src, "공개/사설을 안 가른다"
 
 
+def test_the_image_carries_the_same_shape_as_the_bundle():
+    """⚠ **모양이 갈리면 `apply.sh` 가 한쪽에서만 돈다.** 이미지는 `daemons/` 를
+    디렉토리로, 번들은 `daemons.tar.gz` 로 실었는데 `apply.sh` 는 후자만 안다.
+    이미지로 설치하면 3절이 "Cannot open" 으로 실패했고 — 그런데도 그 다음 줄이
+    **옛 `$SRC` 의 스크립트로 낡은 데몬을 깔았다.** 화면에는 "✓" 만 떴다.
+    """
+    stage = STAGE_SH.read_text()
+    rel = RELEASE.read_text()
+    for f in ("daemons.tar.gz", "apply.sh"):
+        assert f in stage, f"이미지가 {f} 를 안 싣는다"
+        assert f in rel, f"번들이 {f} 를 안 싣는다"
+    # 디렉토리로 풀어 두면 다시 갈린다
+    assert 'cp -r deploy/systemd' not in stage, "systemd 를 디렉토리로 싣는다 — 번들과 다르다"
+
+
+def test_a_failed_untar_stops_the_install():
+    """⚠ `mkdir && tar && ok` 로 이으면 tar 실패가 조용히 넘어간다 — `set -e` 는
+    `&&` 리스트의 중간 명령을 봐준다. 그 다음 줄이 옛 스크립트를 실행했다."""
+    src = APPLY.read_text()
+    block = src.split('tar xzf "$HERE/daemons.tar.gz"', 1)[1][:250]
+    assert "exit 1" in block, "데몬 소스를 못 풀어도 계속 간다"
+
+
+def test_the_release_also_publishes_latest():
+    """⚠ `piper-install.sh` 는 인자가 없으면 `latest` 를 받는다 — README 의 기본
+    명령이 그것이다. 버전 태그만 밀면 사용자가 `./piper-install.sh` 를 그냥 쳤을 때
+    `not found` 로 끝난다. 실기에서 정확히 그렇게 막혔다."""
+    src = RELEASE.read_text()
+    assert 'piper-web-$s:latest"' in src, "latest 를 안 민다"
+    boot = (REPO / "deploy" / "piper-install.sh").read_text()
+    assert 'VERSION="${1:-latest}"' in boot, "부트스트랩 기본값이 latest 가 아니다"
+
+
 def test_the_offline_path_still_exists():
     """⚠ **현장 USB 배포를 버리면 안 된다.** 레지스트리가 전송량을 33배 줄이지만
     (실측 3.46GB → 104.5MB), 망이 없는 현장이 실재한다. `PIPER_REGISTRY` 가 비었거나

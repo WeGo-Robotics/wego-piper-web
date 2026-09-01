@@ -159,7 +159,13 @@ if [ ${#IMAGES[@]} -gt 0 ]; then
     for s in "${IMAGES[@]}"; do
       docker tag "piper-web-$s:$VERSION" "$PUSH_TO/piper-web-$s:$VERSION"
       docker push -q "$PUSH_TO/piper-web-$s:$VERSION"
-      echo "  → piper-web-$s:$VERSION"
+      # ⚠ **`latest` 도 민다.** `piper-install.sh` 는 인자가 없으면 `latest` 를
+      #   받는다 — README 의 기본 명령이 그것이다. 버전 태그만 밀면 사용자가
+      #   `./piper-install.sh` 를 그냥 쳤을 때 **"not found" 로 끝난다.**
+      #   실기에서 그렇게 막혔다.
+      docker tag "piper-web-$s:$VERSION" "$PUSH_TO/piper-web-$s:latest"
+      docker push -q "$PUSH_TO/piper-web-$s:latest"
+      echo "  → piper-web-$s:$VERSION (+ latest)"
     done
     REGISTRY="$PIPER_REGISTRY"
   else
