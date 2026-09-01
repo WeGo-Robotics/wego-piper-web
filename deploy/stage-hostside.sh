@@ -47,5 +47,7 @@ cp deploy/env.example "$OUT/backend.env.example"
 cp deploy/udev/99-piper-can.rules deploy/udev/list-can-adapters.py "$OUT/udev/"
 cp backend/udev/99-realsense-libusb.rules "$OUT/udev/"
 
-chmod +x "$OUT/apply.sh" "$OUT/install-daemons.sh"
+# `install-daemons.sh` 는 이제 tarball 안이라 여기서 못 만진다 — 실행 비트는
+# tar 가 보존하고, 푸는 쪽(`apply.sh` 3절)이 그대로 쓴다.
+chmod +x "$OUT/apply.sh"
 echo "· 호스트 코드 준비: $(du -sh "$OUT" | cut -f1)  ($OUT)"
