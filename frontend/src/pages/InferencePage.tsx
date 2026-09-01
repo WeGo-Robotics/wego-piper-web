@@ -5,6 +5,7 @@ import type { ProcessState } from '../types/ws'
 import { useActivity, isStateMessage } from '../hooks/useActivity'
 import { usePolicies } from '../hooks/usePolicies'
 import { useParamSpec } from '../hooks/useParamSpec'
+import CheckpointPicker from '../components/CheckpointPicker'
 import type { Model } from '../types/models'
 import ParamSlider from '../components/ParamSlider'
 import PresetBar from '../components/PresetBar'
@@ -435,11 +436,9 @@ export default function InferencePage() {
             {/* 모델 */}
             <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
               <h3 className="text-sm font-semibold">체크포인트</h3>
-              <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500">
-                <option value="">모델 선택...</option>
-                {models.map((m) => <option key={m.id} value={m.id}>{m.id} ({m.policy_type})</option>)}
-              </select>
+              {/* ⚠ 예전에는 목록 하나에 전부 넣었다 — 학습 10개에 체크포인트 72개라
+                  어느 학습의 몇 번째인지 읽을 수가 없었다. 학습을 먼저 고른다. */}
+              <CheckpointPicker models={models} value={selectedModel} onChange={setSelectedModel} />
             </div>
 
             {/* 모델 요구사항 + 카메라 매핑 */}

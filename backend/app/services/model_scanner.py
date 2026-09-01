@@ -188,11 +188,26 @@ def _scan_train_outputs(models_dir: Path) -> list[dict]:
                 rel = job_dir.relative_to(models_dir)
                 model_id = f"{rel}/{step_label}"
             except ValueError:
+                rel = Path(job_dir.name)
                 model_id = f"{job_dir.name}/{step_label}"
+            # ⚠ **학습(run)과 체크포인트를 나눠서 내보낸다.** 한 학습이 체크포인트를
+            #   10~20개 남기므로 목록이 금세 수십 개가 되고, 이름만으로는 어느
+            #   학습의 몇 번째인지 읽기 어렵다(실측: 학습 13개에 체크포인트 77개).
+            #   `id` 를 화면에서 쪼개게 하면 HF 허브 모델(`PekingU/rtdetr_v2_r18vd`)
+            #   까지 "PekingU 학습" 으로 묶인다 — 여기서만 판단한다.
+            run_id = str(rel)
+            # 정렬용 숫자. `last` 처럼 숫자가 아닌 것은 None 이고 화면이 맨 위에 둔다.
+            try:
+                step_num: int | None = int(step_label)
+            except ValueError:
+                step_num = None
 
             stat = model_dir.stat()
             results.append({
                 "id": model_id,
+                "run": run_id,
+                "checkpoint": step_label,
+                "step": step_num,
                 "path": str(model_dir),
                 "policy_type": policy_type,
                 "is_policy": is_policy,

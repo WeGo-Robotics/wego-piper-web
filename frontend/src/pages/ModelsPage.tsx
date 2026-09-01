@@ -66,6 +66,16 @@ export default function ModelsPage({ embedded = false }: { embedded?: boolean })
 
   const selected = models.find((m) => m.id === selectedId)
 
+  // ⚠ **검색 중에는 전부 펼친다.** 안 그러면 걸린 게 접힌 묶음 안에 숨어
+  //   "검색해도 아무것도 안 나온다" 로 보인다.
+  const [openRuns, setOpenRuns] = useState<Set<string>>(new Set())
+  const toggleRun = (run: string) => setOpenRuns((prev) => {
+    const next = new Set(prev)
+    if (next.has(run)) next.delete(run)
+    else next.add(run)
+    return next
+  })
+
   const filteredModels = models
     .filter((m) => !search || m.id.toLowerCase().includes(search.toLowerCase()) || m.policy_type.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => {
@@ -76,6 +86,26 @@ export default function ModelsPage({ embedded = false }: { embedded?: boolean })
       else if (sortKey === 'policy') cmp = a.policy_type.localeCompare(b.policy_type)
       return sortAsc ? cmp : -cmp
     })
+
+  const groups = (() => {
+    const by = new Map<string, typeof filteredModels>()
+    for (const m of filteredModels) {
+      const key = m.run ?? ''
+      const list = by.get(key)
+      if (list) list.push(m)
+      else by.set(key, [m])
+    }
+    return [...by.entries()]
+      .map(([run, list]) => ({ run, list }))
+      .sort((a, b) => (a.run ? 0 : 1) - (b.run ? 0 : 1))   // 묶이지 않은 것은 맨 아래
+  })()
+
+  // 검색 중이거나 고른 것이 있으면 그 묶음은 열어 둔다
+  const forcedOpen = new Set(openRuns)
+  if (search) for (const g of groups) forcedOpen.add(g.run)
+  const sel = models.find((m) => m.id === selectedId)
+  if (sel) forcedOpen.add(sel.run ?? '')
+  if (!openRuns.size && !search && groups.length) forcedOpen.add(groups[0].run)
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortAsc(!sortAsc)
@@ -146,46 +176,67 @@ export default function ModelsPage({ embedded = false }: { embedded?: boolean })
               ))}
               <span className="ml-auto text-neutral-500">{filteredModels.length}/{models.length}</span>
             </div>
-            {filteredModels.map((m) => (
-              <div
-                key={m.id}
-                onClick={() => setSelectedId(m.id)}
-                className={`rounded-lg border p-4 cursor-pointer transition-colors ${
-                  selectedId === m.id
-                    ? 'border-blue-500 bg-blue-500/10'
-                    : 'border-neutral-700 bg-neutral-800 hover:border-neutral-600'
-                }`}
-              >
-                <div className="flex justify-between items-start">
-                  <div className="min-w-0">
-                    <p className="font-medium truncate">{m.id}</p>
-                    <p className="text-xs text-neutral-400 mt-1">
-                      {m.policy_type} · {formatBytes(m.size_bytes)}
-                    </p>
+            {groups.map((g) => {
+              const open = forcedOpen.has(g.run)
+              return (
+                <div key={g.run || '_other'} className="space-y-2">
+                  {/* ⚠ 학습이 목록의 단위다. 예전에는 체크포인트 72개가 평면으로
+                      깔려 어느 학습의 몇 번째인지 읽을 수가 없었다. */}
+                  <button type="button" onClick={() => toggleRun(g.run)}
+                    className="flex w-full items-center gap-2 rounded border border-neutral-700 bg-neutral-800/60 px-3 py-2 text-left text-sm hover:border-neutral-600">
+                    <span className="text-neutral-500">{open ? '▾' : '▸'}</span>
+                    <span className="truncate font-medium">{g.run || '그 외 (직접 받은 모델)'}</span>
+                    <span className="ml-auto shrink-0 text-xs text-neutral-500">
+                      {g.run && g.list[0]?.policy_type ? `${g.list[0].policy_type} · ` : ''}{g.list.length}개
+                    </span>
+                  </button>
+                  {open && (
+                    <div className="space-y-2 pl-3">
+                      {g.list.map((m) => (
+                  <div
+                    key={m.id}
+                    onClick={() => setSelectedId(m.id)}
+                    className={`rounded-lg border p-4 cursor-pointer transition-colors ${
+                      selectedId === m.id
+                        ? 'border-blue-500 bg-blue-500/10'
+                        : 'border-neutral-700 bg-neutral-800 hover:border-neutral-600'
+                    }`}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{m.id}</p>
+                        <p className="text-xs text-neutral-400 mt-1">
+                          {m.policy_type} · {formatBytes(m.size_bytes)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-3">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleStartInference(m)
+                        }}
+                        className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white"
+                      >
+                        추론 시작
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleDelete(m.id)
+                        }}
+                        className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white"
+                      >
+                        삭제
+                      </button>
+                    </div>
                   </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div className="flex gap-2 mt-3">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleStartInference(m)
-                    }}
-                    className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white"
-                  >
-                    추론 시작
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleDelete(m.id)
-                    }}
-                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white"
-                  >
-                    삭제
-                  </button>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           {/* 상세 패널 */}

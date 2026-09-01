@@ -14,8 +14,17 @@ export type ModelRequirements = {
 
 export type Model = {
   id: string
+  /** 학습 단위 (`2026-09-01/10-11-22_act`). 학습 산출물이 아니면 없다 — HF 허브
+   *  모델은 묶이지 않는다. 백엔드가 정한다: `id` 를 화면에서 쪼개면
+   *  `PekingU/rtdetr_v2_r18vd` 까지 "PekingU 학습" 으로 묶인다. */
+  run?: string
+  /** 체크포인트 이름 (`060000`, `last`) */
+  checkpoint?: string
+  /** 정렬용 숫자. `last` 는 없다 */
+  step?: number | null
   path: string
   policy_type: string
+  is_policy?: boolean
   config: Record<string, unknown>
   requirements: ModelRequirements
   size_bytes: number
