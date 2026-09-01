@@ -243,18 +243,27 @@ export default function TrainingPage() {
     return () => clearInterval(ckptPollRef.current)
   }, [trainState])
 
-  // 히스토리 폴링 (학습 중)
+  // 히스토리 — **열자마자 한 번**, 그리고 학습 중에는 주기적으로
   const histPollRef = useRef<ReturnType<typeof setInterval>>(undefined)
+  const fetchHistory = useCallback(
+    () => { void api.get<HistoryData>('/training/metrics').then(setHistory).catch(() => {}) }, [])
+
+  // ⚠ **상태를 기다리지 않는다.** 예전에는 `trainState === 'running'` 일 때만
+  //   가져왔는데, 화면을 열면 그 값이 아직 `running` 이 아니라 **한 번도 안
+  //   가져왔다.** 학습 도중에 들어가면 그래프가 한참 비어 있었고, 학습이 끝난
+  //   뒤에 열면 영영 비어 있었다 — 서버에는 곡선이 그대로 있는데도.
+  useEffect(() => { fetchHistory() }, [fetchHistory])
+
   useEffect(() => {
     if (trainState === 'running') {
-      const poll = () => api.get<HistoryData>('/training/metrics').then(setHistory).catch(() => {})
-      poll()
-      histPollRef.current = setInterval(poll, 5000)
+      histPollRef.current = setInterval(fetchHistory, 5000)
     } else {
       clearInterval(histPollRef.current)
+      // 막 끝났으면 마지막 점까지 한 번 더 받는다
+      fetchHistory()
     }
     return () => clearInterval(histPollRef.current)
-  }, [trainState])
+  }, [trainState, fetchHistory])
 
   // 학습 중 패널 배치 — 값은 localStorage 에 남는다
   const { layout, switchLayout } = useLayout('training')

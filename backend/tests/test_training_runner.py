@@ -234,3 +234,23 @@ def test_reattach_keeps_the_replayed_history():
     assert body.index("self.tracker.reset()") < body.index("self.runner.restore()"), \
         "재부착 뒤에 비운다 — 재생된 히스토리가 사라진다"
     assert "reset(total_steps=" not in body, "총 스텝을 넣으면서 다시 비운다"
+
+
+def test_the_curve_loads_without_waiting_for_the_state():
+    """⚠ **곡선이 서버에 있는데 화면이 안 가져왔다.**
+
+    히스토리 폴링이 `trainState === 'running'` 일 때만 돌았다. 화면을 열면 그 값은
+    아직 `running` 이 아니라(상태를 받아오기 전이다) **한 번도 안 가져온다** —
+    학습 도중에 들어가면 그래프가 한참 비어 있었고, 학습이 끝난 뒤에 열면 영영
+    비어 있었다. 저장까지 고쳐 놨는데 화면이 안 읽으면 소용이 없다.
+    """
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+           / "TrainingPage.tsx").read_text()
+    # 상태와 무관한 마운트 시 조회가 있어야 한다
+    assert "useEffect(() => { fetchHistory() }, [fetchHistory])" in src, \
+        "열자마자 한 번 가져오지 않는다"
+    # 폴링 자체는 여전히 학습 중에만 (끝난 뒤 5초마다 두드릴 이유가 없다)
+    poll = src.split("if (trainState === 'running')", 1)[1][:200]
+    assert "setInterval" in poll, "학습 중 주기 갱신이 사라졌다"
