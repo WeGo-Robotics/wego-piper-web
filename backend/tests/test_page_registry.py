@@ -206,6 +206,11 @@ def test_the_hf_token_name_is_labelled_as_a_token():
     괄호 안의 토큰 이름은 데이터셋이나 조직명처럼 읽힌다. 계정명 옆에 그냥
     붙이지 않고 **무엇인지 밝혀서** 적는다.
     """
-    src = (_SRC / "pages" / "DashboardPage.tsx").read_text()
+    # ⚠ **대시보드에서 설정으로 옮겼다.** 대시보드는 "지금 괜찮은가" 에만 답하는
+    #   자리이고 로그인은 상태가 아니라 설정이다. 옮기면서 이 수정이 사라지지
+    #   않도록 검사도 따라온다.
+    src = (_SRC / "components" / "HfAccountBadge.tsx").read_text()
     assert "토큰 {hf.token_name}" in src, "토큰이라고 안 밝힌다"
     assert "` (${hf.token_name})`" not in src, "괄호로만 붙여 정체가 안 보인다"
+    settings = (_SRC / "pages" / "SettingsPage.tsx").read_text()
+    assert "HfAccountBadge" in settings, "옮겼는데 아무 데도 안 쓰인다"

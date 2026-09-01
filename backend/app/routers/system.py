@@ -19,6 +19,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/system", tags=["system"])
 
 
+@router.get("/resources")
+async def resources():
+    """GPU·디스크. **대시보드 전용이라 실패해도 200 이다.**
+
+    ⚠ `nvidia-smi` 는 드라이버가 걸리면 D-state 로 멈춘다 — D405 의 UVC 질의로
+    똑같이 겪었고 그때 **이벤트 루프 전체가 먹통**이 됐다. `to_thread` 로 빼서
+    루프를 막지 않고, 안에서 타임아웃을 건다. 자원 표시가 없는 것과 웹이 안 뜨는
+    것은 비교할 일이 아니다.
+    """
+    from app.core.config import settings
+    from app.services import resources as res
+
+    gpu_list = await asyncio.to_thread(res.gpus)
+    disks = [d for d in (await asyncio.to_thread(res.disk, str(settings.datasets_dir)),)
+             if d]
+    return {"gpus": gpu_list, "disks": disks}
+
+
 @router.get("/services")
 async def list_services():
     """유닛 목록 + 게이트웨이 자신. `stale` 이 이 응답의 요점이다."""

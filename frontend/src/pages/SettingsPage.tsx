@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import FloorGuardPanel from '../components/FloorGuardPanel'
+import HfAccountBadge from '../components/HfAccountBadge'
 import ServicesPanel from '../components/ServicesPanel'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
@@ -56,7 +57,11 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">설정</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">설정</h1>
+        {/* 대시보드에서 옮겨 왔다 — 상태가 아니라 설정이다 */}
+        <HfAccountBadge />
+      </div>
 
       <div className="flex gap-1 border-b border-neutral-700">
         {TABS.map((t) => (
