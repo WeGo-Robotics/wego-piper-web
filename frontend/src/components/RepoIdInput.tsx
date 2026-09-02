@@ -46,15 +46,19 @@ export default function RepoIdInput({
     api.get<Account>('/hub/whoami').then(setAcc).catch(() => setAcc(null))
   }, [])
 
-  const spaces = acc?.logged_in ? [acc.username, ...acc.orgs].filter(Boolean) : []
+  const mine = acc?.logged_in ? [acc.username, ...acc.orgs].filter(Boolean) : []
   const slash = value.indexOf('/')
   const ns = slash > 0 ? value.slice(0, slash) : ''
   const name = slash > 0 ? value.slice(slash + 1) : value
 
-  // 로그인 전이거나 저장된 값이 내 네임스페이스가 아니면 고를 수 없다 — 글상자로 둔다
-  const canPick = spaces.length > 0 && (!ns || spaces.includes(ns))
+  // ⚠ 저장된 값이 내 네임스페이스가 아니어도 **목록에서 빼지 않는다.** 빼면 고를 수
+  //   없는 값이 되어 통짜 글상자로 되돌아가고, 그러면 고르기 자체가 안 붙은 것처럼
+  //   보인다. 대신 남의 것이라고 적어 둔다 — 조용히 다른 곳을 가리키는 것만 막으면 된다.
+  const foreign = !!ns && mine.length > 0 && !mine.includes(ns)
+  const spaces = foreign ? [ns, ...mine] : mine
 
-  if (!canPick) {
+  // 글상자로 떨어지는 경우는 하나뿐이다: 로그인이 안 돼 후보를 모를 때
+  if (spaces.length === 0) {
     return (
       <div>
         <input type="text" value={value} onChange={(e) => onChange(e.target.value)}
@@ -72,6 +76,7 @@ export default function RepoIdInput({
   const empty = allowEmpty && !value.trim()
 
   return (
+    <div>
     <div className="flex gap-1.5">
       <select
         value={empty ? NONE : (ns || spaces[0])}
@@ -81,7 +86,7 @@ export default function RepoIdInput({
         }}
         className="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none">
         {allowEmpty && <option value={NONE}>{emptyLabel}</option>}
-        {spaces.map((s) => <option key={s} value={s}>{s}</option>)}
+        {spaces.map((s) => <option key={s} value={s}>{s}{foreign && s === ns ? ' (내 계정 아님)' : ''}</option>)}
       </select>
       {!empty && (
         <>
@@ -92,6 +97,12 @@ export default function RepoIdInput({
             className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none" />
         </>
       )}
+    </div>
+    {foreign && !empty && (
+      <p className="mt-1 text-xs text-amber-400">
+        {ns} 은 내 계정도, 소속 조직도 아닙니다 — 업로드가 거부될 수 있습니다.
+      </p>
+    )}
     </div>
   )
 }

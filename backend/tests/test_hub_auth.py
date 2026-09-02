@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from conftest import code_only
 
 _SRC = Path(__file__).resolve().parents[2] / "frontend" / "src"
 PANEL = _SRC / "components" / "HfAccountPanel.tsx"
@@ -190,9 +191,20 @@ def test_leaving_it_empty_is_an_explicit_choice():
         "녹화는 비우면 안 된다 — 데이터셋을 어디에 쓸지 정해야 한다"
 
 
-def test_it_falls_back_to_a_text_box_when_not_logged_in():
-    """⚠ 네임스페이스를 알 수 없는데 드롭다운을 비워 놓으면 **아무것도 못 적는
-    화면**이 된다. 로그인 전에는 그냥 글상자로 둔다."""
-    src = REPO_INPUT.read_text()
-    assert "const canPick" in src and "!canPick" in src, "로그인 전 대비가 없다"
+def test_it_falls_back_to_a_text_box_only_when_logged_out():
+    """⚠ 글상자로 떨어지는 경우는 **하나뿐이어야 한다**: 로그인이 안 돼 후보를
+    모를 때. 한때 "저장된 값이 내 네임스페이스가 아니면" 도 폴백이었는데, 그러면
+    남의 저장소를 가리키던 화면에서 고르기가 아예 안 붙은 것처럼 보였다."""
+    src = code_only(REPO_INPUT.read_text())   # TSX 다 — `//` 를 걷는다
+    assert "if (spaces.length === 0)" in src, "폴백 조건이 로그인 여부가 아니다"
     assert "설정 → 저장소에서 로그인하면" in src, "왜 못 고르는지 안 알려준다"
+
+
+def test_a_foreign_namespace_stays_in_the_list():
+    """⚠ 내 것이 아닌 네임스페이스를 목록에서 **빼면 안 된다.** 빼면 고를 수 없는
+    값이 되어 통짜 글상자로 되돌아간다. 넣어 두고 남의 것이라고 적으면, 조용히
+    다른 곳을 가리키는 것도 막고 고르기도 계속 쓸 수 있다."""
+    src = REPO_INPUT.read_text()
+    assert "foreign ? [ns, ...mine] : mine" in src, "남의 네임스페이스가 목록에서 빠진다"
+    assert "내 계정 아님" in src, "남의 것인지 구분이 안 된다"
+    assert "업로드가 거부될 수 있습니다" in src, "왜 문제인지 안 알려준다"

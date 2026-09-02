@@ -18,7 +18,7 @@
 | 정책 UI 스펙 | 모델별 화면 항목을 YAML 로 선언하고 UI 가 그걸 읽어 동적 구성 | ☑ **완료.** 정책 추가에 손댈 곳이 **6군데 → 0** — 파일 하나면 목록·학습 필드·추론 파라미터·wrapper 클래스가 다 붙는다 | [policy-ui-spec.md](policy-ui-spec.md) |
 | 서비스 재시작 | 유닛·게이트웨이 상태와 **낡은 코드 감지**(기동 시각 vs 소스 mtime), 버튼 한 번 재시작 | 데몬 분리의 부작용을 정면으로 다룬다 — 유닛이 늘어날수록 값이 커진다 | [service-restart.md](service-restart.md) |
 | 회색 카드 보정 | 자동 WB·노출을 카드에 맞춘 뒤 **잠근다**. 못 믿을 측정(포화·얼룩)은 거절 | 값 저장·적용은 [카메라 프로파일](camera-profiles.md)이 이미 한다 — 보정은 재기만 | [gray-card-calibration.md](gray-card-calibration.md) |
-| 조명 변화 감시 | shm 프레임의 밝기·색 비율을 EWMA 두 개로 보다 급변하면 알람. 3×3 그리드로 팔 통과와 조명을 구분 | device_watch 루프에 판정 하나 얹는 일 — 데몬·프론트 신규 없음 | [lighting-watch.md](lighting-watch.md) |
+| 조명 변화 감시 | 밝기·색 특징을 버스로 발행(`piper:light:<cam>`, vision 패턴). 소비자: 알람(EWMA 급변, 3×3 그리드로 팔 통과 구분) + 수집·추론 화면 실시간 표시 + 에피소드 뷰어(저장 영상을 **볼 때** 같은 자로 잰다 — 소급 적용) | 측정 수학은 piper_cam(graycard 옆), 발행은 device_watch 루프 — 데몬 신규 없음 | [lighting-watch.md](lighting-watch.md) |
 | 깊이 배경 제거 | 깊이 `far_mm` 밖을 **컬러에서** 지워 정책이 배경에 안 물들게. 깊이를 못 읽은 픽셀은 남긴다(D405 는 42%가 그렇다) | rsd 소유라 녹화·추론이 같은 처리를 받는다. `rs.align` 은 켠 장치에서만 | [depth-background-mask.md](depth-background-mask.md) |
 | 화면 레이아웃 개편 | 좌측 세로 내비(그룹) + 상단 상태바(도는 활동·로봇/캠 개수). 상단 가로 내비가 한계 — **모델·데이터셋은 이미 자리가 없어 밀려나 있다** | 프론트 껍데기 + 요약 API 하나라 **아예 안 겹침.** 값은 `/api/activity` 와 `device_watch` 가 이미 갖고 있다 | [layout-redesign.md](layout-redesign.md) |
 | 외부 LLM 연동 | 분리수거 판단·플래너용 구조화 출력 클라이언트 — 슬롯 JSON 만, 에피소드 경계에서만, 오케스트레이터 스텝으로. 규칙은 프리셋 스토어 합류, 온프레미스는 로컬 Qwen 어댑터 | 백엔드 서비스 + 외부 HTTP 뿐이라 **아예 안 겹침** — 클라이언트(1단계)는 지금 가능, 스텝 합류는 오케스트레이터 1단계 뒤 | [llm-integration.md](llm-integration.md) |
