@@ -488,6 +488,32 @@ class RobotManager:
         arm.ready = False
         return True
 
+    def clear_all(self) -> dict:
+        """등록·역할·슬롯을 전부 버리고 연결도 끊는다 — 처음부터 다시 세팅할 때.
+
+        ⚠ **세션 파일까지 지운다.** 메모리만 비우면 게이트웨이가 재시작할 때
+        `restore_session()` 이 스캔·연결·역할까지 되살려 놓는다. 그러면 "깨끗하게
+        지웠는데 재부팅하니 돌아왔다" 가 된다 — 지웠다는 말이 거짓이 되는 쪽이
+        안 지운 것보다 나쁘다.
+
+        ⚠ **연결을 끊으면 토크가 빠진다.** 드는 자세에서 부르면 팔이 주저앉는다.
+        그래서 호출부(라우터)가 팔을 움직이는 활동이 도는 동안 거절하고, 화면은
+        누르기 전에 파킹을 권한다. 여기서는 사실만 돌려준다.
+        """
+        disconnected = [a.iface for a in self.arms.values() if a.connected]
+        for iface in disconnected:
+            try:
+                self.arms[iface].disconnect()
+            except Exception as e:      # 한 팔이 안 끊겨도 나머지는 지운다
+                logger.warning("  %s 연결 해제 실패 (계속): %s", iface, e)
+        cleared = len(self.arms)
+        self.arms = {}
+        self.selected_type = None
+        self.config_name = None
+        ROBOT_SESSION_PATH.unlink(missing_ok=True)
+        logger.info("Robot state cleared (%d arms, %d disconnected)", cleared, len(disconnected))
+        return {"cleared": cleared, "disconnected": disconnected}
+
     def get_ready_arms(self) -> list[dict]:
         return [a.to_dict() for a in self.arms.values() if a.ready]
 

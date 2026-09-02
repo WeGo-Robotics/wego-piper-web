@@ -837,6 +837,26 @@ async def unregister_arm(body: RegisterRequest):
     return {"status": "unregistered"}
 
 
+@router.post("/clear")
+async def clear_robots():
+    """등록·역할·슬롯을 전부 버리고 처음 상태로 — 사용 가능·1단계·2단계가 다 빈다.
+
+    ⚠ 팔이 움직이는 중이면 거절한다. 연결을 끊으면 **토크가 빠져** 드는 자세의
+      팔이 주저앉는데, 추론·녹화·텔레옵이 도는 중이면 사람이 팔 근처에 있을
+      뿐 아니라 그 활동도 팔을 잃는다. `/zero` 와 같은 판단이다.
+    """
+    from app.services.exclusivity import LABELS, Activity, running
+
+    movers = [a for a in (Activity.INFERENCE, Activity.RECORDING, Activity.TELEOP)
+              if a in running()]
+    if movers:
+        names = " · ".join(LABELS[a] for a in movers)
+        raise HTTPException(
+            409, f"{names} 실행 중입니다 — 지금 초기화하면 연결이 끊기며 팔이 "
+                 f"힘을 잃습니다. 먼저 멈추세요.")
+    return robot_manager.clear_all()
+
+
 @router.get("/ready")
 async def get_ready_arms():
     return robot_manager.get_ready_arms()

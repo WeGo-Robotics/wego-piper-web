@@ -532,6 +532,35 @@ export default function RobotsPage() {
     setPresets(await api.get<string[]>('/robots/presets'))
   }
 
+  const [clearing, setClearing] = useState(false)
+
+  // ⚠ **연결을 끊으면 토크가 빠진다.** 드는 자세에서 누르면 팔이 주저앉으므로
+  //   확인창이 파킹을 먼저 권한다. 실행 중인 활동은 서버가 409 로 막는다.
+  const handleClearAll = async () => {
+    const n = arms.length
+    if (!n) return
+    const connected = arms.filter((a) => a.connected).length
+    if (!await askConfirm(
+      `등록된 로봇과 1·2단계 목록을 모두 비웁니다 (팔 ${n}대).\n\n` +
+      '· 역할·좌우·슬롯·설정이 사라지고 세션 파일도 지워집니다\n' +
+      (connected ? `· 연결된 ${connected}대는 끊깁니다 — 토크가 빠져 팔이 주저앉습니다\n` : '') +
+      '\n' + (connected ? '먼저 파킹 자세로 내려두세요. 계속할까요?' : '계속할까요?'))) return
+    setClearing(true)
+    try {
+      await api.post('/robots/clear', {})
+      setArms([])
+      setExpandedArm(null)
+      setJogIface(null)
+      notify({ level: 'info', source: '로봇',
+               text: '로봇 상태를 초기화했습니다 — 1단계부터 다시 시작하세요.' })
+    } catch (e) {
+      notify({ level: 'error', source: '로봇',
+               text: e instanceof Error ? e.message : '초기화 실패' })
+    } finally {
+      setClearing(false)
+    }
+  }
+
   // 파생 데이터
   //
   // ⚠ 세 목록은 **배타적이어야 한다.** 등록된 팔(`ready`)은 이미 사용 가능 목록에
@@ -568,6 +597,15 @@ export default function RobotsPage() {
             className="px-3 py-1.5 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300">
             USB 진단 / 복구
           </button>
+          {/* 비울 게 없으면 안 보인다 — 이미 깨끗한데 "초기화" 를 권하면
+              누를 이유를 만들어 주는 셈이고, 위험한 버튼일수록 그러면 안 된다. */}
+          {arms.length > 0 && (
+            <button onClick={handleClearAll} disabled={clearing}
+              className="px-3 py-1.5 text-xs rounded bg-neutral-700 hover:bg-red-600
+                         text-neutral-400 hover:text-white disabled:opacity-50">
+              {clearing ? '초기화 중…' : '전체 초기화'}
+            </button>
+          )}
         </div>
       </div>
 
