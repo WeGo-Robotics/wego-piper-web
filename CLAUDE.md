@@ -40,18 +40,31 @@ cd frontend && npm run dev
 ### 핵심 설계 원칙
 - **CLI 래핑 (subprocess)**: LeRobot을 직접 import하지 않고 subprocess로 CLI를 실행. LeRobot 업데이트 시 `backend/app/core/cli_mapping.py`만 수정
 - **유일한 예외**: `wrapper/lerobot_wrapper.py`는 policy 객체를 런타임에 수정해야 하므로 LeRobot을 직접 import. import 범위를 `load_policy` + `run_inference`로 최소화
-- **크래시 격리**: 웹 서버 ↔ LeRobot 프로세스 ↔ E-stop watchdog 각각 독립 프로세스
+- **크래시 격리**: 웹 서버 ↔ LeRobot 프로세스 ↔ 장치 데몬(estopd·robotd·camerad·rsd) 각각 독립 프로세스. 유닛을 넷으로 나눈 것도 격리의 일부다 — rsd 가 D-state 로 물려도 camerad 는 돈다
 
 ### 시스템 구조
+
+C4 3계층 다이어그램: [docs/architecture-c4.drawio](docs/architecture-c4.drawio)
+(컨텍스트 / 컨테이너 / 게이트웨이 컴포넌트). 아래는 요약이다.
+
 ```
-[Web UI (React + Vite)]
-     ↕ WebSocket / REST
-[FastAPI 서버 (backend/)]
-     ├→ subprocess.Popen  → LeRobot CLI 실행 (process_manager.py)
-     ├→ Redis 큐          → 실시간 파라미터 변경 (param_bridge.py → wrapper/)
-     ├→ stdout 파싱       → WebSocket으로 로그 전송 (ws.py)
-     └→ estop_watchdog    → heartbeat 감시, 타임아웃 시 강제 종료
+[Web UI (React + Vite)]  ←nginx :80─→  [piper-gateway (FastAPI :8000)]
+                                            ├→ subprocess.Popen  → LeRobot CLI (process_manager.py)
+                                            ├→ Redis 버스        → 파라미터·녹화제어 (param_bridge.py → wrapper/)
+                                            ├→ stdout 파싱       → WebSocket 로그 (ws.py)
+                                            └→ systemd-run/SSH   → 학습·정책서버·yolod
+
+호스트 상시 유닛 (게이트웨이와 별도 프로세스, Restart=always)
+   piper-estopd    heartbeat 감시 → 타임아웃 시 버스의 활동 PID 를 직접 SIGKILL
+   piper-robotd    CAN 독점 · 기구학 안전 필터   ─┐
+   piper-camerad   /dev/video* (V4L2) 독점       ├→ /dev/shm (piper.arm.* · piper.cam.*)
+   piper-rsd       RealSense 파이프라인 독점     ─┘
+   piper-ollama    로컬 판단 LLM 런타임
 ```
+
+⚠ **컨테이너는 장치를 열지 않는다.** 카메라도 CAN 도 호스트 데몬이 독점하고
+컨테이너로는 shm 세그먼트만 온다. `privileged` 나 `/dev` 마운트를 되돌려야 한다면
+그건 무언가가 아직 장치를 직접 열고 있다는 뜻이다 — 그걸 찾아라.
 
 ### subprocess(프로세스 관리)와 버스(파라미터 변경)의 관계
 둘은 대안이 아니라 레이어가 다른 **협력 관계**:

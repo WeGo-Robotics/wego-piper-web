@@ -1,0 +1,413 @@
+<mxfile host="app.diagrams.net" agent="claude" version="24.0.0">
+  <diagram id="c4-l1" name="L1 — 시스템 컨텍스트">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="780" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="t" value="&lt;b&gt;C4 · Level 1 — 시스템 컨텍스트&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=17;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="14" width="900" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="t2" value="piper-web 은 로봇이 물리적으로 붙어 있는 한 대의 호스트에서 돈다. 바깥과는 사람·상위 제어·허브·GPU 임대 서버로만 닿는다." style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="42" width="1000" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="p-op" value="&lt;b&gt;조작자&lt;/b&gt;&lt;br&gt;&lt;i&gt;[사람]&lt;/i&gt;&lt;br&gt;&lt;br&gt;팔을 가르치고(수집) 정책을 학습·평가한다" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#08427B;strokeColor=#052E56;fontColor=#FFFFFF;fontSize=12;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="260" y="96" width="210" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="p-ext" value="&lt;b&gt;상위 제어 시스템&lt;/b&gt;&lt;br&gt;&lt;i&gt;[외부]&lt;/i&gt;&lt;br&gt;&lt;br&gt;미션을 투입하고 상태를 폴링한다" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#08427B;strokeColor=#052E56;fontColor=#FFFFFF;fontSize=12;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="700" y="96" width="210" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="sys" value="&lt;b&gt;piper-web&lt;/b&gt;&lt;br&gt;&lt;i&gt;[이 저장소]&lt;/i&gt;&lt;br&gt;&lt;br&gt;LeRobot 을 subprocess 로 감싸 웹에서 통제한다 — 수집·학습·추론·평가와 E-stop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1168BD;strokeColor=#0B4884;fontColor=#FFFFFF;fontSize=12;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="400" y="300" width="370" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="e-arm" value="&lt;b&gt;Piper 로봇 팔&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CAN]&lt;/i&gt;&lt;br&gt;&lt;br&gt;관절 지령·상태. robotd 가 독점한다" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#6B6B6B;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="590" width="168" height="108" as="geometry" />
+        </mxCell>
+        <mxCell id="e-cam" value="&lt;b&gt;카메라&lt;/b&gt;&lt;br&gt;&lt;i&gt;[USB]&lt;/i&gt;&lt;br&gt;&lt;br&gt;UVC 웹캠 + RealSense D405" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#6B6B6B;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="228" y="590" width="168" height="108" as="geometry" />
+        </mxCell>
+        <mxCell id="e-hub" value="&lt;b&gt;HuggingFace Hub&lt;/b&gt;&lt;br&gt;&lt;i&gt;[HTTPS]&lt;/i&gt;&lt;br&gt;&lt;br&gt;모델·데이터셋 보관소" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#6B6B6B;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="416" y="590" width="168" height="108" as="geometry" />
+        </mxCell>
+        <mxCell id="e-ssh" value="&lt;b&gt;원격 학습 서버&lt;/b&gt;&lt;br&gt;&lt;i&gt;[SSH]&lt;/i&gt;&lt;br&gt;&lt;br&gt;GPU 임대. 학습만 내보낸다" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#6B6B6B;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="604" y="590" width="168" height="108" as="geometry" />
+        </mxCell>
+        <mxCell id="e-llm" value="&lt;b&gt;Anthropic API&lt;/b&gt;&lt;br&gt;&lt;i&gt;[HTTPS]&lt;/i&gt;&lt;br&gt;&lt;br&gt;장면 판단 LLM (기본은 로컬 Ollama)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#6B6B6B;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="792" y="590" width="168" height="108" as="geometry" />
+        </mxCell>
+        <mxCell id="e-reg" value="&lt;b&gt;GHCR&lt;/b&gt;&lt;br&gt;&lt;i&gt;[HTTPS]&lt;/i&gt;&lt;br&gt;&lt;br&gt;설치·업데이트 이미지 배포" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#6B6B6B;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="980" y="590" width="168" height="108" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="브라우저에서 조작한다&#10;[HTTP/WS]" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="p-op" target="sys">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="미션·상태·E-stop&#10;[REST /api/ext/v1, Bearer]" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="p-ext" target="sys">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="관절 지령·상태&#10;[CAN 2.0]" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="sys" target="e-arm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="프레임 취득&#10;[V4L2 / librealsense]" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="sys" target="e-cam">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="모델·데이터셋&#10;올리기/내려받기" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="sys" target="e-hub">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="학습 잡 실행·로그 회수" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="sys" target="e-ssh">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="구조화 판단 요청" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;dashed=1;" edge="1" parent="1" source="sys" target="e-llm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="설치 스크립트가 끌어온다" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;dashed=1;" edge="1" parent="1" source="e-reg" target="sys">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n1" value="⚠ 하드웨어는 &lt;b&gt;컨테이너가 직접 열지 않는다&lt;/b&gt;. 카메라·CAN 은 호스트 데몬이 독점하고 컨테이너로는 /dev/shm 세그먼트만 온다. Level 2 에서 그 경계를 본다." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF4CE;strokeColor=#D6B656;fontSize=10;align=left;verticalAlign=top;spacingLeft=8;spacingTop=4;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="830" y="300" width="300" height="140" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="c4-l2" name="L2 — 컨테이너">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1620" pageHeight="1060" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="t" value="&lt;b&gt;C4 · Level 2 — 컨테이너&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=17;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="14" width="1000" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="t2" value="경계를 긋는 기준은 하나다 — “이것이 죽으면 무엇이 같이 죽어야 하는가?” 장치를 소유하는 넷은 호스트 유닛으로 갈라 두어, rsd 가 물려도 camerad 는 돈다." style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="42" width="1200" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="p-op" value="&lt;b&gt;조작자&lt;/b&gt;&lt;br&gt;&lt;i&gt;[사람]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#08427B;strokeColor=#052E56;fontColor=#FFFFFF;fontSize=12;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="96" width="190" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="p-ext" value="&lt;b&gt;상위 제어 시스템&lt;/b&gt;&lt;br&gt;&lt;i&gt;[외부]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#08427B;strokeColor=#052E56;fontColor=#FFFFFF;fontSize=12;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="270" y="96" width="200" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="b-doc" value="컨테이너 — docker compose (bridge net `piper`)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;dashPattern=8 6;fillColor=none;strokeColor=#8A8A8A;fontColor=#6B6B6B;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=2;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="196" width="620" height="190" as="geometry" />
+        </mxCell>
+        <mxCell id="ui" value="&lt;b&gt;Web UI&lt;/b&gt;&lt;br&gt;&lt;i&gt;[React + Vite + Tailwind, nginx :80]&lt;/i&gt;&lt;br&gt;&lt;br&gt;수집·학습·추론·저장소·설정 화면. WS 로 로그와 상태를 받는다" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="72" y="244" width="270" height="122" as="geometry" />
+        </mxCell>
+        <mxCell id="gw" value="&lt;b&gt;piper-gateway&lt;/b&gt;&lt;br&gt;&lt;i&gt;[FastAPI + uvicorn :8000]&lt;/i&gt;&lt;br&gt;&lt;br&gt;HTTP/WS 표면, 프로세스 수명, 배타 가드(exclusivity)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="362" y="244" width="270" height="122" as="geometry" />
+        </mxCell>
+        <mxCell id="bus" value="&lt;b&gt;Redis 버스&lt;/b&gt;&lt;br&gt;&lt;i&gt;[piper_bus · unix socket]&lt;/i&gt;&lt;br&gt;&lt;br&gt;E-stop heartbeat·활동 PID·파라미터 큐·녹화 제어·프리뷰/검출 TTL·학습 잡" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="700" y="244" width="250" height="122" as="geometry" />
+        </mxCell>
+        <mxCell id="shm" value="&lt;b&gt;공유 메모리 세그먼트&lt;/b&gt;&lt;br&gt;&lt;i&gt;[piper_shm · ipc: host]&lt;/i&gt;&lt;br&gt;&lt;br&gt;piper.cam.* 프레임 · piper.arm.* 관절 상태" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="980" y="244" width="250" height="122" as="geometry" />
+        </mxCell>
+        <mxCell id="data" value="&lt;b&gt;데이터 루트 /data&lt;/b&gt;&lt;br&gt;&lt;i&gt;[호스트 /srv/piper-data]&lt;/i&gt;&lt;br&gt;&lt;br&gt;데이터셋·모델·체크포인트·로그·HF 캐시" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="244" width="250" height="122" as="geometry" />
+        </mxCell>
+        <mxCell id="b-run" value="호스트 — 게이트웨이가 띄우는 실행 계층 (GPU 를 쓴다 · 배타)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;dashPattern=8 6;fillColor=none;strokeColor=#8A8A8A;fontColor=#6B6B6B;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=2;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="426" width="1000" height="216" as="geometry" />
+        </mxCell>
+        <mxCell id="run" value="&lt;b&gt;LeRobot 추론·녹화 프로세스&lt;/b&gt;&lt;br&gt;&lt;i&gt;[subprocess · wrapper/]&lt;/i&gt;&lt;br&gt;&lt;br&gt;정책 객체를 런타임에 고쳐야 해서 LeRobot 을 유일하게 직접 import 한다" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="72" y="476" width="282" height="148" as="geometry" />
+        </mxCell>
+        <mxCell id="train" value="&lt;b&gt;piper-train@&lt;job&gt;&lt;/b&gt;&lt;br&gt;&lt;i&gt;[systemd 유닛 또는 SSH 원격]&lt;/i&gt;&lt;br&gt;&lt;br&gt;게이트웨이가 죽어도 산다. 로그·지표는 저널에서 되감는다" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="374" y="476" width="268" height="148" as="geometry" />
+        </mxCell>
+        <mxCell id="psrv" value="&lt;b&gt;piper-policysrv&lt;/b&gt;&lt;br&gt;&lt;i&gt;[gRPC 유닛]&lt;/i&gt;&lt;br&gt;&lt;br&gt;정책을 GPU 에 올려 두고 지연을 줄인다" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="662" y="476" width="172" height="148" as="geometry" />
+        </mxCell>
+        <mxCell id="yolod" value="&lt;b&gt;piper-yolod&lt;/b&gt;&lt;br&gt;&lt;i&gt;[유닛 · 필요할 때]&lt;/i&gt;&lt;br&gt;&lt;br&gt;shm 을 훑어 검출을 버스에 발행" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="854" y="476" width="166" height="148" as="geometry" />
+        </mxCell>
+        <mxCell id="b-oll" value="호스트 — 장치를 안 여는 상시 유닛" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;dashPattern=8 6;fillColor=none;strokeColor=#8A8A8A;fontColor=#6B6B6B;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=2;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="1324" y="412" width="262" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="ollama" value="&lt;b&gt;piper-ollama&lt;/b&gt;&lt;br&gt;&lt;i&gt;[유닛 · 상시]&lt;/i&gt;&lt;br&gt;&lt;br&gt;로컬 판단 LLM 런타임 (qwen2.5:7b)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1344" y="452" width="222" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="e-hub" value="&lt;b&gt;HuggingFace Hub&lt;/b&gt;&lt;br&gt;&lt;i&gt;[HTTPS]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#6B6B6B;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="426" width="230" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="e-ssh" value="&lt;b&gt;원격 학습 서버&lt;/b&gt;&lt;br&gt;&lt;i&gt;[SSH]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#6B6B6B;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="524" width="230" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="e-llm" value="&lt;b&gt;Anthropic API&lt;/b&gt;&lt;br&gt;&lt;i&gt;[HTTPS · 선택]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#6B6B6B;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="622" width="230" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="b-dev" value="호스트 — 장치를 소유하는 상시 데몬 (systemd 사용자 유닛, Restart=always)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;dashPattern=8 6;fillColor=none;strokeColor=#8A8A8A;fontColor=#6B6B6B;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=2;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="682" width="1000" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="estopd" value="&lt;b&gt;piper-estopd&lt;/b&gt;&lt;br&gt;&lt;i&gt;[유닛 · 상시]&lt;/i&gt;&lt;br&gt;&lt;br&gt;heartbeat 시계. 끊기면 버스의 활동 PID 를 직접 SIGKILL 한다" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="72" y="734" width="230" height="148" as="geometry" />
+        </mxCell>
+        <mxCell id="robotd" value="&lt;b&gt;piper-robotd&lt;/b&gt;&lt;br&gt;&lt;i&gt;[유닛 · 상시]&lt;/i&gt;&lt;br&gt;&lt;br&gt;CAN 소켓·팔 상태·프리셋/파킹·기구학 안전 필터" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="322" y="734" width="230" height="148" as="geometry" />
+        </mxCell>
+        <mxCell id="camerad" value="&lt;b&gt;piper-camerad&lt;/b&gt;&lt;br&gt;&lt;i&gt;[유닛 · 상시]&lt;/i&gt;&lt;br&gt;&lt;br&gt;/dev/video* (V4L2) 독점" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="572" y="734" width="230" height="148" as="geometry" />
+        </mxCell>
+        <mxCell id="rsd" value="&lt;b&gt;piper-rsd&lt;/b&gt;&lt;br&gt;&lt;i&gt;[유닛 · 상시]&lt;/i&gt;&lt;br&gt;&lt;br&gt;RealSense USB 파이프라인 독점" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="822" y="734" width="196" height="148" as="geometry" />
+        </mxCell>
+        <mxCell id="h-arm" value="&lt;b&gt;Piper 로봇 팔&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CAN 2.0]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7A7A7A;strokeColor=#555555;fontColor=#FFFFFF;fontSize=11;arcSize=12;dashed=0;" vertex="1" parent="1">
+          <mxGeometry x="322" y="938" width="230" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="h-cam" value="&lt;b&gt;USB 카메라&lt;/b&gt;&lt;br&gt;&lt;i&gt;[UVC]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7A7A7A;strokeColor=#555555;fontColor=#FFFFFF;fontSize=11;arcSize=12;dashed=0;" vertex="1" parent="1">
+          <mxGeometry x="572" y="938" width="230" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="h-rs" value="&lt;b&gt;RealSense D405&lt;/b&gt;&lt;br&gt;&lt;i&gt;[USB]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7A7A7A;strokeColor=#555555;fontColor=#FFFFFF;fontSize=11;arcSize=12;dashed=0;" vertex="1" parent="1">
+          <mxGeometry x="822" y="938" width="196" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="n2" value="⚠ &lt;b&gt;E-stop 은 버스에 기대지 않는다.&lt;/b&gt; estopd 는 채널 알림과 무관하게 활동 PID 를 직접 죽인다 — 게이트웨이 이벤트 루프가 막혀도 팔은 서야 하기 때문이다 (D405 UVC 질의가 루프를 통째로 먹통으로 만든 전례가 있다).&lt;br&gt;&lt;br&gt;⚠ 그래서 &lt;b&gt;녹화도 heartbeat 에 매여 있다&lt;/b&gt;. 브라우저가 닫히면 2.5초 뒤 SIGKILL 이고, 인코딩 중이었다면 그 에피소드는 잃는다." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF4CE;strokeColor=#D6B656;fontSize=10;align=left;verticalAlign=top;spacingLeft=8;spacingTop=4;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="734" width="522" height="148" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" value="조작" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="p-op" target="ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" value="REST /api/ext/v1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="p-ext" target="gw">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" value="nginx 프록시&#10;backend:8000 [HTTP/WS]" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="ui" target="gw">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" value="heartbeat·활동 PID&#10;파라미터·녹화 제어" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="gw" target="bus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" value="프레임·관절 상태 읽기" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="gw" target="shm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" value="데이터셋·모델 스캔" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="gw" target="data">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e15" value="Popen" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="gw" target="run">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" value="systemd-run --collect" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="gw" target="train">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e17" value="유닛 제어" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="gw" target="psrv">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e18" value="유닛 제어" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="gw" target="yolod">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e19" value="검색·업로드·다운로드" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="gw" target="e-hub">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e20" value="원격 러너" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="train" target="e-ssh">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e21" value="판단 요청" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;dashed=1;" edge="1" parent="1" source="gw" target="ollama">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e22" value="판단 요청 (제공자 교체)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;dashed=1;" edge="1" parent="1" source="gw" target="e-llm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e23" value="파라미터 수신" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;dashed=1;" edge="1" parent="1" source="run" target="bus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e24" value="프레임·관절" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="run" target="shm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e25" value="체크포인트" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="train" target="data">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e26" value="구독" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="yolod" target="shm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e27" value="heartbeat 감시" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="estopd" target="bus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e28" value="SIGKILL" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;strokeColor=#B85450;fontColor=#B85450;dashed=1;strokeWidth=2;" edge="1" parent="1" source="estopd" target="run">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e29" value="발행" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="robotd" target="shm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e30" value="CAN" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="robotd" target="h-arm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e31" value="발행" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="camerad" target="shm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e32" value="V4L2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="camerad" target="h-cam">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e33" value="발행" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="rsd" target="shm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e34" value="librealsense" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="rsd" target="h-rs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="c4-l3" name="L3 — piper-gateway 컴포넌트">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1620" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="t" value="&lt;b&gt;C4 · Level 3 — piper-gateway 내부&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=17;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="14" width="1000" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="t2" value="라우터는 얇다. 상태와 수명은 전부 services/ 가 들고, LeRobot 과 닿는 지점은 core/cli_mapping.py 하나로 모아 두어 업스트림이 바뀌면 그 파일만 고친다." style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="42" width="1220" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="b-gw" value="piper-gateway 컨테이너  [FastAPI + uvicorn :8000]" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;dashPattern=8 6;fillColor=none;strokeColor=#8A8A8A;fontColor=#6B6B6B;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=2;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="96" width="1230" height="730" as="geometry" />
+        </mxCell>
+        <mxCell id="b-r" value="라우터 — API 표면 (app/routers/)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;dashPattern=8 6;fillColor=none;strokeColor=#8A8A8A;fontColor=#6B6B6B;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=2;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="64" y="136" width="1182" height="212" as="geometry" />
+        </mxCell>
+        <mxCell id="rreco84" value="&lt;b&gt;recording.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;수집 — 시작/정지, 에피소드 제어" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="84" y="170" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="rtrai279" value="&lt;b&gt;training.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;학습 — 잡 제출, 지표 스트림" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="279" y="170" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="rinfe474" value="&lt;b&gt;inference.py · models.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;추론 — 배포, 실시간 튜닝" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="474" y="170" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="rdata669" value="&lt;b&gt;datasets.py · hub.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;저장소 — 로컬/Hub, 로그인" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="669" y="170" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="rvisi864" value="&lt;b&gt;vision.py · yolo_train.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;검출·판단, 커스텀 학습" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="864" y="170" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="rphas1059" value="&lt;b&gt;phase.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;작업 단계 분석·라벨" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1059" y="170" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="r2robo84" value="&lt;b&gt;robots.py · cameras.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;장치 목록·프리셋·조그" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="84" y="262" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="r2esto279" value="&lt;b&gt;estop.py · activity.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;안전 — 정지, 무엇이 도는가" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="279" y="262" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="r2poli474" value="&lt;b&gt;policy_server.py · encoder.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;정책 서버, 인코더 프로브" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="474" y="262" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="r2exte669" value="&lt;b&gt;external.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;외부 제어 API (Bearer)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="669" y="262" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="r2ws.p864" value="&lt;b&gt;ws.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;로그·상태 스트리밍" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="864" y="262" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="r2syst1059" value="&lt;b&gt;system.py · logs.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;자원·저널·프리셋" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1059" y="262" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="b-s" value="서비스 — 상태와 수명 (app/services/)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;dashPattern=8 6;fillColor=none;strokeColor=#8A8A8A;fontColor=#6B6B6B;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=2;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="64" y="366" width="1182" height="212" as="geometry" />
+        </mxCell>
+        <mxCell id="s-ex" value="&lt;b&gt;exclusivity.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;무엇이 무엇을 막는가 — 표 하나. E-stop 대상도 여기" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;strokeColor=#B85450;strokeWidth=3;" vertex="1" parent="1">
+          <mxGeometry x="84" y="400" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="s-pm" value="&lt;b&gt;process_manager.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;추론 프로세스 · systemd_process.py" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="279" y="400" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="s-rm" value="&lt;b&gt;record_manager.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;녹화 세션과 에피소드 경계" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="474" y="400" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="s-tm" value="&lt;b&gt;training/manager.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;잡·지표·러너(local·systemd·ssh)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="669" y="400" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="s-ps" value="&lt;b&gt;policy_server_manager.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;gRPC 정책 서버 유닛" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="864" y="400" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="s-hc" value="&lt;b&gt;hub_client.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;HF 검색·다운로드·토큰" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1059" y="400" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="s-br" value="&lt;b&gt;param_bridge · control_bridge&lt;/b&gt;&lt;br&gt;&lt;br&gt;estop_bridge · preview_bridge — 버스 어댑터" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="84" y="492" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="s-cm" value="&lt;b&gt;camera_manager · realsense_manager&lt;/b&gt;&lt;br&gt;&lt;br&gt;v4l2_client — shm 프레임 어댑터" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="279" y="492" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="s-rb" value="&lt;b&gt;robot_manager · teleop · jog&lt;/b&gt;&lt;br&gt;&lt;br&gt;robotd 로 가는 RPC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="474" y="492" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="s-llm" value="&lt;b&gt;llm_client.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;anthropic / openai_compat(Ollama)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="669" y="492" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="s-sc" value="&lt;b&gt;dataset_scanner · model_scanner&lt;/b&gt;&lt;br&gt;&lt;br&gt;dataset_jobs · dataset_repair" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="864" y="492" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="s-res" value="&lt;b&gt;resources · trends · units&lt;/b&gt;&lt;br&gt;&lt;br&gt;GPU·CPU·디스크, 유닛 상태" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1059" y="492" width="185" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="b-c" value="core — 계약 (app/core/)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;dashPattern=8 6;fillColor=none;strokeColor=#8A8A8A;fontColor=#6B6B6B;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=2;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="64" y="596" width="1182" height="122" as="geometry" />
+        </mxCell>
+        <mxCell id="c-cli" value="&lt;b&gt;cli_mapping.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;LeRobot CLI 와 닿는 유일한 지점" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="84" y="630" width="222" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="c-cfg" value="&lt;b&gt;config.py · hf_layout.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;PIPER_* 설정과 데이터 경로" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="316" y="630" width="222" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="c-spec" value="&lt;b&gt;policy_spec.py · inference_params.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;정책 스펙, safe/unsafe 분류" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="548" y="630" width="222" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="c-ws" value="&lt;b&gt;ws_messages.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;WS 메시지 계약" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="780" y="630" width="222" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="c-j" value="&lt;b&gt;joints.py · policies.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;관절 이름·정책 목록" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1012" y="630" width="222" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="o-wr" value="&lt;b&gt;wrapper/&lt;/b&gt;&lt;br&gt;&lt;i&gt;[subprocess]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="84" y="866" width="250" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="o-bus" value="&lt;b&gt;Redis 버스&lt;/b&gt;&lt;br&gt;&lt;i&gt;[piper_bus]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="364" y="866" width="250" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="o-shm" value="&lt;b&gt;shm 세그먼트&lt;/b&gt;&lt;br&gt;&lt;i&gt;[piper_shm]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="644" y="866" width="250" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="o-data" value="&lt;b&gt;/data&lt;/b&gt;&lt;br&gt;&lt;i&gt;[파일시스템]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="924" y="866" width="250" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="e35" value="모든 시작 엔드포인트는 먼저 exclusivity.require_idle() 을 부른다" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;strokeWidth=2;fontSize=10;" edge="1" parent="1" source="b-r" target="b-s">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e36" value="상태 조회" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="s-ex" target="s-pm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e37" value="상태 조회" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="s-ex" target="s-rm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e38" value="상태 조회" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="s-ex" target="s-tm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e39" value="상태 조회" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="s-ex" target="s-ps">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e40" value="Popen" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="s-pm" target="o-wr">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e41" value="체크포인트·로그" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="s-tm" target="o-data">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e42" value="큐·채널" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="s-br" target="o-bus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e43" value="프레임" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="s-cm" target="o-shm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e44" value="관절 상태" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="s-rb" target="o-shm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e45" value="스캔" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="s-sc" target="o-data">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e46" value="인자 조립" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;dashed=1;" edge="1" parent="1" source="c-cli" target="o-wr">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n3" value="⚠ &lt;b&gt;LeRobot 을 직접 import 하지 않는다.&lt;/b&gt; subprocess 로 CLI 를 부른다 — 업스트림이 바뀌면 cli_mapping.py 만 고친다.&lt;br&gt;&lt;br&gt;유일한 예외가 wrapper/lerobot_wrapper.py 다. 정책 객체를 런타임에 고쳐야 해서 import 범위를 load_policy + run_inference 로 좁혀 두었다." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF4CE;strokeColor=#D6B656;fontSize=10;align=left;verticalAlign=top;spacingLeft=8;spacingTop=4;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="136" width="280" height="212" as="geometry" />
+        </mxCell>
+        <mxCell id="n4" value="⚠ &lt;b&gt;배타 규칙이 8곳에 흩어져 있었고 어느 둘도 같지 않았다.&lt;/b&gt; 녹화 중에 학습이 시작되고, /inference/start-custom 은 녹화 중에도 카메라를 뺏었다.&lt;br&gt;&lt;br&gt;그래서 표를 exclusivity.py 한 곳에 모으고 나머지가 그것을 부른다. 대칭성은 테스트가 강제한다 — 한쪽만 고치는 사고를 막는다." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF4CE;strokeColor=#D6B656;fontSize=10;align=left;verticalAlign=top;spacingLeft=8;spacingTop=4;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="366" width="280" height="212" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
