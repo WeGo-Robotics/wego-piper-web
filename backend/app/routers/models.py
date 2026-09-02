@@ -75,10 +75,12 @@ def _get_first_ready_follower_port() -> str | None:
     return None
 
 
-def _clear_arm_errors(label: str, ifaces: list[str] | None = None) -> None:
+def _clear_arm_errors(label: str, ifaces: list[str] | None = None) -> list[str]:
     """추론 시작/종료 시 로봇팔 에러 플래그를 조회한 뒤 무조건 클리어한다.
 
-    실패해도 추론 흐름은 막지 않는다(best-effort).
+    실패해도 추론 흐름은 막지 않는다(best-effort). 반환은 **슬립 경고 문구** —
+    0x150 리셋이 보고 프레임을 재동기화하며 드러낸 간극이다(piper_sdk #120).
+    시작 응답에 실어 화면이 사람에게 알린다.
 
     ## 호출 순서 — `direct` 에서만 의미가 있다
 
@@ -90,19 +92,22 @@ def _clear_arm_errors(label: str, ifaces: list[str] | None = None) -> None:
     `direct` 쪽 제약이 더 강하니 그쪽에 맞춰 둔다. `direct` 를 걷어내는 날
     이 문단도 같이 지운다 (refactor/robot-transport.md 5단계).
     """
+    from app.services import robot_manager as robot_manager_mod
+
     try:
         report = robot_manager.clear_arm_errors(ifaces)
     except Exception as e:
         logger.warning("[%s] 로봇팔 에러 클리어 실패: %s", label, e)
-        return
+        return []
     if not report:
         logger.info("[%s] 에러 클리어 대상 follower 없음", label)
-        return
+        return []
     for r in report:
         err = r.get("error") or {}
         logger.info("[%s] %s 에러 클리어: code=0x%04X flags=%s cleared=%s",
                     label, r["iface"], err.get("err_code", 0),
                     err.get("flags", []), r["cleared"])
+    return robot_manager_mod.slip_warnings(report)
 
 
 def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
@@ -202,6 +207,9 @@ class InferenceStartRequest(BaseModel):
     robot_port: str | None = None
     robot_ports: list[str] = []  # bimanual: [left_port, right_port]
     camera_mapping: dict[str, str] = {}
+    # 시작 전에 1회 적용할 카메라 프로파일 — 학습 데이터와 같은 노출·색으로
+    # 추론해야 관측이 같은 분포가 된다. 빈 값이면 적용하지 않는다.
+    camera_profile: str = ""
     params: dict = {}
     inference_mode: str = "local"  # "local" | "server"
     server_address: str = "127.0.0.1:8088"
@@ -266,6 +274,21 @@ async def start_inference(body: InferenceStartRequest):
     except CameraPrepareError as e:
         raise HTTPException(400, str(e))
 
+    # 작업 프로파일 — 학습 데이터와 다른 노출·색으로 추론하면 정책이 다른
+    # 분포를 본다. 지정했으면 연결 뒤 한 번 적용하고, 없는 프로파일이면 막는다
+    # (녹화 시작과 같은 규칙 — routers/recording.py).
+    profile_report: dict | None = None
+    if body.camera_profile:
+        import asyncio
+
+        from app.services import camera_profiles
+
+        profile_report = await asyncio.to_thread(
+            camera_profiles.apply_for_task, body.camera_profile)
+        if profile_report.get("error"):
+            raise HTTPException(
+                400, f"카메라 프로파일 '{body.camera_profile}': {profile_report['error']}")
+
     follower_ifaces = body.robot_ports if is_bimanual else ([robot_port] if robot_port else None)
 
     # ⚠ **팔도 카메라와 같은 순서다** — 인자를 만들기 전에 준비한다.
@@ -277,7 +300,7 @@ async def start_inference(body: InferenceStartRequest):
 
     args = _build_args_for(body, robot_type, robot_port)
 
-    _clear_arm_errors("inference-start", follower_ifaces)
+    slip_warns = _clear_arm_errors("inference-start", follower_ifaces)
 
     # ⚠ 지난 세션의 파라미터를 버린다. ZMQ 는 소켓을 닫으면 큐도 사라졌지만
     # Redis 리스트는 남아서, 안 비우면 이전 추론 끝에 민 슬라이더 값이
@@ -292,7 +315,9 @@ async def start_inference(body: InferenceStartRequest):
     # 무엇이 도는지 남긴다 — 오케스트레이터가 `task` 를 보내도 되는 정책인지
     # 알아야 한다 (`services/inference_state` 참고).
     inference_state.set_running(body.policy_type, body.checkpoint_path)
-    return {"status": "started", "pid": process_manager.pid, "args": args, "mode": body.inference_mode}
+    return {"status": "started", "pid": process_manager.pid, "args": args,
+            "mode": body.inference_mode, "camera_profile": profile_report,
+            "arm_reset": {"warnings": slip_warns}}
 
 
 @router.post("/inference/start-custom")

@@ -84,10 +84,15 @@ def capture(cameras: list) -> dict:
     펌웨어가 바뀌면 같이 바뀐다. 저장해두면 옛 범위로 클램프하게 된다.
 
     default 와 같은 값도 뺀다 — 파일이 짧아지고 펌웨어 차이에 강해진다.
-    단 **자동 스위치는 default 와 같아도 항상 저장한다**: 적용 순서를 정하는 축이라
-    빠지면 종속 값이 조용히 무시되는 그 상태로 돌아간다.
+    단 두 부류는 **default 와 같아도 항상 저장한다**:
+
+    - **자동 스위치** — 적용 순서를 정하는 축이라 빠지면 종속 값이 조용히
+      무시되는 그 상태로 돌아간다
+    - **그 종속 값**(노출·WB·gain·초점) — 빠지면 프로파일 **전환**이 완결되지
+      않는다: 야간(노출 2000) 적용 뒤 주간(노출=default 라 미저장)을 적용하면
+      스위치만 수동으로 돌아오고 **2000 이 잔류**한다 (문서 검토 G2)
     """
-    from piper_cam.controls import AUTO_SWITCHES
+    from piper_cam.controls import AUTO_SWITCHES, DEPENDENT_CONTROLS
 
     out = []
     for cam in cameras:
@@ -99,7 +104,8 @@ def capture(cameras: list) -> dict:
             value = ctrl.get("value")
             if value is None:
                 continue
-            if name not in AUTO_SWITCHES and value == ctrl.get("default"):
+            if (name not in AUTO_SWITCHES and name not in DEPENDENT_CONTROLS
+                    and value == ctrl.get("default")):
                 continue
             entry["controls"][name] = _num(value)
         out.append(entry)
@@ -207,6 +213,107 @@ def apply(cameras: list, name: str = "") -> dict:
     unmatched = [e.get("key", "") for e in entries if e.get("key") not in
                  {r["key"] for r in results}]
     return {"profile": name, "cameras": results, "unmatched": unmatched}
+
+
+# 재현성 검토가 보는 컨트롤 계열. 스위치 이름은 controls.AUTO_SWITCHES 의 부분집합이다 —
+# 초점은 고정초점 카메라가 흔해서 **스위치가 있을 때만** 본다.
+_FAMILIES: tuple[tuple[str, tuple[str, ...], bool], ...] = (
+    ("노출", ("auto_exposure", "exposure_auto", "enable_auto_exposure"), True),
+    ("화이트밸런스", ("white_balance_automatic", "white_balance_temperature_auto",
+                     "enable_auto_white_balance"), True),
+    ("초점", ("focus_automatic_continuous", "focus_auto"), False),
+)
+
+
+def validate(entries: list[dict]) -> list[dict]:
+    """프로파일이 **재현 가능한가** — 경고 목록 (문서 검토 G1·G3). 순수 함수.
+
+    프로파일의 존재 이유는 재현(노출·색이 다음 주에도 같게)인데, capture 는
+    장치 상태를 충실히 기록할 뿐 그 상태가 재현 가능한지는 모른다. 여기서 따진다:
+
+    - 자동인 채 저장 → 조명이 바뀌면 카메라가 따라간다 (G1)
+    - 수동인데 종속 값 없음 → 장치에 남아 있던 값이 그대로 쓰인다
+    - match 부재 → 어느 장치에도 적용되지 않는다
+
+    **막지 않고 말만 한다** — 자동 프로파일도 일부러 쓸 수 있다(프리뷰용).
+    반환: ``[{key, text}]``. 깊이 스트림 항목은 노출·WB 검토가 무의미해 건너뛴다.
+    """
+    from piper_cam.controls import AUTO_SWITCHES, manual_switch_value
+
+    out: list[dict] = []
+
+    def warn(key: str, text: str) -> None:
+        out.append({"key": key, "text": text})
+
+    for e in entries or []:
+        key = str(e.get("key") or "(키 없음)")
+        m = e.get("match") or {}
+        controls = e.get("controls") or {}
+        if not e.get("key") and not m.get("last_dev"):
+            warn(key, "match 정보가 없어 어느 장치에도 적용되지 않습니다 — 재캡처하세요")
+        if m.get("stream_type") == "depth":
+            continue
+        for fam, switches, required in _FAMILIES:
+            present = [s for s in switches if s in controls]
+            if not present:
+                if required:
+                    warn(key, f"{fam} 자동/수동 상태가 저장되지 않았습니다 — "
+                              "장치의 그때그때 상태를 따르게 됩니다")
+                continue
+            sw = present[0]
+            try:
+                is_manual = float(controls[sw]) == float(manual_switch_value(sw))
+            except (TypeError, ValueError):
+                is_manual = False
+            if not is_manual:
+                warn(key, f"{fam}이 자동인 채 저장되어 있습니다 — 조명이 바뀌면 "
+                          "카메라가 따라가 재현되지 않습니다")
+                continue
+            if not any(d in controls for d in AUTO_SWITCHES.get(sw, ())):
+                warn(key, f"{fam}이 수동인데 값이 없습니다 — 장치에 남아 있던 "
+                          "값이 그대로 쓰입니다")
+    return out
+
+
+def apply_for_task(name: str) -> dict:
+    """작업(녹화·추론) 시작 직전의 **1회 적용**.
+
+    `prepare_cameras` 가 장치를 연결한 **뒤에** 불러야 값이 장치에 닿는다.
+    연결 시 자동 적용(활성 프로파일)과 별개로 작업이 지정한 프로파일을 한 번
+    더 밀어 넣는다 — **활성은 바꾸지 않는다.** "이 작업은 이 기준"이라고 한
+    것이지 기계의 기본을 바꾼 것이 아니다. 작업 도중 카메라가 재연결되면
+    활성 프로파일이 다시 붙는데, 그 어긋남은 조명 감시(lighting-watch)가
+    밝기·색 급변으로 잡는다.
+
+    프로파일이 없으면 `error` 를 채워 돌려준다 — 호출부가 시작을 막는다.
+    지정한 기준 없이 찍힌 에피소드가 조용히 섞이는 것보다 낫다.
+
+    `warnings` 에는 **막지는 않지만 알아야 하는 것**을 담는다 (문서 검토 3번):
+    프로파일 항목이 장치를 못 찾은 것(unmatched)과, 반대로 연결된 카메라 중
+    프로파일이 안 덮는 것(uncovered). 문구는 여기서 만든다 — 화면이 조립하면
+    한쪽만 고쳐져 어긋난다 (device_watch 와 같은 규칙).
+    """
+    from app.services.camera_manager import camera_manager
+
+    cams = [c for c in camera_manager.cameras.values() if c.connected]
+    report = apply(cams, name)
+    if report.get("error"):
+        return report
+
+    warnings: list[str] = []
+    if report.get("unmatched"):
+        warnings.append(
+            f"프로파일 '{name}' 의 항목 {len(report['unmatched'])}개가 지금 장치와 "
+            f"안 맞습니다: {', '.join(report['unmatched'])} — 다른 장비 구성에서 "
+            "캡처한 프로파일일 수 있습니다")
+    matched = {r["cam_id"] for r in report.get("cameras", [])}
+    uncovered = [(c.label or c.name) for c in cams if c.id not in matched]
+    if uncovered:
+        warnings.append(
+            f"프로파일 '{name}' 이 안 덮는 카메라: {', '.join(uncovered)} — "
+            "이 카메라는 노출·색 기준 없이 돕니다")
+    report["warnings"] = warnings
+    return report
 
 
 def report(cameras: list) -> dict:

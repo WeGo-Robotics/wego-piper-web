@@ -6,6 +6,8 @@ import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import type { ProcessState } from '../types/ws'
 import { useActivity, isStateMessage } from '../hooks/useActivity'
 import LogViewer from '../components/LogViewer'
+import CameraProfilePicker from '../components/CameraProfilePicker'
+import LightStrip from '../components/LightStrip'
 import RecordPreview from '../components/RecordPreview'
 import { camOptionText, type ReadyCam } from '../types/camera'
 
@@ -40,7 +42,7 @@ function formatElapsed(ms: number): string {
 }
 
 export default function RecordingPage() {
-  const { confirm: askConfirm } = useSystemMessage()
+  const { notify, confirm: askConfirm } = useSystemMessage()
   const [followers, setFollowers] = useState<ReadyArm[]>([])
   const [leaders, setLeaders] = useState<ReadyArm[]>([])
   const [cameras, setCameras] = useState<ReadyCam[]>([])
@@ -57,6 +59,7 @@ export default function RecordingPage() {
   const [leftLeader, setLeftLeader] = useState(_saved.leftLeader || '')
   const [rightLeader, setRightLeader] = useState(_saved.rightLeader || '')
   const [cameraMapping, setCameraMapping] = useState<Record<string, string>>(_saved.cameraMapping || {})
+  const [cameraProfile, setCameraProfile] = useState<string>(_saved.cameraProfile || '')
   // ⚠ **무접두사 카메라는 전부 왼팔로 간다.** 규칙은 아래에 적혀 있지만, 그
   //   결과로 오른팔이 카메라 없이 녹화되는 것은 아무도 말해주지 않았다 —
   //   실제로 `two_arm_test` 가 `left_top`·`left_hand` 둘뿐인 채로 남았다.
@@ -180,12 +183,12 @@ export default function RecordingPage() {
   // 설정값 변경 시 localStorage에 통합 저장
   useEffect(() => {
     localStorage.setItem('piper_record_settings', JSON.stringify({
-      followerPort, leaderPort, cameraMapping, camWidth, camHeight,
+      followerPort, leaderPort, cameraMapping, cameraProfile, camWidth, camHeight,
       armMode, leftFollower, rightFollower, leftLeader, rightLeader,
       repoId, singleTask, numEpisodes, fps, episodeTime, resetTime,
       streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled,
     }))
-  }, [followerPort, leaderPort, cameraMapping, camWidth, camHeight, armMode, leftFollower, rightFollower, leftLeader, rightLeader, repoId, singleTask, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled])
+  }, [followerPort, leaderPort, cameraMapping, cameraProfile, camWidth, camHeight, armMode, leftFollower, rightFollower, leftLeader, rightLeader, repoId, singleTask, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled])
 
   // 데이터셋 존재 여부 확인
   useEffect(() => {
@@ -245,15 +248,25 @@ export default function RecordingPage() {
       if (cliEdited) {
         // custom 미지원 — preview에서 빌드된 args 사용
       }
-      await api.post('/recording/start', {
+      const r = await api.post<{
+        camera_profile?: { warnings?: string[] } | null
+        arm_reset?: { warnings?: string[] } | null
+      }>('/recording/start', {
         ...armPayload,
         camera_mapping: cameraMapping,
+        camera_profile: cameraProfile,
         camera_width: camWidth, camera_height: camHeight, camera_fps: fps,
         repo_id: repoId, single_task: singleTask,
         num_episodes: numEpisodes, fps, episode_time_s: episodeTime, reset_time_s: resetTime,
         streaming_encoding: streamingEncoding, vcodec, encoder_threads: encoderThreads, encoder_queue_maxsize: encoderQueue, push_to_hub: pushToHub, resume,
         web_preview: webPreview,
       })
+      // 프로파일이 못 덮은 카메라, 리셋이 드러낸 관절 슬립 — 막을 일은 아니지만
+      // 시작 전에 알아야 한다. 문구는 백엔드가 만든다.
+      for (const w of r.camera_profile?.warnings ?? [])
+        notify({ level: 'warn', text: w, source: '녹화' })
+      for (const w of r.arm_reset?.warnings ?? [])
+        notify({ level: 'warn', text: w, source: '녹화' })
     } catch (e) {
       const msg = e instanceof Error ? e.message : '알 수 없는 오류'
       setLogs(prev => [...prev, `[ERROR] ${msg}`])
@@ -429,6 +442,9 @@ export default function RecordingPage() {
                     }} className="text-red-400 hover:text-red-300 px-1">✕</button>
                   </div>
                 ))}
+                {/* 시작 직전에 노출·WB 를 이 프로파일로 한 번 밀어 넣는다 —
+                    수집은 색·밝기가 곧 데이터셋 품질이다 */}
+                <CameraProfilePicker value={cameraProfile} onChange={setCameraProfile} />
                 {/* 카메라 해상도/FPS */}
                 {Object.keys(cameraMapping).length > 0 && (
                   <div className="flex gap-2 pt-1">
@@ -591,6 +607,8 @@ export default function RecordingPage() {
           <div className="grid gap-6 grid-cols-1 lg:grid-cols-[2fr_1fr] items-start">
             <div className="space-y-4">
               {webPreview && <RecordPreview />}
+              {/* 조명 급변은 경보로 오지만, "지금 몇인가"는 여기서 계속 보인다 */}
+              <LightStrip />
               {status?.phase === 'recording' && (
                 <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
                   <div className="text-xs text-neutral-400 mb-1">현재 에피소드 경과 시간</div>

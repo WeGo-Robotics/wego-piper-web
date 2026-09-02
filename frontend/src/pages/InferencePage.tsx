@@ -11,6 +11,9 @@ import ParamSlider from '../components/ParamSlider'
 import PresetBar from '../components/PresetBar'
 import LogViewer from '../components/LogViewer'
 import EvalPanel from '../components/EvalPanel'
+import CameraProfilePicker from '../components/CameraProfilePicker'
+import { useSystemMessage } from '../components/SystemMessages'
+import LightStrip from '../components/LightStrip'
 import TelemetryPanel, { type TelemetryData } from '../components/TelemetryPanel'
 import ManualControlPanel from '../components/ManualControlPanel'
 import { camOptionText, type ReadyCam } from '../types/camera'
@@ -86,6 +89,13 @@ export default function InferencePage() {
   const [models, setModels] = useState<Model[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
   const [cameraMapping, setCameraMapping] = useState<Record<string, string>>({})
+  const { notify } = useSystemMessage()
+  const [cameraProfile, setCameraProfile] = useState<string>(
+    () => localStorage.getItem('piper.infer.cameraProfile') ?? '')
+  const pickCameraProfile = (v: string) => {
+    setCameraProfile(v)
+    localStorage.setItem('piper.infer.cameraProfile', v)
+  }
   const [validation, setValidation] = useState<ValidationResult | null>(null)
   const [cliArgs, setCliArgs] = useState<string>('')
   const [cliEdited, setCliEdited] = useState(false)
@@ -293,11 +303,15 @@ export default function InferencePage() {
       const ckpt = checkpointPath()
       if (!ckpt) return
       // start API를 직접 호출 (subprocess 리스트로 안전하게 전달)
-      await api.post('/models/inference/start', {
+      const r = await api.post<{
+        camera_profile?: { warnings?: string[] } | null
+        arm_reset?: { warnings?: string[] } | null
+      }>('/models/inference/start', {
         checkpoint_path: ckpt,
         robot_port: robotMode === 'single' ? selectedFollower : leftFollower,
         robot_ports: robotMode === 'bimanual' ? [leftFollower, rightFollower] : [],
         camera_mapping: cameraMapping,
+        camera_profile: cameraProfile,
         params: taskParams(),
         inference_mode: inferenceMode,
         server_address: serverAddress,
@@ -309,6 +323,11 @@ export default function InferencePage() {
         smoothing_window: smoothingWindow,
         debug_mode: debugMode,
       })
+      // 프로파일이 못 덮은 카메라, 리셋이 드러낸 관절 슬립 — 문구는 백엔드가 만든다
+      for (const w of r.camera_profile?.warnings ?? [])
+        notify({ level: 'warn', text: w, source: '추론' })
+      for (const w of r.arm_reset?.warnings ?? [])
+        notify({ level: 'warn', text: w, source: '추론' })
     } catch (e) {
       const msg = e instanceof Error ? e.message : '알 수 없는 오류'
       setLogs((prev) => [...prev, `[ERROR] 추론 시작 실패: ${msg}`])
@@ -472,6 +491,9 @@ export default function InferencePage() {
                     </div>
                   ))}
                 </div>
+                {/* 학습 데이터와 같은 노출·색으로 추론해야 관측이 같은 분포다 —
+                    시작 직전에 이 프로파일을 한 번 적용한다 */}
+                <CameraProfilePicker value={cameraProfile} onChange={pickCameraProfile} />
                 {validation && (
                   <div className="space-y-1">
                     {validation.errors.map((e, i) => <p key={i} className="text-xs text-red-400">✗ {e}</p>)}
@@ -793,6 +815,8 @@ export default function InferencePage() {
 
         {/* 3열: 텔레메트리 + 수동/평가 */}
         <div className="space-y-4">
+          {/* 추론 중 조명이 흔들리면 동작 품질이 흔들린다 — 급변 경보와 별개로 상시 표시 */}
+          <LightStrip />
           <TelemetryPanel
             data={telemetry}
             targetFps={20}

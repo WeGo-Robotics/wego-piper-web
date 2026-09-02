@@ -36,6 +36,9 @@ class RecordStartRequest(BaseModel):
     camera_width: int = 0
     camera_height: int = 0
     camera_fps: int = 0
+    # 시작 전에 1회 적용할 카메라 프로파일 (노출·WB — presets domain=camera).
+    # 빈 값이면 적용하지 않는다. 프로파일이 없는 이름이면 시작을 거부한다.
+    camera_profile: str = ""
     teleop_type: str = "piper_leader"
     teleop_port: str = ""
     repo_id: str = ""
@@ -184,6 +187,22 @@ async def start_recording(body: RecordStartRequest):
     except CameraPrepareError as e:
         raise HTTPException(400, str(e))
 
+    # 작업 프로파일 — 수집은 노출·색이 곧 데이터셋 품질이다. 지정했으면 연결
+    # **뒤에** 한 번 적용하고 시작한다 (feature/lighting-watch.md 의 색 일관성
+    # 문제의식과 같은 뿌리). 프로파일이 없으면 시작하지 않는다 — 기준 없이
+    # 찍힌 에피소드가 조용히 섞이는 것보다 낫다.
+    profile_report: dict | None = None
+    if body.camera_profile:
+        import asyncio
+
+        from app.services import camera_profiles
+
+        profile_report = await asyncio.to_thread(
+            camera_profiles.apply_for_task, body.camera_profile)
+        if profile_report.get("error"):
+            raise HTTPException(
+                400, f"카메라 프로파일 '{body.camera_profile}': {profile_report['error']}")
+
     # 팔도 같은 순서로 준비한다. `shm` 에서는 게이트웨이가 CAN 을 쥔 채로
     # 상태를 발행해야 프록시 드라이버가 붙는다.
     from app.services.robot_config import ArmPrepareError, prepare_arms
@@ -195,6 +214,23 @@ async def start_recording(body: RecordStartRequest):
         prepare_arms(arm_ports, purpose="recording")
     except ArmPrepareError as e:
         raise HTTPException(400, str(e))
+
+    # ⚠ 0x150 리셋을 수집 시작 루틴에 넣는다 (piper_sdk #120). 텔레옵 수집이
+    # 관절 슬립의 최다 트리거 환경인데, 슬립은 피드백이 거짓말해서 평소엔 안
+    # 보인다 — 리셋이 보고 프레임을 실제에 재동기화하고 그 간극(=쌓인 슬립)을
+    # 드러낸다. **follower 만** 리셋한다: 리더는 마스터 모드라 0x150 이 모드를
+    # 흔들 수 있고(#35 계열), 리더 슬립은 사람 손이 기준이라 덜 치명적이다.
+    # 실패해도 시작은 막지 않는다 — 리셋 없는 수집이 수집 못 하는 것보다 낫다.
+    slip_warns: list[str] = []
+    try:
+        from app.services import robot_manager as robot_manager_mod
+        from app.services.robot_manager import robot_manager
+
+        followers = body.robot_ports if bimanual else [body.robot_port]
+        report = robot_manager.clear_arm_errors([f for f in followers if f])
+        slip_warns = robot_manager_mod.slip_warnings(report)
+    except Exception as exc:
+        logger.warning("녹화 시작 리셋 실패 (수집은 계속한다): %s", exc)
 
     # ⚠ **모드가 어긋나면 조용히 안 움직인다.** 팔로워가 마스터 모드면 외부 명령을
     #   통째로 무시해서, 리더를 아무리 끌어도 팔로워가 안 따라온다 — 녹화는 정상으로
@@ -241,7 +277,11 @@ async def start_recording(body: RecordStartRequest):
         control_bridge.stop()
         preview_bridge.stop()
         raise HTTPException(500, f"녹화 시작 실패: {e}")
-    return {"status": "started", "pid": record_manager.pm.pid, "args": args}
+    # 프로파일 경고(안 덮는 카메라 등)와 팔 슬립 경고는 막을 일은 아니지만
+    # **시작 전에 알아야** 한다 — 화면이 응답에서 꺼내 시스템 메시지로 띄운다.
+    return {"status": "started", "pid": record_manager.pm.pid, "args": args,
+            "camera_profile": profile_report,
+            "arm_reset": {"warnings": slip_warns}}
 
 
 # `escape` 를 보낸 뒤 LeRobot 이 스스로 끝날 때까지 기다리는 시간.

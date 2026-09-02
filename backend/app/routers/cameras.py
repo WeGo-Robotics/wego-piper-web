@@ -1,5 +1,6 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
@@ -157,6 +158,18 @@ async def get_current():
     return camera_manager.get_current()
 
 
+@router.get("/light")
+async def get_light():
+    """실시간 조명 측정 미러 (feature/lighting-watch.md §5).
+
+    버스 `piper:light:<cam>` 에 발행되는 것과 같은 값이다 — 수집·추론 화면이
+    프리뷰 옆에 표시하려고 폴링한다. 판정(경보)은 `/api/devices/alerts` 로 온다.
+    """
+    from app.services.light_watch import light_watch
+
+    return {"cameras": light_watch.latest()}
+
+
 # ── 프로파일 ──
 #
 # CRUD 는 공통 프리셋 API(`/api/presets/camera`)를 그대로 쓴다. 여기에는
@@ -195,7 +208,23 @@ async def capture_profile(body: ProfileCaptureRequest):
     except presets.PresetError as e:
         raise HTTPException(400, str(e))
     camera_profiles.set_active(body.name)
-    return preset.to_dict()
+    # 캡처한 그 자리에서 재현성 검토를 알려준다 — AE 켠 채 캡처한 프로파일을
+    # 몇 주 뒤 데이터가 안 맞을 때에야 아는 것이 최악이다 (문서 검토 G1).
+    out = preset.to_dict()
+    out["warnings"] = camera_profiles.validate(values.get("cameras") or [])
+    return out
+
+
+class ProfileValidateRequest(BaseModel):
+    cameras: list[dict] = []
+
+
+@router.post("/profiles/validate")
+async def validate_profile(body: ProfileValidateRequest):
+    """프로파일 값의 재현성 검토 (저장 안 된 편집분도 받는다 — 순수 함수라 싸다)."""
+    from app.services import camera_profiles
+
+    return {"warnings": camera_profiles.validate(body.cameras)}
 
 
 class ProfileApplyRequest(BaseModel):
@@ -335,10 +364,16 @@ async def get_controls(cam_id: str):
 
 
 class GrayCardRequest(BaseModel):
-    """`roi` 는 `(x, y, w, h)`. 없으면 화면 가운데 상자."""
+    """`roi` 는 `(x, y, w, h)`. 없으면 화면 가운데 상자.
+
+    `adjust` — 밝기를 어느 손잡이로 잡나. `exposure`(기본) 또는 `gain`.
+    gain 이면 **노출은 고정**된다 — 노출은 모션 블러·프레임 예산을 정하므로
+    로봇 데이터에서는 먼저 정해 두고 안 건드리고 싶을 때가 있다.
+    """
 
     roi: list[int] | None = None
     target: float | None = None
+    adjust: Literal["exposure", "gain"] = "exposure"
 
 
 @router.post("/{cam_id:path}/measure-gray-card")
@@ -371,7 +406,7 @@ async def calibrate_gray_card(cam_id: str, body: GrayCardRequest):
     loop = asyncio.get_event_loop()
     report = await loop.run_in_executor(
         _executor, lambda: realsense_hub.calibrate_gray_card(
-            cam_id, body.roi, body.target))
+            cam_id, body.roi, body.target, body.adjust))
     if not report.get("ok") and report.get("error"):
         raise HTTPException(400, report["error"])
     return report

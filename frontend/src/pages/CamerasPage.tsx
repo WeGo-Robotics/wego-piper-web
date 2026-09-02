@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import PresetBar from '../components/PresetBar'
+import CameraProfilesPanel from '../components/CameraProfilesPanel'
 import { useSystemMessage } from '../components/SystemMessages'
 import ParamSlider from '../components/ParamSlider'
 import RoiPicker, { centerRoi, toBox } from '../components/RoiPicker'
@@ -20,26 +20,6 @@ function UsbWarning({ reason }: { reason: string }) {
       className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-500"
     >
       USB 2.0
-    </span>
-  )
-}
-
-/** 프로파일 적용 결과 한 줄. 데몬이 세어 준 것을 그대로 보여준다.
- *
- *  `잠김`은 실패가 아니다 — 자동 노출이 켜져 있어 그 값이 지금 안 쓰이는 상태다.
- *  실패로 칠하면 사용자가 고칠 수 없는 빨간 배지를 계속 보게 된다. */
-function ApplyBadge({ r }: { r: CamApplyResult }) {
-  const bad = r.failed > 0
-  return (
-    <span
-      title={(r.details ?? []).map((d) => `${d.name}: ${d.want} → ${d.got ?? '—'} (${d.status})`).join('\n')}
-      className={`rounded px-1.5 py-0.5 text-[10px] ${bad
-        ? 'bg-red-500/15 text-red-400' : 'bg-neutral-700/60 text-neutral-300'}`}
-    >
-      {r.display_name}: 적용 {r.applied}
-      {r.locked ? ` / 잠김 ${r.locked}` : ''}
-      {r.failed ? ` / 실패 ${r.failed}` : ''}
-      {r.truncated ? ' / 시간초과' : ''}
     </span>
   )
 }
@@ -89,15 +69,15 @@ type CamControl = {
   cid: number; name: string; label: string; type: number
   min: number; max: number; step: number; default: number; value: number
   inactive?: boolean; readonly?: boolean
+  /** 표시 단위 — 백엔드가 아는 컨트롤에만 붙는다 (piper_cam.controls.CONTROL_UNITS). */
+  unit?: string
 }
 
-/** 카메라 한 대의 프로파일 적용 결과. **집계는 데몬이 한다** —
- *  `locked`(자동 모드가 잠금)와 `failed`(진짜 실패)의 구분이 거기 있다. */
-type CamApplyResult = {
-  cam_id: string; display_name: string
-  applied: number; locked: number; failed: number; skipped: number
-  truncated?: boolean
-  details?: { name: string; want: number; got: number | null; status: string }[]
+/** 노출 단위의 사람 번역 — "333 이 뭔데" 를 ms 로 말해준다. */
+function unitHint(ctrl: CamControl): string | undefined {
+  if (ctrl.unit === '×100µs') return `${ctrl.value} × 100µs = ${(ctrl.value / 10).toFixed(1)}ms`
+  if (ctrl.unit === 'µs') return `${(ctrl.value / 1000).toFixed(1)}ms`
+  return undefined
 }
 
 type GrayCardReading = {
@@ -108,13 +88,8 @@ type GrayCardReport = {
   ok: boolean; verdict: string; target: number
   before: GrayCardReading; after: GrayCardReading
   exposure_us: number
-}
-
-type ProfileReport = {
-  profile: string
-  cameras: CamApplyResult[]
-  unmatched?: string[]
-  error?: string
+  /** 최종 gain·WB 와 움직인 손잡이 — 옛 rsd 응답에는 없다. */
+  gain?: number; white_balance?: number; adjust?: string
 }
 
 /** rsd `DepthEncoding` 의 기본값과 같아야 한다 (rs/piper_rs/depth.py). */
@@ -160,6 +135,14 @@ export default function CamerasPage() {
   // 마음에 들면 사용자가 프로파일로 저장한다.
   const [grayCard, setGrayCard] = useState<GrayCardReport | null>(null)
   const [calibrating, setCalibrating] = useState(false)
+  // 노출 고정 모드 — 노출은 모션 블러·프레임 예산을 정하므로 먼저 정해 두고
+  // 밝기는 gain 으로만 잡고 싶을 때가 있다. 선택은 브라우저에 남긴다.
+  const [gainOnly, setGainOnly] = useState(
+    () => localStorage.getItem('piper.graycard.gainOnly') === '1')
+  const toggleGainOnly = () => setGainOnly((v) => {
+    localStorage.setItem('piper.graycard.gainOnly', v ? '0' : '1')
+    return !v
+  })
   // 카드 영역. **프레임 좌표**다 — 화면 크기는 창을 줄이면 바뀐다.
   // 조준 중인가. **평소에는 상자를 안 그린다** — 프리뷰는 대부분의 시간
   // 카메라를 확인하는 화면이고, 늘 떠 있는 상자는 그때 방해만 된다.
@@ -168,43 +151,19 @@ export default function CamerasPage() {
   const [roiReading, setRoiReading] = useState<GrayCardReading | null>(null)
   const previewRef = useRef<HTMLImageElement | null>(null)
   const measureTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // 프로파일 — 노출·화이트밸런스 같은 컨트롤 값을 이름 붙여 저장한다.
-  // 적용 자체는 **데몬이 카메라를 열 때** 하므로 여기는 저장·수동적용·결과 표시만 한다.
-  const [profileReport, setProfileReport] = useState<ProfileReport | null>(null)
-  // ⚠ 보정 결과를 **어디에** 저장할지 말해주려면 활성 프로파일 이름이 필요하다.
-  //   모르면 "프로파일로 저장하세요" 가 어디를 가리키는지 알 수 없고, 실제로
-  //   설정 모달이 화면을 덮고 있어 아래 프로파일 바는 손이 닿지도 않는다.
+  // 활성 프로파일 이름 — 프로파일 탭이 배지·활성 지정에 쓰고, 회색 카드 보정
+  // 안내가 "어디에 덮어쓰면 되는지" 이름을 대는 데 쓴다.
   const [activeProfile, setActiveProfile] = useState('')
-  const [savingProfile, setSavingProfile] = useState(false)
+  // 장치와 프로파일은 하는 일이 다르다 — 장치 탭은 "무엇이 붙어 있나",
+  // 프로파일 탭은 "어떤 값을 이름 붙여 두었나". 한 화면에 섞으니 프로파일
+  // 상세(값 편집)를 둘 자리가 없었다.
+  const [tab, setTab] = useState<'devices' | 'profiles'>('devices')
 
-  /** 지금 장치에 들어 있는 값을 읽어 저장한다. 화면 상태가 아니라 **장치**가 출처다 —
-   *  그래서 공통 프리셋 저장 API 를 그대로 못 쓰고 전용 엔드포인트를 탄다. */
   useEffect(() => {
     api.get<{ active: string }>('/cameras/profiles/active')
       .then((r) => setActiveProfile(r.active || ''))
       .catch(() => {})
   }, [])
-
-  const captureProfile = async (name: string) => {
-    const r = await api.post<{ values: { cameras: unknown[] } }>(
-      '/cameras/profiles/capture', { name })
-    const n = r.values?.cameras?.length ?? 0
-    return `"${name}" 저장 — 카메라 ${n}대의 현재 값 (이제부터 연결할 때 자동 적용)`
-  }
-
-  /** 수동 적용. 연결 시 자동 적용과 **같은 데몬 함수**를 탄다 —
-   *  경로가 갈리면 "수동으로는 되는데 자동으로는 안 된다"가 생긴다. */
-  const applyProfile = async (name: string) => {
-    const r = await api.post<ProfileReport>('/cameras/profiles/apply', { name })
-    await api.post('/cameras/profiles/active', { name })
-    setProfileReport(r)
-    if (r.error) return r.error
-    const sum = r.cameras.reduce((a, c) => ({
-      applied: a.applied + c.applied, locked: a.locked + c.locked, failed: a.failed + c.failed,
-    }), { applied: 0, locked: 0, failed: 0 })
-    const miss = r.unmatched?.length ? ` / 못 찾음 ${r.unmatched.length}대` : ''
-    return `"${name}" 적용 — ${sum.applied} 적용 / ${sum.locked} 잠김 / ${sum.failed} 실패${miss}`
-  }
 
   /** 지금 상자를 재기만 한다. 장치를 안 건드리므로 옮길 때마다 불러도 된다 —
    *  그림자·반사는 눈으로 잘 안 보이고 얼룩 % 로만 드러난다. */
@@ -253,10 +212,17 @@ export default function CamerasPage() {
         ? toBox(roi, img.naturalWidth, img.naturalHeight) : null
       const r = await api.post<GrayCardReport>(
         `/cameras/${encodeURIComponent(colorId)}/calibrate-gray-card`,
-        box ? { roi: box } : {})
+        { ...(box ? { roi: box } : {}), adjust: gainOnly ? 'gain' : 'exposure' })
       setGrayCard(r)
       setAiming(false)          // 결과를 볼 차례다 — 상자는 치운다
       bumpPreview([colorId])
+      // 보정은 노출·gain·WB·자동 스위치를 전부 움직인다 — 아래 "이미지 조정"
+      // 목록은 모달을 열 때 한 번만 읽으므로, 여기서 안 갱신하면 옛 값이 남아
+      // "보정이 안 먹었나"로 읽힌다 (자동 스위치의 잠김 표시도 바뀌어야 한다).
+      try {
+        setControls(await api.get<CamControl[]>(
+          `/cameras/${encodeURIComponent(colorId)}/controls`))
+      } catch { /* 표시 갱신일 뿐이다 — 보정 결과는 이미 위 상자에 있다 */ }
     } catch (e) {
       notifyError(e instanceof Error ? e.message : '보정에 실패했습니다')
     } finally {
@@ -561,36 +527,30 @@ export default function CamerasPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center gap-4">
         <h1 className="text-2xl font-bold">카메라</h1>
-        <button onClick={handleScan} disabled={scanning}
-          className="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
-          {scanning ? <><Spinner className="inline" /> 스캔 중...</> : '스캔'}
-        </button>
-      </div>
-
-      {/* 프로파일 — 조명 조건별로 여러 개 두는 게 실사용에 맞다(주간/야간/형광등).
-          저장하면 그 프로파일이 활성이 되고, 이후 **카메라를 열 때마다** 데몬이
-          순서대로(자동 스위치 → 종속 값 → 독립 값) 밀어 넣는다. */}
-      <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3 space-y-2">
-        <PresetBar
-          domain="camera"
-          values={() => ({})}
-          onApply={() => {}}
-          onSaveAs={captureProfile}
-          onApplyName={applyProfile}
-          disabled={scanning}
-        />
-        <p className="text-[10px] text-neutral-500">
-          저장은 <b>지금 장치에 들어 있는 값</b>을 읽어 담는다 — 노출·화이트밸런스를
-          맞춘 뒤 저장하면 서버 재시작·USB 재열거·하드웨어 리셋 뒤에도 되돌아온다.
-        </p>
-        {profileReport && profileReport.cameras.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {profileReport.cameras.map((r) => <ApplyBadge key={r.cam_id} r={r} />)}
-          </div>
+        <div className="flex rounded-lg border border-neutral-700 overflow-hidden text-sm">
+          {([['devices', '장치'], ['profiles', '프로파일']] as const).map(([k, label]) => (
+            <button key={k} onClick={() => setTab(k)}
+              className={`px-4 py-1.5 ${tab === k
+                ? 'bg-neutral-700 text-white' : 'bg-neutral-900 text-neutral-400 hover:text-white'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {tab === 'devices' && (
+          <button onClick={handleScan} disabled={scanning}
+            className="ml-auto px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
+            {scanning ? <><Spinner className="inline" /> 스캔 중...</> : '스캔'}
+          </button>
         )}
       </div>
+
+      {tab === 'profiles' && (
+        <CameraProfilesPanel active={activeProfile} onActiveChange={setActiveProfile} />
+      )}
+
+      {tab === 'devices' && (<>
 
       {/* ⚠ 사라진 등록 카메라 — **맨 위**에 둔다. 이걸 모르고 녹화를 시작하면
           시작하자마자 실패하는데, 화면 아래쪽에 있으면 아무도 안 본다. */}
@@ -847,6 +807,7 @@ export default function CamerasPage() {
           "스캔"을 눌러 카메라를 검색하세요
         </p>
       )}
+      </>)}
 
       {/* 설정 모달 — 등록·미등록 카드가 같은 창을 연다.
           카드 안에서 펼치면 그리드 행 높이가 늘어나 옆 카드까지 커졌다. */}
@@ -958,6 +919,12 @@ export default function CamerasPage() {
                     </button>
                   )}
                 </div>
+                <label className="flex items-center gap-1.5 text-[10px] text-neutral-400 cursor-pointer"
+                       title="노출은 모션 블러와 fps 상한을 정합니다. 체크하면 지금 노출을 그대로 두고(자동 노출도 안 켭니다) 밝기를 gain 으로만 맞춥니다.">
+                  <input type="checkbox" checked={gainOnly} onChange={toggleGainOnly}
+                         disabled={calibrating} className="accent-blue-500" />
+                  노출 고정 — 밝기는 gain 으로만 보정
+                </label>
                 {aiming ? (
                   <>
                     <p className="text-[10px] text-neutral-500">
@@ -977,7 +944,7 @@ export default function CamerasPage() {
                   <p className="text-[10px] text-neutral-500">
                     회색 카드를 화면에 두고 누르면 영역을 고르게 됩니다. 자동 노출·WB 를
                     잠깐 켜 카드에 맞춘 뒤 <b>잠그고</b>, 밝기를 목표까지 보정합니다.
-                    값은 장치에만 올라갑니다 — 마음에 들면 아래 프로파일로 저장하세요.
+                    값은 장치에만 올라갑니다 — 마음에 들면 [프로파일] 탭에서 캡처하세요.
                   </p>
                 )}
                 {grayCard && (
@@ -991,6 +958,9 @@ export default function CamerasPage() {
                       {grayCard.before.neutral_error_pct}% →{' '}
                       <b>{grayCard.after.neutral_error_pct}%</b> · 노출{' '}
                       {(grayCard.exposure_us / 1000).toFixed(1)}ms
+                      {grayCard.gain != null && <> · gain {grayCard.gain}
+                        {grayCard.adjust === 'gain' && ' (노출 고정)'}</>}
+                      {grayCard.white_balance != null && <> · WB {grayCard.white_balance}K</>}
                     </p>
                     {/* ⚠ **결과를 본 직후가 저장이 가장 필요한 순간이다.** 이
                         안내는 보정 **전** 문단에만 있었고, 조준을 시작하면
@@ -1005,32 +975,14 @@ export default function CamerasPage() {
                         <b> 다음에 카메라를 열 때</b>(실시간 보기·녹화·추론)
                         프로파일 값으로 되돌아갑니다.
                       </p>
-                      {/* ⚠ 저장 버튼이 **여기** 있어야 한다. 프로파일 바는 페이지
-                          본문에 있는데 이 설정 패널이 `fixed inset-0` 모달이라
-                          화면을 덮는다 — "아래에서 저장하세요" 는 못 누르는 곳을
-                          가리키는 말이었다. */}
-                      {activeProfile ? (
-                        <button
-                          onClick={async () => {
-                            setSavingProfile(true)
-                            try {
-                              notify({ level: 'info', source: '카메라',
-                                       text: await captureProfile(activeProfile) })
-                            } catch (e) {
-                              notifyError(e instanceof Error ? e.message : '저장 실패')
-                            } finally { setSavingProfile(false) }
-                          }}
-                          disabled={savingProfile}
-                          className="rounded bg-emerald-600 px-2 py-1 text-[11px] text-white
-                                     hover:bg-emerald-500 disabled:opacity-40">
-                          {savingProfile ? '저장 중…' : `'${activeProfile}' 에 저장 (덮어쓰기)`}
-                        </button>
-                      ) : (
-                        <p className="text-[10px] text-neutral-400">
-                          활성 프로파일이 없습니다 — 이 창을 닫고 페이지 위쪽
-                          [프로파일] 에서 이름을 지어 저장하세요.
-                        </p>
-                      )}
+                      {/* 저장 버튼이 여기 있던 적이 있다 — 프로파일 편집이 탭으로
+                          생기면서 저장 경로가 둘이 됐고, 하나만 남긴다(탭).
+                          캡처는 지금 장치값을 읽으므로 이 창을 닫아도 값은 남는다. */}
+                      <p className="text-[10px] text-neutral-400">
+                        남기려면 이 창을 닫고 위쪽 <b>[프로파일] 탭에서 캡처</b>하세요 —
+                        지금 장치에 들어 있는 이 값이 그대로 담깁니다.
+                        {activeProfile && ` (활성 '${activeProfile}' 에 덮어쓰려면 같은 이름으로)`}
+                      </p>
                     </div>
                   </div>
                 )}
@@ -1198,7 +1150,29 @@ export default function CamerasPage() {
                         onChange={(e) => handleControl(settingsCamera.id, ctrl.name, Number(e.target.value))}
                         className="flex-1 h-1 accent-blue-500 disabled:opacity-50" />
                     )}
-                    <span className="text-neutral-300 w-12 text-right font-mono">{ctrl.value}</span>
+                    {/* 값 자체도 숫자로 친다 — 노출처럼 범위가 1~16만인 컨트롤은
+                        슬라이더로 정확한 값을 맞출 수 없다. Enter/포커스 아웃에
+                        커밋하고, 밖에서 값이 바뀌면 key 로 다시 그린다. */}
+                    {ctrl.type === 2 || ctrl.type === 3 ? (
+                      <span className="text-neutral-300 w-16 text-right font-mono">{ctrl.value}</span>
+                    ) : (
+                      <input type="number" key={`${ctrl.name}:${ctrl.value}`}
+                        defaultValue={ctrl.value} disabled={locked}
+                        min={ctrl.min} max={ctrl.max} step={ctrl.step || 1}
+                        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                        onBlur={(e) => {
+                          const v = Number(e.target.value)
+                          if (Number.isNaN(v)) return
+                          const clamped = Math.min(ctrl.max, Math.max(ctrl.min, v))
+                          if (clamped !== ctrl.value) handleControl(settingsCamera.id, ctrl.name, clamped)
+                        }}
+                        className="w-16 shrink-0 px-1 py-0.5 rounded bg-neutral-900 border
+                                   border-neutral-700 text-right font-mono text-neutral-100
+                                   disabled:opacity-50" />
+                    )}
+                    {/* 단위 칸은 항상 그린다 — 있는 행만 넓어지면 슬라이더 폭이 줄마다 다르다 */}
+                    <span className="w-12 shrink-0 text-[10px] text-neutral-500"
+                          title={unitHint(ctrl)}>{ctrl.unit ?? ''}</span>
                   </div>
                 )
               })}
