@@ -93,18 +93,13 @@ export const pages: PageEntry[] = [
 
   // ── LeRobot (모방학습 본선: 수집 → 학습 → 실행) ──
   { path: '/recording', label: '수집', component: RecordingPage, nav: true, group: 'LeRobot', icon: '⏺' },
-  // ⚠ 데이터셋·모델은 **자리가 없어서** 상단바에서 빠져 있었다(카드 전용).
-  //   세로 내비는 자리가 있으므로 돌아온다 (feature/layout-redesign.md §1).
-  {
-    path: '/datasets',
-    label: '데이터셋',
-    description: '데이터셋 열람, 에피소드 관리',
-    component: DatasetsPage,
-    nav: true,
-    group: 'LeRobot',
-    icon: '🗂',
-    card: true,
-  },
+  // ⚠ `데이터셋`·`모델` 은 이제 내비에 없다. `저장소` 화면이 **같은 컴포넌트**를
+  //   탭으로 그리므로 메뉴에 같은 화면이 두 번 있었다.
+  //   경로는 남긴다 — 북마크나 링크가 있으면 열려야 한다.
+  //   ⚠ 예전에는 반대 문제였다: 상단 가로바에 자리가 없어 `card` 만 달았고,
+  //     그때는 **대시보드 카드가 유일한 입구**였다(feature/layout-redesign.md §1).
+  //     지금은 `저장소` 가 그 입구다 — 입구가 없어지지 않았는지 테스트가 본다.
+  { path: '/datasets', label: '데이터셋', component: DatasetsPage, group: 'LeRobot', icon: '🗂' },
   {
     path: '/episodes',
     label: '에피소드',
@@ -116,16 +111,10 @@ export const pages: PageEntry[] = [
     card: true,
   },
   { path: '/training', label: '학습', component: TrainingPage, nav: true, group: 'LeRobot', icon: '📈' },
-  {
-    path: '/models',
-    label: '모델',
-    description: '로컬 체크포인트 관리, Hub 탐색',
-    component: ModelsPage,
-    nav: true,
-    group: 'LeRobot',
-    icon: '🧠',
-    card: true,
-  },
+  // ⚠ `모델` 항목을 없앴다. `저장소` 의 `모델` 탭이 **같은 컴포넌트**를 그리고
+  //   있어서 메뉴에 같은 화면이 두 번 있었다. 경로는 남겨 둔다 — 다른 화면이
+  //   `/models` 로 링크하거나 북마크가 있을 수 있고, 열면 그대로 동작한다.
+  { path: '/models', label: '모델', component: ModelsPage, group: 'LeRobot', icon: '🧠' },
   { path: '/encoder', label: '엔코더', component: EncoderProbePage, nav: true, group: 'LeRobot', icon: '🔬' },
   {
     path: '/inference',
@@ -138,8 +127,8 @@ export const pages: PageEntry[] = [
     card: true,
   },
   { path: '/policy-server', label: '정책서버', component: PolicyServerPage, nav: true, group: 'LeRobot', icon: '🛰' },
-  // HuggingFace Hub — LeRobot 모델·데이터셋의 원격 저장소라 여기 속한다
-  { path: '/hub', label: '허브', component: HubPage, nav: true, group: 'LeRobot', icon: '☁' },
+  // 로컬 + HuggingFace Hub 를 한 화면에서 본다. 모델·데이터셋 탭이 여기 있다.
+  { path: '/hub', label: '저장소', component: HubPage, nav: true, group: 'LeRobot', icon: '☁' },
 
   // ── 객체 검출 (인식: 데모 → 커스텀 학습) ──
   {

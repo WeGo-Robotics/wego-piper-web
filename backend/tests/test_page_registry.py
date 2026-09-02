@@ -74,16 +74,22 @@ def test_grouped_pages_use_a_declared_group():
     assert not bad, f"선언 안 된 묶음: {bad}"
 
 
-@pytest.mark.parametrize("label", ["모델", "데이터셋"])
-def test_pages_pushed_off_the_top_bar_are_back(label):
-    """**회귀** — 상단 가로 내비에 자리가 없어 이 둘은 `card` 만 달고 `nav` 가
-    없었다. 대시보드 카드로만 갈 수 있었다는 뜻이고, 그게 세로 내비로 바꾼 이유다.
+def test_no_page_is_stranded_when_it_leaves_the_nav():
+    """⚠ **회귀** — 예전에 `모델`·`데이터셋` 이 `card` 만 달고 `nav` 가 없어
+    **대시보드 카드가 유일한 입구**였다. 그 카드를 걷어내면 갈 길이 없어진다.
 
-    자리가 생겼으니 돌아와 있어야 한다.
+    지금 `모델` 은 다시 `nav` 에서 빠졌지만 **끊기지 않았다** — `저장소` 화면이
+    `ModelsPage` 를 그대로 품고 있고 그 화면은 `nav` 에 있다. 메뉴에 같은 화면이
+    두 번 있을 이유가 없어서 뺀 것이다.
+
+    지키려는 것은 "nav 에 있어야 한다" 가 아니라 **"갈 길이 있어야 한다"** 다.
     """
-    entry = next((e for e in _entries() if e.get("label") == label), None)
-    assert entry, f"{label} 페이지가 없다"
-    assert entry.get("nav"), f"{label} 이 내비에 없다 — 카드로만 갈 수 있다"
+    hub = (_SRC / "pages" / "HubPage.tsx").read_text()
+    for page in ("ModelsPage", "DatasetsPage"):
+        assert page in hub, f"{page} 가 저장소 화면에서 빠졌다"
+
+    entry = next(e for e in _entries() if e.get("label") == "저장소")
+    assert entry.get("nav"), "저장소가 내비에 없다 — 모델·데이터셋이 통째로 고립된다"
 
 
 def test_the_estop_button_is_not_moved_into_the_bars():
@@ -214,3 +220,39 @@ def test_the_hf_token_name_is_labelled_as_a_token():
     assert "` (${hf.token_name})`" not in src, "괄호로만 붙여 정체가 안 보인다"
     settings = (_SRC / "pages" / "SettingsPage.tsx").read_text()
     assert "HfAccountBadge" in settings, "옮겼는데 아무 데도 안 쓰인다"
+
+
+def test_the_repository_header_is_one_row():
+    """⚠ 제목·탭 / 로컬·Hub·새로고침 / 디스크 상자가 **세 줄**로 쌓여 있었다 —
+    정작 봐야 할 목록이 그만큼 아래로 밀렸다. 셋 다 "무엇을 어디서 보나" 를
+    정하는 것이라 한 줄에 있어도 읽힌다."""
+    hub = (_SRC / "pages" / "HubPage.tsx").read_text()
+    header = hub.split("<h1", 1)[0][-400:] + hub.split("<h1", 1)[1].split("</div>\n\n", 1)[0]
+    assert "flex flex-wrap items-center" in header, "머리줄이 한 줄로 안 붙는다"
+    assert "DiskUsageBar compact" in hub, "디스크가 아직 상자다"
+
+
+def test_the_source_choice_is_shared_between_tabs():
+    """⚠ `로컬|Hub` 는 모델·데이터셋 **둘이 공유하는 선택**이다. 각 페이지가 따로
+    들고 있으면 탭을 옮길 때마다 `로컬` 로 되돌아간다."""
+    hub = (_SRC / "pages" / "HubPage.tsx").read_text()
+    assert "tab={source}" in hub, "출처를 자식에게 안 넘긴다"
+    for page in ("ModelsPage.tsx", "DatasetsPage.tsx"):
+        src = (_SRC / "pages" / page).read_text()
+        assert "const tab = tabProp ?? ownTab" in src, f"{page} 가 부모 선택을 무시한다"
+
+
+def test_refresh_does_not_look_like_a_third_choice():
+    """⚠ `로컬|Hub|새로고침` 이 한 묶음에 같은 모양으로 있었다. `로컬`·`Hub` 는
+    **고르는 것**이고 `새로고침` 은 **하는 것**인데, 같이 두면 세 번째 선택지처럼
+    읽힌다 — 누르면 `Hub` 가 꺼지는 줄 안다.
+
+    선택은 묶음 안의 켜진 칸으로, 동작은 늘 테두리 있는 버튼으로 둔다.
+    """
+    hub = (_SRC / "pages" / "HubPage.tsx").read_text()
+    picker = hub.split("setSource('hub')", 1)[1].split("setRefreshKey", 1)[0]
+    assert "</div>" in picker, "새로고침이 아직 선택 묶음 안에 있다"
+    assert "w-px bg-neutral-700" in picker, "칸막이가 없다"
+    action = hub.split("setRefreshKey((n) => n + 1)", 1)[1][:200]
+    assert "className={action}" in action, "동작 버튼 모양이 아니다"
+    assert "border border-neutral-600" in hub, "테두리가 항상 있지 않다"

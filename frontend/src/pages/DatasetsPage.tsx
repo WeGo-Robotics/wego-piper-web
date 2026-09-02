@@ -18,13 +18,19 @@ function formatBytes(bytes: number): string {
 
 type SortKey = 'name' | 'size' | 'date' | 'episodes'
 
-export default function DatasetsPage({ embedded = false }: { embedded?: boolean }) {
+export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKey }: { embedded?: boolean; tab?: 'local' | 'hub'; refreshKey?: number }) {
   // ⚠ `window.alert` 를 쓰지 않는다 — 이벤트 루프를 막아 E-stop heartbeat 가
   //   끊기고, 2초 타임아웃에 추론이 강제 종료된다 (confirm 으로 실제로 겪었다).
   const { notify, confirm: askConfirm } = useSystemMessage()
   const notifyError = (text: string) =>
     notify({ level: 'error', text, source: '데이터셋' })
-  const [tab, setTab] = useState<'local' | 'hub'>('local')
+  const [ownTab, setTab] = useState<'local' | 'hub'>('local')
+  // ⚠ **묶여 있을 때는 부모가 정한다.** `로컬|Hub` 는 모델·데이터셋 두 탭이
+  //   공유하는 선택이라, 각 페이지가 따로 들고 있으면 탭을 옮길 때마다 되돌아간다.
+  const tab = tabProp ?? ownTab
+
+  // 부모(저장소 화면)의 "새로고침" 을 받는다
+  useEffect(() => { if (refreshKey !== undefined) fetchDatasets() }, [refreshKey])
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [loading, setLoading] = useState(true)
   const [detail, setDetail] = useState<DatasetDetail | null>(null)
@@ -209,24 +215,8 @@ export default function DatasetsPage({ embedded = false }: { embedded?: boolean 
           </div>
         </div>
       )}
-      {embedded && (
-        <div className="flex gap-1">
-          <button onClick={() => setTab('local')}
-            className={`px-3 py-1.5 rounded text-sm ${tab === 'local' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}>
-            로컬
-          </button>
-          <button onClick={() => setTab('hub')}
-            className={`px-3 py-1.5 rounded text-sm ${tab === 'hub' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}>
-            Hub
-          </button>
-          <button onClick={fetchDatasets} disabled={loading}
-            className="px-3 py-1.5 rounded text-sm text-neutral-400 hover:text-white hover:bg-neutral-700 disabled:opacity-50">
-            {loading ? '스캔 중...' : '새로고침'}
-          </button>
-        </div>
-      )}
 
-      <DiskUsageBar />
+      {!embedded && <DiskUsageBar />}
 
       {/* hf-cli 설정 */}
       {tab === 'local' && (
