@@ -9,6 +9,7 @@ import json
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 import redis
@@ -382,17 +383,69 @@ class Bus:
 
     # ── 데몬 생존 ──
 
-    def mark_alive(self, daemon: str) -> None:
-        self.r.set(C.daemon_alive_key(daemon), "1", px=C.DAEMON_ALIVE_TTL_MS)
+    def mark_alive(self, daemon: str, info: dict | None = None) -> None:
+        """생존 표시. `info` 를 주면 자기 보고(pid·기동 시각·소스 mtime)를 싣는다.
+
+        게이트웨이가 컨테이너 안이면 호스트의 systemd 도 파일도 안 보인다 —
+        그쪽에서 알 수 있는 건 이 키에 실어 보낸 것이 전부다.
+        """
+        value = json.dumps(info) if info else "1"
+        self.r.set(C.daemon_alive_key(daemon), value, px=C.DAEMON_ALIVE_TTL_MS)
 
     def is_alive(self, daemon: str) -> bool:
+        # 값이 "1"(구버전)이든 JSON 이든, 키가 살아 있으면 데몬이 살아 있는 것이다
         try:
-            return self.r.get(C.daemon_alive_key(daemon)) == "1"
+            return self.r.get(C.daemon_alive_key(daemon)) is not None
         except Exception:
             return False
+
+    def daemon_info(self, daemon: str) -> dict | None:
+        """생존 키의 자기 보고. 죽었으면 `None`, 구버전 데몬("1")이면 `{}`."""
+        try:
+            raw = self.r.get(C.daemon_alive_key(daemon))
+        except Exception:
+            return None
+        if raw is None:
+            return None
+        try:
+            info = json.loads(raw)
+            return info if isinstance(info, dict) else {}
+        except (TypeError, ValueError):
+            return {}
 
     def ping(self) -> bool:
         try:
             return bool(self.r.ping())
         except Exception:
             return False
+
+
+# ── 데몬 자기 보고 ──────────────────────────────────────────────────────────────
+
+_SELF_STARTED = time.time()
+_self_scan = {"at": 0.0, "mtime": 0.0}
+
+
+def self_report(repo, sources, rescan_s: float = 10.0) -> dict:
+    """`mark_alive(info=)` 에 실을 자기 보고.
+
+    "이 유닛보다 새 코드가 있나"는 파일이 보이는 쪽만 잴 수 있다 — 데몬 자신이다.
+    스캔은 `rescan_s` 마다 한 번만 한다: 하트비트는 초 단위로 도는데 rglob 을
+    매번 돌리면 그게 하트비트를 늦춘다.
+    """
+    now = time.time()
+    if now - _self_scan["at"] > rescan_s:
+        newest = 0.0
+        for rel in sources:
+            p = Path(repo) / rel
+            files = [p] if p.is_file() else (p.rglob("*.py") if p.is_dir() else [])
+            for f in files:
+                if "__pycache__" in f.parts:
+                    continue
+                try:
+                    newest = max(newest, f.stat().st_mtime)
+                except OSError:
+                    pass
+        _self_scan.update(at=now, mtime=newest)
+    return {"pid": os.getpid(), "started": _SELF_STARTED,
+            "code_mtime": _self_scan["mtime"]}

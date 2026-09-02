@@ -233,6 +233,16 @@ RPC_REPLY_TTL_MS: Final = 30_000
 RSD: Final = "rsd"          # RealSense 데몬
 CAMERAD: Final = "camerad"  # v4l2 데몬
 ROBOTD: Final = "robotd"    # CAN 독점 + 안전층
+ESTOPD: Final = "estopd"    # E-stop watchdog
+
+# 데몬이 실제로 import 하는 소스 — 자기 보고(`mark_alive` info)의 mtime 스캔 범위.
+# 넓게 잡으면 "낡았다" 경고가 늘 켜져 있어 아무도 안 본다.
+DAEMON_SOURCES: Final = {
+    RSD: ("daemons/rsd.py", "rs", "cam", "shm", "bus"),
+    CAMERAD: ("daemons/camerad.py", "cam", "shm", "bus"),
+    ROBOTD: ("daemons/robotd.py", "robot", "shm", "bus"),
+    ESTOPD: ("daemons/estopd.py", "bus"),
+}
 
 
 # ── 기본값 ────────────────────────────────────────────────────────────────────

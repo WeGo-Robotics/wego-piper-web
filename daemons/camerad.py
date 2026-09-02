@@ -22,8 +22,10 @@ import signal
 import sys
 import time
 
+from pathlib import Path
+
 from piper_bus import contract as C
-from piper_bus.client import Bus
+from piper_bus.client import Bus, self_report
 from piper_cam import V4l2Hub
 from piper_cam import publish
 
@@ -33,6 +35,8 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger("camerad")
+
+REPO = Path(__file__).resolve().parents[1]
 
 _running = True
 
@@ -45,13 +49,15 @@ _METHODS = {
 
 
 def serve(bus: Bus, hub: V4l2Hub) -> None:
+    global _running
     logger.info("v4l2 데몬 시작")
     last_beat = 0.0
     while _running:
         now = time.monotonic()
         if now - last_beat > C.DAEMON_ALIVE_TTL_MS / 3000:
             try:
-                bus.mark_alive(C.CAMERAD)
+                bus.mark_alive(C.CAMERAD,
+                               info=self_report(REPO, C.DAEMON_SOURCES[C.CAMERAD]))
             except Exception as exc:
                 logger.warning("생존 표시 실패: %s", exc)
             last_beat = now
@@ -66,6 +72,13 @@ def serve(bus: Bus, hub: V4l2Hub) -> None:
             continue
 
         rid, method, args = req.get("id", ""), req.get("method", ""), req.get("args", [])
+        if method == "restart":
+            # 컨테이너 게이트웨이는 systemctl 이 없다 — 스스로 죽으면
+            # 유닛의 Restart=always 가 새 코드로 되살린다. 응답이 먼저다.
+            bus.rpc_reply(rid, True, result="restarting")
+            logger.warning("재시작 요청 — 정리 후 종료")
+            _running = False
+            continue
         if method not in _METHODS:
             bus.rpc_reply(rid, False, error=f"알 수 없는 메서드: {method}")
             continue

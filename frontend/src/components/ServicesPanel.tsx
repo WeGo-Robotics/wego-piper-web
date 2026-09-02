@@ -16,6 +16,8 @@ import { api } from '../services/api'
 type Unit = {
   name: string; active: boolean; since: number | null; stale: boolean
   age_s: number | null; pid: number | null; description: string
+  // 컨테이너 배포에서는 버스 생존 키로만 보인다 — 기동 시각을 모르고 재시작도 불가
+  restartable?: boolean
 }
 type Gateway = {
   pid: number; since: number | null; stale: boolean
@@ -113,9 +115,11 @@ export default function ServicesPanel() {
         )}
         {units.map((u) => (
           <Row key={u.name} name={u.name} active={u.active} stale={u.stale}
-            detail={`${u.active ? `${age(u.age_s)} 전 기동` : '멈춤'}${
-              u.pid ? ` · pid ${u.pid}` : ''}`}
+            detail={`${u.active
+              ? (u.age_s !== null ? `${age(u.age_s)} 전 기동` : '실행 중 · 버스 하트비트')
+              : '멈춤'}${u.pid ? ` · pid ${u.pid}` : ''}`}
             busy={busy === u.name}
+            disabled={u.restartable === false}
             onRestart={() => restartUnit(u.name)} />
         ))}
         {units.length === 0 && !gateway && (

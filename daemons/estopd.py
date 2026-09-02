@@ -29,8 +29,13 @@ import signal
 import sys
 import time
 
+from pathlib import Path
+
 from piper_bus import Bus
 from piper_bus import contract as C
+from piper_bus.client import self_report
+
+REPO = Path(__file__).resolve().parents[1]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -90,6 +95,8 @@ def watch(bus: Bus, timeout_s: float, poll_s: float) -> None:
     while True:
         time.sleep(poll_s)
         try:
+            # 게이트웨이가 컨테이너 안이면 systemd 를 못 보므로, 생존은 이 키가 전부다
+            bus.mark_alive(C.ESTOPD, info=self_report(REPO, C.DAEMON_SOURCES[C.ESTOPD]))
             if not bus.is_armed():
                 warned_disconnect = False
                 continue

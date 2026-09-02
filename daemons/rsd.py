@@ -31,8 +31,10 @@ import sys
 import threading
 import time
 
+from pathlib import Path
+
 from piper_bus import contract as C
-from piper_bus.client import Bus
+from piper_bus.client import Bus, self_report
 from piper_rs import RealSenseHub, rs_available
 from piper_rs import publish
 
@@ -42,6 +44,8 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger("rsd")
+
+REPO = Path(__file__).resolve().parents[1]
 
 _running = True
 
@@ -73,12 +77,13 @@ def heartbeat(bus: Bus, name: str, stop: threading.Event) -> None:
     period = C.DAEMON_ALIVE_TTL_MS / 3000
     while not stop.wait(period):
         try:
-            bus.mark_alive(name)
+            bus.mark_alive(name, info=self_report(REPO, C.DAEMON_SOURCES[name]))
         except Exception as exc:
             logger.warning("생존 표시 실패: %s", exc)
 
 
 def serve(bus: Bus, hub: RealSenseHub) -> None:
+    global _running
     logger.info("RealSense 데몬 시작 (pyrealsense2=%s)", rs_available())
     stop = threading.Event()
     threading.Thread(target=heartbeat, args=(bus, C.RSD, stop),
@@ -94,6 +99,13 @@ def serve(bus: Bus, hub: RealSenseHub) -> None:
             continue
 
         rid, method, args = req.get("id", ""), req.get("method", ""), req.get("args", [])
+        if method == "restart":
+            # 컨테이너 게이트웨이는 systemctl 이 없다 — 스스로 죽으면
+            # 유닛의 Restart=always 가 새 코드로 되살린다. 응답이 먼저다.
+            bus.rpc_reply(rid, True, result="restarting")
+            logger.warning("재시작 요청 — 정리 후 종료")
+            _running = False
+            continue
         if method not in _METHODS:
             bus.rpc_reply(rid, False, error=f"알 수 없는 메서드: {method}")
             continue

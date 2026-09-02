@@ -100,6 +100,7 @@ class Unit:
     code_mtime: float
     pid: int | None
     description: str = ""
+    restartable: bool = True   # 컨테이너에서 버스로만 보이는 유닛은 재시작 불가
 
     def to_dict(self) -> dict:
         return {
@@ -107,6 +108,7 @@ class Unit:
             "since": self.since or None, "stale": self.stale,
             "code_mtime": self.code_mtime or None, "pid": self.pid,
             "description": self.description,
+            "restartable": self.restartable,
             "age_s": round(time.time() - self.since) if self.since else None,
         }
 
@@ -126,13 +128,13 @@ def _parse_since(value: str) -> float:
 
 
 def list_units() -> list[Unit]:
-    """`piper-*` 사용자 유닛. systemd 가 없으면 빈 목록."""
+    """`piper-*` 사용자 유닛. systemd 가 안 보이면 버스 생존 키로 폴백."""
     try:
         out = _systemctl("list-units", "piper-*", "--all",
                          "--no-pager", "--no-legend", "--plain").stdout
     except Exception as exc:
         logger.debug("유닛 목록 조회 실패: %s", exc)
-        return []
+        return _units_from_bus()
 
     units: list[Unit] = []
     for line in out.splitlines():
@@ -160,7 +162,68 @@ def list_units() -> list[Unit]:
             code_mtime=code, pid=pid,
             description=props.get("Description", ""),
         ))
+    if not units:
+        return _units_from_bus()
     return sorted(units, key=lambda u: u.name)
+
+
+# 배포 대상(.120)의 게이트웨이는 컨테이너 안이라 호스트 systemd 가 안 보인다.
+# 데몬들이 생존 키(TTL 3초)에 실어 보내는 자기 보고(pid·기동 시각·소스 mtime)가
+# 거기서 보이는 전부다 — stale 판정도 그 보고로 한다. 구버전 데몬은 "1"만 쓰므로
+# 생존 여부만 알 수 있다.
+#
+# 재시작은 데몬에게 `restart` RPC 를 보낸다 — 데몬이 스스로 죽으면 유닛의
+# Restart=always 가 되살린다. estopd 는 RPC 창구가 없다: 안전장치에 원격 종료
+# 경로를 다는 것은 별개의 결정이라, 여기서는 재시작 불가로 남긴다.
+_BUS_DAEMONS: tuple[tuple[str, str, bool], ...] = (
+    ("piper-camerad", "Piper v4l2 camera daemon", True),
+    ("piper-estopd", "Piper E-stop watchdog", False),
+    ("piper-robotd", "Piper robot daemon", True),
+    ("piper-rsd", "Piper RealSense daemon", True),
+)
+
+_bus_singleton = None
+
+
+def _bus():
+    global _bus_singleton
+    if _bus_singleton is None:
+        from piper_bus.client import Bus
+        _bus_singleton = Bus()
+    return _bus_singleton
+
+
+def _units_from_bus() -> list[Unit]:
+    units: list[Unit] = []
+    try:
+        for name, desc, restartable in _BUS_DAEMONS:
+            info = _bus().daemon_info(name.removeprefix("piper-"))
+            alive, info = info is not None, info or {}
+            since = float(info.get("started") or 0)
+            code = float(info.get("code_mtime") or 0)
+            units.append(Unit(
+                name=name, active=alive, since=since,
+                stale=bool(since and code and code > since + _GRACE_S),
+                code_mtime=code,
+                pid=int(info["pid"]) if info.get("pid") else None,
+                description=desc,
+                restartable=restartable and alive,
+            ))
+    except Exception as exc:
+        logger.debug("버스 생존 키 조회 실패: %s", exc)
+        return []
+    return units
+
+
+def _restart_via_bus(name: str) -> tuple[bool, str]:
+    if not any(n == name and ok for n, _, ok in _BUS_DAEMONS):
+        return False, f"여기서는 재시작할 수 없습니다: {name}"
+    try:
+        _bus().rpc_call(name.removeprefix("piper-"), "restart", timeout=5)
+    except Exception as exc:
+        return False, f"재시작 실패: {exc}"
+    logger.warning("버스로 재시작 요청: %s", name)
+    return True, "OK"
 
 
 def gateway_status() -> dict:
@@ -210,9 +273,16 @@ def restart_unit(name: str) -> tuple[bool, str]:
         return False, f"이상한 이름입니다: {name}"
     try:
         r = _systemctl("restart", f"{name}.service")
+    except FileNotFoundError:
+        # 컨테이너 — systemctl 자체가 없다. 데몬에게 직접 청한다.
+        return _restart_via_bus(name)
     except Exception as exc:
         return False, f"재시작 실패: {exc}"
     if r.returncode != 0:
-        return False, (r.stderr or "").strip() or f"종료 코드 {r.returncode}"
+        err = (r.stderr or "").strip()
+        if "Failed to connect to bus" in err:
+            # systemctl 은 있는데 systemd 가 없는 환경(일부 이미지) — 같은 폴백
+            return _restart_via_bus(name)
+        return False, err or f"종료 코드 {r.returncode}"
     logger.warning("유닛 재시작: %s", name)
     return True, "OK"
