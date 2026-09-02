@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 _api = HfApi(endpoint=settings.hf_endpoint or None)
 
 
+# ⚠ **`direction` 은 이제 없다.** huggingface_hub 1.x 에서 빠졌고 내림차순이
+# 기본이다. 예전 코드는 모델 쪽에만 `except TypeError` 폴백을 달아 넘겼는데,
+# 그 폴백은 `sort` 까지 통째로 버려서 **정렬이 조용히 사라졌다.** 그리고
+# 데이터셋 쪽에는 폴백조차 없어서 검색이 **500 으로 죽었다** — 화면에는
+# "결과 없음" 으로만 보였다.
+_SORT = "downloads"
+
+
 def get_api() -> HfApi:
     """다른 모듈이 HfApi 를 직접 만들지 않도록 여기서 받아 쓴다."""
     return _api
@@ -30,14 +38,9 @@ _download_status: dict[str, dict] = {}
 
 def _search_models(query: str = "", author: str = "lerobot", limit: int = 30) -> list[dict]:
     results = []
-    try:
-        models = _api.list_models(
-            search=query, author=author or None, limit=limit, sort="downloads", direction=-1
-        )
-    except TypeError:
-        models = _api.list_models(
-            search=query, author=author or None, limit=limit,
-        )
+    models = _api.list_models(
+        search=query, author=author or None, limit=limit, sort=_SORT
+    )
     for model in models:
         tags = model.tags or []
         # 태그에서 정보 추출
@@ -95,7 +98,7 @@ def _search_models(query: str = "", author: str = "lerobot", limit: int = 30) ->
 def _search_datasets(query: str = "", author: str = "lerobot", limit: int = 30) -> list[dict]:
     results = []
     for ds in _api.list_datasets(
-        search=query, author=author or None, limit=limit, sort="downloads", direction=-1
+        search=query, author=author or None, limit=limit, sort=_SORT
     ):
         results.append({
             "repo_id": ds.id,
