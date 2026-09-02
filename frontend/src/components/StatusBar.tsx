@@ -6,6 +6,7 @@ import type { DeviceCount } from '../hooks/useDeviceSummary'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { api } from '../services/api'
 import type { DiskUsage } from '../types/models'
+import { NotificationBell } from './SystemMessages'
 
 /**
  * 상단 상태바 — **어느 페이지에 있든** 무엇이 도는지 보인다
@@ -142,6 +143,9 @@ export default function StatusBar() {
           </span>
         )}
       </div>
+
+      {/* 토스트는 2초 만에 사라진다 — 놓친 메시지는 여기 쌓인다 */}
+      <NotificationBell />
 
       {/* 소켓이 끊기면 위 숫자가 **멈춘 값**이 된다 — 그걸 모르면 안 된다 */}
       <span className="flex shrink-0 items-center gap-1.5 text-xs text-neutral-500"
