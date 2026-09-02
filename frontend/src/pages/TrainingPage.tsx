@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import RepoIdInput from '../components/RepoIdInput'
 import SpecFields from '../components/SpecFields'
 import { usePolicyUi, specDefaults, activeWarnings } from '../hooks/usePolicyUi'
 import { useSystemMessage } from '../components/SystemMessages'
@@ -643,10 +644,11 @@ export default function TrainingPage() {
             })()}
             <div className="space-y-1">
               <label className="text-xs text-neutral-400">Policy Repo ID (Hub 업로드용)</label>
-              <input type="text" value={policyRepoId}
-                onChange={(e) => { setPolicyRepoId(e.target.value); setCliEdited(false) }}
-                placeholder="예: wego-hansu/piper_tws_v2"
-                className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 placeholder:text-neutral-600" />
+              {/* ⚠ 비워 두면 `--policy.push_to_hub=false` 가 붙어 로컬에만 남는다.
+                  "올리지 않음" 을 명시적인 선택지로 둔다 — 빈 칸을 그냥 두는 것과
+                  고르는 것은 다르다. */}
+              <RepoIdInput value={policyRepoId} allowEmpty
+                onChange={(v) => { setPolicyRepoId(v); setCliEdited(false) }} />
               {policyRepoId && (() => {
                 const existing = models.find((m) => m.id.includes(policyRepoId.split('/').pop() || ''))
                 if (!existing) return null

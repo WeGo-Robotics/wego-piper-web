@@ -154,3 +154,45 @@ def test_turning_push_off_skips_the_check(client, monkeypatch):
     """올릴 생각이 없으면 권한을 물을 이유가 없다."""
     _whoami(monkeypatch, {})           # 미로그인인데도
     assert _start(client, ["--policy.push_to_hub=false"]).status_code != 400
+
+
+# ── repo_id 입력 ────────────────────────────────────────────────────────────
+
+REPO_INPUT = _SRC / "components" / "RepoIdInput.tsx"
+
+
+def test_the_namespace_is_picked_not_typed():
+    """⚠ 통째로 타이핑하면 `/` 를 빠뜨린다. LeRobot 은 `repo_id.split("/")` 를
+    **두 개로 언패킹**하므로 슬래시가 없으면 녹화가 시작에서 죽는다.
+    네임스페이스는 고를 수 있는 값(내 계정 + 소속 조직)이라 드롭다운이면 그
+    실수가 사라진다."""
+    src = REPO_INPUT.read_text()
+    assert "<select" in src, "네임스페이스를 고를 수 없다"
+    assert "acc.orgs" in src, "소속 조직이 후보에 없다"
+    for page in ("RecordingPage.tsx", "TrainingPage.tsx"):
+        assert "RepoIdInput" in (_SRC / "pages" / page).read_text(), \
+            f"{page} 가 아직 통짜 입력이다"
+
+
+def test_leaving_it_empty_is_an_explicit_choice():
+    """⚠ 학습의 `policy.repo_id` 는 **비울 수 있다** — 비우면
+    `--policy.push_to_hub=false` 가 붙어 로컬에만 남는다. 빈 칸을 그냥 두는 것과
+    "올리지 않음" 을 고르는 것은 다르다. 후자만 의도한 것으로 읽힌다."""
+    src = REPO_INPUT.read_text()
+    assert "allowEmpty" in src, "비울 수 있는 자리를 구분하지 않는다"
+    assert "올리지 않음" in src, "비움이 선택지로 안 보인다"
+
+    train = (_SRC / "pages" / "TrainingPage.tsx").read_text()
+    assert "<RepoIdInput value={policyRepoId} allowEmpty" in train, \
+        "학습에서 비울 수 없다 — 로컬 학습을 못 하게 된다"
+    rec = (_SRC / "pages" / "RecordingPage.tsx").read_text()
+    assert "allowEmpty" not in rec.split("RepoIdInput", 1)[1][:200], \
+        "녹화는 비우면 안 된다 — 데이터셋을 어디에 쓸지 정해야 한다"
+
+
+def test_it_falls_back_to_a_text_box_when_not_logged_in():
+    """⚠ 네임스페이스를 알 수 없는데 드롭다운을 비워 놓으면 **아무것도 못 적는
+    화면**이 된다. 로그인 전에는 그냥 글상자로 둔다."""
+    src = REPO_INPUT.read_text()
+    assert "const canPick" in src and "!canPick" in src, "로그인 전 대비가 없다"
+    assert "설정 → 저장소에서 로그인하면" in src, "왜 못 고르는지 안 알려준다"
