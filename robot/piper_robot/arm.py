@@ -209,21 +209,42 @@ class Arm:
             self.ctrl_mode = ""
 
     def read_joints_raw(self) -> list[int] | None:
+        """관절 raw. **피드백이 기본이고, 지령은 그보다 신선할 때만** 쓴다.
+
+        ⚠ 예전에는 `any(v != 0)` 이기만 하면 지령을 돌려줬다 — 나이를 안 봤다.
+        지령 캐시는 한 번 차면 갱신이 없어도 그 값이 남아 있어서, **얼어붙은
+        지령이 살아 있는 피드백을 가렸다.** 실측: can0 의 raw 읽기가 joint2·
+        joint3 을 0 으로 내면서 나머지는 실제값을 내놨다.
+
+        판정 규칙은 바로 아래 `read_joints_normalized` 의 것과 같아야 한다 —
+        같은 사실을 두 함수가 다르게 답하면 어느 쪽이 맞는지 알 길이 없다.
+        """
         with self._lock:
             if not self._piper:
                 return None
+            fb = self._feedback_joints_locked()
             try:
-                j = self._piper.GetArmJointCtrl().joint_ctrl
-                ctrl = [j.joint_1, j.joint_2, j.joint_3, j.joint_4, j.joint_5, j.joint_6]
-                if any(v != 0 for v in ctrl):
-                    return ctrl
+                jm = self._piper.GetArmJointMsgs()
+                jc = self._piper.GetArmJointCtrl()
+                if fb is None or jc.time_stamp - jm.time_stamp > self._CTRL_FRESHER_S:
+                    j = jc.joint_ctrl
+                    return [j.joint_1, j.joint_2, j.joint_3,
+                            j.joint_4, j.joint_5, j.joint_6]
             except Exception:
                 pass
-            try:
-                j = self._piper.GetArmJointMsgs().joint_state
-                return [j.joint_1, j.joint_2, j.joint_3, j.joint_4, j.joint_5, j.joint_6]
-            except Exception:
+            return fb
+
+    def read_joints_feedback(self) -> list[int] | None:
+        """피드백(0x2A5~7)만. **지령 폴백 없음.**
+
+        ⚠ 마스터/슬레이브 판별이 쓴다. 폴백이 존재하는 이유가 "마스터는 피드백을
+        안 보내서 얼어붙기 때문" 인데, 판별이 가리려는 것이 정확히 그 조건이다 —
+        피드백이 없을 때 지령으로 갈아타면 **재려던 신호가 사라진다.**
+        """
+        with self._lock:
+            if not self._piper:
                 return None
+            return self._feedback_joints_locked()
 
     # 피드백보다 제어지령이 이만큼 신선하면 지령을 상태로 쓴다. 마스터(연동 示教입력)
     # 팔은 피드백(0x2A5~7)을 송신하지 않아 GetArmJointMsgs 가 모드 전환 시점 값으로
@@ -533,7 +554,9 @@ class Arm:
                 on_step(text, remaining)
 
         step("기준 관절값 읽는 중")
-        before = self.read_joints_raw()
+        # ⚠ **피드백만** 본다 — `read_joints_raw` 는 지령이 신선하면 그걸 주는데,
+        #   우리가 방금 쓴 지령을 되읽으면 팔이 뭐든 같은 답이 나온다.
+        before = self.read_joints_feedback()
         if before is None:
             return {"ok": False, "error": "관절값을 읽지 못했습니다"}
 
@@ -573,7 +596,7 @@ class Arm:
             time.sleep(0.1)
 
         step("관절값 다시 읽는 중")
-        after = self.read_joints_raw()
+        after = self.read_joints_feedback()
 
         # 되돌린다. 마스터면 어차피 무시하므로 해로울 게 없다.
         step("원위치로 되돌리는 중")
