@@ -11,7 +11,8 @@ subprocess 로 부르면 torch import ~5초를 매번 무는데, 30분 무인 �
 
 - **입력**: camerad/rsd 가 발행하는 `/dev/shm` 프레임 (`piper_shm.Subscriber`).
   다중 소비자 설계라 장치 소유권 충돌이 없다 — 카메라를 새로 열지 않는다.
-  세그먼트는 **RGB** 다 (wrapper 프리뷰가 RGB2BGR 변환 후 저장하는 것과 같은 사실).
+  세그먼트는 **BGR** 다 (rsd 는 `to_bgr` 후 발행, camerad 는 OpenCV 그대로 —
+  shm_snapshot.py 의 실사고 교정 주석과 같은 사실. 예전 "RGB" 주석은 틀렸었다).
 - **출력**: 버스 `piper:vision:<cam>` 최신값(JSON, TTL — preview 와 같은 이유로
   큐가 아니다) + 어노테이트 프리뷰 `put_preview("yolo_<cam>")` — UI 는 기존
   프리뷰 경로를 그대로 쓴다.
@@ -206,9 +207,15 @@ def main() -> None:
                 continue
             frame, seq, wall_ns = got
 
-            # 세그먼트는 RGB, ultralytics 의 numpy 입력 규약은 BGR
+            # ⚠ 세그먼트는 **BGR** 이다 — ultralytics 의 numpy 입력 규약과 같아
+            #   변환 없이 그대로 넣는다. 예전엔 "세그먼트는 RGB" 전제로 여기서
+            #   채널을 뒤집었는데, 그 전제가 틀렸다: rsd 는 to_bgr 를 거쳐
+            #   발행하고(piper_rs/hub.py) camerad 는 OpenCV 프레임 그대로다.
+            #   같은 오해가 스냅샷 경로에서 "노란 물체가 파랗게" 사고를 이미
+            #   냈다(shm_snapshot.py). 학습 캡처(segment_jpeg)는 BGR 로 바르게
+            #   저장되므로, 여기서 뒤집으면 학습과 추론이 다른 색을 본다.
             result = model.predict(
-                frame[..., ::-1], conf=args.conf, imgsz=args.imgsz,
+                frame, conf=args.conf, imgsz=args.imgsz,
                 device=args.device, verbose=False,
             )[0]
             det_counts[alias] += 1
