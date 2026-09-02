@@ -135,6 +135,32 @@ def measure(bgr: np.ndarray, roi: tuple[int, int, int, int] | None = None
                            spread_pct=spread, pixels=int(patch.shape[0]))
 
 
+def white_balance_for(reading: GrayCardReading, current_k: float,
+                      lo: float = 2800.0, hi: float = 6500.0) -> float:
+    """카드를 중성으로 만들 white_balance 설정(K).
+
+    ⚠ **AWB 의 수렴값은 읽을 수 없다** (실측 2026-09-02: 스트림을 켠 채 AWB 를
+    수렴시켜도 컨트롤 읽기는 수동 설정값 그대로고, 끄면 그 값으로 돌아온다 —
+    "자동을 끄면 얼어붙는다"가 WB 에서는 거짓이었다. 그래서 모든 프로파일의
+    WB 가 공장값 4600 이었고, 조명이 4600K 에서 멀어질수록 색이 치우쳤다).
+    그래서 노출과 같은 방식으로 **카드를 직접 재서** 맞춘다: R/B 균형을 보고
+    설정을 움직이고, 호출자가 다시 재서 다시 부른다. 순수 함수다.
+
+    방향: 카드가 푸르면(B>R) 설정 K 를 **올린다** — 카메라가 조명을 더 차갑다고
+    가정할수록 붉은 쪽으로 보정한다.
+
+    ⚠ 한 걸음의 배율을 제한한다(0.6~1.6). 반사·얼룩으로 채널비가 튄 측정 한 번이
+    설정을 끝까지 밀어붙이면 안 된다 — 노출 보정의 배수 제한과 같은 이유다.
+    지수 0.7 은 감쇠다: 과보정으로 좌우로 튀는 것보다 두 번에 나눠 닿는 게 낫다.
+    """
+    if current_k <= 0:
+        raise ValueError(f"현재 WB 가 양수여야 합니다: {current_k}")
+    if reading.r <= 0 or reading.b <= 0:
+        return min(max(current_k, lo), hi)
+    ratio = min(max((reading.b / reading.r) ** 0.7, 0.6), 1.6)
+    return min(max(current_k * ratio, lo), hi)
+
+
 def exposure_for(reading: GrayCardReading, current_us: float,
                  lo: float, hi: float, target: float = TARGET_LUMA) -> float:
     """카드를 목표 밝기로 만들 노출(µs).

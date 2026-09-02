@@ -952,24 +952,38 @@ class RealSenseHub:
     # 노출 비례 보정을 몇 번까지 반복하나. 보통 1~2번이면 들어온다.
     _CAL_ROUNDS = 3
 
-    def calibrate_gray_card(self, cam_id: str, roi=None, target: float | None = None
-                            ) -> dict:
-        """회색 카드로 화이트밸런스·노출을 맞춘다 (feature/gray-card-calibration.md).
+    def calibrate_gray_card(self, cam_id: str, roi=None, target: float | None = None,
+                            adjust: str = "exposure") -> dict:
+        """회색 카드로 화이트밸런스·밝기를 맞춘다 (feature/gray-card-calibration.md).
 
         절차:
 
-        1. **자동을 켜고 기다린다** — 회색 카드는 자동 WB 가 가장 잘 맞는 조건이다
-           (중성 피사체가 화면을 채운 상태). 카메라 자기 알고리즘을 쓰는 편이
-           켈빈 값을 이분 탐색하는 것보다 빠르고 정확하다.
-        2. **자동을 끈다** — 값이 그 자리에 얼어붙는다. 이게 "캘리브레이션"의 실체다.
-           켜둔 채로는 카드를 치우는 순간 다시 흔들려 재현이 안 된다.
-        3. 카드를 재서 **노출만** 비례 보정한다. 밝기는 노출에 거의 비례한다.
-        4. 다시 재서 결과를 돌려준다.
+        1. **자동 노출만 켜고 기다린다** — 밝기의 출발점은 AE 가 잘 잡고, 끄면
+           그 노출값이 실제로 얼어붙는다(프로파일들의 노출이 제각각인 것이 증거).
+           ⚠ **AWB 는 켜지 않는다.** 수렴값을 읽을 수 없고(실측 2026-09-02:
+           읽기는 수동 설정값 그대로), 끄면 그 값으로 돌아와 수렴 결과가 통째로
+           버려진다 — 그래서 모든 프로파일의 WB 가 공장값 4600 이었다.
+        2. **자동을 끈다** — AE 가 찾은 노출이 얼어붙는다.
+        3. **WB 를 카드로 직접 맞춘다** — 카드의 R/B 균형까지 비례 보정
+           (read-back 반복). AWB 를 믿는 대신 우리가 잰다.
+        4. 카드를 재서 **밝기 손잡이 하나만** 비례 보정한다. 밝기는 노출에도
+           gain 에도 거의 비례한다.
+        5. 다시 재서 결과를 돌려준다.
+
+        `adjust` 가 그 손잡이다:
+
+        - ``"exposure"`` (기본) — 노출을 움직인다. gain 은 안 건드린다
+        - ``"gain"`` — **노출을 고정**하고 gain 만 움직인다. 노출은 모션 블러와
+          프레임 예산(긴 노출 = fps 상한)을 정하므로, 로봇 데이터에서는 노출을
+          먼저 정해 두고 밝기는 gain 으로 잡는 쪽이 안전할 때가 있다.
+          이 모드에서는 **자동 노출을 아예 켜지 않는다** — 켜는 순간 지금
+          노출이 움직여 "고정"이 거짓말이 된다. AWB 만 카드에 맞춘다.
 
         값을 저장하지는 않는다 — 저장은 카메라 프로파일이 하는 일이고, 그쪽은
         이미 연결할 때 적용까지 한다. 여기서는 **장치에 올려놓고 보고**만 한다.
         """
         from piper_cam import graycard as gc
+        from piper_cam.controls import exposure_unit_scale
 
         parsed = parse_id(cam_id)
         if not parsed:
@@ -977,6 +991,8 @@ class RealSenseHub:
         serial, stream = parsed
         if stream != "color":
             return {"ok": False, "error": "회색 카드 보정은 컬러 스트림에만 합니다"}
+        if adjust not in ("exposure", "gain"):
+            return {"ok": False, "error": f"모르는 보정 손잡이: {adjust!r}"}
         dev = self._device(serial)
         if dev is None or "color" not in dev._active:
             return {"ok": False, "error": "컬러 스트림이 연결돼 있지 않습니다"}
@@ -990,10 +1006,13 @@ class RealSenseHub:
                 return None
             return gc.measure(frame, tuple(roi) if roi else None)
 
-        # 1) 자동으로 맞추게 두고 기다린다
-        for name in ("enable_auto_white_balance", "enable_auto_exposure"):
-            self.set_control(cam_id, name, 1)
-        time.sleep(self._CAL_SETTLE_S)
+        # 1) 자동 노출만 수렴시킨다. gain 모드에서는 노출이 고정 약속이라 AE 를
+        #    꺼서 얼린다. ⚠ AWB 는 어느 모드에서도 켜지 않는다 — 수렴값이 읽기에
+        #    반영되지 않아, 켜 봐야 끄는 순간 수동 설정값으로 돌아온다(실측).
+        self.set_control(cam_id, "enable_auto_exposure",
+                         0 if adjust == "gain" else 1)
+        self.set_control(cam_id, "enable_auto_white_balance", 0)
+        time.sleep(self._CAL_SETTLE_S if adjust == "exposure" else 0.5)
 
         before = _read()
         if before is None:
@@ -1004,32 +1023,75 @@ class RealSenseHub:
             #   그게 이 기능의 존재 이유인데 스스로 깨는 셈이다.
             return {"ok": False, "error": why, "before": before.to_dict()}
 
-        # 2) 자동을 끈다 — 자동이 찾은 값이 그대로 얼어붙는다
-        for name in ("enable_auto_white_balance", "enable_auto_exposure"):
-            self.set_control(cam_id, name, 0)
+        # 2) 자동을 끈다 — AE 가 찾은 노출이 얼어붙는다 (노출 동결은 실측으로 성립)
+        self.set_control(cam_id, "enable_auto_exposure", 0)
         time.sleep(0.4)
 
-        # 3) 노출만 비례 보정한다. WB 는 자동이 카드에서 이미 맞췄다.
-        lo, hi, cur = self._exposure_range(cam_id)
+        # 3) WB 를 카드로 직접 맞춘다 — R/B 균형까지 비례 보정.
+        #    AWB 를 믿고 얼리는 방식은 수렴값이 안 읽혀 실패했다(위 주석).
+        wb_lo, wb_hi, wb_cur = self._control_range(
+            cam_id, "white_balance", fallback=(2800.0, 6500.0, 4600.0))
+        reading = _read() or before
+        for _ in range(self._CAL_ROUNDS):
+            if reading.neutral_error_pct <= gc.NEUTRAL_TOLERANCE_PCT:
+                break
+            new_wb = gc.white_balance_for(reading, wb_cur, wb_lo, wb_hi)
+            if abs(new_wb - wb_cur) < 10:
+                break
+            self.set_control(cam_id, "white_balance", new_wb)
+            wb_cur = new_wb
+            time.sleep(0.4)
+            reading = _read() or reading
+            steps.append({"white_balance": round(wb_cur),
+                          "neutral_pct": round(reading.neutral_error_pct, 1),
+                          "luma": round(reading.luma, 1)})
+
+        # 4) 밝기 손잡이 하나만 비례 보정한다.
+        #    비례 모델(exposure_for)은 gain 에도 성립한다 — 어차피 read-back
+        #    반복(_CAL_ROUNDS)이 남는 오차를 잡는다. gain 은 0 에서 시작할 수
+        #    있어(비례가 0 에 갇힌다) 하한을 1 로 든다.
+        lo, hi, cur = self._control_range(cam_id, adjust,
+                                          fallback=(1.0, 165000.0, 1000.0)
+                                          if adjust == "exposure" else (0.0, 128.0, 16.0))
+        if adjust == "gain":
+            cur = max(cur, 1.0)
+        # ⚠ 같은 "exposure" 인데 **센서마다 단위가 다르다** — D435 계열 RGB 는
+        #   100µs 단위(max 10000), D405 컬러·깊이(스테레오 모듈)는 µs(max 165000).
+        #   장치에는 원시값을 쓰고, 보고(`exposure_us`)만 환산한다 — 필드명이
+        #   D435 에서 100배 거짓말을 하지 않게.
+        step_scale = exposure_unit_scale(hi) if adjust == "exposure" else 1
         reading = _read() or before
         for _ in range(self._CAL_ROUNDS):
             if abs(reading.luma - target) <= gc.LUMA_TOLERANCE:
                 break
-            new_us = gc.exposure_for(reading, cur, lo, hi, target)
-            if abs(new_us - cur) < 1:
+            new = gc.exposure_for(reading, cur, max(lo, 1.0) if adjust == "gain" else lo,
+                                  hi, target)
+            if abs(new - cur) < 1:
                 break
-            self.set_control(cam_id, "exposure", new_us)
-            cur = new_us
+            self.set_control(cam_id, adjust, new)
+            cur = new
             time.sleep(0.4)
             reading = _read() or reading
-            steps.append({"exposure_us": round(cur), "luma": round(reading.luma, 1)})
+            knob = "gain" if adjust == "gain" else "exposure_us"
+            steps.append({knob: round(cur * step_scale), "luma": round(reading.luma, 1)})
+
+        # 보고에는 두 손잡이의 최종값을 다 싣는다 — 화면이 "무엇이 움직였나"를
+        # 말하려면 안 움직인 쪽 값도 알아야 한다.
+        _, exp_hi, exp_raw = self._control_range(cam_id, "exposure",
+                                                 fallback=(1.0, 165000.0, 0.0))
+        gain_now = self._control_range(cam_id, "gain", fallback=(0.0, 128.0, 0.0))[2]
+        wb_now = self._control_range(cam_id, "white_balance",
+                                     fallback=(2800.0, 6500.0, 4600.0))[2]
+        exp_us = exp_raw * exposure_unit_scale(exp_hi)
 
         ok, verdict = reading.verdict(target)
-        logger.info("회색 카드 보정 %s: %s (노출 %.0fus, 밝기 %.0f, 치우침 %.1f%%)",
-                    serial, verdict, cur, reading.luma, reading.neutral_error_pct)
-        return {"ok": ok, "verdict": verdict, "target": target,
+        logger.info("회색 카드 보정 %s (%s): %s (노출 %.0fus, gain %.0f, WB %.0fK, 밝기 %.0f, 치우침 %.1f%%)",
+                    serial, adjust, verdict, exp_us, gain_now, wb_now,
+                    reading.luma, reading.neutral_error_pct)
+        return {"ok": ok, "verdict": verdict, "target": target, "adjust": adjust,
                 "before": before.to_dict(), "after": reading.to_dict(),
-                "exposure_us": round(cur), "steps": steps,
+                "exposure_us": round(exp_us), "gain": round(gain_now),
+                "white_balance": round(wb_now), "steps": steps,
                 "roi": list(roi) if roi else list(gc.center_roi(
                     dev.get_frame("color").shape))}
 
@@ -1061,13 +1123,22 @@ class RealSenseHub:
                 "frame": [int(frame.shape[1]), int(frame.shape[0])],
                 "roi": list(roi) if roi else list(gc.center_roi(frame.shape))}
 
-    def _exposure_range(self, cam_id: str) -> tuple[float, float, float]:
-        """`(min, max, 현재)` 노출. 못 읽으면 넓게 잡되 현재값은 보수적으로."""
+    def _control_range(self, cam_id: str, name: str,
+                       fallback: tuple[float, float, float]) -> tuple[float, float, float]:
+        """`(min, max, 현재)` 컨트롤 값. 못 읽으면 넓게 잡되 현재값은 보수적으로.
+
+        ⚠ `or` 로 빈 값을 거르면 안 된다 — gain 은 **0 이 유효값**이라 `0 or 16`
+        이 16 으로 둔갑한다. None 만 결측으로 친다.
+        """
+        def _num(v, d: float) -> float:
+            return d if v is None else float(v)
+
         for c in self.list_controls(cam_id):
-            if c.get("name") == "exposure":
-                return (float(c.get("min") or 1), float(c.get("max") or 165000),
-                        float(c.get("value") or 1000))
-        return 1.0, 165000.0, 1000.0
+            if c.get("name") == name:
+                return (_num(c.get("min"), fallback[0]),
+                        _num(c.get("max"), fallback[1]),
+                        _num(c.get("value"), fallback[2]))
+        return fallback
 
     def set_background_mask(self, cam_id: str, enabled: bool,
                             far_mm=None, keep_unknown=None) -> tuple[bool, str]:

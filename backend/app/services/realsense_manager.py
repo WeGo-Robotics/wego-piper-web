@@ -103,9 +103,12 @@ class RealSenseHub:
                           default={"ok": False, "error": "rsd 가 응답하지 않습니다"}
                           ) or {"ok": False, "error": "응답 없음"}
 
-    def calibrate_gray_card(self, cam_id: str, roi=None, target=None) -> dict:
+    def calibrate_gray_card(self, cam_id: str, roi=None, target=None,
+                            adjust: str = "exposure") -> dict:
         # ⚠ 자동 수렴을 기다리므로 보통 RPC 보다 오래 걸린다 — 타임아웃을 넉넉히.
-        return self._call("calibrate_gray_card", cam_id, roi, target,
+        # ⚠ 인자가 하나 늘었다(adjust) — **옛 코드로 도는 rsd 는 이 호출을
+        #   TypeError 로 거절한다.** 배포 후 rsd 재시작이 필요하다 (유닛 낡은 코드).
+        return self._call("calibrate_gray_card", cam_id, roi, target, adjust,
                           default={"ok": False, "error": "rsd 가 응답하지 않습니다"},
                           timeout=30) or {"ok": False, "error": "응답 없음"}
 

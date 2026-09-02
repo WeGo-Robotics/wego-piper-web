@@ -95,20 +95,25 @@ def test_noise_alone_does_not_fail_a_good_card():
 
 # ── 데몬 절차 ────────────────────────────────────────────────────────────────
 
-def test_the_calibration_turns_auto_off_afterwards():
-    """⚠ 자동을 켜둔 채로는 **카드를 치우는 순간 다시 흔들린다.**
+def test_awb_is_never_trusted_and_wb_is_measured_directly():
+    """⚠ **AWB 의 수렴값은 읽을 수 없다** (실측 2026-09-02: 스트림을 켠 채
+    수렴시켜도 읽기는 수동 설정값 그대로, 끄면 그 값으로 돌아온다). "켜서
+    맞추고 꺼서 얼린다"는 WB 에서 거짓이었고, 그래서 모든 프로파일의 WB 가
+    공장값 4600 이었다 — 조명이 4600K 에서 멀어질수록 화면이 치우쳤다(푸르게).
 
-    잠그는 것이 "보정"의 실체다. 자동으로 맞추게 두는 것은 방법일 뿐이다.
+    새 계약: AWB 는 아예 켜지 않고, WB 는 카드의 R/B 균형으로 **직접 잰다.**
     """
     import inspect
 
     from piper_rs.hub import RealSenseHub
 
     src = inspect.getsource(RealSenseHub.calibrate_gray_card)
-    on = src.index('"enable_auto_white_balance", "enable_auto_exposure"')
-    off = src.index('"enable_auto_white_balance", "enable_auto_exposure"', on + 1)
-    assert ", 1)" in src[on:on + 200], "자동을 안 켜고 잰다"
-    assert ", 0)" in src[off:off + 200], "자동을 안 끈다 — 카드를 치우면 도로 흔들린다"
+    assert '"enable_auto_white_balance", 1' not in src, \
+        "AWB 를 다시 믿기 시작했다 — 수렴값이 읽히는지 실측부터 다시 하라"
+    assert '"enable_auto_white_balance", 0' in src, "AWB 를 꺼두지 않는다"
+    assert "white_balance_for" in src, "WB 를 직접 재서 맞추지 않는다"
+    # 노출 동결은 실측으로 성립한다(프로파일들의 노출이 제각각) — AE 는 켰다 끈다
+    assert '"enable_auto_exposure",' in src and '"enable_auto_exposure", 0' in src
 
 
 def test_an_unusable_reading_stops_before_changing_anything():
@@ -331,35 +336,31 @@ def test_the_result_box_says_it_is_not_saved():
     assert "실시간 보기" in box, "무엇이 되돌리는지 말하지 않는다"
 
 
-def test_the_save_button_is_inside_the_modal():
-    """⚠ 설정 패널은 `fixed inset-0` 모달이라 **페이지 본문을 덮는다.**
-    프로파일 바는 그 아래에 있어서 "아래에서 저장하세요" 는 못 누르는 곳을
-    가리키는 말이었다."""
+def test_the_modal_saves_nothing_and_points_to_the_profile_tab():
+    """저장 버튼이 모달 안에 **있던** 적이 있다 — 그때는 프로파일 바가 페이지
+    본문에 있어 모달(`fixed inset-0`)이 덮었기 때문이다. 프로파일 편집 **탭**이
+    생기면서 저장 경로가 둘이 됐고, 사용자 결정(2026-09-02)으로 탭 하나만
+    남겼다. 모달은 저장하지 않는다 — 대신 탭을 가리키고, 캡처가 **장치값**을
+    읽으므로 창을 닫아도 값이 남는다는 것까지 말한다."""
     from pathlib import Path
 
     page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
             / "CamerasPage.tsx").read_text()
     modal = page.split("{settingsCamera && (", 1)[1]
-    assert "captureProfile(activeProfile)" in modal, "모달 안에 저장 경로가 없다"
+    assert "captureProfile" not in modal, \
+        "모달에 저장 경로가 다시 생겼다 — 결정이 뒤집혔으면 이 테스트도 같이 고쳐라"
+    assert "[프로파일] 탭에서 캡처" in modal, "저장이 어디로 갔는지 말하지 않는다"
     assert "fixed inset-0" in modal.split("\n", 2)[1], "모달이 아니라면 이 테스트를 다시 판단하라"
 
 
-def test_the_button_names_where_it_saves():
-    """"프로파일로 저장" 만으로는 **어느** 프로파일인지 알 수 없다."""
+def test_the_hint_names_the_active_profile_when_there_is_one():
+    """"프로파일 탭에서 캡처" 만으로는 **어디에 덮어쓸지** 알 수 없다 —
+    활성이 있으면 그 이름을 대고, 없어도 문장이 성립해야 한다."""
     from pathlib import Path
 
     page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
             / "CamerasPage.tsx").read_text()
-    assert "'${activeProfile}' 에 저장" in page
-
-
-def test_no_active_profile_says_what_to_do_instead():
-    """활성 프로파일이 없으면 덮어쓸 대상이 없다 — 그때는 이름을 지어야 한다."""
-    from pathlib import Path
-
-    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
-            / "CamerasPage.tsx").read_text()
-    assert "활성 프로파일이 없습니다" in page
+    assert "activeProfile && ` (활성 '${activeProfile}'" in page
 
 
 def test_the_active_name_is_readable_without_changing_it():
@@ -367,3 +368,85 @@ def test_the_active_name_is_readable_without_changing_it():
     router = (Path(__file__).resolve().parents[2] / "backend" / "app" / "routers"
               / "cameras.py").read_text()
     assert '@router.get("/profiles/active")' in router
+
+
+def test_calibration_can_lock_exposure_and_adjust_gain_only():
+    """노출은 모션 블러와 프레임 예산(긴 노출 = fps 상한)을 정한다 — 먼저 정해
+    두고 밝기는 gain 으로만 잡는 선택지가 있어야 한다. gain 모드는 자동 노출을
+    **아예 켜지 않는다**: 1단계에서 AE 를 켜는 순간 노출이 움직여 "고정"이
+    거짓말이 된다."""
+    root = Path(__file__).resolve().parents[2]
+    hub = (root / "rs" / "piper_rs" / "hub.py").read_text()
+    assert 'adjust: str = "exposure"' in hub, "손잡이 선택이 없다"
+    assert '0 if adjust == "gain" else 1' in hub, "gain 모드가 AE 를 얼리지 않는다"
+
+    page = (root / "frontend" / "src" / "pages" / "CamerasPage.tsx").read_text()
+    assert "gainOnly ? 'gain' : 'exposure'" in page, "화면이 손잡이를 안 보낸다"
+    assert "노출 고정" in page
+
+
+def test_an_unknown_adjust_knob_is_rejected():
+    """오타(`gian`)가 조용히 exposure 로 굴러가면 사용자는 노출이 고정된 줄
+    알고 노출이 움직인 데이터를 찍는다 — 스키마가 거절한다."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    r = TestClient(app).post("/api/cameras/x/calibrate-gray-card", json={"adjust": "iso"})
+    assert r.status_code == 422
+
+
+def test_zero_gain_is_a_value_not_a_missing_reading():
+    """⚠ RealSense gain 은 **0 이 유효값**이다. `value or fallback` 패턴은
+    0 을 결측으로 삼켜 16 으로 둔갑시킨다 — 비례 보정의 출발점이 틀어진다."""
+    hub = (Path(__file__).resolve().parents[2] / "rs" / "piper_rs" / "hub.py").read_text()
+    body = hub.split("def _control_range", 1)[1].split("def ", 1)[0]
+    assert 'c.get("value") or' not in body, "or 패턴이 돌아왔다 — 0 을 삼킨다"
+    assert "None" in body
+
+
+def test_image_controls_accept_typed_numbers():
+    """범위가 1~16000 인 노출을 슬라이더로 딱 맞추는 것은 손 떨림 게임이다 —
+    숫자를 쳐 넣고 Enter 로 커밋할 수 있어야 하고, 범위 밖 입력은 클램프한다."""
+    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+            / "CamerasPage.tsx").read_text()
+    assert 'type="number"' in page and "onBlur" in page
+    assert "Math.min(ctrl.max, Math.max(ctrl.min" in page, "클램프가 없다"
+
+
+def test_calibration_refreshes_the_image_controls_below():
+    """보정은 노출·gain·WB·자동 스위치를 전부 움직인다 — 아래 "이미지 조정"
+    목록은 모달을 열 때 한 번만 읽으므로, 보정 직후 다시 읽지 않으면 옛 값이
+    남아 "보정이 안 먹었나"로 읽힌다."""
+    src = (_SRC / "pages" / "CamerasPage.tsx").read_text()
+    body = src.split("const calibrateGrayCard", 1)[1].split("\n  }", 1)[0]
+    assert "/controls`" in body and "setControls" in body, "보정 후 컨트롤을 안 다시 읽는다"
+
+
+def test_wb_correction_moves_toward_neutral_and_is_damped():
+    """푸른 카드(B>R)면 설정 K 를 올리고, 붉으면 내린다. 한 걸음의 배율을
+    제한한다 — 반사로 튄 측정 한 번이 설정을 끝까지 밀면 안 된다."""
+    blue = G.measure(card(118, b=140, r=100))
+    up = G.white_balance_for(blue, 4600)
+    assert up > 4600, "푸른데 K 를 안 올린다 — 방향이 뒤집혔다"
+
+    red = G.measure(card(118, b=100, r=140))
+    down = G.white_balance_for(red, 4600)
+    assert down < 4600, "붉은데 K 를 안 내린다"
+
+    # 극단 측정도 한 걸음은 1.6배 이내
+    very_blue = G.measure(card(118, b=250, r=20))
+    assert G.white_balance_for(very_blue, 4000) <= 4000 * 1.6 + 1
+
+
+def test_wb_stays_inside_the_device_range():
+    blue = G.measure(card(118, b=140, r=100))
+    assert G.white_balance_for(blue, 6400, 2800, 6500) == 6500
+    red = G.measure(card(118, b=100, r=140))
+    assert G.white_balance_for(red, 2900, 2800, 6500) == 2800
+
+
+def test_a_neutral_card_leaves_wb_alone():
+    """맞아 있는 것을 흔들면 보정이 수렴하지 않는다."""
+    neutral = G.measure(card(118))
+    assert abs(G.white_balance_for(neutral, 4600) - 4600) < 20

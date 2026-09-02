@@ -56,6 +56,54 @@ for _sw, _deps in AUTO_SWITCHES.items():
     for _d in _deps:
         _LOCKED_BY.setdefault(_d, set()).add(_sw)
 
+# 컨트롤 표시 단위 — 화면이 값 옆에 붙인다. **규격·실측이 정한 사실만** 적는다:
+# V4L2 의 exposure*_absolute 는 100µs 단위(V4L2_CID_EXPOSURE_ABSOLUTE 규격 —
+# 333 이면 33.3ms), white balance 는 켈빈. 단위를 모르는 컨트롤에는 안 붙인다 —
+# 틀린 단위는 없는 단위보다 나쁘다.
+#
+# ⚠ RealSense 의 `exposure` 는 여기 없다 — **센서마다 단위가 달라** 이름만으로
+#   못 정한다. `unit_for()` 가 범위를 보고 가른다.
+CONTROL_UNITS: dict[str, str] = {
+    "exposure_time_absolute": "×100µs",
+    "exposure_absolute": "×100µs",       # 구형 커널 이름
+    "white_balance_temperature": "K",
+    "white_balance": "K",                # RealSense
+}
+
+
+def exposure_unit_scale(max_value) -> int:
+    """RealSense `exposure` 를 µs 로 환산할 때 곱하는 배율.
+
+    같은 이름인데 **센서마다 단위가 다르다** (실측 2026-09-02):
+
+    - D415/D435/D455 의 RGB 센서: max 10000, **100µs 단위** (값 266 = 26.6ms.
+      µs 로 읽으면 최대 노출이 10ms 라는 뜻이 되는데, 그런 카메라는 없다)
+    - 스테레오 모듈 — 깊이, 그리고 **RGB 센서가 없는 D405 의 컬러**: max 165000, **µs**
+
+    모델명 목록 대신 **범위로 가른다.** 장치가 스스로 신고하는 값이라 새 모델에도
+    맞을 가능성이 높고, 틀려도 range 를 보라는 단서가 남는다. 경계 2만은 두 세계
+    (1만 / 16.5만) 사이 어디든 상관없는 값이다.
+    """
+    if max_value is None:
+        return 1
+    try:
+        return 100 if float(max_value) <= 20000 else 1
+    except (TypeError, ValueError):
+        return 1
+
+
+def unit_for(ctrl: dict) -> str | None:
+    """컨트롤 하나의 표시 단위. 모르면 None — 지어내지 않는다."""
+    name = ctrl.get("name", "")
+    if name == "exposure":               # RealSense — 범위가 단위의 지문이다
+        return "×100µs" if exposure_unit_scale(ctrl.get("max")) == 100 else "µs"
+    return CONTROL_UNITS.get(name)
+
+# 종속 컨트롤 전체 — capture 가 "default 와 같아도 저장" 판정에 쓴다.
+# 스위치만 저장하고 값을 빼면 프로파일 **전환**이 완결되지 않는다: 야간(노출 2000)
+# 적용 뒤 주간(노출=default 라 미저장)을 적용하면 2000 이 잔류한다 (camera-profiles.md G2).
+DEPENDENT_CONTROLS: frozenset = frozenset(_LOCKED_BY)
+
 # v4l2 menu 스위치의 "수동" 값. bool(type 2)은 0 이 수동이라 표가 필요 없다.
 _MENU_MANUAL = {
     "auto_exposure": 1,      # V4L2_EXPOSURE_MANUAL
@@ -67,6 +115,15 @@ OK = "ok"
 LOCKED = "locked"    # 자동 모드가 잠갔다 — 실패가 아니다
 FAILED = "failed"
 SKIPPED = "skipped"  # 장치에 없거나 readonly
+
+
+def manual_switch_value(name: str) -> int:
+    """장치 없이 **프로파일 값만 보고** 스위치의 수동 값을 판정할 때 쓴다.
+
+    menu 스위치(auto_exposure 계열)는 1 = Manual, bool 스위치는 0 이 수동이다.
+    장치가 있으면 `manual_value(ctrl)` 를 쓴다 — 그쪽은 범위 검증까지 한다.
+    """
+    return _MENU_MANUAL.get(name, 0)
 
 
 def manual_value(ctrl: dict) -> int | None:

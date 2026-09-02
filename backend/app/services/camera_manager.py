@@ -390,7 +390,21 @@ class CameraManager:
         cam = self.cameras.get(cam_id)
         if not cam:
             return []
-        return cam.get_controls()
+        controls = cam.get_controls()
+        # 표시 단위를 붙인다. 데몬이 아니라 **게이트웨이에서** — 단위 표기를
+        # 고치자고 장치를 쥔 데몬을 재시작(스트림 끊김)할 이유가 없다.
+        # 지식 자체는 piper_cam.controls 한 곳이다 (조회·리셋 두 라우트가 다 지난다).
+        # RealSense `exposure` 는 센서마다 단위가 달라 범위로 가른다(unit_for).
+        try:
+            from piper_cam.controls import unit_for
+
+            for c in controls or []:
+                unit = unit_for(c)
+                if unit:
+                    c["unit"] = unit
+        except Exception:
+            pass          # 단위는 장식이다 — 이것 때문에 컨트롤 목록이 죽으면 안 된다
+        return controls
 
     def set_control(self, cam_id: str, name: str, value: float) -> bool:
         cam = self.cameras.get(cam_id)
