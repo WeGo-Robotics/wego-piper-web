@@ -308,6 +308,10 @@ export default function RobotsPage() {
   const motionPollRef = useRef<ReturnType<typeof setInterval>>(undefined)
   const [zeroIface, setZeroIface] = useState<string | null>(null)
   const [parkingIface, setParkingIface] = useState<string | null>(null)
+  // 조작(조그)은 **모달**로 띄운다. 행 아래로 펼치면 긴 목록에서 다른 팔 행이
+  // 밀려 내려가고, 팔을 실제로 움직이는 조작은 화면이 그 팔 하나에 고정되는 게
+  // 맞다 — 영점·파킹 모달과 같은 판단이다.
+  const [jogIface, setJogIface] = useState<string | null>(null)
   const [usbModalOpen, setUsbModalOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   // CAN 관리
@@ -872,9 +876,9 @@ export default function RobotsPage() {
                       영점(HW)</button>
                   )}
                   {arm.connected && (
-                    <button onClick={() => setExpandedArm(expandedArm === arm.iface ? null : arm.iface)}
-                      className={`px-3 py-1 text-xs rounded ${expandedArm === arm.iface
-                        ? 'bg-amber-600 text-white' : 'bg-neutral-700 hover:bg-amber-600 text-neutral-300 hover:text-white'}`}>
+                    <button onClick={() => setJogIface(arm.iface)}
+                      className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-amber-600
+                                 text-neutral-300 hover:text-white">
                       조작</button>
                   )}
                   <button onClick={() => handleUnregister(arm.iface)}
@@ -882,23 +886,50 @@ export default function RobotsPage() {
                 </div>
               </div>
 
-              {expandedArm === arm.iface && arm.connected && (
-                <div className="border-t border-green-500/20 p-3 space-y-3 bg-neutral-900/50">
-                  <JogPanel
-                    iface={arm.iface}
-                    commandable={arm.role === 'follower'}
-                    reason={arm.role === 'leader'
-                      ? '마스터(리더)는 외부 명령을 무시합니다 — 이 팔로 팔로워를 끄세요'
-                      : '역할을 모릅니다 — 먼저 [찾기] 로 판별하세요'}
-                    leader={leaderFor(arm.side)}
-                    side={arm.side} />
-                </div>
-              )}
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* 조작(조그) 모달 — 행 아래 펼침이었는데 긴 목록에서 다른 팔 행이 밀려
+          내려갔다. 팔이 사라지거나 연결이 끊기면 조건이 깨져 스스로 닫힌다. */}
+      {(() => {
+        const arm = jogIface ? readyArms.find((a) => a.iface === jogIface) : null
+        if (!arm || !arm.connected) return null
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+               onClick={() => setJogIface(null)}>
+            <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-lg border
+                            border-neutral-700 bg-neutral-900 p-5 space-y-3"
+                 onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-neutral-100">
+                    조작 — {arm.iface}
+                  </h2>
+                  <p className="text-xs text-neutral-400">
+                    {arm.role}{arm.side ? ` · ${arm.side === 'left' ? '왼팔' : '오른팔'}` : ''}
+                    {' '}— 팔이 실제로 움직입니다
+                  </p>
+                </div>
+                <button onClick={() => setJogIface(null)}
+                        className="shrink-0 rounded px-2 py-1 text-sm text-neutral-400 hover:text-white">
+                  닫기
+                </button>
+              </div>
+              <JogPanel
+                iface={arm.iface}
+                commandable={arm.role === 'follower'}
+                reason={arm.role === 'leader'
+                  ? '마스터(리더)는 외부 명령을 무시합니다 — 이 팔로 팔로워를 끄세요'
+                  : '역할을 모릅니다 — 먼저 [찾기] 로 판별하세요'}
+                leader={leaderFor(arm.side)}
+                side={arm.side} />
+            </div>
+          </div>
+        )
+      })()}
 
       {/* 하드웨어 영점 모달 — 파킹 보정(소프트웨어)과 **다른 물건**이다 */}
       {zeroIface && (
