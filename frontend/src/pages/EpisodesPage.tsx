@@ -87,6 +87,43 @@ type EpisodeRow = {
 
 type Segment = [number, number, number]
 
+type FrameLightInfo = {
+  luma: number; sat_pct: number; dark_pct: number; log_rg: number; log_bg: number
+}
+
+/**
+ * 보고 있는 프레임의 조명 (feature/lighting-watch.md §5 "에피소드 뷰어").
+ *
+ * **라이브 알람과 같은 자**로 서버가 잰다 — 저장할 때 기록한 게 아니라 볼 때
+ * 재는 것이라 옛 데이터셋에도 나온다. 응답이 불변 캐시라 재방문은 공짜다.
+ * 재생 중에는 프레임이 계속 바뀌므로 250ms 멈췄을 때만 묻는다 — 뜯어보는
+ * 화면이지 실시간 계기판이 아니다. 캐시가 없으면(404) 조용히 숨는다.
+ */
+function FrameLight({ dsId, ep, cam, frame }: {
+  dsId: string; ep: number; cam: string; frame: number
+}) {
+  const [info, setInfo] = useState<FrameLightInfo | null>(null)
+  useEffect(() => {
+    setInfo(null)
+    const t = setTimeout(() => {
+      api.get<FrameLightInfo>(
+        `/datasets/${dsId}/episodes/${ep}/frames/${cam}/${frame}/light`)
+        .then(setInfo).catch(() => {})
+    }, 250)
+    return () => clearTimeout(t)
+  }, [dsId, ep, cam, frame])
+  if (!info) return null
+  const s = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`
+  return (
+    <span className="tabular-nums text-neutral-400"
+          title={`이 프레임 — 밝기 ${info.luma}/255 · 포화 ${info.sat_pct}% · 암부 ${info.dark_pct}%
+색 비율(log₂): R/G ${s(info.log_rg)} · B/G ${s(info.log_bg)}`}>
+      ☀ {Math.round((info.luma / 255) * 100)}%
+      <span className="ml-1 text-neutral-500">R/G {s(info.log_rg)}</span>
+    </span>
+  )
+}
+
 export default function EpisodesPage() {
   const { notify, confirm: askConfirm } = useSystemMessage()
   const notifyError = (text: string) => notify({ level: 'error', text, source: '에피소드' })
@@ -1007,6 +1044,7 @@ export default function EpisodesPage() {
                   )}
                   <figcaption className="text-xs text-neutral-500 mt-1 flex items-center gap-2">
                     {cam}
+                    {ep != null && <FrameLight dsId={dsId} ep={ep} cam={cam} frame={frame} />}
                     {yoloTarget && (
                       <button onClick={() => void captureToYolo(cam)}
                         title={`이 장면을 ${yoloTarget} 검출 데이터셋으로 캡처`}

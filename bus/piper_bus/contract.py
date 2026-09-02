@@ -161,6 +161,27 @@ def vision_name(key: str) -> str:
     return key[len(VISION_PREFIX) + 1:]
 
 
+# ── 조명 측정 (게이트웨이 샘플러 → 소비자) ──────────────────────────────────
+#
+# vision 과 같은 규칙: 최신값 덮어쓰기 + TTL, payload 의 `ts` 로 신선도 재판단.
+# payload 는 **원시 특징**만이다 (`piper_cam.lighting.features` 의 모양) —
+# EWMA·임계 같은 판정 상태는 알람 소비자의 내부 사정이라 계약에 없다
+# (feature/lighting-watch.md §5). 소비자는 이 키에만 의존한다 — 발행자가
+# 게이트웨이에서 다른 프로세스로 옮겨 가도 계약은 불변.
+LIGHT_PREFIX: Final = _k("light")
+LIGHT_PATTERN: Final = f"{LIGHT_PREFIX}:*"
+# 샘플 주기가 2초라 vision(3초)보다 길게 — 한 틱 밀렸다고 만료되면 깜빡인다.
+LIGHT_TTL_MS: Final = 6000
+
+
+def light_key(name: str) -> str:
+    return f"{LIGHT_PREFIX}:{name}"
+
+
+def light_name(key: str) -> str:
+    return key[len(LIGHT_PREFIX) + 1:]
+
+
 # yolod 자기소개 — 어떤 모델·설정으로 돌고 있나 (프로세스당 하나, 카메라별 아님).
 # ⚠ VISION_PREFIX 아래 두면 `detection_names()` 스캔에 "meta" 카메라로 잡힌다 —
 # 접두사를 분리한다. yolod 가 루프마다 갱신하고 TTL 이 죽은 데몬의 낡은 정보를 지운다.

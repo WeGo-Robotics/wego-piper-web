@@ -277,6 +277,14 @@ class DeviceWatch:
         out: list[Alert] = []
         out += self._robots()
         out += self._cameras()
+        # 조명 경보도 같은 목록에 합류한다 — add/clear 전이, WS 방송, 재연결 시
+        # 목록 재조회까지 전부 공짜로 얻는다 (feature/lighting-watch.md §5).
+        # 판정은 light_watch 가 한다. 여기는 목록만 받는다.
+        try:
+            from app.services.light_watch import light_watch
+            out += light_watch.alerts()
+        except Exception as exc:
+            logger.debug("조명 경보 합류 실패: %s", exc)
         return out
 
     def _robots(self) -> list[Alert]:

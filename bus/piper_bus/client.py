@@ -275,6 +275,27 @@ class Bus:
             C.vision_name(k) for k in self.r.scan_iter(match=C.VISION_PATTERN)
         )
 
+    # ── 조명 측정 (게이트웨이 샘플러 → 소비자) ──
+
+    def put_light(self, name: str, payload: dict) -> None:
+        """최신 조명 특징으로 덮어쓴다. vision 과 같은 규칙 (계약 주석 참고)."""
+        self.r.set(C.light_key(name), json.dumps(payload), px=C.LIGHT_TTL_MS)
+
+    def get_light(self, name: str) -> dict | None:
+        raw = self.r.get(C.light_key(name))
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def light_names(self) -> list[str]:
+        """살아 있는(TTL 안 지난) 조명 측정 카메라 이름."""
+        return sorted(
+            C.light_name(k) for k in self.r.scan_iter(match=C.LIGHT_PATTERN)
+        )
+
     def put_yolo_meta(self, meta: dict) -> None:
         """yolod 자기소개(모델·설정). 루프마다 갱신 — TTL 이 stale 판정을 대신한다."""
         self.r.set(C.YOLO_META, json.dumps(meta), px=C.YOLO_META_TTL_MS)

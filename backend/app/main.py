@@ -56,10 +56,17 @@ async def _watch_devices() -> None:
     """전이가 있을 때만 방송한다. 실패해도 게이트웨이를 죽이지 않는다."""
     from app.routers.ws import broadcast_device_alert
     from app.services.device_watch import device_watch
+    from app.services.light_watch import light_watch
 
     while True:
         try:
             await asyncio.sleep(_DEVICE_WATCH_S)
+            # 조명 샘플링을 **판정보다 먼저** — check() 의 _collect 가 이번 주기
+            # 측정의 경보를 가져간다. 프레임 읽기(memcpy)와 64×64 평균이라 싸다.
+            try:
+                await asyncio.to_thread(light_watch.sample)
+            except Exception as exc:
+                logger.debug("조명 감시 실패: %s", exc)
             added, cleared = await asyncio.to_thread(device_watch.check)
             if not added and not cleared:
                 continue

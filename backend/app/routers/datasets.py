@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from app.core.cli_mapping import build_edit_dataset_args
@@ -117,6 +117,37 @@ async def episode_frame(dataset_id: str, episode: int, cam: str, frame: int):
             # 캐시 프레임은 불변 — 재생 중 같은 프레임을 브라우저가 다시 받지 않게 한다
             return FileResponse(path, headers={"Cache-Control": "public, max-age=86400, immutable"})
     raise HTTPException(404, "디코딩 캐시에 프레임이 없습니다 — decode-cache 를 먼저 생성하세요")
+
+
+@router.get("/{dataset_id:path}/episodes/{episode}/frames/{cam}/{frame}/light")
+async def episode_frame_light(dataset_id: str, episode: int, cam: str, frame: int):
+    """보고 있는 프레임의 조명 측정 (feature/lighting-watch.md §5).
+
+    **라이브 알람과 같은 자**(`piper_cam.lighting.features`)로 잰다 — 저장할 때
+    기록하지 않고 볼 때 재므로 이미 수집한 데이터셋에도 소급 적용된다.
+    캐시 프레임이 불변이라 측정값도 불변 — 이미지와 같은 캐시 정책을 준다.
+    """
+    ds_path = find_dataset_path(dataset_id)
+    if not ds_path:
+        raise HTTPException(404, "Dataset not found")
+    key = cam if cam.startswith("observation.images.") else f"observation.images.{cam}"
+    ep_dir = ds_path / "images" / key / f"episode-{episode:06d}"
+    path = next((p for ext in ("jpg", "png")
+                 if (p := ep_dir / f"frame-{frame:06d}.{ext}").exists()), None)
+    if path is None:
+        raise HTTPException(404, "디코딩 캐시에 프레임이 없습니다 — decode-cache 를 먼저 생성하세요")
+
+    def _measure() -> dict | None:
+        import cv2
+        from piper_cam.lighting import features
+
+        img = cv2.imread(str(path))          # cv2 디코드 = BGR — 라이브러리 입력 규약
+        return None if img is None else features(img)
+
+    feats = await asyncio.to_thread(_measure)
+    if feats is None:
+        raise HTTPException(500, "프레임을 디코드하지 못했습니다")
+    return JSONResponse(feats, headers={"Cache-Control": "public, max-age=86400, immutable"})
 
 
 @router.get("/{dataset_id:path}/videos/{cam}/{chunk}/{file}")
