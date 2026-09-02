@@ -59,6 +59,36 @@ def gpus() -> list[dict]:
     return rows
 
 
+# CPU 사용률은 /proc/stat 두 번의 **차분**이다. 직전 스냅숏(busy, total)을 들고 있다가
+# 다음 호출에서 그 사이 구간의 사용률을 낸다 — 첫 호출은 기준점만 잡고 None.
+_prev_cpu: tuple[int, int] | None = None
+
+
+def cpu_pct() -> float | None:
+    """전체 코어 평균 CPU 사용률(%). 직전 호출 이후 구간 기준. 못 읽으면 None."""
+    global _prev_cpu
+    try:
+        with open("/proc/stat") as f:
+            parts = f.readline().split()
+    except OSError as e:
+        logger.warning("/proc/stat 읽기 실패: %s", e)
+        return None
+    if not parts or parts[0] != "cpu":
+        return None
+    vals = [int(x) for x in parts[1:] if x.isdigit()]
+    if len(vals) < 5:
+        return None
+    idle = vals[3] + vals[4]              # idle + iowait
+    total = sum(vals)
+    prev, _prev_cpu = _prev_cpu, (total - idle, total)
+    if prev is None:
+        return None
+    dt = total - prev[1]
+    if dt <= 0:
+        return None
+    return round(((total - idle) - prev[0]) / dt * 100, 1)
+
+
 def disk(path: str) -> dict | None:
     """한 경로의 디스크 여유. 못 읽으면 None."""
     try:

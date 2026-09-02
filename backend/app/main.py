@@ -136,7 +136,12 @@ async def lifespan(app: FastAPI):
     # 장치 사라짐 감시. **주기적으로 장치를 열거하지 않는다** — `/dev/shm` 을
     # 훑어 발행이 끊겼는지만 본다(세그먼트 = 임대권). RPC 도 안 타므로 2초 주기가 싸다.
     watch_task = asyncio.create_task(_watch_devices())
+    # 자원 추이 샘플러 — 대시보드가 로딩 때 지난 15분을 받아 가려면
+    # 아무도 안 보는 동안에도 서버가 쌓고 있어야 한다.
+    from app.services import trends
+    trend_task = asyncio.create_task(trends.run_sampler())
     yield
+    trend_task.cancel()
     watch_task.cancel()
     await param_bridge.close()
 

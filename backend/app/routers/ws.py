@@ -5,6 +5,7 @@ import re
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core import ws_messages as M
+from app.services import trends
 from app.services.estop_bridge import estop_bridge
 from app.services.process_manager import ProcessState, process_manager
 from app.services.training import train_manager
@@ -78,6 +79,9 @@ def _setup_callbacks() -> None:
                 data = json.loads(clean_line)
                 msg_type = data.get("t")
                 if msg_type == "telemetry":
+                    # 추이 그래프용 — 샘플러가 4초마다 마지막 값을 줍는다
+                    if isinstance(data.get("fps"), (int, float)):
+                        trends.note_fps(data["fps"])
                     asyncio.run_coroutine_threadsafe(
                         broadcast({"type": M.TELEMETRY, "data": data}), loop
                     )
@@ -94,6 +98,7 @@ def _setup_callbacks() -> None:
         m = _RE_FPS.search(clean_line)
         if m:
             _server_telemetry["fps"] = float(m.group(1))
+            trends.note_fps(_server_telemetry["fps"])
 
         m = _RE_OBS.search(clean_line)
         if m:

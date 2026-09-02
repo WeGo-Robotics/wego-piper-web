@@ -92,7 +92,7 @@ def test_resources_survive_a_stuck_driver(client):
 
     r = client.get("/api/system/resources")
     assert r.status_code == 200
-    assert set(r.json()) == {"gpus", "disks"}
+    assert set(r.json()) == {"gpus", "disks", "cpu_pct", "samples"}
 
 
 def test_a_machine_without_a_gpu_is_not_an_error(client):
@@ -103,6 +103,55 @@ def test_a_machine_without_a_gpu_is_not_an_error(client):
     src = (Path(resources.__file__)).read_text()
     assert "FileNotFoundError" in src, "nvidia-smi 가 없는 경우를 안 다룬다"
     assert "return []" in src, "실패를 예외로 올린다"
+
+
+def test_the_trend_graph_is_full_on_page_load(client):
+    """⚠ 추이는 **서버가 쌓는다.** 브라우저가 쌓으면 페이지를 연 순간부터만
+    보이는데, 그래프를 보러 오는 이유는 대개 "아까 무슨 일이 있었나"다.
+    `since` 없이 부르면 창 전체가 오고, `since` 를 주면 새 견본만 온다.
+    """
+    from app.services import trends
+
+    old = list(trends._samples)
+    trends._samples.clear()
+    try:
+        trends._samples.extend([
+            {"t": 100.0, "cpu_pct": 10.0, "fps": None, "gpus": []},
+            {"t": 104.0, "cpu_pct": 20.0, "fps": 29.8, "gpus": []},
+        ])
+        full = client.get("/api/system/resources").json()
+        assert [s["t"] for s in full["samples"]] == [100.0, 104.0], "로딩 때 창 전체가 안 온다"
+        inc = client.get("/api/system/resources", params={"since": 100.0}).json()
+        assert [s["t"] for s in inc["samples"]] == [104.0], "since 이후 것만 와야 한다"
+    finally:
+        trends._samples.clear()
+        trends._samples.extend(old)
+
+
+def test_a_sample_records_what_the_charts_draw():
+    """견본 한 점에는 CPU·GPU(사용률+메모리%)·추론 fps 가 다 들어간다 —
+    차트 세 개가 같은 버퍼를 그린다. fps 는 텔레메트리가 **최근에** 지나갔을
+    때만 값이고, 멈춘 지 오래면 None 이라 그래프가 거기서 끊긴다."""
+    import time as _time
+
+    from app.services import trends
+
+    trends.note_fps(30.2)
+    s = trends._take_sample()
+    assert set(s) == {"t", "cpu_pct", "fps", "gpus"}
+    assert s["fps"] == 30.2
+    # 오래된 fps 는 줍지 않는다
+    trends._last_fps = (_time.monotonic() - trends.SAMPLE_INTERVAL_S * 3, 30.2)
+    assert trends._take_sample()["fps"] is None
+    trends._last_fps = None
+
+
+def test_the_sampler_does_not_double_the_nvidia_smi_calls():
+    """⚠ nvidia-smi 는 드라이버가 걸리면 멈추는 물건이라 **호출 횟수가 곧
+    위험**이다. 샘플러가 4초마다 이미 부르는데 대시보드 폴링이 또 부르면
+    두 배로 찌른다 — 라우터는 샘플러의 마지막 견본을 재사용해야 한다."""
+    src = (Path(__file__).resolve().parents[1] / "app" / "routers" / "system.py").read_text()
+    assert "latest_gpus()" in src, "라우터가 nvidia-smi 를 직접만 부른다"
 
 
 def test_one_failed_call_does_not_blank_the_dashboard():

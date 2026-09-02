@@ -1,7 +1,8 @@
 import { Link } from 'react-router-dom'
 import { useActivity } from '../hooks/useActivity'
 import { useDeviceSummary } from '../hooks/useDeviceSummary'
-import { ageText, useSystemStatus } from '../hooks/useSystemStatus'
+import { ageText, TREND_WINDOW_S, useSystemStatus } from '../hooks/useSystemStatus'
+import type { TrendSample } from '../hooks/useSystemStatus'
 
 /**
  * 대시보드 — **"지금 괜찮은가, 아니면 어디가 문제인가"** 하나에만 답한다.
@@ -37,6 +38,79 @@ function Card({ title, to, children }: {
   )
 }
 
+type Series = {
+  label: string
+  /** 선 색 (svg stroke). 범례 막대에도 그대로 쓴다. */
+  color: string
+  pick: (s: TrendSample) => number | null
+}
+
+/**
+ * 최근 15분 추이 — 2D 라인 차트 (x=시간, y=값).
+ *
+ * "지금 몇 %"(막대)는 순간이고, 문제는 **추세**에서 보인다 — GPU 메모리 선이
+ * 슬금슬금 오르면 곧 OOM 이고, fps 가 흘러내리면 카메라·USB 문제의 전조다.
+ *
+ * 견본은 **서버가 쌓는다**(`useSystemStatus` 참고) — 페이지를 연 순간 이미
+ * 15분치가 있다. x 축 오른끝은 마지막 견본의 t 다. 클라이언트 시계를 쓰면
+ * 서버와 시각이 어긋난 만큼 그래프가 통째로 밀린다.
+ *
+ * ⚠ 인라인 SVG 로 그린다. Plotly 는 청크가 4.6MB 라 첫 화면인 대시보드에
+ *   실을 물건이 아니다.
+ */
+function TrendChart({ samples, series, yMax = 100, caption }: {
+  samples: TrendSample[]; series: Series[]; yMax?: number; caption: string
+}) {
+  const W = 400
+  const H = 80
+  // 점 하나로는 선이 안 된다 — 견본이 쌓이면 나타난다
+  if (samples.length < 2) return null
+  const t1 = samples[samples.length - 1].t
+  const t0 = t1 - TREND_WINDOW_S
+  const x = (t: number) => ((t - t0) / TREND_WINDOW_S) * W
+  const y = (v: number) => H - (Math.min(yMax, Math.max(0, v)) / yMax) * H
+  const path = (pick: Series['pick']) => {
+    let d = ''
+    let prevT: number | null = null
+    for (const s of samples) {
+      if (s.t < t0) continue
+      const v = pick(s)
+      if (v == null) { prevT = null; continue }
+      // 견본(4초)이 세 번 넘게 빈 구간은 잇지 않는다 — 게이트웨이가 내려갔거나
+      // 값이 없던(추론 정지 등) 시간이고, 이어 그리면 그동안 평온했다는 거짓말이 된다
+      const move = prevT === null || s.t - prevT > 12
+      d += `${move ? 'M' : 'L'}${x(s.t).toFixed(1)},${y(v).toFixed(1)}`
+      prevT = s.t
+    }
+    return d
+  }
+  return (
+    <div className="mt-2">
+      <div className="flex items-center justify-between text-[10px] text-neutral-500">
+        <span>{caption}</span>
+        <span className="flex gap-2.5">
+          {series.map((sr) => (
+            <span key={sr.label} className="flex items-center gap-1">
+              <i className="inline-block h-0.5 w-3" style={{ background: sr.color }}
+                 aria-hidden /> {sr.label}
+            </span>
+          ))}
+        </span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
+           className="mt-1 h-20 w-full rounded border border-neutral-700/60 bg-neutral-900/60"
+           role="img" aria-label={`${series.map((sr) => sr.label).join('·')} 최근 15분 추이`}>
+        <line x1={0} y1={H / 2} x2={W} y2={H / 2} stroke="#404040"
+              strokeDasharray="3 5" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        {series.map((sr) => (
+          <path key={sr.label} d={path(sr.pick)} fill="none" stroke={sr.color}
+                strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+        ))}
+      </svg>
+    </div>
+  )
+}
+
 function Bar({ pct, warn }: { pct: number; warn?: boolean }) {
   return (
     <div className="h-1.5 w-full rounded bg-neutral-700">
@@ -47,7 +121,13 @@ function Bar({ pct, warn }: { pct: number; warn?: boolean }) {
 }
 
 export default function DashboardPage() {
-  const { units, gateway, gpus, disks, estop } = useSystemStatus()
+  const { units, gateway, gpus, disks, estop, cpu, samples } = useSystemStatus()
+
+  // 추론 fps 차트 — 창 안에 값이 하나라도 있어야 그린다. 방금 멈춘 추론의
+  // 꼬리도 보인다 — "왜 멈췄나"를 볼 때 정확히 필요한 구간이다.
+  const hasFps = samples.some((s) => s.fps != null)
+  const fpsMax = Math.max(10,
+    Math.ceil(Math.max(...samples.map((s) => s.fps ?? 0)) / 10) * 10)
   const devices = useDeviceSummary()
   const { running, labelOf } = useActivity()
 
@@ -97,6 +177,12 @@ export default function DashboardPage() {
                   </li>
                 ))}
               </ul>
+            )}
+            {hasFps && (
+              <TrendChart samples={samples} yMax={fpsMax}
+                          caption={`최근 15분 · 0–${fpsMax}fps`}
+                          series={[{ label: '추론 fps', color: '#34d399',
+                                     pick: (s) => s.fps }]} />
             )}
           </Card>
 
@@ -179,11 +265,28 @@ export default function DashboardPage() {
                     </span>
                   </div>
                   <Bar pct={g.util_pct ?? 0} />
+                  <TrendChart samples={samples} caption="최근 15분 · 0–100%"
+                              series={[
+                                { label: '사용률', color: '#3b82f6',
+                                  pick: (s) => s.gpus.find((x) => x.name === g.name)?.util_pct ?? null },
+                                { label: '메모리', color: '#a78bfa',
+                                  pick: (s) => s.gpus.find((x) => x.name === g.name)?.mem_pct ?? null },
+                              ]} />
                 </div>
               ))}
               {gpus.length === 0 && (
                 <p className="text-sm text-neutral-500">GPU 없음 — 학습·추론은 못 돈다</p>
               )}
+              <div>
+                <div className="mb-1 flex items-baseline justify-between text-sm">
+                  <span className="text-neutral-200">CPU</span>
+                  <span className="text-neutral-400">{cpu != null ? `${cpu}%` : '?'}</span>
+                </div>
+                <Bar pct={cpu ?? 0} />
+                <TrendChart samples={samples} caption="최근 15분 · 0–100%"
+                            series={[{ label: '사용률', color: '#3b82f6',
+                                       pick: (s) => s.cpu_pct }]} />
+              </div>
               {disks.map((d) => (
                 <div key={d.path}>
                   <div className="mb-1 flex items-baseline justify-between text-sm">

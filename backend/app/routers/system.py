@@ -20,21 +20,31 @@ router = APIRouter(prefix="/api/system", tags=["system"])
 
 
 @router.get("/resources")
-async def resources():
-    """GPU·디스크. **대시보드 전용이라 실패해도 200 이다.**
+async def resources(since: float | None = None):
+    """GPU·CPU·디스크 + 추이 견본. **대시보드 전용이라 실패해도 200 이다.**
 
     ⚠ `nvidia-smi` 는 드라이버가 걸리면 D-state 로 멈춘다 — D405 의 UVC 질의로
     똑같이 겪었고 그때 **이벤트 루프 전체가 먹통**이 됐다. `to_thread` 로 빼서
     루프를 막지 않고, 안에서 타임아웃을 건다. 자원 표시가 없는 것과 웹이 안 뜨는
     것은 비교할 일이 아니다.
+
+    GPU 는 샘플러(trends)가 4초마다 뜬 마지막 견본을 재사용한다 — 같은 위험한
+    호출을 폴링마다 또 하지 않기 위해서다. 샘플러가 아직 안 떴을 때만 직접 묻는다.
+
+    `samples` 는 서버가 쌓아 둔 최근 15분 추이다. `since`(epoch 초) 없이 부르면
+    창 전체가 온다 — **페이지 로딩 때 그래프가 처음부터 차 있는 이유다.**
+    이후 폴링은 마지막 견본의 `t` 를 `since` 로 넘겨 새 것만 받는다.
     """
     from app.core.config import settings
     from app.services import resources as res
+    from app.services import trends
 
-    gpu_list = await asyncio.to_thread(res.gpus)
+    gpu_list = trends.latest_gpus() or await asyncio.to_thread(res.gpus)
     disks = [d for d in (await asyncio.to_thread(res.disk, str(settings.datasets_dir)),)
              if d]
-    return {"gpus": gpu_list, "disks": disks}
+    return {"gpus": gpu_list, "disks": disks,
+            "cpu_pct": trends.latest_cpu(),
+            "samples": trends.samples(since)}
 
 
 @router.get("/services")
