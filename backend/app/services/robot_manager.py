@@ -106,6 +106,33 @@ def set_hardware_zero(iface: str, joint: str) -> dict | None:
     return _call("set_hardware_zero", iface, joint)
 
 
+# 리셋이 재동기화한 간극이 이보다 크면 사람에게 말한다. 관절 슬립(piper_sdk #120)의
+# 실용 임계 — 2° 면 파지 오차로 바로 드러나는 크기다.
+SLIP_WARN_DEG = 2.0
+
+
+def slip_warnings(report: list[dict]) -> list[str]:
+    """clear_errors 보고에서 슬립 경고 문구를 만든다. **문구는 여기서만** —
+    화면이 조립하면 한쪽만 고쳐져 어긋난다 (device_watch 와 같은 규칙).
+
+    슬립은 과부하로 보고 프레임이 밀린 것이다(피드백은 그동안 거짓말했다).
+    리셋이 그걸 재동기화하며 간극을 드러낸다 — 크면 직전까지의 관절 기록
+    (에피소드·텔레옵)이 실제 자세와 어긋나 있었다는 뜻이라 알려야 한다.
+    """
+    out: list[str] = []
+    for r in report or []:
+        slip = r.get("slip_raw") or []
+        worst = [(i + 1, v / 1000.0) for i, v in enumerate(slip)
+                 if abs(v) >= SLIP_WARN_DEG * 1000]
+        if worst:
+            desc = ", ".join(f"joint{n} {d:+.1f}°" for n, d in worst)
+            out.append(
+                f"팔 {r.get('iface', '?')} 리셋에서 관절 슬립이 재동기화됐습니다: {desc} — "
+                "직전까지의 관절 기록(에피소드·텔레옵)은 실제 자세와 어긋나 있었을 수 "
+                "있습니다 (과부하 클러치 슬립, piper_sdk #120)")
+    return out
+
+
 def get_safety() -> dict | None:
     """바닥 필터 설정. robotd 가 없으면 `None` — 화면이 "데몬 없음"을 보여준다.
 
@@ -488,6 +515,10 @@ class RobotManager:
             if err.get("err_code"):
                 logger.warning("Arm %s had error 0x%04X before clear: %s",
                                r["iface"], err["err_code"], err.get("flags"))
+        # 슬립은 호출자가 화면에 띄우든 말든 **저널에는 남긴다** — 나중에
+        # "언제부터 어긋났나"를 캐는 유일한 흔적이다.
+        for w in slip_warnings(report):
+            logger.warning("%s", w)
         return report
 
     # ── 움직임 감지 ──

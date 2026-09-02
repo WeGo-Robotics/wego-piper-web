@@ -636,23 +636,56 @@ class Arm:
         flags = [name for bit, name in self._ERR_BITS.items() if err_code & (1 << bit)]
         return {"err_code": err_code, "flags": flags}
 
-    def clear_error(self) -> bool:
+    # 리셋 전후 보고값 차이가 이보다 크면 슬립으로 친다. raw 단위 0.001° —
+    # 2000 = 2.0°. 정지 상태의 잡음·양자화는 수십 단위라 여유가 크다.
+    SLIP_WARN_RAW = 2000
+
+    def _feedback_joints_locked(self) -> list[int] | None:
+        """피드백(0x2A5~7)의 관절 raw. **지령 폴백 없이 피드백만** 본다.
+
+        슬립 계측은 "피드백이 리셋 전에 거짓말하고 리셋 후 실제값에 재동기화되는"
+        그 간극을 재는 것이다 — `read_joints_raw` 처럼 지령(0x155~7)을 섞으면
+        계측 자체가 무너진다. 호출자가 락을 쥔 상태여야 한다.
+        """
+        try:
+            j = self._piper.GetArmJointMsgs().joint_state
+            return [j.joint_1, j.joint_2, j.joint_3, j.joint_4, j.joint_5, j.joint_6]
+        except Exception:
+            return None
+
+    def clear_error(self) -> dict:
         """팔의 에러를 무조건 클리어한다 (급정지/일시정지 해제 + 전 관절 에러코드 클리어).
 
         공식 reset 데모(piper_ctrl_reset.py)의 MotionCtrl_1(0x02) '恢复'와
         JointConfig clear_err=0xAE(전 관절 에러코드 클리어)를 함께 보낸다.
+
+        ## 리셋은 슬립 센서다 (piper_sdk #120)
+
+        과부하로 로터↔출력축이 미끄러지면 피드백은 명령값을 따라가며 **조용히
+        거짓말한다** — fault 도 없다. 0x150(0x02) 리셋만이 출력축 절대값을 다시
+        읽어 보고 프레임을 실제에 재동기화한다. 그래서 **리셋 직전/직후 피드백의
+        차이가 곧 그동안 쌓인 슬립**이고, 여기서 그걸 재서 돌려준다(`slip_raw`,
+        0.001° 단위). 소프트웨어가 평소에는 볼 수 없는 것을 이 순간에는 본다.
         """
         with self._lock:
             if not self._piper:
-                return False
+                return {"ok": False, "slip_raw": None}
+            before = self._feedback_joints_locked()
             try:
                 self._piper.MotionCtrl_1(0x02, 0, 0)        # 급정지/일시정지 해제(恢复)
                 time.sleep(0.01)
                 self._piper.JointConfig(joint_num=7, clear_err=0xAE)  # 전 관절 에러코드 클리어
-                return True
             except Exception as e:
                 logger.error("clear_error failed on %s: %s", self.iface, e)
-                return False
+                return {"ok": False, "slip_raw": None}
+        time.sleep(0.3)          # 재동기화된 피드백이 올 시간. 락 밖에서 쉰다
+        with self._lock:
+            after = self._feedback_joints_locked() if self._piper else None
+        slip = [a - b for a, b in zip(after, before)] if before and after else None
+        if slip and max(abs(v) for v in slip) >= self.SLIP_WARN_RAW:
+            logger.warning("리셋 재동기화 %s: 관절 슬립 감지 raw %s (0.001°) — "
+                           "직전까지의 피드백은 실제 자세와 어긋나 있었다", self.iface, slip)
+        return {"ok": True, "slip_raw": slip}
 
 
 # ── 세션/파킹 저장 경로 ──

@@ -245,6 +245,40 @@ async def read_joints_raw(iface: str):
 #   지금 위치를 0 으로 굽는다 — 전원을 꺼도 남고 되돌리는 명령이 없다.
 
 
+class ArmResetRequest(BaseModel):
+    iface: str
+
+
+@router.post("/reset")
+async def reset_arm(body: ArmResetRequest):
+    """0x150(0x02) 리셋 + 에러 클리어 — **슬립 재동기화**를 사람 손으로.
+
+    과부하 슬립(piper_sdk #120)은 보고 위치를 실제에서 밀어 놓고도 fault 를
+    안 낸다. 리셋만이 출력축 절대값을 다시 읽어 재동기화하고, 그 간극이 곧
+    쌓여 있던 슬립이다 — 응답 `warnings` 에 실어 준다. 간극이 없으면 보고
+    위치가 실제와 일치하고 있었다는 뜻이다.
+
+    ⚠ 팔이 움직이는 중이면 거절한다 — 리셋은 급정지 해제(恢复)를 겸해서
+    동작 중 상태를 흔들 수 있다.
+    """
+    from app.services.exclusivity import LABELS, Activity, running
+
+    movers = [a for a in (Activity.INFERENCE, Activity.RECORDING, Activity.TELEOP)
+              if a in running()]
+    if movers:
+        names = " · ".join(LABELS[a] for a in movers)
+        raise HTTPException(409, f"{names} 실행 중입니다 — 멈춘 뒤에 리셋하세요.")
+    arm = robot_manager.arms.get(body.iface)
+    if not arm or not arm.connected:
+        raise HTTPException(404, f"{body.iface} 가 연결되어 있지 않습니다")
+    report = robot_manager.clear_arm_errors([body.iface])
+    if not report:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    return {"report": report,
+            "warnings": robot_manager_mod.slip_warnings(report),
+            "slip_raw": report[0].get("slip_raw")}
+
+
 class ZeroRequest(BaseModel):
     iface: str
     #: joint1~6 또는 gripper
@@ -272,6 +306,21 @@ async def set_hardware_zero(body: ZeroRequest):
     arm = robot_manager.arms.get(body.iface)
     if not arm or not arm.connected:
         raise HTTPException(404, f"{body.iface} 가 연결되어 있지 않습니다")
+
+    # ⚠ 굽기 전에 **0x150 리셋부터** (piper_sdk #120). "원점이 틀어졌다"의 대부분은
+    # 영점 손상이 아니라 과부하 슬립으로 보고 프레임이 밀린 것이고, 그때 영점을
+    # 구우면 실제 영자세가 아닌 곳이 영점이 된다 — 되돌리는 명령이 없는 조작의
+    # 최악 실패다(2026-09-02 실사례: joint2 를 −141° "틀어짐"으로 보고 구웠다).
+    # 리셋이 크게 재동기화되면 굽지 않고 멈춘다. 리셋 후에도 진짜 어긋나 있으면
+    # 다시 누르면 되고, 그때는 간극이 없어 통과한다.
+    reset_report = robot_manager.clear_arm_errors([body.iface])
+    slip = robot_manager_mod.slip_warnings(reset_report)
+    if slip:
+        raise HTTPException(
+            409, f"{slip[0]} — 지금 보이던 어긋남은 영점 문제가 아니라 슬립이었을 "
+                 "가능성이 큽니다. 리셋으로 재동기화했으니 자세를 다시 확인하고, "
+                 "그래도 영점이 틀렸으면 다시 누르세요. (영점 굽기는 진행하지 않았습니다)")
+
     out = robot_manager_mod.set_hardware_zero(body.iface, body.joint)
     if out is None:
         raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")

@@ -46,6 +46,43 @@ export default function ZeroCalibrationModal({ iface, onClose }:
     return () => clearInterval(pollRef.current)
   }, [read])
 
+  // 0x150(0x02) 리셋 — 슬립으로 밀린 보고 위치를 실제에 재동기화한다 (piper_sdk
+  // #120). 영점을 굽기 **전에** 눌러야 오진(슬립을 영점으로 굽기)을 피한다.
+  // 백엔드가 리셋 전후 간극(=쌓인 슬립)을 재서 문구로 준다.
+  const [resetting, setResetting] = useState(false)
+  const doReset = async () => {
+    setResetting(true)
+    try {
+      const r = await api.post<{ warnings: string[] }>('/robots/reset', { iface })
+      for (const w of r.warnings) notify({ level: 'warn', source: '영점', text: w })
+      if (r.warnings.length === 0)
+        notify({ level: 'info', source: '영점',
+          text: '리셋 완료 — 재동기화 간극 없음 (보고 위치가 실제와 일치하고 있었습니다)' })
+      await read()
+    } catch (e) {
+      notify({ level: 'error', source: '영점',
+        text: e instanceof Error ? e.message : '리셋 실패' })
+    } finally {
+      setResetting(false)
+    }
+  }
+
+  // 300ms 폴링이 이미 돌지만, 명시적 버튼은 "지금 이 순간 값"이라는 확신을 준다 —
+  // 폴링이 조용히 실패하고 있어도 여기서는 에러가 보인다.
+  const [refreshing, setRefreshing] = useState(false)
+  const doRefresh = async () => {
+    setRefreshing(true)
+    try {
+      const d = await api.get<Record<string, number>>(`/robots/joints/raw/${iface}`)
+      setRaw(d)
+    } catch (e) {
+      notify({ level: 'error', source: '영점',
+        text: e instanceof Error ? e.message : '위치를 읽지 못했습니다' })
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   const setZero = async (joint: string, label: string) => {
     const now = raw[joint]
     const ok = await confirm(
@@ -103,10 +140,27 @@ export default function ZeroCalibrationModal({ iface, onClose }:
         </div>
 
         <ol className="list-decimal space-y-0.5 pl-5 text-xs text-neutral-400">
+          <li>[리셋]으로 보고 위치를 실제와 재동기화합니다 — 간극이 크게 나오면
+            영점이 아니라 <b>슬립</b>이었던 것입니다 (굽지 마세요)</li>
           <li>토크를 끄고 관절을 손으로 원점 자세에 맞춥니다</li>
           <li>아래 raw 값이 그 자세에서 멈춘 것을 확인합니다</li>
           <li>그 관절의 [영점] 을 누릅니다</li>
         </ol>
+
+        <div className="flex items-center gap-2">
+          <button onClick={() => void doReset()} disabled={resetting || busy !== null}
+            title="MotionCtrl_1(0x02,0,0) — 급정지 해제 + 에러 클리어 + 보고 위치를 출력축 실제값에 재동기화. 슬립(piper_sdk #120)이 쌓여 있었다면 간극이 경고로 뜹니다."
+            className="rounded bg-blue-600 px-3 py-1.5 text-xs text-white
+                       hover:bg-blue-500 disabled:opacity-40">
+            {resetting ? '리셋 중…' : '리셋 (0x150 재동기화)'}
+          </button>
+          <button onClick={() => void doRefresh()} disabled={refreshing}
+            title="raw 위치를 지금 다시 읽습니다 (평소에도 0.3초마다 자동 갱신됩니다)"
+            className="rounded bg-neutral-700 px-3 py-1.5 text-xs text-neutral-200
+                       hover:bg-neutral-600 disabled:opacity-40">
+            {refreshing ? '읽는 중…' : '위치 새로고침'}
+          </button>
+        </div>
 
         <div className="space-y-1">
           {JOINTS.map((j) => {

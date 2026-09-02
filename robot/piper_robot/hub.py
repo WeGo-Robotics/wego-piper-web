@@ -105,11 +105,14 @@ class RobotHub:
             if arm is None or not arm.connected:
                 continue
             before = arm.read_error()
-            cleared = arm.clear_error()
+            out = arm.clear_error()
             if before and before.get("err_code"):
                 logger.warning("Arm %s had error 0x%04X before clear: %s",
                                iface, before["err_code"], before["flags"])
-            report.append({"iface": iface, "error": before, "cleared": cleared})
+            # slip_raw: 리셋이 재동기화한 보고값 간극 = 쌓여 있던 슬립 (arm.clear_error)
+            report.append({"iface": iface, "error": before,
+                           "cleared": out.get("ok", False),
+                           "slip_raw": out.get("slip_raw")})
         return report
 
     def read_error(self, iface: str) -> dict | None:
