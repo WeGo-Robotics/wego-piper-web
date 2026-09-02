@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import FloorGuardPanel from '../components/FloorGuardPanel'
-import HfAccountBadge from '../components/HfAccountBadge'
+import HfAccountPanel from '../components/HfAccountPanel'
 import ServicesPanel from '../components/ServicesPanel'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
@@ -16,6 +16,7 @@ const TABS = [
   { id: 'general', label: '일반' },
   { id: 'safety', label: '안전' },
   { id: 'services', label: '서비스' },
+  { id: 'hub', label: '저장소' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
 
@@ -57,11 +58,7 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">설정</h1>
-        {/* 대시보드에서 옮겨 왔다 — 상태가 아니라 설정이다 */}
-        <HfAccountBadge />
-      </div>
+      <h1 className="text-2xl font-bold">설정</h1>
 
       <div className="flex gap-1 border-b border-neutral-700">
         {TABS.map((t) => (
@@ -86,6 +83,8 @@ export default function SettingsPage() {
           <ServicesPanel />
         </div>
       )}
+
+      {tab === 'hub' && <HfAccountPanel />}
 
       {tab === 'general' && (
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5 space-y-4">

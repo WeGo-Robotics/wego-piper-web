@@ -215,11 +215,14 @@ def test_the_hf_token_name_is_labelled_as_a_token():
     # ⚠ **대시보드에서 설정으로 옮겼다.** 대시보드는 "지금 괜찮은가" 에만 답하는
     #   자리이고 로그인은 상태가 아니라 설정이다. 옮기면서 이 수정이 사라지지
     #   않도록 검사도 따라온다.
-    src = (_SRC / "components" / "HfAccountBadge.tsx").read_text()
-    assert "토큰 {hf.token_name}" in src, "토큰이라고 안 밝힌다"
-    assert "` (${hf.token_name})`" not in src, "괄호로만 붙여 정체가 안 보인다"
+    # ⚠ 자리가 두 번 옮겨졌다: 대시보드 배지 → 설정 배지 → **설정의 저장소 탭
+    #   패널**. 옮길 때마다 이 수정이 따라와야 한다 — 원래 문구가 아니라 그
+    #   **이유**(정체가 안 보인다)가 지켜야 할 것이다.
+    src = (_SRC / "components" / "HfAccountPanel.tsx").read_text()
+    assert "토큰 {acc.token_name}" in src, "토큰이라고 안 밝힌다"
+    assert "` (${acc.token_name})`" not in src, "괄호로만 붙여 정체가 안 보인다"
     settings = (_SRC / "pages" / "SettingsPage.tsx").read_text()
-    assert "HfAccountBadge" in settings, "옮겼는데 아무 데도 안 쓰인다"
+    assert "HfAccountPanel" in settings, "옮겼는데 아무 데도 안 쓰인다"
 
 
 def test_the_repository_header_is_one_row():

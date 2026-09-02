@@ -6,6 +6,7 @@ HuggingFace Hub 클라이언트.
 import asyncio
 import logging
 from functools import partial
+from pathlib import Path
 
 from huggingface_hub import HfApi, snapshot_download
 
@@ -31,6 +32,57 @@ _SORT = "downloads"
 def get_api() -> HfApi:
     """다른 모듈이 HfApi 를 직접 만들지 않도록 여기서 받아 쓴다."""
     return _api
+
+
+def refresh_api() -> None:
+    """토큰이 바뀐 뒤 클라이언트를 다시 만든다.
+
+    ⚠ **파일만 써 놓고 끝내면 안 된다.** `HfApi` 는 만들 때 토큰을 붙들 수 있고,
+    그러면 로그인 직후에도 게이트웨이는 옛 상태(또는 미로그인)로 남는다 —
+    화면은 "로그인됨" 인데 업로드는 실패하는, 가장 헷갈리는 상태가 된다.
+    """
+    global _api
+    _api = HfApi(endpoint=settings.hf_endpoint or None)
+
+
+def token_path() -> Path:
+    """토큰이 놓이는 자리. **환경마다 다르다.**
+
+    ⚠ 컨테이너는 `HF_HOME=/data/hf` 라 `/data/hf/token` 이고, 저장소에서 직접
+    띄운 개발 머신은 `~/.cache/huggingface/token` 이다. 호스트에서
+    `huggingface-cli login` 을 해도 **컨테이너는 그 파일을 못 본다** — 이걸
+    모르면 "로그인했는데 왜 안 되지" 로 한참 헤맨다. 그래서 화면에 자리를 적어 준다.
+    """
+    from huggingface_hub import constants
+
+    return Path(constants.HF_TOKEN_PATH)
+
+
+def save_token(token: str) -> dict:
+    """토큰을 검증하고 **성공했을 때만** 저장한다. 계정 정보를 돌려준다.
+
+    ⚠ 검증 없이 저장하면 오타 하나로 조용히 미로그인이 되고, 그 사실은 몇 시간
+    뒤 업로드 단계에서야 드러난다.
+    """
+    probe = HfApi(endpoint=settings.hf_endpoint or None, token=token)
+    info = probe.whoami()          # 실패하면 예외가 그대로 올라간다
+
+    p = token_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(token.strip() + "\n")
+    # ⚠ 자격증명이다. 소유자만 읽게 둔다.
+    p.chmod(0o600)
+    refresh_api()
+    return info
+
+
+def clear_token() -> bool:
+    """토큰 파일을 지운다. 지웠으면 True."""
+    p = token_path()
+    existed = p.exists()
+    p.unlink(missing_ok=True)
+    refresh_api()
+    return existed
 
 # 다운로드 진행 상태 추적
 _download_status: dict[str, dict] = {}

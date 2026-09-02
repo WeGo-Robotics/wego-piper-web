@@ -124,6 +124,43 @@ def _amp_env(amp: str) -> dict[str, str] | None:
     return {"ACCELERATE_MIXED_PRECISION": amp} if amp and amp != "off" else None
 
 
+async def _require_push_permission(repo_id: str) -> None:
+    """`--policy.repo_id` 를 쓰면 학습이 **끝나고 나서** Hub 로 올린다.
+
+    ⚠ **그래서 지금 막아야 한다.** 토큰이 없거나 읽기 전용이면 몇 시간을 돌린 뒤
+    마지막 단계에서 실패한다. 체크포인트는 디스크에 남지만 화면에는 실패로 뜨고,
+    사람은 학습이 통째로 날아간 줄 안다.
+
+    ⚠ **네트워크 문제로는 막지 않는다.** 토큰이 나쁜 것과 HF 가 안 닿는 것은
+    다르다 — 사내망이 느리다고 학습을 못 걸게 하면 그게 더 나쁘다. 확인할 수
+    없으면 통과시키고 로그에 남긴다.
+    """
+    import asyncio
+
+    from app.services import hub_client
+
+    try:
+        info = await asyncio.wait_for(
+            asyncio.to_thread(hub_client.get_api().whoami), timeout=10)
+    except Exception as e:
+        logger.warning("HF 권한을 확인 못 했다 (학습은 진행): %s", e)
+        return
+
+    role = info.get("auth", {}).get("accessToken", {}).get("role", "")
+    if not info.get("name"):
+        raise HTTPException(400,
+            f"HuggingFace 에 로그인되어 있지 않습니다. 학습이 끝난 뒤 "
+            f"'{repo_id}' 로 업로드하다 실패합니다 — 설정 → 저장소에서 토큰을 "
+            f"넣거나, 저장소 ID 를 비우고 로컬에만 남기세요.")
+    # ⚠ `read` 일 때만 막는다. fine-grained 토큰은 role 이 달리 오는데,
+    #   그걸 싸잡아 막으면 멀쩡한 토큰으로 학습을 못 건다.
+    if role == "read":
+        raise HTTPException(400,
+            f"HuggingFace 토큰이 읽기 전용입니다({info['name']}). 학습이 끝난 뒤 "
+            f"'{repo_id}' 로 업로드하다 실패합니다 — 설정 → 저장소에서 write 권한 "
+            f"토큰으로 바꾸거나, 저장소 ID 를 비우세요.")
+
+
 @router.post("/start")
 async def start_training(body: TrainStartRequest):
     """학습 시작."""
@@ -146,6 +183,10 @@ async def start_training(body: TrainStartRequest):
 
     # 파일시스템 접근은 인자 조립과 분리돼 있다 (원격 학습 대비).
     # config.json 수정은 **파괴적**이라 시작 경로에서만 한다.
+    # ⚠ 몇 시간 뒤가 아니라 **지금** 막는다
+    if params.get("policy_repo_id"):
+        await _require_push_permission(params["policy_repo_id"])
+
     rename_map = ""
     if params.get("pretrained_path"):
         rename_map = resolve_rename_map(params["pretrained_path"])
@@ -169,6 +210,16 @@ async def start_training_custom(body: TrainCustomRequest):
     require_idle(Activity.TRAINING)
     if not body.args:
         raise HTTPException(400, "CLI 인자가 비어있습니다")
+
+    # ⚠ **직접 편집한 인자에도 건다.** 여기로 오는 명령이 화면에서 만든 것과 같은
+    #   실패를 겪는다 — 오히려 손으로 고친 쪽이 `push_to_hub` 를 끄는 걸 잊기 쉽다.
+    repo = next((a.split("=", 1)[1] for a in body.args
+                 if a.startswith("--policy.repo_id=")), "")
+    pushes = repo and not any(
+        a.replace(" ", "").lower() in ("--policy.push_to_hub=false", "--policy.push_to_hub=0")
+        for a in body.args)
+    if pushes:
+        await _require_push_permission(repo)
     try:
         await train_manager.start(
             body.args, total_steps=body.total_steps, output_dir=body.output_dir, env_extra=_amp_env(body.amp)
