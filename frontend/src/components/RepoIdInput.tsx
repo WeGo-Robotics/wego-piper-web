@@ -34,12 +34,15 @@ export function repoIdError(v: string): string | null {
 }
 
 export default function RepoIdInput({
-  value, onChange, allowEmpty = false, emptyLabel = '올리지 않음 (로컬에만)',
+  value, onChange, allowEmpty = false, emptyLabel = '올리지 않음 (로컬에만)', uploads = true,
 }: {
   value: string
   onChange: (v: string) => void
   allowEmpty?: boolean
   emptyLabel?: string
+  /** Hub 로 올라가는 값인가. 데이터셋은 이게 꺼져도 repo_id 가 **로컬 폴더 경로**라
+   *  여전히 필요하다 — 그래서 "비울 수 있느냐"(allowEmpty)와는 다른 축이다. */
+  uploads?: boolean
 }) {
   const [acc, setAcc] = useState<Account | null>(null)
   useEffect(() => {
@@ -98,9 +101,14 @@ export default function RepoIdInput({
         </>
       )}
     </div>
-    {foreign && !empty && (
+    {foreign && !empty && uploads && (
       <p className="mt-1 text-xs text-amber-400">
         {ns} 은 내 계정도, 소속 조직도 아닙니다 — 업로드가 거부될 수 있습니다.
+      </p>
+    )}
+    {!uploads && (
+      <p className="mt-1 text-xs text-neutral-500">
+        Hub 업로드가 꺼져 있습니다 — 로컬 폴더 이름으로만 쓰입니다.
       </p>
     )}
     </div>

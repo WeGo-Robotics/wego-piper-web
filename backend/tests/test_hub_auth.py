@@ -208,3 +208,18 @@ def test_a_foreign_namespace_stays_in_the_list():
     assert "foreign ? [ns, ...mine] : mine" in src, "남의 네임스페이스가 목록에서 빠진다"
     assert "내 계정 아님" in src, "남의 것인지 구분이 안 된다"
     assert "업로드가 거부될 수 있습니다" in src, "왜 문제인지 안 알려준다"
+
+
+def test_the_upload_warning_is_silent_when_nothing_is_uploaded():
+    """⚠ 데이터셋의 repo_id 는 Hub 주소이면서 **로컬 폴더 경로**다
+    (~/.cache/huggingface/lerobot/<네임스페이스>/<이름>). 그래서 학습과 달리 비울 수
+    없고, "Hub 업로드" 를 꺼도 여전히 필요하다.
+
+    끄고 나면 남의 네임스페이스여도 그냥 폴더 이름이다 — 그 상태로 "업로드가
+    거부될 수 있습니다" 를 띄우면 틀린 말이 된다."""
+    src = REPO_INPUT.read_text()
+    assert "foreign && !empty && uploads &&" in src, "업로드를 꺼도 업로드 경고가 뜬다"
+    assert "로컬 폴더 이름으로만 쓰입니다" in src, "왜 이름이 여전히 필요한지 안 알려준다"
+
+    rec = (_SRC / "pages" / "RecordingPage.tsx").read_text()
+    assert "uploads={pushToHub}" in rec, "수집의 Hub 업로드 체크박스가 안 전달된다"
