@@ -507,4 +507,6 @@ PROVIDERS = {
 
 ## 상태
 
-◐ 0~2단계 완료 — 3단계(job 레지스트리)는 Redis 이후
+◐ 0~4단계 완료 — job 레지스트리·WS `job_id`·SSH 러너까지 실기 확인 (ROADMAP 3b-3.5).
+5~8단계(전송·회수·비용 가드·유료 프로바이더)는 [vast-training.md](vast-training.md)가
+Vast.ai 기준으로 구체화한다.

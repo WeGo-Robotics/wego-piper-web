@@ -465,11 +465,11 @@ export default function RecordingPage() {
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
             <h3 className="text-sm font-semibold">데이터셋</h3>
             <div>
-              <label className="text-xs text-neutral-400">Repo ID (예: wego-hansu/piper_demo)</label>
-                {/* ⚠ 통째로 타이핑하면 `/` 를 빠뜨린다 — LeRobot 이 두 개로
-                    언패킹하므로 녹화가 시작에서 죽는다. 네임스페이스는 고른다. */}
-                <RepoIdInput value={repoId}
-                  onChange={(v) => { setRepoId(v); setCliEdited(false) }} />
+              <label className="text-xs text-neutral-400">Repo ID</label>
+              {/* ⚠ 통째로 타이핑하면 `/` 를 빠뜨린다 — LeRobot 이 두 개로
+                  언패킹하므로 녹화가 시작에서 죽는다. 네임스페이스는 고른다. */}
+              <RepoIdInput value={repoId}
+                onChange={(v) => { setRepoId(v); setCliEdited(false) }} />
               {repoIdError && (
                 <div className="flex items-center justify-between gap-2 mt-1 px-2 py-1 rounded bg-red-500/10 border border-red-500/30 text-xs">
                   <span className="text-red-300">{repoIdError}</span>

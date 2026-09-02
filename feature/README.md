@@ -7,7 +7,8 @@
 |---|---|---|---|
 | 작업 단계 라벨 | `observation.state`에 페이즈 슬롯 추가 + 자동 라벨러 + 편집 UI | 거의 안 겹침 → **지금 착수 가능** | [01-phase-annotation.md](01-phase-annotation.md) |
 | 카메라 프로파일 | 노출·WB 등을 이름 붙인 프로파일로 저장, **연결 시** 자동 적용 | ☑ **완료.** 개편이 원인 7개 중 4개를 삭제했고 나머지 셋을 닫았다 — 적용 지점은 데몬 `connect()` 한 곳 | [camera-profiles.md](camera-profiles.md) |
-| 클라우드 학습 | 외부 GPU에서 `lerobot-train`, 웹에서 동일하게 제어 | 0~2는 독립 리팩터, 3~4는 Redis만 필요 → **쪼개서 앞당김** | [cloud-training.md](cloud-training.md) |
+| 클라우드 학습 | 외부 GPU에서 `lerobot-train`, 웹에서 동일하게 제어 | 0~2는 독립 리팩터, 3~4는 Redis만 필요 → **쪼개서 앞당김** → ☑ 0~4 실기 확인 | [cloud-training.md](cloud-training.md) |
+| 외부 학습 서버 (Vast.ai) | 임대 GPU 조달·파기·왕복 전송·비용 가드 — cloud-training 5~8 구체화 | 검증된 SSH 러너·레지스트리 위에 **프로바이더 층만 얹는다** — 러너 신규 없음 | [vast-training.md](vast-training.md) |
 | 파라미터 프리셋 | 추론·학습 설정을 이름 붙여 저장·재사용 | 추론 부분이 **#1 단계 2(PARAM_SPEC)에 의존** | [parameter-presets.md](parameter-presets.md) |
 | 데모 시나리오 격차 | [데모 시나리오](../PiPER_AI_데모_시나리오_정리.md) 수행에 필요한 공통 격차 4개(뎁스 경로·에피소드 루프·센서 입력·양팔 수집) 분석 | camerad 없이 가능한 지름길과 미룰 것을 구분 | [demo-scenario-gaps.md](demo-scenario-gaps.md) |
 | 에피소드 오케스트레이터 | 스냅샷→판단→실행→리셋 루프. 스텝은 Python, 시퀀스는 YAML 스펙 (ComfyUI 방식, Lua 기각) | 지금은 백엔드 서비스, Redis 이후 버스 클라이언트로 — 프로토콜은 불변 | [episode-orchestrator.md](episode-orchestrator.md) |
@@ -17,6 +18,7 @@
 | 정책 UI 스펙 | 모델별 화면 항목을 YAML 로 선언하고 UI 가 그걸 읽어 동적 구성 | ☑ **완료.** 정책 추가에 손댈 곳이 **6군데 → 0** — 파일 하나면 목록·학습 필드·추론 파라미터·wrapper 클래스가 다 붙는다 | [policy-ui-spec.md](policy-ui-spec.md) |
 | 서비스 재시작 | 유닛·게이트웨이 상태와 **낡은 코드 감지**(기동 시각 vs 소스 mtime), 버튼 한 번 재시작 | 데몬 분리의 부작용을 정면으로 다룬다 — 유닛이 늘어날수록 값이 커진다 | [service-restart.md](service-restart.md) |
 | 회색 카드 보정 | 자동 WB·노출을 카드에 맞춘 뒤 **잠근다**. 못 믿을 측정(포화·얼룩)은 거절 | 값 저장·적용은 [카메라 프로파일](camera-profiles.md)이 이미 한다 — 보정은 재기만 | [gray-card-calibration.md](gray-card-calibration.md) |
+| 조명 변화 감시 | shm 프레임의 밝기·색 비율을 EWMA 두 개로 보다 급변하면 알람. 3×3 그리드로 팔 통과와 조명을 구분 | device_watch 루프에 판정 하나 얹는 일 — 데몬·프론트 신규 없음 | [lighting-watch.md](lighting-watch.md) |
 | 깊이 배경 제거 | 깊이 `far_mm` 밖을 **컬러에서** 지워 정책이 배경에 안 물들게. 깊이를 못 읽은 픽셀은 남긴다(D405 는 42%가 그렇다) | rsd 소유라 녹화·추론이 같은 처리를 받는다. `rs.align` 은 켠 장치에서만 | [depth-background-mask.md](depth-background-mask.md) |
 | 화면 레이아웃 개편 | 좌측 세로 내비(그룹) + 상단 상태바(도는 활동·로봇/캠 개수). 상단 가로 내비가 한계 — **모델·데이터셋은 이미 자리가 없어 밀려나 있다** | 프론트 껍데기 + 요약 API 하나라 **아예 안 겹침.** 값은 `/api/activity` 와 `device_watch` 가 이미 갖고 있다 | [layout-redesign.md](layout-redesign.md) |
 | 외부 LLM 연동 | 분리수거 판단·플래너용 구조화 출력 클라이언트 — 슬롯 JSON 만, 에피소드 경계에서만, 오케스트레이터 스텝으로. 규칙은 프리셋 스토어 합류, 온프레미스는 로컬 Qwen 어댑터 | 백엔드 서비스 + 외부 HTTP 뿐이라 **아예 안 겹침** — 클라이언트(1단계)는 지금 가능, 스텝 합류는 오케스트레이터 1단계 뒤 | [llm-integration.md](llm-integration.md) |

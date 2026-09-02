@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { api } from '../services/api'
 import { useActivity } from '../hooks/useActivity'
 import { useDeviceSummary } from '../hooks/useDeviceSummary'
 import { ageText, TREND_WINDOW_S, useSystemStatus } from '../hooks/useSystemStatus'
@@ -120,6 +122,16 @@ function Bar({ pct, warn }: { pct: number; warn?: boolean }) {
   )
 }
 
+/**
+ * HF 로그인은 **업로드 준비 상태**다 (feature/hf-account.md §3). 미로그인이어도
+ * 녹화·학습은 시작되는데 **결과를 못 보낸다** — 학습 몇 시간 뒤 업로드 단계에서
+ * 아는 게 최악이라, 시작 전에 보이는 자리(대시보드)에 둔다. 계정 관리는 설정에 있다.
+ */
+type HfStatus = {
+  logged_in: boolean; username: string; fullname?: string
+  avatar_url?: string; token_name?: string; token_role?: string
+}
+
 export default function DashboardPage() {
   const { units, gateway, gpus, disks, estop, cpu, samples } = useSystemStatus()
 
@@ -130,6 +142,15 @@ export default function DashboardPage() {
     Math.ceil(Math.max(...samples.map((s) => s.fps ?? 0)) / 10) * 10)
   const devices = useDeviceSummary()
   const { running, labelOf } = useActivity()
+
+  const [hf, setHf] = useState<HfStatus | null>(null)
+  useEffect(() => {
+    // 실패하면 null 로 둔다 — 게이트웨이가 안 닿는 것과 "미로그인"은 다른 말이다
+    api.get<HfStatus>('/hub/whoami').then(setHf).catch(() => {})
+  }, [])
+  // "read" 토큰도 whoami 는 성공한다 — 로그인돼 보이는데 업로드에서만 실패하는
+  // 상태라 따로 갈라 둔다. fine-grained 는 role 이 달라 "read" 일 때만 경고한다.
+  const hfReadOnly = !!hf?.logged_in && hf.token_role === 'read'
 
   // ── 맨 위 한 줄이 이 화면의 요점이다 ──
   // 평소엔 여기만 보고 지나가고, 문제가 있을 때만 아래를 본다.
@@ -144,6 +165,8 @@ export default function DashboardPage() {
   if (devices.alerts > 0) problems.push(`장치 경보 ${devices.alerts}건`)
   // ⚠ 디스크는 **남은 용량**으로 본다. 사용률 90% 라도 1TB 가 남았으면 문제가 아니다.
   for (const d of disks) if (d.free_gb < 20) problems.push(`디스크 ${d.free_gb}GB 남음`)
+  if (hf && !hf.logged_in) problems.push('HF 미로그인 — 녹화·학습은 되지만 Hub 업로드 불가')
+  if (hfReadOnly) problems.push('HF 토큰이 읽기 전용 — 학습 끝 업로드에서 실패')
 
   return (
     <div className="space-y-4">
@@ -212,6 +235,37 @@ export default function DashboardPage() {
               ))}
               {units.length === 0 && <li className="text-neutral-500">불러오는 중…</li>}
             </ul>
+          </Card>
+
+          <Card title="HuggingFace" to="/settings">
+            {!hf ? (
+              <p className="text-sm text-neutral-500">불러오는 중…</p>
+            ) : !hf.logged_in ? (
+              <p className="flex items-center gap-2 text-sm">
+                <Dot ok={false} />
+                <span className="text-neutral-400">미로그인 — Hub 업로드 불가</span>
+              </p>
+            ) : (
+              <div className="flex items-center gap-3">
+                {hf.avatar_url && (
+                  <img src={hf.avatar_url} alt="" className="h-8 w-8 rounded-full" />
+                )}
+                <div className="min-w-0 flex-1 text-sm">
+                  <p className="truncate text-neutral-200">{hf.fullname || hf.username}</p>
+                  <p className="truncate text-xs text-neutral-400">
+                    {hf.username}
+                    {/* ⚠ 토큰은 **이름만** 적는다. 값을 되돌려 보내는 화면은
+                        그 자체가 자격증명 유출 경로다 (feature/hf-account.md §1) */}
+                    {hf.token_name && ` · 토큰 ${hf.token_name}`}
+                    {hf.token_role === 'write' && ' (쓰기)'}
+                    {hfReadOnly && (
+                      <span className="text-amber-400"> (읽기 전용 — 업로드 불가)</span>
+                    )}
+                  </p>
+                </div>
+                <Dot ok warn={hfReadOnly} />
+              </div>
+            )}
           </Card>
         </div>
 
