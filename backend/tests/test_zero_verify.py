@@ -8,9 +8,12 @@
 있는데 안 보는 것은 성공을 지어내는 것이다.
 """
 
+import inspect
+import textwrap
 import threading
 
 import pytest
+from conftest import python_code_only
 from piper_robot.arm import Arm
 
 
@@ -20,9 +23,39 @@ class FakePiper:
     def __init__(self, raw: int, *, applied: bool, flag: int = 1):
         self._raw, self._applied, self._flag = raw, applied, flag
         self.sent_zero = 0
+        self.mode = 0x00                      # Standby — 리셋 직후의 상태
+        self.enabled = {i: False for i in range(1, 7)}
 
     def ClearRespSetInstruction(self): pass
     def GripperCtrl(self, *a): pass
+
+    # ── 굽기 전 준비 (`_prepare_for_config_locked`) ──
+    #
+    # ⚠ 실기에서 이 준비가 **빠져 있어서** 굽기가 조용히 무시됐다. 가짜 팔도
+    #   같은 상태를 흉내내야, 준비 없이 굽는 회귀를 테스트가 잡는다.
+    def EnableArm(self, motor_num=7, *a):
+        for i in range(1, 7):
+            if motor_num in (7, i):
+                self.enabled[i] = True
+
+    def DisableArm(self, motor_num=7, *a):
+        for i in range(1, 7):
+            if motor_num in (7, i):
+                self.enabled[i] = False
+
+    def ModeCtrl(self, ctrl_mode=0x01, *a):
+        self.mode = ctrl_mode
+
+    def GetArmStatus(self):
+        mode = self.mode
+        return type("S", (), {"arm_status": type("A", (), {"ctrl_mode": mode})()})()
+
+    def GetArmLowSpdInfoMsgs(self):
+        en = self.enabled
+        return type("L", (), {
+            f"motor_{i}": type("M", (), {
+                "foc_status": type("F", (), {"driver_enable_status": en[i]})()})()
+            for i in range(1, 7)})()
 
     def JointConfig(self, joint_num=7, set_zero=0, **kw):
         self.sent_zero += 1
@@ -160,3 +193,34 @@ def test_a_slave_arm_is_not_blocked_by_that_guard():
     arm = arm_with(FakePiper(4880, applied=True))
     arm.is_master = False
     assert arm.set_hardware_zero("joint1")["ok"] is True
+
+
+def test_the_flash_prepares_the_arm_itself():
+    """⚠ **굽기가 스스로 상태를 세워야 한다.** 토크 버튼이 세워 둔 상태를 사이에
+    끼어든 0x150 리셋이 지운다 — 실측(2026-09-03): 리셋 후 `CAN ctrl → Standby`,
+    모터 전부 꺼짐. 그 상태로 나간 굽기는 조용히 무시됐고, 준비를 다시 세우자
+    같은 팔이 `18714 → 0` 으로 먹었다.
+
+    순서에 기대지 않는다는 것이 요점이다 — 앞에 무엇이 지나갔든 여기서 세운다."""
+    piper = FakePiper(5000, applied=True)
+    assert piper.mode == 0x00 and not any(piper.enabled.values())
+
+    out = arm_with(piper).set_hardware_zero("joint3")
+    assert out["ok"] is True, out
+    assert piper.mode == 0x01, "CAN 제어 모드로 안 세운다"
+    # 대상만 꺼지고 나머지는 켜져 있어야 한다 (공식 예제가 만드는 상태)
+    assert piper.enabled[3] is False, "대상 모터를 실능시키지 않는다"
+    assert all(piper.enabled[i] for i in (1, 2, 4, 5, 6)), piper.enabled
+
+
+def test_waiting_is_on_state_not_on_a_fixed_delay():
+    """⚠ 고정 딜레이로는 부족했다. 리셋이 팔을 Standby 로 떨어뜨린 뒤 100ms 로는
+    CAN 제어 모드로 못 돌아오고, 그 상태로 나간 굽기가 무시됐다. 공식 예제도
+    `while not EnablePiper(): sleep(0.01)` 로 **기다린다.**"""
+    import inspect
+
+    src = python_code_only(textwrap.dedent(
+        inspect.getsource(Arm._prepare_for_config_locked)))
+    assert "PREPARE_TIMEOUT_S" in src, "기다리지 않는다"
+    assert "_mode_int_locked" in src and "_enabled_locked" in src, "상태를 안 본다"
+    assert "EnablePiper" not in src, "한 번 부르면 안 먹는 EnablePiper 를 쓴다"

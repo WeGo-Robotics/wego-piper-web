@@ -394,6 +394,15 @@ class Arm:
     ZERO_MOTOR = {"joint1": 1, "joint2": 2, "joint3": 3,
                   "joint4": 4, "joint5": 5, "joint6": 6, "gripper": 7}
 
+    #: 굽기 전 준비가 끝나기를 기다리는 최대 시간 (초).
+    #:
+    #: ⚠ **고정 딜레이로는 부족했다.** 0x150 리셋이 팔을 Standby 로 떨어뜨린 뒤
+    #:   100ms 로는 CAN 제어 모드로 못 돌아오고, 그 상태로 나간 굽기는 조용히
+    #:   무시된다 — 실측(2026-09-03): 리셋 없이 준비된 상태에서 부르면 `3645 → 0`
+    #:   으로 먹었고, 리셋을 사이에 두면 `3648 → 3645` 로 안 먹었다.
+    #:   공식 예제도 `while not EnablePiper(): sleep(0.01)` 로 **기다린다.**
+    PREPARE_TIMEOUT_S = 3.0
+
     #: 마스터 팔이 외부 명령을 무시한다는 안내. 두 곳(토크·영점)이 같은 말을
     #: 해야 하므로 한 곳에 둔다.
     MASTER_IGNORES = (
@@ -428,6 +437,57 @@ class Arm:
             time.sleep(0.2)
         return last
 
+    def _prepare_for_config_locked(self, disable_motor: int | None) -> None:
+        """설정 쓰기를 받을 상태로 만든다. **락을 쥔 상태에서 부른다.**
+
+        CAN 제어 모드 + (대상 모터만 실능). 시간을 재는 게 아니라 **상태를 본다** —
+        팔이 언제 준비되는지는 앞에 무엇이 지나갔는지에 달려 있고, 리셋 직후는
+        한참 걸린다.
+        """
+        deadline = time.monotonic() + self.PREPARE_TIMEOUT_S
+        while True:
+            # ⚠ `EnablePiper()` 를 쓰지 않는다. 실측(can0, S-V1.8-2): 한 번 부르면
+            #   **모터가 하나도 안 켜진다** — 공식 예제가 그걸 `while not
+            #   EnablePiper(): sleep(0.01)` 로 감싸는 이유다. 같은 팔에
+            #   `EnableArm(n)` 은 곧바로 먹었으므로, 전체 지정(7)을 직접 보낸다.
+            self._piper.EnableArm(7)
+            time.sleep(self.CONFIG_GAP_S)
+            self._piper.ModeCtrl(0x01, 0x01, 30, 0x00)
+            time.sleep(self.CONFIG_GAP_S)
+            # 시간이 아니라 **상태**를 본다: 제어 모드가 왔고 모터가 살아 있어야
+            # 설정 쓰기가 먹는다. 리셋 직후는 여기까지 한참 걸린다.
+            live = sum(1 for v in self._enabled_locked().values() if v)
+            if (self._mode_int_locked() == 0x01 and live) or time.monotonic() > deadline:
+                if not live:
+                    logger.warning("%s 의 모터가 안 켜집니다 — 그대로 시도합니다",
+                                   self.iface)
+                break
+        if disable_motor is not None:
+            self._piper.DisableArm(disable_motor)
+            time.sleep(self.CONFIG_GAP_S)
+
+    def _enabled_locked(self) -> dict[str, bool]:
+        """모터별 활성 상태. **락을 쥔 상태에서** 부른다 (`motor_enabled` 의 속살)."""
+        try:
+            info = self._piper.GetArmLowSpdInfoMsgs()
+        except Exception:
+            return {}
+        out = {}
+        for j, m in self.ZERO_MOTOR.items():
+            mm = getattr(info, f"motor_{m}", None)
+            if mm is not None:
+                out[j] = bool(mm.foc_status.driver_enable_status)
+        return out
+
+    def _mode_int_locked(self) -> int | None:
+        """제어 모드 정수. `refresh_ctrl_mode` 와 같은 방식으로 읽는다 —
+        `ctrl_mode` 가 Enum 으로 올 수도 있어서 그 처리를 빠뜨리면 안 된다."""
+        try:
+            m = self._piper.GetArmStatus().arm_status.ctrl_mode
+            return m.value if hasattr(m, "value") else int(m)
+        except Exception:
+            return None
+
     def set_hardware_zero(self, joint: str) -> dict:
         """지금 위치를 그 관절의 **하드웨어 영점**으로 굽는다.
 
@@ -452,6 +512,14 @@ class Arm:
             try:
                 # ⚠ 먼저 지운다. 안 지우면 **이전 명령의 성공 응답**을 읽고
                 #   이번 것도 성공했다고 보고한다.
+                # ⚠ **굽기 직전에 상태를 다시 세운다.** 토크 버튼이 세워 둔
+                #   상태(CAN ctrl + 대상 모터만 실능)를 사이에 끼어든 0x150 리셋이
+                #   지워 버린다 — 실측: 리셋 후 `CAN ctrl → Standby`, 모터 전부
+                #   꺼짐. 그 상태로 나간 굽기는 조용히 무시됐다(2026-09-03).
+                #
+                #   그래서 굽기가 **스스로 충분해야 한다.** 앞에서 무엇이 지나갔든
+                #   여기서 다시 세우면 순서에 기대지 않는다.
+                self._prepare_for_config_locked(motor if joint != "gripper" else None)
                 # ⚠ 설정 명령을 **몰아 보내지 않는다.** 공식 예제도 설정 사이에
                 #   100ms 를 둔다 — 컨트롤러가 앞 프레임을 처리하기 전에 다음
                 #   프레임이 오면 조용히 흘린다.
@@ -548,17 +616,7 @@ class Arm:
         with self._lock:
             if not self._piper:
                 return {}
-            try:
-                info = self._piper.GetArmLowSpdInfoMsgs()
-            except Exception:
-                return {}
-            out = {}
-            for joint, motor in self.ZERO_MOTOR.items():
-                m = getattr(info, f"motor_{motor}", None)
-                if m is None:
-                    continue
-                out[joint] = bool(m.foc_status.driver_enable_status)
-            return out
+            return self._enabled_locked()
 
     def read_raw_all(self) -> dict[str, int | None]:
         """관절 + 그리퍼의 raw 값. **영점 창이 보는 숫자다.**
