@@ -285,6 +285,45 @@ class ZeroRequest(BaseModel):
     joint: str
 
 
+class MotorTorqueRequest(BaseModel):
+    iface: str
+    joint: str
+    enabled: bool
+
+
+@router.post("/motor/torque")
+async def set_motor_torque(body: MotorTorqueRequest):
+    """관절 하나의 모터 토크를 켜고 끈다 — 영점 굽기의 **선행 절차**다.
+
+    ⚠ **끄면 그 관절이 중력으로 주저앉는다.** SDK 공식 예제도 여기서 "팔을
+      보호하라"고 적는다. 화면이 누르기 전에 그 말을 해야 한다.
+    """
+    from app.services.exclusivity import LABELS, Activity, running
+
+    movers = [a for a in (Activity.INFERENCE, Activity.RECORDING, Activity.TELEOP)
+              if a in running()]
+    if movers:
+        names = " · ".join(LABELS[a] for a in movers)
+        raise HTTPException(409, f"{names} 실행 중입니다 — 지금 토크를 끊으면 "
+                                 f"팔이 주저앉고 그 작업도 망가집니다.")
+    arm = robot_manager.arms.get(body.iface)
+    if not arm or not arm.connected:
+        raise HTTPException(404, f"{body.iface} 가 연결되어 있지 않습니다")
+    out = arm.set_motor_enabled(body.joint, body.enabled)
+    if not out.get("ok"):
+        raise HTTPException(409, out.get("error", "토크 설정에 실패했습니다"))
+    return out
+
+
+@router.get("/motor/torque/{iface}")
+async def get_motor_torque(iface: str):
+    """모터별 실제 토크 상태. **기억이 아니라 팔이 말하는 값**이다."""
+    arm = robot_manager.arms.get(iface)
+    if not arm or not arm.connected:
+        raise HTTPException(404, f"{iface} 가 연결되어 있지 않습니다")
+    return {"enabled": arm.motor_enabled()}
+
+
 @router.post("/zero")
 async def set_hardware_zero(body: ZeroRequest):
     """지금 위치를 그 관절의 하드웨어 영점으로 굽는다. **되돌릴 수 없다.**
@@ -320,6 +359,17 @@ async def set_hardware_zero(body: ZeroRequest):
             409, f"{slip[0]} — 지금 보이던 어긋남은 영점 문제가 아니라 슬립이었을 "
                  "가능성이 큽니다. 리셋으로 재동기화했으니 자세를 다시 확인하고, "
                  "그래도 영점이 틀렸으면 다시 누르세요. (영점 굽기는 진행하지 않았습니다)")
+
+    # ⚠ **모터가 자세를 붙들고 있으면 안 굽힌다.** 팔은 성공이라 응답하면서
+    #   실제로는 안 굽는다 (2026-09-03 실측 16/16). SDK 공식 절차도 굽기 전에
+    #   그 모터를 실능시킨다. 화면이 막는 것만으로는 부족하다 — 서버가 막는다.
+    if body.joint != "gripper":
+        states = arm.motor_enabled()
+        if states.get(body.joint) is True:
+            raise HTTPException(409,
+                f"{body.joint} 모터가 아직 활성 상태입니다 — 먼저 토크를 끊으세요. "
+                f"모터가 자세를 붙들고 있으면 팔이 '성공'이라 답하면서 실제로는 "
+                f"굽히지 않습니다.")
 
     out = robot_manager_mod.set_hardware_zero(body.iface, body.joint)
     if out is None:

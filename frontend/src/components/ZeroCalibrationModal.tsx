@@ -49,6 +49,36 @@ export default function ZeroCalibrationModal({ iface, onClose }:
   // 0x150(0x02) 리셋 — 슬립으로 밀린 보고 위치를 실제에 재동기화한다 (piper_sdk
   // #120). 영점을 굽기 **전에** 눌러야 오진(슬립을 영점으로 굽기)을 피한다.
   // 백엔드가 리셋 전후 간극(=쌓인 슬립)을 재서 문구로 준다.
+  // ⚠ **팔에게 묻는다.** 우리가 보낸 명령을 기억해 두면, 팔이 스스로 실능된
+  //   경우(에러·전원)를 놓쳐 "토크 켜짐" 이라 보여주면서 관절은 힘이 없게 된다.
+  const [torque, setTorque] = useState<Record<string, boolean>>({})
+  const readTorque = useCallback(async () => {
+    try {
+      const d = await api.get<{ enabled: Record<string, boolean> }>(
+        `/robots/motor/torque/${iface}`)
+      setTorque(d.enabled)
+    } catch { /* 못 읽으면 비워 둔다 — 모르는 것과 꺼진 것은 다르다 */ }
+  }, [iface])
+  useEffect(() => { void readTorque() }, [readTorque])
+
+  const [torqueBusy, setTorqueBusy] = useState<string | null>(null)
+  const setMotorTorque = async (joint: string, label: string, enabled: boolean) => {
+    if (!enabled && !await confirm(
+      `${label} 모터의 토크를 끊습니다.\n\n` +
+      '⚠ 이 관절은 힘을 잃고 **중력으로 주저앉습니다.**\n' +
+      '팔을 받치거나, 떨어져도 괜찮은 자세인지 확인하세요.\n\n' +
+      '영점을 굽으려면 이 과정이 필요합니다 — 모터가 자세를 붙들고 있으면 ' +
+      '팔이 "성공"이라 답하면서 실제로는 굽히지 않습니다.')) return
+    setTorqueBusy(joint)
+    try {
+      await api.post('/robots/motor/torque', { iface, joint, enabled })
+      await readTorque()
+    } catch (e) {
+      notify({ level: 'error', source: '영점',
+               text: e instanceof Error ? e.message : '토크 설정 실패' })
+    } finally { setTorqueBusy(null) }
+  }
+
   const [resetting, setResetting] = useState(false)
   const doReset = async () => {
     setResetting(true)
@@ -95,6 +125,7 @@ export default function ZeroCalibrationModal({ iface, onClose }:
     setBusy(joint)
     try {
       const r = await api.post<Result>('/robots/zero', { iface, joint })
+      void readTorque()   // 굽는 동안 팔이 상태를 바꿨을 수 있다
       setDone((d) => ({ ...d, [joint]: r }))
       notify({ level: 'info', source: '영점',
         text: `${label} 영점 설정 — raw ${r.raw_before} → ${r.raw_after}` })
@@ -178,9 +209,29 @@ export default function ZeroCalibrationModal({ iface, onClose }:
                     ? <span className="text-green-400">✔ {r.raw_before} → {r.raw_after}</span>
                     : <span className="text-red-400">{r.error}</span>)}
                 </span>
+                {/* 그리퍼에는 모터 실능이 없다 — 다른 명령으로 굽는다. */}
+                {j.name !== 'gripper' && (
+                  <button
+                    onClick={() => void setMotorTorque(j.name, j.label, !torque[j.name])}
+                    disabled={torqueBusy !== null || busy !== null}
+                    title={torque[j.name]
+                      ? '토크를 끊습니다 — 이 관절이 주저앉습니다'
+                      : '토크를 다시 겁니다 (영점 굽기는 잠깁니다)'}
+                    className={`shrink-0 rounded px-2.5 py-1 text-xs disabled:opacity-40 ${
+                      torque[j.name]
+                        ? 'bg-neutral-700 text-neutral-300 hover:bg-amber-600 hover:text-white'
+                        : 'bg-amber-600 text-white hover:bg-amber-500'}`}>
+                    {torqueBusy === j.name ? '…' : torque[j.name] ? '토크 끊기' : '토크 걸기'}
+                  </button>
+                )}
+                {/* ⚠ 토크가 걸린 채로는 안 굽힌다 — 서버도 같은 이유로 막는다.
+                    화면만 막으면 API 를 직접 부르는 경로가 남는다. */}
                 <button
                   onClick={() => void setZero(j.name, j.label)}
-                  disabled={busy !== null}
+                  disabled={busy !== null || torque[j.name] === true}
+                  title={torque[j.name] === true
+                    ? '먼저 이 관절의 토크를 끊으세요 — 모터가 붙들고 있으면 안 굽힙니다'
+                    : ''}
                   className="shrink-0 rounded bg-red-600/80 px-2.5 py-1 text-xs text-white
                              hover:bg-red-600 disabled:opacity-40">
                   {busy === j.name ? '…' : '영점'}

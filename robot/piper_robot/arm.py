@@ -454,6 +454,54 @@ class Arm:
                          "raw 값을 보고 판단하세요.",
                 "raw_before": before, "raw_after": after}
 
+    def set_motor_enabled(self, joint: str, enabled: bool) -> dict:
+        """그 관절 모터의 토크를 켜고 끈다.
+
+        ⚠ **끄면 그 관절이 중력으로 주저앉는다.** SDK 공식 예제도 영점 굽기 전에
+        이걸 하면서 "请保护好机械臂"(팔을 보호하라)라고 적어 둔다. 부르는 쪽이
+        사람에게 그 사실을 먼저 말해야 한다.
+
+        영점 굽기에 필요한 절차다 — 모터가 자세를 붙들고 있는 채로 굽기를 보내면
+        팔은 성공이라 응답하면서 실제로는 안 굽는다 (2026-09-03 실측 16/16 실패).
+        """
+        motor = self.ZERO_MOTOR.get(joint)
+        if motor is None or joint == "gripper":
+            return {"ok": False, "error": f"모터가 없는 관절입니다: {joint}"}
+        with self._lock:
+            if not self._piper:
+                return {"ok": False, "error": "연결되지 않음"}
+            try:
+                if enabled:
+                    self._piper.EnableArm(motor)
+                else:
+                    self._piper.DisableArm(motor)
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
+        logger.warning("모터 토크 %s: %s %s (모터 %d)",
+                       "켬" if enabled else "끔", self.iface, joint, motor)
+        return {"ok": True, "joint": joint, "motor": motor, "enabled": enabled}
+
+    def motor_enabled(self) -> dict[str, bool]:
+        """모터별 **실제** 활성 상태. 기억이 아니라 팔이 말하는 값이다.
+
+        ⚠ 우리가 보낸 명령을 기억해 두면, 팔이 스스로 실능된 경우(에러·전원)를
+        놓친다 — 화면은 "토크 켜짐" 인데 관절은 힘이 없는 상태가 된다.
+        """
+        with self._lock:
+            if not self._piper:
+                return {}
+            try:
+                info = self._piper.GetArmLowSpdInfoMsgs()
+            except Exception:
+                return {}
+            out = {}
+            for joint, motor in self.ZERO_MOTOR.items():
+                m = getattr(info, f"motor_{motor}", None)
+                if m is None:
+                    continue
+                out[joint] = bool(m.foc_status.driver_enable_status)
+            return out
+
     def read_raw_all(self) -> dict[str, int | None]:
         """관절 + 그리퍼의 raw 값. **영점 창이 보는 숫자다.**
 

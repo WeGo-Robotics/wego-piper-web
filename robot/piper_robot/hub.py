@@ -88,6 +88,16 @@ class RobotHub:
         arm = self.arms.get(iface)
         return arm.read_joints_normalized() if arm else None
 
+    def set_motor_enabled(self, iface: str, joint: str, enabled: bool) -> dict:
+        arm = self.arms.get(iface)
+        if arm is None:
+            return {"ok": False, "error": f"{iface} 를 모릅니다"}
+        return arm.set_motor_enabled(joint, enabled)
+
+    def motor_enabled(self, iface: str) -> dict:
+        arm = self.arms.get(iface)
+        return arm.motor_enabled() if arm else {}
+
     def read_joints_raw(self, iface: str) -> list[int] | None:
         arm = self.arms.get(iface)
         return arm.read_joints_raw() if arm else None
