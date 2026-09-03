@@ -26,8 +26,15 @@
 `phase/`, `vendor/*`는 데몬이 import하지 않는다 — `backend/Dockerfile`이 이미지 빌드 때
 같이 넣으므로 별도 wheel 불필요 (`bus/shm/robot/phase/vendor`만 COPY, `cam/rs`는 호스트 전용).
 
-레지스트리(GHCR 등)는 안 쓰기로 했다 — 아직 설정된 게 없고, 로컬 빌드 후 `docker save`/`scp`가
-지금 규모(로컬-호스트 동일 네트워크, 3.4GB 전송)에는 더 간단하다는 판단.
+레지스트리는 둘 다 쓴다 (처음엔 "안 쓰기로 했다"였는데 뒤집었다 — tar 는 무엇을
+고쳤든 매번 3.46GB 를 옮기기 때문이다):
+
+- **로컬 레지스트리** (`registry.sh`, `PIPER_REGISTRY=piper-build:5000`) — 현장망 배포
+- **GHCR** (`PIPER_REGISTRY=ghcr.io/swhan-wego`) — 외부망. v0.4.3 부터 올라가 있다.
+  push 는 `docker login ghcr.io` (classic PAT, `write:packages`) 후 release.sh 그대로.
+  ⚠ 패키지는 **private** 이다 — 호스트가 GHCR 에서 직접 pull 하려면 호스트에도
+  `read:packages` 전용 토큰으로 `docker login` 이 필요하다. push 용 토큰을
+  호스트에 두지 말 것.
 
 ---
 

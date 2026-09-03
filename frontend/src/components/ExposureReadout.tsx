@@ -1,5 +1,5 @@
 /**
- * 지금 이 카메라가 **어떻게 노출되고 있는가** — 노출 눈금(스톱) + 셔터 + 게인.
+ * 지금 이 카메라가 **어떻게 노출되고 있는가** — 노출 눈금(스톱) + 셔터 + Gain.
  *
  * 0.0 EV 의 기준은 회색카드 보정이 맞추는 목표(`graycard.TARGET_LUMA`)와 같다.
  * 화면 두 곳이 같은 카메라를 두고 다른 말을 하면 안 되기 때문이다.
@@ -89,7 +89,7 @@ export default function ExposureReadout({ light, mode }: {
       {light.exposure_us != null && (
         <span title="셔터 (노출 시간)">⏱ {shutter(light.exposure_us)}</span>
       )}
-      {light.gain != null && <span title="게인">게인 {light.gain}</span>}
+      {light.gain != null && <span title="Gain — 설정에서 같은 이름으로 조절합니다">Gain {light.gain}</span>}
 
       {/* ⚠ 측광이 수상해 보이는 이유가 대개 이것이다 — 모드를 바꿔도 안 고쳐진다. */}
       {clipped && (
