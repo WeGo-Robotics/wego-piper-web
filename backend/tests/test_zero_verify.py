@@ -224,3 +224,61 @@ def test_waiting_is_on_state_not_on_a_fixed_delay():
     assert "PREPARE_TIMEOUT_S" in src, "기다리지 않는다"
     assert "_mode_int_locked" in src and "_enabled_locked" in src, "상태를 안 본다"
     assert "EnablePiper" not in src, "한 번 부르면 안 먹는 EnablePiper 를 쓴다"
+
+
+# ── 재시도 ──────────────────────────────────────────────────────────────────
+
+class FlakyPiper(FakePiper):
+    """`lands_at` 번째 시도에서야 먹는 팔 — 설정 프레임이 떨어지는 경우."""
+
+    def __init__(self, raw: int, *, lands_at: int):
+        super().__init__(raw, applied=False)
+        self._lands_at = lands_at
+
+    def JointConfig(self, joint_num=7, set_zero=0, **kw):
+        self.sent_zero += 1
+        if self.sent_zero >= self._lands_at:
+            self._raw = 0
+
+
+def test_a_dropped_config_frame_is_retried():
+    """⚠ **설정 프레임이 간헐적으로 떨어진다.** 실측(can3): 1회째 `1994 → 1993`
+    으로 안 먹고 2회째 `1993 → 0` 으로 먹었다. can0 도 2회째에 `29890 → 0`.
+
+    재시도가 없어서 팔 두 대가 "영점이 안 된다" 로 보였다 — 코드는 멀쩡했고
+    한 번 더 보내면 되는 일이었다."""
+    piper = FlakyPiper(29890, lands_at=2)
+    out = arm_with(piper).set_hardware_zero("joint5")
+    assert out["ok"] is True, out
+    assert out["raw_after"] == 0
+    assert out["attempts"] == 2, out
+
+
+def test_retrying_is_safe_because_the_flash_is_idempotent():
+    """⚠ 되돌릴 수 없는 조작을 반복해도 되는 이유는 **멱등**이기 때문이다 —
+    이미 0 인 관절에 다시 구우면 `0 → 0` 이다(실측 3·4·5회). 이 성질이 없으면
+    재시도가 위험한 짓이 된다."""
+    piper = FakePiper(0, applied=True)
+    for _ in range(3):
+        out = arm_with(piper).set_hardware_zero("joint1")
+        assert out["ok"] is True and out["raw_after"] == 0, out
+
+
+def test_it_gives_up_after_a_bounded_number_of_tries():
+    """영원히 두드리면 사람이 화면 앞에서 하염없이 기다린다."""
+    piper = FakePiper(5000, applied=False)
+    out = arm_with(piper).set_hardware_zero("joint1")
+    assert out["ok"] is False
+    assert piper.sent_zero == Arm.ZERO_ATTEMPTS, piper.sent_zero
+
+
+def test_an_explicit_refusal_is_not_retried():
+    """⚠ 팔이 "실패" 라고 응답한 것과 프레임이 떨어진 것은 다르다. 전자는 다시
+    보내도 같은 답이 오므로, 두드리는 대신 사람에게 말한다."""
+    piper = FakePiper(5000, applied=False, flag=0)
+    out = arm_with(piper).set_hardware_zero("joint1")
+    assert out["ok"] is False and piper.sent_zero == 1, piper.sent_zero
+
+    master = arm_with(FakePiper(5000, applied=False))
+    master.is_master = True
+    assert master.set_hardware_zero("joint1")["ok"] is False

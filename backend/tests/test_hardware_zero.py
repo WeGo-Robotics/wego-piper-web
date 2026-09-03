@@ -29,7 +29,7 @@ MODAL = REPO / "frontend" / "src" / "components" / "ZeroCalibrationModal.tsx"
 def test_it_uses_the_hardware_zero_command():
     """`JointConfig(set_zero=0xAE)` 다 — 소프트웨어 표를 고치는 게 아니다."""
     src = ARM.read_text()
-    body = src.split("def set_hardware_zero", 1)[1].split("\n    def ", 1)[0]
+    body = src.split("def _flash_zero_once", 1)[1].split("\n    def ", 1)[0]
     assert "JointConfig(joint_num=motor, set_zero=0xAE)" in body
     assert "GripperCtrl(0, 1000, 0x01, 0xAE)" in body, "그리퍼는 별도 명령이다"
 
@@ -44,7 +44,7 @@ def test_the_gripper_is_motor_seven():
 
 def test_the_response_is_cleared_before_sending():
     """⚠ 안 지우면 **이전 명령의 성공 응답**을 읽고 이번 것도 성공이라고 보고한다."""
-    body = ARM.read_text().split("def set_hardware_zero", 1)[1]
+    body = ARM.read_text().split("def _flash_zero_once", 1)[1]
     clear = body.index("ClearRespSetInstruction")
     send = body.index("set_zero=0xAE")
     assert clear < send, "응답을 지우기 전에 명령을 보낸다"
@@ -53,15 +53,22 @@ def test_the_response_is_cleared_before_sending():
 def test_no_response_is_not_success():
     """`is_set_zero_successfully` 가 -1 이면 **응답이 없는 것**이다.
     보냈으니 됐다고 치면 CAN 이 반쯤 죽었을 때 조용히 실패한다."""
-    body = ARM.read_text().split("def set_hardware_zero", 1)[1].split("\n    def ", 1)[0]
+    body = ARM.read_text().split("def _flash_zero_once", 1)[1].split("\n    def ", 1)[0]
     tree = ast.parse(ARM.read_text())
     fn = next(n for n in ast.walk(tree)
-              if isinstance(n, ast.FunctionDef) and n.name == "set_hardware_zero")
+              if isinstance(n, ast.FunctionDef) and n.name == "_flash_zero_once")
     # 성공(True)을 돌려주는 return 은 flag == 1 가지 하나여야 한다
+    # ⚠ `"ok"` 키와 **짝지어진** 값을 본다. 예전에는 "값 중에 True 가 있나" 로
+    #   봤는데, `{"ok": False, "fatal": True}` 처럼 다른 True 가 생기자 실패를
+    #   성공으로 셌다 — 검사가 조용히 헐거워지는 모양이다.
+    def _ok_value(d: ast.Dict):
+        for k, v in zip(d.keys, d.values):
+            if isinstance(k, ast.Constant) and k.value == "ok":
+                return v.value if isinstance(v, ast.Constant) else None
+        return None
+
     oks = [n for n in ast.walk(fn) if isinstance(n, ast.Return)
-           and isinstance(n.value, ast.Dict)
-           and any(isinstance(k, ast.Constant) and k.value == "ok" for k in n.value.keys)
-           and any(isinstance(v, ast.Constant) and v.value is True for v in n.value.values)]
+           and isinstance(n.value, ast.Dict) and _ok_value(n.value) is True]
     assert len(oks) == 1, "성공을 돌려주는 자리가 하나가 아니다"
     assert "flag == 1" in body
 

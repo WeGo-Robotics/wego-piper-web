@@ -488,7 +488,37 @@ class Arm:
         except Exception:
             return None
 
+    #: 영점 굽기 시도 횟수.
+    #:
+    #: ⚠ **설정 프레임이 간헐적으로 떨어진다.** 실측(can3, 2026-09-03): 1회째는
+    #:   `1994 → 1993` 으로 안 먹고 2회째에 `1993 → 0` 으로 먹었다. 같은 버스에서
+    #:   `MasterSlaveConfig send failed: SEND_MESSAGE_FAILED` 도 나왔었다.
+    #:
+    #:   재시도가 공짜인 이유는 **멱등**이기 때문이다 — 이미 0 인 관절에 다시
+    #:   구우면 `0 → 0` 이다(실측 3·4·5회). 그래서 "안 먹었으면 다시" 가 안전하다.
+    #:   재시도가 없어서 팔 두 대가 "영점이 안 된다" 로 보였다.
+    ZERO_ATTEMPTS = 4
+
     def set_hardware_zero(self, joint: str) -> dict:
+        """지금 위치를 그 관절의 하드웨어 영점으로 굽는다. 되돌릴 수 없다.
+
+        먹었는지 **값으로 확인하고, 안 먹었으면 다시 보낸다.** 팔의 성공 응답은
+        믿을 수 없다 — 안 굽고도 `is_set_zero_successfully=1` 을 돌려준다.
+        """
+        out: dict = {}
+        for attempt in range(self.ZERO_ATTEMPTS):
+            out = self._flash_zero_once(joint)
+            if out.get("ok"):
+                if attempt:
+                    logger.warning("영점이 %d번째에 먹었습니다: %s %s",
+                                   attempt + 1, self.iface, joint)
+                return {**out, "attempts": attempt + 1}
+            # 팔이 명시적으로 실패라 했거나 애초에 못 보낸 경우는 다시 해도 같다
+            if out.get("fatal"):
+                break
+        return {**out, "attempts": self.ZERO_ATTEMPTS}
+
+    def _flash_zero_once(self, joint: str) -> dict:
         """지금 위치를 그 관절의 **하드웨어 영점**으로 굽는다.
 
         되돌릴 수 없다. SDK 에 "영점 해제" 명령이 없다 — 되돌리려면 팔을 원래
@@ -504,7 +534,8 @@ class Arm:
         # ⚠ **마스터 팔에는 굽기가 안 먹는다.** 그런데 팔은 성공이라 응답하므로
         #   보내고 나서는 구분이 안 된다 — 보내기 전에 막아야 이유를 말할 수 있다.
         if self.is_master:
-            return {"ok": False, "joint": joint, "error": self.MASTER_IGNORES}
+            return {"ok": False, "joint": joint, "fatal": True,
+                    "error": self.MASTER_IGNORES}
         with self._lock:
             if not self._piper:
                 return {"ok": False, "error": "연결되지 않음"}
@@ -558,7 +589,8 @@ class Arm:
             return {"ok": True, "joint": joint, "motor": motor,
                     "raw_before": before, "raw_after": after}
         if flag == 0:
-            return {"ok": False, "error": "팔이 실패로 응답했습니다", "joint": joint}
+            return {"ok": False, "fatal": True, "joint": joint,
+                    "error": "팔이 실패로 응답했습니다"}
         # -1 = 응답 없음. **성공으로 치지 않는다** — 명령이 나갔는지도 모른다.
         return {"ok": False, "joint": joint,
                 "error": "팔이 응답하지 않았습니다 — 설정됐는지 확인할 수 없습니다. "
@@ -579,7 +611,8 @@ class Arm:
         if motor is None or joint == "gripper":
             return {"ok": False, "error": f"모터가 없는 관절입니다: {joint}"}
         if self.is_master:
-            return {"ok": False, "joint": joint, "error": self.MASTER_IGNORES}
+            return {"ok": False, "joint": joint, "fatal": True,
+                    "error": self.MASTER_IGNORES}
         with self._lock:
             if not self._piper:
                 return {"ok": False, "error": "연결되지 않음"}
