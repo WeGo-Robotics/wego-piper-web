@@ -86,3 +86,45 @@ def test_the_button_hides_when_there_is_nothing_to_clear():
            / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
     assert "{arms.length > 0 && (" in src, "빈 상태에서도 위험 버튼이 보인다"
     assert "토크가 빠져 팔이 주저앉습니다" in src, "확인창이 토크를 경고하지 않는다"
+
+
+# ── 초기화 뒤의 경보 ────────────────────────────────────────────────────────
+
+def test_no_alert_survives_the_clear(monkeypatch):
+    """⚠ 실기에서 났다: 로봇을 전부 지웠는데 can1·can2·can3 경보가 계속 떴다.
+
+    robotd 는 **자기 브리지 기준으로** lost 를 보고하고 그 기록은 재연결까지
+    남는다. 게이트웨이가 그걸 그대로 중계하면, 등록부가 비어 있어도 경보가
+    산다 — 이 경보의 뜻은 "쓰려던 팔이 없어졌다" 인데 지운 팔은 쓰려던 적이 없다.
+    """
+    from app.services import device_watch as dw
+
+    monkeypatch.setattr(dw, "_survey_arms", lambda: (set(), {"can1", "can2"}))
+    monkeypatch.setattr("app.services.robot_manager.lost_arms",
+                        lambda: [{"id": "can3", "at": 1.0}])
+    monkeypatch.setattr("app.services.robot_manager.robotd_available", lambda: True)
+
+    mgr = rm.robot_manager
+    saved = dict(mgr.arms)
+    try:
+        mgr.arms = {}
+        assert dw.DeviceWatch()._robots() == [], "지운 팔에 경보가 뜬다"
+
+        arm = rm.ArmInfo(iface="can3")
+        mgr.arms = {"can3": arm}
+        assert [a.ident for a in dw.DeviceWatch()._robots()] == ["can3"], \
+            "아는 팔인데 경보가 안 뜬다"
+    finally:
+        mgr.arms = saved
+
+
+def test_an_arm_is_not_told_its_video_stopped():
+    """⚠ **팔에는 영상이 없다.** 명사만 바꾸고 술어는 카메라 것을 그대로 써서
+    "로봇팔 can3 의 영상이 끊겼습니다" 가 나갔다. 무엇이 끊긴 것인지가 다르면
+    사람이 엉뚱한 것을 찾아보게 된다."""
+    from app.services.device_watch import _device_gone
+
+    arm = _device_gone("robot", "can3", "can3").text
+    assert "영상" not in arm, arm
+    assert "상태 발행" in arm, arm
+    assert "영상" in _device_gone("camera", "cam0", "탑").text

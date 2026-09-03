@@ -145,9 +145,13 @@ class Alert:
 
 
 def _device_gone(kind: str, ident: str, name: str) -> Alert:
+    # ⚠ **팔에는 영상이 없다.** 명사만 바꾸고 술어는 카메라 것을 그대로 써서
+    #   "로봇팔 can3 의 영상이 끊겼습니다" 가 나갔다. 장치 종류가 다르면 무엇이
+    #   끊긴 것인지도 다르다 — 사람이 엉뚱한 것을 찾아보게 된다.
     what = "로봇팔" if kind == "robot" else "카메라"
+    what_stopped = "상태 발행" if kind == "robot" else "영상"
     return Alert(kind, ident, name, "device_gone",
-                 f"{what} {name} 의 영상이 끊겼습니다 ({ident}). "
+                 f"{what} {name} 의 {what_stopped}이 끊겼습니다 ({ident}). "
                  "USB 연결을 확인하세요 — 뽑혔거나 컨트롤러가 내려갔을 수 있습니다. "
                  "이 상태로 녹화·추론을 시작하면 시작하자마자 실패합니다.")
 
@@ -293,6 +297,13 @@ class DeviceWatch:
 
         arms = robot_manager.arms
 
+        # ⚠ **게이트웨이가 아는 팔만 경고한다.** 이 경보의 뜻은 "쓰려던 팔이
+        #   없어졌다" 인데, 등록부에 없는 팔은 쓰려던 적이 없다. robotd 는 자기
+        #   브리지 기준으로 계속 lost 를 보고하므로(재연결까지 남는다) 그대로
+        #   중계하면 **전체 초기화로 다 지운 뒤에도 경보가 뜬다** — 실제로 그랬다.
+        def _ours(iface: str) -> bool:
+            return iface in arms
+
         def _name(iface: str) -> str:
             arm = arms.get(iface)
             return arm.role if arm and arm.role != "unknown" else iface
@@ -301,7 +312,7 @@ class DeviceWatch:
         # 1초 안에 보지만, 게이트웨이는 컨테이너라 `/sys/class/net` 자체가 안 보인다.
         try:
             declared = [_device_gone("robot", i["id"], _name(i["id"]))
-                        for i in lost_arms() if i.get("id")]
+                        for i in lost_arms() if i.get("id") and _ours(i["id"])]
         except Exception as exc:
             logger.debug("robotd lost() 조회 실패: %s", exc)
             declared = []
@@ -314,7 +325,7 @@ class DeviceWatch:
             logger.debug("팔 신선도 조회 실패: %s", exc)
             return []
 
-        missing = sorted(stopped)
+        missing = sorted(i for i in stopped if _ours(i))
         if not missing:
             # 발행이 아무것도 없다 — 쥐고 있다고 **기록된** 팔이 있는데 데몬이 죽었으면
             # 그건 알린다. 팔을 안 연 유휴 상태와는 다르다.
