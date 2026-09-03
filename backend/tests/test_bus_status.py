@@ -1,0 +1,86 @@
+"""CAN 버스 상태 탭 — 지금 상태 + 누적 오류 + 트래픽.
+
+⚠ **카운터만 보여주면 오독한다.** 인터페이스를 다시 열면 0 으로 돌아가므로
+절대값끼리 비교하면 안 된다 — 실측: can2·can3 이 1초 차이로 올라왔는데 각각
+0 과 34,794 였다. 그래서 트래픽을 같이 내고, 화면이 백만 프레임당으로 환산한다.
+"""
+
+from pathlib import Path
+
+import pytest
+import textwrap
+
+from conftest import code_only, python_code_only
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+PANEL = (Path(__file__).resolve().parents[2] / "frontend" / "src"
+         / "components" / "BusStatusPanel.tsx")
+
+
+@pytest.fixture
+def client():
+    with TestClient(app) as c:
+        yield c
+
+
+def test_it_reports_state_counters_and_traffic_together(client, monkeypatch):
+    """⚠ 셋을 **함께** 내야 한다. 상태만 보면 잠깐 나빠졌다 돌아오는 버스를
+    영영 못 잡고, 카운터만 보면 가동 시간이 다른 버스를 잘못 비교한다."""
+    from app.services import robot_manager as rm
+
+    rows = [{"iface": "can0", "state": "ERROR-ACTIVE", "healthy": True,
+             "bitrate": 1000000, "counters": {"bus_off": 0}, "errors_total": 0,
+             "rx_packets": 40979846, "tx_packets": 153,
+             "rx_errors": 0, "tx_errors": 0, "rx_dropped": 0, "tx_dropped": 0}]
+    monkeypatch.setattr(rm, "_call", lambda m, *a, **k: rows if m == "bus_status" else None)
+
+    got = client.get("/api/robots/bus")
+    assert got.status_code == 200, got.text
+    b = got.json()["buses"][0]
+    assert b["state"] == "ERROR-ACTIVE"
+    assert b["counters"] and b["rx_packets"] and b["errors_total"] == 0
+
+
+def test_a_dead_daemon_is_said_out_loud(client, monkeypatch):
+    """⚠ 버스 상태를 못 읽는 것과 버스가 멀쩡한 것은 다르다 — 빈 목록을 내면
+    "문제 없음" 으로 읽힌다."""
+    from app.services import robot_manager as rm
+
+    monkeypatch.setattr(rm, "_call", lambda m, *a, **k: None)
+    got = client.get("/api/robots/bus")
+    assert got.status_code == 503 and "robotd" in got.json()["detail"]
+
+
+def test_the_host_reads_it_because_the_container_cannot():
+    """⚠ 게이트웨이는 컨테이너라 `/sys/class/net` 이 안 보인다 — robotd 에
+    물어야 한다. 게이트웨이에서 직접 읽으면 배포에서만 조용히 빈다."""
+    import inspect
+
+    from app.routers.robots import bus_status
+
+    # docstring 이 `/sys/class/net` 을 **쓰지 말라고** 적고 있어서, 그대로
+    # 뒤지면 그 설명이 검사에 걸린다
+    # ⚠ `python_code_only` 는 ast 로 되짚으므로 따옴표가 정규화된다 —
+    #   따옴표에 기대는 검사는 조용히 깨진다.
+    src = python_code_only(textwrap.dedent(inspect.getsource(bus_status))).replace('"', "'")
+    assert "_call('bus_status'" in src, "robotd 에 안 묻는다"
+    assert "/sys/class/net" not in src
+
+
+def test_the_screen_normalizes_by_traffic():
+    """⚠ 절대값 비교는 틀린다(0 vs 34,794 가 같은 시각의 두 버스였다).
+    백만 프레임당으로 환산하면 가동 시간이 달라도 비교가 된다."""
+    src = code_only(PANEL.read_text())
+    assert "perMillion" in src, "트래픽으로 정규화하지 않는다"
+    assert "34,794" in PANEL.read_text(), "왜 정규화가 필요한지 화면이 안 말한다"
+
+
+def test_auto_refresh_is_optional_and_off_by_default():
+    """⚠ 이 화면은 인터페이스마다 `ip` 를 부르므로 공짜가 아니고, 팔을 만지는
+    중에 배경 폴링이 도는 것을 사람이 모르면 안 된다 — 기본은 꺼짐, 켜는 건 선택."""
+    src = code_only(PANEL.read_text())
+    assert "useState(false)" in src, "자동 새로고침이 기본으로 켜져 있다"
+    assert "INTERVALS" in src, "주기를 고를 수 없다"
+    assert "새로고침" in PANEL.read_text(), "수동 새로고침 버튼이 없다"

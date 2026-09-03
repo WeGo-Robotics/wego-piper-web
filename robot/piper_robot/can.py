@@ -127,6 +127,49 @@ def error_counters(iface: str) -> dict[str, int]:
     return dict(zip(ERROR_COUNTERS, (int(g) for g in m.groups())))
 
 
+def _stat(iface: str, name: str) -> int | None:
+    try:
+        return int(Path(f"/sys/class/net/{iface}/statistics/{name}").read_text().strip())
+    except Exception:
+        return None
+
+
+def bus_stats(iface: str) -> dict:
+    """이 버스의 지금 상태 + 누적 오류 + 트래픽. 화면의 버스 상태 탭이 쓴다.
+
+    ⚠ **카운터만 보여주면 오독한다.** 인터페이스를 다시 열면 0 으로 돌아가므로
+    절대값끼리 비교하면 안 된다 — 실측: can2 와 can3 이 1초 차이로 올라왔는데
+    각각 0 과 34,794 였다. 그래서 **트래픽(rx_packets)을 같이 낸다.** 백만
+    프레임당 오류로 환산하면 가동 시간이 달라도 비교가 된다.
+    """
+    rx = _stat(iface, "rx_packets")
+    counters = error_counters(iface)
+    return {
+        "iface": iface,
+        "state": can_state(iface),
+        "healthy": can_state(iface) == CAN_HEALTHY,
+        "bitrate": _bitrate(iface),
+        "counters": counters,
+        "errors_total": sum(counters.values()) if counters else None,
+        "rx_packets": rx,
+        "tx_packets": _stat(iface, "tx_packets"),
+        "rx_errors": _stat(iface, "rx_errors"),
+        "tx_errors": _stat(iface, "tx_errors"),
+        "rx_dropped": _stat(iface, "rx_dropped"),
+        "tx_dropped": _stat(iface, "tx_dropped"),
+    }
+
+
+def _bitrate(iface: str) -> int | None:
+    try:
+        out = subprocess.run(["ip", "-details", "link", "show", iface],
+                             capture_output=True, text=True, timeout=2).stdout
+    except Exception:
+        return None
+    m = re.search(r"bitrate (\d+)", out)
+    return int(m.group(1)) if m else None
+
+
 def can_unhealthy_reason(iface: str) -> str | None:
     """버스가 나쁘면 사람이 읽을 사유, 괜찮으면 None."""
     state = can_state(iface)

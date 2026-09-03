@@ -315,6 +315,19 @@ async def set_motor_torque(body: MotorTorqueRequest):
     return out
 
 
+@router.get("/bus")
+async def bus_status():
+    """CAN 버스별 상태·누적 오류·트래픽 (화면의 버스 상태 탭).
+
+    ⚠ **호스트에서만 읽힌다.** 게이트웨이는 컨테이너라 `/sys/class/net` 이 안
+      보이므로 robotd 에 물어본다.
+    """
+    rows = robot_manager_mod._call("bus_status", default=None)
+    if rows is None:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    return {"buses": rows}
+
+
 @router.get("/motor/torque/{iface}")
 async def get_motor_torque(iface: str):
     """모터별 실제 토크 상태. **기억이 아니라 팔이 말하는 값**이다."""

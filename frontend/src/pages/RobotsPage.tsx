@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import AlignmentPanel from '../components/AlignmentPanel'
+import BusStatusPanel from '../components/BusStatusPanel'
 import JogPanel from '../components/JogPanel'
 import ZeroCalibrationModal from '../components/ZeroCalibrationModal'
 import { JOINT_NAMES } from '../config/joints'
@@ -313,7 +314,7 @@ export default function RobotsPage() {
   // 밀려 내려가고, 팔을 실제로 움직이는 조작은 화면이 그 팔 하나에 고정되는 게
   // 맞다 — 영점·파킹 모달과 같은 판단이다.
   const [jogIface, setJogIface] = useState<string | null>(null)
-  const [tab, setTab] = useState<'devices' | 'alignment'>('devices')
+  const [tab, setTab] = useState<'devices' | 'alignment' | 'bus'>('devices')
   // 정렬 탭에서 쓸 카메라 목록. **탭을 열 때만** 부른다 — 로봇 페이지가 늘
   // 카메라를 폴링할 이유가 없다.
   const [alignCams, setAlignCams] = useState<
@@ -607,7 +608,8 @@ export default function RobotsPage() {
       <div className="flex items-center gap-4">
         <h1 className="text-2xl font-bold">로봇</h1>
         <div className="flex overflow-hidden rounded-lg border border-neutral-700 text-sm">
-          {([['devices', '디바이스'], ['alignment', '정렬']] as const).map(([k, label]) => (
+          {([['devices', '디바이스'], ['alignment', '정렬'],
+             ['bus', '버스 상태']] as const).map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)}
               className={`px-4 py-1.5 ${tab === k
                 ? 'bg-neutral-700 text-white' : 'bg-neutral-900 text-neutral-400 hover:text-white'}`}>
@@ -959,6 +961,8 @@ export default function RobotsPage() {
       </div>
 
       </>)}
+
+      {tab === 'bus' && <BusStatusPanel />}
 
       {tab === 'alignment' && (
         <AlignmentPanel

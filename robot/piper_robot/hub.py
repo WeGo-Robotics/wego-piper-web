@@ -88,6 +88,13 @@ class RobotHub:
         arm = self.arms.get(iface)
         return arm.read_joints_normalized() if arm else None
 
+    def bus_status(self) -> list[dict]:
+        """모든 CAN 버스의 상태. **호스트에서만 읽을 수 있다** — 게이트웨이는
+        컨테이너라 `/sys/class/net` 자체가 안 보인다."""
+        from piper_robot.can import bus_stats, scan_can_interfaces
+
+        return [bus_stats(c["iface"]) for c in scan_can_interfaces()]
+
     def set_motor_enabled(self, iface: str, joint: str, enabled: bool) -> dict:
         arm = self.arms.get(iface)
         if arm is None:
