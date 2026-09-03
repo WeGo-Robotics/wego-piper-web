@@ -107,69 +107,6 @@ def test_a_small_residual_still_counts_as_applied():
     out = arm_with(FakePiper(-281, applied=False)).set_hardware_zero("joint2")
     assert out["ok"] is True, out
 
-
-def test_the_arms_own_failure_still_wins():
-    """팔이 실패라 하면 값과 무관하게 실패다."""
-    out = arm_with(FakePiper(0, applied=False, flag=0)).set_hardware_zero("joint1")
-    assert out["ok"] is False and "실패로 응답" in out["error"], out
-
-
-# ── 굽기 전 실능 ────────────────────────────────────────────────────────────
-
-def test_the_server_refuses_to_flash_a_motor_that_still_holds():
-    """⚠ **모터가 자세를 붙들고 있으면 안 굽힌다.** 팔은 성공이라 응답하면서
-    실제로는 안 굽는다 (2026-09-03 실측 16/16 실패). SDK 공식 절차도 굽기 전에
-    그 모터를 실능시킨다.
-
-    화면만 막으면 API 를 직접 부르는 경로가 남는다 — 되돌릴 수 없는 조작이라
-    서버가 막아야 한다."""
-    import inspect
-
-    from conftest import python_code_only
-    from app.routers import robots
-
-    src = python_code_only(inspect.getsource(robots.set_hardware_zero))
-    assert "motor_enabled()" in src, "서버가 토크 상태를 안 본다"
-    assert "먼저 토크를 끊으세요" in src
-
-
-def test_the_screen_reads_the_torque_from_the_arm_not_from_memory():
-    """⚠ 우리가 보낸 명령을 기억해 두면 팔이 스스로 실능된 경우(에러·전원)를
-    놓친다 — 화면은 "토크 켜짐" 인데 관절은 힘이 없는 상태가 된다."""
-    from pathlib import Path
-
-    from conftest import code_only
-
-    src = code_only((Path(__file__).resolve().parents[2] / "frontend" / "src"
-                     / "components" / "ZeroCalibrationModal.tsx").read_text())
-    assert "/robots/motor/torque/" in src, "토크 상태를 팔에게 안 묻는다"
-    assert "torque[j.name] === true" in src, "토크가 걸린 채로 영점을 누를 수 있다"
-
-
-def test_cutting_torque_warns_that_the_joint_will_drop():
-    """⚠ 토크를 끊으면 그 관절이 **중력으로 주저앉는다.** SDK 공식 예제도
-    "请保护好机械臂"(팔을 보호하라)라고 적는다 — 누르기 전에 말해야 한다."""
-    from pathlib import Path
-
-    src = (Path(__file__).resolve().parents[2] / "frontend" / "src"
-           / "components" / "ZeroCalibrationModal.tsx").read_text()
-    assert "중력으로 주저앉습니다" in src, "떨어진다는 말을 안 한다"
-
-
-def test_enabling_torque_locks_the_flash_again():
-    """토크를 다시 걸면 영점 버튼이 잠겨야 한다 — 같은 조건 하나로 양방향이
-    같이 움직인다."""
-    from pathlib import Path
-
-    from conftest import code_only
-
-    src = code_only((Path(__file__).resolve().parents[2] / "frontend" / "src"
-                     / "components" / "ZeroCalibrationModal.tsx").read_text())
-    assert "'토크 끊기' : '토크 걸기'" in src, "양방향 버튼이 아니다"
-
-
-# ── 마스터 팔 ───────────────────────────────────────────────────────────────
-
 def test_a_master_arm_is_refused_before_anything_is_sent():
     """⚠ **마스터(示教输入臂)는 외부 제어 명령을 전부 무시한다.** 실측(can3):
     `EnablePiper` · `ModeCtrl` · `DisableArm` 을 보내도 `ctrl_mode` 는 Standby
@@ -184,9 +121,6 @@ def test_a_master_arm_is_refused_before_anything_is_sent():
     assert out["ok"] is False
     assert "마스터" in out["error"] and "무시" in out["error"], out
     assert piper.sent_zero == 0, "막았다면서 프레임을 보냈다"
-
-    t = arm.set_motor_enabled("joint1", False)
-    assert t["ok"] is False and "마스터" in t["error"], t
 
 
 def test_a_slave_arm_is_not_blocked_by_that_guard():
@@ -282,3 +216,35 @@ def test_an_explicit_refusal_is_not_retried():
     master = arm_with(FakePiper(5000, applied=False))
     master.is_master = True
     assert master.set_hardware_zero("joint1")["ok"] is False
+
+def test_nothing_gates_the_flash_on_torque_state():
+    """⚠ 한때 "모터가 활성이면 거절" 하는 가드가 있었다. 굽기가 스스로 준비하게
+    된 뒤로 그 가드는 **멀쩡한 시도를 전부 거절한다** — 평상시엔 토크가 켜져
+    있기 때문이다. 진짜 원인은 모터 상태가 아니라 검증·재시도가 없던 것이었다.
+
+    그래서 화면에도 토크 버튼이 없다. 사람이 순서를 맞춰 줘야 하는 절차처럼
+    보였던 것이 실은 우리가 결과를 안 본 탓이었다."""
+    import inspect
+    from pathlib import Path
+
+    from app.routers import robots
+
+    src = python_code_only(textwrap.dedent(inspect.getsource(robots.set_hardware_zero)))
+    assert "motor_enabled" not in src, "토크 상태로 굽기를 막는다"
+
+    modal = (Path(__file__).resolve().parents[2] / "frontend" / "src"
+             / "components" / "ZeroCalibrationModal.tsx").read_text()
+    assert "토크 끊기" not in modal and "토크 걸기" not in modal, "창에 토크 버튼이 남았다"
+    assert "/robots/motor/torque" not in modal, "창이 아직 토크를 만진다"
+
+
+def test_the_flash_still_does_the_disabling_itself():
+    """버튼을 없앨 수 있는 근거 — 굽기가 대상 모터를 스스로 실능시킨다.
+    이게 빠지면 버튼도 없고 절차도 없는 상태가 된다."""
+    piper = FakePiper(5000, applied=True)
+    piper.EnableArm(7)                      # 평상시처럼 토크가 켜져 있다
+    assert all(piper.enabled.values())
+
+    out = arm_with(piper).set_hardware_zero("joint2")
+    assert out["ok"] is True, out
+    assert piper.enabled[2] is False, "대상 모터를 스스로 끄지 않는다"

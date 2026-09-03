@@ -597,49 +597,6 @@ class Arm:
                          "raw 값을 보고 판단하세요.",
                 "raw_before": before, "raw_after": after}
 
-    def set_motor_enabled(self, joint: str, enabled: bool) -> dict:
-        """그 관절 모터의 토크를 켜고 끈다.
-
-        ⚠ **끄면 그 관절이 중력으로 주저앉는다.** SDK 공식 예제도 영점 굽기 전에
-        이걸 하면서 "请保护好机械臂"(팔을 보호하라)라고 적어 둔다. 부르는 쪽이
-        사람에게 그 사실을 먼저 말해야 한다.
-
-        영점 굽기에 필요한 절차다 — 모터가 자세를 붙들고 있는 채로 굽기를 보내면
-        팔은 성공이라 응답하면서 실제로는 안 굽는다 (2026-09-03 실측 16/16 실패).
-        """
-        motor = self.ZERO_MOTOR.get(joint)
-        if motor is None or joint == "gripper":
-            return {"ok": False, "error": f"모터가 없는 관절입니다: {joint}"}
-        if self.is_master:
-            return {"ok": False, "joint": joint, "fatal": True,
-                    "error": self.MASTER_IGNORES}
-        with self._lock:
-            if not self._piper:
-                return {"ok": False, "error": "연결되지 않음"}
-            try:
-                if enabled:
-                    self._piper.EnableArm(motor)
-                else:
-                    # ⚠ **끊기 전에 팔을 CAN 제어 모드로 세운다.** 공식 예제는 절차
-                    #   전체를 그 모드에서 한다(`EnablePiper` → `ModeCtrl(0x01,0x01,…)`
-                    #   → 대상 모터만 `DisableArm`). Standby 인 팔에 굽기를 보내면
-                    #   팔은 성공이라 응답하면서 아무 일도 안 한다 — 2026-09-03 실측.
-                    #
-                    #   ⚠ 예제의 `JointCtrl(0,0,0,0,0,0)` 은 **따라하지 않는다.**
-                    #     그건 팔을 홈 자세로 **움직이라는 명령**이다. 영점을 맞추려
-                    #     세워둔 자세가 그 순간 사라진다.
-                    self._piper.EnablePiper()
-                    time.sleep(self.CONFIG_GAP_S)
-                    self._piper.ModeCtrl(0x01, 0x01, 30, 0x00)
-                    time.sleep(self.CONFIG_GAP_S)
-                    self._piper.DisableArm(motor)
-                time.sleep(self.CONFIG_GAP_S)
-            except Exception as exc:
-                return {"ok": False, "error": str(exc)}
-        logger.warning("모터 토크 %s: %s %s (모터 %d)",
-                       "켬" if enabled else "끔", self.iface, joint, motor)
-        return {"ok": True, "joint": joint, "motor": motor, "enabled": enabled}
-
     def motor_enabled(self) -> dict[str, bool]:
         """모터별 **실제** 활성 상태. 기억이 아니라 팔이 말하는 값이다.
 

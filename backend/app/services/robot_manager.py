@@ -372,10 +372,6 @@ class ArmInfo:
             self.refresh_mode(classify=True)   # 방금 바꾼 값을 확인한다
         return r
 
-    def set_motor_enabled(self, joint: str, enabled: bool) -> dict:
-        return _call("set_motor_enabled", self.iface, joint, enabled,
-                     default={"ok": False, "error": "robotd 가 응답하지 않습니다"})
-
     def motor_enabled(self) -> dict:
         return _call("motor_enabled", self.iface, default={}) or {}
 

@@ -95,12 +95,6 @@ class RobotHub:
 
         return [bus_stats(c["iface"]) for c in scan_can_interfaces()]
 
-    def set_motor_enabled(self, iface: str, joint: str, enabled: bool) -> dict:
-        arm = self.arms.get(iface)
-        if arm is None:
-            return {"ok": False, "error": f"{iface} 를 모릅니다"}
-        return arm.set_motor_enabled(joint, enabled)
-
     def motor_enabled(self, iface: str) -> dict:
         arm = self.arms.get(iface)
         return arm.motor_enabled() if arm else {}
