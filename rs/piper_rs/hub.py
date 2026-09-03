@@ -1323,6 +1323,43 @@ class RealSenseHub:
             logger.warning("RealSense sensor lookup failed: %s", exc)
         return None
 
+    def intrinsics(self, cam_id: str) -> dict | None:
+        """이 스트림의 카메라 내부 파라미터. 없으면 None.
+
+        ⚠ **지어내지 않는다.** 초점거리를 추측하면 mm 로 나오는 답이 그럴듯한
+        모양으로 틀린다 — 틀린 줄도 모르게 된다. 장치가 스스로 신고하는 값만 쓴다.
+        """
+        parsed = parse_id(cam_id)
+        if not parsed:
+            return None
+        return _run_guarded(lambda: self._intrinsics_impl(*parsed), 3.0, None,
+                            f"intrinsics({cam_id})")
+
+    def _intrinsics_impl(self, serial: str, stream: str) -> dict | None:
+        import pyrealsense2 as rs
+
+        dev = self._device(serial)
+        pipeline = getattr(dev, "_pipeline", None) if dev else None
+        if pipeline is None:
+            return None
+        target = {"color": rs.stream.color, "depth": rs.stream.depth,
+                  "infrared": rs.stream.infrared}.get(stream)
+        if target is None:
+            return None
+        try:
+            v = pipeline.get_active_profile().get_stream(target).as_video_stream_profile()
+            i = v.get_intrinsics()
+        except Exception as exc:
+            logger.warning("내부 파라미터 조회 실패 (%s): %s", make_id(serial, stream), exc)
+            return None
+        # ⚠ 왜곡 계수도 **같이 낸다.** "RealSense 는 보정된 프레임을 준다" 는
+        #   모델마다 참이 아니다 — 0 이라고 가정하면 그 가정이 틀린 카메라에서
+        #   mm 단위 답이 조용히 치우친다. 값을 넘겨 받는 쪽이 판단하게 한다.
+        return {"fx": float(i.fx), "fy": float(i.fy),
+                "cx": float(i.ppx), "cy": float(i.ppy),
+                "width": int(i.width), "height": int(i.height),
+                "model": str(i.model), "coeffs": [float(c) for c in i.coeffs]}
+
     def list_controls(self, cam_id: str) -> list[dict]:
         """해당 스트림 센서가 지원하는 option을 v4l2 컨트롤과 동일한 dict 형태로 반환."""
         if not _RS_AVAILABLE:

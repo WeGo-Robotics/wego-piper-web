@@ -55,7 +55,7 @@ _METHODS = {
     "scan", "connect", "disconnect", "release_all", "is_d405",
     "probe", "hardware_reset", "list_controls", "set_control",
     "info", "set_depth_encoding", "set_background_mask", "calibrate_gray_card", "measure_gray_card",
-    "apply_controls", "last_apply_report", "lost",
+    "apply_controls", "last_apply_report", "lost", "intrinsics",
 }
 
 
