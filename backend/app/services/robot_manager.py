@@ -781,6 +781,7 @@ class RobotManager:
         if data.get("config_name"):
             self.config_name = data["config_name"]
         applied: list[str] = []
+        mode_failed: list[str] = []
         missing: list[str] = []
         failed: list[str] = []
         for arm_data in data.get("arms", []):
@@ -810,13 +811,18 @@ class RobotManager:
                     continue
             # ⚠ **라벨만 복구하면 절반이다.** 팔의 마스터/슬레이브 모드까지 세운다 —
             #   안 그러면 화면은 leader 인데 팔은 슬레이브로 남는다.
-            self.apply_role_mode(arm)
+            # ⚠ **모드 설정 실패를 삼키지 않는다.** 이 함수는 "무엇이 실제로
+            #   적용됐는지 돌려준다" 고 약속하는데, 예전에는 마스터/슬레이브가
+            #   안 먹어도 `applied` 에 올렸다 — 화면은 leader 인데 팔은 슬레이브로
+            #   남고, 텔레옵을 걸어야 그제서야 드러난다.
+            if not self.apply_role_mode(arm):
+                mode_failed.append(iface)
             # 등록 상태 복원. 없으면(옛 프리셋) 슬롯 유무로 추정한다.
             arm.ready = arm_data.get("ready", bool(arm_data.get("slot")))
             applied.append(iface)
         # 프론트 호환: 예전 응답이 name 을 포함했다
-        return {"name": name, **data,
-                "applied": applied, "missing": missing, "failed": failed}
+        return {"name": name, **data, "applied": applied, "missing": missing,
+                "failed": failed, "mode_failed": mode_failed}
 
     def delete_preset(self, name: str) -> bool:
         return presets.delete(PRESET_DOMAIN, name)

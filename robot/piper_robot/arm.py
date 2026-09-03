@@ -177,24 +177,46 @@ class Arm:
         if classify:
             self._classify_master(mode_int)
 
+    #: 마스터/슬레이브 설정 재시도 횟수. 프레임 하나가 떨어져도 조용히 실패하면
+    #: 안 되고, 그렇다고 무한히 시도하면 사람이 화면 앞에서 하염없이 기다린다.
+    MS_ATTEMPTS = 3
+
     def set_master_slave(self, master: bool) -> tuple[bool, str]:
         """팔을 마스터(示教输入臂, 0xFA) 또는 슬레이브(运动输出臂, 0xFC)로 설정.
 
         설정 후 마스터는 ctrl_mode 0x06(Linkage teaching)을 보고하며 제어지령(0x15x)을
         송신한다. 전원 재투입 시 풀릴 수 있으므로 재설정이 필요할 수 있다.
         """
-        with self._lock:
-            if not self._piper:
-                return False, "연결되지 않음"
-            try:
-                self._piper.MasterSlaveConfig(0xFA if master else 0xFC, 0, 0, 0)
-            except Exception as e:
-                return False, str(e)
-        time.sleep(0.4)  # 모드 전환 반영 대기
-        self.refresh_mode(classify=True)   # 방금 바꿨다 — 여기서는 다시 본다
-        # 사용자가 명시적으로 바꿨으므로 역할도 따라간다 — 마스터로 바꿔놓고
-        # 화면에 follower 로 남아 있으면 슬롯 배정에서 그대로 어긋난다.
-        return True, "OK"
+        want = "마스터" if master else "슬레이브"
+        last = ""
+        # ⚠ **한 번 보내고 믿지 않는다.** 프레임이 조용히 떨어진 적이 있다 —
+        #   2026-09-03 로그에 `MasterSlaveConfig send failed: SEND_MESSAGE_FAILED`
+        #   가 아홉 번 찍혔는데 화면에는 전부 성공으로 보였다. 보낸 뒤 팔이 실제로
+        #   그 모드인지 보고, 아니면 다시 보낸다.
+        for attempt in range(self.MS_ATTEMPTS):
+            with self._lock:
+                if not self._piper:
+                    return False, "연결되지 않음"
+                try:
+                    self._piper.MasterSlaveConfig(0xFA if master else 0xFC, 0, 0, 0)
+                except Exception as e:
+                    last = str(e)
+                    continue
+            time.sleep(0.4)  # 모드 전환 반영 대기
+            self.refresh_mode(classify=True)   # 방금 바꿨다 — 여기서는 다시 본다
+            # 사용자가 명시적으로 바꿨으므로 역할도 따라간다 — 마스터로 바꿔놓고
+            # 화면에 follower 로 남아 있으면 슬롯 배정에서 그대로 어긋난다.
+            if self.is_master is master:
+                if attempt:
+                    logger.warning("%s 모드 설정이 %d번째에 먹었습니다 (%s)",
+                                   self.iface, attempt + 1, want)
+                return True, "OK"
+            last = (f"팔이 {want} 로 바뀌지 않았습니다 "
+                    f"(지금 {'마스터' if self.is_master else '슬레이브'})")
+        logger.warning("%s 모드 설정 실패 (%s): %s", self.iface, want, last)
+        return False, (f"{last}. 명령은 보냈지만 팔이 따라오지 않았습니다 — "
+                       f"CAN 연결과 팔 전원을 확인하세요. "
+                       f"(전원을 껐다 켜면 이 설정은 풀립니다)")
 
     def disconnect(self) -> None:
         with self._lock:
