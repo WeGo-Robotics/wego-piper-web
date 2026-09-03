@@ -123,3 +123,17 @@ def test_a_master_arms_zeros_are_reported_as_missing_not_as_readings():
 
     src = code_only(PANEL.read_text())
     assert "j.feedback === false" in src, "화면이 '피드백 없음' 을 구분하지 않는다"
+
+
+def test_the_columns_line_up_across_arms():
+    """⚠ 팔마다 표가 **따로** 그려진다. 내용에 맞춰 칸이 잡히면 팔끼리 열이
+    어긋나는데, 값이 없는 팔(`—`)과 있는 팔이 나란히 있을 때 특히 심하다
+    (실기 화면: can1 은 전부 `—`, can2 는 `23.0V`). 위아래로 훑으며 비교하는
+    표라 열이 맞아야 한다 — 너비를 한 곳에서 정한다."""
+    src = code_only(PANEL.read_text())
+    assert "table-fixed" in src, "내용에 따라 칸 너비가 달라진다"
+    assert "COLS" in src and "colgroup" in src, "열 너비를 한 곳에서 안 정한다"
+    # 너비(colgroup)와 헤더가 **같은 정의**를 쓴다. 본문 `<td>` 는 여전히 손으로
+    # 적으므로, 열을 재배치할 때는 그쪽도 같이 옮겨야 한다 — 이 검사가 잡아주지
+    # 못하는 부분이라 여기 적어 둔다.
+    assert src.count("COLS.map") >= 2, "헤더가 열 정의를 안 쓴다"

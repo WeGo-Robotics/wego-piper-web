@@ -34,6 +34,18 @@ const FLAG_LABEL: Record<string, string> = {
 /** 온도 경고선(℃). 이 위는 색을 준다 — 늘 색이 있으면 아무도 안 본다. */
 const TEMP_WARN = 55
 
+/** 표의 열. 팔마다 표가 따로라 **너비를 여기서 한 번에 정해야** 열이 맞는다. */
+const COLS = [
+  { key: 'joint', label: '관절', width: '9%' },
+  { key: 'volt', label: '전압', width: '9%' },
+  { key: 'dtemp', label: '드라이버 온도', width: '13%' },
+  { key: 'mtemp', label: '모터 온도', width: '12%' },
+  { key: 'angle', label: '각도 범위', width: '17%' },
+  { key: 'spd', label: '최대 속도', width: '13%' },
+  { key: 'acc', label: '최대 가속', width: '13%' },
+  { key: 'state', label: '상태', width: '14%' },
+] as const
+
 const n = (v: number | undefined, unit = '', digits = 0) =>
   v == null ? '—' : `${v.toFixed(digits)}${unit}`
 
@@ -76,7 +88,7 @@ export default function VersionPanel() {
 
       {arms.map((a) => (
         <div key={a.iface} className="rounded-lg border border-neutral-700 bg-neutral-800 p-3 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="font-mono text-sm text-neutral-100">{a.iface}</span>
             <span className="rounded bg-blue-600/20 px-2 py-0.5 text-xs text-blue-300">
               {a.firmware || '펌웨어 미상'}
@@ -85,23 +97,25 @@ export default function VersionPanel() {
               <span className="text-xs text-neutral-400">{a.master_slave}</span>
             )}
             {a.ctrl_mode && <span className="text-xs text-neutral-500">{a.ctrl_mode}</span>}
-            <span className="ml-auto text-xs text-neutral-500">
+            {/* 오른쪽 끝에서 잘리던 줄 — 좁아지면 접히게 둔다 */}
+            <span className="ml-auto shrink-0 text-xs text-neutral-500">
               SDK {a.sdk ?? '—'} · {a.protocol ?? '—'}
             </span>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[46rem] text-xs tabular-nums">
+            {/* ⚠ **너비를 고정한다.** 팔마다 표가 따로라 내용에 맞춰 칸이 잡히면
+                팔끼리 열이 어긋난다 — 값이 없는 팔(`—`)과 있는 팔이 나란히 있을
+                때 특히 심하다. 위아래로 훑으며 비교하는 표라 열이 맞아야 한다. */}
+            <table className="w-full min-w-[52rem] table-fixed text-xs tabular-nums">
+              <colgroup>
+                {COLS.map((c) => <col key={c.key} style={{ width: c.width }} />)}
+              </colgroup>
               <thead className="text-neutral-500">
                 <tr className="text-left">
-                  <th className="py-1 pr-3 font-normal">관절</th>
-                  <th className="py-1 pr-3 font-normal">전압</th>
-                  <th className="py-1 pr-3 font-normal">드라이버 온도</th>
-                  <th className="py-1 pr-3 font-normal">모터 온도</th>
-                  <th className="py-1 pr-3 font-normal">각도 범위</th>
-                  <th className="py-1 pr-3 font-normal">최대 속도</th>
-                  <th className="py-1 pr-3 font-normal">최대 가속</th>
-                  <th className="py-1 font-normal">상태</th>
+                  {COLS.map((c) => (
+                    <th key={c.key} className="py-1 pr-3 font-normal">{c.label}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="text-neutral-300">
