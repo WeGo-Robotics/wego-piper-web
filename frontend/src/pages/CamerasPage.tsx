@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import ExposureReadout, { type LightSample } from '../components/ExposureReadout'
+import ExposureReadout, { METERING_LABEL, METERING_MODES, type LightSample, type Metering } from '../components/ExposureReadout'
 import CameraProfilesPanel from '../components/CameraProfilesPanel'
 import { useSystemMessage } from '../components/SystemMessages'
 import ParamSlider from '../components/ParamSlider'
@@ -331,6 +331,13 @@ export default function CamerasPage() {
   // 노출 표시용. 샘플러가 2초마다 재 둔 것을 같은 주기로 받아온다 —
   // 카드마다 폴링하면 카메라 수만큼 요청이 늘고, 장치는 아무도 안 만진다.
   const [light, setLight] = useState<Record<string, LightSample>>({})
+  // 측광 모드는 **보는 방식**이지 장치 설정이 아니다 — 브라우저에 남긴다.
+  // 모드별 값은 샘플에 다 실려 오므로 바꾸는 즉시 반영된다(다음 샘플을 안 기다린다).
+  const [metering, setMetering] = useState<Metering>(() => {
+    const v = localStorage.getItem('piper_metering')
+    return (METERING_MODES as readonly string[]).includes(v || '') ? (v as Metering) : 'average'
+  })
+  useEffect(() => { localStorage.setItem('piper_metering', metering) }, [metering])
   useEffect(() => {
     const tick = () => api.get<{ cameras: LightSample[] }>('/cameras/light')
       .then((r) => setLight(Object.fromEntries(r.cameras.map((c) => [c.id, c]))))
@@ -551,12 +558,25 @@ export default function CamerasPage() {
             </button>
           ))}
         </div>
-        {tab === 'devices' && (
+        {tab === 'devices' && (<>
+          {/* 측광 모드 — 카드마다 두면 카메라 수만큼 중복된다. 한 곳에서 고르고
+              모든 카드가 같은 방식으로 읽힌다. */}
+          <div className="ml-auto flex items-center gap-1 rounded-lg bg-neutral-800 p-0.5"
+               title="같은 프레임의 어디를 보고 노출을 잴지. 목표(0.0 EV)는 셋 다 같습니다.">
+            <span className="pl-1.5 text-[10px] text-neutral-500">측광</span>
+            {METERING_MODES.map((m) => (
+              <button key={m} onClick={() => setMetering(m)}
+                className={`rounded px-2 py-1 text-xs transition-colors ${metering === m
+                  ? 'bg-neutral-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}>
+                {METERING_LABEL[m]}
+              </button>
+            ))}
+          </div>
           <button onClick={handleScan} disabled={scanning}
-            className="ml-auto px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
+            className="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
             {scanning ? <><Spinner className="inline" /> 스캔 중...</> : '스캔'}
           </button>
-        )}
+        </>)}
       </div>
 
       {tab === 'profiles' && (
@@ -655,7 +675,7 @@ export default function CamerasPage() {
                       {cam.config.width && <span className="ml-2">{cam.config.width}x{cam.config.height}</span>}
                       {cam.config.fps && <span className="ml-2">{cam.config.fps}fps</span>}
                     </div>
-                    <ExposureReadout light={light[cam.id]} />
+                    <ExposureReadout light={light[cam.id]} mode={metering} />
                     <div className="flex gap-1.5">
                       <button onClick={() => handleProbe(cam.id)} disabled={busyId === cam.id}
                         className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
@@ -799,7 +819,7 @@ export default function CamerasPage() {
                       {cam.config.width && <span className="ml-2">{cam.config.width}x{cam.config.height}</span>}
                       {cam.config.fps && <span className="ml-2">{cam.config.fps}fps</span>}
                     </div>
-                    <ExposureReadout light={light[cam.id]} />
+                    <ExposureReadout light={light[cam.id]} mode={metering} />
                     <div className="flex gap-1.5">
                       <button onClick={() => openSettings(cam.id)}
                         className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-yellow-600 text-neutral-300 hover:text-white transition-colors">설정</button>

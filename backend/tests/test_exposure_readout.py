@@ -12,7 +12,7 @@ import pytest
 from conftest import code_only
 from piper_cam.controls import exposure_us
 from piper_cam.graycard import TARGET_LUMA
-from piper_cam.lighting import EV_LIMIT, ev, features
+from piper_cam.lighting import EV_LIMIT, METERING_MODES, ev, features
 
 _SRC = Path(__file__).resolve().parents[2] / "frontend" / "src"
 READOUT = _SRC / "components" / "ExposureReadout.tsx"
@@ -42,13 +42,52 @@ def test_the_scale_has_ends_and_darkness_does_not_explode():
     assert ev(TARGET_LUMA * 1000) == EV_LIMIT
 
 
-def test_the_frame_measurement_carries_the_scale():
+def test_the_frame_measurement_carries_every_mode():
+    """⚠ 셋을 **다 실어 보낸다.** 고른 하나만 보내면 모드를 바꿀 때마다 다음
+    샘플(2초)을 기다려야 하고, 무엇보다 비교가 안 된다 — 측광이 수상할 때
+    사람이 제일 먼저 하는 일이 모드를 바꿔 보는 것이다."""
     import numpy as np
 
-    frame = np.full((32, 32, 3), 118, dtype=np.uint8)
+    feats = features(np.full((32, 32, 3), 118, dtype=np.uint8))
+    assert set(feats["ev"]) == set(METERING_MODES), feats["ev"]
+    assert set(feats["metering"]) == set(METERING_MODES), feats["metering"]
+    for m in METERING_MODES:
+        assert abs(feats["ev"][m]) < 0.2, (m, feats["ev"])
+
+
+def test_the_modes_actually_look_at_different_places():
+    import numpy as np
+
+    frame = np.zeros((64, 64, 3), np.uint8)
+    frame[20:44, 20:44] = 200                 # 가운데만 밝다
+    m = features(frame)["metering"]
+    assert m["spot"] > m["center"] > m["average"], m
+
+
+def test_every_mode_shares_one_target():
+    """⚠ 목표가 모드마다 다르면 같은 '+1.0 EV' 가 모드마다 다른 뜻이 되어
+    모드를 바꿔 비교하는 일 자체가 무의미해진다. 바뀌는 건 '어디를 재나' 뿐이다."""
+    import numpy as np
+
+    feats = features(np.full((64, 64, 3), int(TARGET_LUMA), dtype=np.uint8))
+    for m in METERING_MODES:
+        assert abs(feats["ev"][m]) < 0.05, (m, feats["ev"])
+
+
+def test_the_alert_baseline_is_not_the_metering_mode():
+    """⚠ Judge 의 급변 판정은 `luma` 를 기준선으로 쓴다. 사람이 고른 측광 모드에
+    따라 그 뜻이 바뀌면 **표시를 바꾸려다 안전 경보를 건드리는** 셈이다."""
+    import numpy as np
+
+    frame = np.zeros((64, 64, 3), np.uint8)
+    frame[20:44, 20:44] = 200
     feats = features(frame)
-    assert "ev" in feats, "샘플에 눈금이 안 실린다"
-    assert abs(feats["ev"]) < 0.2, feats
+    assert feats["luma"] == feats["metering"]["average"], "luma 가 평균이 아니다"
+
+    src = code_only(Path(__file__).resolve().parents[2]
+                    .joinpath("cam/piper_cam/lighting.py").read_text())
+    judge = src.split("class Judge", 1)[1]
+    assert "metering" not in judge and '"ev"' not in judge, "판정이 측광 모드를 본다"
 
 
 def test_the_front_end_uses_the_same_ends():
@@ -135,3 +174,21 @@ def test_the_card_does_not_ask_the_device_itself():
 
     page = code_only((_SRC / "pages" / "CamerasPage.tsx").read_text())
     assert page.count("'/cameras/light'") == 1, "폴링이 한 곳이 아니다"
+
+
+def test_clipping_is_called_out_because_no_mode_fixes_it():
+    """⚠ 잘린 화소는 자기가 원래 얼마나 밝았는지 **말할 수 없다.** 그래서 포화가
+    심하면 측광값이 실제보다 낮게 나오는데, 이건 모드를 바꿔도 안 고쳐진다 —
+    "측광이 이상하다" 의 실제 원인이 대개 이것이라 화면이 말해 줘야 한다."""
+    src = code_only(READOUT.read_text())
+    assert "sat_pct" in src, "포화를 안 본다"
+    assert "SAT_UNRELIABLE_PCT" in src, "포화 임계가 값에 묻혀 있다"
+
+
+def test_the_mode_is_a_way_of_looking_not_a_device_setting():
+    """⚠ 측광 모드로 장치를 만지면 안 된다 — 카메라가 실제로 노출을 바꾸는 것과
+    "어떻게 읽을까" 는 다른 일이다. 브라우저에 남기고 장치는 그대로 둔다."""
+    page = code_only((_SRC / "pages" / "CamerasPage.tsx").read_text())
+    assert "localStorage.setItem('piper_metering'" in page, "고른 모드가 안 남는다"
+    seg = page.split("setMetering", 1)[1][:400]
+    assert "api.post" not in seg, "모드를 바꾸며 장치를 만진다"

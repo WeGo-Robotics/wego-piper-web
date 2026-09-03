@@ -48,6 +48,49 @@ def ev(luma: float) -> float:
     return round(max(-EV_LIMIT, min(EV_LIMIT, math.log2(luma / TARGET_LUMA))), 1)
 
 
+# 측광 모드 — 같은 프레임의 **어디를 보고 재느냐**다.
+#
+# ⚠ 셋 다 **같은 목표**(`graycard.TARGET_LUMA`)를 쓴다. 목표가 모드마다 다르면
+#   같은 "+1.0 EV" 가 모드마다 다른 뜻이 되어 모드를 바꿔 비교하는 일 자체가
+#   무의미해진다. 바뀌는 것은 "어디를 재나" 뿐이어야 한다.
+METERING_MODES: tuple[str, ...] = ("average", "center", "spot")
+
+# 스팟이 보는 창. 64×64 의 중앙 12×12 = 화면의 3.5% — 카메라의 스팟(1~5%)과 같은 크기다.
+_SPOT = slice(26, 38)
+
+# 중앙중점의 가중치 반경(정규화). 0.4 면 중앙 원 안이 전체 가중치의 약 3분의 2를
+# 가져간다 — 고전적인 중앙중점(60~75%)과 같은 배분이다.
+_CENTER_SIGMA = 0.4
+_WEIGHTS: "np.ndarray | None" = None
+
+
+def _center_weights() -> "np.ndarray":
+    """중앙중점 가중치 (64,64). 한 번 만들어 재사용한다 — 프레임마다 새로
+    만들면 2초 주기 × 카메라 수만큼 헛일이다."""
+    global _WEIGHTS
+    if _WEIGHTS is None:
+        c = (SMALL - 1) / 2.0
+        yy, xx = np.mgrid[0:SMALL, 0:SMALL]
+        d = np.hypot(yy - c, xx - c) / np.hypot(c, c)
+        _WEIGHTS = np.exp(-(d ** 2) / (2 * _CENTER_SIGMA ** 2))
+    return _WEIGHTS
+
+
+def meter(luma: "np.ndarray") -> dict[str, float]:
+    """축소된 luma 판 → 모드별 측광값.
+
+    셋을 **다 계산해서 실어 보낸다.** 고른 하나만 보내면 모드를 바꿀 때마다
+    다음 샘플(2초)을 기다려야 하고, 무엇보다 **비교가 안 된다** — 측광이
+    수상할 때 사람이 제일 먼저 하는 일이 모드를 바꿔 보는 것이다.
+    """
+    w = _center_weights()
+    return {
+        "average": round(float(luma.mean()), 1),
+        "center": round(float((luma * w).sum() / w.sum()), 1),
+        "spot": round(float(luma[_SPOT, _SPOT].mean()), 1),
+    }
+
+
 def features(frame_bgr: np.ndarray, ts: float | None = None) -> dict:
     """프레임 하나 → 조명 특징. 버스 payload 가 그대로 되는 모양이다 (문서 §5).
 
@@ -70,11 +113,16 @@ def features(frame_bgr: np.ndarray, ts: float | None = None) -> dict:
     cells = cv2.resize(small, (GRID, GRID), interpolation=cv2.INTER_AREA)
     cell_luma = (0.114 * cells[:, :, 0] + 0.587 * cells[:, :, 1]
                  + 0.299 * cells[:, :, 2]).flatten()
+    metered = meter(luma)
     eps = 1.0  # 완전 암흑에서 log(0) 방지 — 1/255 수준이라 판정에 영향 없다
     return {
         "ts": time.time() if ts is None else ts,
+        # ⚠ `luma` 는 **평균 그대로 둔다.** Judge 의 급변 판정이 이걸 기준선으로
+        #   쓰는데, 사람이 고른 측광 모드에 따라 뜻이 바뀌면 경보가 조용히
+        #   달라진다 — 표시를 바꾸려다 안전 경보를 건드리는 셈이다.
         "luma": round(float(luma.mean()), 1),
-        "ev": ev(float(luma.mean())),
+        "metering": metered,
+        "ev": {k: ev(v) for k, v in metered.items()},
         "sat_pct": round(float((luma > 250).mean() * 100), 1),
         "dark_pct": round(float((luma < 5).mean() * 100), 1),
         "log_rg": round(float(math.log2((r.mean() + eps) / (g.mean() + eps))), 3),
