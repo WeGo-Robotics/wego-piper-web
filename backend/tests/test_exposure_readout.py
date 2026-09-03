@@ -12,7 +12,8 @@ import pytest
 from conftest import code_only
 from piper_cam.controls import exposure_us
 from piper_cam.graycard import TARGET_LUMA
-from piper_cam.lighting import EV_LIMIT, METERING_MODES, ev, features
+from piper_cam.lighting import (EV_LIMIT, METERING_MODES, ev, ev_ceiling,
+                                features, target_linear)
 
 _SRC = Path(__file__).resolve().parents[2] / "frontend" / "src"
 READOUT = _SRC / "components" / "ExposureReadout.tsx"
@@ -23,23 +24,52 @@ READOUT = _SRC / "components" / "ExposureReadout.tsx"
 def test_zero_means_what_the_gray_card_calibration_means():
     """⚠ 0 점이 회색카드 목표와 다르면 화면 두 곳이 같은 카메라를 두고 다른 말을
     한다 — "0.0 EV" 와 "보정 완료" 가 서로 다른 밝기를 뜻하게 된다."""
-    assert ev(TARGET_LUMA) == 0.0
+    assert ev(target_linear()) == 0.0
 
 
-def test_one_stop_is_one_doubling():
-    """스톱은 곱셈 눈금이다. 노출을 두 배 주면 luma 도 두 배라 '+1' 이 언제나
-    같은 크기의 조작을 뜻한다."""
-    assert ev(TARGET_LUMA * 2) == 1.0
-    assert ev(TARGET_LUMA / 2) == -1.0
-    assert ev(TARGET_LUMA * 4) == 2.0
+def test_the_zero_point_is_standard_middle_grey():
+    """회색카드 목표 118 을 감마 되돌리면 0.18 이다 — 사진의 중간회색.
+    둘이 맞는다는 게 목표값이 옳다는 독립적인 확인이다."""
+    assert abs(target_linear() - 0.18) < 0.01, target_linear()
+
+
+def test_a_stop_is_a_doubling_of_light_not_of_the_code_value():
+    """⚠ 이게 처음의 버그였다. 프레임은 sRGB 감마로 인코딩돼 있어서 부호값을
+    그대로 log₂ 하면 스톱이 아니다 — 인코딩값 118→236 은 +1 스톱이 아니라
+    +2.21 스톱이다. 스톱은 **선형 광량**의 눈금이다."""
+    t = target_linear()
+    assert ev(t * 2) == 1.0
+    assert ev(t / 2) == -1.0
+    assert ev(t * 4) == 2.0
+
+    import numpy as np
+    doubled = features(np.full((64, 64, 3), int(TARGET_LUMA * 2), np.uint8))
+    assert doubled["ev"]["average"] > 2.0, ("인코딩값 두 배를 +1 스톱이라 한다",
+                                            doubled["ev"])
+
+
+def test_the_meter_admits_where_it_stops_reading():
+    """⚠ 화면이 완전히 하얘도 여기까지다 — 그 위는 잘린 화소가 자기 밝기를 말할
+    수 없어 알 방법이 없다. 눈금을 +5 까지 그려 놓고 값이 여기서 멈추면 사람은
+    "측광이 고장났다" 로 읽는다 (실제로 그렇게 보고됐다)."""
+    import numpy as np
+
+    ceiling = ev_ceiling()
+    assert 2.0 < ceiling < 3.0, ceiling          # 흰 화면은 목표보다 약 2.5 스톱 위
+    white = features(np.full((64, 64, 3), 255, np.uint8))
+    assert white["ev"]["average"] == ceiling
+    assert white["ev_ceiling"] == ceiling, "샘플이 한계를 안 알려준다"
+
+    src = code_only(READOUT.read_text())
+    assert "ev_ceiling" in src, "화면이 못 읽는 구간을 안 그린다"
 
 
 def test_the_scale_has_ends_and_darkness_does_not_explode():
     """⚠ log₂(0) 은 -∞ 다. 완전 암흑에서 눈금이 터지면 화면이 깨진다."""
     assert ev(0.0) == -EV_LIMIT
     assert ev(-1.0) == -EV_LIMIT
-    assert -EV_LIMIT <= ev(255.0) <= EV_LIMIT
-    assert ev(TARGET_LUMA * 1000) == EV_LIMIT
+    assert ev(1.0) <= EV_LIMIT
+    assert ev(target_linear() * 1000) == EV_LIMIT
 
 
 def test_the_frame_measurement_carries_every_mode():
@@ -52,7 +82,7 @@ def test_the_frame_measurement_carries_every_mode():
     assert set(feats["ev"]) == set(METERING_MODES), feats["ev"]
     assert set(feats["metering"]) == set(METERING_MODES), feats["metering"]
     for m in METERING_MODES:
-        assert abs(feats["ev"][m]) < 0.2, (m, feats["ev"])
+        assert abs(feats["ev"][m]) < 0.05, (m, feats["ev"])
 
 
 def test_the_modes_actually_look_at_different_places():
@@ -176,6 +206,13 @@ def test_the_card_does_not_ask_the_device_itself():
     assert page.count("'/cameras/light'") == 1, "폴링이 한 곳이 아니다"
 
 
+def test_a_clipped_reading_is_shown_as_a_floor_not_a_value():
+    """⚠ 잘린 화소가 많으면 실제 노출은 읽힌 값보다 **위**다. 같다고 쓰면
+    거짓말이 된다 — 화면이 하얀데 +2.4 라고만 하면 사람은 그게 전부인 줄 안다."""
+    src = code_only(READOUT.read_text())
+    assert "clipped && '≥ '" in src, "포화된 값이 하한으로 안 보인다"
+
+
 def test_clipping_is_called_out_because_no_mode_fixes_it():
     """⚠ 잘린 화소는 자기가 원래 얼마나 밝았는지 **말할 수 없다.** 그래서 포화가
     심하면 측광값이 실제보다 낮게 나오는데, 이건 모드를 바꿔도 안 고쳐진다 —
@@ -192,3 +229,19 @@ def test_the_mode_is_a_way_of_looking_not_a_device_setting():
     assert "localStorage.setItem('piper_metering'" in page, "고른 모드가 안 남는다"
     seg = page.split("setMetering", 1)[1][:400]
     assert "api.post" not in seg, "모드를 바꾸며 장치를 만진다"
+
+
+def test_linearizing_comes_before_shrinking():
+    """⚠ 인코딩된 값을 평균 낸 뒤 되돌리면 실제보다 어둡게 나온다(볼록함수).
+    하필 밝은 화소가 많을수록 더 어긋나는데, 그게 측광이 가장 안 맞아 보이는
+    바로 그 장면이다."""
+    import numpy as np
+    from piper_cam.lighting import _srgb_to_linear, linear_luma
+
+    # 절반은 새하얗고 절반은 새까만 프레임 — 순서를 바꾸면 답이 크게 갈린다
+    frame = np.zeros((64, 64, 3), np.uint8)
+    frame[:32] = 255
+    right = float(linear_luma(frame).mean())
+    wrong = _srgb_to_linear(float(frame[:, :, 0].mean()))
+    assert abs(right - 0.5) < 0.01, right
+    assert wrong < right / 2, (wrong, right)     # 먼저 축소하면 절반 이하로 어두워진다

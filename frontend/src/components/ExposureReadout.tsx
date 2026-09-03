@@ -23,6 +23,8 @@ export type LightSample = {
   sat_pct: number
   metering?: Record<string, number>
   ev?: Record<string, number>
+  /** 이 눈금이 읽을 수 있는 최대치 — 화면이 완전히 하얄 때의 값. */
+  ev_ceiling?: number
   exposure_us?: number
   gain?: number
 }
@@ -51,21 +53,33 @@ export default function ExposureReadout({ light, mode }: {
   // 늘 켜져 있는 표시가 늘 경고색이면 아무도 안 본다.
   const off = Math.abs(ev) >= 2
   const clipped = light.sat_pct >= SAT_UNRELIABLE_PCT
-  const pct = ((ev + EV_LIMIT) / (2 * EV_LIMIT)) * 100
+  const at = (v: number) => ((v + EV_LIMIT) / (2 * EV_LIMIT)) * 100
+  const pct = at(ev)
+  // ⚠ 눈금 위쪽에는 **못 읽는 구간**이 있다. 화면이 완전히 하얘도 여기까지고,
+  //   그 위는 잘린 화소가 자기 밝기를 말할 수 없어 알 방법이 없다. 그려 두지
+  //   않으면 값이 거기서 멈추는 걸 보고 "측광이 고장났다" 로 읽는다.
+  const ceil = light.ev_ceiling
 
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]
                     tabular-nums text-neutral-400"
-         title={`${METERING_LABEL[mode]} 측광 ${signed(ev)} EV (−${EV_LIMIT}.0 ~ +${EV_LIMIT}.0, 0.0 = 목표 노출)
+         title={`${METERING_LABEL[mode]} 측광 ${clipped ? '최소 ' : ''}${signed(ev)} EV (0.0 = 목표 노출)
+잴 수 있는 범위 −${EV_LIMIT}.0 ~ ${ceil != null ? `+${ceil.toFixed(1)}` : ''} — 그 위는 화소가 잘려 알 수 없습니다
 잰 밝기 ${light.metering?.[mode] ?? light.luma}/255 · 포화 ${light.sat_pct}%
 0 점은 회색카드 보정의 목표와 같습니다`}>
       <span className="text-neutral-500">{METERING_LABEL[mode]}</span>
       <span className={off ? 'font-semibold text-amber-400' : 'text-neutral-200'}>
-        {signed(ev)} EV
+        {/* ⚠ 잘린 화소가 많으면 실제는 이보다 위다 — 같다고 쓰면 거짓말이 된다. */}
+        {clipped && '≥ '}{signed(ev)} EV
       </span>
 
       {/* −5 … 0 … +5 눈금. 숫자만으로는 "얼마나 치우쳤나"가 안 읽힌다. */}
       <span className="relative h-1 w-16 shrink-0 rounded-full bg-neutral-700">
+        {ceil != null && ceil < EV_LIMIT && (
+          <span className="absolute inset-y-0 right-0 rounded-r-full bg-neutral-800/90"
+                style={{ left: `${at(ceil)}%` }}
+                title={`+${ceil.toFixed(1)} 위는 잴 수 없습니다 — 화면이 완전히 하얀 상태가 여기입니다`} />
+        )}
         <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-neutral-500" />
         <span className={`absolute top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2
                           rounded-full ${off ? 'bg-amber-400' : 'bg-neutral-200'}`}

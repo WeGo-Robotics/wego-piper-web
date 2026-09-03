@@ -27,25 +27,61 @@ SMALL = 64
 GRID = 3
 
 
-# 눈금의 양끝. ±5 스톱이면 32배 밝기 차라 이 밖은 "완전히 틀렸다" 하나로 족하다.
+# ⚠ **스톱은 선형 광량의 눈금이다.** 프레임은 sRGB 감마로 인코딩돼 있어서
+#   부호값을 그대로 log₂ 하면 스톱이 아니다 — 실제로 틀렸었다: 인코딩값
+#   118→236 을 "+1.0 스톱" 이라 했는데 선형으로는 +2.21 스톱이다.
+#
+#   되돌려 보면 목표 118 은 선형 0.181 로 **표준 중간회색 0.18** 과 맞는다.
+#   목표값은 옳았고 계산하는 영역이 틀렸던 것이다.
+_LINEAR_LUT = None
+
+
+def _srgb_to_linear(v255: float) -> float:
+    c = v255 / 255.0
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _linear_lut():
+    """8bit sRGB → 선형 표. 화소마다 거듭제곱을 하면 프레임당 100만 번이다."""
+    global _LINEAR_LUT
+    if _LINEAR_LUT is None:
+        _LINEAR_LUT = np.array([_srgb_to_linear(v) for v in range(256)],
+                               dtype=np.float32)
+    return _LINEAR_LUT
+
+
+def target_linear() -> float:
+    """0 점의 선형 광량. **회색카드 목표를 그대로 되돌린 값**이다 — 0.18 을
+    따로 적으면 언젠가 둘이 어긋난다."""
+    from piper_cam.graycard import TARGET_LUMA
+
+    return _srgb_to_linear(TARGET_LUMA)
+
+
+# 눈금의 아래끝. 어두운 쪽은 한참 내려가므로 −5 스톱(32분의 1)에서 끊는다.
 EV_LIMIT = 5.0
 
 
-def ev(luma: float) -> float:
-    """평균 밝기 → 노출 눈금(스톱). 0.0 = 목표 노출, +1.0 = 두 배 밝다.
+def ev_ceiling() -> float:
+    """이 눈금이 **읽을 수 있는 최대치.** 화면이 완전히 하얄 때의 값이다.
 
-    ⚠ 0 점은 회색카드 보정이 맞추는 목표(`graycard.TARGET_LUMA`)와 **같은 값을
-    쓴다.** 다르면 "0.0 EV" 와 "보정 완료" 가 서로 다른 밝기를 뜻하게 되어,
-    화면 두 곳이 같은 카메라를 두고 다른 말을 한다.
-
-    스톱(log₂)인 이유: 밝기는 곱으로 변한다. 노출을 두 배 주면 luma 도 두 배라
-    "+1" 이 언제나 같은 크기의 조작을 뜻한다 — 뺄셈 눈금은 어두운 쪽에서 뭉갠다.
+    ⚠ 여기 위는 못 읽는다 — 잘린 화소는 자기가 원래 얼마나 밝았는지 말할 수
+    없기 때문이다. 눈금을 +5 까지 그려 놓고 값이 여기서 멈추면 사람은 "측광이
+    고장났다" 로 읽는다(실제로 그렇게 보고됐다). 화면이 이 한계를 그려야 한다.
     """
-    from piper_cam.graycard import TARGET_LUMA
+    return round(math.log2(1.0 / target_linear()), 2)
 
-    if luma <= 0:
+
+def ev(linear: float) -> float:
+    """**선형** 광량(0~1) → 노출 눈금(스톱). 0.0 = 목표, +1.0 = 빛이 두 배.
+
+    ⚠ 0~255 부호값을 넣으면 안 된다 — 그게 처음의 버그였다. 0 점은 회색카드
+    보정의 목표와 같은 값이라, "0.0 EV" 와 "보정 완료" 가 같은 밝기를 뜻한다.
+    """
+    t = target_linear()
+    if linear <= 0:
         return -EV_LIMIT          # log₂(0) 은 -∞ 다. 눈금 끝으로 붙인다.
-    return round(max(-EV_LIMIT, min(EV_LIMIT, math.log2(luma / TARGET_LUMA))), 1)
+    return round(max(-EV_LIMIT, min(EV_LIMIT, math.log2(linear / t))), 2)
 
 
 # 측광 모드 — 같은 프레임의 **어디를 보고 재느냐**다.
@@ -76,6 +112,25 @@ def _center_weights() -> "np.ndarray":
     return _WEIGHTS
 
 
+def linear_luma(frame_bgr: "np.ndarray") -> "np.ndarray":
+    """sRGB BGR 프레임 → 선형 휘도 판 (SMALL×SMALL).
+
+    ⚠ **선형화를 축소보다 먼저** 한다. 인코딩된 값을 평균 낸 뒤 되돌리면 실제
+    보다 어둡게 나오고(볼록함수), 하필 밝은 화소가 많을수록 더 어긋난다 —
+    측광이 가장 안 맞아 보이는 바로 그 장면이다.
+    """
+    import cv2
+
+    f = frame_bgr[:, :, :3]
+    if f.dtype != np.uint8:
+        f = np.clip(f, 0, 255).astype(np.uint8)
+    lin = _linear_lut()[f]
+    # ⚠ 선형광의 휘도 계수는 **Rec.709** 다. 0.299/0.587/0.114 는 감마 인코딩된
+    #   값에 쓰는 Rec.601 계수라 여기 쓰면 안 된다.
+    y = 0.0722 * lin[:, :, 0] + 0.7152 * lin[:, :, 1] + 0.2126 * lin[:, :, 2]
+    return cv2.resize(y, (SMALL, SMALL), interpolation=cv2.INTER_AREA)
+
+
 def meter(luma: "np.ndarray") -> dict[str, float]:
     """축소된 luma 판 → 모드별 측광값.
 
@@ -84,10 +139,14 @@ def meter(luma: "np.ndarray") -> dict[str, float]:
     수상할 때 사람이 제일 먼저 하는 일이 모드를 바꿔 보는 것이다.
     """
     w = _center_weights()
+    # ⚠ **여기서 반올림하지 않는다.** 이 함수는 0~255 판에도, 0~1 선형 판에도
+    #   쓰인다 — 소수 첫째 자리로 자르면 선형값 0.181 이 0.2 가 되어 EV 가
+    #   0.14 스톱 틀어지고, 0.044 는 아예 0 이 되어 눈금 바닥에 처박힌다.
+    #   표시용 반올림은 부르는 쪽이 한다.
     return {
-        "average": round(float(luma.mean()), 1),
-        "center": round(float((luma * w).sum() / w.sum()), 1),
-        "spot": round(float(luma[_SPOT, _SPOT].mean()), 1),
+        "average": float(luma.mean()),
+        "center": float((luma * w).sum() / w.sum()),
+        "spot": float(luma[_SPOT, _SPOT].mean()),
     }
 
 
@@ -114,6 +173,7 @@ def features(frame_bgr: np.ndarray, ts: float | None = None) -> dict:
     cell_luma = (0.114 * cells[:, :, 0] + 0.587 * cells[:, :, 1]
                  + 0.299 * cells[:, :, 2]).flatten()
     metered = meter(luma)
+    metered_lin = meter(linear_luma(frame_bgr))
     eps = 1.0  # 완전 암흑에서 log(0) 방지 — 1/255 수준이라 판정에 영향 없다
     return {
         "ts": time.time() if ts is None else ts,
@@ -121,8 +181,9 @@ def features(frame_bgr: np.ndarray, ts: float | None = None) -> dict:
         #   쓰는데, 사람이 고른 측광 모드에 따라 뜻이 바뀌면 경보가 조용히
         #   달라진다 — 표시를 바꾸려다 안전 경보를 건드리는 셈이다.
         "luma": round(float(luma.mean()), 1),
-        "metering": metered,
-        "ev": {k: ev(v) for k, v in metered.items()},
+        "metering": {k: round(v, 1) for k, v in metered.items()},
+        "ev": {k: ev(v) for k, v in metered_lin.items()},
+        "ev_ceiling": ev_ceiling(),
         "sat_pct": round(float((luma > 250).mean() * 100), 1),
         "dark_pct": round(float((luma < 5).mean() * 100), 1),
         "log_rg": round(float(math.log2((r.mean() + eps) / (g.mean() + eps))), 3),
