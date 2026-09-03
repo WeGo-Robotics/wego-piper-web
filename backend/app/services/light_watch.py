@@ -43,6 +43,13 @@ def _color_alert(cam_id: str, name: str, d_rg: float, d_bg: float) -> Alert:
         "깨질 수 있으니 확인하세요.")
 
 
+# ⚠ **노출·게인은 밝기와 달리 공짜가 아니다.** 밝기는 shm 프레임에서 재지만
+#   이 둘은 **장치를 물어야** 알고, RealSense UVC 질의는 D405 를 커널 D-state 로
+#   물린 전례가 있다. 그래서 주기를 따로 두고 느리게 읽는다 — 사람 조작이나
+#   자동노출로만 바뀌는 값이라 이 정도 신선도면 충분하다.
+KNOBS_EVERY_S = 5.0
+
+
 class LightWatch:
     """카메라별 조명 샘플러. 상태는 전부 여기 — Judge 는 카메라당 하나."""
 
@@ -52,6 +59,8 @@ class LightWatch:
         self._judges: dict[str, object] = {}
         self._latest: dict[str, dict] = {}
         self._alerts: list[Alert] = []
+        # 노출·게인 캐시: {cam_id: (읽은 시각, 값)}
+        self._knobs: dict[str, tuple[float, dict]] = {}
 
     def _connect(self):
         # preview_bridge 와 같은 지연 연결 — 버스가 없어도 측정·경보는 계속 된다
@@ -97,7 +106,8 @@ class LightWatch:
                 continue
             seen.add(cam.id)
             label = cam.label or cam.name
-            self._latest[cam.id] = {"id": cam.id, "label": label, **feats}
+            self._latest[cam.id] = {"id": cam.id, "label": label, **feats,
+                                    **self._knobs_for(cam, now)}
 
             bus = self._connect()
             if bus is not None:
@@ -121,7 +131,37 @@ class LightWatch:
             if cid not in seen:
                 del self._judges[cid]
                 self._latest.pop(cid, None)
+                self._knobs.pop(cid, None)
         self._alerts = alerts
+
+    def _knobs_for(self, cam, now: float) -> dict:
+        """이 카메라의 노출(µs)·게인. 느린 주기로 캐시한다.
+
+        ⚠ **실패하면 직전 값을 그대로 둔다.** 장치 질의는 타임아웃으로 빈 목록을
+        돌려줄 수 있는데(rsd 의 `_run_guarded`), 그때 화면에서 숫자가 사라지면
+        사람은 "노출이 0 이 됐나" 로 읽는다. 모르는 것과 없는 것은 다르다.
+        """
+        from piper_cam.controls import exposure_us
+
+        prev = self._knobs.get(cam.id)
+        if prev is not None and now - prev[0] < KNOBS_EVERY_S:
+            return prev[1]
+        values: dict = {}
+        try:
+            for c in cam.get_controls() or []:
+                us = exposure_us(c)
+                if us is not None:
+                    values["exposure_us"] = round(us, 1)
+                elif c.get("name") == "gain" and c.get("value") is not None:
+                    values["gain"] = c["value"]
+        except Exception as exc:
+            logger.debug("노출·게인 읽기 실패 (%s): %s", cam.id, exc)
+            values = prev[1] if prev else {}
+        else:
+            if not values and prev:
+                values = prev[1]          # 빈 응답 = 못 읽음. 지우지 않는다.
+        self._knobs[cam.id] = (now, values)
+        return values
 
     def alerts(self) -> list[Alert]:
         """활성 조명 경보. device_watch 가 자기 목록에 합쳐 전이를 계산한다."""

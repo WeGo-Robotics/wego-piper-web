@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import ExposureReadout, { type LightSample } from '../components/ExposureReadout'
 import CameraProfilesPanel from '../components/CameraProfilesPanel'
 import { useSystemMessage } from '../components/SystemMessages'
 import ParamSlider from '../components/ParamSlider'
@@ -327,6 +328,18 @@ export default function CamerasPage() {
   // ⚠ **목록을 주기적으로 다시 받는다.** 예전에는 마운트 때 한 번뿐이라, 다른 탭에서
   //   경보를 보고 카메라 페이지로 와도 뽑힌 카메라가 **멀쩡한 것처럼** 남아 있었다.
   //   백엔드가 감시 주기(2초)마다 `present` 를 내리므로 여기서 그걸 가져오면 된다.
+  // 노출 표시용. 샘플러가 2초마다 재 둔 것을 같은 주기로 받아온다 —
+  // 카드마다 폴링하면 카메라 수만큼 요청이 늘고, 장치는 아무도 안 만진다.
+  const [light, setLight] = useState<Record<string, LightSample>>({})
+  useEffect(() => {
+    const tick = () => api.get<{ cameras: LightSample[] }>('/cameras/light')
+      .then((r) => setLight(Object.fromEntries(r.cameras.map((c) => [c.id, c]))))
+      .catch(() => {})
+    tick()
+    const id = setInterval(tick, 2000)
+    return () => clearInterval(id)
+  }, [])
+
   useEffect(() => {
     const id = setInterval(() => {
       api.get<{ cameras: CamInfo[] }>('/cameras/current')
@@ -642,6 +655,7 @@ export default function CamerasPage() {
                       {cam.config.width && <span className="ml-2">{cam.config.width}x{cam.config.height}</span>}
                       {cam.config.fps && <span className="ml-2">{cam.config.fps}fps</span>}
                     </div>
+                    <ExposureReadout light={light[cam.id]} />
                     <div className="flex gap-1.5">
                       <button onClick={() => handleProbe(cam.id)} disabled={busyId === cam.id}
                         className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
@@ -785,6 +799,7 @@ export default function CamerasPage() {
                       {cam.config.width && <span className="ml-2">{cam.config.width}x{cam.config.height}</span>}
                       {cam.config.fps && <span className="ml-2">{cam.config.fps}fps</span>}
                     </div>
+                    <ExposureReadout light={light[cam.id]} />
                     <div className="flex gap-1.5">
                       <button onClick={() => openSettings(cam.id)}
                         className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-yellow-600 text-neutral-300 hover:text-white transition-colors">설정</button>

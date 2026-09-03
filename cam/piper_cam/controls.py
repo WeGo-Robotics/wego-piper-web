@@ -92,6 +92,31 @@ def exposure_unit_scale(max_value) -> int:
         return 1
 
 
+EXPOSURE_NAMES: tuple[str, ...] = ("exposure_time_absolute", "exposure_absolute",
+                                   "exposure")
+
+
+def exposure_us(ctrl: dict) -> float | None:
+    """노출 컨트롤 하나 → µs. 노출이 아니거나 값이 없으면 None.
+
+    ⚠ 환산은 **여기 한 곳**이다. 세 이름이 서로 다른 단위를 쓴다 — v4l2 의 둘은
+    ×100µs 로 고정이고, RealSense `exposure` 는 범위가 단위의 지문이다
+    (`exposure_unit_scale`). 호출부마다 다시 적으면 언젠가 100배 틀린 노출이
+    화면에 뜨는데, 그건 눈으로 못 거른다.
+    """
+    name = ctrl.get("name", "")
+    if name not in EXPOSURE_NAMES:
+        return None
+    v = ctrl.get("value")
+    if v is None:
+        return None
+    scale = exposure_unit_scale(ctrl.get("max")) if name == "exposure" else 100
+    try:
+        return float(v) * scale
+    except (TypeError, ValueError):
+        return None
+
+
 def unit_for(ctrl: dict) -> str | None:
     """컨트롤 하나의 표시 단위. 모르면 None — 지어내지 않는다."""
     name = ctrl.get("name", "")

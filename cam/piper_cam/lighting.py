@@ -27,6 +27,27 @@ SMALL = 64
 GRID = 3
 
 
+# 눈금의 양끝. ±5 스톱이면 32배 밝기 차라 이 밖은 "완전히 틀렸다" 하나로 족하다.
+EV_LIMIT = 5.0
+
+
+def ev(luma: float) -> float:
+    """평균 밝기 → 노출 눈금(스톱). 0.0 = 목표 노출, +1.0 = 두 배 밝다.
+
+    ⚠ 0 점은 회색카드 보정이 맞추는 목표(`graycard.TARGET_LUMA`)와 **같은 값을
+    쓴다.** 다르면 "0.0 EV" 와 "보정 완료" 가 서로 다른 밝기를 뜻하게 되어,
+    화면 두 곳이 같은 카메라를 두고 다른 말을 한다.
+
+    스톱(log₂)인 이유: 밝기는 곱으로 변한다. 노출을 두 배 주면 luma 도 두 배라
+    "+1" 이 언제나 같은 크기의 조작을 뜻한다 — 뺄셈 눈금은 어두운 쪽에서 뭉갠다.
+    """
+    from piper_cam.graycard import TARGET_LUMA
+
+    if luma <= 0:
+        return -EV_LIMIT          # log₂(0) 은 -∞ 다. 눈금 끝으로 붙인다.
+    return round(max(-EV_LIMIT, min(EV_LIMIT, math.log2(luma / TARGET_LUMA))), 1)
+
+
 def features(frame_bgr: np.ndarray, ts: float | None = None) -> dict:
     """프레임 하나 → 조명 특징. 버스 payload 가 그대로 되는 모양이다 (문서 §5).
 
@@ -53,6 +74,7 @@ def features(frame_bgr: np.ndarray, ts: float | None = None) -> dict:
     return {
         "ts": time.time() if ts is None else ts,
         "luma": round(float(luma.mean()), 1),
+        "ev": ev(float(luma.mean())),
         "sat_pct": round(float((luma > 250).mean() * 100), 1),
         "dark_pct": round(float((luma < 5).mean() * 100), 1),
         "log_rg": round(float(math.log2((r.mean() + eps) / (g.mean() + eps))), 3),
