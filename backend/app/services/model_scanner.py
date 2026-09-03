@@ -14,6 +14,14 @@ from app.core.hf_layout import dirname_from_repo_id, latest_snapshot, repo_id_fr
 logger = logging.getLogger(__name__)
 
 
+def _notes(root: Path) -> dict:
+    """이름·설명 사이드카 (piper_notes.json). 체크포인트 형식에 그 자리가 없어
+    디렉토리 바로 아래에 둔다 — notes_sidecar 참고."""
+    from app.services.notes_sidecar import read_notes
+
+    return read_notes(root, kind="model")
+
+
 def _dir_size(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
@@ -156,6 +164,7 @@ def _scan_hf_cache(models_dir: Path) -> list[dict]:
             "requirements": extract_model_requirements(config, snapshot),
             "size_bytes": _dir_size(snapshot),
             "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "notes": _notes(snapshot),
             "source_dir": str(models_dir),
         })
 
@@ -216,6 +225,7 @@ def _scan_train_outputs(models_dir: Path) -> list[dict]:
                 "size_bytes": _dir_size(model_dir),
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
                 "source_dir": str(models_dir),
+                "notes": _notes(model_dir),
             })
 
     return results

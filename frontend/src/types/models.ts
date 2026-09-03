@@ -13,6 +13,7 @@ export type ModelRequirements = {
 }
 
 export type Model = {
+  notes?: SidecarNotes
   id: string
   /** 학습 단위 (`2026-09-01/10-11-22_act`). 학습 산출물이 아니면 없다 — HF 허브
    *  모델은 묶이지 않는다. 백엔드가 정한다: `id` 를 화면에서 쪼개면
@@ -35,9 +36,13 @@ export type ModelDetail = Model & {
   files: { path: string; size_bytes: number }[]
 }
 
+/** 이름·설명 사이드카 (meta/piper_notes.json — LeRobot 구조에 이 자리가 없다). */
+export type SidecarNotes = { name: string; description: string; updated_at: string }
+
 export type Dataset = {
   id: string
   path: string
+  notes?: SidecarNotes
   total_episodes: number
   total_frames: number
   fps: number | null

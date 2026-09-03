@@ -26,6 +26,14 @@ def _dir_size(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
+def _notes(root: Path) -> dict:
+    """이름·설명 사이드카 (meta/piper_notes.json). LeRobot 구조에 그 자리가
+    없어서 옆에 둔다 — notes_sidecar 참고."""
+    from app.services.notes_sidecar import read_notes
+
+    return read_notes(root, kind="dataset")
+
+
 def _parse_meta(meta_path: Path) -> dict:
     if not meta_path.exists():
         return {}
@@ -68,6 +76,7 @@ def _scan_hub_datasets(datasets_dir: Path) -> list[dict]:
             "features": meta.get("features", {}),
             "size_bytes": _dir_size(snapshot),
             "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "notes": _notes(snapshot),
         })
     return results
 
@@ -100,6 +109,7 @@ def _scan_lerobot_datasets(lerobot_dir: Path) -> list[dict]:
                 "size_bytes": _dir_size(ds_dir),
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
                 "baked": baked_info(ds_dir),
+                "notes": _notes(ds_dir),
             })
     return results
 

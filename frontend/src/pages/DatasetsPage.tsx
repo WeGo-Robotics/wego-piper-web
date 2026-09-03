@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import NotesEditor from '../components/NotesEditor'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import { copyText } from '../services/clipboard'
@@ -268,7 +269,14 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
                     : 'border-neutral-700 bg-neutral-800 hover:border-neutral-600'
                 }`}
               >
-                <p className="font-medium truncate">{ds.id}</p>
+                <p className="font-medium truncate">
+                  {ds.notes?.name
+                    ? <>{ds.notes.name} <span className="text-neutral-500 font-normal">({ds.id})</span></>
+                    : ds.id}
+                </p>
+                {ds.notes?.description && (
+                  <p className="truncate text-[11px] text-neutral-500">{ds.notes.description}</p>
+                )}
                 <p className="text-xs text-neutral-400 mt-1">
                   {ds.total_episodes} 에피소드 · {formatBytes(ds.size_bytes)}
                 </p>
@@ -325,11 +333,15 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
                     </button>
                   </div>
                 </div>
+                {/* 이름·설명 — LeRobot 에 없는 자리라 사이드카로. key 로 대상 전환 시
+                    초안이 초기화된다 (다른 데이터셋에 눌러붙는 사고 방지). */}
+                <NotesEditor key={detail.id} endpoint={`/datasets/${detail.id}/notes`} source="데이터셋" />
                 <div className="grid grid-cols-3 gap-3 text-sm">
                   <div>
                     <span className="text-neutral-400">에피소드</span>
                     <p>{detail.total_episodes}</p>
                   </div>
+
                   <div>
                     <span className="text-neutral-400">프레임</span>
                     <p>{detail.total_frames.toLocaleString()}</p>

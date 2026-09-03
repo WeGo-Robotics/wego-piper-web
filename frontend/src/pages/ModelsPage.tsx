@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import NotesEditor from '../components/NotesEditor'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import type { Model } from '../types/models'
@@ -233,7 +234,14 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
           <div className="lg:col-span-2">
             {selected ? (
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-6 space-y-5">
-                <h2 className="text-lg font-semibold">{selected.id}</h2>
+                <h2 className="text-lg font-semibold">
+                  {selected.notes?.name
+                    ? <>{selected.notes.name} <span className="text-sm font-normal text-neutral-500">({selected.id})</span></>
+                    : selected.id}
+                </h2>
+
+                {/* 이름·설명 사이드카 — 체크포인트 형식에 이 자리가 없다 */}
+                <NotesEditor key={selected.id} endpoint={`/models/${selected.id}/notes`} source="모델" />
 
                 {/* 기본 정보 */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">

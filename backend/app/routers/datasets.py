@@ -150,6 +150,41 @@ async def episode_frame_light(dataset_id: str, episode: int, cam: str, frame: in
     return JSONResponse(feats, headers={"Cache-Control": "public, max-age=86400, immutable"})
 
 
+# ── 이름·설명 사이드카 ──
+# LeRobot `meta/info.json` 에는 사람이 붙이는 이름·설명 자리가 없다 —
+# `meta/piper_notes.json` 으로 옆에 남긴다 (notes_sidecar 참고).
+# ⚠ 이 GET 도 아래 상세 catch-all 보다 위여야 한다 (frames 와 같은 이유).
+
+
+class NotesRequest(BaseModel):
+    name: str = ""
+    description: str = ""
+
+
+@router.get("/{dataset_id:path}/notes")
+async def get_notes(dataset_id: str):
+    from app.services.notes_sidecar import read_notes
+
+    ds_path = find_dataset_path(dataset_id)
+    if not ds_path:
+        raise HTTPException(404, "Dataset not found")
+    return read_notes(ds_path, kind="dataset")
+
+
+@router.put("/{dataset_id:path}/notes")
+async def put_notes(dataset_id: str, body: NotesRequest):
+    from app.services.notes_sidecar import write_notes
+
+    ds_path = find_dataset_path(dataset_id)
+    if not ds_path:
+        raise HTTPException(404, "Dataset not found")
+    try:
+        return write_notes(ds_path, kind="dataset",
+                           name=body.name, description=body.description)
+    except FileNotFoundError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/{dataset_id:path}/videos/{cam}/{chunk}/{file}")
 async def episode_video(dataset_id: str, cam: str, chunk: int, file: int):
     """chunk mp4 원본 서빙 — Range 는 FileResponse 가 처리한다 (206, 실측 확인).
@@ -348,6 +383,12 @@ async def upload_to_hub(dataset_id: str, body: UploadRequest):
     hf_cli = _find_hf_cli()
     if not hf_cli:
         raise HTTPException(500, "huggingface-cli를 찾을 수 없습니다. 설정에서 경로를 지정하세요.")
+
+    # 이름·설명 사이드카가 있으면 허브 카드(README.md)로 만든다 — 업로드가 폴더
+    # 전체를 올리므로 여기서 만들어 두면 카드가 된다. 이미 있으면 안 건드린다.
+    from app.services.notes_sidecar import ensure_readme, read_notes
+    ensure_readme(ds_path, dataset_id, read_notes(ds_path, kind="dataset"))
+
     # 파일 수에 따라 upload / upload-large-folder 선택
     file_count = sum(1 for _ in ds_path.rglob("*") if _.is_file())
     if file_count > 1000:

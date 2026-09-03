@@ -186,6 +186,37 @@ async def list_models():
     return scan_models()
 
 
+# 이름·설명 사이드카 — 상세 catch-all 이 path 를 통째로 삼키므로 **위에** 둔다.
+class ModelNotesRequest(BaseModel):
+    name: str = ""
+    description: str = ""
+
+
+@router.get("/{model_id:path}/notes")
+async def get_model_notes(model_id: str):
+    from pathlib import Path
+
+    from app.services.notes_sidecar import read_notes
+
+    model = get_model(model_id)
+    if not model:
+        raise HTTPException(404, "Model not found")
+    return read_notes(Path(model["path"]), kind="model")
+
+
+@router.put("/{model_id:path}/notes")
+async def put_model_notes(model_id: str, body: ModelNotesRequest):
+    from pathlib import Path
+
+    from app.services.notes_sidecar import write_notes
+
+    model = get_model(model_id)
+    if not model:
+        raise HTTPException(404, "Model not found")
+    return write_notes(Path(model["path"]), kind="model",
+                       name=body.name, description=body.description)
+
+
 @router.get("/{model_id:path}")
 async def model_detail(model_id: str):
     model = get_model(model_id)
