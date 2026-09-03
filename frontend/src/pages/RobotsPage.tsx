@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
+import AlignmentPanel from '../components/AlignmentPanel'
 import JogPanel from '../components/JogPanel'
 import ZeroCalibrationModal from '../components/ZeroCalibrationModal'
 import { JOINT_NAMES } from '../config/joints'
@@ -312,6 +313,23 @@ export default function RobotsPage() {
   // 밀려 내려가고, 팔을 실제로 움직이는 조작은 화면이 그 팔 하나에 고정되는 게
   // 맞다 — 영점·파킹 모달과 같은 판단이다.
   const [jogIface, setJogIface] = useState<string | null>(null)
+  const [tab, setTab] = useState<'devices' | 'alignment'>('devices')
+  // 정렬 탭에서 쓸 카메라 목록. **탭을 열 때만** 부른다 — 로봇 페이지가 늘
+  // 카메라를 폴링할 이유가 없다.
+  const [alignCams, setAlignCams] = useState<
+    { id: string; label: string; connected: boolean }[]>([])
+  useEffect(() => {
+    if (tab !== 'alignment') return
+    api.get<{ cameras: { id: string; label?: string; display_name?: string
+                         name: string; connected: boolean; stream_type?: string }[] }>(
+      '/cameras/current')
+      .then((r) => setAlignCams(r.cameras
+        // 깊이·적외선에는 태그가 안 보인다 — 컬러만 후보다
+        .filter((c) => (c.stream_type ?? 'color') === 'color')
+        .map((c) => ({ id: c.id, label: c.display_name || c.label || c.name,
+                       connected: !!c.connected }))))
+      .catch(() => setAlignCams([]))
+  }, [tab])
   const [usbModalOpen, setUsbModalOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   // CAN 관리
@@ -586,9 +604,18 @@ export default function RobotsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center gap-4">
         <h1 className="text-2xl font-bold">로봇</h1>
-        <div className="flex gap-2">
+        <div className="flex overflow-hidden rounded-lg border border-neutral-700 text-sm">
+          {([['devices', '디바이스'], ['alignment', '정렬']] as const).map(([k, label]) => (
+            <button key={k} onClick={() => setTab(k)}
+              className={`px-4 py-1.5 ${tab === k
+                ? 'bg-neutral-700 text-white' : 'bg-neutral-900 text-neutral-400 hover:text-white'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="ml-auto flex gap-2">
           <button onClick={handleRefresh} disabled={refreshing}
             className="px-3 py-1.5 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 disabled:opacity-50 flex items-center gap-1">
             {refreshing ? <><Spinner /> 새로고침 중...</> : '↻ 상태 새로고침'}
@@ -609,6 +636,7 @@ export default function RobotsPage() {
         </div>
       </div>
 
+      {tab === 'devices' && (<>
       {/* 프리셋 */}
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
         <h2 className="text-sm font-semibold">프리셋</h2>
@@ -930,6 +958,15 @@ export default function RobotsPage() {
         )}
       </div>
 
+      </>)}
+
+      {tab === 'alignment' && (
+        <AlignmentPanel
+          arms={arms.map((a) => ({ iface: a.iface, connected: !!a.connected }))}
+          cameras={alignCams} />
+      )}
+
+      {/* 모달은 탭 밖에 둔다 — 탭을 바꾼다고 사라져야 할 것들이 아니다. */}
       {/* 조작(조그) 모달 — 행 아래 펼침이었는데 긴 목록에서 다른 팔 행이 밀려
           내려갔다. 팔이 사라지거나 연결이 끊기면 조건이 깨져 스스로 닫힌다. */}
       {(() => {
