@@ -423,6 +423,11 @@ export default function TrainingPage() {
           </div>
 
           <div className="grid gap-6 grid-cols-1 lg:grid-cols-2 items-start">
+          {/* ⚠ 열을 **따로 흘린다.** 카드들을 그리드에 직접 담으면 행 단위로
+              묶여, 짧은 카드 밑에 옆 칸 높이만큼 빈 공간이 생긴다 — 데이터셋
+              카드 밑이 데이터셋 정보 높이만큼 비어 보였던 그 공백이다.
+              대신 좁은 화면에서는 열 단위로 쌓인다 (쌍 교차가 아니라). */}
+          <div className="space-y-6">
           {/* 데이터셋 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
             <h3 className="text-sm font-semibold">데이터셋</h3>
@@ -457,106 +462,6 @@ export default function TrainingPage() {
               )
             })()}
           </div>
-
-          {/* 데이터셋 정보 */}
-          {selectedDataset && (() => {
-            const ds = datasets.find((d) => d.id === selectedDataset)
-            if (!ds?.features) return null
-            const stateShape = ds.features['observation.state']?.shape
-            const actionShape = ds.features['action']?.shape
-            const stateNames = ds.features['observation.state']?.names
-            const cameras = Object.keys(ds.features).filter((k) => k.startsWith('observation.images.'))
-            return (
-              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-                <h3 className="text-sm font-semibold">데이터셋 정보</h3>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <span className="text-neutral-400">관절 (state):</span>
-                    <span className="ml-1 text-neutral-100">{stateShape?.[0] ?? '?'}개</span>
-                    {stateNames && <span className="text-neutral-500 ml-1">({stateNames.join(', ')})</span>}
-                  </div>
-                  <div>
-                    <span className="text-neutral-400">액션:</span>
-                    <span className="ml-1 text-neutral-100">{actionShape?.[0] ?? '?'}차원</span>
-                  </div>
-                </div>
-                {stateShape && actionShape && stateShape[0] !== actionShape[0] && (
-                  <p className="text-xs text-amber-400">state({stateShape[0]})와 action({actionShape[0]}) 차원이 다릅니다. 베이스 모델의 기본 state_dim이 다를 수 있으니 CLI에서 확인하세요.</p>
-                )}
-                {cameras.length > 0 && (
-                  <div className="text-xs">
-                    <span className="text-neutral-400">카메라 ({cameras.length}대):</span>
-                    <span className="ml-1 text-neutral-100">
-                      {cameras.map((c) => c.replace('observation.images.', '')).join(', ')}
-                    </span>
-                  </div>
-                )}
-                <div className="text-xs pt-2 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-neutral-400 font-medium">카메라 이름 매핑</label>
-                    {renameMap && pretrainedPath && <span className="text-[10px] text-green-400">자동 감지됨</span>}
-                  </div>
-                  {(() => {
-                    let entries: [string, string][] = []
-                    try { entries = Object.entries(JSON.parse(renameMap || '{}')) } catch {}
-                    const updateEntries = (newEntries: [string, string][]) => {
-                      const obj: Record<string, string> = {}
-                      newEntries.forEach(([k, v]) => { if (k) obj[k] = v })
-                      setRenameMap(Object.keys(obj).length > 0 ? JSON.stringify(obj, null, 2) : '')
-                      setCliEdited(false)
-                    }
-                    return (
-                      <>
-                        <table className="w-full text-xs">
-                          <thead>
-                            <tr className="text-neutral-500">
-                              <th className="text-left py-1 pr-2">데이터셋 카메라</th>
-                              <th className="text-center py-1 px-1">→</th>
-                              <th className="text-left py-1 pl-2">모델 카메라</th>
-                              <th className="w-8"></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {entries.map(([src, dst], idx) => (
-                              <tr key={idx}>
-                                <td className="pr-1 py-0.5">
-                                  <input type="text" value={src.replace('observation.images.', '')}
-                                    onChange={(e) => {
-                                      const newEntries = [...entries]
-                                      newEntries[idx] = [`observation.images.${e.target.value}`, dst]
-                                      updateEntries(newEntries)
-                                    }}
-                                    className="w-full px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100" />
-                                </td>
-                                <td className="text-center text-neutral-600">→</td>
-                                <td className="pl-1 py-0.5">
-                                  <input type="text" value={dst.replace('observation.images.', '')}
-                                    onChange={(e) => {
-                                      const newEntries = [...entries]
-                                      newEntries[idx] = [src, `observation.images.${e.target.value}`]
-                                      updateEntries(newEntries)
-                                    }}
-                                    className="w-full px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100" />
-                                </td>
-                                <td>
-                                  <button onClick={() => updateEntries(entries.filter((_, i) => i !== idx))}
-                                    className="text-neutral-600 hover:text-red-400 px-1">x</button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                        <button onClick={() => updateEntries([...entries, ['observation.images.', 'observation.images.camera' + (entries.length + 1)]])}
-                          className="text-[10px] text-blue-400 hover:text-blue-300">+ 매핑 추가</button>
-                      </>
-                    )
-                  })()}
-                  <textarea value={renameMap} readOnly rows={2}
-                    className="w-full px-2 py-1 rounded bg-neutral-950 border border-neutral-800 text-[10px] font-mono text-neutral-500 resize-none" />
-                </div>
-              </div>
-            )
-          })()}
 
           {/* 정책 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
@@ -666,6 +571,140 @@ export default function TrainingPage() {
             </div>
           </div>
 
+          {/* 정책별 파라미터.
+              예전에는 pretrained 가 있으면 **패널 전체를 숨겼다.** 아키텍처 값이
+              체크포인트에 고정되는 건 맞지만, `freeze_vision_encoder` 같은 **학습 스위치**
+              까지 같이 사라져서 파인튜닝에서 가장 중요한 손잡이를 못 만졌다.
+              이제 `arch` 값만 가린다. */}
+          {policyFields.length > 0 && (
+            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
+              <h3 className="text-sm font-semibold">{policyType.toUpperCase()} 파라미터</h3>
+              {pretrainedPath && (
+                <p className="text-[10px] text-neutral-500">
+                  체크포인트에서 이어 학습 중 — 모델 구조 값(chunk_size 등)은 체크포인트에 고정돼 숨겼습니다.
+                </p>
+              )}
+              <SpecFields fields={policyFields} values={policyParams} onChange={setPolicyParam} />
+              {/* 정책과 무관한 규칙이라 스펙이 아니라 여기 남는다 — 두 키가 다
+                  있을 때만 뜻이 있고, 어느 정책이든 같은 관계다. */}
+              {typeof policyParams.n_action_steps === 'number' && typeof policyParams.chunk_size === 'number'
+                && policyParams.n_action_steps > policyParams.chunk_size && (
+                <span className="text-yellow-500 text-[10px]">⚠ n_action_steps는 chunk_size 이하여야 합니다</span>
+              )}
+              {/* 정책별 경고는 스펙이 준다 — 예전엔 `policyType === 'smolvla'` 가
+                  화면에 박혀 있었다. 조건도 문구도 `policies/<type>.yaml` 에 있다. */}
+              {warnings.map((w, i) => (
+                <span key={i} className={`block text-[10px] ${
+                  w.level === 'error' ? 'text-red-400'
+                  : w.level === 'warn' ? 'text-yellow-500' : 'text-neutral-400'}`}>
+                  ⚠ {w.text}
+                </span>
+              ))}
+            </div>
+          )}
+          </div>
+
+          <div className="space-y-6">
+          {/* 데이터셋 정보 */}
+          {selectedDataset && (() => {
+            const ds = datasets.find((d) => d.id === selectedDataset)
+            if (!ds?.features) return null
+            const stateShape = ds.features['observation.state']?.shape
+            const actionShape = ds.features['action']?.shape
+            const stateNames = ds.features['observation.state']?.names
+            const cameras = Object.keys(ds.features).filter((k) => k.startsWith('observation.images.'))
+            return (
+              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
+                <h3 className="text-sm font-semibold">데이터셋 정보</h3>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-neutral-400">관절 (state):</span>
+                    <span className="ml-1 text-neutral-100">{stateShape?.[0] ?? '?'}개</span>
+                    {stateNames && <span className="text-neutral-500 ml-1">({stateNames.join(', ')})</span>}
+                  </div>
+                  <div>
+                    <span className="text-neutral-400">액션:</span>
+                    <span className="ml-1 text-neutral-100">{actionShape?.[0] ?? '?'}차원</span>
+                  </div>
+                </div>
+                {stateShape && actionShape && stateShape[0] !== actionShape[0] && (
+                  <p className="text-xs text-amber-400">state({stateShape[0]})와 action({actionShape[0]}) 차원이 다릅니다. 베이스 모델의 기본 state_dim이 다를 수 있으니 CLI에서 확인하세요.</p>
+                )}
+                {cameras.length > 0 && (
+                  <div className="text-xs">
+                    <span className="text-neutral-400">카메라 ({cameras.length}대):</span>
+                    <span className="ml-1 text-neutral-100">
+                      {cameras.map((c) => c.replace('observation.images.', '')).join(', ')}
+                    </span>
+                  </div>
+                )}
+                <div className="text-xs pt-2 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-neutral-400 font-medium">카메라 이름 매핑</label>
+                    {renameMap && pretrainedPath && <span className="text-[10px] text-green-400">자동 감지됨</span>}
+                  </div>
+                  {(() => {
+                    let entries: [string, string][] = []
+                    try { entries = Object.entries(JSON.parse(renameMap || '{}')) } catch {}
+                    const updateEntries = (newEntries: [string, string][]) => {
+                      const obj: Record<string, string> = {}
+                      newEntries.forEach(([k, v]) => { if (k) obj[k] = v })
+                      setRenameMap(Object.keys(obj).length > 0 ? JSON.stringify(obj, null, 2) : '')
+                      setCliEdited(false)
+                    }
+                    return (
+                      <>
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-neutral-500">
+                              <th className="text-left py-1 pr-2">데이터셋 카메라</th>
+                              <th className="text-center py-1 px-1">→</th>
+                              <th className="text-left py-1 pl-2">모델 카메라</th>
+                              <th className="w-8"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {entries.map(([src, dst], idx) => (
+                              <tr key={idx}>
+                                <td className="pr-1 py-0.5">
+                                  <input type="text" value={src.replace('observation.images.', '')}
+                                    onChange={(e) => {
+                                      const newEntries = [...entries]
+                                      newEntries[idx] = [`observation.images.${e.target.value}`, dst]
+                                      updateEntries(newEntries)
+                                    }}
+                                    className="w-full px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100" />
+                                </td>
+                                <td className="text-center text-neutral-600">→</td>
+                                <td className="pl-1 py-0.5">
+                                  <input type="text" value={dst.replace('observation.images.', '')}
+                                    onChange={(e) => {
+                                      const newEntries = [...entries]
+                                      newEntries[idx] = [src, `observation.images.${e.target.value}`]
+                                      updateEntries(newEntries)
+                                    }}
+                                    className="w-full px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-100" />
+                                </td>
+                                <td>
+                                  <button onClick={() => updateEntries(entries.filter((_, i) => i !== idx))}
+                                    className="text-neutral-600 hover:text-red-400 px-1">x</button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <button onClick={() => updateEntries([...entries, ['observation.images.', 'observation.images.camera' + (entries.length + 1)]])}
+                          className="text-[10px] text-blue-400 hover:text-blue-300">+ 매핑 추가</button>
+                      </>
+                    )
+                  })()}
+                  <textarea value={renameMap} readOnly rows={2}
+                    className="w-full px-2 py-1 rounded bg-neutral-950 border border-neutral-800 text-[10px] font-mono text-neutral-500 resize-none" />
+                </div>
+              </div>
+            )
+          })()}
+
           {/* 기본 파라미터 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
             <h3 className="text-sm font-semibold">파라미터</h3>
@@ -711,38 +750,6 @@ export default function TrainingPage() {
               {!usePolicyPreset && <span className="text-yellow-500 text-[10px]">OFF — config.json 값 그대로 사용</span>}
             </label>
           </div>
-
-          {/* 정책별 파라미터.
-              예전에는 pretrained 가 있으면 **패널 전체를 숨겼다.** 아키텍처 값이
-              체크포인트에 고정되는 건 맞지만, `freeze_vision_encoder` 같은 **학습 스위치**
-              까지 같이 사라져서 파인튜닝에서 가장 중요한 손잡이를 못 만졌다.
-              이제 `arch` 값만 가린다. */}
-          {policyFields.length > 0 && (
-            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-              <h3 className="text-sm font-semibold">{policyType.toUpperCase()} 파라미터</h3>
-              {pretrainedPath && (
-                <p className="text-[10px] text-neutral-500">
-                  체크포인트에서 이어 학습 중 — 모델 구조 값(chunk_size 등)은 체크포인트에 고정돼 숨겼습니다.
-                </p>
-              )}
-              <SpecFields fields={policyFields} values={policyParams} onChange={setPolicyParam} />
-              {/* 정책과 무관한 규칙이라 스펙이 아니라 여기 남는다 — 두 키가 다
-                  있을 때만 뜻이 있고, 어느 정책이든 같은 관계다. */}
-              {typeof policyParams.n_action_steps === 'number' && typeof policyParams.chunk_size === 'number'
-                && policyParams.n_action_steps > policyParams.chunk_size && (
-                <span className="text-yellow-500 text-[10px]">⚠ n_action_steps는 chunk_size 이하여야 합니다</span>
-              )}
-              {/* 정책별 경고는 스펙이 준다 — 예전엔 `policyType === 'smolvla'` 가
-                  화면에 박혀 있었다. 조건도 문구도 `policies/<type>.yaml` 에 있다. */}
-              {warnings.map((w, i) => (
-                <span key={i} className={`block text-[10px] ${
-                  w.level === 'error' ? 'text-red-400'
-                  : w.level === 'warn' ? 'text-yellow-500' : 'text-neutral-400'}`}>
-                  ⚠ {w.text}
-                </span>
-              ))}
-            </div>
-          )}
 
           {/* 고급 설정 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
@@ -806,6 +813,7 @@ export default function TrainingPage() {
                 </div>
               </div>
             )}
+          </div>
           </div>
 
           </div>
