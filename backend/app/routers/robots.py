@@ -285,6 +285,59 @@ class ZeroRequest(BaseModel):
     joint: str
 
 
+class DiagStartRequest(BaseModel):
+    iface: str
+    #: 비우면 여섯 관절 전부(전체 측정). 하나만 주면 개별 측정.
+    joints: list[str] = []
+
+
+@router.post("/diag/start")
+async def diag_start(body: DiagStartRequest):
+    """관절 검사 시작 — **팔이 실제로 움직인다** (feature/joint-diagnostics.md).
+
+    ⚠ 추론·녹화·텔레옵 중이면 거절한다. 검사는 팔을 흔드는 일이라 돌고 있는
+      작업을 망가뜨리고, 그 작업이 만드는 부하가 측정에도 섞인다.
+    """
+    from app.services.exclusivity import LABELS, Activity, running
+    from piper_robot.kinematics import ARM_JOINTS
+
+    movers = [a for a in (Activity.INFERENCE, Activity.RECORDING, Activity.TELEOP)
+              if a in running()]
+    if movers:
+        names = " · ".join(LABELS[a] for a in movers)
+        raise HTTPException(409, f"{names} 실행 중입니다 — 검사는 팔을 움직입니다. "
+                                 f"먼저 멈추세요.")
+    joints = body.joints or list(ARM_JOINTS)
+    bad = [j for j in joints if j not in ARM_JOINTS]
+    if bad:
+        raise HTTPException(400, f"모르는 관절입니다: {bad}")
+    out = robot_manager_mod._call("diag_start", body.iface, joints, default=None)
+    if out is None:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    if not out.get("ok"):
+        raise HTTPException(409, out.get("error", "검사를 시작하지 못했습니다"))
+    return out
+
+
+@router.get("/diag/status")
+async def diag_status():
+    return robot_manager_mod._call("diag_status", default={"running": False}) or {}
+
+
+@router.post("/diag/stop")
+async def diag_stop():
+    """⚠ 멈춰도 **토크는 안 끊는다** — 끊으면 팔이 떨어진다."""
+    return robot_manager_mod._call("diag_stop", default={"ok": False}) or {}
+
+
+@router.get("/diag/result")
+async def diag_result():
+    out = robot_manager_mod._call("diag_result", default=None, timeout=30)
+    if out is None:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    return out
+
+
 @router.get("/versions")
 async def robot_versions():
     """팔별 펌웨어 + 관절별 하드웨어 정보 (화면의 버전 탭).

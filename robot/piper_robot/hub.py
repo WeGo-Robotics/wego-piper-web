@@ -18,6 +18,7 @@ import logging
 import threading
 import time
 
+from piper_robot.joints import denormalize_joint
 from piper_robot.arm import Arm
 from piper_robot.can import scan_can_interfaces
 
@@ -94,6 +95,64 @@ class RobotHub:
         from piper_robot.can import bus_stats, scan_can_interfaces
 
         return [bus_stats(c["iface"]) for c in scan_can_interfaces()]
+
+    # ── 관절 검사 ──
+    #
+    # ⚠ 한 번에 하나만 돈다. 두 팔을 동시에 흔들면 사람이 둘 다 못 지켜본다.
+    _diag = None
+
+    def diag_start(self, iface: str, joints: list[str]) -> dict:
+        from piper_robot import diagnostics as D
+        from piper_robot.diag_runner import DiagRun
+        from piper_robot.publish import arm_bridge_manager
+
+        if self._diag is not None and not self._diag.done:
+            return {"ok": False, "error": "이미 검사가 돌고 있습니다"}
+        arm = self.arms.get(iface)
+        if arm is None or not arm.connected:
+            return {"ok": False, "error": f"{iface} 가 연결되어 있지 않습니다"}
+        if arm.is_master:
+            return {"ok": False, "error": arm.MASTER_IGNORES}
+        bridge = arm_bridge_manager.bridges.get(iface)
+        if bridge is None:
+            return {"ok": False, "error": f"{iface} 의 발행 브리지가 없습니다"}
+
+        now = arm.read_joints_normalized() or {}
+        if not now:
+            return {"ok": False, "error": f"{iface} 의 관절값을 읽지 못했습니다"}
+        centers = {j: denormalize_joint(j, now[j]) / 1000.0 for j in joints if j in now}
+        limits = {}
+        for row in (arm.versions().get("joints") or []):
+            if row.get("angle_min_deg") is not None:
+                limits[row["joint"]] = (row["angle_min_deg"], row["angle_max_deg"])
+        plan = D.build_plan(centers, limits, joints)
+        if not any(p.amplitude_deg > 0 for p in plan.joints):
+            return {"ok": False, "plan": plan.to_dict(),
+                    "error": "흔들 여유가 없습니다 — 관절이 한계 근처입니다. "
+                             "팔을 가운데 자세로 옮기고 다시 하세요."}
+        self._diag = DiagRun(arm, bridge, plan)
+        self._diag.start()
+        return {"ok": True, "plan": plan.to_dict()}
+
+    def diag_status(self) -> dict:
+        return self._diag.status() if self._diag else {"running": False, "samples": 0}
+
+    def diag_stop(self) -> dict:
+        if self._diag:
+            self._diag.stop()
+        return {"ok": True}
+
+    def diag_result(self) -> dict:
+        """행 전체와 요약. **행도 준다** — 요약만으로는 파형을 못 본다."""
+        from piper_robot import diagnostics as D
+
+        if self._diag is None:
+            return {"rows": [], "summary": {}, "plan": {}}
+        joints = [p.joint for p in self._diag.plan.joints]
+        return {"rows": self._diag.rows,
+                "summary": D.summarize(self._diag.rows, joints),
+                "plan": self._diag.plan.to_dict(),
+                "iface": self._diag.arm.iface, "error": self._diag.error}
 
     def versions(self) -> list[dict]:
         """연결된 팔 전부의 버전·관절 정보."""
