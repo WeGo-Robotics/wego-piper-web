@@ -285,6 +285,19 @@ class ZeroRequest(BaseModel):
     joint: str
 
 
+@router.get("/versions")
+async def robot_versions():
+    """팔별 펌웨어 + 관절별 하드웨어 정보 (화면의 버전 탭).
+
+    ⚠ **관절별 펌웨어 버전은 없다** — 프로토콜에 그런 필드가 없고 팔은 문자열
+      하나만 신고한다. 관절마다는 읽히는 것(전압·온도·상태·설정 한계)을 낸다.
+    """
+    rows = robot_manager_mod._call("versions", default=None, timeout=15)
+    if rows is None:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    return {"arms": rows}
+
+
 @router.get("/bus")
 async def bus_status():
     """CAN 버스별 상태·누적 오류·트래픽 (화면의 버스 상태 탭).

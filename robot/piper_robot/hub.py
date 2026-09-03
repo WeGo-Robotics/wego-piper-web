@@ -95,6 +95,10 @@ class RobotHub:
 
         return [bus_stats(c["iface"]) for c in scan_can_interfaces()]
 
+    def versions(self) -> list[dict]:
+        """연결된 팔 전부의 버전·관절 정보."""
+        return [a.versions() for a in self.arms.values() if a.connected]
+
     def motor_enabled(self, iface: str) -> dict:
         arm = self.arms.get(iface)
         return arm.motor_enabled() if arm else {}

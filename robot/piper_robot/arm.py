@@ -597,6 +597,104 @@ class Arm:
                          "raw 값을 보고 판단하세요.",
                 "raw_before": before, "raw_after": after}
 
+    def versions(self) -> dict:
+        """이 팔의 펌웨어와 **관절별 하드웨어 정보**.
+
+        ⚠ **관절별 펌웨어 버전은 없다.** 프로토콜에 그런 필드가 없고 팔은 문자열
+        하나(`S-VX.X-X`)만 신고한다. 없는 것을 지어내면 화면이 거짓말을 하므로,
+        관절마다는 **실제로 읽히는 것**을 낸다 — 전압·온도·상태 플래그와 설정된
+        각도/속도 한계다. 그게 "이 관절이 남들과 다른가" 를 보는 근거다.
+
+        한계값은 팔에 **물어봐야** 온다(`Search…` → 응답 대기 → `Get…`).
+        """
+        with self._lock:
+            if not self._piper:
+                return {}
+            try:
+                self._piper.SearchAllMotorMaxAngleSpd()
+                self._piper.SearchAllMotorMaxAccLimit()
+            except Exception:
+                pass
+        time.sleep(0.3)          # 응답이 올 시간. 락 밖에서 쉰다
+        with self._lock:
+            if not self._piper:
+                return {}
+            drivers = self._safe(lambda: self._piper.GetDriverStates())
+            limits = self._safe(lambda: self._piper.GetAllMotorAngleLimitMaxSpd())
+            accs = self._safe(lambda: self._piper.GetAllMotorMaxAccLimit())
+            joints = []
+            for name, m in self.ZERO_MOTOR.items():
+                if name == "gripper":
+                    continue
+                joints.append({"joint": name, "motor": m,
+                               **self._driver_row(drivers, m),
+                               **self._limit_row(limits, accs, m)})
+            return {
+                "iface": self.iface,
+                "firmware": self.firmware,
+                "master_slave": (None if self.is_master is None
+                                 else "master" if self.is_master else "slave"),
+                "ctrl_mode": self.ctrl_mode,
+                "sdk": self._safe(lambda: str(self._piper.GetCurrentSDKVersion())),
+                "protocol": self._safe(lambda: str(self._piper.GetCurrentProtocolVersion())),
+                "interface": self._safe(lambda: str(self._piper.GetCurrentInterfaceVersion())),
+                "joints": joints,
+            }
+
+    @staticmethod
+    def _safe(fn):
+        """읽기 실패는 **None 이다** — 0 으로 채우면 정상값처럼 보인다."""
+        try:
+            return fn()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _driver_row(drivers, motor: int) -> dict:
+        d = getattr(drivers, f"motor_{motor}", None) if drivers else None
+        if d is None:
+            return {}
+        f = d.foc_status
+        # ⚠ **0V 는 읽은 값이 아니라 "안 왔다" 이다.** 마스터(示教输入臂)는 저속
+        #   피드백도 안 보내서 전부 0 으로 얼어 있는데, 그대로 그리면 `0.0V·0℃`
+        #   가 측정값처럼 보인다 — 전원이 들어온 팔은 23V 다. 0 으로 채우는 것과
+        #   모른다고 말하는 것은 다르다.
+        if not d.vol:
+            return {"feedback": False}
+        flags = [k for k in ("voltage_too_low", "motor_overheating",
+                             "driver_overcurrent", "driver_overheating",
+                             "collision_status", "driver_error_status")
+                 if getattr(f, k, False)]
+        return {"feedback": True,
+                "voltage_v": round(d.vol / 10.0, 1), "driver_temp_c": d.foc_temp,
+                "motor_temp_c": d.motor_temp, "enabled": bool(f.driver_enable_status),
+                "flags": flags}
+
+    @staticmethod
+    def _pick(container, attr: str, motor: int, num_field: str):
+        """`motor` 리스트에서 그 모터의 항목. **번호로 찾는다** — 리스트 순서가
+        모터 번호와 같다고 가정하면, 응답이 덜 왔을 때 남의 값을 보여준다."""
+        rows = getattr(getattr(container, attr, None), "motor", None) if container else None
+        if not rows:
+            return None
+        for r in rows:
+            if getattr(r, num_field, None) == motor:
+                return r
+        return None
+
+    @classmethod
+    def _limit_row(cls, limits, accs, motor: int) -> dict:
+        out: dict = {}
+        m = cls._pick(limits, "all_motor_angle_limit_max_spd", motor, "motor_num")
+        if m is not None and (m.max_angle_limit or m.min_angle_limit):
+            out |= {"angle_min_deg": round(m.min_angle_limit / 10.0, 1),
+                    "angle_max_deg": round(m.max_angle_limit / 10.0, 1),
+                    "max_spd_rad_s": round(m.max_joint_spd / 1000.0, 3)}
+        a = cls._pick(accs, "all_motor_max_acc_limit", motor, "joint_motor_num")
+        if a is not None and a.max_joint_acc:
+            out["max_acc_rad_s2"] = round(a.max_joint_acc / 100.0, 2)
+        return out
+
     def motor_enabled(self) -> dict[str, bool]:
         """모터별 **실제** 활성 상태. 기억이 아니라 팔이 말하는 값이다.
 
