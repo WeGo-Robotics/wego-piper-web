@@ -19,11 +19,13 @@ class FakePiper:
 
     def __init__(self, raw: int, *, applied: bool, flag: int = 1):
         self._raw, self._applied, self._flag = raw, applied, flag
+        self.sent_zero = 0
 
     def ClearRespSetInstruction(self): pass
     def GripperCtrl(self, *a): pass
 
     def JointConfig(self, joint_num=7, set_zero=0, **kw):
+        self.sent_zero += 1
         if self._applied:
             self._raw = 0
 
@@ -41,6 +43,7 @@ class FakePiper:
 def arm_with(piper) -> Arm:
     a = Arm.__new__(Arm)
     a.iface, a._piper, a._lock = "can0", piper, threading.Lock()
+    a.is_master = False          # 기본은 슬레이브 — 마스터는 테스트가 따로 세운다
     return a
 
 
@@ -130,3 +133,30 @@ def test_enabling_torque_locks_the_flash_again():
     src = code_only((Path(__file__).resolve().parents[2] / "frontend" / "src"
                      / "components" / "ZeroCalibrationModal.tsx").read_text())
     assert "'토크 끊기' : '토크 걸기'" in src, "양방향 버튼이 아니다"
+
+
+# ── 마스터 팔 ───────────────────────────────────────────────────────────────
+
+def test_a_master_arm_is_refused_before_anything_is_sent():
+    """⚠ **마스터(示教输入臂)는 외부 제어 명령을 전부 무시한다.** 실측(can3):
+    `EnablePiper` · `ModeCtrl` · `DisableArm` 을 보내도 `ctrl_mode` 는 Standby
+    그대로고 토크도 하나도 안 켜졌다. 굽기도 같다 — 그런데 팔은 **성공이라
+    응답하므로** 보내고 나서는 구분이 안 된다. 보내기 전에 막아야 이유를 말할 수 있다.
+    """
+    piper = FakePiper(1234, applied=False)
+    arm = arm_with(piper)
+    arm.is_master = True
+
+    out = arm.set_hardware_zero("joint1")
+    assert out["ok"] is False
+    assert "마스터" in out["error"] and "무시" in out["error"], out
+    assert piper.sent_zero == 0, "막았다면서 프레임을 보냈다"
+
+    t = arm.set_motor_enabled("joint1", False)
+    assert t["ok"] is False and "마스터" in t["error"], t
+
+
+def test_a_slave_arm_is_not_blocked_by_that_guard():
+    arm = arm_with(FakePiper(4880, applied=True))
+    arm.is_master = False
+    assert arm.set_hardware_zero("joint1")["ok"] is True

@@ -394,6 +394,19 @@ class Arm:
     ZERO_MOTOR = {"joint1": 1, "joint2": 2, "joint3": 3,
                   "joint4": 4, "joint5": 5, "joint6": 6, "gripper": 7}
 
+    #: 마스터 팔이 외부 명령을 무시한다는 안내. 두 곳(토크·영점)이 같은 말을
+    #: 해야 하므로 한 곳에 둔다.
+    MASTER_IGNORES = (
+        "이 팔은 마스터(示教输入臂) 모드입니다 — 외부 제어 명령을 **전부 무시**하므로 "
+        "토크 조작도 영점 굽기도 먹지 않습니다. 먼저 슬레이브로 바꾸세요. "
+        "(실측: 마스터 팔에 EnablePiper·ModeCtrl·DisableArm 을 보내도 상태가 안 바뀐다)"
+    )
+
+    #: 설정 명령 사이의 간격 (초). 공식 예제(`piper_set_joint_zero_cpv.py`)가
+    #: 모드 설정 사이에 두는 것과 같은 값이다 — 컨트롤러가 앞 프레임을 처리하기
+    #: 전에 다음 것이 오면 조용히 흘린다.
+    CONFIG_GAP_S = 0.1
+
     #: 굽은 뒤 이만큼(raw, 0.001°) 안이면 영점이 옮겨진 것으로 본다.
     #: 실측 성공 사례는 대부분 정확히 0 이었고 가장 큰 것이 281 이었다.
     ZERO_APPLIED_RAW = 1000
@@ -428,6 +441,10 @@ class Arm:
         motor = self.ZERO_MOTOR.get(joint)
         if motor is None:
             return {"ok": False, "error": f"모르는 관절입니다: {joint}"}
+        # ⚠ **마스터 팔에는 굽기가 안 먹는다.** 그런데 팔은 성공이라 응답하므로
+        #   보내고 나서는 구분이 안 된다 — 보내기 전에 막아야 이유를 말할 수 있다.
+        if self.is_master:
+            return {"ok": False, "joint": joint, "error": self.MASTER_IGNORES}
         with self._lock:
             if not self._piper:
                 return {"ok": False, "error": "연결되지 않음"}
@@ -435,7 +452,11 @@ class Arm:
             try:
                 # ⚠ 먼저 지운다. 안 지우면 **이전 명령의 성공 응답**을 읽고
                 #   이번 것도 성공했다고 보고한다.
+                # ⚠ 설정 명령을 **몰아 보내지 않는다.** 공식 예제도 설정 사이에
+                #   100ms 를 둔다 — 컨트롤러가 앞 프레임을 처리하기 전에 다음
+                #   프레임이 오면 조용히 흘린다.
                 self._piper.ClearRespSetInstruction()
+                time.sleep(self.CONFIG_GAP_S)
                 if joint == "gripper":
                     self._piper.GripperCtrl(0, 1000, 0x01, 0xAE)
                 else:
@@ -489,6 +510,8 @@ class Arm:
         motor = self.ZERO_MOTOR.get(joint)
         if motor is None or joint == "gripper":
             return {"ok": False, "error": f"모터가 없는 관절입니다: {joint}"}
+        if self.is_master:
+            return {"ok": False, "joint": joint, "error": self.MASTER_IGNORES}
         with self._lock:
             if not self._piper:
                 return {"ok": False, "error": "연결되지 않음"}
@@ -496,7 +519,20 @@ class Arm:
                 if enabled:
                     self._piper.EnableArm(motor)
                 else:
+                    # ⚠ **끊기 전에 팔을 CAN 제어 모드로 세운다.** 공식 예제는 절차
+                    #   전체를 그 모드에서 한다(`EnablePiper` → `ModeCtrl(0x01,0x01,…)`
+                    #   → 대상 모터만 `DisableArm`). Standby 인 팔에 굽기를 보내면
+                    #   팔은 성공이라 응답하면서 아무 일도 안 한다 — 2026-09-03 실측.
+                    #
+                    #   ⚠ 예제의 `JointCtrl(0,0,0,0,0,0)` 은 **따라하지 않는다.**
+                    #     그건 팔을 홈 자세로 **움직이라는 명령**이다. 영점을 맞추려
+                    #     세워둔 자세가 그 순간 사라진다.
+                    self._piper.EnablePiper()
+                    time.sleep(self.CONFIG_GAP_S)
+                    self._piper.ModeCtrl(0x01, 0x01, 30, 0x00)
+                    time.sleep(self.CONFIG_GAP_S)
                     self._piper.DisableArm(motor)
+                time.sleep(self.CONFIG_GAP_S)
             except Exception as exc:
                 return {"ok": False, "error": str(exc)}
         logger.warning("모터 토크 %s: %s %s (모터 %d)",
