@@ -372,6 +372,27 @@ class Arm:
     ZERO_MOTOR = {"joint1": 1, "joint2": 2, "joint3": 3,
                   "joint4": 4, "joint5": 5, "joint6": 6, "gripper": 7}
 
+    #: 굽은 뒤 이만큼(raw, 0.001°) 안이면 영점이 옮겨진 것으로 본다.
+    #: 실측 성공 사례는 대부분 정확히 0 이었고 가장 큰 것이 281 이었다.
+    ZERO_APPLIED_RAW = 1000
+
+    def _settled_raw(self, joint: str, timeout_s: float = 2.0) -> int | None:
+        """피드백이 자리 잡을 때까지 기다렸다가 읽는다.
+
+        ⚠ 한 번만 읽고 판단하면 **아직 안 온 갱신을 실패로 읽는다.** 굽기는
+        되돌릴 수 없는 조작이라, 성공을 실패라 부르는 쪽도 값이 비싸다.
+        """
+        deadline = time.monotonic() + timeout_s
+        last = None
+        while time.monotonic() < deadline:
+            with self._lock:
+                v = self._raw_of(joint)
+            if v is not None and last is not None and abs(v - last) < 50:
+                return v                       # 두 번 연속 같으면 자리 잡았다
+            last = v
+            time.sleep(0.2)
+        return last
+
     def set_hardware_zero(self, joint: str) -> dict:
         """지금 위치를 그 관절의 **하드웨어 영점**으로 굽는다.
 
@@ -406,8 +427,21 @@ class Arm:
                 flag = int(resp.instruction_response.is_set_zero_successfully)
             except Exception as exc:
                 return {"ok": False, "error": f"응답을 읽지 못했습니다: {exc}"}
-            after = self._raw_of(joint)
+        after = self._settled_raw(joint)
         if flag == 1:
+            # ⚠ **팔의 "성공" 을 그대로 믿으면 안 된다.** 굽혔다고 응답해 놓고
+            #   실제로는 안 굽는 경우가 있다 — 2026-09-03 에 16번을 눌러 전부
+            #   `ok` 를 받았는데 하나도 안 굽혔고, 화면에는 아무 신호도 없었다.
+            #   영점이 옮겨졌으면 그 관절은 **0 을 보고해야 한다.** 확인할 근거가
+            #   바로 옆에 있는데 안 보는 것은 성공을 지어내는 것이다.
+            if after is not None and abs(after) > self.ZERO_APPLIED_RAW:
+                logger.warning("영점이 안 먹었다: %s %s (모터 %d) raw %s → %s "
+                               "(0 이 되어야 한다)", self.iface, joint, motor,
+                               before, after)
+                return {"ok": False, "joint": joint, "motor": motor,
+                        "raw_before": before, "raw_after": after,
+                        "error": "팔은 성공이라 응답했지만 값이 0 이 되지 않았습니다 "
+                                 f"({before} → {after}). 영점이 실제로는 안 굽혔습니다."}
             logger.warning("하드웨어 영점 설정: %s %s (모터 %d) raw %s → %s",
                            self.iface, joint, motor, before, after)
             return {"ok": True, "joint": joint, "motor": motor,
