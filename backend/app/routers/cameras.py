@@ -32,6 +32,17 @@ def _guard_device_access() -> None:
         raise HTTPException(409, f"{owner} 실행 중에는 카메라 디바이스에 접근할 수 없습니다")
 
 
+@router.post("/clear")
+async def clear_cameras():
+    """등록·별칭·스캔 결과를 전부 버리고 처음 상태로 (`/robots/clear` 와 짝).
+
+    ⚠ 녹화·추론이 카메라를 쓰는 중이면 거절한다 — 연결을 끊으면 그 활동이
+    프레임을 잃는다. 판정은 기존 가드 한 곳이다.
+    """
+    _guard_device_access()
+    return camera_manager.clear_all()
+
+
 @router.get("/scan")
 async def scan_cameras():
     """카메라 스캔 + 병렬 probe (타임아웃 3초)."""

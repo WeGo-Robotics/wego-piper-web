@@ -331,6 +331,28 @@ class CameraManager:
             return False, f"Unknown camera: {cam_id}"
         return cam.connect()
 
+    def clear_all(self) -> dict:
+        """등록·별칭·스캔 결과를 전부 버리고 연결도 끊는다 — 처음부터 다시 세팅할 때.
+
+        ⚠ **세션 파일까지 지운다.** 메모리만 비우면 게이트웨이가 재시작할 때
+        `restore_session()` 이 되살려 놓는다 — "지웠는데 재부팅하니 돌아왔다"는
+        안 지운 것보다 나쁘다 (robot_manager.clear_all 과 같은 판단).
+        별칭·등록은 사람이 정한 값이지만, 이 버튼의 뜻이 바로 그걸 버리는 것이다 —
+        화면이 누르기 전에 그 사실을 말한다.
+        """
+        disconnected = [c.id for c in self.cameras.values() if c.connected]
+        for cid in disconnected:
+            try:
+                self.cameras[cid].disconnect()
+            except Exception as e:      # 한 대가 안 끊겨도 나머지는 지운다
+                logger.warning("  %s 연결 해제 실패 (계속): %s", cid, e)
+        cleared = len(self.cameras)
+        self.cameras = {}
+        self.CAMERA_SESSION_PATH.unlink(missing_ok=True)
+        logger.info("Camera state cleared (%d cameras, %d disconnected)",
+                    cleared, len(disconnected))
+        return {"cleared": cleared, "disconnected": disconnected}
+
     def disconnect_camera(self, cam_id: str) -> bool:
         cam = self.cameras.get(cam_id)
         if not cam:

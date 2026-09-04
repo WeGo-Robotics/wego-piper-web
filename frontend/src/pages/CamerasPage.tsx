@@ -437,6 +437,23 @@ export default function CamerasPage() {
       setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
     } catch { /* 표시 이름일 뿐이라 실패해도 조용히 둔다 */ }
   }
+  // 스캔 결과까지 전부 비운다 — 별칭·등록은 사람이 정한 값이라 확인창이 그걸 말한다
+  const handleClearAll = async () => {
+    const registered = cams.filter((c) => c.ready).length
+    if (!await askConfirm(
+      `카메라 상태를 전부 비웁니다 (${cams.length}대, 등록 ${registered}대).\n\n` +
+      '· 스캔 결과·연결·등록·별칭이 사라지고 세션 파일도 지워집니다\n' +
+      '· 카메라 프로파일(프리셋)은 남습니다 — 다시 등록하면 연결 시 적용됩니다\n\n계속할까요?')) return
+    try {
+      await api.post('/cameras/clear', {})
+      setCams([])
+      notify({ level: 'info', source: '카메라',
+               text: '카메라 상태를 초기화했습니다 — 스캔부터 다시 시작하세요.' })
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : '초기화 실패')
+    }
+  }
+
   const handleUnregister = async (id: string) => {
     await api.post('/cameras/unregister', { id })
     setCams((prev) => prev.map((c) => (c.id === id ? { ...c, ready: false } : c)))
@@ -576,6 +593,15 @@ export default function CamerasPage() {
             className="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
             {scanning ? <><Spinner className="inline" /> 스캔 중...</> : '스캔'}
           </button>
+          {/* 비울 게 없으면 안 보인다 — 위험한 버튼에 누를 이유를 만들어 주지
+              않는다 (로봇 페이지 전체 초기화와 같은 규칙) */}
+          {cams.length > 0 && (
+            <button onClick={handleClearAll}
+              className="px-3 py-1.5 text-sm rounded bg-neutral-700 hover:bg-red-600
+                         text-neutral-400 hover:text-white">
+              전체 초기화
+            </button>
+          )}
         </>)}
       </div>
 
