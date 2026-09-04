@@ -635,6 +635,9 @@ async def can_up(body: CanUpRequest):
     ok, msg = init_can_interface(body.iface, body.bitrate)
     if not ok:
         raise HTTPException(400, msg)
+    arm = robot_manager.arms.get(body.iface)
+    if arm:
+        arm.state = "UP"          # 스캔 캐시도 사실을 따라간다
     return {"status": "ok", "iface": body.iface}
 
 
@@ -727,6 +730,8 @@ async def can_down(body: PortDownRequest):
     ok, msg = down_can_interface(body.iface)
     if not ok:
         raise HTTPException(400, msg)
+    if arm:
+        arm.state = "DOWN"        # 스캔 캐시도 사실을 따라간다
     return {"status": "down", "iface": body.iface}
 
 
@@ -748,9 +753,10 @@ async def list_ports():
         out.append({
             "iface": iface,
             "bus_info": arm.bus_info,
-            # UP/DOWN 은 링크 상태(스캔이 채움), can_state 는 컨트롤러 상태
-            # (ERROR-ACTIVE 등) — 다른 층의 사실이라 둘 다 낸다.
-            "state": arm.state,
+            # UP/DOWN 은 **지금 링크 상태**(ip 가 방금 말한 것), can_state 는
+            # 컨트롤러 상태(ERROR-ACTIVE 등) — 다른 층의 사실이라 둘 다 낸다.
+            # 스캔 캐시(arm.state)는 폴백이다: UP/DOWN 버튼을 누른 순간 낡는다.
+            "state": stats.get("link") or arm.state,
             "can_state": stats.get("state"),
             "bitrate": stats.get("bitrate"),
             "rx_packets": stats.get("rx_packets"),

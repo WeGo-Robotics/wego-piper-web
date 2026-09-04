@@ -167,6 +167,11 @@ def bus_stats(iface: str) -> dict:
         out = ""
     m = re.search(r"can state (\S+)", out)
     state = m.group(1) if m else None
+    # 링크 상태(UP/DOWN)는 컨트롤러 상태(ERROR-ACTIVE 등)와 **다른 층**이다.
+    # 내린 인터페이스는 can state 줄 자체가 없어지므로, 첫 줄의 operstate 를
+    # 따로 읽어야 "DOWN" 이라고 말할 수 있다 — 스캔 캐시는 누른 순간 낡는다.
+    ml = re.search(r"qdisc \S+ state (\S+)", out)
+    link = ml.group(1) if ml else None
     mb = re.search(r"bitrate (\d+)", out)
     mc = re.search(r"re-started bus-errors arbit-lost error-warn error-pass bus-off\s*\n\s*"
                    r"(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)", out)
@@ -174,6 +179,7 @@ def bus_stats(iface: str) -> dict:
     return {
         "iface": iface,
         "state": state,
+        "link": link,
         "healthy": state == CAN_HEALTHY,
         "bitrate": int(mb.group(1)) if mb else None,
         "counters": counters,

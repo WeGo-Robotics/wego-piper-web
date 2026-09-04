@@ -546,10 +546,17 @@ export default function RobotsPage() {
     setScanning(false)
   }
 
+  // 성공하면 즉시 배지·버튼을 뒤집는다(낙관적) — 서버 확인은 loadPorts 가 한다.
+  // /ports 가 라이브 링크 상태를 주므로 다음 폴링에서 사실과 다시 맞춰진다.
+  const setPortState = (iface: string, state: 'UP' | 'DOWN') => {
+    setPorts((prev) => prev.map((p) => p.iface === iface ? { ...p, state } : p))
+    setArms((prev) => prev.map((a) => a.iface === iface ? { ...a, state } : a))
+  }
+
   const handleCanUp = async (iface: string) => {
     try {
       await api.post('/robots/can/up', { iface })
-      setArms((prev) => prev.map((a) => a.iface === iface ? { ...a, state: 'UP' } : a))
+      setPortState(iface, 'UP')
       loadPorts()
     } catch { notifyError('CAN UP 실패') }
   }
@@ -557,7 +564,7 @@ export default function RobotsPage() {
   const handleCanDown = async (iface: string) => {
     try {
       await api.post('/robots/can/down', { iface })
-      setArms((prev) => prev.map((a) => a.iface === iface ? { ...a, state: 'DOWN' } : a))
+      setPortState(iface, 'DOWN')
       loadPorts()
     } catch (e) { notifyError(e instanceof Error ? e.message : 'CAN DOWN 실패') }
   }
