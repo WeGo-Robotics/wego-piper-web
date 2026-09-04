@@ -62,3 +62,53 @@ def test_robotd_does_not_keep_its_own_parking_store():
         )
     sig = inspect.signature(arm_mod.Arm.go_parking)
     assert "target" in sig.parameters, "go_parking 이 자세를 인자로 안 받는다"
+
+
+# ── 파킹 보정 창 ─────────────────────────────────────────────────────────────
+
+def _page() -> str:
+    from pathlib import Path
+
+    return (Path(__file__).resolve().parents[2]
+            / "frontend/src/pages/RobotsPage.tsx").read_text()
+
+
+def test_the_three_buttons_are_independent():
+    """⚠ **순서를 강제하면 되돌아갈 수 없다.** 예전에는 `ready → moving →
+    adjusting → saving` 한 줄로 흘러서, 다시 파킹으로 보내려면 창을 닫았다
+    열어야 했다. 보정은 "맞을 때까지 되풀이하는" 일이라 그 흐름과 안 맞는다."""
+    from conftest import code_only
+
+    src = code_only(_page())
+    modal = src.split("function ParkingCalibrationModal", 1)[1].split("\nfunction ", 1)[0]
+    for label in ("파킹", "현재 위치 읽기", "저장"):
+        assert label in modal, f"[{label}] 버튼이 없다"
+    # 단계 기계가 남아 있으면 다시 순서가 생긴다
+    assert "'adjusting'" not in modal and '"adjusting"' not in modal, \
+        "단계 상태가 남아 있다 — 순서가 다시 강제된다"
+
+
+def test_saving_uses_what_was_captured_not_the_polled_state():
+    """⚠ 예전 `handleSave` 는 `readJoints()` 를 부른 **직후** `joints` 를
+    저장했는데, React 상태는 그 자리에서 안 바뀐다 — **직전 폴링 값**(최대
+    300ms 전 자세)이 저장됐다. 찍어 둔 값을 저장해야 무엇이 들어가는지 안다."""
+    from conftest import code_only
+
+    src = code_only(_page())
+    modal = src.split("function ParkingCalibrationModal", 1)[1].split("\nfunction ", 1)[0]
+    save = modal.split("const save = async", 1)[1][:400]
+    assert "positions: captured" in save, "찍어 둔 값이 아니라 폴링 값을 저장한다"
+    assert "readJoints()" not in save, "저장하면서 읽으면 또 한 박자 늦는다"
+
+
+def test_parking_waits_for_the_arm_to_settle_not_a_fixed_delay():
+    """⚠ 고정 3초는 자세가 멀면 못 닿고 가까우면 괜히 기다린다 — 둘 다 사람이
+    "왜 엉뚱한 데서 멈췄지" 로 만난다. 영점 굽기 준비도 같은 이유로 시간이
+    아니라 상태를 본다 (`_prepare_for_config_locked`)."""
+    from conftest import code_only
+
+    src = code_only(_page())
+    modal = src.split("function ParkingCalibrationModal", 1)[1].split("\nfunction ", 1)[0]
+    park = modal.split("const goParking = async", 1)[1][:900]
+    assert "setTimeout(async" not in park, "고정 지연으로 도착을 가정한다"
+    assert "still" in park, "멈췄는지 보지 않는다"

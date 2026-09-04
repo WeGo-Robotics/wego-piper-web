@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { Fragment, useEffect, useState, useRef, useCallback } from 'react'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import AlignmentPanel from '../components/AlignmentPanel'
@@ -10,147 +10,162 @@ import ZeroCalibrationModal from '../components/ZeroCalibrationModal'
 import { JOINT_NAMES } from '../config/joints'
 
 // ── 파킹 보정 모달 ──
+//
+// ⚠ **순서를 강제하지 않는다.** 예전에는 `ready → moving → adjusting → saving`
+//    한 줄로 흘러서, 한 번 지나간 단계로 못 돌아갔다 — 다시 파킹으로 보내려면
+//    창을 닫았다 열어야 했고, 자세를 고쳐 잡고 다시 읽을 수도 없었다. 보정은
+//    "맞을 때까지 되풀이하는" 일이라 그 흐름과 안 맞는다.
+//
+// ⚠ **읽기와 저장을 나눈다.** 예전 `handleSave` 는 `readJoints()` 를 부른 **직후**
+//    `joints` 를 저장했는데, React 상태는 그 자리에서 안 바뀐다 — **직전 폴링
+//    값**이 저장됐다. 최대 300ms 전의 자세다. 찍어 둔 값을 화면에 보여주고 그걸
+//    저장하면, 무엇이 저장되는지 눈으로 확인한 뒤 누르게 된다.
 
 function ParkingCalibrationModal({ iface, onClose }: { iface: string; onClose: () => void }) {
-  const [step, setStep] = useState<'ready' | 'moving' | 'adjusting' | 'saving'>('ready')
   const [joints, setJoints] = useState<Record<string, number>>({})
+  //: 저장할 값. **읽기 버튼으로만** 채워진다 — 폴링이 덮어쓰면 찍어 둔 뜻이 없다.
+  const [captured, setCaptured] = useState<Record<string, number> | null>(null)
+  const [busy, setBusy] = useState<'' | 'park' | 'read' | 'save'>('')
+  const [msg, setMsg] = useState('')
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined)
 
   const readJoints = useCallback(async () => {
     try {
       const data = await api.get<Record<string, number>>(`/robots/parking/joints/${iface}`)
       setJoints(data)
-    } catch { /* ignore */ }
+      return data
+    } catch { return null }
   }, [iface])
 
-  // 관절 위치 폴링
   useEffect(() => {
     readJoints()
     pollRef.current = setInterval(readJoints, 300)
     return () => clearInterval(pollRef.current)
   }, [readJoints])
 
-  const handleGoParking = async () => {
-    setStep('moving')
+  const goParking = async () => {
+    setBusy('park'); setMsg('')
     try {
-      // 토크 ON → 파킹 이동
       await api.post('/robots/parking/torque?enable=true', { iface })
       await api.post('/robots/parking/go', { iface })
-      // 3초 대기 (이동 완료) → 토크 해제 → 보정 단계
-      setTimeout(async () => {
-        await api.post('/robots/parking/torque?enable=false', { iface })
-        setStep('adjusting')
-      }, 3000)
-    } catch { setStep('ready') }
+      // ⚠ **고정 3초가 아니라 멈출 때까지 기다린다.** 자세가 멀면 3초로는 안
+      //    닿고, 가까우면 괜히 기다린다. 둘 다 사람이 "왜 엉뚱한 데서 멈췄지" 로
+      //    만난다. 움직임이 멎으면 도착이다.
+      let last: Record<string, number> | null = null
+      let still = 0
+      for (let i = 0; i < 40 && still < 4; i++) {         // 최대 ~8초
+        await new Promise((r) => setTimeout(r, 200))
+        const now = await readJoints()
+        if (now && last && JOINT_NAMES.every((n) =>
+              Math.abs((now[n] ?? 0) - (last![n] ?? 0)) < 0.3)) still++
+        else still = 0
+        last = now
+      }
+      await api.post('/robots/parking/torque?enable=false', { iface })
+      setMsg('파킹 자세에 섰고 토크를 풀었습니다 — 손으로 자세를 맞추세요.')
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : '파킹으로 보내지 못했습니다')
+    } finally { setBusy('') }
   }
 
-  const handleSave = async () => {
-    setStep('saving')
-    // 현재 위치 읽고 저장
-    await readJoints()
-    await api.post('/robots/parking/save', { iface, positions: joints })
-    // 토크 복원
-    await api.post('/robots/parking/torque?enable=true', { iface })
-    onClose()
+  const capture = async () => {
+    setBusy('read'); setMsg('')
+    // ⚠ 폴링 상태가 아니라 **지금 응답**을 쓴다 — 상태는 한 박자 늦다
+    const now = await readJoints()
+    if (now) { setCaptured(now); setMsg('지금 자세를 찍었습니다. 저장을 누르면 이 값이 들어갑니다.') }
+    else setMsg('관절값을 읽지 못했습니다')
+    setBusy('')
   }
 
-  const handleCancel = async () => {
-    // 토크 복원 후 닫기
+  const save = async () => {
+    if (!captured) return
+    setBusy('save'); setMsg('')
+    try {
+      await api.post('/robots/parking/save', { iface, positions: captured })
+      await api.post('/robots/parking/torque?enable=true', { iface })
+      onClose()
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : '저장하지 못했습니다')
+      setBusy('')
+    }
+  }
+
+  const close = async () => {
+    // ⚠ 토크를 복원하고 닫는다 — 풀린 채로 두면 팔이 중력으로 내려앉는다
     try { await api.post('/robots/parking/torque?enable=true', { iface }) } catch { /* ignore */ }
     onClose()
   }
 
+  const drift = (n: string) =>
+    captured ? (joints[n] ?? 0) - (captured[n] ?? 0) : 0
+
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={handleCancel}>
-      <div className="bg-neutral-800 rounded-xl border border-neutral-600 p-6 w-[480px] max-h-[90vh] overflow-y-auto space-y-4"
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={close}>
+      <div className="bg-neutral-800 rounded-xl border border-neutral-600 p-6 w-[520px] max-h-[90vh] overflow-y-auto space-y-4"
         onClick={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-bold">파킹 위치 보정 — {iface}</h2>
+        <p className="text-xs text-neutral-400">
+          세 버튼은 <b>순서가 정해져 있지 않습니다</b>. 파킹으로 보내고, 손으로
+          맞추고, 읽고, 마음에 안 들면 다시 맞춰 읽으면 됩니다.
+        </p>
 
-        {/* 단계 표시 */}
-        <div className="flex gap-2 text-xs">
-          {(['ready', 'moving', 'adjusting', 'saving'] as const).map((s, i) => (
-            <div key={s} className={`flex items-center gap-1 ${step === s ? 'text-blue-400 font-medium' : 'text-neutral-500'}`}>
-              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === s ? 'bg-blue-600 text-white' : 'bg-neutral-700'}`}>
-                {i + 1}
-              </span>
-              {s === 'ready' && '준비'}
-              {s === 'moving' && '이동 + 토크 해제'}
-              {s === 'adjusting' && '보정'}
-              {s === 'saving' && '저장'}
-            </div>
-          ))}
-        </div>
-
-        {/* 관절 위치 표시 */}
         <div className="rounded-lg border border-neutral-700 bg-neutral-900 p-3 space-y-2">
-          <h3 className="text-xs font-semibold text-neutral-400">현재 관절 위치</h3>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-neutral-400">관절 위치</h3>
+            {captured && <span className="text-[10px] text-green-400">찍어 둔 값이 있습니다</span>}
+          </div>
+          <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-1 text-xs">
+            <span className="text-[10px] text-neutral-500">관절</span>
+            <span className="text-[10px] text-neutral-500 text-right">지금</span>
+            <span className="text-[10px] text-neutral-500 text-right w-20">저장할 값</span>
             {JOINT_NAMES.map((name) => (
-              <div key={name} className="flex items-center justify-between text-xs">
+              <Fragment key={name}>
                 <span className="text-neutral-400 font-mono">{name}</span>
-                <span className="text-neutral-100 font-mono tabular-nums">
+                <span className="text-neutral-100 font-mono tabular-nums text-right">
                   {joints[name] !== undefined ? joints[name].toFixed(1) : '—'}
                 </span>
-              </div>
+                <span className={`font-mono tabular-nums text-right w-20 ${
+                  !captured ? 'text-neutral-600'
+                  : Math.abs(drift(name)) > 0.5 ? 'text-amber-400' : 'text-green-400'}`}>
+                  {captured ? captured[name]?.toFixed(1) ?? '—' : '—'}
+                </span>
+              </Fragment>
             ))}
           </div>
-          {/* 바 차트 */}
-          <div className="space-y-1 pt-1">
-            {JOINT_NAMES.map((name) => {
-              const val = joints[name] ?? 0
-              const isGripper = name === 'gripper'
-              const pct = isGripper ? val : (val + 100) / 2  // [-100,100] → [0,100]
-              return (
-                <div key={name} className="flex items-center gap-2 text-[10px]">
-                  <span className="w-12 text-neutral-500 font-mono">{name.replace('joint', 'J')}</span>
-                  <div className="flex-1 h-2 bg-neutral-700 rounded overflow-hidden relative">
-                    {!isGripper && <div className="absolute left-1/2 w-px h-full bg-neutral-500" />}
-                    <div className={`h-full rounded ${isGripper ? 'bg-green-500' : val >= 0 ? 'bg-blue-500' : 'bg-orange-500'}`}
-                      style={{
-                        width: `${Math.abs(isGripper ? pct : (val / 100) * 50)}%`,
-                        marginLeft: isGripper ? 0 : val >= 0 ? '50%' : `${50 - Math.abs(val / 2)}%`,
-                      }} />
-                  </div>
-                  <span className="w-12 text-right text-neutral-400 tabular-nums">{val.toFixed(1)}</span>
-                </div>
-              )
-            })}
-          </div>
+          {captured && JOINT_NAMES.some((n) => Math.abs(drift(n)) > 0.5) && (
+            <p className="text-[10px] text-amber-400">
+              찍은 뒤 팔이 움직였습니다 — 지금 자세를 저장하려면 다시 읽으세요.
+            </p>
+          )}
         </div>
 
-        {/* 액션 버튼 */}
         <div className="flex gap-2">
-          {step === 'ready' && (
-            <button onClick={handleGoParking}
-              className="flex-1 px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium">
-              1. 파킹 위치로 이동
-            </button>
-          )}
-          {step === 'moving' && (
-            <button disabled className="flex-1 px-4 py-2 rounded bg-neutral-700 text-neutral-400 text-sm">
-              이동 중...
-            </button>
-          )}
-          {step === 'adjusting' && (
-            <button onClick={handleSave}
-              className="flex-1 px-4 py-2 rounded bg-green-600 hover:bg-green-500 text-white text-sm font-medium">
-              2. 현재 위치 저장
-            </button>
-          )}
-          {step === 'saving' && (
-            <button disabled className="flex-1 px-4 py-2 rounded bg-neutral-700 text-neutral-400 text-sm">
-              저장 중...
-            </button>
-          )}
-          <button onClick={handleCancel}
-            className="px-4 py-2 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 text-sm">
-            취소
+          <button onClick={goParking} disabled={!!busy}
+            title="토크를 걸고 저장된 파킹 자세로 보낸 뒤, 멈추면 토크를 풉니다"
+            className="flex-1 px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white
+                       text-sm font-medium disabled:opacity-50">
+            {busy === 'park' ? '이동 중…' : '파킹'}
+          </button>
+          <button onClick={capture} disabled={!!busy}
+            title="지금 관절값을 찍어 둡니다 — 저장은 이 값으로 됩니다"
+            className="flex-1 px-3 py-2 rounded bg-neutral-700 hover:bg-neutral-600
+                       text-neutral-100 text-sm font-medium disabled:opacity-50">
+            {busy === 'read' ? '읽는 중…' : '현재 위치 읽기'}
+          </button>
+          <button onClick={save} disabled={!!busy || !captured}
+            title={captured ? '찍어 둔 값을 파킹 자세로 저장합니다' : '먼저 현재 위치를 읽으세요'}
+            className="flex-1 px-3 py-2 rounded bg-green-600 hover:bg-green-500 text-white
+                       text-sm font-medium disabled:opacity-50">
+            {busy === 'save' ? '저장 중…' : '저장'}
+          </button>
+          <button onClick={close} disabled={busy === 'save'}
+            className="px-3 py-2 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 text-sm">
+            닫기
           </button>
         </div>
 
-        <p className="text-[10px] text-neutral-500">
-          파킹 위치로 이동 후 토크가 자동 해제됩니다. 관절을 원하는 위치로 직접 조정한 후 저장하세요.
-        </p>
+        {msg && <p className="text-xs text-neutral-300 rounded border border-neutral-700
+                              bg-neutral-900 px-2 py-1.5">{msg}</p>}
       </div>
     </div>
   )
