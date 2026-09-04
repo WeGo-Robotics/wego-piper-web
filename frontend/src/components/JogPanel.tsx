@@ -134,7 +134,7 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
 
   // 확인창을 안 띄운다 — 사용자가 지웠다. 대신 버튼 위 `title` 이 경고를 남긴다.
   // 되돌릴 수 있는 조작이고(다시 조그하면 된다) 자주 누르는 버튼이다.
-  const goHome = async () => {
+  const goParking = async () => {
     setBusy(true)
     try {
       await api.post('/robots/parking/go', { iface })
@@ -325,11 +325,15 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
           {running && <span className="ml-2 text-amber-400">· 명령 경로 점유 중</span>}
         </span>
         <span className="flex gap-1">
-        {/* 원점(파킹)으로 — 조그로 되돌리려면 관절 여섯을 손으로 맞춰야 한다 */}
-        <button onClick={goHome} disabled={busy || running || relaying}
-          title={running || relaying ? '조작을 먼저 끝내세요' : '파킹(원점) 자세로 이동'}
+        {/* ⚠ **"원점" 이라 부르지 않는다.** 여기는 엔코더 영점이 아니라 사람이
+            저장해 둔 파킹 자세로 간다 — 저장이 없으면 기본 자세다. 이름이
+            "원점으로" 였을 때 "0 으로 갈 줄 알았는데 엉뚱한 데로 간다" 로
+            보고됐다. 하드웨어 영점은 로봇 페이지의 영점 굽기 쪽이다. */}
+        <button onClick={goParking} disabled={busy || running || relaying}
+          title={running || relaying ? '조작을 먼저 끝내세요'
+                 : '저장된 파킹 자세로 이동 (없으면 기본 자세)'}
           className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-50">
-          원점으로
+          파킹
         </button>
         <button onClick={running ? stop : start} disabled={busy || relaying || !!blocked}
           title={blocked ? `${heldLabel} — 먼저 멈추세요`

@@ -425,9 +425,9 @@ class RobotHub:
                            f" (마스터라 건너뜀: {', '.join(skipped)})" if skipped else "")
         return done
 
-    def go_parking(self, iface: str) -> bool:
+    def go_parking(self, iface: str, target: dict | None = None) -> bool:
         arm = self.arms.get(iface)
-        return bool(arm and arm.go_parking())
+        return bool(arm and arm.go_parking(target))
 
     # ── 움직임 감지 ──
 

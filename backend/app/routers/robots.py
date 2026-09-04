@@ -1191,7 +1191,7 @@ async def parking_go(body: ConnectRequest):
     arm = robot_manager.arms.get(body.iface)
     if not arm or not arm.connected:
         raise HTTPException(404, "Arm not connected")
-    if not arm.go_parking():
+    if not arm.go_parking(_load_custom_parking(body.iface)):
         raise HTTPException(500, "Parking failed")
     return {"status": "ok"}
 

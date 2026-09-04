@@ -400,8 +400,11 @@ class ArmInfo:
     def disable_torque(self) -> bool:
         return bool(_call("disable_torque", self.iface, default=False))
 
-    def go_parking(self) -> bool:
-        return bool(_call("go_parking", self.iface, default=False, timeout=30))
+    def go_parking(self, target: dict | None = None) -> bool:
+        # ⚠ 커스텀 파킹은 **여기가** 갖고 있다 — robotd 에 실어 보낸다.
+        #   저쪽이 자기 파일을 읽게 두면 저장 위치가 갈라진다 (`Arm.go_parking`).
+        return bool(_call("go_parking", self.iface, target,
+                          default=False, timeout=30))
 
 
 class RobotManager:

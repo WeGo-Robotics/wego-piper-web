@@ -9,7 +9,6 @@
 연결·제어모드·마스터/슬레이브·관절·에러·토크·파킹.
 """
 
-import json
 import logging
 import os
 import threading
@@ -338,18 +337,33 @@ class Arm:
                 logger.debug("read_joints_normalized error: %s", e)
                 return None
 
-    def go_parking(self) -> bool:
-        """파킹 위치로 이동."""
+    def go_parking(self, target: dict | None = None) -> bool:
+        """파킹 위치로 이동. `target` 은 **게이트웨이가 준다**.
+
+        ⚠ 예전엔 여기서 `~/.piper/parking/` 을 직접 읽었는데, 게이트웨이의
+        `/parking/save` 는 `~/.config/piper-web/parking/` 에 적는다. **저장은
+        되는데 이동이 그걸 못 봤다** — UI 는 "저장됨" 이라 말하고 팔은 기본
+        자세로 갔다. 커스텀 파킹은 사람이 고른 프리셋이라 게이트웨이가 갖는
+        것이 맞다 (`hub.py` 의 경계). 여기서 파일을 읽으면 그 사실이 두
+        프로세스에 생기고, 지금처럼 조용히 어긋난다.
+        """
         with self._lock:
             if not self._piper:
                 return False
             try:
-                self._piper.EnablePiper()
-                time.sleep(0.3)
+                # ⚠ **`EnablePiper()` 를 한 번 부르면 모터가 안 켜진다** (실측,
+                #   `_prepare_for_config_locked` 의 주석). 예전엔 그걸 부르고
+                #   0.3 초 자고 명령을 보냈다 — 모터가 꺼져 있으면 관절은 그대로
+                #   있고 그리퍼만 움직인다. 시간이 아니라 **상태**를 기다린다.
+                self._prepare_for_config_locked(None)
+                if not any(self._enabled_locked().values()):
+                    # ⚠ 여기서 True 를 돌려주면 UI 가 "이동" 이라 말하고 팔은
+                    #   가만히 있다. 안 켜졌으면 안 켜졌다고 해야 한다.
+                    logger.warning("%s 의 모터가 안 켜져 파킹을 못 합니다", self.iface)
+                    return False
                 # 커스텀 파킹 위치 또는 기본값
-                parking_pos = _load_custom_parking(self.iface)
                 from lerobot_robot_piper.motors.tables import INITIALIZE_POSITION
-                target = parking_pos or INITIALIZE_POSITION
+                target = target or INITIALIZE_POSITION
                 # set_action 직접 호출 (정규화 값 → raw 변환)
                 raw = denormalize_all(target)
 
@@ -415,8 +429,8 @@ class Arm:
     #
     #   소프트웨어 영점  `joints.JOINT_CALIBRATION` — raw 엔코더 범위를 정규화
     #                    -100..100 으로 옮기는 **우리 파일 안의 표**다. 고쳐도
-    #                    팔은 아무것도 모른다. 파킹 자세(`~/.piper/parking/*.json`)
-    #                    도 이쪽이다.
+    #                    팔은 아무것도 모른다. 파킹 자세도 이쪽이고, 그건
+    #                    게이트웨이가 갖는다 (`~/.config/piper-web/parking/`).
     #
     #   하드웨어 영점    `JointConfig(set_zero=0xAE)` — CAN 0x475 로 모터
     #                    드라이버에 지금 위치를 0 으로 **플래시에 굽는다.**
@@ -1061,26 +1075,12 @@ class Arm:
         return {"ok": True, "slip_raw": slip}
 
 
-# ── 세션/파킹 저장 경로 ──
-SESSION_DIR = CONFIG_DIR
-PARKING_DIR = SESSION_DIR / "parking"
-ROBOT_SESSION_PATH = SESSION_DIR / "robot_session.json"
-
-
-def _load_custom_parking(iface: str) -> dict | None:
-    path = PARKING_DIR / f"{iface}.json"
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text())
-    except Exception:
-        return None
-
-
-def _save_custom_parking(iface: str, positions: dict) -> None:
-    PARKING_DIR.mkdir(parents=True, exist_ok=True)
-    (PARKING_DIR / f"{iface}.json").write_text(json.dumps(positions, indent=2))
-    logger.info("Saved custom parking for %s: %s", iface, positions)
+# ⚠ **여기엔 파킹 저장소가 없다.** 한때 `~/.piper/parking/` 을 읽었는데
+#   게이트웨이의 `/parking/save` 는 `~/.config/piper-web/parking/` 에 적었다 —
+#   저장은 되는데 이동이 그걸 못 봐서, UI 는 "저장됨" 이라 말하고 팔은 기본
+#   자세로 갔다. 커스텀 파킹은 **사람이 고른 프리셋**이라 게이트웨이가 갖고
+#   `go_parking(target)` 으로 넘어온다 (`hub.py` 의 경계). 같은 사실을 두
+#   프로세스에 두면 조용히 갈라진다.
 
 
 # ── Robot Manager ──

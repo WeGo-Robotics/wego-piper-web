@@ -248,23 +248,23 @@ def test_the_sliders_follow_the_arm_until_you_grab_them():
     assert "[disabled, currentJoints]" in src
 
 
-def test_there_is_a_way_back_to_the_home_pose():
+def test_there_is_a_way_back_to_the_parking_pose():
     """조그로 되돌리려면 관절 여섯을 손으로 맞춰야 한다 — 버튼 하나면 될 일이다."""
     src = _src("components/JogPanel.tsx")
-    assert "parking/go" in src, "원점으로 보내는 길이 없다"
+    assert "parking/go" in src, "파킹으로 보내는 길이 없다"
     # ⚠ 확인창은 **사용자가 지웠다.** 자주 누르는 버튼이고 되돌릴 수 있는
     #   조작이라(다시 조그하면 된다) 매번 묻는 것이 성가시다는 판단이다.
     #   경고는 버튼 `title` 로 남는다. 되돌릴 수 없는 조작(하드웨어 영점)과는
     #   다르게 다룬다.
     assert "confirm(" not in code_only(src), "확인창이 다시 생겼다"
-    home = src.split("onClick={goHome}", 1)[1][:260]
+    home = src.split("onClick={goParking}", 1)[1][:260]
     assert "title=" in home, "경고가 아무 데도 없다"
 
 
-def test_going_home_is_blocked_while_something_else_drives():
+def test_going_to_parking_is_blocked_while_something_else_drives():
     """조그·릴레이가 명령 경로를 쥔 채로 파킹을 보내면 둘이 팔을 두고 다툰다."""
     src = _src("components/JogPanel.tsx")
-    home = src.split("onClick={goHome}", 1)[1][:200]
+    home = src.split("onClick={goParking}", 1)[1][:200]
     assert "busy || running || relaying" in home
 
 
@@ -367,3 +367,17 @@ def test_an_unknown_interface_is_not_called_bad(monkeypatch):
 
     monkeypatch.setattr(can, "can_state", lambda iface: None)
     assert can.can_unhealthy_reason("canX_없음") is None
+
+
+def test_the_button_is_not_called_the_origin():
+    """⚠ **"원점으로" 는 거짓말이었다.** 이 버튼은 엔코더 영점이 아니라 사람이
+    저장해 둔 파킹 자세로 간다 — 저장이 없으면 기본 자세(J5 만 22.75° 든 영점)다.
+    "0 으로 갈 줄 알았는데 도대체 어딜 가는 거냐" 로 보고됐다.
+
+    하드웨어 영점(`JointConfig(set_zero=0xAE)`)은 되돌릴 수 없는 다른 조작이라,
+    이름이 겹치면 그쪽과 헷갈린다.
+    """
+    src = _src("components/JogPanel.tsx")
+    label = src.split("onClick={goParking}", 1)[1].split("</button>", 1)[0]
+    assert "원점" not in label, "버튼 이름이 다시 '원점' 이 됐다"
+    assert "파킹" in label, "버튼이 파킹이라고 말하지 않는다"
