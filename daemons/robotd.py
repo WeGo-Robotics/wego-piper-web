@@ -35,6 +35,7 @@ from pathlib import Path
 from piper_bus import contract as C
 from piper_bus.client import Bus, self_report
 from piper_robot import publish
+from piper_robot.bus_watch import bus_watch
 from piper_robot.hub import RobotHub
 
 REPO = Path(__file__).resolve().parents[1]
@@ -142,6 +143,9 @@ def heartbeat(bus: Bus, name: str, stop: threading.Event) -> None:
 
 def serve(bus: Bus, hub: _Serving) -> None:
     global _running
+    # ⚠ **버스 표본은 데몬이 계속 모은다.** 브라우저가 모으면 탭을 열 때마다
+    #   빈 그래프로 시작하고, 정작 보고 싶은 "내가 안 보던 동안" 이 비어 있다.
+    bus_watch.start()
     logger.info("로봇 데몬 시작")
     # E-stop 은 늦으면 의미가 없다 — RPC 루프와 **따로** 듣는다.
     stop = threading.Event()

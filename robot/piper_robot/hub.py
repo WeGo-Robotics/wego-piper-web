@@ -97,6 +97,7 @@ class RobotHub:
 
     def bus_reset(self, iface: str) -> dict:
         """버스를 내렸다 올린다. **팔 연결이 끊기므로** 그 팔도 정리한다."""
+        from piper_robot.bus_watch import bus_watch
         from piper_robot.can import bus_stats, reset_bus
 
         arm = self.arms.get(iface)
@@ -104,6 +105,9 @@ class RobotHub:
             arm.disconnect()
         out = reset_bus(iface)
         if out.get("ok"):
+            # 그래프도 같이 기준을 새로 잡는다 — 숫자만 초기화하고 선은 옛
+            # 구간을 그대로 두면 둘이 다른 말을 한다
+            bus_watch.clear(iface)
             # ⚠ **트래픽도 같이 잡는다.** 오류만 기준선을 두면 파생값(백만 프레임당
             #   오류)이 누적 오류 ÷ 누적 RX 가 되어 말이 안 되는 숫자가 나온다 —
             #   실제로 50,796,791/M 이 떴다. 기준을 잡을 거면 **전부** 잡아야 한다.
@@ -116,6 +120,8 @@ class RobotHub:
         return out
 
     def bus_status(self) -> list[dict]:
+        from piper_robot.bus_watch import bus_watch
+
         """모든 CAN 버스의 상태. **호스트에서만 읽을 수 있다** — 게이트웨이는
         컨테이너라 `/sys/class/net` 자체가 안 보인다."""
         from piper_robot.can import bus_stats, scan_can_interfaces
@@ -136,6 +142,7 @@ class RobotHub:
                                             - base.get("rx_packets", 0))
                 row["tx_since_reset"] = max(0, (row.get("tx_packets") or 0)
                                             - base.get("tx_packets", 0))
+            row["history"] = bus_watch.history(c["iface"])
             rows.append(row)
         return rows
 

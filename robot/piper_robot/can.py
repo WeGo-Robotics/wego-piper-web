@@ -137,37 +137,40 @@ def _stat(iface: str, name: str) -> int | None:
 def bus_stats(iface: str) -> dict:
     """이 버스의 지금 상태 + 누적 오류 + 트래픽. 화면의 버스 상태 탭이 쓴다.
 
+    ⚠ **`ip` 를 한 번만 부른다.** 예전에는 상태·비트레이트·카운터를 따로 물어
+    인터페이스마다 세 번이었다 — 데몬이 2초마다 네 버스를 재면 초당 여섯 번의
+    프로세스 생성이다. 한 출력에 셋이 다 들어 있으므로 나눌 이유가 없었다.
+
     ⚠ **카운터만 보여주면 오독한다.** 인터페이스를 다시 열면 0 으로 돌아가므로
     절대값끼리 비교하면 안 된다 — 실측: can2 와 can3 이 1초 차이로 올라왔는데
     각각 0 과 34,794 였다. 그래서 **트래픽(rx_packets)을 같이 낸다.** 백만
     프레임당 오류로 환산하면 가동 시간이 달라도 비교가 된다.
     """
-    rx = _stat(iface, "rx_packets")
-    counters = error_counters(iface)
+    try:
+        out = subprocess.run(["ip", "-details", "-statistics", "link", "show", iface],
+                             capture_output=True, text=True, timeout=2).stdout
+    except Exception:
+        out = ""
+    m = re.search(r"can state (\S+)", out)
+    state = m.group(1) if m else None
+    mb = re.search(r"bitrate (\d+)", out)
+    mc = re.search(r"re-started bus-errors arbit-lost error-warn error-pass bus-off\s*\n\s*"
+                   r"(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)", out)
+    counters = dict(zip(ERROR_COUNTERS, (int(g) for g in mc.groups()))) if mc else {}
     return {
         "iface": iface,
-        "state": can_state(iface),
-        "healthy": can_state(iface) == CAN_HEALTHY,
-        "bitrate": _bitrate(iface),
+        "state": state,
+        "healthy": state == CAN_HEALTHY,
+        "bitrate": int(mb.group(1)) if mb else None,
         "counters": counters,
         "errors_total": sum(counters.values()) if counters else None,
-        "rx_packets": rx,
+        "rx_packets": _stat(iface, "rx_packets"),
         "tx_packets": _stat(iface, "tx_packets"),
         "rx_errors": _stat(iface, "rx_errors"),
         "tx_errors": _stat(iface, "tx_errors"),
         "rx_dropped": _stat(iface, "rx_dropped"),
         "tx_dropped": _stat(iface, "tx_dropped"),
     }
-
-
-def _bitrate(iface: str) -> int | None:
-    try:
-        out = subprocess.run(["ip", "-details", "link", "show", iface],
-                             capture_output=True, text=True, timeout=2).stdout
-    except Exception:
-        return None
-    m = re.search(r"bitrate (\d+)", out)
-    return int(m.group(1)) if m else None
 
 
 def can_unhealthy_reason(iface: str) -> str | None:

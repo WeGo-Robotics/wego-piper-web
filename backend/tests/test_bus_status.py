@@ -167,8 +167,12 @@ def test_the_charts_plot_rate_not_the_running_total():
               / "components" / "BusCharts.tsx").read_text()
     assert "초당" in charts, "무엇을 그리는지 화면이 안 말한다"
 
-    ui = code_only(PANEL.read_text())
-    assert "/ dt" in ui, "누적값을 그대로 그린다"
+    # 속도 계산은 **데몬**에 있다 — 화면은 받아 그리기만 한다
+    from piper_robot.bus_watch import _rate
+
+    assert _rate(300, 100, 2.0) == 100.0
+    assert _rate(100, 300, 2.0) == 0.0, "카운터가 되감기면 음수 속도가 나온다"
+    assert _rate(None, 100, 2.0) == 0.0
 
 
 def test_the_two_traffic_series_share_one_axis():
@@ -182,3 +186,65 @@ def test_the_two_traffic_series_share_one_axis():
                  / "components" / "BusCharts.tsx").read_text())
     assert charts.count("const max = Math.max(1, ...points") == 1, "축이 둘이다"
     assert "p.rx, p.tx" in charts, "두 계열이 같은 최대값을 안 쓴다"
+
+
+# ── 데몬 수집기 ─────────────────────────────────────────────────────────────
+
+def test_the_daemon_collects_so_the_tab_opens_with_a_graph():
+    """⚠ **브라우저가 이력을 모으면 탭을 열 때마다 빈 그래프로 시작한다.** 표본이
+    쌓이길 기다려야 하고, 탭을 닫으면 그동안이 사라진다 — 정작 보고 싶은 것은
+    "내가 안 보던 동안 무슨 일이 있었나" 인데 그때가 비어 있는 셈이다."""
+    from piper_robot.bus_watch import BusWatch, INTERVAL_S
+
+    assert INTERVAL_S == 2.0
+    w = BusWatch()
+    assert w.history("can0") == []
+    w._push("can0", {"t": 1.0, "rx": 10.0, "tx": 0.0, "err": 0.0})
+    assert len(w.history("can0")) == 1
+
+    ui = code_only(PANEL.read_text())
+    assert "b.history" in ui, "화면이 데몬 이력을 안 쓴다"
+
+
+def test_a_reset_starts_the_graph_over_too():
+    """⚠ 초기화 전 표본은 **다른 기준**의 값이다. 남겨 두면 그래프가 두 기준을 한
+    선에 섞어 그리고, 화면의 다른 숫자는 전부 "초기화 이후" 인데 그래프만 옛
+    구간을 보여준다."""
+    from piper_robot.bus_watch import BusWatch
+
+    w = BusWatch()
+    w._push("can0", {"t": 1.0, "rx": 1.0, "tx": 0.0, "err": 0.0})
+    w.clear("can0")
+    assert w.history("can0") == [], "초기화해도 옛 표본이 남는다"
+
+    import inspect
+    import textwrap
+
+    from piper_robot.hub import RobotHub
+
+    src = python_code_only(textwrap.dedent(inspect.getsource(RobotHub.bus_reset)))
+    assert "bus_watch.clear" in src, "초기화가 그래프 기준을 안 맞춘다"
+
+
+def test_a_stalled_sampler_does_not_invent_a_quiet_period():
+    """⚠ 표본 간격이 크게 벌어졌으면(데몬이 멈췄다 깼다) 그 구간은 버린다 —
+    평균이 뭉개져 "그동안 조용했다" 로 보인다."""
+    import inspect
+    import textwrap
+
+    from piper_robot.bus_watch import BusWatch
+
+    src = python_code_only(textwrap.dedent(inspect.getsource(BusWatch._sample)))
+    assert "INTERVAL_S * 5" in src, "간격이 벌어진 구간을 그대로 쓴다"
+
+
+def test_one_ip_call_per_sample():
+    """⚠ 2초마다 네 버스를 재는데 인터페이스마다 `ip` 를 세 번 부르면 초당 여섯
+    번의 프로세스 생성이다. 한 출력에 상태·비트레이트·카운터가 다 들어 있다."""
+    import inspect
+    import textwrap
+
+    from piper_robot.can import bus_stats
+
+    src = python_code_only(textwrap.dedent(inspect.getsource(bus_stats)))
+    assert src.count("subprocess.run") == 1, "샘플마다 ip 를 여러 번 부른다"

@@ -24,6 +24,10 @@ type Bus = {
   counters_since_reset?: Counters
   rx_since_reset?: number
   tx_since_reset?: number
+  /** 데몬이 2초마다 모아 둔 초당 증가량 — 탭을 열면 **바로** 그려진다.
+   *  브라우저가 모으면 열 때마다 빈 그래프로 시작하고, 정작 보고 싶은
+   *  "내가 안 보던 동안" 이 비어 있다. */
+  history?: Point[]
 }
 
 const COUNTER_LABEL: Record<string, string> = {
@@ -57,50 +61,18 @@ export default function BusStatusPanel() {
   const [err, setErr] = useState<string | null>(null)
   const [at, setAt] = useState<Date | null>(null)
   const [busy, setBusy] = useState(false)
-  // ⚠ 자동 새로고침이 **기본 꺼짐**이다. 이 화면은 `ip` 를 인터페이스마다 두 번
-  //   부르므로 공짜가 아니고, 무엇보다 팔을 만지는 작업 중에 배경 폴링이 도는
-  //   것을 사람이 모르고 있으면 안 된다.
-  const [auto, setAuto] = useState(false)
+  // ⚠ **기본이 켜짐이다.** 데몬이 이미 2초마다 재고 있으므로 이 폴링은 모아 둔
+  //   버퍼를 읽는 것뿐이라 싸다 — 예전에 기본을 꺼 뒀던 이유(인터페이스마다
+  //   `ip` 를 부른다)는 그 비용이 데몬으로 옮겨가면서 사라졌다.
+  const [auto, setAuto] = useState(true)
+  const [every, setEvery] = useState<number>(2)
   const [resetting, setResetting] = useState<string | null>(null)
-  // ⚠ **누적값이 아니라 초당 증가량을 그린다.** 카운터는 단조증가라 누적을
-  //   그리면 선이 언제나 우상향이고 아무것도 안 말한다. 표본은 폴링에서 나오므로
-  //   자동 새로고침을 켜야 모인다.
-  const [history, setHistory] = useState<Record<string, Point[]>>({})
-  const prev = useRef<{ at: number; by: Record<string, Bus> } | null>(null)
-  const HISTORY_MAX = 60
-  const [every, setEvery] = useState<number>(5)
-
   const load = useCallback(async () => {
     setBusy(true)
     try {
       const d = await api.get<{ buses: Bus[] }>('/robots/bus')
       setBuses(d.buses); setErr(null); setAt(new Date())
 
-      const now = Date.now()
-      const by = Object.fromEntries(d.buses.map((b) => [b.iface, b]))
-      const before = prev.current
-      prev.current = { at: now, by }
-      if (before) {
-        const dt = (now - before.at) / 1000
-        // 표본 간격이 너무 벌어지면(탭을 떠났다 왔다) 그 구간은 버린다 —
-        // 평균이 뭉개져 "그동안 조용했다" 로 보인다
-        if (dt > 0.5 && dt < 30) {
-          setHistory((h) => {
-            const out = { ...h }
-            for (const b of d.buses) {
-              const p0 = before.by[b.iface]
-              if (!p0) continue
-              const rate = (a?: number | null, c?: number | null) =>
-                a == null || c == null ? 0 : Math.max(0, (a - c) / dt)
-              out[b.iface] = [...(out[b.iface] ?? []),
-                              { t: now, rx: rate(b.rx_packets, p0.rx_packets),
-                                tx: rate(b.tx_packets, p0.tx_packets) }
-                             ].slice(-HISTORY_MAX)
-            }
-            return out
-          })
-        }
-      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : '읽지 못했습니다')
     } finally { setBusy(false) }
@@ -235,14 +207,14 @@ export default function BusStatusPanel() {
                       TX 가 바닥에 붙어도 숫자는 읽힌다 */}
                   <span className="flex items-center gap-1">
                     <i className="inline-block h-2 w-2 rounded-full" style={{ background: '#3987e5' }} />
-                    RX {(history[b.iface]?.at(-1)?.rx ?? 0).toFixed(0)}
+                    RX {(b.history?.at(-1)?.rx ?? 0).toFixed(0)}
                   </span>
                   <span className="flex items-center gap-1">
                     <i className="inline-block h-2 w-2 rounded-full" style={{ background: '#d95926' }} />
-                    TX {(history[b.iface]?.at(-1)?.tx ?? 0).toFixed(1)}
+                    TX {(b.history?.at(-1)?.tx ?? 0).toFixed(1)}
                   </span>
                 </div>
-                <TrafficChart points={history[b.iface] ?? []} />
+                <TrafficChart points={b.history ?? []} />
               </div>
               <div>
                 <div className="mb-1 text-[10px] text-neutral-400">
