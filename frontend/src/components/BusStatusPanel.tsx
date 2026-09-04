@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ErrorChart, TrafficChart, type Point } from './BusCharts'
+import { ErrorChart, RateChart, RX_COLOR, TX_COLOR, type Point } from './BusCharts'
 import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
 
@@ -35,6 +35,10 @@ const COUNTER_LABEL: Record<string, string> = {
   error_warning: '경고', error_passive: '수동', bus_off: '버스 오프',
 }
 
+/** 로깅 창 (분). 데몬은 늘 가장 긴 것(30분)을 모으고, 여기서 고른 만큼만 받는다 —
+ *  그래야 5분으로 보다가 30분으로 바꾸는 순간 그 25분이 비어 있지 않다. */
+const WINDOWS = [5, 10, 30] as const
+
 /** 자동 새로고침 주기 후보. 버스 상태는 초 단위로 급변하지 않는다. */
 const INTERVALS = [2, 5, 15] as const
 
@@ -66,17 +70,18 @@ export default function BusStatusPanel() {
   //   `ip` 를 부른다)는 그 비용이 데몬으로 옮겨가면서 사라졌다.
   const [auto, setAuto] = useState(true)
   const [every, setEvery] = useState<number>(2)
+  const [minutes, setMinutes] = useState<number>(5)
   const [resetting, setResetting] = useState<string | null>(null)
   const load = useCallback(async () => {
     setBusy(true)
     try {
-      const d = await api.get<{ buses: Bus[] }>('/robots/bus')
+      const d = await api.get<{ buses: Bus[] }>(`/robots/bus?minutes=${minutes}`)
       setBuses(d.buses); setErr(null); setAt(new Date())
 
     } catch (e) {
       setErr(e instanceof Error ? e.message : '읽지 못했습니다')
     } finally { setBusy(false) }
-  }, [])
+  }, [minutes])
 
   useEffect(() => { void load() }, [load])
 
@@ -125,6 +130,17 @@ export default function BusStatusPanel() {
                 auto && every === s ? 'bg-neutral-600 text-white'
                                     : 'text-neutral-400 hover:text-neutral-200'}`}>
               {s}초
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1 rounded bg-neutral-800 p-0.5"
+             title="그래프가 보여줄 기간. 데몬은 늘 30분치를 모으므로 바꾸면 과거가 바로 보입니다.">
+          <span className="pl-1.5 text-[10px] text-neutral-500">기간</span>
+          {WINDOWS.map((m) => (
+            <button key={m} onClick={() => setMinutes(m)}
+              className={`rounded px-2 py-1 text-xs transition-colors ${minutes === m
+                ? 'bg-neutral-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}>
+              {m}분
             </button>
           ))}
         </div>
@@ -202,7 +218,7 @@ export default function BusStatusPanel() {
             <div className="flex flex-wrap gap-4 pt-1">
               <div>
                 <div className="mb-1 flex items-center gap-3 text-[10px] text-neutral-400">
-                  <span>초당 패킷</span>
+                  <span>초당 패킷 · 최근 {minutes}분</span>
                   {/* 2계열이므로 범례는 늘 있고, 최신값을 직접 붙인다 —
                       TX 가 바닥에 붙어도 숫자는 읽힌다 */}
                   <span className="flex items-center gap-1">
@@ -214,7 +230,11 @@ export default function BusStatusPanel() {
                     TX {(b.history?.at(-1)?.tx ?? 0).toFixed(1)}
                   </span>
                 </div>
-                <TrafficChart points={b.history ?? []} />
+                {/* ⚠ **소형 다중이다.** RX 는 초당 수천, TX 는 0 에 가깝다 —
+                    한 축에 얹으면 TX 가 바닥에 깔려 안 보이고, 축을 둘로 쪼개면
+                    이중 축이 된다. 각자 자기 배율의 별개 플롯이 답이다. */}
+                <RateChart points={b.history ?? []} field="rx" color={RX_COLOR} />
+                <RateChart points={b.history ?? []} field="tx" color={TX_COLOR} />
               </div>
               <div>
                 <div className="mb-1 text-[10px] text-neutral-400">

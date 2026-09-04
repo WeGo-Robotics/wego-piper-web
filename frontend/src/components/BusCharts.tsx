@@ -22,10 +22,11 @@ const fmt = (v: number) =>
 
 // ── 트래픽 (선) ─────────────────────────────────────────────────────────────
 
-export function TrafficChart({ points, width = 300, height = 92 }: {
-  points: Point[]; width?: number; height?: number
+export function RateChart({ points, field, color, width = 300, height = 76 }: {
+  points: Point[]; field: 'rx' | 'tx'; color: string
+  width?: number; height?: number
 }) {
-  const pad = { l: 34, r: 8, t: 8, b: 14 }
+  const pad = { l: 46, r: 8, t: 8, b: 12 }
   const w = width - pad.l - pad.r
   const h = height - pad.t - pad.b
 
@@ -33,40 +34,50 @@ export function TrafficChart({ points, width = 300, height = 92 }: {
     return (
       <div className="flex items-center justify-center rounded bg-neutral-900/60 text-xs text-neutral-600"
            style={{ width, height }}>
-        표본이 모이면 그려집니다 — 자동 새로고침을 켜세요
+        표본을 모으는 중…
       </div>
     )
   }
 
-  // ⚠ **두 계열을 한 축에 둔다.** 같은 단위(패킷/초)이므로 축을 둘로 쪼개면
-  //   크기 비교가 거짓이 된다. TX 가 바닥에 붙어 보이는 것은 사실이 그래서다 —
-  //   그 대신 최신값을 숫자로 직접 붙여 작은 계열도 읽히게 한다.
-  const max = Math.max(1, ...points.flatMap((p) => [p.rx, p.tx]))
+  const vals = points.map((p) => p[field])
+  const lo = Math.min(...vals)
+  const hi = Math.max(...vals)
+  // ⚠ **축을 0 부터 그리지 않는다.** 이 그래프의 질문은 "얼마나 많나" 가 아니라
+  //   "**변했나**" 다. 초당 3000 프레임이 ±50 으로 흔들리는데 0 부터 그리면 선이
+  //   맨 위에 붙어 **멈춘 것처럼 보인다** — 실제로 그렇게 보고됐다.
+  //
+  //   잘린 축은 크기 비교를 왜곡하므로, 위아래 눈금에 **실제 값을 적어** 무엇을
+  //   보고 있는지 숨기지 않는다.
+  const span = hi - lo || Math.max(hi * 0.02, 1)
+  const y0 = lo - span * 0.15
+  const y1 = hi + span * 0.15
   const x = (i: number) => pad.l + (i / (points.length - 1)) * w
-  const y = (v: number) => pad.t + h - (v / max) * h
-  const path = (key: 'rx' | 'tx') =>
-    points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p[key]).toFixed(1)}`).join(' ')
+  const y = (v: number) => pad.t + h - ((v - y0) / (y1 - y0)) * h
+  const d = points.map((p, i) =>
+    `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p[field]).toFixed(1)}`).join(' ')
 
-  const last = points[points.length - 1]
+  const last = vals[vals.length - 1]
   return (
     <svg width={width} height={height} role="img"
-         aria-label={`초당 패킷 — RX ${fmt(last.rx)}, TX ${fmt(last.tx)}`}>
-      {[0, 0.5, 1].map((f) => (
-        <g key={f}>
-          <line x1={pad.l} x2={pad.l + w} y1={pad.t + h * f} y2={pad.t + h * f}
+         aria-label={`${field.toUpperCase()} 초당 ${fmt(last)} (범위 ${fmt(lo)}~${fmt(hi)})`}>
+      {[y1, y0].map((v, i) => (
+        <g key={i}>
+          <line x1={pad.l} x2={pad.l + w} y1={pad.t + h * i} y2={pad.t + h * i}
                 stroke={GRID} strokeWidth={1} />
-          <text x={pad.l - 4} y={pad.t + h * f + 3} textAnchor="end"
-                fill={INK} fontSize={9}>{fmt(max * (1 - f))}</text>
+          <text x={pad.l - 4} y={pad.t + h * i + 3} textAnchor="end"
+                fill={INK} fontSize={9}>{fmt(v)}</text>
         </g>
       ))}
-      <path d={path('rx')} fill="none" stroke={RX} strokeWidth={2}
+      <path d={d} fill="none" stroke={color} strokeWidth={2}
             strokeLinejoin="round" strokeLinecap="round" />
-      <path d={path('tx')} fill="none" stroke={TX} strokeWidth={2}
-            strokeLinejoin="round" strokeLinecap="round" />
-      <title>{`RX ${fmt(last.rx)}/s · TX ${fmt(last.tx)}/s`}</title>
+      <circle cx={x(points.length - 1)} cy={y(last)} r={2.5} fill={color} />
+      <title>{`${field.toUpperCase()} ${fmt(last)}/s · 범위 ${fmt(lo)}~${fmt(hi)}`}</title>
     </svg>
   )
 }
+
+export const RX_COLOR = RX
+export const TX_COLOR = TX
 
 // ── 오류 (막대) ─────────────────────────────────────────────────────────────
 

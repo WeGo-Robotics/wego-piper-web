@@ -378,14 +378,23 @@ async def bus_reset(body: BusResetRequest):
     return out
 
 
+#: 화면이 고를 수 있는 로깅 창 (분). 데몬은 늘 가장 긴 것을 모은다.
+BUS_WINDOWS_MIN = (5, 10, 30)
+
+
 @router.get("/bus")
-async def bus_status():
+async def bus_status(minutes: int = 5):
     """CAN 버스별 상태·누적 오류·트래픽 (화면의 버스 상태 탭).
 
     ⚠ **호스트에서만 읽힌다.** 게이트웨이는 컨테이너라 `/sys/class/net` 이 안
       보이므로 robotd 에 물어본다.
     """
-    rows = robot_manager_mod._call("bus_status", default=None)
+    if minutes not in BUS_WINDOWS_MIN:
+        raise HTTPException(400, f"창은 {BUS_WINDOWS_MIN} 분 중 하나여야 합니다")
+    from piper_robot.bus_watch import INTERVAL_S
+
+    rows = robot_manager_mod._call("bus_status", int(minutes * 60 / INTERVAL_S),
+                                   default=None)
     if rows is None:
         raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
     return {"buses": rows}

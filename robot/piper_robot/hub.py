@@ -89,12 +89,6 @@ class RobotHub:
         arm = self.arms.get(iface)
         return arm.read_joints_normalized() if arm else None
 
-    #: 버스별 오류 기준선 — "초기화 이후" 를 세는 출발점.
-    #:
-    #: ⚠ 카운터 자체는 down/up 으로 **안 지워진다**(실측). 그래서 지운 척하는
-    #:   대신 기준을 잡는다. 절대값끼리 비교하면 안 된다는 것과 같은 이유다.
-    _bus_baseline: dict = {}
-
     def bus_reset(self, iface: str) -> dict:
         """버스를 내렸다 올린다. **팔 연결이 끊기므로** 그 팔도 정리한다."""
         from piper_robot.bus_watch import bus_watch
@@ -105,21 +99,12 @@ class RobotHub:
             arm.disconnect()
         out = reset_bus(iface)
         if out.get("ok"):
-            # 그래프도 같이 기준을 새로 잡는다 — 숫자만 초기화하고 선은 옛
-            # 구간을 그대로 두면 둘이 다른 말을 한다
-            bus_watch.clear(iface)
-            # ⚠ **트래픽도 같이 잡는다.** 오류만 기준선을 두면 파생값(백만 프레임당
-            #   오류)이 누적 오류 ÷ 누적 RX 가 되어 말이 안 되는 숫자가 나온다 —
-            #   실제로 50,796,791/M 이 떴다. 기준을 잡을 거면 **전부** 잡아야 한다.
-            now = bus_stats(iface)
-            self._bus_baseline[iface] = {
-                "counters": dict(now.get("counters") or {}),
-                "rx_packets": now.get("rx_packets") or 0,
-                "tx_packets": now.get("tx_packets") or 0,
-            }
+            # 기준선과 이력을 **한 번에** 새로 잡는다 — 숫자만 초기화하고 선은
+            # 옛 구간을 그대로 두면 둘이 다른 말을 한다
+            bus_watch.rebase(iface)
         return out
 
-    def bus_status(self) -> list[dict]:
+    def bus_status(self, limit: int | None = None) -> list[dict]:
         from piper_robot.bus_watch import bus_watch
 
         """모든 CAN 버스의 상태. **호스트에서만 읽을 수 있다** — 게이트웨이는
@@ -129,7 +114,7 @@ class RobotHub:
         rows = []
         for c in scan_can_interfaces():
             row = bus_stats(c["iface"])
-            base = self._bus_baseline.get(c["iface"])
+            base = bus_watch.baseline(c["iface"])
             if base and row.get("counters"):
                 # ⚠ **항목별로도, 트래픽도** 낸다. 합계만 주면 화면은 항목 칸에
                 #   누적값을 쓸 수밖에 없고, 트래픽을 빼먹으면 파생값이 섞인 기준을
@@ -142,7 +127,7 @@ class RobotHub:
                                             - base.get("rx_packets", 0))
                 row["tx_since_reset"] = max(0, (row.get("tx_packets") or 0)
                                             - base.get("tx_packets", 0))
-            row["history"] = bus_watch.history(c["iface"])
+            row["history"] = bus_watch.history(c["iface"], limit)
             rows.append(row)
         return rows
 

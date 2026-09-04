@@ -19,8 +19,12 @@ logger = logging.getLogger(__name__)
 
 #: 표본 간격 (초).
 INTERVAL_S = 2.0
-#: 버스별 보관 표본 수. 2초 × 150 = 5분.
-HISTORY = 150
+#: 버스별 보관 표본 수. 2초 × 900 = **30분** — 화면이 고를 수 있는 가장 긴 창.
+#:
+#: ⚠ **항상 최대치를 모은다.** 화면이 고른 만큼만 모으면, 5분으로 보다가 30분으로
+#:   바꾸는 순간 그 25분이 비어 있다 — 정작 "아까 뭐였지" 를 보려고 바꾸는 것인데.
+#:   보관은 싸고(한 표본 4개 숫자), 뒤늦게 되돌릴 수 없는 쪽은 안 모은 시간이다.
+HISTORY = 900
 
 
 class BusWatch:
@@ -29,6 +33,10 @@ class BusWatch:
     def __init__(self) -> None:
         self._hist: dict[str, deque] = {}
         self._prev: dict[str, tuple[float, dict]] = {}
+        # ⚠ **기준선을 수집기가 들고 있다.** 이력과 같은 자리에 둬야 둘이 함께
+        #   새로 잡힌다 — 숫자는 초기화됐는데 그래프만 옛 구간을 보여주는 일이
+        #   생기지 않는다.
+        self._base: dict[str, dict] = {}
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -36,12 +44,42 @@ class BusWatch:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        # ⚠ **기동하면 기준선을 잡는다.** CAN 오류 카운터는 커널 쪽이라 데몬을
+        #   다시 띄워도 그대로다 — 안 잡으면 새로 뜬 데몬이 어제의 1억을 물려받아
+        #   보여준다. 데몬이 새로 떴다는 것은 "여기서부터 본다" 는 뜻이다.
+        self.rebase()
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True, name="buswatch")
         self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+
+    def rebase(self, iface: str | None = None) -> None:
+        """지금을 기준으로 삼는다 — 이력도 함께 버린다.
+
+        `iface` 가 없으면 전부. 데몬 기동과 버스 초기화가 이걸 부른다.
+        """
+        for c in scan_can_interfaces():
+            name = c["iface"]
+            if iface and name != iface:
+                continue
+            try:
+                cur = bus_stats(name)
+            except Exception:
+                continue
+            with self._lock:
+                self._base[name] = {
+                    "counters": dict(cur.get("counters") or {}),
+                    "rx_packets": cur.get("rx_packets") or 0,
+                    "tx_packets": cur.get("tx_packets") or 0,
+                }
+                self._hist.pop(name, None)
+            self._prev.pop(name, None)
+
+    def baseline(self, iface: str) -> dict | None:
+        with self._lock:
+            return self._base.get(iface)
 
     def clear(self, iface: str) -> None:
         """이 버스의 기록을 버린다 — **초기화가 기준선을 새로 잡을 때** 부른다.
@@ -54,9 +92,15 @@ class BusWatch:
             self._hist.pop(iface, None)
             self._prev.pop(iface, None)
 
-    def history(self, iface: str) -> list[dict]:
+    def history(self, iface: str, limit: int | None = None) -> list[dict]:
+        """최근 표본. `limit` 을 주면 그만큼만 — 화면이 고른 창이다.
+
+        ⚠ 잘라 보내는 이유는 payload 다. 30분치(900개) × 네 버스를 2초마다
+        보내면 대부분 안 그리는 점이다.
+        """
         with self._lock:
-            return list(self._hist.get(iface, ()))
+            rows = list(self._hist.get(iface, ()))
+        return rows[-limit:] if limit else rows
 
     # ── 내부 ──
 

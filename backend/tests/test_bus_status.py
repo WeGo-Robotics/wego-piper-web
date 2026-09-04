@@ -1,3 +1,28 @@
+def test_the_daemon_takes_a_baseline_when_it_starts():
+    """⚠ **CAN 오류 카운터는 커널 쪽이라 데몬을 다시 띄워도 그대로다.** 기동 때
+    기준선을 안 잡으면 새로 뜬 데몬이 어제의 1억을 물려받아 보여준다 — 데몬이
+    새로 떴다는 것은 "여기서부터 본다" 는 뜻이다."""
+    import inspect
+    import textwrap
+
+    from piper_robot.bus_watch import BusWatch
+
+    src = python_code_only(textwrap.dedent(inspect.getsource(BusWatch.start)))
+    assert "self.rebase()" in src, "기동해도 기준선을 안 잡는다"
+
+
+def test_rebasing_drops_the_old_samples_too():
+    """기준선과 이력은 **같이** 새로 잡혀야 한다 — 따로 놀면 숫자는 초기화됐는데
+    그래프만 옛 구간을 보여준다."""
+    import inspect
+    import textwrap
+
+    from piper_robot.bus_watch import BusWatch
+
+    src = python_code_only(textwrap.dedent(inspect.getsource(BusWatch.rebase)))
+    assert "_hist.pop" in src and "_base[name]" in src, "둘 중 하나만 새로 잡는다"
+
+
 """CAN 버스 상태 탭 — 지금 상태 + 누적 오류 + 트래픽.
 
 ⚠ **카운터만 보여주면 오독한다.** 인터페이스를 다시 열면 0 으로 돌아가므로
@@ -146,9 +171,9 @@ def test_every_derived_value_uses_the_same_baseline():
     import inspect
     import textwrap
 
-    from piper_robot.hub import RobotHub
+    from piper_robot.bus_watch import BusWatch
 
-    src = python_code_only(textwrap.dedent(inspect.getsource(RobotHub.bus_reset)))
+    src = python_code_only(textwrap.dedent(inspect.getsource(BusWatch.rebase)))
     for field in ("rx_packets", "tx_packets", "counters"):
         assert field in src, f"기준선에 {field} 가 없다"
 
@@ -175,21 +200,6 @@ def test_the_charts_plot_rate_not_the_running_total():
     assert _rate(None, 100, 2.0) == 0.0
 
 
-def test_the_two_traffic_series_share_one_axis():
-    """⚠ 이중 축 금지 — RX 와 TX 는 같은 단위(패킷/초)라 축을 쪼개면 크기 비교가
-    거짓이 된다. TX 가 바닥에 붙는 것은 사실이고, 대신 최신값을 숫자로 붙인다."""
-    from pathlib import Path
-
-    from conftest import code_only as _c
-
-    charts = _c((Path(__file__).resolve().parents[2] / "frontend" / "src"
-                 / "components" / "BusCharts.tsx").read_text())
-    assert charts.count("const max = Math.max(1, ...points") == 1, "축이 둘이다"
-    assert "p.rx, p.tx" in charts, "두 계열이 같은 최대값을 안 쓴다"
-
-
-# ── 데몬 수집기 ─────────────────────────────────────────────────────────────
-
 def test_the_daemon_collects_so_the_tab_opens_with_a_graph():
     """⚠ **브라우저가 이력을 모으면 탭을 열 때마다 빈 그래프로 시작한다.** 표본이
     쌓이길 기다려야 하고, 탭을 닫으면 그동안이 사라진다 — 정작 보고 싶은 것은
@@ -212,18 +222,19 @@ def test_a_reset_starts_the_graph_over_too():
     구간을 보여준다."""
     from piper_robot.bus_watch import BusWatch
 
-    w = BusWatch()
-    w._push("can0", {"t": 1.0, "rx": 1.0, "tx": 0.0, "err": 0.0})
-    w.clear("can0")
-    assert w.history("can0") == [], "초기화해도 옛 표본이 남는다"
-
     import inspect
     import textwrap
 
+    from piper_robot.bus_watch import BusWatch
     from piper_robot.hub import RobotHub
 
+    w = BusWatch()
+    w._push("can0", {"t": 1.0, "rx": 1.0, "tx": 0.0, "err": 0.0})
+    w.clear("can0")
+    assert w.history("can0") == [], "버리라 했는데 옛 표본이 남는다"
+
     src = python_code_only(textwrap.dedent(inspect.getsource(RobotHub.bus_reset)))
-    assert "bus_watch.clear" in src, "초기화가 그래프 기준을 안 맞춘다"
+    assert "bus_watch.rebase" in src, "초기화가 그래프 기준을 안 맞춘다"
 
 
 def test_a_stalled_sampler_does_not_invent_a_quiet_period():
@@ -248,3 +259,54 @@ def test_one_ip_call_per_sample():
 
     src = python_code_only(textwrap.dedent(inspect.getsource(bus_stats)))
     assert src.count("subprocess.run") == 1, "샘플마다 ip 를 여러 번 부른다"
+
+
+# ── 축과 창 ─────────────────────────────────────────────────────────────────
+
+def test_the_rate_chart_does_not_force_a_zero_baseline():
+    """⚠ 이 그래프의 질문은 "얼마나 많나" 가 아니라 **"변했나"** 다. 초당 3000
+    프레임이 ±50 으로 흔들리는데 0 부터 그리면 선이 맨 위에 붙어 **멈춘 것처럼
+    보인다** — 실기에서 "왜 그래프가 안 바뀌지" 로 보고됐다(실측 2981~3077).
+
+    잘린 축은 크기 비교를 왜곡하므로 위아래 눈금에 **실제 값을 적는다.**"""
+    from pathlib import Path
+
+    charts = (Path(__file__).resolve().parents[2] / "frontend" / "src"
+              / "components" / "BusCharts.tsx").read_text()
+    src = code_only(charts)
+    assert "const lo = Math.min(...vals)" in src, "축을 데이터에 맞추지 않는다"
+    assert "{fmt(v)}" in src, "잘린 축인데 값을 안 적는다"
+
+
+def test_rx_and_tx_are_separate_plots_not_a_dual_axis():
+    """⚠ RX 는 초당 수천, TX 는 0 에 가깝다. 한 축에 얹으면 TX 가 바닥에 깔려
+    안 보이고, 축을 둘로 쪼개면 이중 축이 된다 — 각자 자기 배율의 **별개 플롯**이
+    답이다(소형 다중)."""
+    ui = code_only(PANEL.read_text())
+    assert ui.count("<RateChart") == 2, "두 계열이 한 플롯에 있다"
+    assert 'field="rx"' in ui and 'field="tx"' in ui
+
+
+def test_the_daemon_always_keeps_the_longest_window():
+    """⚠ 화면이 고른 만큼만 모으면, 5분으로 보다가 30분으로 바꾸는 순간 그 25분이
+    비어 있다 — 정작 "아까 뭐였지" 를 보려고 바꾸는 것인데. 보관은 싸고, 뒤늦게
+    되돌릴 수 없는 쪽은 **안 모은 시간**이다."""
+    from piper_robot.bus_watch import HISTORY, INTERVAL_S
+    from app.routers.robots import BUS_WINDOWS_MIN
+
+    assert HISTORY * INTERVAL_S >= max(BUS_WINDOWS_MIN) * 60, \
+        "가장 긴 창을 데몬이 못 채운다"
+    assert BUS_WINDOWS_MIN == (5, 10, 30)
+
+
+def test_only_the_offered_windows_are_accepted(monkeypatch):
+    """⚠ 임의의 분을 받으면 900개를 통째로 내보내는 요청이 열린다."""
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from app.routers.robots import bus_status
+
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(bus_status(minutes=7))
+    assert err.value.status_code == 400
