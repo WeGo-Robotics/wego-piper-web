@@ -481,6 +481,22 @@ class Arm:
             time.sleep(0.2)
         return last
 
+    def enable_for_motion(self) -> bool:
+        """움직일 수 있는 상태로 만든다 — CAN 제어 모드 + 모터 실능 해제.
+
+        ⚠ **모터가 꺼져 있으면 명령이 아무 일도 안 한다.** 팔은 멀쩡히 전압·온도를
+        보고하므로 로그만 보면 정상인데 모든 값이 0 이다 — 실기에서 검사가 그렇게
+        돌아 397행을 전부 0 으로 남겼다. 움직이려는 쪽이 켜야 한다.
+
+        영점 굽기의 준비와 같은 절차이고 **실능시킬 모터만 없다**(굽기는 대상
+        모터를 꺼야 하고, 검사는 켜야 한다).
+        """
+        with self._lock:
+            if not self._piper:
+                return False
+            self._prepare_for_config_locked(None)
+            return any(self._enabled_locked().values())
+
     def _prepare_for_config_locked(self, disable_motor: int | None) -> None:
         """설정 쓰기를 받을 상태로 만든다. **락을 쥔 상태에서 부른다.**
 

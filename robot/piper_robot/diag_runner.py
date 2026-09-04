@@ -54,6 +54,11 @@ class DiagRun:
     def _run(self) -> None:
         dt = 1.0 / D.SAMPLE_HZ
         try:
+            # ⚠ **켜고 시작한다.** 모터가 꺼져 있으면 명령이 아무 일도 안 하고,
+            #   팔은 전압·온도를 멀쩡히 보고하므로 로그만 보면 정상인데 전부 0 이다.
+            if not self.arm.enable_for_motion():
+                raise RuntimeError("모터를 켜지 못했습니다 — 팔 전원과 에러 상태를 "
+                                   "확인하세요 (검사는 팔을 움직여야 잽니다)")
             t0 = time.monotonic()
             while not self._stop.is_set():
                 t = time.monotonic() - t0
@@ -66,8 +71,26 @@ class DiagRun:
             self.error = str(exc)
             logger.exception("검사 실패 (%s)", self.arm.iface)
         finally:
-            self._hold()
+            # ⚠ **끝났다는 표시가 먼저다.** 뒷정리에서 예외가 나면 `done` 이
+            #   영영 안 서고 화면은 "진행 중" 으로 굳는다 — 실제로 그랬다
+            #   (`_hold` 를 안 만들어 둔 채 불러서 AttributeError, 77초째 진행 중).
+            #   정리는 못 해도 끝난 것은 끝난 것이다.
             self.done = True
+            try:
+                self._hold()
+            except Exception as exc:                   # noqa: BLE001
+                logger.warning("검사 종료 정지 실패 (%s): %s", self.arm.iface, exc)
+
+    def _hold(self) -> None:
+        """끝나거나 멈출 때 **그 자리에 세운다.**
+
+        ⚠ 토크를 끊지 않는다 — 끊으면 팔이 떨어진다. 마지막 목표가 먼 곳이었으면
+        팔은 계속 그리로 가므로, **현재 자세를 실제로 명령해야** 선다
+        (`publish.ArmBridge._hold` 와 같은 이유).
+        """
+        now = self.arm.read_joints_normalized()
+        if now:
+            self.bridge._send(dict(now))
 
     def _tick(self, t: float) -> None:
         targets = {p.joint: p.target_deg(t) for p in self.plan.joints}
@@ -95,7 +118,7 @@ class DiagRun:
         lo = _try(lambda: p.GetArmLowSpdInfoMsgs())
         st = _try(lambda: p.GetArmStatus().arm_status)
         for i, name in enumerate(ARM_JOINTS, start=1):
-            row |= _joint_row(name, i, fb, ct, hi, lo, st)
+            row |= _joint_row(name, i, fb, ct, hi, lo, st, targets_deg.get(name))
         return row
 
 
@@ -107,14 +130,21 @@ def _try(fn):
         return None
 
 
-def _joint_row(name: str, i: int, fb, ct, hi, lo, st) -> dict:
+def _joint_row(name: str, i: int, fb, ct, hi, lo, st, target_deg=None) -> dict:
     f = _num(fb, f"joint_{i}")
-    c = _num(ct, f"joint_{i}")
+    fdeg = None if f is None else round(f / 1000.0, 4)
+    # ⚠ **우리가 보낸 목표를 지령으로 쓴다.** 팔의 지령 레지스터(0x15x)는 우리
+    #   명령을 되비추지 않는다 — 실측: 관절이 ±10° 로 흔들리는 내내 `ctrl_deg`
+    #   가 0 이어서 **추종 오차가 통째로 진폭과 같게** 나왔다(10.068°).
+    #   우리는 무엇을 시켰는지 정확히 아는데, 그걸 안 쓰고 팔에게 되물은 셈이다.
+    #   안 시킨 관절은 그때만 레지스터를 읽는다(참고값).
+    cdeg = round(target_deg, 4) if target_deg is not None else (
+        None if (c := _num(ct, f"joint_{i}")) is None else round(c / 1000.0, 4))
     row = {
-        f"{name}_feedback_deg": None if f is None else round(f / 1000.0, 4),
-        f"{name}_ctrl_deg": None if c is None else round(c / 1000.0, 4),
+        f"{name}_feedback_deg": fdeg,
+        f"{name}_ctrl_deg": cdeg,
         f"{name}_ctrl_minus_feedback_deg":
-            None if (f is None or c is None) else round((c - f) / 1000.0, 4),
+            None if (fdeg is None or cdeg is None) else round(cdeg - fdeg, 4),
     }
     h = getattr(hi, f"motor_{i}", None) if hi else None
     if h is not None:

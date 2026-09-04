@@ -12,9 +12,22 @@ import { api } from '../services/api'
 
 const JOINTS = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6'] as const
 
+/** 흔드는 폭.
+ *
+ * ⚠ **작게 흔들면 부하가 안 걸린다.** ±10°(15.7°/s)에서는 토크가 0.17 N·m 밖에
+ *   안 나와 멀쩡한 관절과 나쁜 관절이 구분되지 않았다. 속도는 팔의 한계(0.3 rad/s)
+ *   때문에 못 올리므로 **폭을 키우고 주기를 늘린다** — 부하는 이동 범위에서 온다. */
+const INTENSITY = [
+  { key: 'gentle', label: '약하게', hint: '±10° · 짧다' },
+  { key: 'normal', label: '보통', hint: '±20°' },
+  { key: 'strong', label: '강하게', hint: '±30° · 길다' },
+] as const
+type Intensity = typeof INTENSITY[number]['key']
+
 type PlanJoint = { joint: string; center_deg: number; amplitude_deg: number
+                   period_s: number; peak_speed_deg_s: number
                    phase_deg: number; note: string }
-type Plan = { duration_s: number; joints: PlanJoint[] }
+type Plan = { duration_s: number; intensity: string; joints: PlanJoint[] }
 type Status = { running: boolean; elapsed_s: number; duration_s: number
                 samples: number; error: string | null; plan?: Plan }
 type Summary = {
@@ -49,6 +62,7 @@ export default function DiagnosticsPanel({ arms }: {
   const { notify, confirm } = useSystemMessage()
   const [iface, setIface] = useState('')
   const [scope, setScope] = useState<'all' | string>('all')
+  const [intensity, setIntensity] = useState<Intensity>('normal')
   const [status, setStatus] = useState<Status | null>(null)
   const [summary, setSummary] = useState<Summary | null>(null)
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
@@ -91,15 +105,17 @@ export default function DiagnosticsPanel({ arms }: {
 
   const start = async () => {
     const joints = scope === 'all' ? [...JOINTS] : [scope]
+    const amp = { gentle: 10, normal: 20, strong: 30 }[intensity]
     if (!await confirm(
       `${iface} 의 ${scope === 'all' ? '여섯 관절을 모두' : scope + ' 를'} 흔들어 잽니다.\n\n` +
-      '· 지금 자세를 중심으로 사인파, 최대 ±10° · 약 8초\n' +
+      `· 지금 자세를 중심으로 사인파 **±${amp}°**\n` +
+      '· 속도는 팔의 한계 안(약 14°/s)이라 폭이 클수록 오래 걸립니다\n' +
       '· 끝나면 원래 자세로 돌아옵니다\n' +
       (scope === 'all' ? '· 여섯이 위상을 어긋나게 움직입니다\n' : '') +
       '\n팔 주변이 비어 있는지 확인하세요.')) return
     setBusy(true); setSummary(null); setRows([])
     try {
-      await api.post('/robots/diag/start', { iface, joints })
+      await api.post('/robots/diag/start', { iface, joints, intensity })
       await poll()
     } catch (e) {
       notify({ level: 'error', source: '검사',
@@ -151,6 +167,17 @@ export default function DiagnosticsPanel({ arms }: {
             ))}
           </div>
 
+          <div className="flex items-center gap-1 rounded bg-neutral-900 p-0.5">
+            {INTENSITY.map((it) => (
+              <button key={it.key} onClick={() => setIntensity(it.key)}
+                title={it.hint}
+                className={`rounded px-2 py-1 text-xs ${intensity === it.key
+                  ? 'bg-neutral-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}>
+                {it.label}
+              </button>
+            ))}
+          </div>
+
           {running ? (
             <button onClick={() => void stop()}
               className="rounded bg-red-600 px-4 py-1 text-xs text-white hover:bg-red-500">
@@ -191,8 +218,9 @@ export default function DiagnosticsPanel({ arms }: {
 
         {status?.plan && !running && (
           <p className="text-xs text-neutral-500">
-            계획: {status.plan.joints.map((p) =>
-              `${p.joint} ±${p.amplitude_deg}°${p.note ? `(${p.note})` : ''}`).join(' · ')}
+            계획 ({status.plan.duration_s}초): {status.plan.joints.map((p) =>
+              `${p.joint} ±${p.amplitude_deg}° ${p.peak_speed_deg_s}°/s${p.note ? `(${p.note})` : ''}`
+            ).join(' · ')}
           </p>
         )}
       </div>

@@ -2,6 +2,8 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from typing import Literal
+
 from pydantic import BaseModel
 
 from app.services import robot_manager as robot_manager_mod
@@ -289,6 +291,8 @@ class DiagStartRequest(BaseModel):
     iface: str
     #: 비우면 여섯 관절 전부(전체 측정). 하나만 주면 개별 측정.
     joints: list[str] = []
+    #: 흔드는 폭. ⚠ 작게 흔들면 부하가 안 걸려 멀쩡한 관절과 구분이 안 된다.
+    intensity: Literal["gentle", "normal", "strong"] = "normal"
 
 
 @router.post("/diag/start")
@@ -311,7 +315,8 @@ async def diag_start(body: DiagStartRequest):
     bad = [j for j in joints if j not in ARM_JOINTS]
     if bad:
         raise HTTPException(400, f"모르는 관절입니다: {bad}")
-    out = robot_manager_mod._call("diag_start", body.iface, joints, default=None)
+    out = robot_manager_mod._call("diag_start", body.iface, joints,
+                                  body.intensity, default=None)
     if out is None:
         raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
     if not out.get("ok"):

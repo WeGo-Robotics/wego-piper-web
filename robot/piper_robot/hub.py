@@ -15,6 +15,7 @@ CAN 과 무관하다. 그래서 여기 메서드는 그 값들을 인자로 받�
 """
 
 import logging
+import math
 import threading
 import time
 
@@ -136,7 +137,8 @@ class RobotHub:
     # ⚠ 한 번에 하나만 돈다. 두 팔을 동시에 흔들면 사람이 둘 다 못 지켜본다.
     _diag = None
 
-    def diag_start(self, iface: str, joints: list[str]) -> dict:
+    def diag_start(self, iface: str, joints: list[str],
+                   intensity: str = "normal") -> dict:
         from piper_robot import diagnostics as D
         from piper_robot.diag_runner import DiagRun
         from piper_robot.publish import arm_bridge_manager
@@ -156,11 +158,14 @@ class RobotHub:
         if not now:
             return {"ok": False, "error": f"{iface} 의 관절값을 읽지 못했습니다"}
         centers = {j: denormalize_joint(j, now[j]) / 1000.0 for j in joints if j in now}
-        limits = {}
+        limits, speeds = {}, {}
         for row in (arm.versions().get("joints") or []):
             if row.get("angle_min_deg") is not None:
                 limits[row["joint"]] = (row["angle_min_deg"], row["angle_max_deg"])
-        plan = D.build_plan(centers, limits, joints)
+            # 속도 한계는 rad/s 로 오고 계획은 도/초로 센다
+            if row.get("max_spd_rad_s"):
+                speeds[row["joint"]] = math.degrees(row["max_spd_rad_s"])
+        plan = D.build_plan(centers, limits, joints, intensity, speeds)
         if not any(p.amplitude_deg > 0 for p in plan.joints):
             return {"ok": False, "plan": plan.to_dict(),
                     "error": "흔들 여유가 없습니다 — 관절이 한계 근처입니다. "

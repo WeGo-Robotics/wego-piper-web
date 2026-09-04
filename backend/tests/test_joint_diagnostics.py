@@ -12,6 +12,39 @@ from piper_robot import diagnostics as D
 
 # ── 모션 ────────────────────────────────────────────────────────────────────
 
+def test_a_bigger_swing_does_not_mean_a_faster_one():
+    """⚠ 관절의 설정 최대 속도가 0.3 rad/s(17.2°/s)다. 그보다 빠른 목표를 주면
+    팔이 못 따라오고 **그 미달이 추종 오차로 기록된다** — 검사가 팔의 한계를
+    관절 이상으로 오독하는 셈이다. 그래서 속도는 고정하고 주기를 늘린다."""
+    speeds = {"joint6": 17.2}
+    lim = {"joint6": (-150.0, 150.0)}
+    peaks = []
+    for it in ("gentle", "normal", "strong"):
+        p = D.build_plan({"joint6": 0.0}, lim, ["joint6"], it, speeds)
+        j = p.joints[0]
+        peaks.append(j.peak_speed_deg_s)
+        assert j.peak_speed_deg_s <= 17.2, (it, j.peak_speed_deg_s)
+    # 주기를 0.1초로 반올림하므로 완전히 같지는 않다 — 강도가 속도를 바꾸지
+    # 않는다는 것만 확인한다
+    assert max(peaks) - min(peaks) < 0.5, f"강도를 올리자 빨라졌다: {peaks}"
+
+    strong = D.build_plan({"joint6": 0.0}, lim, ["joint6"], "strong", speeds)
+    gentle = D.build_plan({"joint6": 0.0}, lim, ["joint6"], "gentle", speeds)
+    assert strong.joints[0].amplitude_deg > gentle.joints[0].amplitude_deg * 2, \
+        "강하게가 실제로 더 크게 안 흔든다"
+    assert strong.duration_s > gentle.duration_s, "폭이 커졌는데 시간이 그대로다"
+
+
+def test_all_joints_share_one_period():
+    """⚠ 관절마다 주기가 다르면 위상을 어긋나게 둔 뜻이 사라진다 — 어느 순간
+    여럿이 겹쳐 같은 방향으로 최대 속도를 낸다."""
+    joints = [f"joint{i}" for i in range(1, 7)]
+    p = D.build_plan({j: 0.0 for j in joints},
+                     {"joint1": (-150.0, 150.0), "joint5": (-70.0, 70.0)},
+                     joints, "normal", {j: 17.2 for j in joints})
+    assert len({j.period_s for j in p.joints}) == 1, "주기가 제각각이다"
+
+
 def test_the_swing_never_reaches_the_configured_limit():
     """⚠ 한계를 때리면 그 때림이 `angle_limit` 플래그로 기록되고, **검사가 자기
     결론을 만들어낸다.** 지금 자세에서 한계까지 남은 거리도 진폭을 깎아야 한다."""
@@ -19,7 +52,7 @@ def test_the_swing_never_reaches_the_configured_limit():
     assert amp == 0.0 and "여유" in note, (amp, note)
 
     amp, _ = D.plan_amplitude(center_deg=0.0, lo_deg=-70.0, hi_deg=70.0)
-    assert 0 < amp <= D.MAX_AMP_DEG
+    assert 0 < amp <= D.AMPLITUDES_DEG["strong"]
     assert amp <= 70.0 - D.LIMIT_MARGIN_DEG
 
 
@@ -35,8 +68,8 @@ def test_an_unknown_limit_swings_less_not_more():
     """⚠ 한계를 모르면 여유도 모른다. 안전층이 범위를 자르니 위험하진 않지만,
     한계에 닿으면 `angle_limit` 플래그가 서고 그게 측정에 섞인다 — 검사가 자기
     결론을 만들어내는 셈이다. 모르면 **작게** 흔든다."""
-    amp, note = D.plan_amplitude(0.0, None, None)
-    assert amp == D.UNKNOWN_LIMIT_AMP_DEG < D.MAX_AMP_DEG
+    amp, note = D.plan_amplitude(0.0, None, None, cap_deg=30.0)
+    assert amp == D.UNKNOWN_LIMIT_AMP_DEG < 30.0
     assert "몰라" in note, note
 
 
@@ -51,7 +84,7 @@ def test_all_joints_do_not_peak_at_the_same_moment():
 
     # 같은 순간의 속도(도함수)가 한 방향으로 몰리지 않는다
     t = 0.3
-    d = [math.cos(2 * math.pi * t / D.PERIOD_S + math.radians(p.phase_deg))
+    d = [math.cos(2 * math.pi * t / p.period_s + math.radians(p.phase_deg))
          for p in plan.joints]
     assert abs(sum(d)) < len(d) * 0.7, d
 
@@ -65,9 +98,9 @@ def test_a_single_joint_run_has_no_phase_offset():
 def test_the_motion_starts_and_ends_where_it_began():
     """⚠ 검사가 끝났을 때 팔이 다른 자세에 있으면, 다음 작업이 그 자세에서
     시작한다. 사인파는 정수 주기라 제자리로 돌아온다."""
-    p = D.JointPlan("joint1", center_deg=12.0, amplitude_deg=10.0)
+    p = D.JointPlan("joint1", center_deg=12.0, amplitude_deg=10.0, period_s=4.0)
     assert p.target_deg(0.0) == pytest.approx(12.0)
-    assert p.target_deg(D.PERIOD_S * D.CYCLES) == pytest.approx(12.0, abs=1e-6)
+    assert p.target_deg(4.0 * D.CYCLES) == pytest.approx(12.0, abs=1e-6)
 
 
 # ── 분석 ────────────────────────────────────────────────────────────────────
@@ -185,3 +218,77 @@ def test_the_command_goes_through_the_safety_filter():
     src = python_code_only(textwrap.dedent(inspect.getsource(DiagRun._command)))
     assert "bridge._send" in src, "안전층을 우회한다"
     assert "JointCtrl" not in src
+
+
+def test_a_crash_in_cleanup_still_ends_the_run():
+    """⚠ **끝났다는 표시가 뒷정리보다 먼저다.** 정리에서 예외가 나면 `done` 이
+    영영 안 서고 화면은 "진행 중" 으로 굳는다 — 실기에서 그랬다: `_hold` 를 안
+    만들어 둔 채 불러 `AttributeError`, 모션은 8초에 끝났는데 77초째 진행 중.
+    정리는 못 해도 **끝난 것은 끝난 것이다.**"""
+    import threading
+
+    from piper_robot.diag_runner import DiagRun
+
+    class _Boom:
+        def read_joints_normalized(self):
+            raise RuntimeError("팔이 안 읽힌다")
+        iface = "can0"
+
+    run = DiagRun.__new__(DiagRun)
+    run.arm, run.bridge = _Boom(), None
+    run.plan = D.build_plan({}, {}, [])
+    run.rows, run.error, run.done = [], None, False
+    run.started_at = 0.0
+    run._stop = threading.Event()
+    run._run()
+    assert run.done is True, "정리가 터지면 영영 안 끝난다"
+
+
+def test_stopping_holds_the_pose_instead_of_dropping_it():
+    """⚠ 마지막 목표가 먼 곳이었으면 팔은 계속 그리로 간다 — **현재 자세를 실제로
+    명령해야** 선다. 토크를 끊는 것은 답이 아니다(팔이 떨어진다)."""
+    import inspect
+    import textwrap
+
+    from conftest import python_code_only
+    from piper_robot.diag_runner import DiagRun
+
+    src = python_code_only(textwrap.dedent(inspect.getsource(DiagRun._hold)))
+    assert "read_joints_normalized" in src and "_send" in src, "그 자리에 안 선다"
+    assert "Disable" not in src, "토크를 끊는다 — 팔이 떨어진다"
+
+
+def test_it_enables_the_motors_before_measuring():
+    """⚠ **모터가 꺼져 있으면 명령이 아무 일도 안 한다.** 그런데 팔은 전압·온도를
+    멀쩡히 보고하므로 로그만 보면 정상이다 — 실기에서 397행이 전부 0 으로
+    남았고, 그게 "고장" 으로 읽힐 뻔했다."""
+    import inspect
+    import textwrap
+
+    from conftest import python_code_only
+    from piper_robot.diag_runner import DiagRun
+
+    src = python_code_only(textwrap.dedent(inspect.getsource(DiagRun._run)))
+    assert "enable_for_motion" in src, "끈 채로 재려 한다"
+    assert "모터를 켜지 못했습니다" in inspect.getsource(DiagRun._run), \
+        "못 켜도 그냥 재서 0 을 남긴다"
+
+
+def test_the_tracking_error_is_measured_against_what_we_commanded():
+    """⚠ 팔의 지령 레지스터(0x15x)는 우리 명령을 **되비추지 않는다** — 실측:
+    관절이 ±10° 로 흔들리는 내내 `ctrl_deg` 가 0 이어서 추종 오차가 통째로
+    진폭과 같게 나왔다(10.068°). 우리는 무엇을 시켰는지 정확히 아는데 그걸
+    안 쓰고 팔에게 되물은 셈이었다. 고친 뒤 같은 관절이 1.16° 다."""
+    from piper_robot.diag_runner import _joint_row
+
+    row = _joint_row("joint6", 6, None, None, None, None, None, target_deg=8.65)
+    assert row["joint6_ctrl_deg"] == 8.65, "시킨 값을 안 쓴다"
+
+
+def test_a_joint_we_did_not_command_falls_back_to_the_register():
+    """안 시킨 관절은 참고값이라도 있어야 한다 — 같이 흔들렸는지 보려면."""
+    from piper_robot.diag_runner import _joint_row
+
+    ct = type("C", (), {"joint_1": 1234})()
+    row = _joint_row("joint1", 1, None, ct, None, None, None, target_deg=None)
+    assert row["joint1_ctrl_deg"] == 1.234
