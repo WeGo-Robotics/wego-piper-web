@@ -97,14 +97,22 @@ class RobotHub:
 
     def bus_reset(self, iface: str) -> dict:
         """버스를 내렸다 올린다. **팔 연결이 끊기므로** 그 팔도 정리한다."""
-        from piper_robot.can import reset_bus
+        from piper_robot.can import bus_stats, reset_bus
 
         arm = self.arms.get(iface)
         if arm is not None and arm.connected:
             arm.disconnect()
         out = reset_bus(iface)
         if out.get("ok"):
-            self._bus_baseline[iface] = dict(out.get("counters") or {})
+            # ⚠ **트래픽도 같이 잡는다.** 오류만 기준선을 두면 파생값(백만 프레임당
+            #   오류)이 누적 오류 ÷ 누적 RX 가 되어 말이 안 되는 숫자가 나온다 —
+            #   실제로 50,796,791/M 이 떴다. 기준을 잡을 거면 **전부** 잡아야 한다.
+            now = bus_stats(iface)
+            self._bus_baseline[iface] = {
+                "counters": dict(now.get("counters") or {}),
+                "rx_packets": now.get("rx_packets") or 0,
+                "tx_packets": now.get("tx_packets") or 0,
+            }
         return out
 
     def bus_status(self) -> list[dict]:
@@ -117,12 +125,17 @@ class RobotHub:
             row = bus_stats(c["iface"])
             base = self._bus_baseline.get(c["iface"])
             if base and row.get("counters"):
-                # ⚠ **항목별로도 낸다.** 합계만 주면 화면은 여전히 누적값을 항목
-                #   별로 보여줄 수밖에 없고, 1억이 넘는 숫자가 주황색으로 남아
-                #   "초기화가 소용없다" 로 읽힌다. 실제로 그렇게 보고됐다.
+                # ⚠ **항목별로도, 트래픽도** 낸다. 합계만 주면 화면은 항목 칸에
+                #   누적값을 쓸 수밖에 없고, 트래픽을 빼먹으면 파생값이 섞인 기준을
+                #   쓴다 — 둘 다 실제로 겪었다.
+                cb = base.get("counters", {})
                 row["counters_since_reset"] = {
-                    k: max(0, v - base.get(k, 0)) for k, v in row["counters"].items()}
+                    k: max(0, v - cb.get(k, 0)) for k, v in row["counters"].items()}
                 row["errors_since_reset"] = sum(row["counters_since_reset"].values())
+                row["rx_since_reset"] = max(0, (row.get("rx_packets") or 0)
+                                            - base.get("rx_packets", 0))
+                row["tx_since_reset"] = max(0, (row.get("tx_packets") or 0)
+                                            - base.get("tx_packets", 0))
             rows.append(row)
         return rows
 

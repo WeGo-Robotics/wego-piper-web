@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { ErrorChart, TrafficChart, type Point } from './BusCharts'
 import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
 
@@ -21,6 +22,8 @@ type Bus = {
   /** 초기화 이후의 오류. 카운터 자체는 안 지워지므로 이게 진짜 비교값이다. */
   errors_since_reset?: number
   counters_since_reset?: Counters
+  rx_since_reset?: number
+  tx_since_reset?: number
 }
 
 const COUNTER_LABEL: Record<string, string> = {
@@ -34,10 +37,18 @@ const INTERVALS = [2, 5, 15] as const
 const num = (v: number | null | undefined) =>
   v == null ? '—' : v.toLocaleString('ko-KR')
 
-/** 백만 프레임당 오류. 트래픽이 없으면 뜻이 없으므로 null. */
+/**
+ * 백만 프레임당 오류. 트래픽이 없으면 뜻이 없으므로 null.
+ *
+ * ⚠ **기준선이 있으면 분자와 분모가 같은 기준이어야 한다.** 누적 오류를 누적
+ *   RX 로 나누던 때 `50,796,791/M` 이 떴다 — 다른 항목은 초기화 이후를 쓰는데
+ *   이것만 옛 숫자였다. 기준을 잡을 거면 전부 잡는다.
+ */
 function perMillion(bus: Bus): number | null {
-  if (!bus.rx_packets || bus.errors_total == null) return null
-  return (bus.errors_total / bus.rx_packets) * 1e6
+  const errs = bus.errors_since_reset ?? bus.errors_total
+  const rx = bus.rx_since_reset ?? bus.rx_packets
+  if (!rx || errs == null) return null
+  return (errs / rx) * 1e6
 }
 
 export default function BusStatusPanel() {
@@ -51,6 +62,12 @@ export default function BusStatusPanel() {
   //   것을 사람이 모르고 있으면 안 된다.
   const [auto, setAuto] = useState(false)
   const [resetting, setResetting] = useState<string | null>(null)
+  // ⚠ **누적값이 아니라 초당 증가량을 그린다.** 카운터는 단조증가라 누적을
+  //   그리면 선이 언제나 우상향이고 아무것도 안 말한다. 표본은 폴링에서 나오므로
+  //   자동 새로고침을 켜야 모인다.
+  const [history, setHistory] = useState<Record<string, Point[]>>({})
+  const prev = useRef<{ at: number; by: Record<string, Bus> } | null>(null)
+  const HISTORY_MAX = 60
   const [every, setEvery] = useState<number>(5)
 
   const load = useCallback(async () => {
@@ -58,6 +75,32 @@ export default function BusStatusPanel() {
     try {
       const d = await api.get<{ buses: Bus[] }>('/robots/bus')
       setBuses(d.buses); setErr(null); setAt(new Date())
+
+      const now = Date.now()
+      const by = Object.fromEntries(d.buses.map((b) => [b.iface, b]))
+      const before = prev.current
+      prev.current = { at: now, by }
+      if (before) {
+        const dt = (now - before.at) / 1000
+        // 표본 간격이 너무 벌어지면(탭을 떠났다 왔다) 그 구간은 버린다 —
+        // 평균이 뭉개져 "그동안 조용했다" 로 보인다
+        if (dt > 0.5 && dt < 30) {
+          setHistory((h) => {
+            const out = { ...h }
+            for (const b of d.buses) {
+              const p0 = before.by[b.iface]
+              if (!p0) continue
+              const rate = (a?: number | null, c?: number | null) =>
+                a == null || c == null ? 0 : Math.max(0, (a - c) / dt)
+              out[b.iface] = [...(out[b.iface] ?? []),
+                              { t: now, rx: rate(b.rx_packets, p0.rx_packets),
+                                tx: rate(b.tx_packets, p0.tx_packets) }
+                             ].slice(-HISTORY_MAX)
+            }
+            return out
+          })
+        }
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : '읽지 못했습니다')
     } finally { setBusy(false) }
@@ -140,8 +183,11 @@ export default function BusStatusPanel() {
               {b.bitrate && (
                 <span className="text-xs text-neutral-500">{b.bitrate / 1000}kbps</span>
               )}
-              <span className="ml-auto text-xs tabular-nums text-neutral-400">
-                RX {num(b.rx_packets)} · TX {num(b.tx_packets)}
+              <span className="ml-auto text-xs tabular-nums text-neutral-400"
+                    title={b.rx_since_reset != null
+                      ? `초기화 이후 · 누적 RX ${num(b.rx_packets)} / TX ${num(b.tx_packets)}`
+                      : '누적'}>
+                RX {num(b.rx_since_reset ?? b.rx_packets)} · TX {num(b.tx_since_reset ?? b.tx_packets)}
               </span>
               <button onClick={() => void reset(b.iface)} disabled={resetting !== null}
                 title="버스를 내렸다 올립니다 — 팔 연결이 끊기고 카운터가 0 이 됩니다"
@@ -180,6 +226,31 @@ export default function BusStatusPanel() {
                   백만 프레임당 오류 <b>{rate.toFixed(2)}</b>
                 </span>
               )}
+            </div>
+            <div className="flex flex-wrap gap-4 pt-1">
+              <div>
+                <div className="mb-1 flex items-center gap-3 text-[10px] text-neutral-400">
+                  <span>초당 패킷</span>
+                  {/* 2계열이므로 범례는 늘 있고, 최신값을 직접 붙인다 —
+                      TX 가 바닥에 붙어도 숫자는 읽힌다 */}
+                  <span className="flex items-center gap-1">
+                    <i className="inline-block h-2 w-2 rounded-full" style={{ background: '#3987e5' }} />
+                    RX {(history[b.iface]?.at(-1)?.rx ?? 0).toFixed(0)}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <i className="inline-block h-2 w-2 rounded-full" style={{ background: '#d95926' }} />
+                    TX {(history[b.iface]?.at(-1)?.tx ?? 0).toFixed(1)}
+                  </span>
+                </div>
+                <TrafficChart points={history[b.iface] ?? []} />
+              </div>
+              <div>
+                <div className="mb-1 text-[10px] text-neutral-400">
+                  오류 {b.counters_since_reset ? '(초기화 이후)' : '(누적)'}
+                </div>
+                <ErrorChart counters={b.counters_since_reset ?? b.counters}
+                            labels={COUNTER_LABEL} />
+              </div>
             </div>
           </div>
         )

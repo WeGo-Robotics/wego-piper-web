@@ -136,3 +136,49 @@ def test_after_a_reset_the_screen_shows_the_new_count_not_the_old_one():
     assert "b.counters_since_reset ?? b.counters" in src, \
         "초기화 뒤에도 항목별로 누적값을 보여준다"
     assert "누적" in PANEL.read_text(), "누적값을 어디서도 못 본다"
+
+
+def test_every_derived_value_uses_the_same_baseline():
+    """⚠ 기준선을 잡을 거면 **전부** 잡아야 한다. 오류만 기준선을 두고 트래픽은
+    누적을 쓰던 때, 백만 프레임당 오류가 `50,796,791` 로 떴다 — 다른 항목은 전부
+    0 인데 이것만 옛 숫자였다. 섞인 기준은 틀린 값보다 나쁘다: 그럴듯해 보인다.
+    """
+    import inspect
+    import textwrap
+
+    from piper_robot.hub import RobotHub
+
+    src = python_code_only(textwrap.dedent(inspect.getsource(RobotHub.bus_reset)))
+    for field in ("rx_packets", "tx_packets", "counters"):
+        assert field in src, f"기준선에 {field} 가 없다"
+
+    ui = code_only(PANEL.read_text())
+    seg = ui.split("function perMillion", 1)[1][:400]
+    assert "errors_since_reset" in seg and "rx_since_reset" in seg, \
+        "파생값이 누적과 초기화 이후를 섞어 쓴다"
+
+
+def test_the_charts_plot_rate_not_the_running_total():
+    """⚠ 카운터는 단조증가라 누적을 그리면 선이 언제나 우상향이고 아무것도 안
+    말한다. 그릴 값은 **초당 증가량**이다."""
+    from pathlib import Path
+
+    charts = (Path(__file__).resolve().parents[2] / "frontend" / "src"
+              / "components" / "BusCharts.tsx").read_text()
+    assert "초당" in charts, "무엇을 그리는지 화면이 안 말한다"
+
+    ui = code_only(PANEL.read_text())
+    assert "/ dt" in ui, "누적값을 그대로 그린다"
+
+
+def test_the_two_traffic_series_share_one_axis():
+    """⚠ 이중 축 금지 — RX 와 TX 는 같은 단위(패킷/초)라 축을 쪼개면 크기 비교가
+    거짓이 된다. TX 가 바닥에 붙는 것은 사실이고, 대신 최신값을 숫자로 붙인다."""
+    from pathlib import Path
+
+    from conftest import code_only as _c
+
+    charts = _c((Path(__file__).resolve().parents[2] / "frontend" / "src"
+                 / "components" / "BusCharts.tsx").read_text())
+    assert charts.count("const max = Math.max(1, ...points") == 1, "축이 둘이다"
+    assert "p.rx, p.tx" in charts, "두 계열이 같은 최대값을 안 쓴다"
