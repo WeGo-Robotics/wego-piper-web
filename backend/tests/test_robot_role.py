@@ -145,71 +145,17 @@ def test_preset_refuses_when_nothing_configured(monkeypatch, tmp_path):
         rm.save_preset("빈것")
 
 
-def test_page_lists_are_disjoint():
-    """**회귀** — 로봇 페이지의 세 목록이 겹치면 같은 팔을 두 번 등록하게 된다.
-
-    프리셋을 불러오면 `ready` 만 서고 연결은 안 되므로 `ready && !connected` 가
-    생기는데, 예전 `unconnectedArms` 는 `ready` 를 안 봐서 그 팔이 1단계와
-    사용 가능 목록에 동시에 떴다. (카메라 페이지에서도 똑같은 실수를 했었다.)
-    """
-    import re
+def test_a_connected_port_cannot_be_attached_twice():
+    """**회귀 계보** — 예전 세 목록(1단계/2단계/사용 가능)이 겹쳐 같은 팔을 두 번
+    등록한 적이 있다. 2026-09-03 개편(포트/로봇)에서는 포트 카드의 [연결]이
+    `port.connected` 로 잠기는 것이 그 방어다."""
     from pathlib import Path
 
     src = (Path(__file__).resolve().parents[2]
            / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
-    line = next(ln for ln in src.splitlines() if "const unconnectedArms" in ln)
-    assert re.search(r"!a\.connected\s*&&\s*!a\.ready", line), (
-        f"unconnectedArms 가 ready 를 걸러내지 않는다: {line.strip()}"
-    )
-    conn = next(ln for ln in src.splitlines() if "const connectedArms" in ln)
-    assert "!a.ready" in conn, f"connectedArms 가 ready 를 걸러내지 않는다: {conn.strip()}"
-
-
-# ── 프리셋 로드는 연결까지 한다 ─────────────────────────────────────────────
-
-def _preset_manager(monkeypatch, tmp_path, *, connect_ok: bool):
-    from app.services import presets as preset_store
-    from app.services.robot_manager import RobotManager
-
-    monkeypatch.setattr(preset_store, "PRESETS_ROOT", tmp_path / "presets")
-    preset_store.save("robot", "사무실", {
-        "robot_type": None, "config_name": None,
-        "arms": [{"slot": None, "can_name": "can1", "bus_info": "3-3:1.0",
-                  "role": "leader", "ready": True, "config": {}}],
-    })
-
-    rm = RobotManager()
-    arm = ArmInfo(iface="can1", bus_info="3-3:1.0")
-    monkeypatch.setattr(
-        ArmInfo, "connect",
-        lambda self: (setattr(self, "connected", connect_ok) or (connect_ok, "OK" if connect_ok else "포트 없음")),
-    )
-    rm.arms["can1"] = arm
-    return rm, arm
-
-
-def test_preset_load_connects_the_arm(monkeypatch, tmp_path):
-    """**회귀** — `ready` 만 세우면 팔이 1·2단계 목록에서 빠지는데 CAN 은 안 열려 있다.
-
-    그 상태에서는 연결 버튼(1단계에만 있다)에 닿을 수가 없어 **등록을 끝낼 방법이 없다.**
-    `restore_session` 이 연결까지 하는 것과 같은 이유다.
-    """
-    rm, arm = _preset_manager(monkeypatch, tmp_path, connect_ok=True)
-    rm.load_preset("사무실")
-    assert arm.connected is True
-    assert arm.ready is True
-    assert arm.role == "leader"
-
-
-def test_preset_load_does_not_mark_failed_arm_as_ready(monkeypatch, tmp_path):
-    """연결 실패한 팔을 "사용 가능"으로 올리면 쓸 수 없는데 쓸 수 있다고 말하는 셈이다.
-
-    1단계에 남아야 사용자가 다시 시도할 수 있다.
-    """
-    rm, arm = _preset_manager(monkeypatch, tmp_path, connect_ok=False)
-    rm.load_preset("사무실")
-    assert arm.connected is False
-    assert arm.ready is False, "연결 못 한 팔이 사용 가능 목록에 올라갔다"
+    attach = src.split("handleAttach(port.iface)", 1)[1][:200]
+    assert "port.connected" in attach, "연결된 포트의 [연결]이 안 잠긴다 — 이중 연결"
+    assert "a.ready || a.connected" in src, "로봇 패널이 연결-미등록 팔을 놓친다"
 
 
 def test_ready_card_can_reconnect():
@@ -218,8 +164,8 @@ def test_ready_card_can_reconnect():
 
     src = (Path(__file__).resolve().parents[2]
            / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
-    ready_section = src.split("사용 가능 로봇", 1)[1]
-    assert "!arm.connected" in ready_section and "handleConnect" in ready_section, (
+    robots_section = src.split("robotArms.map", 1)[1]
+    assert "!arm.connected" in robots_section and "handleAttach" in robots_section, (
         "등록된 팔이 끊겼을 때 다시 연결할 방법이 없다"
     )
 

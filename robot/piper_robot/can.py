@@ -294,6 +294,15 @@ def init_can_interface(iface: str, bitrate: int = DEFAULT_BITRATE) -> tuple[bool
     return True, "OK"
 
 
+def down_can_interface(iface: str) -> tuple[bool, str]:
+    """CAN 인터페이스를 내린다. 포트 카드의 [DOWN] — 안 쓰는 버스를 조용히
+    세워 두거나, 꼬인 컨트롤러를 손으로 내렸다 올릴 때 쓴다."""
+    rc, _, err = _run_cmd(["ip", "link", "set", iface, "down"], sudo=True)
+    if rc != 0:
+        return False, f"bring-down failed: {err}"
+    return True, "OK"
+
+
 def reset_bus(iface: str, bitrate: int = DEFAULT_BITRATE) -> dict:
     """CAN 버스를 내렸다 올려 컨트롤러를 다시 세운다.
 

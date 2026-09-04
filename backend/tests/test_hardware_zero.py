@@ -131,8 +131,11 @@ def test_confirmation_is_required():
     assert "confirm(" in src and "danger: true" in src
 
 
-def test_it_is_not_called_parking_calibration():
-    """[파킹 보정]은 소프트웨어다. 이름이 겹치면 사용자가 그걸 누른다."""
+def test_zero_and_parking_stay_distinct_in_the_detail_modal():
+    """[파킹]은 소프트웨어(우리 파일), [영점]은 모터 플래시다 — 이름이 겹치면
+    사용자가 엉뚱한 쪽을 누른다. 2026-09-03 개편으로 둘 다 상세 창의 **탭**이
+    됐지만 분리는 유지되어야 한다."""
     page = (REPO / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
-    assert "영점(HW)" in page
-    assert "파킹 보정" in page, "소프트웨어 쪽 버튼이 사라졌다"
+    assert "ZeroCalibrationPanel" in page, "영점 탭이 사라졌다"
+    assert "'zero', '영점'" in page and "'parking', '파킹'" in page, "탭 분리가 무너졌다"
+    assert "ParkingPanel" in page, "소프트웨어 파킹 쪽이 사라졌다"

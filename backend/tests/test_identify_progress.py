@@ -101,66 +101,20 @@ def test_results_survive_to_the_end():
     assert st["results"]["can1"]["role"] == "slave"
 
 
-def test_the_page_shows_the_countdown_and_the_step():
-    from pathlib import Path
-    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
-           / "RobotsPage.tsx").read_text()
-    assert "motionStatus.phase" in src, "단계를 안 보여준다"
-    assert "motionStatus.remaining > 0" in src, "남은 시간을 안 보여준다"
-    # 어느 팔인지는 **행 자체**가 말한다 — 표시가 그 팔의 줄에만 뜨므로
-    # 문장에 iface 를 또 넣으면 같은 말을 두 번 한다.
-
-
-def test_the_row_is_matched_by_what_was_actually_stored():
-    """**회귀** — 진행 표시가 화면에 아예 안 나왔다.
-
-    행을 가리는 조건은 `motionIface === arm.iface` 인데, 거기에 슬롯 이름
-    (`identify`)을 넣었다. 어느 행의 iface 와도 같지 않아 버튼이 흐려지기만 했다.
-
-    담는 값과 비교하는 값이 **같은 것**이어야 한다.
-    """
+def test_the_identify_ui_was_removed_on_purpose():
+    """2026-09-03 디바이스 탭 개편(포트/로봇 카드): [찾기](움직임 판별) UI 를
+    화면에서 뺐다 — 연결이 기본을 슬레이브로 세우고(`/attach`), RX 분류가
+    마스터/슬레이브를 정하며, 카드의 마스터/슬레이브 버튼이 명시적 전환을
+    맡는다. **백엔드 판별 경로는 남긴다** — 진단 도구로 되살릴 수 있게.
+    (아래 데몬 쪽 진행 표시 테스트들은 그 경로의 계약이라 그대로 산다.)"""
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
-           / "RobotsPage.tsx").read_text()
-    assert "motionIface === arm.iface" in src, "행을 iface 로 안 가린다"
-    assert "setMotionIface(iface)" in src, "iface 가 아닌 것을 담는다"
-    assert "setMotionIface(slot)" not in src
+    root = Path(__file__).resolve().parents[2]
+    page = (root / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
+    assert "handleIdentify" not in page, "찾기 UI 가 되돌아왔다 — 이 테스트와 개편 결정을 같이 재검토하라"
+    router = (root / "backend" / "app" / "routers" / "robots.py").read_text()
+    assert "/identify" in router, "백엔드 판별 경로까지 지워졌다 — 진단 수단이 사라진다"
 
-
-def test_only_the_pressed_arm_is_probed():
-    """⚠ **물리적으로 움직이는 동작**이다. 연결된 것을 전부 훑으면 사용자가
-    누르지도 않은 팔이 움직인다."""
-    import inspect
-
-    from app.services.robot_manager import RobotManager
-
-    src = inspect.getsource(RobotManager.start_identify)
-    assert "[iface]" in src, "부른 팔 하나만 넘기지 않는다"
-    assert "for a in self.arms.values()" not in src, "연결된 전부를 훑는다"
-
-    from pathlib import Path
-    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
-            / "RobotsPage.tsx").read_text()
-    assert "handleIdentify(arm.iface)" in page, "어느 팔을 눌렀는지 안 보낸다"
-
-
-def test_the_screen_and_the_daemon_use_the_same_wait_wording():
-    """처음 뜨는 문구와 폴링이 가져오는 문구가 다르면 시작하자마자 글자가 바뀐다."""
-    from pathlib import Path
-
-    import inspect
-
-    from piper_robot.hub import RobotHub
-
-    hub_src = inspect.getsource(RobotHub._identify)
-    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
-            / "RobotsPage.tsx").read_text()
-    phrase = "부팅 중인 팔을 깨뜨리지 않으려고 대기"
-    assert phrase in hub_src and phrase in page
-
-
-# ── 판별 결과가 역할이 되는가 ────────────────────────────────────────────────
 
 class _ArmInfo:
     def __init__(self, role="unknown", slot=None):

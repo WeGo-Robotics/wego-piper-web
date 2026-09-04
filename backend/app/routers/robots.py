@@ -675,6 +675,92 @@ async def connect_arm(body: ConnectRequest):
     return arm.to_dict() if arm else {"status": "connected"}
 
 
+@router.post("/attach")
+async def attach_arm(body: ConnectRequest):
+    """포트 카드의 [연결] — 연결 → **슬레이브 설정** → **토크 OFF** → follower 등록.
+
+    초기화 기본값은 슬레이브다. 마스터는 명시적으로 세우는 모드이고(전원이
+    끊기면 풀린다), 마스터로 잘못 남은 팔은 외부 명령을 통째로 무시해
+    "조용히 안 움직이는" 사고가 된다 — 기본이 안전한 쪽이어야 한다.
+    토크도 끈다: 연결 직후는 사람이 팔 옆에서 자세를 만지는 시간이다.
+
+    슬레이브·토크는 best-effort 다 — 연결이 됐는데 그 둘 때문에 등록까지
+    실패하면 화면에서 손 쓸 방법이 없어진다. 실패는 경고로 돌려준다.
+    """
+    import asyncio
+
+    ok, msg = robot_manager.connect_arm(body.iface)
+    if not ok:
+        raise HTTPException(400, msg)
+    arm = robot_manager.arms.get(body.iface)
+    warnings: list[str] = []
+    try:
+        ok2, msg2 = await asyncio.to_thread(arm.set_master_slave, False)
+        if not ok2:
+            warnings.append(f"슬레이브 설정 실패: {msg2}")
+    except Exception as exc:
+        warnings.append(f"슬레이브 설정 실패: {exc}")
+    try:
+        if not await asyncio.to_thread(arm.disable_torque):
+            warnings.append("토크 OFF 실패")
+    except Exception as exc:
+        warnings.append(f"토크 OFF 실패: {exc}")
+    robot_manager.set_role(body.iface, "follower")
+    if not robot_manager.register_arm(body.iface):
+        warnings.append("등록 실패 — 역할을 확인하세요")
+    robot_manager.save_session()
+    return {**(arm.to_dict() if arm else {}), "warnings": warnings}
+
+
+class PortDownRequest(BaseModel):
+    iface: str
+
+
+@router.post("/can/down")
+async def can_down(body: PortDownRequest):
+    """CAN 인터페이스 DOWN. 연결된 팔이 있으면 거절 — 발밑을 파는 조작이다."""
+    from piper_robot.can import down_can_interface
+
+    arm = robot_manager.arms.get(body.iface)
+    if arm and arm.connected:
+        raise HTTPException(409, f"{body.iface} 에 연결된 로봇이 있습니다 — 먼저 등록해제/해제하세요")
+    ok, msg = down_can_interface(body.iface)
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"status": "down", "iface": body.iface}
+
+
+@router.get("/ports")
+async def list_ports():
+    """포트 패널용 — **이미 스캔된** 포트에 버스 통계(Rx/Tx·bitrate·state)를 얹는다.
+
+    스캔 자체는 [스캔] 버튼(`/robots/can`)의 몫이다 — 여기는 폴링되는 자리라
+    robotd 스캔 RPC 를 매번 치면 안 된다. 카운터는 인터페이스를 다시 열면
+    0 이 되므로 절대값 비교는 금물 (can.bus_stats 주석) — "지금 흐르나"의 감이다.
+    """
+    import asyncio
+
+    from piper_robot.can import bus_stats
+
+    out = []
+    for iface, arm in sorted(robot_manager.arms.items()):
+        stats = await asyncio.to_thread(bus_stats, iface)
+        out.append({
+            "iface": iface,
+            "bus_info": arm.bus_info,
+            # UP/DOWN 은 링크 상태(스캔이 채움), can_state 는 컨트롤러 상태
+            # (ERROR-ACTIVE 등) — 다른 층의 사실이라 둘 다 낸다.
+            "state": arm.state,
+            "can_state": stats.get("state"),
+            "bitrate": stats.get("bitrate"),
+            "rx_packets": stats.get("rx_packets"),
+            "tx_packets": stats.get("tx_packets"),
+            "connected": bool(arm.connected),
+            "ready": bool(arm.ready),
+        })
+    return {"ports": out}
+
+
 @router.post("/disconnect")
 async def disconnect_arm(body: ConnectRequest):
     robot_manager.disconnect_arm(body.iface)

@@ -80,7 +80,7 @@ def test_the_three_buttons_are_independent():
     from conftest import code_only
 
     src = code_only(_page())
-    modal = src.split("function ParkingCalibrationModal", 1)[1].split("\nfunction ", 1)[0]
+    modal = src.split("function ParkingPanel", 1)[1].split("\nfunction ", 1)[0]
     for label in ("파킹", "현재 위치 읽기", "저장"):
         assert label in modal, f"[{label}] 버튼이 없다"
     # 단계 기계가 남아 있으면 다시 순서가 생긴다
@@ -95,7 +95,7 @@ def test_saving_uses_what_was_captured_not_the_polled_state():
     from conftest import code_only
 
     src = code_only(_page())
-    modal = src.split("function ParkingCalibrationModal", 1)[1].split("\nfunction ", 1)[0]
+    modal = src.split("function ParkingPanel", 1)[1].split("\nfunction ", 1)[0]
     save = modal.split("const save = async", 1)[1][:400]
     assert "positions: captured" in save, "찍어 둔 값이 아니라 폴링 값을 저장한다"
     assert "readJoints()" not in save, "저장하면서 읽으면 또 한 박자 늦는다"
@@ -108,7 +108,7 @@ def test_parking_waits_for_the_arm_to_settle_not_a_fixed_delay():
     from conftest import code_only
 
     src = code_only(_page())
-    modal = src.split("function ParkingCalibrationModal", 1)[1].split("\nfunction ", 1)[0]
+    modal = src.split("function ParkingPanel", 1)[1].split("\nfunction ", 1)[0]
     park = modal.split("const goParking = async", 1)[1][:900]
     assert "setTimeout(async" not in park, "고정 지연으로 도착을 가정한다"
     assert "still" in park, "멈췄는지 보지 않는다"

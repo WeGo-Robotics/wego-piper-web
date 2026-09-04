@@ -6,7 +6,7 @@ import BusStatusPanel from '../components/BusStatusPanel'
 import DiagnosticsPanel from '../components/DiagnosticsPanel'
 import VersionPanel from '../components/VersionPanel'
 import JogPanel from '../components/JogPanel'
-import ZeroCalibrationModal from '../components/ZeroCalibrationModal'
+import { ZeroCalibrationPanel } from '../components/ZeroCalibrationModal'
 import { JOINT_NAMES } from '../config/joints'
 
 // ── 파킹 보정 모달 ──
@@ -21,7 +21,8 @@ import { JOINT_NAMES } from '../config/joints'
 //    값**이 저장됐다. 최대 300ms 전의 자세다. 찍어 둔 값을 화면에 보여주고 그걸
 //    저장하면, 무엇이 저장되는지 눈으로 확인한 뒤 누르게 된다.
 
-function ParkingCalibrationModal({ iface, onClose }: { iface: string; onClose: () => void }) {
+/** 상세 창의 파킹 탭 — 파킹 하기 / 현재 위치 읽기 / 파킹 위치 저장. */
+function ParkingPanel({ iface }: { iface: string }) {
   const [joints, setJoints] = useState<Record<string, number>>({})
   //: 저장할 값. **읽기 버튼으로만** 채워진다 — 폴링이 덮어쓰면 찍어 둔 뜻이 없다.
   const [captured, setCaptured] = useState<Record<string, number> | null>(null)
@@ -83,27 +84,23 @@ function ParkingCalibrationModal({ iface, onClose }: { iface: string; onClose: (
     try {
       await api.post('/robots/parking/save', { iface, positions: captured })
       await api.post('/robots/parking/torque?enable=true', { iface })
-      onClose()
+      setMsg('파킹 위치를 저장했고 토크를 걸었습니다.')
     } catch (e) {
       setMsg(e instanceof Error ? e.message : '저장하지 못했습니다')
-      setBusy('')
-    }
+    } finally { setBusy('') }
   }
 
-  const close = async () => {
-    // ⚠ 토크를 복원하고 닫는다 — 풀린 채로 두면 팔이 중력으로 내려앉는다
-    try { await api.post('/robots/parking/torque?enable=true', { iface }) } catch { /* ignore */ }
-    onClose()
-  }
+  // ⚠ 떠날 때 토크를 복원한다 — 파킹 흐름이 토크를 풀어 두는데, 풀린 채로
+  //   두면 팔이 중력으로 내려앉는다 (예전 모달의 닫기와 같은 책임).
+  useEffect(() => () => {
+    api.post('/robots/parking/torque?enable=true', { iface }).catch(() => {})
+  }, [iface])
 
   const drift = (n: string) =>
     captured ? (joints[n] ?? 0) - (captured[n] ?? 0) : 0
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={close}>
-      <div className="bg-neutral-800 rounded-xl border border-neutral-600 p-6 w-[520px] max-h-[90vh] overflow-y-auto space-y-4"
-        onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-bold">파킹 위치 보정 — {iface}</h2>
+    <div className="space-y-4">
         <p className="text-xs text-neutral-400">
           세 버튼은 <b>순서가 정해져 있지 않습니다</b>. 파킹으로 보내고, 손으로
           맞추고, 읽고, 마음에 안 들면 다시 맞춰 읽으면 됩니다.
@@ -156,17 +153,12 @@ function ParkingCalibrationModal({ iface, onClose }: { iface: string; onClose: (
             title={captured ? '찍어 둔 값을 파킹 자세로 저장합니다' : '먼저 현재 위치를 읽으세요'}
             className="flex-1 px-3 py-2 rounded bg-green-600 hover:bg-green-500 text-white
                        text-sm font-medium disabled:opacity-50">
-            {busy === 'save' ? '저장 중…' : '저장'}
-          </button>
-          <button onClick={close} disabled={busy === 'save'}
-            className="px-3 py-2 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 text-sm">
-            닫기
+            {busy === 'save' ? '저장 중…' : '파킹 위치 저장'}
           </button>
         </div>
 
         {msg && <p className="text-xs text-neutral-300 rounded border border-neutral-700
                               bg-neutral-900 px-2 py-1.5">{msg}</p>}
-      </div>
     </div>
   )
 }
@@ -280,6 +272,128 @@ type ArmInfo = {
   mode_mismatch?: string | null
   firmware: string; slot: string | null; side?: 'left' | 'right' | null
   ready: boolean; config: Record<string, unknown>; rx_packets?: number
+  /** 최근 2초 안에 관절이 움직였나 — 카드 깜빡임용. 마스터는 지령, 슬레이브는
+   *  피드백으로 감지한다 (robot_manager._is_moving). */
+  moving?: boolean
+}
+
+type PortInfo = {
+  iface: string; bus_info?: string; state?: string; can_state?: string | null
+  bitrate?: number | null; rx_packets?: number | null; tx_packets?: number | null
+  connected: boolean; ready: boolean
+}
+
+/**
+ * 로봇 카드의 [상세] — 파킹 / 영점 / 조작 / 설정 탭.
+ *
+ * 셋 다 팔 하나에 고정된 조작이라 한 창에 모은다. 이전에는 파킹·영점·조작이
+ * 제각각 모달이었는데, 같은 팔을 다루면서 창을 갈아타야 했다.
+ */
+function ArmDetailModal({ arm, leader, onConfig, onClose }: {
+  arm: ArmInfo
+  leader?: string
+  onConfig: (cfg: Record<string, unknown>) => void
+  onClose: () => void
+}) {
+  const [dtab, setDtab] = useState<'parking' | 'zero' | 'jog' | 'config'>('parking')
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+         onClick={onClose}>
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg border
+                      border-neutral-700 bg-neutral-900 p-5 space-y-4"
+           onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-neutral-100">{arm.iface}</h2>
+            <p className="text-xs text-neutral-400">
+              {arm.role}{arm.side ? ` · ${arm.side === 'left' ? '왼팔' : '오른팔'}` : ''}
+              {arm.master_slave ? ` · ${arm.master_slave}` : ''} — 팔이 실제로 움직일 수 있습니다
+            </p>
+          </div>
+          <button onClick={onClose}
+                  className="shrink-0 rounded px-2 py-1 text-sm text-neutral-400 hover:text-white">
+            닫기
+          </button>
+        </div>
+
+        <div className="flex overflow-hidden rounded border border-neutral-700 text-xs">
+          {([['parking', '파킹'], ['zero', '영점'], ['jog', '조작'],
+             ['config', '설정']] as const).map(([k, label]) => (
+            <button key={k} onClick={() => setDtab(k)}
+              className={`px-4 py-1.5 ${dtab === k
+                ? 'bg-neutral-700 text-white' : 'bg-neutral-900 text-neutral-400 hover:text-white'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {dtab === 'parking' && <ParkingPanel iface={arm.iface} />}
+        {dtab === 'zero' && <ZeroCalibrationPanel iface={arm.iface} />}
+        {dtab === 'jog' && (
+          <div className="space-y-3">
+            <JogPanel
+              iface={arm.iface}
+              commandable={arm.role === 'follower'}
+              reason={arm.role === 'leader'
+                ? '마스터(리더)는 외부 명령을 무시합니다 — 이 팔로 팔로워를 끄세요'
+                : '역할을 모릅니다 — 카드의 역할 선택에서 지정하세요'}
+              leader={leader}
+              side={arm.side} />
+            <button onClick={async () => {
+              try {
+                await api.post('/robots/parking/torque?enable=true', { iface: arm.iface })
+                await api.post('/robots/parking/go', { iface: arm.iface })
+              } catch { /* 조작 탭 부가 버튼 — 실패는 파킹 탭에서 다룬다 */ }
+            }}
+              className="w-full px-3 py-2 rounded bg-neutral-700 hover:bg-blue-600 text-sm
+                         text-neutral-200 hover:text-white">
+              파킹 자세로 이동
+            </button>
+          </div>
+        )}
+        {dtab === 'config' && (
+          <div className="space-y-2">
+            <h4 className="text-xs font-semibold text-neutral-400">
+              {arm.role === 'leader' ? 'Leader 설정' : 'Follower 설정'}
+            </h4>
+            {arm.role === 'follower' || arm.role === 'unknown' ? (
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-xs">
+                  <input type="checkbox"
+                    checked={(arm.config.disable_torque_on_disconnect as boolean) ?? true}
+                    onChange={(e) => onConfig({ disable_torque_on_disconnect: e.target.checked })} />
+                  연결 해제 시 토크 비활성화
+                </label>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-neutral-400 w-40">max_relative_target</span>
+                  <input type="number" step="0.1"
+                    value={(arm.config.max_relative_target as number) ?? ''}
+                    onChange={(e) => onConfig({ max_relative_target: e.target.value ? Number(e.target.value) : null })}
+                    placeholder="null (무제한)"
+                    className="flex-1 px-2 py-1 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
+                </div>
+                <div className="text-xs">
+                  <span className="text-neutral-400">cameras (JSON)</span>
+                  <textarea value={JSON.stringify(arm.config.cameras ?? {}, null, 2)}
+                    onChange={(e) => { try { onConfig({ cameras: JSON.parse(e.target.value) }) } catch { /* 입력 중 */ } }}
+                    rows={3}
+                    className="w-full mt-1 px-2 py-1 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 font-mono text-[11px] focus:outline-none focus:border-blue-500" />
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-neutral-400 w-40">gripper_open_pos</span>
+                <input type="number" step="1"
+                  value={(arm.config.gripper_open_pos as number) ?? 50}
+                  onChange={(e) => onConfig({ gripper_open_pos: Number(e.target.value) })}
+                  className="flex-1 px-2 py-1 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 // 하드웨어 마스터(示教输入)/슬레이브(运动输出) 모드 뱃지
@@ -308,23 +422,6 @@ function MasterSlaveBadge({ ms, responding }: {
     </span>
   )
 }
-type ProbeResult = {
-  ok: boolean; role?: 'master' | 'slave'; moved_raw?: number
-  commanded_raw?: number; error?: string
-}
-type MotionStatus = {
-  status: string
-  /** 지금 무엇을 하고 있나. 몇 초씩 조용한 절차라 이게 없으면 멈춘 것처럼 보인다. */
-  phase?: string
-  /** 이 단계가 끝나기까지 남은 초. 0 이면 안 보여준다. */
-  remaining: number
-  iface?: string
-  index?: number
-  total?: number
-  results?: Record<string, ProbeResult>
-  // 예전 손 감지 방식이 쓰던 것들 — 아직 엔드포인트가 남아 있다
-  max_delta?: number; threshold?: number; found_iface?: string | null
-}
 
 export default function RobotsPage() {
   // ⚠ `window.alert` 를 쓰지 않는다 — 이벤트 루프를 막아 E-stop heartbeat 가
@@ -336,17 +433,11 @@ export default function RobotsPage() {
   const [arms, setArms] = useState<ArmInfo[]>([])
   const [scanning, setScanning] = useState(false)
   const [connectingIface, setConnectingIface] = useState<string | null>(null)
-  const [expandedArm, setExpandedArm] = useState<string | null>(null)
-  // 움직임 감지
-  const [motionIface, setMotionIface] = useState<string | null>(null)
-  const [motionStatus, setMotionStatus] = useState<MotionStatus | null>(null)
-  const motionPollRef = useRef<ReturnType<typeof setInterval>>(undefined)
-  const [zeroIface, setZeroIface] = useState<string | null>(null)
-  const [parkingIface, setParkingIface] = useState<string | null>(null)
-  // 조작(조그)은 **모달**로 띄운다. 행 아래로 펼치면 긴 목록에서 다른 팔 행이
-  // 밀려 내려가고, 팔을 실제로 움직이는 조작은 화면이 그 팔 하나에 고정되는 게
-  // 맞다 — 영점·파킹 모달과 같은 판단이다.
-  const [jogIface, setJogIface] = useState<string | null>(null)
+  // 포트 패널 — 스캔된 포트 + 버스 통계(Rx/Tx·bps). 스캔은 버튼, 통계는 폴링.
+  const [ports, setPorts] = useState<PortInfo[]>([])
+  // 상세 창 (파킹/영점/조작 탭). 팔 하나에 고정된 모달 — 행 펼침은 긴 목록에서
+  // 다른 행을 밀어낸다는 판단을 그대로 잇는다.
+  const [detailIface, setDetailIface] = useState<string | null>(null)
   const [tab, setTab] = useState<'devices' | 'alignment' | 'bus' | 'versions' | 'diag'>('devices')
   // 정렬 탭에서 쓸 카메라 목록. **탭을 열 때만** 부른다 — 로봇 페이지가 늘
   // 카메라를 폴링할 이유가 없다.
@@ -369,7 +460,6 @@ export default function RobotsPage() {
   // CAN 관리
   const [renamingIface, setRenamingIface] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
-  const [canActive, setCanActive] = useState<Record<string, boolean | 'checking'>>({})  // iface → active
   // 프리셋
   // 저장 실패 사유를 화면에 띄운다 — 예전에는 빈 프리셋이 조용히 저장돼
   // "저장은 됐는데 불러오면 아무 일도 없다" 가 됐다.
@@ -394,6 +484,54 @@ export default function RobotsPage() {
     if (cur.arms) setArms(cur.arms)
   }
 
+  const loadPorts = useCallback(() => {
+    api.get<{ ports: PortInfo[] }>('/robots/ports')
+      .then((r) => setPorts(r.ports)).catch(() => {})
+  }, [])
+
+  // 디바이스 탭이 열려 있는 동안: 포트 통계 3초, 팔 상태(움직임 감지) 2초.
+  // 움직임 깜빡임은 폴링이 곧 감지 주기다 — 탭을 떠나면 멈춘다.
+  useEffect(() => {
+    if (tab !== 'devices') return
+    loadPorts()
+    const iv1 = setInterval(loadPorts, 3000)
+    const iv2 = setInterval(() => { refreshArms().catch(() => {}) }, 2000)
+    return () => { clearInterval(iv1); clearInterval(iv2) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, loadPorts])
+
+  // 카드의 [파킹] — 토크를 걸고 저장된 파킹 자세로 보낸다
+  const handleParkNow = async (iface: string) => {
+    try {
+      await api.post('/robots/parking/torque?enable=true', { iface })
+      await api.post('/robots/parking/go', { iface })
+      notify({ level: 'info', text: `${iface} 파킹 자세로 이동`, source: '로봇' })
+    } catch (e) { notifyError(e instanceof Error ? e.message : '파킹 실패') }
+  }
+
+  // 카드의 [리셋] — 0x150 재동기화. 간극(=슬립)이 있으면 백엔드 문구가 뜬다.
+  const handleResetArm = async (iface: string) => {
+    try {
+      const r = await api.post<{ warnings: string[] }>('/robots/reset', { iface })
+      for (const w of r.warnings) notify({ level: 'warn', text: w, source: '로봇' })
+      if (!r.warnings.length)
+        notify({ level: 'info', source: '로봇',
+          text: `${iface} 리셋 완료 — 재동기화 간극 없음` })
+    } catch (e) { notifyError(e instanceof Error ? e.message : '리셋 실패') }
+  }
+
+  // 카드의 [해제] — 등록을 걷고 연결도 끊어 포트로 되돌린다
+  const handleDetach = async (iface: string) => {
+    if (!await askConfirm(
+      `${iface} 를 해제합니다.\n연결이 끊기며 토크가 빠질 수 있습니다 — 팔이 드는 자세면 먼저 파킹하세요.`)) return
+    try {
+      await api.post('/robots/unregister', { iface }).catch(() => {})
+      await api.post('/robots/disconnect', { iface })
+      await refreshArms()
+      loadPorts()
+    } catch (e) { notifyError(e instanceof Error ? e.message : '해제 실패') }
+  }
+
   // 연결된 팔의 상태(마스터/슬레이브·ctrl_mode)를 라이브 재읽기
   const handleRefresh = async () => {
     setRefreshing(true)
@@ -408,32 +546,33 @@ export default function RobotsPage() {
     setScanning(false)
   }
 
-  // ── 2단계: 인식 & 초기화 ──
-  const handleConnect = async (iface: string) => {
-    setConnectingIface(iface)
-    try {
-      const updated = await api.post<ArmInfo>('/robots/connect', { iface })
-      setArms((prev) => prev.map((a) => (a.iface === iface ? updated : a)))
-    } catch { notifyError('연결 실패') }
-    finally { setConnectingIface(null) }
-  }
-  const handleCheckActive = async (iface: string) => {
-    setCanActive((prev) => ({ ...prev, [iface]: 'checking' }))
-    try {
-      const r = await api.get<{ active: boolean }>(`/robots/can/check/${encodeURIComponent(iface)}`)
-      setCanActive((prev) => ({ ...prev, [iface]: r.active }))
-    } catch {
-      setCanActive((prev) => ({ ...prev, [iface]: false }))
-    }
-  }
-
-  // CAN UP 후 자동으로 활성 체크
   const handleCanUp = async (iface: string) => {
     try {
       await api.post('/robots/can/up', { iface })
       setArms((prev) => prev.map((a) => a.iface === iface ? { ...a, state: 'UP' } : a))
-      handleCheckActive(iface)
+      loadPorts()
     } catch { notifyError('CAN UP 실패') }
+  }
+
+  const handleCanDown = async (iface: string) => {
+    try {
+      await api.post('/robots/can/down', { iface })
+      setArms((prev) => prev.map((a) => a.iface === iface ? { ...a, state: 'DOWN' } : a))
+      loadPorts()
+    } catch (e) { notifyError(e instanceof Error ? e.message : 'CAN DOWN 실패') }
+  }
+
+  // [연결] — 연결 + **슬레이브 설정 + 토크 OFF** + follower 등록까지 한 번에.
+  // 초기화 기본값은 슬레이브다 (백엔드 /attach 주석 참고).
+  const handleAttach = async (iface: string) => {
+    setConnectingIface(iface)
+    try {
+      const r = await api.post<ArmInfo & { warnings?: string[] }>('/robots/attach', { iface })
+      for (const w of r.warnings ?? []) notify({ level: 'warn', text: w, source: '로봇' })
+      await refreshArms()
+      loadPorts()
+    } catch (e) { notifyError(e instanceof Error ? e.message : '연결 실패') }
+    finally { setConnectingIface(null) }
   }
 
   const handleRename = async (oldName: string) => {
@@ -448,12 +587,6 @@ export default function RobotsPage() {
     } catch { notifyError('이름 변경 실패') }
   }
 
-  const handleDisconnect = async (iface: string) => {
-    await api.post('/robots/disconnect', { iface })
-    setArms((prev) => prev.map((a) =>
-      a.iface === iface ? { ...a, connected: false, role: 'unknown', ready: false, config: {} } : a
-    ))
-  }
   const handleRoleChange = async (iface: string, role: string) => {
     const updated = await api.post<ArmInfo>('/robots/role', { iface, role })
     setArms((prev) => prev.map((a) => (a.iface === iface ? updated : a)))
@@ -477,53 +610,6 @@ export default function RobotsPage() {
     finally { setSettingMs(null) }
   }
 
-  /**
-   * 마스터/슬레이브를 **팔에 직접 물어서** 가린다.
-   *
-   * 예전에는 사람이 팔을 손으로 움직이면 그걸 감지했다. 이제는 각 팔에 작은 이동
-   * 명령을 넣고 반응을 본다 — 마스터는 외부 명령을 무시하고 피드백도 안 보내므로
-   * 움직이지도, 관절값이 바뀌지도 않는다.
-   *
-   * ⚠ **팔이 실제로 움직인다**(손목 4%). 그리고 시작까지 **10초를 기다린다** —
-   * 부팅 중인 팔에 CAN 이 도착하면 부팅이 깨지는데, 방금 전원을 넣었는지
-   * 화면에서는 알 수 없다.
-   */
-  const handleIdentify = async (iface: string) => {
-    // ⚠ 상태 키는 슬롯이지만 **행을 가리는 값은 iface** 다. 여기에 슬롯 이름을
-    //   넣었다가 어느 행과도 안 맞아 진행 표시가 통째로 안 보인 적이 있다.
-    const slot = `identify_${iface}`
-    const yes = await askConfirm(
-      `${iface} 를 움직여 마스터/슬레이브를 가립니다.\n\n` +
-      '· 손목(joint6)이 가동범위의 4%만큼 돌았다가 제자리로 돌아옵니다\n' +
-      '· 부팅 중인 팔을 깨뜨리지 않으려고 시작까지 10초를 기다립니다\n\n' +
-      '이 팔 주변이 비어 있는지 확인하세요.')
-    if (!yes) return
-    try {
-      await api.post('/robots/identify', { slot, iface })
-      setMotionIface(iface)
-      setMotionStatus({ status: 'waiting', phase: '부팅 중인 팔을 깨뜨리지 않으려고 대기',
-                        remaining: 10, results: {} })
-      motionPollRef.current = setInterval(async () => {
-        const st = await api.get<MotionStatus>(`/robots/find-by-motion/status?slot=${slot}`)
-        setMotionStatus(st)
-        if (st.status === 'done' || st.status === 'error') {
-          clearInterval(motionPollRef.current)
-          setMotionIface(null)
-          const lines = Object.entries(st.results ?? {}).map(([iface, r]) =>
-            r.ok ? `${iface}: ${r.role === 'master' ? '마스터' : '슬레이브'}` +
-                   ` (${r.moved_raw}/${r.commanded_raw} raw 이동)`
-                 : `${iface}: 판별 실패 — ${r.error}`)
-          notify({ level: 'info', source: '로봇',
-            text: lines.join('\n') || '판별할 팔이 없습니다' })
-          await refreshArms()
-        }
-        // 카운트다운을 보여주므로 촘촘히 본다 — 0.4초면 숫자가 뚝뚝 끊긴다
-      }, 150)
-    } catch (e) {
-      notifyError(e instanceof Error ? e.message : '판별을 시작하지 못했습니다')
-    }
-  }
-  useEffect(() => () => clearInterval(motionPollRef.current), [])
 
   // ── 3단계: 설정 ──
   const handleArmConfig = async (iface: string, cfg: Record<string, unknown>) => {
@@ -531,17 +617,6 @@ export default function RobotsPage() {
     setArms((prev) => prev.map((a) => (a.iface === iface ? updated : a)))
   }
 
-  // ── 4단계: 등록 ──
-  const handleRegister = async (iface: string) => {
-    try {
-      const updated = await api.post<ArmInfo>('/robots/register', { iface })
-      setArms((prev) => prev.map((a) => (a.iface === iface ? updated : a)))
-    } catch { notifyError('등록 실패: 연결 및 역할 지정을 확인하세요') }
-  }
-  const handleUnregister = async (iface: string) => {
-    await api.post('/robots/unregister', { iface })
-    setArms((prev) => prev.map((a) => (a.iface === iface ? { ...a, ready: false } : a)))
-  }
 
   // ── 프리셋 ──
   const handlePresetSave = async () => {
@@ -601,8 +676,7 @@ export default function RobotsPage() {
     try {
       await api.post('/robots/clear', {})
       setArms([])
-      setExpandedArm(null)
-      setJogIface(null)
+      setDetailIface(null)
       notify({ level: 'info', source: '로봇',
                text: '로봇 상태를 초기화했습니다 — 1단계부터 다시 시작하세요.' })
     } catch (e) {
@@ -621,7 +695,9 @@ export default function RobotsPage() {
   // 프리셋을 불러오면 `ready` 만 서고 연결은 안 되므로 `ready && !connected` 가
   // 생기는데, 예전 `unconnectedArms` 는 `ready` 를 안 봐서 그 팔이 1단계와
   // 사용 가능 목록에 **동시에** 떴다.
-  const readyArms = arms.filter((a) => a.ready)
+  // 로봇 패널 = 등록됐거나 연결된 팔 전부. [연결]이 등록까지 하므로 보통 같지만,
+  // 옛 세션·프리셋 잔재로 연결-미등록이 남을 수 있어 둘 다 담는다.
+  const robotArms = arms.filter((a) => a.ready || a.connected)
   // ⚠ **전체에서 찾는다.** `connectedArms` 는 `!ready` 라 등록하는 순간 빠지는데,
   //   거기서 리더를 찾으면 등록된 팔끼리는 릴레이 버튼이 영영 안 뜬다.
   // ⚠ **같은 쪽 리더만 짝이 된다.** 예전에는 연결된 첫 리더를 아무 팔에나
@@ -629,8 +705,6 @@ export default function RobotsPage() {
   const leaderFor = (side: string | null | undefined) =>
     side ? arms.find((a) => a.role === 'leader' && a.connected && a.side === side)?.iface
          : undefined
-  const connectedArms = arms.filter((a) => a.connected && !a.ready)
-  const unconnectedArms = arms.filter((a) => !a.connected && !a.ready)
 
   if (loading) {
     return <div className="flex items-center justify-center h-64 gap-2 text-neutral-400"><Spinner /> 로딩 중...</div>
@@ -700,294 +774,162 @@ export default function RobotsPage() {
         {presetMsg && <p className="text-xs text-amber-300 whitespace-pre-wrap">{presetMsg}</p>}
       </div>
 
-      {/* 1단계: 포트 찾기 */}
+      {/* 포트 — 스캔된 CAN 포트 카드. 버스에 지금 뭐가 흐르는지(Rx/Tx)와
+          링크 상태(UP/DOWN)를 보여주고, [연결]은 UP 일 때만 산다. */}
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">1단계: 포트 찾기</h2>
+          <h2 className="text-sm font-semibold">포트</h2>
           <button onClick={handleScan} disabled={scanning}
             className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
             {scanning ? <><Spinner className="inline" /> 스캔 중...</> : '스캔'}
           </button>
         </div>
-        {unconnectedArms.length === 0 && connectedArms.length === 0 && readyArms.length === 0 ? (
+        {ports.length === 0 ? (
           <p className="text-xs text-neutral-400">"스캔"을 눌러 CAN 포트를 검색하세요</p>
-        ) : unconnectedArms.length > 0 ? (
-          <div className="space-y-1">
-            {unconnectedArms.map((arm) => (
-              <div key={arm.iface} className="rounded border border-neutral-700 p-2.5 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm flex items-center gap-2">
-                    {renamingIface === arm.iface ? (
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {ports.map((port) => {
+              const isUp = port.state === 'UP'
+              return (
+                <div key={port.iface}
+                     className={`rounded border p-2.5 space-y-1.5 ${
+                       port.connected ? 'border-green-500/40 bg-green-500/5'
+                                      : 'border-neutral-700'}`}>
+                  <div className="flex items-center gap-2">
+                    {renamingIface === port.iface ? (
                       <input type="text" value={renameValue} autoFocus
                         onChange={(e) => setRenameValue(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') handleRename(arm.iface); if (e.key === 'Escape') setRenamingIface(null) }}
-                        onBlur={() => handleRename(arm.iface)}
-                        className="font-mono px-1.5 py-0.5 rounded bg-neutral-900 border border-blue-500 text-sm text-neutral-100 w-32 focus:outline-none" />
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleRename(port.iface); if (e.key === 'Escape') setRenamingIface(null) }}
+                        onBlur={() => handleRename(port.iface)}
+                        className="font-mono px-1.5 py-0.5 rounded bg-neutral-900 border border-blue-500 text-sm text-neutral-100 w-28 focus:outline-none" />
                     ) : (
-                      <span className="font-mono cursor-pointer hover:text-blue-400"
-                        onClick={() => { setRenamingIface(arm.iface); setRenameValue(arm.iface) }}
-                        title="클릭하여 이름 변경">{arm.iface}</span>
+                      <span className="font-mono text-sm cursor-pointer hover:text-blue-400"
+                        onClick={() => { setRenamingIface(port.iface); setRenameValue(port.iface) }}
+                        title="클릭하여 이름 변경">{port.iface}</span>
                     )}
-                    <span className="text-xs text-neutral-400">{arm.bus_info || ''}</span>
-                    <span className={`text-xs ${arm.state === 'UP' ? 'text-green-400' : 'text-red-400'}`}>{arm.state}</span>
-                    {arm.state === 'UP' && (() => {
-                      const status = canActive[arm.iface]
-                      if (status === 'checking') return <span className="text-xs text-yellow-400"><Spinner className="inline" /></span>
-                      if (status === true) return <span className="text-xs text-green-400">RX</span>
-                      if (status === false) return <span className="text-xs text-red-400">NO DATA</span>
-                      return null
-                    })()}
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                      isUp ? 'bg-green-600/25 text-green-400' : 'bg-red-600/25 text-red-400'}`}>
+                      {port.state ?? '?'}
+                    </span>
+                    {port.connected && <span className="text-[10px] text-green-400">연결됨</span>}
                   </div>
+                  {/* ⚠ 카운터는 인터페이스를 다시 열면 0 이 된다 — 절대값 비교 금물,
+                      "지금 흐르고 있나"의 감으로만 (백엔드 주석과 같은 규칙) */}
+                  <p className="text-[11px] text-neutral-400 tabular-nums">
+                    RX {port.rx_packets ?? '—'} · TX {port.tx_packets ?? '—'}
+                    {port.bitrate ? ` · ${(port.bitrate / 1e6).toFixed(0)}M bps` : ''}
+                    {port.can_state && port.can_state !== 'ERROR-ACTIVE' && (
+                      <span className="ml-1 text-amber-400">{port.can_state}</span>
+                    )}
+                  </p>
+                  <p className="truncate text-[10px] text-neutral-600">{port.bus_info || ''}</p>
                   <div className="flex gap-1">
-                    {arm.state !== 'UP' ? (
-                      <button onClick={() => handleCanUp(arm.iface)}
+                    {isUp ? (
+                      <button onClick={() => handleCanDown(port.iface)} disabled={port.connected}
+                        title={port.connected ? '연결된 로봇이 있어 내릴 수 없습니다' : '인터페이스를 내립니다'}
+                        className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white disabled:opacity-40">
+                        DOWN
+                      </button>
+                    ) : (
+                      <button onClick={() => handleCanUp(port.iface)}
                         className="px-2 py-1 text-xs rounded bg-yellow-600 hover:bg-yellow-500 text-white">
                         UP
                       </button>
-                    ) : (
-                      <button onClick={() => handleCheckActive(arm.iface)} disabled={canActive[arm.iface] === 'checking'}
-                        className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 disabled:opacity-50">
-                        체크
-                      </button>
                     )}
-                    <button onClick={() => handleConnect(arm.iface)} disabled={connectingIface === arm.iface}
-                      className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 flex items-center gap-1">
-                      {connectingIface === arm.iface ? <><Spinner /> 연결 중...</> : '연결'}
+                    <button onClick={() => handleAttach(port.iface)}
+                      disabled={!isUp || port.connected || connectingIface === port.iface}
+                      title={!isUp ? '포트가 UP 이어야 연결할 수 있습니다'
+                        : port.connected ? '이미 연결됨'
+                        : '연결 + 슬레이브 설정 + 토크 OFF + 등록까지 한 번에'}
+                      className="flex-1 px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">
+                      {connectingIface === port.iface ? <><Spinner className="inline" /> 연결 중…</>
+                        : port.connected ? '연결됨' : '연결'}
                     </button>
                   </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-xs text-green-400">모든 포트가 연결되었습니다</p>
-        )}
-      </div>
-
-      {/* 2단계: 인식 & 초기화 + 3단계: 설정 + 4단계: 등록 */}
-      {connectedArms.length > 0 && (
-        <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
-          <h2 className="text-sm font-semibold">2~4단계: 인식 → 설정 → 등록</h2>
-          <div className="space-y-2">
-            {connectedArms.map((arm) => {
-              const isExpanded = expandedArm === arm.iface
-              // 누른 그 팔만 움직인다 — 진행 표시도 그 행에만.
-              const isDetecting = motionIface === arm.iface && !!motionStatus
-              const canRegister = arm.connected && arm.role !== 'unknown'
-
-              return (
-                <div key={arm.iface} className="rounded border border-blue-500/30 bg-blue-500/5 overflow-hidden">
-                  {/* 팔 헤더 */}
-                  <div className="p-3 flex items-center justify-between">
-                    <div className="space-y-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono text-sm">{arm.iface}</span>
-                        <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
-                        {/* 역할 드롭다운 */}
-                        <select value={arm.role} onChange={(e) => handleRoleChange(arm.iface, e.target.value)}
-                          className="px-1.5 py-0.5 text-[10px] rounded bg-neutral-900 border border-neutral-600 text-neutral-100">
-                          <option value="unknown">미지정</option>
-                          <option value="leader">leader</option>
-                          <option value="follower">follower</option>
-                        </select>
-                        <MasterSlaveBadge ms={arm.master_slave} responding={arm.responding} />
-                      </div>
-                      <div className="text-xs text-neutral-400 space-x-3">
-                        <span>모드: {arm.ctrl_mode}</span>
-                        {arm.firmware && <span>FW: {arm.firmware}</span>}
-                        <span>bus: {arm.bus_info || '-'}</span>
-                      </div>
-                    </div>
-                    <div className="flex gap-2 shrink-0">
-                      {/* 움직임 감지 */}
-                      {isDetecting && motionStatus ? (
-                        <div className="text-xs text-neutral-400 flex items-center gap-2">
-                          {/* 절차가 몇 초씩 조용하다 — **무엇을, 얼마나 더**
-                              기다리는지 둘 다 보여야 멈춘 것과 구분된다. */}
-                          <span className="flex items-center gap-1.5 text-amber-400">
-                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400"
-                                  aria-hidden />
-                            <span>{motionStatus.phase ?? '확인 중'}</span>
-                            {motionStatus.remaining > 0 && (
-                              <span className="tabular-nums font-medium">
-                                {motionStatus.remaining.toFixed(1)}s
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                      ) : (
-                        <button onClick={() => handleIdentify(arm.iface)} disabled={!!motionIface}
-                          className="px-2 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50"
-                          title="이동 명령에 반응하는지로 마스터/슬레이브 판별 (팔이 움직입니다)">찾기</button>
-                      )}
-                      <button onClick={() => handleSetMasterSlave(arm.iface, true)} disabled={settingMs === arm.iface}
-                        className="px-2 py-1 text-xs rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50"
-                        title="이 팔을 마스터(示教入力)로 설정">마스터</button>
-                      <button onClick={() => handleSetMasterSlave(arm.iface, false)} disabled={settingMs === arm.iface}
-                        className="px-2 py-1 text-xs rounded bg-cyan-700 hover:bg-cyan-600 text-white disabled:opacity-50"
-                        title="이 팔을 슬레이브(運動出力)로 설정">슬레이브</button>
-                      <button onClick={() => setExpandedArm(isExpanded ? null : arm.iface)}
-                        className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300">설정</button>
-                      <button onClick={() => handleRegister(arm.iface)} disabled={!canRegister}
-                        className="px-3 py-1 text-xs rounded bg-green-600 hover:bg-green-500 text-white disabled:opacity-50">등록</button>
-                      <button onClick={() => handleDisconnect(arm.iface)}
-                        className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">해제</button>
-                    </div>
-                  </div>
-
-                  {/* 설정 패널 (펼침) */}
-                  {isExpanded && (
-                    <div className="border-t border-neutral-700 p-3 space-y-3 bg-neutral-900/50">
-                      {/* 웹 조그 — 추론을 안 띄우고 이 팔을 움직인다.
-                          마스터는 외부 명령을 무시하므로 이유를 적고 막는다. */}
-                      <JogPanel
-                        iface={arm.iface}
-                        commandable={arm.connected && arm.role === 'follower'}
-                        leader={leaderFor(arm.side)}
-                        side={arm.side}
-                        reason={
-                          !arm.connected ? '연결되지 않아 조작할 수 없습니다'
-                          : arm.role === 'leader'
-                            ? '마스터(리더)는 외부 명령을 무시합니다 — 슬레이브로 바꾸거나 팔로워 팔을 고르세요'
-                            : '역할을 모릅니다 — 먼저 [찾기] 로 판별하세요'
-                        } />
-
-                      <h4 className="text-xs font-semibold text-neutral-400">
-                        {arm.role === 'leader' ? 'Leader 설정' : 'Follower 설정'}
-                      </h4>
-                      {arm.role === 'follower' || arm.role === 'unknown' ? (
-                        <div className="space-y-2">
-                          <label className="flex items-center gap-2 text-xs">
-                            <input type="checkbox"
-                              checked={(arm.config.disable_torque_on_disconnect as boolean) ?? true}
-                              onChange={(e) => handleArmConfig(arm.iface, { disable_torque_on_disconnect: e.target.checked })} />
-                            연결 해제 시 토크 비활성화
-                          </label>
-                          <div className="flex items-center gap-2 text-xs">
-                            <span className="text-neutral-400 w-40">max_relative_target</span>
-                            <input type="number" step="0.1"
-                              value={(arm.config.max_relative_target as number) ?? ''}
-                              onChange={(e) => handleArmConfig(arm.iface, { max_relative_target: e.target.value ? Number(e.target.value) : null })}
-                              placeholder="null (무제한)"
-                              className="flex-1 px-2 py-1 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
-                          </div>
-                          <div className="text-xs">
-                            <span className="text-neutral-400">cameras (JSON)</span>
-                            <textarea value={JSON.stringify(arm.config.cameras ?? {}, null, 2)}
-                              onChange={(e) => { try { handleArmConfig(arm.iface, { cameras: JSON.parse(e.target.value) }) } catch {} }}
-                              rows={3}
-                              className="w-full mt-1 px-2 py-1 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 font-mono text-[11px] focus:outline-none focus:border-blue-500" />
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 text-xs">
-                          <span className="text-neutral-400 w-40">gripper_open_pos</span>
-                          <input type="number" step="1"
-                            value={(arm.config.gripper_open_pos as number) ?? 50}
-                            onChange={(e) => handleArmConfig(arm.iface, { gripper_open_pos: Number(e.target.value) })}
-                            className="flex-1 px-2 py-1 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               )
             })}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* 사용 가능 로봇 */}
+      {/* 로봇 — 연결·등록된 팔 카드. 움직임이 감지되면 깜빡인다
+          (마스터는 지령, 슬레이브는 피드백으로 — 백엔드가 가려서 잰다). */}
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
-        <h2 className="text-sm font-semibold">사용 가능 로봇</h2>
-        {readyArms.length === 0 ? (
-          <p className="text-xs text-neutral-400">등록된 로봇이 없습니다. 위 단계를 완료하세요.</p>
+        <h2 className="text-sm font-semibold">로봇</h2>
+        {robotArms.length === 0 ? (
+          <p className="text-xs text-neutral-400">등록된 로봇이 없습니다 — 포트에서 [연결]을 누르세요.</p>
         ) : (
-          <div className="space-y-1">
-            {readyArms.map((arm) => (
-              <div key={arm.iface} className="rounded border border-green-500/30 bg-green-500/5">
-              <div className="flex items-center justify-between p-2.5">
-                <div className="flex items-center gap-2">
-                  {/* 등록됐다고 연결까지 되어 있는 것은 아니다 — 팔 전원이 꺼져 있거나
-                      프리셋 로드 중 연결이 실패하면 여기 끊긴 채로 남는다. */}
-                  <span className={arm.connected ? 'text-green-400 text-sm' : 'text-amber-400 text-sm'}>
-                    {arm.connected ? '✓' : '⚠'}
-                  </span>
-                  <span className="font-mono text-sm">{arm.iface}</span>
-                  <span className={`px-1.5 py-0.5 text-[10px] rounded ${arm.role === 'leader' ? 'bg-amber-600/30 text-amber-400' : 'bg-blue-600/30 text-blue-400'}`}>
-                    {arm.role}
-                  </span>
-                  <MasterSlaveBadge ms={arm.master_slave} responding={arm.responding} />
-                  {/* 좌/우 (양팔) — 클릭 순환 왼→오른→해제. 등록에 저장된다 */}
-                  <button onClick={() => handleSideToggle(arm)}
-                    title="양팔에서 이 팔의 좌/우 (클릭해서 변경)"
-                    className={`px-1.5 py-0.5 text-[10px] rounded border ${
-                      arm.side ? 'bg-purple-600/30 text-purple-300 border-purple-500/40'
-                               : 'bg-neutral-700/50 text-neutral-500 border-neutral-600'}`}>
-                    {arm.side === 'left' ? '왼팔' : arm.side === 'right' ? '오른팔' : '좌/우?'}
-                  </button>
-                  <span className="text-xs text-neutral-400">
-                    {arm.role === 'leader' ? 'piper_leader' : 'piper_follower'}
-                  </span>
-                  {!arm.connected && <span className="text-[10px] text-amber-400">연결 끊김</span>}
-                  {/* ⚠ 어긋나면 **조용히 안 움직인다** — 팔로워가 마스터 모드면
-                      외부 명령을 통째로 무시한다. 문구는 백엔드가 만든다. */}
-                  {arm.mode_mismatch && (
-                    <span className="rounded bg-red-600/25 px-1.5 py-0.5 text-[10px] text-red-300"
-                          title={arm.mode_mismatch}>⚠ 모드 불일치</span>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  {/* 끊긴 팔을 다시 붙일 길 — 1단계 목록에서는 이미 빠졌으므로
-                      여기에 없으면 등록을 끝낼 방법이 없어진다. */}
-                  {!arm.connected && (
-                    <button onClick={() => handleConnect(arm.iface)} disabled={connectingIface === arm.iface}
-                      className="px-3 py-1 text-xs rounded bg-green-600 hover:bg-green-500 text-white disabled:opacity-50">
-                      {connectingIface === arm.iface ? '연결 중...' : '연결'}
+          <div className="space-y-1.5">
+            {robotArms.map((arm) => (
+              <div key={arm.iface}
+                   className={`rounded border p-2.5 transition-shadow ${
+                     arm.moving
+                       ? 'border-amber-400 bg-amber-500/10 ring-1 ring-amber-400/70 animate-pulse'
+                       : arm.ready ? 'border-green-500/30 bg-green-500/5'
+                                   : 'border-blue-500/30 bg-blue-500/5'}`}>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap min-w-0">
+                    <span className={arm.connected ? 'text-green-400 text-sm' : 'text-amber-400 text-sm'}>
+                      {arm.connected ? '✓' : '⚠'}
+                    </span>
+                    <span className="font-mono text-sm cursor-pointer hover:text-blue-400"
+                      onClick={() => { setRenamingIface(arm.iface); setRenameValue(arm.iface) }}
+                      title="포트(=로봇) 이름 — 클릭하여 변경">{arm.iface}</span>
+                    <select value={arm.role} onChange={(e) => handleRoleChange(arm.iface, e.target.value)}
+                      className="px-1.5 py-0.5 text-[10px] rounded bg-neutral-900 border border-neutral-600 text-neutral-100">
+                      <option value="unknown">역할?</option>
+                      <option value="leader">leader</option>
+                      <option value="follower">follower</option>
+                    </select>
+                    <MasterSlaveBadge ms={arm.master_slave} responding={arm.responding} />
+                    <button onClick={() => handleSideToggle(arm)}
+                      title="양팔에서 이 팔의 좌/우 (클릭해서 변경)"
+                      className={`px-1.5 py-0.5 text-[10px] rounded border ${
+                        arm.side ? 'bg-purple-600/30 text-purple-300 border-purple-500/40'
+                                 : 'bg-neutral-700/50 text-neutral-500 border-neutral-600'}`}>
+                      {arm.side === 'left' ? '왼팔' : arm.side === 'right' ? '오른팔' : '좌/우?'}
                     </button>
-                  )}
-                  <button onClick={() => handleSetMasterSlave(arm.iface, true)} disabled={settingMs === arm.iface}
-                    className="px-3 py-1 text-xs rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50"
-                    title="이 팔을 마스터(示教入力)로 설정">마스터</button>
-                  <button onClick={() => handleSetMasterSlave(arm.iface, false)} disabled={settingMs === arm.iface}
-                    className="px-3 py-1 text-xs rounded bg-cyan-700 hover:bg-cyan-600 text-white disabled:opacity-50"
-                    title="이 팔을 슬레이브(運動出力)로 설정">슬레이브</button>
-                  <button onClick={() => setParkingIface(arm.iface)}
-                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white">파킹 보정</button>
-                  {/* ⚠ ON 이 없으면 토크를 끈 뒤 되돌릴 길이 화면에 없다.
-                      조그·릴레이는 시작할 때 알아서 켜지만, 그 전에 팔을 세워
-                      두고 싶을 때가 있다. */}
-                  <button onClick={async () => {
-                    try {
-                      await api.post('/robots/parking/torque?enable=true', { iface: arm.iface })
-                    } catch { notifyError('토크 ON 실패') }
-                  }}
-                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white">토크 ON</button>
-                  <button onClick={async () => {
-                    try {
-                      await api.post('/robots/parking/torque?enable=false', { iface: arm.iface })
-                    } catch { notifyError('토크 OFF 실패') }
-                  }}
-                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-amber-600 text-neutral-300 hover:text-white">토크 OFF</button>
-                  {/* ⚠ 조작 패널을 여는 자리. 등록된 팔이 **여기** 그려지는데
-                      패널을 미등록 목록에만 붙였다가 화면에서 통째로 안 보였다. */}
-                  {arm.connected && (
-                    <button onClick={() => setZeroIface(arm.iface)}
-                      title="모터 플래시에 영점을 굽습니다 — 되돌릴 수 없습니다"
-                      className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">
-                      영점(HW)</button>
-                  )}
-                  {arm.connected && (
-                    <button onClick={() => setJogIface(arm.iface)}
-                      className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-amber-600
-                                 text-neutral-300 hover:text-white">
-                      조작</button>
-                  )}
-                  <button onClick={() => handleUnregister(arm.iface)}
-                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">등록해제</button>
+                    {arm.moving && <span className="text-[10px] text-amber-400">● 움직임</span>}
+                    {!arm.connected && <span className="text-[10px] text-amber-400">연결 끊김</span>}
+                    {arm.mode_mismatch && (
+                      <span className="rounded bg-red-600/25 px-1.5 py-0.5 text-[10px] text-red-300"
+                            title={arm.mode_mismatch}>⚠ 모드 불일치</span>
+                    )}
+                  </div>
+                  <div className="flex gap-1.5 flex-wrap shrink-0">
+                    {!arm.connected && (
+                      <button onClick={() => handleAttach(arm.iface)} disabled={connectingIface === arm.iface}
+                        className="px-2.5 py-1 text-xs rounded bg-green-600 hover:bg-green-500 text-white disabled:opacity-50">
+                        {connectingIface === arm.iface ? '연결 중…' : '연결'}
+                      </button>
+                    )}
+                    <button onClick={() => handleSetMasterSlave(arm.iface, true)} disabled={settingMs === arm.iface}
+                      className="px-2.5 py-1 text-xs rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50"
+                      title="이 팔을 마스터(示教入力)로 설정">마스터</button>
+                    <button onClick={() => handleSetMasterSlave(arm.iface, false)} disabled={settingMs === arm.iface}
+                      className="px-2.5 py-1 text-xs rounded bg-cyan-700 hover:bg-cyan-600 text-white disabled:opacity-50"
+                      title="이 팔을 슬레이브(運動出力)로 설정">슬레이브</button>
+                    <button onClick={async () => {
+                      try { await api.post('/robots/parking/torque?enable=true', { iface: arm.iface }) }
+                      catch { notifyError('토크 ON 실패') }
+                    }} className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white">토크 ON</button>
+                    <button onClick={async () => {
+                      try { await api.post('/robots/parking/torque?enable=false', { iface: arm.iface }) }
+                      catch { notifyError('토크 OFF 실패') }
+                    }} className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-amber-600 text-neutral-300 hover:text-white">토크 OFF</button>
+                    <button onClick={() => handleParkNow(arm.iface)} disabled={!arm.connected}
+                      title="토크를 걸고 저장된 파킹 자세로 보냅니다"
+                      className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-40">파킹</button>
+                    <button onClick={() => handleResetArm(arm.iface)} disabled={!arm.connected}
+                      title="0x150 재동기화 — 슬립으로 밀린 보고 위치를 실제에 맞춥니다"
+                      className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-40">리셋</button>
+                    <button onClick={() => setDetailIface(arm.iface)} disabled={!arm.connected}
+                      className="px-2.5 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-40">상세</button>
+                    <button onClick={() => handleDetach(arm.iface)}
+                      className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">해제</button>
+                  </div>
                 </div>
-              </div>
-
               </div>
             ))}
           </div>
@@ -1014,54 +956,16 @@ export default function RobotsPage() {
       )}
 
       {/* 모달은 탭 밖에 둔다 — 탭을 바꾼다고 사라져야 할 것들이 아니다. */}
-      {/* 조작(조그) 모달 — 행 아래 펼침이었는데 긴 목록에서 다른 팔 행이 밀려
-          내려갔다. 팔이 사라지거나 연결이 끊기면 조건이 깨져 스스로 닫힌다. */}
+      {/* 상세 창 — 파킹/영점/조작. 팔이 끊기면 조건이 깨져 스스로 닫힌다. */}
       {(() => {
-        const arm = jogIface ? readyArms.find((a) => a.iface === jogIface) : null
+        const arm = detailIface ? arms.find((a) => a.iface === detailIface) : null
         if (!arm || !arm.connected) return null
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-               onClick={() => setJogIface(null)}>
-            <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-lg border
-                            border-neutral-700 bg-neutral-900 p-5 space-y-3"
-                 onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-lg font-semibold text-neutral-100">
-                    조작 — {arm.iface}
-                  </h2>
-                  <p className="text-xs text-neutral-400">
-                    {arm.role}{arm.side ? ` · ${arm.side === 'left' ? '왼팔' : '오른팔'}` : ''}
-                    {' '}— 팔이 실제로 움직입니다
-                  </p>
-                </div>
-                <button onClick={() => setJogIface(null)}
-                        className="shrink-0 rounded px-2 py-1 text-sm text-neutral-400 hover:text-white">
-                  닫기
-                </button>
-              </div>
-              <JogPanel
-                iface={arm.iface}
-                commandable={arm.role === 'follower'}
-                reason={arm.role === 'leader'
-                  ? '마스터(리더)는 외부 명령을 무시합니다 — 이 팔로 팔로워를 끄세요'
-                  : '역할을 모릅니다 — 먼저 [찾기] 로 판별하세요'}
-                leader={leaderFor(arm.side)}
-                side={arm.side} />
-            </div>
-          </div>
+          <ArmDetailModal arm={arm} leader={leaderFor(arm.side)}
+            onConfig={(cfg) => handleArmConfig(arm.iface, cfg)}
+            onClose={() => setDetailIface(null)} />
         )
       })()}
-
-      {/* 하드웨어 영점 모달 — 파킹 보정(소프트웨어)과 **다른 물건**이다 */}
-      {zeroIface && (
-        <ZeroCalibrationModal iface={zeroIface} onClose={() => setZeroIface(null)} />
-      )}
-
-      {/* 파킹 보정 모달 */}
-      {parkingIface && (
-        <ParkingCalibrationModal iface={parkingIface} onClose={() => setParkingIface(null)} />
-      )}
 
       {/* USB 진단/복구 모달 */}
       {usbModalOpen && <UsbInfoModal onClose={() => setUsbModalOpen(false)} />}

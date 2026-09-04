@@ -23,8 +23,8 @@ import { api } from '../services/api'
 
 type Result = { ok: boolean; raw_before?: number | null; raw_after?: number | null; error?: string }
 
-export default function ZeroCalibrationModal({ iface, onClose }:
-  { iface: string; onClose: () => void }) {
+/** 상세 창의 영점 탭이 임베드한다 — 오버레이·헤더 없는 내용물만. */
+export function ZeroCalibrationPanel({ iface }: { iface: string }) {
   const { notify, confirm } = useSystemMessage()
   const [raw, setRaw] = useState<Record<string, number>>({})
   const [busy, setBusy] = useState<string | null>(null)
@@ -108,26 +108,7 @@ export default function ZeroCalibrationModal({ iface, onClose }:
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-         onClick={onClose}>
-      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border
-                      border-red-500/40 bg-neutral-900 p-5 space-y-4"
-           onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold text-neutral-100">
-              하드웨어 영점 — {iface}
-            </h2>
-            <p className="text-xs text-neutral-400">
-              모터 플래시에 굽습니다. [파킹 보정]과 다른 물건입니다.
-            </p>
-          </div>
-          <button onClick={onClose}
-                  className="shrink-0 rounded px-2 py-1 text-sm text-neutral-400 hover:text-white">
-            닫기
-          </button>
-        </div>
-
+    <div className="space-y-4">
         {/* ⚠ 이 경고가 없으면 버튼 일곱 개짜리 평범한 창으로 보인다. */}
         <div className="space-y-1 rounded border border-red-500/40 bg-red-500/10 px-3 py-2
                         text-xs leading-relaxed text-red-300">
@@ -199,6 +180,32 @@ export default function ZeroCalibrationModal({ iface, onClose }:
           한 번에 하나씩만 굽습니다. 일곱 개를 묶어 실행하면 하나가 틀렸을 때
           어느 것이 틀렸는지 알 수 없습니다.
         </p>
+    </div>
+  )
+}
+
+/** 단독 모달 래퍼 — 상세 창 밖에서 영점만 열고 싶을 때. */
+export default function ZeroCalibrationModal({ iface, onClose }:
+  { iface: string; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+         onClick={onClose}>
+      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border
+                      border-red-500/40 bg-neutral-900 p-5 space-y-4"
+           onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-neutral-100">
+              하드웨어 영점 — {iface}
+            </h2>
+            <p className="text-xs text-neutral-400">모터 플래시에 굽습니다. [파킹]과 다른 물건입니다.</p>
+          </div>
+          <button onClick={onClose}
+                  className="shrink-0 rounded px-2 py-1 text-sm text-neutral-400 hover:text-white">
+            닫기
+          </button>
+        </div>
+        <ZeroCalibrationPanel iface={iface} />
       </div>
     </div>
   )

@@ -834,18 +834,55 @@ class RobotManager:
 
     # ── 현재 상태 ──
 
+    # ── 움직임 감지 (카드 깜빡임용) ──
+    #
+    # 관절 raw 가 최근에 이만큼(0.001° 단위) 넘게 움직였으면 "움직이는 중"이다.
+    # 0.3° — 정지 팔의 엔코더 잡음(수십 단위)보다 훨씬 크고, 사람 손이 스치기만
+    # 해도 넘는 크기다. `read_joints_raw` 는 마스터면 지령(0x15x), 슬레이브면
+    # 피드백을 읽으므로 **모드에 맞는 신호로** 감지된다 — 마스터는 피드백을
+    # 안 보내서 피드백만 보면 영원히 "정지"로 보인다 (arm.py 주석 참고).
+    _MOVE_RAW = 300
+    _MOVE_HOLD_S = 2.0
+
+    def _is_moving(self, arm) -> bool:
+        try:
+            raw = arm.read_joints_raw()
+        except Exception:
+            raw = None
+        if not raw:
+            return False
+        import time as _t
+        now = _t.monotonic()
+        prev = self._motion.get(arm.iface)
+        self._motion[arm.iface] = (now, raw, prev[2] if prev else 0.0)
+        if prev is None:
+            return False
+        _, prev_raw, last_move = prev
+        moved = any(abs(a - b) > self._MOVE_RAW for a, b in zip(raw, prev_raw))
+        if moved:
+            self._motion[arm.iface] = (now, raw, now)
+            return True
+        return (now - last_move) < self._MOVE_HOLD_S
+
     def get_current(self) -> dict:
         # ⚠ ctrl_mode 만 다시 읽는다. 마스터/슬레이브는 **연결할 때 한 번**이다 —
         #   저절로 바뀌지 않는 값이고, 판별은 버스를 0.35초 듣는 일이라 폴링에
         #   태우면 팔 2대에 매 초의 0.7초를 쓴다 (`Arm.refresh_mode` 주석 참고).
+        if not hasattr(self, "_motion"):
+            self._motion = {}
         for arm in self.arms.values():
             if arm.connected:
                 arm.refresh_mode()
+        out = []
+        for a in self.arms.values():
+            d = a.to_dict()
+            d["moving"] = self._is_moving(a) if a.connected else False
+            out.append(d)
         return {
             "selected_type": self.selected_type,
             "config_name": self.config_name,
             "config": self.load_config(),
-            "arms": [a.to_dict() for a in self.arms.values()],
+            "arms": out,
         }
 
 

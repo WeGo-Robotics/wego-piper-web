@@ -198,8 +198,10 @@ def test_registered_arms_get_the_controls_too():
     패널이 어디에도 없었다.
     """
     src = _page()
-    ready_block = src.split("readyArms.map", 1)[1]
-    assert "JogPanel" in ready_block, "등록된 팔에 조작 패널이 없다"
+    cards = src.split("robotArms.map", 1)[1]
+    assert "상세" in cards, "로봇 카드에서 조작(상세 창)으로 가는 길이 없다"
+    modal = src.split("function ArmDetailModal", 1)[1]
+    assert "JogPanel" in modal, "상세 창에 조작 패널이 없다"
 
 
 def test_the_leader_is_looked_up_across_all_arms():
@@ -214,9 +216,9 @@ def test_the_leader_must_be_on_the_same_side():
     사람이 실수하는 자리다. 예전에는 연결된 **첫** 리더를 아무 팔에나 넘겼다."""
     src = _page()
     assert "a.side === side" in src, "같은 쪽을 안 본다"
-    assert src.count("leader={leaderFor(arm.side)}") == 2, "두 목록이 같은 규칙을 써야 한다"
+    assert "leader={leaderFor(arm.side)}" in src, "상세 창이 같은 쪽 리더 규칙을 안 쓴다"
 
 
 def test_the_side_is_passed_so_the_panel_can_explain():
     """좌/우 미지정 팔은 짝을 정할 수 없다 — 화면이 그 이유를 말해야 한다."""
-    assert _page().count("side={arm.side}") == 2
+    assert "side={arm.side}" in _page()
