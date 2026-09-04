@@ -52,7 +52,7 @@ _running = True
 _METHODS = {
     "scan", "connect", "disconnect", "release_all", "info",
     "refresh_mode", "set_master_slave", "read_joints", "read_joints_raw",
-    "motor_enabled", "bus_status", "versions",
+    "motor_enabled", "bus_status", "bus_reset", "versions",
     "diag_start", "diag_status", "diag_stop", "diag_result",
     "clear_errors", "read_error", "enable_torque", "disable_torque", "go_parking",
     "start_motion_detect", "motion_status", "start_identify",

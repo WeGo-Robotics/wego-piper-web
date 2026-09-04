@@ -84,3 +84,42 @@ def test_auto_refresh_is_optional_and_off_by_default():
     assert "useState(false)" in src, "자동 새로고침이 기본으로 켜져 있다"
     assert "INTERVALS" in src, "주기를 고를 수 없다"
     assert "새로고침" in PANEL.read_text(), "수동 새로고침 버튼이 없다"
+
+
+# ── 버스 초기화 ─────────────────────────────────────────────────────────────
+
+def test_reset_does_not_claim_to_zero_the_counters():
+    """⚠ **down/up 으로 오류 카운터가 안 지워진다** — gs_usb 실측:
+    130,730,379 → 130,730,379. 지운 척하면 사람이 "고쳐졌다" 로 읽는다.
+    대신 **기준선**을 잡아 "초기화 이후" 를 센다."""
+    import inspect
+    import textwrap
+
+    from piper_robot.can import reset_bus
+
+    src = python_code_only(textwrap.dedent(inspect.getsource(reset_bus)))
+    assert "restart-ms" not in src, "지원하지 않는 자동 복구를 건다"
+    assert "counters" in src, "기준선을 잡을 값을 안 돌려준다"
+
+
+def test_reset_refuses_while_the_arm_is_in_use(monkeypatch):
+    """⚠ 초기화는 연결을 끊는다 — 돌고 있는 작업이 통째로 죽는다."""
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from app.routers.robots import BusResetRequest, bus_reset
+    from app.services import exclusivity
+
+    monkeypatch.setattr(exclusivity, "running",
+                        lambda: [exclusivity.Activity.TELEOP])
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(bus_reset(BusResetRequest(iface="can0")))
+    assert err.value.status_code == 409
+
+
+def test_the_screen_says_the_counters_survive():
+    """⚠ 화면이 "0 으로 초기화됩니다" 라고 하면 거짓말이다 — 실제로는 안 지워진다."""
+    src = PANEL.read_text()
+    assert "안 지워집니다" in src
+    assert "초기화 이후" in src

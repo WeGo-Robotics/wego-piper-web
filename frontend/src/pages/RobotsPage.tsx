@@ -259,6 +259,8 @@ function Spinner({ className = '' }: { className?: string }) {
 type ArmInfo = {
   iface: string; bus_info: string; state: string; connected: boolean
   role: string; ctrl_mode: string; master_slave?: 'master' | 'slave' | null
+  /** 버스에서 무언가 오고 있나. false = 팔이 조용하다 — 마스터와 다르다. */
+  responding?: boolean | null
   /** 역할과 팔 모드가 어긋난 사유. **판정은 백엔드가 한다.** */
   mode_mismatch?: string | null
   firmware: string; slot: string | null; side?: 'left' | 'right' | null
@@ -266,7 +268,21 @@ type ArmInfo = {
 }
 
 // 하드웨어 마스터(示教输入)/슬레이브(运动输出) 모드 뱃지
-function MasterSlaveBadge({ ms }: { ms?: 'master' | 'slave' | null }) {
+function MasterSlaveBadge({ ms, responding }: {
+  ms?: 'master' | 'slave' | null
+  responding?: boolean | null
+}) {
+  // ⚠ **조용한 팔을 마스터라 부르지 않는다.** 둘 다 슬레이브 피드백이 없지만
+  //   원인도 대처도 다르다 — 실기에서 전원을 내렸다 켠 뒤 네 대가 전부 "마스터"
+  //   로 표시돼 원인을 가리기 어려웠다. 켜진 팔은 가만히 있어도 무언가 뿌린다.
+  if (responding === false) {
+    return (
+      <span className="rounded bg-red-600/30 px-1.5 py-0.5 text-[10px] font-medium text-red-300"
+        title="CAN 에서 아무 프레임도 오지 않습니다 — 전원·비상정지·케이블을 확인하세요">
+        응답 없음
+      </span>
+    )
+  }
   if (!ms) return null
   const isMaster = ms === 'master'
   return (
@@ -759,7 +775,7 @@ export default function RobotsPage() {
                           <option value="leader">leader</option>
                           <option value="follower">follower</option>
                         </select>
-                        <MasterSlaveBadge ms={arm.master_slave} />
+                        <MasterSlaveBadge ms={arm.master_slave} responding={arm.responding} />
                       </div>
                       <div className="text-xs text-neutral-400 space-x-3">
                         <span>모드: {arm.ctrl_mode}</span>
@@ -886,7 +902,7 @@ export default function RobotsPage() {
                   <span className={`px-1.5 py-0.5 text-[10px] rounded ${arm.role === 'leader' ? 'bg-amber-600/30 text-amber-400' : 'bg-blue-600/30 text-blue-400'}`}>
                     {arm.role}
                   </span>
-                  <MasterSlaveBadge ms={arm.master_slave} />
+                  <MasterSlaveBadge ms={arm.master_slave} responding={arm.responding} />
                   {/* 좌/우 (양팔) — 클릭 순환 왼→오른→해제. 등록에 저장된다 */}
                   <button onClick={() => handleSideToggle(arm)}
                     title="양팔에서 이 팔의 좌/우 (클릭해서 변경)"
@@ -972,7 +988,8 @@ export default function RobotsPage() {
       {tab === 'diag' && (
         <DiagnosticsPanel
           arms={arms.map((a) => ({ iface: a.iface, connected: !!a.connected,
-                                   master_slave: a.master_slave }))} />
+                                   master_slave: a.master_slave,
+                                   responding: a.responding }))} />
       )}
 
       {tab === 'alignment' && (

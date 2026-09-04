@@ -43,7 +43,8 @@ const FLAG_LABEL: Record<string, string> = {
 const num = (v: number | null | undefined, d = 3) => v == null ? '—' : v.toFixed(d)
 
 export default function DiagnosticsPanel({ arms }: {
-  arms: { iface: string; connected: boolean; master_slave?: string | null }[]
+  arms: { iface: string; connected: boolean
+          master_slave?: string | null; responding?: boolean | null }[]
 }) {
   const { notify, confirm } = useSystemMessage()
   const [iface, setIface] = useState('')
@@ -54,7 +55,9 @@ export default function DiagnosticsPanel({ arms }: {
   const [busy, setBusy] = useState(false)
 
   // ⚠ 마스터는 외부 명령을 무시한다 — "안 움직였다" 가 고장으로 오독된다.
-  const usable = arms.filter((a) => a.connected && a.master_slave !== 'master')
+  //   조용한 팔도 마찬가지다: 안 움직이는 이유가 관절이 아니라 전원이다.
+  const usable = arms.filter((a) => a.connected && a.master_slave !== 'master'
+                                    && a.responding !== false)
 
   const poll = useCallback(async () => {
     try { setStatus(await api.get<Status>('/robots/diag/status')) } catch { /* 무시 */ }

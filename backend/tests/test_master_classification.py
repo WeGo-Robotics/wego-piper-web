@@ -17,12 +17,19 @@ _ROBOT = Path(__file__).resolve().parents[2] / "robot"
 sys.path.insert(0, str(_ROBOT))
 
 
-def _arm(monkeypatch, groups=None, error=None):
+def _arm(monkeypatch, groups=None, error=None, alive=True):
+    """`alive` — 조용할 때 **물어보면 답하는가**.
+
+    ⚠ 한가한 마스터는 아무것도 안 보내므로 침묵은 증거가 못 된다. 죽은 팔과
+    버스 위에서 똑같이 조용하다. 그래서 조용하면 펌웨어 질의로 물어보고, 그
+    답 여부가 "마스터" 와 "응답 없음" 을 가른다.
+    """
     from piper_robot import arm as arm_mod
 
     a = arm_mod.Arm.__new__(arm_mod.Arm)
     a.iface = "can9"
-    a.is_master = None
+    a.is_master = a.responding = None
+    monkeypatch.setattr(arm_mod.Arm, "_probe_alive", lambda self, wait=0.4: alive)
     seen = {"error": error} if error else {
         "groups": {"slave_fb": 0, "master_fb": 0, "master_ctrl": 0,
                    "driver": 0, "other": 0, **(groups or {})}}
@@ -42,10 +49,27 @@ def test_a_moving_master_is_still_a_master(monkeypatch):
 
 
 def test_an_idle_master_is_a_master(monkeypatch):
-    """가만히 있는 마스터는 아무것도 안 보낸다."""
-    a = _arm(monkeypatch)
+    """가만히 있는 마스터는 아무것도 안 보낸다 — 그래도 **물어보면 답한다.**"""
+    a = _arm(monkeypatch, alive=True)
     a._classify_master()
-    assert a.is_master is True
+    assert a.is_master is True and a.responding is True
+
+
+def test_a_silent_arm_that_answers_nothing_is_not_called_a_master():
+    """⚠ 침묵만으로는 못 가른다 — 한가한 마스터와 죽은 팔이 버스에서 똑같다.
+    예전에는 둘 다 "마스터" 라 불렀는데, 하필 팔이 죽었을 때 화면이 거짓말을
+    한다. 실기에서 전원을 내렸다 켠 뒤 네 대가 전부 master 로 표시돼 원인을
+    가리기 어려웠다 (실제 원인은 전원이었다)."""
+    import pytest as _pytest
+
+    mp = _pytest.MonkeyPatch()
+    try:
+        a = _arm(mp, alive=False)
+        a._classify_master()
+        assert a.responding is False, "죽은 팔을 살아 있다고 한다"
+        assert a.is_master is None, "죽은 팔을 마스터라 부른다"
+    finally:
+        mp.undo()
 
 
 def test_a_slave_is_recognised_by_its_periodic_feedback(monkeypatch):
@@ -129,3 +153,66 @@ def test_the_daemon_defaults_to_not_classifying():
     """⚠ 기본값이 판별이면, 인자를 안 넘기는 옛 호출부가 **조용히** 비싼 경로를 탄다."""
     body = _HUB.read_text().split("def refresh_mode", 1)[1].split("\n    def ", 1)[0]
     assert "classify: bool = False" in body, "기본값이 판별이다"
+
+
+# ── 언제 판정하나 ───────────────────────────────────────────────────────────
+
+def test_the_polling_path_never_classifies():
+    """⚠ **마스터/슬레이브는 실시간으로 판정하지 않는다.** 저절로 바뀌지 않는
+    값이고, 판정은 버스를 0.35초 듣는 일이라 폴링에 태우면 비싸기만 한 게 아니라
+    **틀릴 창이 폴링 횟수만큼 열린다.** 실제로 옛 규칙에서 조작 중인 리더가 매
+    폴링마다 슬레이브로 뒤집혀 수집 내내 화면이 거꾸로였다.
+
+    사용자가 두 번 못박은 규칙이다 — 판정은 사람이 [찾기] 를 눌렀을 때만."""
+    import inspect
+    import textwrap
+
+    from conftest import python_code_only
+    from app.services.robot_manager import RobotManager
+    from piper_robot.arm import Arm
+
+    poll = python_code_only(textwrap.dedent(inspect.getsource(RobotManager.get_current)))
+    assert "classify" not in poll, "1초 폴링 경로가 판정을 부른다"
+
+    # 기본값이 False 여야 한다 — 실수로 부르는 쪽이 조용히 판정하면 안 된다
+    assert inspect.signature(Arm.refresh_mode).parameters["classify"].default is False
+
+
+def test_classification_only_runs_where_a_person_asked_for_it():
+    """판정을 켜는 자리는 **사람이 시작한 순간**뿐이어야 한다.
+
+    - `connect` — 사람이 연결을 눌렀다
+    - `set_master_slave` / `apply_role_mode` — 방금 바꾼 값을 확인한다
+    - `start_identify` — 찾기, 바로 그 버튼이다
+    - `refresh_mode` — `classify=True` 를 받았을 때만 (그 자체가 요청이다)
+
+    ⚠ 새 기능이 여기 끼어들면 규칙이 조용히 무너진다. **호출 노드**만 보고
+    (docstring 은 세지 않는다) 감싸는 함수 이름으로 잡는다 — 개수로 세면 자리를
+    옮기는 것만으로 통과한다.
+    """
+    import ast
+    from pathlib import Path
+
+    ALLOWED = {"connect", "set_master_slave", "apply_role_mode", "start_identify",
+               "refresh_mode", "_classify_master"}
+    root = Path(__file__).resolve().parents[2]
+    bad = []
+    for rel in ("robot/piper_robot/arm.py", "robot/piper_robot/hub.py",
+                "backend/app/services/robot_manager.py",
+                "backend/app/routers/robots.py"):
+        tree = ast.parse((root / rel).read_text())
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(fn):
+                if not isinstance(node, ast.Call):
+                    continue
+                name = getattr(node.func, "attr", getattr(node.func, "id", ""))
+                classifies = name == "_classify_master" or (
+                    name == "refresh_mode"
+                    and any(k.arg == "classify"
+                            and getattr(k.value, "value", False) is True
+                            for k in node.keywords))
+                if classifies and fn.name not in ALLOWED:
+                    bad.append(f"{rel}::{fn.name}")
+    assert not bad, f"사람이 부르지 않은 자리에서 판정한다: {sorted(set(bad))}"

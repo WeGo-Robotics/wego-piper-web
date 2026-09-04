@@ -21,6 +21,7 @@ type Joint = {
 type ArmVersions = {
   iface: string; firmware: string | null
   master_slave: string | null; ctrl_mode: string | null
+  responding?: boolean | null
   sdk: string | null; protocol: string | null; interface: string | null
   joints: Joint[]
 }
@@ -93,9 +94,14 @@ export default function VersionPanel() {
             <span className="rounded bg-blue-600/20 px-2 py-0.5 text-xs text-blue-300">
               {a.firmware || '펌웨어 미상'}
             </span>
-            {a.master_slave && (
-              <span className="text-xs text-neutral-400">{a.master_slave}</span>
-            )}
+            {a.responding === false
+              ? <span className="rounded bg-red-600/30 px-2 py-0.5 text-xs text-red-300"
+                      title="CAN 에서 아무 프레임도 오지 않습니다 — 전원·비상정지·케이블">
+                  응답 없음
+                </span>
+              : a.master_slave && (
+                  <span className="text-xs text-neutral-400">{a.master_slave}</span>
+                )}
             {a.ctrl_mode && <span className="text-xs text-neutral-500">{a.ctrl_mode}</span>}
             {/* 오른쪽 끝에서 잘리던 줄 — 좁아지면 접히게 둔다 */}
             <span className="ml-auto shrink-0 text-xs text-neutral-500">

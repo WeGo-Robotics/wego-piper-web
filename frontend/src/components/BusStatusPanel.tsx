@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
 
 /**
@@ -17,6 +18,8 @@ type Bus = {
   rx_packets: number | null; tx_packets: number | null
   rx_errors: number | null; tx_errors: number | null
   rx_dropped: number | null; tx_dropped: number | null
+  /** 초기화 이후의 오류. 카운터 자체는 안 지워지므로 이게 진짜 비교값이다. */
+  errors_since_reset?: number
 }
 
 const COUNTER_LABEL: Record<string, string> = {
@@ -37,6 +40,7 @@ function perMillion(bus: Bus): number | null {
 }
 
 export default function BusStatusPanel() {
+  const { notify, confirm } = useSystemMessage()
   const [buses, setBuses] = useState<Bus[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [at, setAt] = useState<Date | null>(null)
@@ -45,6 +49,7 @@ export default function BusStatusPanel() {
   //   부르므로 공짜가 아니고, 무엇보다 팔을 만지는 작업 중에 배경 폴링이 도는
   //   것을 사람이 모르고 있으면 안 된다.
   const [auto, setAuto] = useState(false)
+  const [resetting, setResetting] = useState<string | null>(null)
   const [every, setEvery] = useState<number>(5)
 
   const load = useCallback(async () => {
@@ -65,6 +70,29 @@ export default function BusStatusPanel() {
     if (auto) timer.current = setInterval(() => void load(), every * 1000)
     return () => clearInterval(timer.current)
   }, [auto, every, load])
+
+  // ⚠ 초기화는 **연결을 끊는다.** 카운터가 0 이 되는 것은 부작용이 아니라 목적의
+  //   절반이다 — 누적값은 인터페이스를 올린 뒤부터의 합이라, 고쳤는지 보려면
+  //   기준을 다시 잡아야 한다. 다만 그 사실을 누르기 전에 말해야 한다.
+  const reset = async (iface: string) => {
+    if (!await confirm(
+      `${iface} 버스를 내렸다 올립니다.\n\n` +
+      '· 이 버스의 팔 **연결이 끊깁니다** — 디바이스 탭에서 다시 연결하세요\n' +
+      '· CAN 컨트롤러가 다시 세워집니다 (BUS-OFF 에서 빠져나오는 유일한 길입니다 —\n' +
+      '  이 어댑터는 자동 복구를 지원하지 않습니다)\n' +
+      '· 누적 오류 카운터는 **안 지워집니다** — 대신 "초기화 이후" 를 세기 시작합니다\n\n' +
+      '계속할까요?')) return
+    setResetting(iface)
+    try {
+      await api.post('/robots/bus/reset', { iface })
+      await load()
+      notify({ level: 'info', source: '버스',
+               text: `${iface} 를 초기화했습니다 — 팔을 다시 연결하세요.` })
+    } catch (e) {
+      notify({ level: 'error', source: '버스',
+               text: e instanceof Error ? e.message : '초기화 실패' })
+    } finally { setResetting(null) }
+  }
 
   return (
     <div className="space-y-3">
@@ -114,6 +142,12 @@ export default function BusStatusPanel() {
               <span className="ml-auto text-xs tabular-nums text-neutral-400">
                 RX {num(b.rx_packets)} · TX {num(b.tx_packets)}
               </span>
+              <button onClick={() => void reset(b.iface)} disabled={resetting !== null}
+                title="버스를 내렸다 올립니다 — 팔 연결이 끊기고 카운터가 0 이 됩니다"
+                className="rounded bg-neutral-700 px-2 py-0.5 text-xs text-neutral-400
+                           hover:bg-amber-600 hover:text-white disabled:opacity-50">
+                {resetting === b.iface ? '초기화 중…' : '초기화'}
+              </button>
             </div>
 
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums">
@@ -127,6 +161,12 @@ export default function BusStatusPanel() {
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-neutral-500">
               <span>드롭 RX {num(b.rx_dropped)} / TX {num(b.tx_dropped)}</span>
               <span>오류 RX {num(b.rx_errors)} / TX {num(b.tx_errors)}</span>
+              {b.errors_since_reset != null && (
+                <span className={b.errors_since_reset ? 'text-amber-400' : 'text-green-400'}
+                      title="누적 카운터는 down/up 으로 안 지워집니다 — 이게 초기화 이후의 값입니다">
+                  초기화 이후 <b>{num(b.errors_since_reset)}</b>
+                </span>
+              )}
               {rate != null && (
                 <span title="누적 카운터는 인터페이스를 다시 열면 0 이 됩니다 — 절대값끼리 비교하면 안 되고, 이 값이 가동 시간과 무관하게 비교됩니다."
                       className={rate > 1 ? 'text-amber-400' : ''}>
@@ -139,7 +179,7 @@ export default function BusStatusPanel() {
       })}
 
       <p className="text-xs text-neutral-600">
-        누적 카운터는 인터페이스를 다시 열면 0 으로 돌아갑니다. 팔끼리 비교할 때는
+        누적 카운터는 <b>초기화로 안 지워집니다</b>(gs_usb 실측). 팔끼리 비교할 때는
         절대값이 아니라 <b>백만 프레임당 오류</b>를 보세요 — 실측으로 같은 시각에
         올라온 두 버스가 0 과 34,794 였습니다.
       </p>

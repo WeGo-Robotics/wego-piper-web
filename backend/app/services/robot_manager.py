@@ -229,6 +229,9 @@ class ArmInfo:
     role: str = "unknown"
     ctrl_mode: str = ""
     is_master: bool | None = None
+    #: 팔이 버스에서 무언가 보내고 있나. False = 아예 조용하다(전원·케이블).
+    #: ⚠ 마스터와 **구분되어야 한다** — 둘 다 슬레이브 피드백이 없지만 원인이 다르다.
+    responding: bool | None = None
     firmware: str = ""
     slot: str | None = None
     # 좌/우 — 사람의 해석이라 등록이 소유한다 (feature/bimanual.md §3).
@@ -258,6 +261,8 @@ class ArmInfo:
         ms = info.get("master_slave")
         if ms is not None:
             self.is_master = ms == "master"
+        if "responding" in info:
+            self.responding = info["responding"]
         self.firmware = info.get("firmware", self.firmware)
 
     def to_dict(self) -> dict:
@@ -270,6 +275,7 @@ class ArmInfo:
             "ctrl_mode": self.ctrl_mode,
             "master_slave": (None if self.is_master is None
                              else "master" if self.is_master else "slave"),
+            "responding": self.responding,
             "firmware": self.firmware,
             "slot": self.slot,
             "side": self.side,

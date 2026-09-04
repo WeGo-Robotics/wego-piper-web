@@ -351,6 +351,33 @@ async def robot_versions():
     return {"arms": rows}
 
 
+class BusResetRequest(BaseModel):
+    iface: str
+
+
+@router.post("/bus/reset")
+async def bus_reset(body: BusResetRequest):
+    """CAN 버스를 내렸다 올린다 — 컨트롤러와 오류 카운터가 초기화된다.
+
+    ⚠ **연결이 끊긴다.** 팔을 다시 연결해야 한다. 그리고 팔을 움직이는 것이
+      돌고 있으면 그 작업이 통째로 끊기므로 거절한다.
+    """
+    from app.services.exclusivity import LABELS, Activity, running
+
+    movers = [a for a in (Activity.INFERENCE, Activity.RECORDING, Activity.TELEOP)
+              if a in running()]
+    if movers:
+        names = " · ".join(LABELS[a] for a in movers)
+        raise HTTPException(409, f"{names} 실행 중입니다 — 버스를 초기화하면 "
+                                 f"연결이 끊겨 그 작업이 죽습니다. 먼저 멈추세요.")
+    out = robot_manager_mod._call("bus_reset", body.iface, default=None, timeout=15)
+    if out is None:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    if not out.get("ok"):
+        raise HTTPException(409, out.get("error", "버스 초기화에 실패했습니다"))
+    return out
+
+
 @router.get("/bus")
 async def bus_status():
     """CAN 버스별 상태·누적 오류·트래픽 (화면의 버스 상태 탭).

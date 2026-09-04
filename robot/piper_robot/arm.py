@@ -39,6 +39,10 @@ class Arm:
     connected: bool = False
     ctrl_mode: str = ""
     is_master: bool | None = None  # 하드웨어 마스터(示教输入)/슬레이브(运动输出) 모드. None=미확인
+    #: 버스에서 무언가 오고 있나. False = 팔이 아예 조용하다(전원·케이블).
+    #: None = 아직 안 봤다. **마스터와 구분되어야 한다** — 둘 다 슬레이브
+    #: 피드백이 없지만 원인도 대처도 다르다.
+    responding: bool | None = None
     firmware: str = ""
     # 내부
     _piper: object = field(default=None, repr=False)
@@ -54,6 +58,7 @@ class Arm:
             "ctrl_mode": self.ctrl_mode,
             "master_slave": (None if self.is_master is None
                              else "master" if self.is_master else "slave"),
+            "responding": self.responding,
             "firmware": self.firmware,
         }
 
@@ -152,9 +157,41 @@ class Arm:
         seen = sniff_can_ids(self.iface, duration=rx_interval)
         if seen.get("error"):
             # 버스를 못 들으면 판정하지 않는다 — 추측이 라벨로 굳는 것보다 낫다
-            self.is_master = None
+            self.is_master = self.responding = None
             return
+        # ⚠ **침묵만으로는 못 가른다.** 한가한 마스터는 아무것도 안 보낸다 —
+        #   죽은 팔과 버스 위에서 똑같이 조용하다. 예전에는 둘 다 "마스터" 로
+        #   봤는데(명령을 안 보내는 쪽으로 안전하게 실패), 하필 팔이 죽었을 때
+        #   화면이 "마스터" 라고 거짓말을 한다. 실기에서 전원을 내렸다 켠 뒤 네
+        #   대가 전부 master 로 표시돼 원인을 가리기 어려웠다.
+        #
+        #   그래서 조용하면 **물어본다.** 마스터도 펌웨어 질의에는 답한다
+        #   (실측: 마스터 상태의 can1·can3 에서 `S-V1.9-0` 을 읽었다).
+        if sum(seen["groups"].values()) == 0:
+            alive = self._probe_alive()
+            self.responding = alive
+            # 조용한데 살아 있다 = 마스터. 죽었으면 판정하지 않는다.
+            self.is_master = True if alive else None
+            return
+        self.responding = True
         self.is_master = seen["groups"]["slave_fb"] == 0
+
+    def _probe_alive(self, wait: float = 0.4) -> bool:
+        """조용한 팔이 살아 있는지 **물어서** 확인한다.
+
+        ⚠ 한가한 마스터는 아무것도 안 보내므로 침묵은 증거가 못 된다. 그런데
+        마스터도 펌웨어 질의(0x4AF)에는 답한다 — 그게 "살아 있음" 의 증거다.
+        읽기라 부작용이 없고, 팔을 안 움직인다.
+        """
+        with self._lock:
+            if not self._piper:
+                return False
+            try:
+                self._piper.SearchPiperFirmwareVersion()
+            except Exception:
+                return False
+        seen = sniff_can_ids(self.iface, duration=wait)
+        return not seen.get("error") and sum(seen["groups"].values()) > 0
 
     def refresh_mode(self, classify: bool = False) -> None:
         """ctrl_mode 텍스트를 라이브 갱신. 마스터/슬레이브는 **요청할 때만.**
@@ -227,7 +264,7 @@ class Arm:
                     pass
                 self._piper = None
             self.connected = False
-            self.is_master = None
+            self.is_master = self.responding = None
             self.ctrl_mode = ""
 
     def read_joints_raw(self) -> list[int] | None:
@@ -411,6 +448,13 @@ class Arm:
         "(실측: 마스터 팔에 EnablePiper·ModeCtrl·DisableArm 을 보내도 상태가 안 바뀐다)"
     )
 
+    #: 팔이 버스에서 조용할 때의 안내. 마스터와 **다른 말**을 해야 한다 —
+    #: 증상은 같아도(슬레이브 피드백 없음) 원인도 대처도 다르다.
+    NOT_RESPONDING = (
+        "이 팔이 CAN 에서 아무 프레임도 보내지 않습니다 — 전원·비상정지·케이블을 "
+        "확인하세요. 켜진 팔은 가만히 있어도 피드백을 계속 뿌립니다."
+    )
+
     #: 설정 명령 사이의 간격 (초). 공식 예제(`piper_set_joint_zero_cpv.py`)가
     #: 모드 설정 사이에 두는 것과 같은 값이다 — 컨트롤러가 앞 프레임을 처리하기
     #: 전에 다음 것이 오면 조용히 흘린다.
@@ -533,6 +577,9 @@ class Arm:
             return {"ok": False, "error": f"모르는 관절입니다: {joint}"}
         # ⚠ **마스터 팔에는 굽기가 안 먹는다.** 그런데 팔은 성공이라 응답하므로
         #   보내고 나서는 구분이 안 된다 — 보내기 전에 막아야 이유를 말할 수 있다.
+        if self.responding is False:
+            return {"ok": False, "joint": joint, "fatal": True,
+                    "error": self.NOT_RESPONDING}
         if self.is_master:
             return {"ok": False, "joint": joint, "fatal": True,
                     "error": self.MASTER_IGNORES}
@@ -634,6 +681,7 @@ class Arm:
                 "firmware": self.firmware,
                 "master_slave": (None if self.is_master is None
                                  else "master" if self.is_master else "slave"),
+                "responding": self.responding,
                 "ctrl_mode": self.ctrl_mode,
                 "sdk": self._safe(lambda: str(self._piper.GetCurrentSDKVersion())),
                 "protocol": self._safe(lambda: str(self._piper.GetCurrentProtocolVersion())),

@@ -277,6 +277,26 @@ def init_can_interface(iface: str, bitrate: int = DEFAULT_BITRATE) -> tuple[bool
     return True, "OK"
 
 
+def reset_bus(iface: str, bitrate: int = DEFAULT_BITRATE) -> dict:
+    """CAN 버스를 내렸다 올려 컨트롤러를 다시 세운다.
+
+    ⚠ **오류 카운터는 안 지워진다.** gs_usb 에서 down/up 을 해도 누적값이
+    그대로다(실측: 130,730,379 → 130,730,379). 그래서 "초기화" 가 카운터를
+    0 으로 만든다고 말하면 거짓말이다 — 대신 부르는 쪽이 **기준선**을 잡아
+    "이 시점 이후" 로 보게 한다.
+
+    ⚠ **`restart-ms` 도 못 쓴다.** 이 어댑터는 BUS-OFF 자동 복구를 지원하지
+    않는다(`Device doesn't support restart from Bus Off`). 그래서 BUS-OFF 가
+    나면 사람이 이 버튼을 눌러야 한다 — 그게 이 기능이 있는 이유의 절반이다.
+
+    ⚠ **연결이 끊긴다.** 이 인터페이스를 쥔 SDK 핸들은 낡은 것이 되므로, 부르는
+    쪽이 팔을 다시 연결해야 한다.
+    """
+    ok, msg = init_can_interface(iface, bitrate)
+    return {"ok": ok, "error": None if ok else msg, "iface": iface,
+            "state": can_state(iface), "counters": error_counters(iface)}
+
+
 def rename_can_interface(old_name: str, new_name: str) -> tuple[bool, str]:
     _run_cmd(["ip", "link", "set", old_name, "down"], sudo=True)
     rc, _, err = _run_cmd(["ip", "link", "set", old_name, "name", new_name], sudo=True)

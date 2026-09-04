@@ -89,12 +89,38 @@ class RobotHub:
         arm = self.arms.get(iface)
         return arm.read_joints_normalized() if arm else None
 
+    #: 버스별 오류 기준선 — "초기화 이후" 를 세는 출발점.
+    #:
+    #: ⚠ 카운터 자체는 down/up 으로 **안 지워진다**(실측). 그래서 지운 척하는
+    #:   대신 기준을 잡는다. 절대값끼리 비교하면 안 된다는 것과 같은 이유다.
+    _bus_baseline: dict = {}
+
+    def bus_reset(self, iface: str) -> dict:
+        """버스를 내렸다 올린다. **팔 연결이 끊기므로** 그 팔도 정리한다."""
+        from piper_robot.can import reset_bus
+
+        arm = self.arms.get(iface)
+        if arm is not None and arm.connected:
+            arm.disconnect()
+        out = reset_bus(iface)
+        if out.get("ok"):
+            self._bus_baseline[iface] = dict(out.get("counters") or {})
+        return out
+
     def bus_status(self) -> list[dict]:
         """모든 CAN 버스의 상태. **호스트에서만 읽을 수 있다** — 게이트웨이는
         컨테이너라 `/sys/class/net` 자체가 안 보인다."""
         from piper_robot.can import bus_stats, scan_can_interfaces
 
-        return [bus_stats(c["iface"]) for c in scan_can_interfaces()]
+        rows = []
+        for c in scan_can_interfaces():
+            row = bus_stats(c["iface"])
+            base = self._bus_baseline.get(c["iface"])
+            if base and row.get("counters"):
+                row["errors_since_reset"] = sum(
+                    max(0, row["counters"].get(k, 0) - base.get(k, 0)) for k in row["counters"])
+            rows.append(row)
+        return rows
 
     # ── 관절 검사 ──
     #

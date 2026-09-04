@@ -44,6 +44,9 @@ def _device_arm(monkeypatch, *, mode_int, rx_changes: bool) -> Arm:
               "master_ctrl": 0, "driver": 0, "other": 0}
     monkeypatch.setattr("piper_robot.arm.sniff_can_ids",
                         lambda iface, duration: {"groups": groups})
+    # ⚠ 조용한 팔은 **물어봐서** 마스터와 죽은 팔을 가른다. 여기 팔은 살아 있다 —
+    #   이 파일이 보는 것은 역할 배정이지 생사 판정이 아니다.
+    monkeypatch.setattr(Arm, "_probe_alive", lambda self, wait=0.4: True)
     return arm
 
 
