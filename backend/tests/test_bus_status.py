@@ -123,3 +123,16 @@ def test_the_screen_says_the_counters_survive():
     src = PANEL.read_text()
     assert "안 지워집니다" in src
     assert "초기화 이후" in src
+
+
+def test_after_a_reset_the_screen_shows_the_new_count_not_the_old_one():
+    """⚠ 누적 카운터는 초기화해도 안 지워진다. 그런데 화면이 계속 누적값을
+    주황색으로 보여주면 **"초기화가 소용없다" 로 읽힌다** — 실제로 그렇게
+    보고됐다("경고 4 수동 130,673,575 … 이건 안 없어지네").
+
+    기준선이 있으면 **항목별로도** 초기화 이후 값을 보여줘야 한다. 합계만으로는
+    항목 칸이 여전히 누적값을 쓸 수밖에 없다."""
+    src = code_only(PANEL.read_text())
+    assert "b.counters_since_reset ?? b.counters" in src, \
+        "초기화 뒤에도 항목별로 누적값을 보여준다"
+    assert "누적" in PANEL.read_text(), "누적값을 어디서도 못 본다"

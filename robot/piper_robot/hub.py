@@ -117,8 +117,12 @@ class RobotHub:
             row = bus_stats(c["iface"])
             base = self._bus_baseline.get(c["iface"])
             if base and row.get("counters"):
-                row["errors_since_reset"] = sum(
-                    max(0, row["counters"].get(k, 0) - base.get(k, 0)) for k in row["counters"])
+                # ⚠ **항목별로도 낸다.** 합계만 주면 화면은 여전히 누적값을 항목
+                #   별로 보여줄 수밖에 없고, 1억이 넘는 숫자가 주황색으로 남아
+                #   "초기화가 소용없다" 로 읽힌다. 실제로 그렇게 보고됐다.
+                row["counters_since_reset"] = {
+                    k: max(0, v - base.get(k, 0)) for k, v in row["counters"].items()}
+                row["errors_since_reset"] = sum(row["counters_since_reset"].values())
             rows.append(row)
         return rows
 

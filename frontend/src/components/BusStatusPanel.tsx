@@ -20,6 +20,7 @@ type Bus = {
   rx_dropped: number | null; tx_dropped: number | null
   /** 초기화 이후의 오류. 카운터 자체는 안 지워지므로 이게 진짜 비교값이다. */
   errors_since_reset?: number
+  counters_since_reset?: Counters
 }
 
 const COUNTER_LABEL: Record<string, string> = {
@@ -150,23 +151,29 @@ export default function BusStatusPanel() {
               </button>
             </div>
 
+            {/* ⚠ **기준선이 있으면 그쪽이 주인공이다.** 누적값은 down/up 으로 안
+                지워지므로, 초기화한 뒤에도 1억이 넘는 숫자가 주황색으로 남아
+                "초기화가 소용없다" 로 읽힌다. 실제로 그렇게 보고됐다.
+                지금 고쳐졌는지를 보려면 초기화 이후만 봐야 한다. */}
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums">
-              {Object.entries(b.counters).map(([k, v]) => (
-                <span key={k} className={v ? 'text-amber-400' : 'text-neutral-500'}>
+              {Object.entries(b.counters_since_reset ?? b.counters).map(([k, v]) => (
+                <span key={k} className={v ? 'text-amber-400' : 'text-neutral-500'}
+                      title={b.counters_since_reset
+                        ? `초기화 이후 ${num(v)} · 누적 ${num(b.counters[k])}`
+                        : `누적 ${num(v)}`}>
                   {COUNTER_LABEL[k] ?? k} <b>{num(v)}</b>
                 </span>
               ))}
+              {b.counters_since_reset && (
+                <span className="text-neutral-600">
+                  (초기화 이후 · 누적 {num(b.errors_total)})
+                </span>
+              )}
             </div>
 
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-neutral-500">
               <span>드롭 RX {num(b.rx_dropped)} / TX {num(b.tx_dropped)}</span>
               <span>오류 RX {num(b.rx_errors)} / TX {num(b.tx_errors)}</span>
-              {b.errors_since_reset != null && (
-                <span className={b.errors_since_reset ? 'text-amber-400' : 'text-green-400'}
-                      title="누적 카운터는 down/up 으로 안 지워집니다 — 이게 초기화 이후의 값입니다">
-                  초기화 이후 <b>{num(b.errors_since_reset)}</b>
-                </span>
-              )}
               {rate != null && (
                 <span title="누적 카운터는 인터페이스를 다시 열면 0 이 됩니다 — 절대값끼리 비교하면 안 되고, 이 값이 가동 시간과 무관하게 비교됩니다."
                       className={rate > 1 ? 'text-amber-400' : ''}>
@@ -179,7 +186,9 @@ export default function BusStatusPanel() {
       })}
 
       <p className="text-xs text-neutral-600">
-        누적 카운터는 <b>초기화로 안 지워집니다</b>(gs_usb 실측). 팔끼리 비교할 때는
+        ⚠ 누적 카운터는 <b>버스를 초기화해도 안 지워집니다</b> — 이 어댑터(gs_usb)의
+        드라이버가 그렇습니다. 초기화하면 그 시점을 기준으로 다시 세기 시작하고,
+        위 숫자는 <b>그 이후</b>의 값입니다(괄호 안이 누적). 팔끼리 비교할 때는
         절대값이 아니라 <b>백만 프레임당 오류</b>를 보세요 — 실측으로 같은 시각에
         올라온 두 버스가 0 과 34,794 였습니다.
       </p>
