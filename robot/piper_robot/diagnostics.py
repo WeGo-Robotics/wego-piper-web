@@ -41,6 +41,16 @@ LIMIT_MARGIN_DEG = 5.0
 #:   다만 **한계에 닿으면 `angle_limit` 플래그가 서고, 그게 측정 결과에 섞인다** —
 #:   검사가 자기 결론을 만들어내는 셈이다. 모르면 작게 흔든다.
 UNKNOWN_LIMIT_AMP_DEG = 5.0
+#: 말단 쪽 관절 — **위로 쳐드는 쪽으로만** 흔든다.
+#:
+#: ⚠ 말단에 그리퍼나 카메라가 달려 있으면 아래로 내리다 뭔가에 닿는다. 위로는
+#:   부딪힐 것이 없다. 손목 셋은 팔 전체를 옮기지 않으므로 한쪽만 써도 부하를
+#:   충분히 만든다.
+#:
+#: ⚠ **어느 부호가 "위" 인지는 추측하지 않는다** — 관절 부호 규약은 팔마다 다르고
+#:   지금 자세에 따라도 달라진다. 기구학으로 **실제 높이를 재서** 정한다.
+WRIST_JOINTS = ("joint4", "joint5", "joint6")
+
 #: 전체 측정에서 관절마다 어긋나게 주는 위상 (도). 한꺼번에 같은 방향으로
 #: 최대 속도를 내면 팔 전체가 크게 흔들린다.
 PHASE_STEP_DEG = 60.0
@@ -57,18 +67,33 @@ class JointPlan:
     amplitude_deg: float
     period_s: float = MIN_PERIOD_S
     phase_deg: float = 0.0
+    #: 0 = 대칭(중심 기준 ±A), +1/−1 = **한쪽으로만**.
+    #:
+    #: ⚠ 한계에 붙어 있는 관절은 대칭으로 못 흔든다 — 실기에서 can3 의 joint3 가
+    #:   한계 `−170~0°` 의 0° 에 붙어 있어 진폭이 0 이 됐고 "거의 안 움직인다" 로
+    #:   보고됐다. 반대쪽에 165° 가 남아 있는데도. 한쪽 스윙은 **지금 자세에서
+    #:   출발해 지금 자세로 돌아온다** — 튀지 않으면서 남은 공간을 다 쓴다.
+    direction: int = 0
     #: 진폭이 깎였으면 그 이유 — 화면이 사람에게 그대로 보여준다.
     note: str = ""
 
     def target_deg(self, t: float) -> float:
-        ph = math.radians(self.phase_deg)
+        w = 2 * math.pi * t / self.period_s
+        if self.direction:
+            # 지금 자세에서 출발해 한쪽으로 갔다 돌아온다 (t=0·T 에서 중심)
+            return self.center_deg + self.direction * self.amplitude_deg * (
+                1 - math.cos(w)) / 2
         return self.center_deg + self.amplitude_deg * math.sin(
-            2 * math.pi * t / self.period_s + ph)
+            w + math.radians(self.phase_deg))
 
     @property
     def peak_speed_deg_s(self) -> float:
-        """사인파의 최대 속도 — 화면이 "얼마나 빠른가" 를 말할 근거."""
-        return round(self.amplitude_deg * 2 * math.pi / self.period_s, 1)
+        """최대 속도 — 화면이 "얼마나 빠른가" 를 말할 근거.
+
+        한쪽 스윙은 진폭이 같아도 **절반의 속도**다 (`A·π/T` 대 `A·2π/T`).
+        """
+        k = math.pi if self.direction else 2 * math.pi
+        return round(self.amplitude_deg * k / self.period_s, 1)
 
 
 @dataclass
@@ -82,6 +107,7 @@ class Plan:
                 "joints": [{"joint": j.joint, "center_deg": round(j.center_deg, 2),
                             "amplitude_deg": round(j.amplitude_deg, 2),
                             "period_s": round(j.period_s, 1),
+                            "direction": j.direction,
                             "peak_speed_deg_s": j.peak_speed_deg_s,
                             "phase_deg": j.phase_deg, "note": j.note}
                            for j in self.joints]}
@@ -98,42 +124,72 @@ def period_for(amplitude_deg: float, max_spd_deg_s: float | None) -> float:
     return max(MIN_PERIOD_S, round(amplitude_deg * 2 * math.pi / max(v, 0.1), 1))
 
 
-def plan_amplitude(center_deg: float, lo_deg: float | None,
-                   hi_deg: float | None, cap_deg: float | None = None) -> tuple[float, str]:
-    """이 관절을 얼마나 흔들 수 있나. `(진폭, 깎인 이유)`.
+def plan_amplitude(center_deg: float, lo_deg: float | None, hi_deg: float | None,
+                   cap_deg: float | None = None,
+                   force: int | None = None) -> tuple[float, int, str]:
+    """이 관절을 얼마나, 어느 쪽으로 흔들 수 있나. `(진폭, 방향, 사유)`.
 
-    ⚠ **세 가지 중 가장 작은 것**이다 — 상한, 가동범위 비율, 그리고 지금 자세에서
-    한계까지 남은 거리. 마지막을 빼먹으면 한계 근처에 있는 관절이 한계를 때리고,
-    그 때림이 "이상" 으로 기록되어 **검사가 자기 결론을 만들어낸다.**
+    ⚠ **대칭으로 못 흔들면 한쪽으로 흔든다.** 예전에는 여유가 없으면 진폭을 0 으로
+    깎았는데, 한계에 붙어 있는 관절이 정확히 그 경우라 **아예 안 움직였다** —
+    실기에서 can3 의 joint3 가 한계 `−170~0°` 의 0° 에 있어 그랬다. 반대쪽에
+    165° 가 남아 있는데도 재지 못한 셈이다.
+
+    한쪽 스윙은 지금 자세에서 출발해 지금 자세로 돌아오므로 튀지 않는다.
     """
     cap = cap_deg or AMPLITUDES_DEG[DEFAULT_INTENSITY]
     if lo_deg is None or hi_deg is None or hi_deg <= lo_deg:
-        return min(UNKNOWN_LIMIT_AMP_DEG, cap), "한계를 몰라 보수적으로"
+        return min(UNKNOWN_LIMIT_AMP_DEG, cap), 0, "한계를 몰라 보수적으로"
+
     amp, note = cap, ""
-    if True:
-        by_range = (hi_deg - lo_deg) * RANGE_FRACTION
-        if by_range < amp:
-            amp, note = by_range, "가동범위 기준"
-        room = min(center_deg - (lo_deg + LIMIT_MARGIN_DEG),
-                   (hi_deg - LIMIT_MARGIN_DEG) - center_deg)
-        if room < amp:
-            amp, note = max(room, 0.0), "한계까지 여유 부족"
-    return round(amp, 2), note
+    by_range = (hi_deg - lo_deg) * RANGE_FRACTION
+    if by_range < amp:
+        amp, note = by_range, "가동범위 기준"
+
+    down = center_deg - (lo_deg + LIMIT_MARGIN_DEG)     # 값이 작아지는 쪽 여유
+    up = (hi_deg - LIMIT_MARGIN_DEG) - center_deg       # 값이 커지는 쪽 여유
+    if force:
+        # 방향이 정해진 관절 — 그쪽 여유까지만 쓴다
+        room = up if force > 0 else down
+        if room <= 0:
+            return 0.0, 0, "그 방향으로 여유가 없습니다"
+        return round(min(amp, room), 2), force, "" if room >= amp else "한쪽 여유까지"
+    if min(down, up) >= amp:
+        return round(amp, 2), 0, note
+
+    # 대칭으로는 안 된다 — 넓은 쪽으로만 흔든다
+    direction = 1 if up >= down else -1
+    room = max(up, down)
+    if room <= 0:
+        return 0.0, 0, "양쪽 다 한계 — 팔을 가운데로 옮기세요"
+    if room < amp:
+        amp, note = room, "한쪽 여유까지"
+    else:
+        note = note or "한쪽으로만"
+    return round(amp, 2), direction, note
 
 
 def build_plan(centers: dict[str, float], limits: dict[str, tuple],
                joints: list[str], intensity: str = DEFAULT_INTENSITY,
-               speeds: dict[str, float] | None = None) -> Plan:
+               speeds: dict[str, float] | None = None,
+               up: dict[str, int] | None = None) -> Plan:
     """검사할 관절들의 모션 계획. `joints` 가 하나면 개별, 여럿이면 전체다."""
     cap = AMPLITUDES_DEG.get(intensity, AMPLITUDES_DEG[DEFAULT_INTENSITY])
     speeds = speeds or {}
     out = Plan(intensity=intensity)
     for i, name in enumerate(joints):
         lo, hi = limits.get(name, (None, None))
-        amp, note = plan_amplitude(centers.get(name, 0.0), lo, hi, cap)
+        amp, direction, note = plan_amplitude(centers.get(name, 0.0), lo, hi, cap)
+        # ⚠ 손목 셋은 **위로만**. 말단에 달린 것이 아래에서 걸릴 수 있다.
+        want = (up or {}).get(name)
+        if name in WRIST_JOINTS and want and direction != want:
+            amp, direction, note = plan_amplitude(
+                centers.get(name, 0.0), lo, hi, cap, force=want)
+            note = note or "위로만"
         out.joints.append(JointPlan(
             joint=name, center_deg=centers.get(name, 0.0), amplitude_deg=amp,
-            period_s=period_for(amp, speeds.get(name)),
+            direction=direction,
+            # 한쪽 스윙은 같은 진폭에서 속도가 절반이라 주기를 그만큼 줄여도 된다
+            period_s=period_for(amp / (2 if direction else 1), speeds.get(name)),
             # 개별 측정에서는 위상을 어긋나게 할 이유가 없다
             phase_deg=(PHASE_STEP_DEG * i) if len(joints) > 1 else 0.0,
             note=note))

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import DiagChart, { type Row } from './DiagCharts'
 import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
 
@@ -65,7 +66,7 @@ export default function DiagnosticsPanel({ arms }: {
   const [intensity, setIntensity] = useState<Intensity>('normal')
   const [status, setStatus] = useState<Status | null>(null)
   const [summary, setSummary] = useState<Summary | null>(null)
-  const [rows, setRows] = useState<Record<string, unknown>[]>([])
+  const [rows, setRows] = useState<Row[]>([])
   const [busy, setBusy] = useState(false)
 
   // ⚠ 마스터는 외부 명령을 무시한다 — "안 움직였다" 가 고장으로 오독된다.
@@ -93,7 +94,7 @@ export default function DiagnosticsPanel({ arms }: {
 
   const fetchResult = async () => {
     try {
-      const d = await api.get<{ rows: Record<string, unknown>[]; summary: Summary
+      const d = await api.get<{ rows: Row[]; summary: Summary
                                 error: string | null }>('/robots/diag/result')
       setRows(d.rows); setSummary(d.summary)
       if (d.error) notify({ level: 'error', source: '검사', text: d.error })
@@ -269,6 +270,21 @@ export default function DiagnosticsPanel({ arms }: {
               </tbody>
             </table>
           </div>
+          {/* ⚠ **겹쳐 그린다.** 여섯이 같은 모션을 했다는 것이 이 검사의 전제이고,
+              그러면 비교도 한 그림에서 되어야 한다 — 나란히 놓으면 눈이 축을
+              오가야 하고, 그 차이가 바로 표만 봐서는 안 보이던 것이다. */}
+          <div className="flex flex-wrap gap-4 overflow-x-auto pt-1">
+            <DiagChart rows={rows} joints={Object.keys(summary.joints)}
+                       field="ctrl_minus_feedback_deg" unit="°"
+                       title="추종 오차 — 시킨 값과 실제의 차이" zeroLine />
+            <DiagChart rows={rows} joints={Object.keys(summary.joints)}
+                       field="motor_current_a" unit="A" title="모터 전류" zeroLine />
+            <DiagChart rows={rows} joints={Object.keys(summary.joints)}
+                       field="effort_nm" unit="N·m" title="토크" zeroLine />
+            <DiagChart rows={rows} joints={Object.keys(summary.joints)}
+                       field="feedback_deg" unit="°" title="실제 각도" />
+          </div>
+
           <p className="text-xs text-neutral-600">
             ⚠ 합격/불합격을 판정하지 않습니다 — 절대 기준이 없습니다. 여섯이 <b>같은
             모션</b>을 했으므로 관절끼리가 서로의 대조군이고, 중앙값의 2배를 넘는

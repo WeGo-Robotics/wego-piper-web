@@ -48,18 +48,19 @@ def test_all_joints_share_one_period():
 def test_the_swing_never_reaches_the_configured_limit():
     """⚠ 한계를 때리면 그 때림이 `angle_limit` 플래그로 기록되고, **검사가 자기
     결론을 만들어낸다.** 지금 자세에서 한계까지 남은 거리도 진폭을 깎아야 한다."""
-    amp, note = D.plan_amplitude(center_deg=68.0, lo_deg=-70.0, hi_deg=70.0)
-    assert amp == 0.0 and "여유" in note, (amp, note)
+    # 한계에 붙어 있으면 **한쪽으로** 흔든다 (0 으로 깎지 않는다)
+    amp, direction, note = D.plan_amplitude(center_deg=68.0, lo_deg=-70.0, hi_deg=70.0)
+    assert amp > 0 and direction == -1, (amp, direction, note)
 
-    amp, _ = D.plan_amplitude(center_deg=0.0, lo_deg=-70.0, hi_deg=70.0)
-    assert 0 < amp <= D.AMPLITUDES_DEG["strong"]
+    amp, direction, _ = D.plan_amplitude(center_deg=0.0, lo_deg=-70.0, hi_deg=70.0)
+    assert 0 < amp <= D.AMPLITUDES_DEG["strong"] and direction == 0
     assert amp <= 70.0 - D.LIMIT_MARGIN_DEG
 
 
 def test_a_narrow_joint_swings_less():
     """가동범위가 좁은 관절에 같은 진폭을 주면 그 관절만 한계에 가까워진다."""
-    wide, _ = D.plan_amplitude(0.0, -150.0, 150.0)
-    narrow, note = D.plan_amplitude(0.0, -30.0, 30.0)
+    wide, _, _ = D.plan_amplitude(0.0, -150.0, 150.0)
+    narrow, _, note = D.plan_amplitude(0.0, -30.0, 30.0)
     assert narrow < wide, (narrow, wide)
     assert note == "가동범위 기준"
 
@@ -68,7 +69,7 @@ def test_an_unknown_limit_swings_less_not_more():
     """⚠ 한계를 모르면 여유도 모른다. 안전층이 범위를 자르니 위험하진 않지만,
     한계에 닿으면 `angle_limit` 플래그가 서고 그게 측정에 섞인다 — 검사가 자기
     결론을 만들어내는 셈이다. 모르면 **작게** 흔든다."""
-    amp, note = D.plan_amplitude(0.0, None, None, cap_deg=30.0)
+    amp, _, note = D.plan_amplitude(0.0, None, None, cap_deg=30.0)
     assert amp == D.UNKNOWN_LIMIT_AMP_DEG < 30.0
     assert "몰라" in note, note
 
@@ -292,3 +293,50 @@ def test_a_joint_we_did_not_command_falls_back_to_the_register():
     ct = type("C", (), {"joint_1": 1234})()
     row = _joint_row("joint1", 1, None, ct, None, None, None, target_deg=None)
     assert row["joint1_ctrl_deg"] == 1.234
+
+
+def test_a_joint_parked_at_its_limit_still_gets_measured():
+    """⚠ **한계에 붙어 있으면 대칭으로 못 흔든다.** 예전에는 진폭을 0 으로 깎아
+    그 관절이 **아예 안 움직였다** — 실기에서 can3 의 joint3 가 한계 `−170~0°` 의
+    0° 에 있어 "거의 안 움직인다" 로 보고됐다. 반대쪽에 165° 가 남아 있는데도.
+
+    한쪽 스윙은 **지금 자세에서 출발해 지금 자세로 돌아온다** — 튀지 않으면서
+    남은 공간을 쓴다. (고친 뒤 같은 관절이 −20.1°~−0.1°, 토크 2.07 N·m.)"""
+    p = D.build_plan({"joint3": -0.1}, {"joint3": (-170.0, 0.0)}, ["joint3"],
+                     "normal", {"joint3": 17.2})
+    j = p.joints[0]
+    assert j.amplitude_deg > 0, "한계에 붙었다고 안 움직인다"
+    assert j.direction == -1, "여유가 있는 쪽으로 안 간다"
+    # 출발과 도착이 지금 자세여야 한다
+    assert j.target_deg(0.0) == pytest.approx(-0.1, abs=1e-6)
+    assert j.target_deg(j.period_s) == pytest.approx(-0.1, abs=1e-6)
+    # 한계를 넘지 않는다
+    lows = [j.target_deg(t / 100 * j.period_s) for t in range(101)]
+    assert min(lows) >= -170.0 + D.LIMIT_MARGIN_DEG, min(lows)
+
+
+def test_a_one_sided_swing_is_not_faster_for_the_same_amplitude():
+    """한쪽 스윙은 `A·π/T` 라 대칭(`A·2π/T`)의 절반이다 — 주기를 그만큼 줄여도
+    팔의 속도 한계를 안 넘는다."""
+    sym = D.JointPlan("j", 0.0, 20.0, period_s=9.1, direction=0)
+    one = D.JointPlan("j", 0.0, 20.0, period_s=9.1, direction=1)
+    assert one.peak_speed_deg_s == pytest.approx(sym.peak_speed_deg_s / 2, rel=0.01)
+
+
+def test_the_result_charts_overlay_the_joints():
+    """⚠ 이 검사의 전제는 "여섯이 같은 모션을 했으니 서로가 서로의 대조군" 이다.
+    그러면 그래프도 겹쳐야 한다 — 나란히 놓으면 눈이 축을 오가야 하고, 그게 바로
+    표만 봐서는 안 보이던 차이다."""
+    from pathlib import Path
+
+    from conftest import code_only
+
+    src = code_only((Path(__file__).resolve().parents[2] / "frontend" / "src"
+                     / "components" / "DiagCharts.tsx").read_text())
+    assert "joints.map" in src, "관절을 겹쳐 그리지 않는다"
+    assert "MAX_POINTS" in src, "1361행을 그대로 그린다"
+
+    panel = code_only((Path(__file__).resolve().parents[2] / "frontend" / "src"
+                       / "components" / "DiagnosticsPanel.tsx").read_text())
+    for field in ("ctrl_minus_feedback_deg", "motor_current_a", "effort_nm"):
+        assert field in panel, f"{field} 그래프가 없다"

@@ -165,7 +165,8 @@ class RobotHub:
             # 속도 한계는 rad/s 로 오고 계획은 도/초로 센다
             if row.get("max_spd_rad_s"):
                 speeds[row["joint"]] = math.degrees(row["max_spd_rad_s"])
-        plan = D.build_plan(centers, limits, joints, intensity, speeds)
+        plan = D.build_plan(centers, limits, joints, intensity, speeds,
+                            _up_directions(arm, now, joints))
         if not any(p.amplitude_deg > 0 for p in plan.joints):
             return {"ok": False, "plan": plan.to_dict(),
                     "error": "흔들 여유가 없습니다 — 관절이 한계 근처입니다. "
@@ -580,3 +581,40 @@ class RobotHub:
         from piper_robot.can import get_usb_info
 
         return get_usb_info()
+
+
+def _up_directions(arm, now_norm: dict, joints: list[str]) -> dict[str, int]:
+    """손목 관절마다 **어느 부호가 팔을 들어올리나**.
+
+    ⚠ 관절 부호 규약은 팔마다 다르고 지금 자세에 따라서도 달라진다 — 추측하면
+    반대로 내리찍는다. 기구학으로 양쪽을 실제로 재서 **최저점이 높아지는 쪽**을
+    고른다. 말단에 달린 것이 걸리는 곳은 아래이므로 최저점이 기준이다.
+    """
+    import numpy as np
+    from piper_robot import diagnostics as D
+    from piper_robot import kinematics as K
+    from piper_robot.joints import denormalize_joint, normalize_joint
+
+    out: dict[str, int] = {}
+    if not K.available():
+        return out
+    try:
+        base = [now_norm[j] for j in K.ARM_JOINTS]
+    except KeyError:
+        return out                      # 관절값이 다 없으면 판정하지 않는다
+    for name in joints:
+        if name not in D.WRIST_JOINTS or name not in K.ARM_JOINTS:
+            continue
+        idx = K.ARM_JOINTS.index(name)
+        zs = {}
+        for sign in (1, -1):
+            q = list(base)
+            deg = denormalize_joint(name, q[idx]) / 1000.0 + sign * 10.0
+            q[idx] = normalize_joint(name, deg * 1000.0)
+            try:
+                zs[sign] = float(K.lowest_z(K.norm_to_rad(np.array([q])))[0])
+            except Exception:
+                return out
+        if zs:
+            out[name] = 1 if zs[1] >= zs[-1] else -1
+    return out
