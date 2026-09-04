@@ -43,19 +43,38 @@ export default function AlignmentPoseModal({
   const [err, setErr] = useState('')
   const live = useRef(true)
 
-  // ── 조그 세션: 열 때 잡고 닫을 때 반드시 놓는다 ──
+  // ── 조그 세션: 열려 있는 동안 **계속 확인해서** 살려 둔다 ──
+  //
+  // ⚠ **한 번 열고 마는 것으로는 부족했다.** 세션을 `useEffect` 에서 여는데
+  //    StrictMode 가 effect 를 두 번 돌린다 — `start → stop → start` 가 되고,
+  //    늦게 도착한 `stop` 이 두 번째 `start` 를 덮으면 **세션은 닫혔는데 화면은
+  //    열린 줄 안다.** 슬라이더는 움직이는데 팔은 가만히 있는다. JogPanel 은
+  //    버튼 클릭으로 열어서 이 문제를 안 만난다.
+  //
+  // ⚠ 세션은 5 분 놀면 서버가 닫는다. 자세를 잡느라 창을 오래 열어 두면 그때도
+  //    조용히 안 듣게 된다. 상태를 보고 없으면 다시 여는 편이 둘 다 낫다.
   useEffect(() => {
     live.current = true
-    void (async () => {
+    const ensure = async () => {
       try {
+        const st = await api.get<{ running: boolean; iface: string | null }>(
+          '/robots/jog/status')
+        if (!live.current) return
+        if (st.running && st.iface === iface) { setReady(true); return }
         await api.post('/robots/jog/start', { iface })
-        if (live.current) setReady(true)
+        if (live.current) { setReady(true); setErr('') }
       } catch (e) {
-        if (live.current) setErr(e instanceof Error ? e.message : '조그를 열지 못했습니다')
+        if (live.current) {
+          setReady(false)
+          setErr(e instanceof Error ? e.message : '조그를 열지 못했습니다')
+        }
       }
-    })()
+    }
+    void ensure()
+    const h = setInterval(() => { void ensure() }, 2000)
     return () => {
       live.current = false
+      clearInterval(h)
       // ⚠ 실패해도 삼킨다 — 닫는 길이 막히면 세션이 영영 남는다
       void api.post('/robots/jog/stop', {}).catch(() => {})
     }
@@ -92,10 +111,16 @@ export default function AlignmentPoseModal({
   }, [cameraId, tagMm, family])
 
   const send = useCallback((values: Record<string, number>) => {
-    // ⚠ `actionKey`(`joint1.pos`) 로 오므로 관절 이름으로 바꾼다
+    // ⚠ **빠진 관절을 0 으로 채우지 않는다.** 0 은 "가만히" 가 아니라 정규화
+    //    가운데라, 안 온 관절을 0 으로 보내면 팔이 크게 움직인다.
     const out: Record<string, number> = {}
-    JOINTS.forEach((j) => { out[j.name] = values[j.actionKey] ?? 0 })
+    JOINTS.forEach((j) => {
+      const v = values[j.actionKey]
+      if (typeof v === 'number') out[j.name] = v
+    })
     void api.post('/robots/jog/goal', { iface, values: out }).catch((e) => {
+      // 세션이 닫혔으면 다음 `ensure` 가 다시 연다 — 여기서는 알리기만 한다
+      setReady(false)
       setErr(e instanceof Error ? e.message : '목표를 보내지 못했습니다')
     })
   }, [iface])

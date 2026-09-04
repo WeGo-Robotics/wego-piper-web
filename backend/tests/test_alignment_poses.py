@@ -145,3 +145,28 @@ def test_the_modal_shows_what_the_camera_sees():
     src = code_only(_modal())
     assert "/stream" in src, "카메라 영상이 없다"
     assert "alignment/tags/" in src, "보이는 태그를 안 보여준다"
+
+
+def test_the_modal_keeps_the_jog_session_alive():
+    """⚠ **한 번 열고 마는 것으로는 부족했다.** 세션을 `useEffect` 에서 여는데
+    StrictMode 가 effect 를 두 번 돌린다 — `start → stop → start` 가 되고, 늦게
+    도착한 `stop` 이 두 번째 `start` 를 덮으면 세션은 닫혔는데 화면은 열린 줄
+    안다. **슬라이더는 움직이는데 팔은 가만히 있는다.** JogPanel 은 버튼 클릭으로
+    열어서 이 문제를 안 만난다 — 그래서 조그 창은 되고 새 자세 창은 안 됐다.
+
+    세션은 5 분 놀면 서버가 닫기도 한다. 상태를 보고 없으면 다시 여는 편이
+    둘 다 낫다.
+    """
+    src = code_only(_modal())
+    assert "jog/status" in src, "세션이 살아 있는지 안 본다"
+    assert "setInterval" in src.split("jog/status", 1)[0][-600:] or \
+           "setInterval" in src.split("jog/status", 1)[1][:600], \
+        "한 번만 확인한다 — 세션이 죽으면 그대로 굳는다"
+
+
+def test_a_missing_joint_is_not_sent_as_zero():
+    """⚠ 정규화 0 은 "가만히" 가 아니라 **가동범위 가운데**다. 안 온 관절을 0 으로
+    채우면 팔이 크게 움직인다 — 자세를 잡는 창에서 그러면 위험하다."""
+    src = code_only(_modal())
+    send = src.split("const send = useCallback", 1)[1][:600]
+    assert "?? 0" not in send, "빠진 관절을 0 으로 채운다"
