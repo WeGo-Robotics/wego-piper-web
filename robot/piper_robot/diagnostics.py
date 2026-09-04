@@ -59,16 +59,17 @@ UNKNOWN_LIMIT_AMP_DEG = 5.0
 #:   지금 자세에 따라도 달라진다. 기구학으로 **실제 높이를 재서** 정한다.
 WRIST_JOINTS = ("joint4", "joint5", "joint6")
 
-#: 흔들기 전에 중심을 **위로** 이만큼 띄운다 (도).
+#: 검사 중심을 관절마다 이만큼 옮긴다 (도) — **사람이 팔마다 정한다.**
 #:
-#: ⚠ **아래쪽이 막힌 관절이 있다.** can3 의 joint5 는 아래로 가면 기구물에
-#:   걸려 아예 안 움직인다(실기 확인: 조그로 보내도 20348 에서 안 내려간다).
-#:   지금 자세에서 그대로 흔들면 아래 절반이 막힌 채로 재고, 검사는 그걸
-#:   "추종 오차" 로 적는다 — 관절이 아니라 기구물을 재는 셈이다.
+#: ⚠ **여기 기본값을 두면 안 된다.** 걸리는 것은 팔에 붙은 기구물이지 관절이
+#:   아니다. 실기에서 마스터 암에만 달린 기구물 때문에 joint5 가 아래에서
+#:   걸렸는데, 한때 이걸 `{"joint5": 30}` 상수로 박아서 **그 기구물이 없는 팔까지**
+#:   중심을 옮길 뻔했다. 무엇이 달려 있는지는 코드가 알 수 없다.
 #:
-#: ⚠ 방향은 **기구학으로 정한다** (`up`). 부호를 찍으면 띄운다는 것이 오히려
-#:   아래로 밀어 넣는 일이 될 수 있다 — 관절 부호 규약은 팔마다 다르다.
-CENTER_SHIFT_DEG = {"joint5": 30.0}
+#: 값은 게이트웨이가 팔별로 들고 `diag_start` 로 넘어온다 (파킹과 같은 경계).
+#: 부호는 **관절 좌표 그대로**다 — 사람이 +30 이라 적으면 +30° 다. 기구학으로
+#: "위" 를 찾아 주지 않는다: 직접 맞추는 값이라 적은 대로 나와야 예측이 된다.
+DEFAULT_OFFSETS: dict[str, float] = {}
 
 #: 띄운 중심까지 데려가는 시간 (초).
 #:
@@ -175,23 +176,25 @@ def period_for(amplitude_deg: float, speed_deg_s: float,
     return max(MIN_PERIOD_S, round(max(t_spd, t_acc), 1))
 
 
-def shift_center(center_deg: float, shift_deg: float, up_sign: int | None,
+def shift_center(center_deg: float, offset_deg: float,
                  lo_deg: float | None, hi_deg: float | None) -> tuple[float, str]:
-    """검사 중심을 **위로** 띄운다. `(중심, 사유)`.
+    """검사 중심을 사람이 정한 만큼 옮긴다. `(중심, 사유)`.
 
-    ⚠ **방향을 모르면 안 옮긴다.** 위가 어느 부호인지는 기구학이 정한다 — 찍으면
-    띄우려던 것이 아래로 밀어 넣는 일이 된다.
+    ⚠ 부호는 **관절 좌표 그대로**다. 기구학으로 "위" 를 찾아 주지 않는다 —
+    사람이 직접 맞추는 값이라 적은 대로 나와야 다음에 얼마를 고칠지 알 수 있다.
     """
-    if not shift_deg or not up_sign:
+    if not offset_deg:
         return center_deg, ""
-    want = center_deg + up_sign * shift_deg
+    want = center_deg + offset_deg
     if lo_deg is not None and hi_deg is not None and hi_deg > lo_deg:
         # 한계에 닿으면 그 자체가 이상 신호로 기록된다 — 여유를 남기고 자른다
         want = min(max(want, lo_deg + LIMIT_MARGIN_DEG), hi_deg - LIMIT_MARGIN_DEG)
     moved = want - center_deg
     if abs(moved) < 0.1:
-        return center_deg, "띄울 여유가 없습니다"
-    note = f"위로 {abs(moved):.0f}° 띄움"
+        return center_deg, "옮길 여유가 없습니다"
+    note = f"중심 {moved:+.0f}°"
+    if abs(moved - offset_deg) > 0.1:
+        note += f" (적은 값 {offset_deg:+.0f}° 는 한계에 걸림)"
     return round(want, 2), note
 
 
@@ -242,7 +245,8 @@ def plan_amplitude(center_deg: float, lo_deg: float | None, hi_deg: float | None
 def build_plan(centers: dict[str, float], limits: dict[str, tuple],
                joints: list[str], intensity: str = DEFAULT_INTENSITY,
                accels: dict[str, float] | None = None,
-               up: dict[str, int] | None = None) -> Plan:
+               up: dict[str, int] | None = None,
+               offsets: dict[str, float] | None = None) -> Plan:
     """검사할 관절들의 모션 계획. `joints` 가 하나면 개별, 여럿이면 전체다.
 
     `accels` 는 관절별 가속도 한계 (rad/s²) — 팔이 보고하는 값이다.
@@ -254,9 +258,10 @@ def build_plan(centers: dict[str, float], limits: dict[str, tuple],
     for i, name in enumerate(joints):
         lo, hi = limits.get(name, (None, None))
         want = (up or {}).get(name)
-        # ⚠ 아래가 막힌 관절은 **먼저 띄우고** 흔든다 (`CENTER_SHIFT_DEG`).
+        # ⚠ 기구물에 걸리는 관절은 **중심을 옮겨서** 흔든다. 얼마나 옮길지는
+        #   팔마다 다르므로 사람이 정한다 (`DEFAULT_OFFSETS` 의 주석).
         center, shift_note = shift_center(
-            centers.get(name, 0.0), CENTER_SHIFT_DEG.get(name, 0.0), want, lo, hi)
+            centers.get(name, 0.0), (offsets or {}).get(name, 0.0), lo, hi)
         amp, direction, note = plan_amplitude(center, lo, hi, cap)
         # ⚠ 손목 셋은 **위로만**. 말단에 달린 것이 아래에서 걸릴 수 있다.
         if name in WRIST_JOINTS and want and direction != want:

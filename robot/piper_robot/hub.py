@@ -137,7 +137,8 @@ class RobotHub:
     _diag = None
 
     def diag_start(self, iface: str, joints: list[str],
-                   intensity: str = "normal") -> dict:
+                   intensity: str = "normal",
+                   offsets: dict | None = None) -> dict:
         from piper_robot import diagnostics as D
         from piper_robot.diag_runner import DiagRun
         from piper_robot.publish import arm_bridge_manager
@@ -166,8 +167,10 @@ class RobotHub:
             #   (`diagnostics.SPEED_DEG_S`). 계획을 무는 것은 가속도 쪽이다.
             if row.get("max_acc_rad_s2"):
                 accels[row["joint"]] = row["max_acc_rad_s2"]
+        # ⚠ 오프셋은 **게이트웨이가 갖는다** — 팔에 무엇이 붙어 있는지는 사람이
+        #   아는 것이라, 여기서 파일을 읽으면 파킹 때처럼 저장 위치가 갈라진다.
         plan = D.build_plan(centers, limits, joints, intensity, accels,
-                            _up_directions(arm, now, joints))
+                            _up_directions(arm, now, joints), offsets or {})
         if not any(p.amplitude_deg > 0 for p in plan.joints):
             return {"ok": False, "plan": plan.to_dict(),
                     "error": "흔들 여유가 없습니다 — 관절이 한계 근처입니다. "

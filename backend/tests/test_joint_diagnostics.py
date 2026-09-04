@@ -353,29 +353,19 @@ def test_the_result_charts_overlay_the_joints():
 
 
 def test_a_joint_blocked_below_is_lifted_before_swinging():
-    """⚠ **아래가 막힌 관절이 있다.** can3 의 joint5 는 아래로 가면 기구물에
-    걸려 안 움직인다 — 그 자리에서 그대로 흔들면 아래 절반이 막힌 채로 재고,
+    """⚠ **아래가 막힌 관절이 있다.** 마스터 암에 달린 기구물 때문에 joint5 가
+    아래에서 걸린다 — 그 자리에서 그대로 흔들면 아래 절반이 막힌 채로 재고,
     검사는 그 미달을 "추종 오차" 로 적는다. 관절이 아니라 기구물을 재는 셈이다.
+
+    얼마나 옮길지는 **사람이 팔마다 정한다** (`DiagOffsetsModal`).
     """
     lim = {"joint5": (-70.0, 70.0)}
     p = D.build_plan({"joint5": 0.0}, lim, ["joint5"], "strong",
-                     {"joint5": 5.0}, up={"joint5": 1})
+                     {"joint5": 5.0}, up={"joint5": 1}, offsets={"joint5": 30.0})
     j = p.joints[0]
-    assert j.center_deg >= 25.0, f"중심이 안 띄워졌다: {j.center_deg}"
+    assert j.center_deg >= 25.0, f"중심이 안 옮겨졌다: {j.center_deg}"
     lowest = min(j.target_deg(t / 50.0) for t in range(int(50 * j.period_s) + 1))
     assert lowest >= 0.0, f"궤적이 아래로 내려간다: {lowest:.1f}°"
-
-
-def test_the_lift_never_guesses_which_way_is_up():
-    """⚠ 위가 어느 부호인지는 **기구학이 정한다.** 찍으면 띄우려던 것이 아래로
-    밀어 넣는 일이 된다 — 관절 부호 규약은 팔마다, 자세마다 다르다."""
-    lim = {"joint5": (-70.0, 70.0)}
-    plain = D.build_plan({"joint5": 0.0}, lim, ["joint5"], "strong", {"joint5": 5.0})
-    assert plain.joints[0].center_deg == 0.0, "방향을 모르는데 중심을 옮겼다"
-
-    down = D.build_plan({"joint5": 0.0}, lim, ["joint5"], "strong",
-                        {"joint5": 5.0}, up={"joint5": -1})
-    assert down.joints[0].center_deg < 0, "위 방향이 음수인 팔에서 반대로 띄웠다"
 
 
 def test_the_lift_stays_inside_the_limits():
@@ -465,3 +455,83 @@ def test_the_stop_message_says_how_to_recover():
         _run_with_rows([{"joint5_stall": True}] * D.ABORT_FRAMES)
     assert "리셋" in str(e.value), "복구하는 길을 안 알려준다"
     assert "0x150" in str(e.value)
+
+
+# ── 검사 중심 오프셋 ─────────────────────────────────────────────────────────
+
+def test_the_offset_is_applied_in_joint_coordinates():
+    """⚠ 부호는 **관절 좌표 그대로**다. 기구학으로 "위" 를 찾아 주면 사람이 +30 을
+    적었는데 −30 으로 움직일 수 있다 — 직접 맞추는 값이라 적은 대로 나와야
+    다음에 얼마를 고칠지 알 수 있다."""
+    lim = {"joint5": (-70.0, 70.0)}
+    for off in (30.0, -20.0):
+        p = D.build_plan({"joint5": 20.0}, lim, ["joint5"], "normal",
+                         {"joint5": 5.0}, up={"joint5": 1}, offsets={"joint5": off})
+        assert p.joints[0].center_deg == pytest.approx(20.0 + off, abs=0.01), off
+
+
+def test_a_clamped_offset_says_so():
+    """⚠ 한계에 걸려 덜 옮겼으면 **적은 값과 실제를 둘 다** 말해야 한다.
+    조용히 자르면 사람이 왜 안 걸리는지 모르고 같은 값을 다시 적는다."""
+    lim = {"joint5": (-70.0, 70.0)}
+    p = D.build_plan({"joint5": 20.0}, lim, ["joint5"], "normal",
+                     {"joint5": 5.0}, up={"joint5": 1}, offsets={"joint5": 60.0})
+    note = p.joints[0].note
+    assert "60" in note and "한계" in note, f"잘렸다는 말이 없다: {note}"
+
+
+def test_there_is_no_offset_baked_into_the_code():
+    """⚠ **걸리는 것은 팔에 붙은 기구물이지 관절이 아니다.** 한때 joint5 를 30°
+    옮기는 상수를 코드에 박았는데, 그 기구물은 마스터 암에만 달려 있다 — 없는
+    팔까지 중심을 옮길 뻔했다. 무엇이 달려 있는지는 코드가 알 수 없다."""
+    assert D.DEFAULT_OFFSETS == {}, "코드에 오프셋 기본값이 생겼다"
+    lim = {"joint5": (-70.0, 70.0)}
+    p = D.build_plan({"joint5": 20.0}, lim, ["joint5"], "normal", {"joint5": 5.0},
+                     up={"joint5": 1})
+    assert p.joints[0].center_deg == 20.0, "아무도 안 시켰는데 중심이 옮겨졌다"
+
+
+def test_offsets_are_stored_per_arm(tmp_path, monkeypatch):
+    """팔마다 붙은 것이 다르다 — 한 팔의 오프셋이 다른 팔에 새면 안 된다."""
+    from app.services import diag_offsets
+
+    monkeypatch.setattr(diag_offsets, "ROOT", tmp_path)
+    diag_offsets.save("can3", {"joint5": 30.0})
+    assert diag_offsets.load("can3") == {"joint5": 30.0}
+    assert diag_offsets.load("can0") == {}
+
+
+def test_saving_drops_zeros_and_unknown_joints(tmp_path, monkeypatch):
+    """0 은 안 쓰는 값이다 — 파일에 남으면 나중에 왜 있는지 모른다."""
+    from app.services import diag_offsets
+
+    monkeypatch.setattr(diag_offsets, "ROOT", tmp_path)
+    got = diag_offsets.save("can3", {"joint5": 30.0, "joint4": 0.0, "elbow": 5.0})
+    assert got == {"joint5": 30.0}
+
+
+def test_an_absurd_offset_is_clamped(tmp_path, monkeypatch):
+    """⚠ 검사는 지금 자세 **근처**에서 흔드는 일이다. 오타 하나로 팔을 반대편까지
+    보내면 안 된다."""
+    from app.services import diag_offsets
+
+    monkeypatch.setattr(diag_offsets, "ROOT", tmp_path)
+    got = diag_offsets.save("can3", {"joint5": 999.0})
+    assert got["joint5"] == diag_offsets.LIMIT_DEG
+
+
+def test_the_gateway_owns_the_offsets_not_robotd():
+    """⚠ 파킹 자세를 robotd 가 자기 파일에서 읽다가 저장 위치가 갈라져 "저장은
+    되는데 안 간다" 가 났다. 같은 실수를 반복하지 않는다 — 사람이 정하는 값은
+    게이트웨이가 갖고 robotd 는 인자로 받는다."""
+    import inspect
+    import textwrap
+
+    from conftest import python_code_only
+    from piper_robot.hub import RobotHub
+
+    body = python_code_only(textwrap.dedent(inspect.getsource(RobotHub.diag_start)))
+    assert "offsets" in inspect.signature(RobotHub.diag_start).parameters, \
+        "robotd 가 오프셋을 인자로 안 받는다"
+    assert "diag_offsets" not in body and "open(" not in body, \
+        "robotd 가 오프셋을 직접 읽는다 — 저장 위치가 갈라진다"

@@ -287,6 +287,12 @@ class ZeroRequest(BaseModel):
     joint: str
 
 
+class DiagOffsetsBody(BaseModel):
+    iface: str
+    #: 관절 → 도. 0 은 저장하면서 지워진다.
+    offsets: dict[str, float] = {}
+
+
 class DiagStartRequest(BaseModel):
     iface: str
     #: 비우면 여섯 관절 전부(전체 측정). 하나만 주면 개별 측정.
@@ -315,13 +321,34 @@ async def diag_start(body: DiagStartRequest):
     bad = [j for j in joints if j not in ARM_JOINTS]
     if bad:
         raise HTTPException(400, f"모르는 관절입니다: {bad}")
+    from app.services import diag_offsets
+
+    # ⚠ 오프셋은 **여기가** 갖고 실어 보낸다 — robotd 가 자기 파일을 읽게 두면
+    #   파킹 때처럼 저장 위치가 갈라진다 (`services/diag_offsets.py`).
     out = robot_manager_mod._call("diag_start", body.iface, joints,
-                                  body.intensity, default=None)
+                                  body.intensity, diag_offsets.load(body.iface),
+                                  default=None)
     if out is None:
         raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
     if not out.get("ok"):
         raise HTTPException(409, out.get("error", "검사를 시작하지 못했습니다"))
     return out
+
+
+@router.get("/diag/offsets/{iface}")
+async def diag_offsets_get(iface: str):
+    """이 팔의 검사 중심 오프셋. 팔에 붙은 기구물은 사람만 안다."""
+    from app.services import diag_offsets
+
+    return {"iface": iface, "offsets": diag_offsets.load(iface),
+            "limit_deg": diag_offsets.LIMIT_DEG}
+
+
+@router.post("/diag/offsets")
+async def diag_offsets_set(body: DiagOffsetsBody):
+    from app.services import diag_offsets
+
+    return {"iface": body.iface, "offsets": diag_offsets.save(body.iface, body.offsets)}
 
 
 @router.get("/diag/status")

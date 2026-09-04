@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import DiagChart, { type Row } from './DiagCharts'
 import { useSystemMessage } from './SystemMessages'
+import DiagOffsetsModal from './DiagOffsetsModal'
 import { api } from '../services/api'
 
 /**
@@ -83,6 +84,10 @@ export default function DiagnosticsPanel({ arms }: {
   const [iface, setIface] = useState('')
   const [scope, setScope] = useState<'all' | string>('all')
   const [intensity, setIntensity] = useState<Intensity>('normal')
+  const [offsetsOpen, setOffsetsOpen] = useState(false)
+  // ⚠ 몇 개 걸려 있는지 버튼에 보여준다 — 안 보이면 옮겨 둔 걸 잊고 "왜 딴 데서
+  //   흔들지" 가 된다. 검사 중심은 조용히 달라져 있으면 안 되는 값이다.
+  const [offsetCount, setOffsetCount] = useState(0)
   const [status, setStatus] = useState<Status | null>(null)
   const [summary, setSummary] = useState<Summary | null>(null)
   const [rows, setRows] = useState<Row[]>([])
@@ -165,13 +170,26 @@ export default function DiagnosticsPanel({ arms }: {
     }
   }
 
+  const loadOffsetCount = async () => {
+    if (!iface) { setOffsetCount(0); return }
+    try {
+      const d = await api.get<{ offsets: Record<string, number> }>(
+        `/robots/diag/offsets/${iface}`)
+      setOffsetCount(Object.keys(d.offsets ?? {}).length)
+    } catch { setOffsetCount(0) }
+  }
+  useEffect(() => { void loadOffsetCount() }, [iface])
+
   const start = async () => {
     const joints = scope === 'all' ? [...JOINTS] : [scope]
     const amp = { gentle: 10, normal: 20, strong: 30 }[intensity]
     if (!await confirm(
       `${iface} 의 ${scope === 'all' ? '여섯 관절을 모두' : scope + ' 를'} 흔들어 잽니다.\n\n` +
       `· 지금 자세를 중심으로 사인파 **±${amp}°**\n` +
-      '· 속도는 팔의 한계 안(약 14°/s)이라 폭이 클수록 오래 걸립니다\n' +
+      `· 최고 ${{ gentle: 15, normal: 40, strong: 70 }[intensity]}°/s\n` +
+      // ⚠ 중심을 옮겨 뒀으면 **지금 자세가 아닌 곳**에서 흔든다. 안 알리면
+      //   팔이 먼저 움직이는 것이 놀라움이 된다.
+      (offsetCount > 0 ? `· 중심 오프셋 ${offsetCount}개 적용 — 흔들기 전에 그 자세로 이동합니다\n` : '') +
       '· 끝나면 원래 자세로 돌아옵니다\n' +
       (scope === 'all' ? '· 여섯이 위상을 어긋나게 움직입니다\n' : '') +
       '\n팔 주변이 비어 있는지 확인하세요.')) return
@@ -204,8 +222,14 @@ export default function DiagnosticsPanel({ arms }: {
   const pct = status && status.duration_s
     ? Math.min(100, (status.elapsed_s / status.duration_s) * 100) : 0
 
+  const offsetsModal = offsetsOpen ? (
+    <DiagOffsetsModal iface={iface} onClose={() => setOffsetsOpen(false)}
+      onSaved={() => void loadOffsetCount()} />
+  ) : null
+
   return (
     <div className="space-y-4">
+      {offsetsModal}
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <select value={iface} onChange={(e) => setIface(e.target.value)}
@@ -239,6 +263,13 @@ export default function DiagnosticsPanel({ arms }: {
               </button>
             ))}
           </div>
+
+          <button onClick={() => setOffsetsOpen(true)} disabled={!iface}
+            title="팔에 붙은 기구물에 걸리는 관절은 검사 중심을 옮기세요 — 팔마다 따로 저장됩니다"
+            className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-300
+                       hover:bg-neutral-600 disabled:opacity-50">
+            중심 오프셋{offsetCount > 0 ? ` (${offsetCount})` : ''}
+          </button>
 
           {running ? (
             <button onClick={() => void stop()}
