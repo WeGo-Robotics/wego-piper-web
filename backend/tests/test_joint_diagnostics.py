@@ -350,3 +350,106 @@ def test_the_result_charts_overlay_the_joints():
                        / "components" / "DiagnosticsPanel.tsx").read_text())
     for field in ("ctrl_minus_feedback_deg", "motor_current_a", "effort_nm"):
         assert field in panel, f"{field} 그래프가 없다"
+
+
+def test_a_joint_blocked_below_is_lifted_before_swinging():
+    """⚠ **아래가 막힌 관절이 있다.** can3 의 joint5 는 아래로 가면 기구물에
+    걸려 안 움직인다 — 그 자리에서 그대로 흔들면 아래 절반이 막힌 채로 재고,
+    검사는 그 미달을 "추종 오차" 로 적는다. 관절이 아니라 기구물을 재는 셈이다.
+    """
+    lim = {"joint5": (-70.0, 70.0)}
+    p = D.build_plan({"joint5": 0.0}, lim, ["joint5"], "strong",
+                     {"joint5": 5.0}, up={"joint5": 1})
+    j = p.joints[0]
+    assert j.center_deg >= 25.0, f"중심이 안 띄워졌다: {j.center_deg}"
+    lowest = min(j.target_deg(t / 50.0) for t in range(int(50 * j.period_s) + 1))
+    assert lowest >= 0.0, f"궤적이 아래로 내려간다: {lowest:.1f}°"
+
+
+def test_the_lift_never_guesses_which_way_is_up():
+    """⚠ 위가 어느 부호인지는 **기구학이 정한다.** 찍으면 띄우려던 것이 아래로
+    밀어 넣는 일이 된다 — 관절 부호 규약은 팔마다, 자세마다 다르다."""
+    lim = {"joint5": (-70.0, 70.0)}
+    plain = D.build_plan({"joint5": 0.0}, lim, ["joint5"], "strong", {"joint5": 5.0})
+    assert plain.joints[0].center_deg == 0.0, "방향을 모르는데 중심을 옮겼다"
+
+    down = D.build_plan({"joint5": 0.0}, lim, ["joint5"], "strong",
+                        {"joint5": 5.0}, up={"joint5": -1})
+    assert down.joints[0].center_deg < 0, "위 방향이 음수인 팔에서 반대로 띄웠다"
+
+
+def test_the_lift_stays_inside_the_limits():
+    """한계에 닿으면 그 자체가 이상 신호로 기록된다 — 띄우다 한계를 치면 안 된다."""
+    lim = {"joint5": (-70.0, 70.0)}
+    p = D.build_plan({"joint5": 60.0}, lim, ["joint5"], "strong",
+                     {"joint5": 5.0}, up={"joint5": 1})
+    j = p.joints[0]
+    assert j.center_deg <= 70.0 - D.LIMIT_MARGIN_DEG + 1e-6, f"한계를 넘겼다: {j.center_deg}"
+    top = max(j.target_deg(t / 50.0) for t in range(int(50 * j.period_s) + 1))
+    assert top <= 70.0 - D.LIMIT_MARGIN_DEG + 1e-6, f"궤적이 한계를 넘는다: {top:.1f}°"
+
+
+def test_the_run_walks_to_the_start_pose_first():
+    """⚠ 중심을 띄우면 t=0 목표가 지금 자세에서 떨어져 있다. 바로 흔들면 팔이
+    그리로 튀고, 그 과도응답이 첫 주기 측정에 섞인다."""
+    from pathlib import Path
+
+    from conftest import python_code_only
+
+    src = (Path(__file__).resolve().parents[2]
+           / "robot/piper_robot/diag_runner.py").read_text()
+    body = python_code_only(src)
+    assert "_approach" in body, "출발 자세로 데려가는 구간이 없다"
+    assert body.index("self._approach()") < body.index("while not self._stop.is_set()"), \
+        "접근이 측정 루프보다 뒤에 있다"
+
+
+def _run_with_rows(rows):
+    """`DiagRun` 을 팔 없이 세워서 중단 판정만 돌린다."""
+    from piper_robot.diag_runner import DiagRun
+
+    run = DiagRun.__new__(DiagRun)
+    run.plan = D.Plan(joints=[D.JointPlan(joint="joint5", center_deg=0.0,
+                                          amplitude_deg=10.0)])
+    run._abort_run = 0
+    for row in rows:
+        run._check_abort(row)
+    return run
+
+
+def test_a_stalled_joint_stops_the_run():
+    """⚠ **팔은 멈췄다고 말하고 있었는데 검사가 계속 밀었다.** 실기에서 걸린
+    joint5 를 6 초간 밀어 모터 온도가 65 → 87°C 까지 올랐고 드라이버가 스스로
+    차단했다. 플래그를 열에 적기만 하고 반응을 안 한 것이 구멍이었다 — 재려는
+    것이 관절 상태인데 그 과정에서 관절을 상하게 하면 검사가 아니라 사고다."""
+    stalled = {"joint5_stall": True, "joint5_ctrl_minus_feedback_deg": 2.0}
+    with pytest.raises(RuntimeError, match="걸려서"):
+        _run_with_rows([stalled] * D.ABORT_FRAMES)
+
+
+def test_one_noisy_frame_does_not_stop_the_run():
+    """한 프레임 튀었다고 멈추면 멀쩡한 검사가 자꾸 끊긴다."""
+    bad = {"joint5_stall": True}
+    good = {"joint5_stall": False, "joint5_ctrl_minus_feedback_deg": 0.5}
+    _run_with_rows([bad, good] * 10)          # 예외가 안 나면 통과
+
+
+def test_a_joint_that_never_follows_stops_the_run():
+    """⚠ 플래그를 못 읽는 팔도 있다. **안 따라오는 것 자체**가 보루다 —
+    실기에서 명령 65° 인데 피드백이 22° 에 머물렀다(오차 44°)."""
+    stuck = {"joint5_ctrl_minus_feedback_deg": 44.7}
+    with pytest.raises(RuntimeError, match="추종 오차"):
+        _run_with_rows([stuck] * D.ABORT_FRAMES)
+
+
+def test_the_approach_is_watched_too():
+    """⚠ **걸림은 접근 구간에서 먼저 난다** — 띄우러 가다 막히는 것이 흔들다
+    막히는 것보다 앞선다. 측정 안 하는 구간이라고 안 보면 안 된다."""
+    import inspect
+    import textwrap
+
+    from conftest import python_code_only
+    from piper_robot.diag_runner import DiagRun
+
+    body = python_code_only(textwrap.dedent(inspect.getsource(DiagRun._approach)))
+    assert "_check_abort" in body, "접근 구간이 감시를 안 받는다"

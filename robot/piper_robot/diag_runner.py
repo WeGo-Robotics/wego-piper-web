@@ -8,11 +8,12 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 
 from piper_robot import diagnostics as D
-from piper_robot.joints import normalize_joint
+from piper_robot.joints import denormalize_joint, normalize_joint
 from piper_robot.kinematics import ARM_JOINTS
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,8 @@ class DiagRun:
         self.error: str | None = None
         self.done = False
         self._stop = threading.Event()
+        #: 중단 조건이 몇 프레임 연속인가 (`_check_abort`).
+        self._abort_run = 0
         self._thread = threading.Thread(target=self._run, daemon=True, name="diag")
 
     def start(self) -> None:
@@ -45,8 +48,12 @@ class DiagRun:
 
     def status(self) -> dict:
         el = time.time() - self.started_at
+        # ⚠ **접근 구간을 더해서 보고한다.** `plan.duration_s` 는 흔드는 시간이고,
+        #   실제로는 그 앞에 출발 자세로 데려가는 시간이 있다. 빼고 말하면
+        #   진행률이 먼저 100% 에 닿고 화면은 다 됐다는데 팔은 아직 돈다.
         return {"running": not self.done, "elapsed_s": round(el, 2),
-                "duration_s": self.plan.duration_s, "samples": len(self.rows),
+                "duration_s": round(self.plan.duration_s + D.APPROACH_S, 1),
+                "samples": len(self.rows),
                 "error": self.error, "plan": self.plan.to_dict()}
 
     # ── 실행 ──
@@ -59,6 +66,9 @@ class DiagRun:
             if not self.arm.enable_for_motion():
                 raise RuntimeError("모터를 켜지 못했습니다 — 팔 전원과 에러 상태를 "
                                    "확인하세요 (검사는 팔을 움직여야 잽니다)")
+            # ⚠ **흔들기 전에 출발 자세로 데려간다.** 중심을 띄운 관절은 t=0
+            #   목표가 지금 자세에서 떨어져 있다 (`CENTER_SHIFT_DEG`).
+            self._approach()
             t0 = time.monotonic()
             while not self._stop.is_set():
                 t = time.monotonic() - t0
@@ -81,6 +91,39 @@ class DiagRun:
             except Exception as exc:                   # noqa: BLE001
                 logger.warning("검사 종료 정지 실패 (%s): %s", self.arm.iface, exc)
 
+    def _approach(self) -> None:
+        """계획의 출발 자세로 **부드럽게** 데려간다. 측정에는 안 들어간다.
+
+        ⚠ 바로 흔들기 시작하면 팔이 출발 자세로 튀고, 그 과도응답이 첫 주기에
+        섞인다 — 검사가 **자기가 만든 이동**을 관절 이상으로 읽는다.
+
+        ⚠ 코사인 이즈라 출발·도착에서 속도가 0 이다. 선형으로 가면 도착하는
+        순간 속도가 꺾여 그 자체로 충격이 된다.
+        """
+        now = self.arm.read_joints_normalized()
+        if not now:
+            return
+        start = {p.joint: denormalize_joint(p.joint, now[p.joint]) / 1000.0
+                 for p in self.plan.joints if p.joint in now}
+        goal = {p.joint: p.target_deg(0.0) for p in self.plan.joints if p.joint in start}
+        if not goal or max(abs(goal[j] - start[j]) for j in goal) < 1.0:
+            return          # 이미 그 자리다 — 시간을 버릴 이유가 없다
+        dt = 1.0 / D.SAMPLE_HZ
+        t0 = time.monotonic()
+        while not self._stop.is_set():
+            t = time.monotonic() - t0
+            if t >= D.APPROACH_S:
+                break
+            k = (1 - math.cos(math.pi * t / D.APPROACH_S)) / 2
+            targets = {j: start[j] + (goal[j] - start[j]) * k for j in goal}
+            self._command(targets)
+            # ⚠ **걸림은 여기서 먼저 난다.** 띄우러 가다 막히는 것이 흔들다
+            #   막히는 것보다 앞선다 — 측정 안 하는 구간이라고 안 보면 안 된다.
+            self._check_abort(self._sample(t, targets))
+            time.sleep(dt)
+        if not self._stop.is_set():
+            self._command(goal)
+
     def _hold(self) -> None:
         """끝나거나 멈출 때 **그 자리에 세운다.**
 
@@ -95,7 +138,35 @@ class DiagRun:
     def _tick(self, t: float) -> None:
         targets = {p.joint: p.target_deg(t) for p in self.plan.joints}
         self._command(targets)
-        self.rows.append(self._sample(t, targets))
+        row = self._sample(t, targets)
+        self.rows.append(row)
+        self._check_abort(row)
+
+    def _check_abort(self, row: dict) -> None:
+        """팔이 "걸렸다" 고 말하면 **멈춘다.**
+
+        ⚠ 예전엔 `stall`·`driver_overcurrent` 를 열에 적기만 했다. 걸린 관절을
+        계속 밀어 모터 온도가 65 → 87°C 까지 올랐고 드라이버가 스스로 차단했다
+        (`D.ABORT_FLAGS` 의 실측). 재려는 것이 관절 상태인데 그 과정에서 관절을
+        상하게 하면 검사가 아니라 사고다.
+        """
+        hit = [f"{p.joint} {flag}"
+               for p in self.plan.joints for flag in D.ABORT_FLAGS
+               if row.get(f"{p.joint}_{flag}")]
+        # 플래그를 못 읽는 팔도 있다 — 안 따라오는 것 자체가 보루다
+        hit += [f"{p.joint} 추종 오차 {abs(e):.0f}°"
+                for p in self.plan.joints
+                if isinstance(e := row.get(f"{p.joint}_ctrl_minus_feedback_deg"),
+                              (int, float)) and abs(e) > D.ABORT_ERROR_DEG]
+        if not hit:
+            self._abort_run = 0
+            return
+        self._abort_run += 1
+        if self._abort_run >= D.ABORT_FRAMES:
+            raise RuntimeError(
+                "팔이 걸려서 검사를 멈췄습니다 — " + ", ".join(sorted(set(hit)))
+                + ". 기구물 간섭이나 관절 고착을 확인하세요."
+            )
 
     def _command(self, targets_deg: dict[str, float]) -> None:
         """목표를 **안전층을 거쳐** 보낸다.

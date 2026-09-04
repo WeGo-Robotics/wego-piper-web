@@ -59,11 +59,41 @@ UNKNOWN_LIMIT_AMP_DEG = 5.0
 #:   지금 자세에 따라도 달라진다. 기구학으로 **실제 높이를 재서** 정한다.
 WRIST_JOINTS = ("joint4", "joint5", "joint6")
 
+#: 흔들기 전에 중심을 **위로** 이만큼 띄운다 (도).
+#:
+#: ⚠ **아래쪽이 막힌 관절이 있다.** can3 의 joint5 는 아래로 가면 기구물에
+#:   걸려 아예 안 움직인다(실기 확인: 조그로 보내도 20348 에서 안 내려간다).
+#:   지금 자세에서 그대로 흔들면 아래 절반이 막힌 채로 재고, 검사는 그걸
+#:   "추종 오차" 로 적는다 — 관절이 아니라 기구물을 재는 셈이다.
+#:
+#: ⚠ 방향은 **기구학으로 정한다** (`up`). 부호를 찍으면 띄운다는 것이 오히려
+#:   아래로 밀어 넣는 일이 될 수 있다 — 관절 부호 규약은 팔마다 다르다.
+CENTER_SHIFT_DEG = {"joint5": 30.0}
+
+#: 띄운 중심까지 데려가는 시간 (초).
+#:
+#: ⚠ **이 구간은 측정에 안 들어간다.** 중심을 옮기면 t=0 목표가 지금 자세에서
+#:   떨어져 있어, 바로 흔들면 팔이 그리로 튀고 그 과도응답이 첫 주기에 섞인다.
+APPROACH_S = 2.0
+
 #: 전체 측정에서 관절마다 어긋나게 주는 위상 (도). 한꺼번에 같은 방향으로
 #: 최대 속도를 내면 팔 전체가 크게 흔들린다.
 PHASE_STEP_DEG = 60.0
 #: 샘플 주기 (Hz).
 SAMPLE_HZ = 50.0
+
+#: 이 플래그가 서면 **즉시 멈춘다.**
+#:
+#: ⚠ **팔은 멈췄다고 말하고 있었는데 검사가 계속 밀었다.** 실기(can3 joint5,
+#:   기구물에 걸린 관절): 명령 50.9~65° 인데 피드백은 18~22° 에서 안 움직였고,
+#:   전류 10.3 A · `stall` 86.9% · `driver_overcurrent` 86.9% 로 드라이버가
+#:   스스로 차단할 때까지 6 초를 밀었다. **모터 온도가 65 → 87°C.** 플래그를
+#:   기록만 하고 반응을 안 한 것이 구멍이었다 — 검사가 모터를 태울 수 있다.
+ABORT_FLAGS = ("stall", "driver_overcurrent", "collision")
+#: 몇 프레임 연속으로 서야 멈추나. 한 프레임은 잡음일 수 있다 (50Hz 라 0.1초).
+ABORT_FRAMES = 5
+#: 추종 오차가 이보다 크면 걸린 것으로 본다 (도). 플래그를 못 읽는 팔의 보루다.
+ABORT_ERROR_DEG = 15.0
 
 
 @dataclass
@@ -139,6 +169,26 @@ def period_for(amplitude_deg: float, speed_deg_s: float,
     return max(MIN_PERIOD_S, round(max(t_spd, t_acc), 1))
 
 
+def shift_center(center_deg: float, shift_deg: float, up_sign: int | None,
+                 lo_deg: float | None, hi_deg: float | None) -> tuple[float, str]:
+    """검사 중심을 **위로** 띄운다. `(중심, 사유)`.
+
+    ⚠ **방향을 모르면 안 옮긴다.** 위가 어느 부호인지는 기구학이 정한다 — 찍으면
+    띄우려던 것이 아래로 밀어 넣는 일이 된다.
+    """
+    if not shift_deg or not up_sign:
+        return center_deg, ""
+    want = center_deg + up_sign * shift_deg
+    if lo_deg is not None and hi_deg is not None and hi_deg > lo_deg:
+        # 한계에 닿으면 그 자체가 이상 신호로 기록된다 — 여유를 남기고 자른다
+        want = min(max(want, lo_deg + LIMIT_MARGIN_DEG), hi_deg - LIMIT_MARGIN_DEG)
+    moved = want - center_deg
+    if abs(moved) < 0.1:
+        return center_deg, "띄울 여유가 없습니다"
+    note = f"위로 {abs(moved):.0f}° 띄움"
+    return round(want, 2), note
+
+
 def plan_amplitude(center_deg: float, lo_deg: float | None, hi_deg: float | None,
                    cap_deg: float | None = None,
                    force: int | None = None) -> tuple[float, int, str]:
@@ -197,15 +247,18 @@ def build_plan(centers: dict[str, float], limits: dict[str, tuple],
     out = Plan(intensity=intensity)
     for i, name in enumerate(joints):
         lo, hi = limits.get(name, (None, None))
-        amp, direction, note = plan_amplitude(centers.get(name, 0.0), lo, hi, cap)
-        # ⚠ 손목 셋은 **위로만**. 말단에 달린 것이 아래에서 걸릴 수 있다.
         want = (up or {}).get(name)
+        # ⚠ 아래가 막힌 관절은 **먼저 띄우고** 흔든다 (`CENTER_SHIFT_DEG`).
+        center, shift_note = shift_center(
+            centers.get(name, 0.0), CENTER_SHIFT_DEG.get(name, 0.0), want, lo, hi)
+        amp, direction, note = plan_amplitude(center, lo, hi, cap)
+        # ⚠ 손목 셋은 **위로만**. 말단에 달린 것이 아래에서 걸릴 수 있다.
         if name in WRIST_JOINTS and want and direction != want:
-            amp, direction, note = plan_amplitude(
-                centers.get(name, 0.0), lo, hi, cap, force=want)
+            amp, direction, note = plan_amplitude(center, lo, hi, cap, force=want)
             note = note or "위로만"
+        note = " · ".join(x for x in (shift_note, note) if x)
         out.joints.append(JointPlan(
-            joint=name, center_deg=centers.get(name, 0.0), amplitude_deg=amp,
+            joint=name, center_deg=center, amplitude_deg=amp,
             direction=direction,
             # 한쪽 스윙은 같은 진폭에서 속도가 절반이라 주기를 그만큼 줄여도 된다
             period_s=period_for(amp / (2 if direction else 1), speed,
