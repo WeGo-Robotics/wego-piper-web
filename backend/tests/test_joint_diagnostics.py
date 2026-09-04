@@ -453,3 +453,15 @@ def test_the_approach_is_watched_too():
 
     body = python_code_only(textwrap.dedent(inspect.getsource(DiagRun._approach)))
     assert "_check_abort" in body, "접근 구간이 감시를 안 받는다"
+
+
+def test_the_stop_message_says_how_to_recover():
+    """⚠ **멈추는 것으로 끝이 아니다.** 기구 한계에 한 번 부딪히면 과전류·위치
+    오차가 래치되어 그 뒤로는 어느 방향으로도 안 움직인다 — 기구물을 치워도
+    안 돌아온다. `0x150` 리셋이 에러를 지워야 다시 움직이는데, 그 버튼은 영점
+    굽기 창 안에 있어 검사가 끊긴 사람이 스스로 찾지 못한다.
+    """
+    with pytest.raises(RuntimeError) as e:
+        _run_with_rows([{"joint5_stall": True}] * D.ABORT_FRAMES)
+    assert "리셋" in str(e.value), "복구하는 길을 안 알려준다"
+    assert "0x150" in str(e.value)

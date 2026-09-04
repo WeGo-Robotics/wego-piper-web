@@ -149,6 +149,9 @@ class DiagRun:
         계속 밀어 모터 온도가 65 → 87°C 까지 올랐고 드라이버가 스스로 차단했다
         (`D.ABORT_FLAGS` 의 실측). 재려는 것이 관절 상태인데 그 과정에서 관절을
         상하게 하면 검사가 아니라 사고다.
+
+        ⚠ 멈추는 것으로 끝이 아니다 — 한 번 래치된 폴트는 **리셋해야** 풀린다.
+        사유에 그 길을 적는다.
         """
         hit = [f"{p.joint} {flag}"
                for p in self.plan.joints for flag in D.ABORT_FLAGS
@@ -165,7 +168,9 @@ class DiagRun:
         if self._abort_run >= D.ABORT_FRAMES:
             raise RuntimeError(
                 "팔이 걸려서 검사를 멈췄습니다 — " + ", ".join(sorted(set(hit)))
-                + ". 기구물 간섭이나 관절 고착을 확인하세요."
+                + ". 기구 한계에 부딪히면 과전류·위치 오차가 래치되어 그 뒤로는 "
+                "어느 방향으로도 안 움직입니다. 로봇 페이지의 리셋(0x150)으로 "
+                "에러를 지운 뒤 다시 하세요."
             )
 
     def _command(self, targets_deg: dict[str, float]) -> None:
