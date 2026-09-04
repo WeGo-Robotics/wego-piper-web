@@ -31,6 +31,17 @@ type PlanJoint = { joint: string; center_deg: number; amplitude_deg: number
 type Plan = { duration_s: number; intensity: string; joints: PlanJoint[] }
 type Status = { running: boolean; elapsed_s: number; duration_s: number
                 samples: number; error: string | null; plan?: Plan }
+type Saved = {
+  name: string; iface: string; rows: number; saved_at: number
+  note?: string; adapter_serial?: string | null; firmware?: string | null
+  plan?: Plan
+}
+type CmpCell = { a: number | null; b: number | null; delta: number | null; ratio: number | null }
+type Compare = {
+  a: Saved; b: Saved; keys: string[]; plan_differs: string[]
+  joints: Record<string, Record<string, CmpCell>>
+}
+
 type Summary = {
   joints: Record<string, {
     samples: number; err_max_deg: number | null; err_rms_deg: number | null
@@ -38,6 +49,11 @@ type Summary = {
     effort_max_nm: number | null; temp_rise_c: number | null; flags: string[]
   }>
   outliers: Record<string, string[]>
+}
+
+const METRIC_LABEL: Record<string, string> = {
+  err_max_deg: '오차 최대', err_rms_deg: '오차 RMS', current_max_a: '전류 최대',
+  current_mean_a: '전류 평균', effort_max_nm: '토크 최대', temp_rise_c: '온도 상승',
 }
 
 const METRICS = [
@@ -68,6 +84,48 @@ export default function DiagnosticsPanel({ arms }: {
   const [summary, setSummary] = useState<Summary | null>(null)
   const [rows, setRows] = useState<Row[]>([])
   const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState<Saved[]>([])
+  const [saveName, setSaveName] = useState('')
+  const [saveNote, setSaveNote] = useState('')
+  const [pick, setPick] = useState<{ a: string; b: string }>({ a: '', b: '' })
+  const [cmp, setCmp] = useState<Compare | null>(null)
+
+  const loadSaved = useCallback(() => {
+    api.get<{ saved: Saved[] }>('/robots/diag/saved')
+      .then((r) => setSaved(r.saved)).catch(() => {})
+  }, [])
+  useEffect(() => { loadSaved() }, [loadSaved])
+
+  const save = async () => {
+    try {
+      await api.post('/robots/diag/save', { name: saveName.trim(), note: saveNote })
+      setSaveName(''); setSaveNote(''); loadSaved()
+    } catch (e) {
+      notify({ level: 'error', source: '검사',
+               text: e instanceof Error ? e.message : '저장 실패' })
+    }
+  }
+
+  const open = async (name: string) => {
+    try {
+      const d = await api.get<{ rows: Row[]; summary: Summary }>(
+        `/robots/diag/saved/${encodeURIComponent(name)}`)
+      setRows(d.rows); setSummary(d.summary); setCmp(null)
+    } catch (e) {
+      notify({ level: 'error', source: '검사',
+               text: e instanceof Error ? e.message : '불러오기 실패' })
+    }
+  }
+
+  const runCompare = async () => {
+    try {
+      setCmp(await api.get<Compare>(
+        `/robots/diag/compare?a=${encodeURIComponent(pick.a)}&b=${encodeURIComponent(pick.b)}`))
+    } catch (e) {
+      notify({ level: 'error', source: '검사',
+               text: e instanceof Error ? e.message : '비교 실패' })
+    }
+  }
 
   // ⚠ 마스터는 외부 명령을 무시한다 — "안 움직였다" 가 고장으로 오독된다.
   //   조용한 팔도 마찬가지다: 안 움직이는 이유가 관절이 아니라 전원이다.
@@ -225,6 +283,112 @@ export default function DiagnosticsPanel({ arms }: {
           </p>
         )}
       </div>
+
+      {/* ── 저장·조회·비교 ── */}
+      <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-3 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <input value={saveName} onChange={(e) => setSaveName(e.target.value)}
+            placeholder="결과 이름" className="w-40 rounded border border-neutral-700
+            bg-neutral-900 px-2 py-1 text-sm" />
+          {/* ⚠ 팔은 CAN 으로 **시리얼을 안 준다** — 어댑터 시리얼은 케이블을
+              가리킬 뿐이다. 어느 팔인지는 사람이 여기 적어야 한다. */}
+          <input value={saveNote} onChange={(e) => setSaveNote(e.target.value)}
+            placeholder="팔 표시 (시리얼·위치 등 — 팔은 시리얼을 안 줍니다)"
+            className="flex-1 min-w-[16rem] rounded border border-neutral-700
+            bg-neutral-900 px-2 py-1 text-sm" />
+          <button onClick={() => void save()} disabled={!saveName.trim() || !rows.length}
+            title={rows.length ? '' : '저장할 결과가 없습니다 — 검사를 먼저 하세요'}
+            className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-300
+                       hover:bg-blue-600 hover:text-white disabled:opacity-50">
+            결과 저장
+          </button>
+        </div>
+
+        {saved.length > 0 && (
+          <div className="space-y-1">
+            {saved.map((r) => (
+              <div key={r.name} className="flex flex-wrap items-center gap-2 text-xs">
+                <button onClick={() => void open(r.name)}
+                  className="rounded bg-neutral-700 px-2 py-0.5 text-neutral-200 hover:bg-neutral-600">
+                  {r.name}
+                </button>
+                <span className="text-neutral-500">
+                  {r.iface} · {r.rows}행 · {new Date(r.saved_at * 1000).toLocaleString('ko-KR')}
+                  {r.note ? ` · ${r.note}` : ''}
+                </span>
+                <span className="text-neutral-600" title="CAN 어댑터의 USB 시리얼 — 팔이 아니라 케이블을 가리킵니다">
+                  어댑터 {r.adapter_serial?.slice(-6) ?? '—'}
+                </span>
+                <button onClick={() => setPick((p) => ({ ...p, a: r.name }))}
+                  className={`rounded px-1.5 py-0.5 ${pick.a === r.name
+                    ? 'bg-blue-600 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}>A</button>
+                <button onClick={() => setPick((p) => ({ ...p, b: r.name }))}
+                  className={`rounded px-1.5 py-0.5 ${pick.b === r.name
+                    ? 'bg-orange-600 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}>B</button>
+                <button onClick={() => void api.delete(`/robots/diag/saved/${encodeURIComponent(r.name)}`).then(loadSaved)}
+                  className="text-neutral-600 hover:text-red-400">삭제</button>
+              </div>
+            ))}
+            <button onClick={() => void runCompare()} disabled={!pick.a || !pick.b || pick.a === pick.b}
+              className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-300
+                         hover:bg-green-600 hover:text-white disabled:opacity-50">
+              A ↔ B 비교
+            </button>
+          </div>
+        )}
+      </div>
+
+      {cmp && (
+        <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-3 space-y-2">
+          <div className="text-xs text-neutral-400">
+            <b className="text-blue-300">A {cmp.a.name}</b> → <b className="text-orange-300">B {cmp.b.name}</b>
+          </div>
+          {/* ⚠ 모션이 다르면 비교가 거짓이다 — 관절이 아니라 계획의 차이를 보는 것이다.
+              막지는 않되 **다르다는 사실을 먼저** 말한다. */}
+          {cmp.plan_differs.length > 0 && (
+            <p className="rounded bg-amber-600/15 p-2 text-xs text-amber-300">
+              ⚠ 두 회차의 모션이 다릅니다 — 아래 차이는 관절이 아니라 계획의 차이일 수
+              있습니다: {cmp.plan_differs.join(' · ')}
+            </p>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[40rem] text-xs tabular-nums">
+              <thead className="text-neutral-500">
+                <tr className="text-left">
+                  <th className="py-1 pr-3 font-normal">관절</th>
+                  {cmp.keys.map((k) => (
+                    <th key={k} className="py-1 pr-3 font-normal">{METRIC_LABEL[k] ?? k}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="text-neutral-300">
+                {Object.entries(cmp.joints).map(([j, row]) => (
+                  <tr key={j} className="border-t border-neutral-700/60">
+                    <td className="py-1 pr-3 text-neutral-100">{j}</td>
+                    {cmp.keys.map((k) => {
+                      const c = row[k]
+                      const big = c.ratio != null && (c.ratio >= 1.5 || c.ratio <= 0.67)
+                      return (
+                        <td key={k} className={`py-1 pr-3 ${big ? 'text-amber-400' : ''}`}
+                            title={`A ${c.a ?? '—'} → B ${c.b ?? '—'}`}>
+                          {c.ratio != null ? `×${c.ratio}` : '—'}
+                          <span className="ml-1 text-neutral-600">
+                            {c.delta != null ? (c.delta >= 0 ? `+${c.delta}` : c.delta) : ''}
+                          </span>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-neutral-600">
+            숫자는 <b>B ÷ A</b> 배율이고 작은 글씨가 차이입니다. 1.5배를 넘거나 0.67배
+            아래일 때만 색이 붙습니다.
+          </p>
+        </div>
+      )}
 
       {summary && (
         <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-3 space-y-2">

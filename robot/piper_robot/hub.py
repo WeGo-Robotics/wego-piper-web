@@ -190,10 +190,18 @@ class RobotHub:
         if self._diag is None:
             return {"rows": [], "summary": {}, "plan": {}}
         joints = [p.joint for p in self._diag.plan.joints]
+        from piper_robot.can import adapter_serial
+
+        arm = self._diag.arm
         return {"rows": self._diag.rows,
                 "summary": D.summarize(self._diag.rows, joints),
                 "plan": self._diag.plan.to_dict(),
-                "iface": self._diag.arm.iface, "error": self._diag.error}
+                "iface": arm.iface, "error": self._diag.error,
+                # ⚠ **팔의 시리얼이 아니다** — Piper 는 CAN 으로 시리얼을 안 준다.
+                #   이건 "어느 케이블에 물려 있었나" 다. 팔 자체는 사람이 적는다.
+                "adapter_serial": adapter_serial(arm.iface),
+                "firmware": arm.firmware,
+                "at": self._diag.started_at}
 
     def versions(self) -> list[dict]:
         """연결된 팔 전부의 버전·관절 정보."""

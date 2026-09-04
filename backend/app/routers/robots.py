@@ -343,6 +343,70 @@ async def diag_result():
     return out
 
 
+class DiagSaveRequest(BaseModel):
+    name: str
+    #: 팔을 가리키는 사람의 메모. ⚠ 팔은 시리얼을 안 주므로 **여기가 유일한
+    #: 식별 수단**이다 — 어댑터 시리얼은 케이블을 가리킬 뿐이다.
+    note: str = ""
+
+
+@router.post("/diag/save")
+async def diag_save(body: DiagSaveRequest):
+    """방금 검사 결과를 이름 붙여 저장한다."""
+    from app.services import diag_store
+
+    out = robot_manager_mod._call("diag_result", default=None, timeout=30)
+    if not out or not out.get("rows"):
+        raise HTTPException(409, "저장할 결과가 없습니다 — 검사를 먼저 하세요")
+    try:
+        return diag_store.save(body.name.strip(), {**out, "note": body.note})
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/diag/saved")
+async def diag_saved():
+    from app.services import diag_store
+
+    return {"saved": diag_store.list_saved()}
+
+
+@router.get("/diag/saved/{name}")
+async def diag_saved_one(name: str):
+    from app.services import diag_store
+
+    rec = diag_store.get(name)
+    if rec is None:
+        raise HTTPException(404, f"'{name}' 결과가 없습니다")
+    return rec
+
+
+@router.delete("/diag/saved/{name}")
+async def diag_saved_delete(name: str):
+    from app.services import diag_store
+
+    if not diag_store.delete(name):
+        raise HTTPException(404, f"'{name}' 결과가 없습니다")
+    return {"status": "deleted"}
+
+
+@router.get("/diag/compare")
+async def diag_compare(a: str, b: str):
+    """두 회차를 견준다 (`b − a`).
+
+    ⚠ 모션이 다르면 비교가 거짓이다 — 그때는 숫자를 내되 **다르다는 사실을
+      함께** 낸다. 감추지도, 막지도 않는다.
+    """
+    from app.services import diag_store
+
+    ra, rb = diag_store.get(a), diag_store.get(b)
+    missing = [n for n, r in ((a, ra), (b, rb)) if r is None]
+    if missing:
+        raise HTTPException(404, f"결과가 없습니다: {missing}")
+    return {"a": diag_store.meta(ra), "b": diag_store.meta(rb),
+            **diag_store.compare(ra, rb)}
+
+
 @router.get("/versions")
 async def robot_versions():
     """팔별 펌웨어 + 관절별 하드웨어 정보 (화면의 버전 탭).

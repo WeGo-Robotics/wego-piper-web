@@ -134,6 +134,20 @@ def _stat(iface: str, name: str) -> int | None:
         return None
 
 
+def adapter_serial(iface: str) -> str | None:
+    """이 인터페이스를 만드는 **USB 어댑터의 시리얼.**
+
+    ⚠ **팔의 시리얼이 아니다.** Piper 는 CAN 으로 시리얼을 신고하지 않는다 —
+    SDK 프로토콜에 그런 필드가 없다. 이것은 "어느 케이블에 물려 있었나" 이고,
+    배선을 안 바꾸는 한 그 팔을 가리킨다. 팔 자체의 식별은 사람이 적어야 한다.
+    """
+    try:
+        dev = Path(f"/sys/class/net/{iface}/device").resolve()
+        return (dev.parent / "serial").read_text().strip() or None
+    except Exception:
+        return None
+
+
 def bus_stats(iface: str) -> dict:
     """이 버스의 지금 상태 + 누적 오류 + 트래픽. 화면의 버스 상태 탭이 쓴다.
 
