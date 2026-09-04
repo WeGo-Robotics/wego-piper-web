@@ -89,7 +89,12 @@ def test_the_pose_is_captured_not_typed(client):
     from app.routers.alignment import CheckBody, create_check
 
     assert "pose" not in CheckBody.model_fields, "API 가 자세를 받는다"
-    assert "read_joints_normalized" in inspect.getsource(create_check)
+    # 자세를 읽는 자리는 `_read_pose` 로 옮겼다 (저장된 자세와 나눠 쓰려고).
+    # 받는 것은 **이름**뿐이고 관절값이 아니다.
+    from app.routers.alignment import _read_pose
+
+    assert "read_joints_normalized" in inspect.getsource(_read_pose)
+    assert "_read_pose" in inspect.getsource(create_check)
 
 
 def test_the_gripper_is_not_part_of_the_pose():
@@ -97,9 +102,9 @@ def test_the_gripper_is_not_part_of_the_pose():
     자세에 넣으면 무관한 차이로 검사가 실패한다."""
     import inspect
 
-    from app.routers.alignment import create_check
+    from app.routers.alignment import _read_pose
 
-    assert 'k != "gripper"' in inspect.getsource(create_check)
+    assert 'k != "gripper"' in inspect.getsource(_read_pose)
 
 
 def test_moving_goes_through_the_safety_filter():
