@@ -216,3 +216,27 @@ def test_classification_only_runs_where_a_person_asked_for_it():
                 if classifies and fn.name not in ALLOWED:
                     bad.append(f"{rel}::{fn.name}")
     assert not bad, f"사람이 부르지 않은 자리에서 판정한다: {sorted(set(bad))}"
+
+
+def test_setting_the_mode_updates_the_label_right_away():
+    """⚠ **표기가 바뀔 수 있는 자리는 둘이다** — [찾기] 와 [마스터/슬레이브] 버튼.
+    후자는 사람이 값을 바꾼 것이므로 표기도 즉시 따라가야 한다. 안 따라가면
+    화면은 slave 인데 팔은 master 로 남고, 텔레옵을 걸어야 드러난다.
+
+    (실기 확인 2026-09-04: `master=false` → 응답 `slave`, `master=true` → `master`.
+    1초 폴링이 되돌리지도 않았다.)"""
+    import inspect
+    import textwrap
+
+    from conftest import python_code_only
+    from piper_robot.arm import Arm
+
+    src = python_code_only(textwrap.dedent(inspect.getsource(Arm.set_master_slave)))
+    assert "refresh_mode(classify=True)" in src, "바꾸고 나서 다시 안 본다"
+    assert "self.is_master is master" in src, "바뀌었는지 확인하지 않는다"
+
+    # 라우터가 **바뀐 뒤의** 팔을 돌려줘야 화면이 갈아끼울 수 있다
+    from app.routers.robots import set_master_slave as route
+
+    rsrc = python_code_only(textwrap.dedent(inspect.getsource(route)))
+    assert "to_dict()" in rsrc, "바뀐 상태를 안 돌려준다 — 화면이 갱신할 근거가 없다"
