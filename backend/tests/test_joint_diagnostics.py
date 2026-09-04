@@ -12,27 +12,37 @@ from piper_robot import diagnostics as D
 
 # ── 모션 ────────────────────────────────────────────────────────────────────
 
-def test_a_bigger_swing_does_not_mean_a_faster_one():
-    """⚠ 관절의 설정 최대 속도가 0.3 rad/s(17.2°/s)다. 그보다 빠른 목표를 주면
-    팔이 못 따라오고 **그 미달이 추종 오차로 기록된다** — 검사가 팔의 한계를
-    관절 이상으로 오독하는 셈이다. 그래서 속도는 고정하고 주기를 늘린다."""
-    speeds = {"joint6": 17.2}
+def test_stronger_means_both_wider_and_faster():
+    """⚠ 부하는 폭에서만 오지 않는다. 폭만 키우고 속도를 고정하면 **현장보다
+    네 배 느린 부하**만 보게 된다 — 실제 수집 데이터의 상위 5% 가 60~73°/s 인데
+    (`SPEED_DEG_S` 주석의 실측) 검사가 13.8°/s 로 흔들고 있었다."""
+    accels = {"joint6": 5.0}
     lim = {"joint6": (-150.0, 150.0)}
-    peaks = []
-    for it in ("gentle", "normal", "strong"):
-        p = D.build_plan({"joint6": 0.0}, lim, ["joint6"], it, speeds)
-        j = p.joints[0]
-        peaks.append(j.peak_speed_deg_s)
-        assert j.peak_speed_deg_s <= 17.2, (it, j.peak_speed_deg_s)
-    # 주기를 0.1초로 반올림하므로 완전히 같지는 않다 — 강도가 속도를 바꾸지
-    # 않는다는 것만 확인한다
-    assert max(peaks) - min(peaks) < 0.5, f"강도를 올리자 빨라졌다: {peaks}"
+    plans = {it: D.build_plan({"joint6": 0.0}, lim, ["joint6"], it, accels)
+             for it in ("gentle", "normal", "strong")}
+    peaks = [plans[it].joints[0].peak_speed_deg_s
+             for it in ("gentle", "normal", "strong")]
+    assert peaks == sorted(peaks), f"강도를 올렸는데 안 빨라진다: {peaks}"
+    assert peaks[-1] > 60.0, f"가장 강한 설정이 수집 속도에 한참 못 미친다: {peaks[-1]}"
 
-    strong = D.build_plan({"joint6": 0.0}, lim, ["joint6"], "strong", speeds)
-    gentle = D.build_plan({"joint6": 0.0}, lim, ["joint6"], "gentle", speeds)
+    strong, gentle = plans["strong"], plans["gentle"]
     assert strong.joints[0].amplitude_deg > gentle.joints[0].amplitude_deg * 2, \
         "강하게가 실제로 더 크게 안 흔든다"
-    assert strong.duration_s > gentle.duration_s, "폭이 커졌는데 시간이 그대로다"
+
+
+def test_the_acceleration_limit_beats_the_wanted_speed():
+    """⚠ 팔이 못 내는 가속도를 주면 못 따라온 만큼이 추종 오차로 기록된다 —
+    검사가 **자기가 만든 미달**을 관절 이상으로 읽는다. 속도표는 목표지 보장이
+    아니고, 가속도 한계가 이겨야 한다."""
+    amp = 30.0
+    # 넉넉한 팔: 원하는 속도가 그대로 나온다
+    loose = D.period_for(amp, 70.0, max_acc_rad_s2=5.0)
+    # 굼뜬 팔: 같은 요구인데 가속도가 주기를 늘린다
+    tight = D.period_for(amp, 70.0, max_acc_rad_s2=0.3)
+    assert tight > loose, f"가속도 한계가 무시됐다: {loose} → {tight}"
+
+    peak = math.radians(amp) * (2 * math.pi / tight) ** 2
+    assert peak <= 0.3 + 1e-6, f"가속도 한계를 넘겼다: {peak:.3f} > 0.3"
 
 
 def test_all_joints_share_one_period():

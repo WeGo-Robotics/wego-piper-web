@@ -19,9 +19,12 @@ const JOINTS = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6'] as c
  *   안 나와 멀쩡한 관절과 나쁜 관절이 구분되지 않았다. 속도는 팔의 한계(0.3 rad/s)
  *   때문에 못 올리므로 **폭을 키우고 주기를 늘린다** — 부하는 이동 범위에서 온다. */
 const INTENSITY = [
-  { key: 'gentle', label: '약하게', hint: '±10° · 짧다' },
-  { key: 'normal', label: '보통', hint: '±20°' },
-  { key: 'strong', label: '강하게', hint: '±30° · 길다' },
+  // ⚠ 속도를 같이 적는다. 폭만 보이면 "강하게" 가 느리게 크게 흔드는 것으로
+  //   읽히는데, 관절 이상은 **빠를 때** 드러난다 — 무엇을 고르는지가 폭이 아니라
+  //   부하라는 것이 보여야 한다. 70°/s 는 실제 수집 데이터의 상위 5% 자리다.
+  { key: 'gentle', label: '약하게', hint: '±10° · 15°/s' },
+  { key: 'normal', label: '보통', hint: '±20° · 40°/s' },
+  { key: 'strong', label: '강하게', hint: '±30° · 70°/s · 수집 속도' },
 ] as const
 type Intensity = typeof INTENSITY[number]['key']
 

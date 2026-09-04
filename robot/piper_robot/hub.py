@@ -15,7 +15,6 @@ CAN 과 무관하다. 그래서 여기 메서드는 그 값들을 인자로 받�
 """
 
 import logging
-import math
 import threading
 import time
 
@@ -158,14 +157,16 @@ class RobotHub:
         if not now:
             return {"ok": False, "error": f"{iface} 의 관절값을 읽지 못했습니다"}
         centers = {j: denormalize_joint(j, now[j]) / 1000.0 for j in joints if j in now}
-        limits, speeds = {}, {}
+        limits, accels = {}, {}
         for row in (arm.versions().get("joints") or []):
             if row.get("angle_min_deg") is not None:
                 limits[row["joint"]] = (row["angle_min_deg"], row["angle_max_deg"])
-            # 속도 한계는 rad/s 로 오고 계획은 도/초로 센다
-            if row.get("max_spd_rad_s"):
-                speeds[row["joint"]] = math.degrees(row["max_spd_rad_s"])
-        plan = D.build_plan(centers, limits, joints, intensity, speeds,
+            # ⚠ 속도(`max_spd_rad_s`)는 **안 쓴다.** 그 값은 MOVE J 플래너의 설정이지
+            #   위치 추종의 한계가 아니다 — 실제 수집은 그 네 배로 움직인다
+            #   (`diagnostics.SPEED_DEG_S`). 계획을 무는 것은 가속도 쪽이다.
+            if row.get("max_acc_rad_s2"):
+                accels[row["joint"]] = row["max_acc_rad_s2"]
+        plan = D.build_plan(centers, limits, joints, intensity, accels,
                             _up_directions(arm, now, joints))
         if not any(p.amplitude_deg > 0 for p in plan.joints):
             return {"ok": False, "plan": plan.to_dict(),

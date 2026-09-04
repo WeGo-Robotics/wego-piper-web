@@ -20,15 +20,23 @@ CYCLES = 2
 AMPLITUDES_DEG = {"gentle": 10.0, "normal": 20.0, "strong": 30.0}
 DEFAULT_INTENSITY = "normal"
 
-#: 팔이 허용하는 최대 속도의 몇 할까지 쓰나.
+#: 강도별 최고 각속도 (도/초).
 #:
-#: ⚠ **더 빠르게는 못 간다.** 관절의 설정 최대 속도가 0.3 rad/s(17.2°/s)라, 그보다
-#:   빠른 목표를 주면 팔이 못 따라오고 그 미달이 "추종 오차" 로 기록된다 — 검사가
-#:   팔의 한계를 관절 이상으로 오독하는 셈이다. 그래서 **폭을 키우고 주기를 그
-#:   한계에 맞춰 늘린다.** 부하는 속도가 아니라 이동 범위에서 온다.
-SPEED_FRACTION = 0.8
-#: 최대 속도를 못 읽었을 때 가정할 값 (도/초). 실측 Piper 기본이 17.2 다.
-FALLBACK_SPD_DEG_S = 17.2
+#: ⚠ **팔이 보고하는 0.3 rad/s(17.2°/s)는 이 경로의 한계가 아니다.** 그건 MOVE J
+#:   플래너의 설정값이고, 위치 스트림 추종이나 마스터-슬레이브 추종을 제한하지
+#:   않는다. 실제 수집 데이터가 그 증거다 — `bolt_single` 6 에피소드 실측에서
+#:   상위 5% 속도가 joint2 60.5 · joint3 63.1 · joint5 72.9 °/s 였고 최고는
+#:   145°/s 였다. 보고값을 한계로 믿고 13.8°/s 로 흔들면 **검사가 현장보다 네 배
+#:   느린 부하만 본다** — 빠를 때만 드러나는 이상을 그대로 놓친다.
+#:
+#: ⚠ 진짜 제약은 **가속도**다 (`period_for`). 그래서 이 표는 목표지 보장이 아니다.
+SPEED_DEG_S = {"gentle": 15.0, "normal": 40.0, "strong": 70.0}
+
+#: 가속도 한계를 못 읽었을 때 가정할 값 (rad/s²). 실측 Piper 기본이 5.0 이다.
+FALLBACK_ACC_RAD_S2 = 5.0
+#: 가속도 한계의 몇 할까지 쓰나. 한계에 붙여 돌리면 못 따라온 만큼이 추종 오차로
+#: 기록되어, 검사가 자기가 만든 미달을 관절 이상으로 읽는다.
+ACC_FRACTION = 0.8
 #: 주기 하한 (초). 아무리 작은 진폭이라도 이보다 빠르게 흔들지 않는다.
 MIN_PERIOD_S = 2.0
 #: 가동범위 대비 진폭 비율.
@@ -113,15 +121,22 @@ class Plan:
                            for j in self.joints]}
 
 
-def period_for(amplitude_deg: float, max_spd_deg_s: float | None) -> float:
-    """이 진폭을 팔의 속도 한계 안에서 흔들려면 주기가 얼마여야 하나.
+def period_for(amplitude_deg: float, speed_deg_s: float,
+               max_acc_rad_s2: float | None = None) -> float:
+    """이 진폭을 그 속도로 흔들려면 주기가 얼마여야 하나. **가속도가 이긴다.**
 
-    ⚠ 사인파의 최대 속도는 `A·2π/T` 다. 팔의 한계보다 빠른 목표를 주면 못 따라
-    오고, 그 미달이 추종 오차로 기록되어 **검사가 팔의 한계를 관절 이상으로
-    오독한다.** 그래서 속도가 아니라 주기를 늘려 폭을 키운다.
+    사인파는 최대 속도가 `A·ω`, 최대 가속도가 `A·ω²` 다. 원하는 속도가 나오는
+    주기와 가속도 한계가 허락하는 주기 중 **느린 쪽**을 쓴다.
+
+    ⚠ 두 한계를 다 넘겨 놓고 못 따라온 만큼을 재면, 그건 관절이 아니라 우리가
+    만든 미달이다. 검사가 자기 결론을 만들어내는 셈이라 여기서 먼저 자른다.
     """
-    v = (max_spd_deg_s or FALLBACK_SPD_DEG_S) * SPEED_FRACTION
-    return max(MIN_PERIOD_S, round(amplitude_deg * 2 * math.pi / max(v, 0.1), 1))
+    amp = max(amplitude_deg, 0.01)
+    t_spd = amp * 2 * math.pi / max(speed_deg_s, 0.1)
+    # A·ω² ≤ a  →  ω ≤ √(a/A).  A 는 rad 로 재야 a 와 단위가 맞는다.
+    a = (max_acc_rad_s2 or FALLBACK_ACC_RAD_S2) * ACC_FRACTION
+    t_acc = 2 * math.pi / math.sqrt(a / math.radians(amp))
+    return max(MIN_PERIOD_S, round(max(t_spd, t_acc), 1))
 
 
 def plan_amplitude(center_deg: float, lo_deg: float | None, hi_deg: float | None,
@@ -170,11 +185,15 @@ def plan_amplitude(center_deg: float, lo_deg: float | None, hi_deg: float | None
 
 def build_plan(centers: dict[str, float], limits: dict[str, tuple],
                joints: list[str], intensity: str = DEFAULT_INTENSITY,
-               speeds: dict[str, float] | None = None,
+               accels: dict[str, float] | None = None,
                up: dict[str, int] | None = None) -> Plan:
-    """검사할 관절들의 모션 계획. `joints` 가 하나면 개별, 여럿이면 전체다."""
+    """검사할 관절들의 모션 계획. `joints` 가 하나면 개별, 여럿이면 전체다.
+
+    `accels` 는 관절별 가속도 한계 (rad/s²) — 팔이 보고하는 값이다.
+    """
     cap = AMPLITUDES_DEG.get(intensity, AMPLITUDES_DEG[DEFAULT_INTENSITY])
-    speeds = speeds or {}
+    speed = SPEED_DEG_S.get(intensity, SPEED_DEG_S[DEFAULT_INTENSITY])
+    accels = accels or {}
     out = Plan(intensity=intensity)
     for i, name in enumerate(joints):
         lo, hi = limits.get(name, (None, None))
@@ -189,7 +208,8 @@ def build_plan(centers: dict[str, float], limits: dict[str, tuple],
             joint=name, center_deg=centers.get(name, 0.0), amplitude_deg=amp,
             direction=direction,
             # 한쪽 스윙은 같은 진폭에서 속도가 절반이라 주기를 그만큼 줄여도 된다
-            period_s=period_for(amp / (2 if direction else 1), speeds.get(name)),
+            period_s=period_for(amp / (2 if direction else 1), speed,
+                                accels.get(name)),
             # 개별 측정에서는 위상을 어긋나게 할 이유가 없다
             phase_deg=(PHASE_STEP_DEG * i) if len(joints) > 1 else 0.0,
             note=note))
