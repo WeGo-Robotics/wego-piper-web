@@ -160,3 +160,20 @@ def test_one_failed_call_does_not_blank_the_dashboard():
     hook = (_SRC / "hooks" / "useSystemStatus.ts").read_text()
     assert hook.count(".catch(() => null)") >= 3, "실패를 개별로 안 삼킨다"
     assert "prev." in hook, "직전 값을 안 지킨다 — 화면이 깜빡인다"
+
+
+def test_the_disk_threshold_is_saved_and_wins_over_env(tmp_path, monkeypatch):
+    """설정 화면에서 저장한 임계치는 파일로 남아 env 기본값을 이긴다 —
+    UI 로 바꾼 값이 재시작에 되돌아오면 "저장했는데 돌아왔다"가 된다
+    (model_paths 와 같은 이유의 파일 오버라이드)."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "config_dir", tmp_path)
+    monkeypatch.setattr(settings, "disk_warning_threshold_gb", 10.0)
+    assert settings.disk_threshold_gb == 10.0          # 파일 없음 → env/기본값
+    settings.set_disk_threshold(150.0)
+    assert settings.disk_threshold_gb == 150.0         # 파일이 이긴다
+    assert (tmp_path / "disk_threshold.json").exists()
+    # 깨진 파일은 조용히 무시하고 기본값으로 돌아간다 — 임계치 때문에 상태바가 죽으면 안 된다
+    (tmp_path / "disk_threshold.json").write_text("{깨짐")
+    assert settings.disk_threshold_gb == 10.0

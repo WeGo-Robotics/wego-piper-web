@@ -31,6 +31,23 @@ def _save_model_paths(config_dir: Path, paths: list[str]) -> None:
     f.write_text(json.dumps(paths, indent=2))
 
 
+def _disk_threshold_file(config_dir: Path) -> Path:
+    return config_dir / "disk_threshold.json"
+
+
+def _load_disk_threshold(config_dir: Path) -> float | None:
+    """설정 화면에서 저장한 임계치. 없거나 깨졌으면 None → env/기본값."""
+    f = _disk_threshold_file(config_dir)
+    if f.exists():
+        try:
+            v = float(json.loads(f.read_text())["threshold_gb"])
+            if v > 0:
+                return v
+        except Exception:
+            _logger.warning("disk_threshold.json 파싱 실패, 무시함: %s", f)
+    return None
+
+
 class Settings(BaseSettings):
     # 서버
     host: str = "0.0.0.0"
@@ -82,6 +99,21 @@ class Settings(BaseSettings):
         base = [p for p in self.scan_paths.split(":") if p] or [str(self.models_dir)]
         merged = list(dict.fromkeys(base + _load_model_paths(self.config_dir)))
         return [Path(p) for p in merged]
+
+    @property
+    def disk_threshold_gb(self) -> float:
+        """디스크 경고 임계치 — 설정 화면 저장값(파일)이 env/기본값을 이긴다.
+
+        UI 로 바꾼 값이 env 에 눌리면 "저장했는데 재시작하니 돌아왔다" 가 된다 —
+        model_paths 와 같은 이유의 파일 오버라이드다.
+        """
+        return _load_disk_threshold(self.config_dir) or self.disk_warning_threshold_gb
+
+    def set_disk_threshold(self, gb: float) -> float:
+        f = _disk_threshold_file(self.config_dir)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"threshold_gb": gb}))
+        return gb
 
     def add_model_path(self, path: str) -> list[str]:
         paths = _load_model_paths(self.config_dir)

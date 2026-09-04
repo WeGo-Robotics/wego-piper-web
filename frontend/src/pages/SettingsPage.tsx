@@ -38,6 +38,27 @@ export default function SettingsPage() {
 
   useEffect(() => { fetchPaths() }, [fetchPaths])
 
+  // 디스크 경고 임계치 — 상태바 💾 칩의 노란 ⚠ 기준(데이터셋+모델 사용량 합)
+  const [diskThreshold, setDiskThreshold] = useState('')
+  const [diskTotal, setDiskTotal] = useState<number | null>(null)
+  useEffect(() => {
+    api.get<{ threshold_gb: number; total_gb: number }>('/datasets/disk-usage')
+      .then((r) => { setDiskThreshold(String(r.threshold_gb)); setDiskTotal(r.total_gb) })
+      .catch(() => {})
+  }, [])
+  const saveDiskThreshold = async () => {
+    const v = Number(diskThreshold)
+    if (!Number.isFinite(v) || v <= 0) { notifyError('0보다 큰 GB 값을 입력하세요'); return }
+    try {
+      const r = await api.post<{ threshold_gb: number }>('/datasets/disk-threshold', { threshold_gb: v })
+      setDiskThreshold(String(r.threshold_gb))
+      notify({ level: 'info', source: '설정',
+               text: `디스크 경고 임계치 ${r.threshold_gb}GB 저장됨 — 상태바 💾 에 바로 반영됩니다` })
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : '저장 실패')
+    }
+  }
+
   const handleAdd = async () => {
     const trimmed = newPath.trim()
     if (!trimmed) return
@@ -86,7 +107,29 @@ export default function SettingsPage() {
 
       {tab === 'hub' && <HfAccountPanel />}
 
-      {tab === 'general' && (
+      {tab === 'general' && (<>
+      <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5 space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold">디스크 경고 임계치</h2>
+          <p className="text-xs text-neutral-400 mt-1">
+            데이터셋·모델 사용량 합이 이 값을 넘으면 상태바 💾 에 ⚠ 가 붙습니다.
+            {diskTotal != null && <> 지금 사용량: <b>{diskTotal}GB</b></>}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input type="number" min="1" step="1" value={diskThreshold}
+            onChange={(e) => setDiskThreshold(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && saveDiskThreshold()}
+            className="w-32 px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 text-right tabular-nums focus:outline-none focus:border-blue-500" />
+          <span className="text-sm text-neutral-400">GB</span>
+          <button onClick={saveDiskThreshold}
+            className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white">저장</button>
+        </div>
+        <p className="text-[10px] text-neutral-500">
+          저장값은 파일로 남아 재시작·환경변수(PIPER_DISK_WARNING_THRESHOLD_GB)보다 우선합니다.
+        </p>
+      </div>
+
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5 space-y-4">
         <div>
           <h2 className="text-lg font-semibold">모델 검색 경로</h2>
@@ -114,7 +157,7 @@ export default function SettingsPage() {
             className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white">추가</button>
         </div>
       </div>
-      )}
+      </>)}
     </div>
   )
 }

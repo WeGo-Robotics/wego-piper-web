@@ -44,6 +44,21 @@ async def list_datasets():
     return scan_datasets()
 
 
+class DiskThresholdRequest(BaseModel):
+    threshold_gb: float
+
+
+@router.post("/disk-threshold")
+async def set_disk_threshold(body: DiskThresholdRequest):
+    """디스크 경고 임계치 저장 (설정 화면). 파일로 남아 env 기본값을 이긴다."""
+    from app.core.config import settings
+
+    if not (0 < body.threshold_gb < 1_000_000):
+        raise HTTPException(400, "임계치는 0보다 큰 GB 값이어야 합니다")
+    settings.set_disk_threshold(body.threshold_gb)
+    return check_disk_usage()
+
+
 @router.get("/disk-usage")
 async def disk_usage():
     return check_disk_usage()

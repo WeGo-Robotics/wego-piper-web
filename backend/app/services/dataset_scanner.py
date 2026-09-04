@@ -341,6 +341,6 @@ def check_disk_usage() -> dict:
         "datasets_bytes": datasets_size,
         "models_bytes": models_size,
         "total_gb": round(total_gb, 2),
-        "warning": total_gb > settings.disk_warning_threshold_gb,
-        "threshold_gb": settings.disk_warning_threshold_gb,
+        "warning": total_gb > settings.disk_threshold_gb,
+        "threshold_gb": settings.disk_threshold_gb,
     }
