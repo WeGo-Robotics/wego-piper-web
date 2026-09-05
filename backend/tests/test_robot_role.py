@@ -346,3 +346,19 @@ def test_a_restarted_daemon_alone_does_not_mean_connected(monkeypatch):
         if a and a[0] == "scan" else k.get("default")))
     mgr.scan()
     assert arm.connected is False
+
+
+def test_attaching_an_arm_fills_the_robot_type_the_ui_cannot_set():
+    """⚠ **UI 에는 로봇 타입을 고르는 자리가 없다** — 프리셋이 실어 오거나 세션이
+    기억할 뿐이다. 세션이 지워진 뒤 [연결]로 등록만 하면 타입이 null 로 남아
+    추론 시작이 "로봇이 선택되지 않았습니다"로 막힌다 (실기에서 그렇게 막혔다).
+    등록이 곧 선택이다: 비어 있으면 piper_follower 를 기본으로 채운다.
+    이미 있는 타입은 덮지 않는다 — bi 조립은 wrapper 가 robot_ports 로 한다."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "app" / "routers" / "robots.py").read_text()
+    attach = src.split('@router.post("/attach")', 1)[1].split("@router.post", 1)[0]
+    assert 'selected_type = "piper_follower"' in attach, "등록이 타입을 안 채운다"
+    assert "if not robot_manager.selected_type" in attach, "있는 타입을 덮어쓴다"
+    assert attach.index("selected_type") < attach.index("save_session"), \
+        "타입을 채우고 나서 세션을 저장해야 재시작에도 남는다"

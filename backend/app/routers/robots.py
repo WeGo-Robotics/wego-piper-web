@@ -711,6 +711,12 @@ async def attach_arm(body: ConnectRequest):
     robot_manager.set_role(body.iface, "follower")
     if not robot_manager.register_arm(body.iface):
         warnings.append("등록 실패 — 역할을 확인하세요")
+    # 로봇 타입 기본값 — UI 에는 타입을 고르는 자리가 없다(프리셋에 실려 오거나
+    # 세션이 기억할 뿐). 세션이 지워진 뒤 여기로 등록만 하면 타입이 null 로
+    # 남아 추론 시작이 "로봇이 선택되지 않았습니다"로 막힌다. 양팔은 wrapper 가
+    # robot_ports 를 보고 bi 로 조립하므로 단일 기본값이면 된다.
+    if not robot_manager.selected_type:
+        robot_manager.selected_type = "piper_follower"
     robot_manager.save_session()
     return {**(arm.to_dict() if arm else {}), "warnings": warnings}
 
