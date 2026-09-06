@@ -206,6 +206,12 @@ class JudgeConfig:
     global_cells: int = 7       # 9칸 중 이만큼이 같은 방향이어야 전역(조명)이다
     cell_jump: float = 10.0     # 칸이 "움직였다"로 칠 최소 이동 (luma_jump 의 절반)
     warmup_s: float = 10.0      # 기준선(slow)이 서기 전에는 판정하지 않는다
+    # 표류(앵커 대비) — 급변 판정은 분당 +20/255 보다 느린 변화를 **영영** 못
+    # 본다: fast−slow 는 변화율×(τslow−τfast)≈r×58초 에 수렴해 임계 아래에
+    # 머문다. 그래서 작업(수집·추론) 중에는 시작 시점을 앵커로 동결해 누적
+    # 변화를 따로 판정한다. 임계는 급변과 같은 값에서 출발 — 실측 튜닝 대상.
+    drift_luma: float = 20.0
+    drift_color: float = 0.10
 
 
 class _Ewma:
@@ -244,9 +250,45 @@ class Judge:
         self._slow = {k: _Ewma(self.cfg.slow_tau_s) for k in ("luma", "rg", "bg", "grid")}
         self._t0: float | None = None
         self._last_t: float | None = None
-        self._streak: dict[str, int] = {"brightness": 0, "color": 0}
-        self._calm: dict[str, int] = {"brightness": 0, "color": 0}
+        names = ("brightness", "color", "drift_brightness", "drift_color")
+        self._streak: dict[str, int] = {n: 0 for n in names}
+        self._calm: dict[str, int] = {n: 0 for n in names}
         self._active: dict[str, dict] = {}
+        self._anchor: dict | None = None
+        self._anchor_t: float | None = None
+        self._anchor_pending = False
+
+    # ── 앵커 (표류 판정 기준) ──
+
+    @property
+    def anchored(self) -> bool:
+        return self._anchor is not None or self._anchor_pending
+
+    def set_anchor(self) -> None:
+        """지금의 slow 값을 표류 기준으로 동결한다 — 작업 시작이 부른다.
+
+        아직 샘플이 없으면(작업 도중 연결된 카메라) 다음 샘플에서 잡는다.
+        이미 앵커가 있으면 유지한다 — 작업 중에 기준이 미끄러지면 표류 판정이
+        급변 판정과 같은 병(기준선이 따라감)에 걸린다.
+        """
+        if self._anchor is not None:
+            return
+        if self._slow["luma"].v is None:
+            self._anchor_pending = True
+            return
+        self._anchor = {k: (np.array(e.v, dtype=np.float64) if np.ndim(e.v) else float(e.v))
+                        for k, e in self._slow.items()}
+        self._anchor_t = self._last_t
+
+    def clear_anchor(self) -> None:
+        """앵커 해제 + 표류 경보 철회 — 작업 종료가 부른다. 멱등."""
+        self._anchor = None
+        self._anchor_t = None
+        self._anchor_pending = False
+        for n in ("drift_brightness", "drift_color"):
+            self._active.pop(n, None)
+            self._streak[n] = 0
+            self._calm[n] = 0
 
     def update(self, feats: dict, t: float) -> list[dict]:
         if self._t0 is None:
@@ -258,6 +300,10 @@ class Judge:
                 "bg": feats["log_bg"], "grid": feats["grid"]}
         fast = {k: self._fast[k].update(v, dt) for k, v in vals.items()}
         slow = {k: self._slow[k].update(v, dt) for k, v in vals.items()}
+
+        if self._anchor_pending:           # 작업 도중 연결 — 첫 샘플이 기준이 된다
+            self._anchor_pending = False
+            self.set_anchor()
 
         if t - self._t0 < self.cfg.warmup_s:
             return []          # 기준선이 아직 없다 — 스트림 시작 직후를 판정하면 오보다
@@ -276,6 +322,32 @@ class Judge:
         self._step("brightness", bright, {"type": "brightness", "delta": round(d_luma, 1)})
         self._step("color", color, {"type": "color", "delta_rg": round(d_rg, 3),
                                     "delta_bg": round(d_bg, 3)})
+
+        # 표류: fast vs **앵커**. 완만한 변화는 급변 판정을 영영 못 넘지만
+        # 앵커 대비로는 누적된다. 급변 경보가 활성인 동안은 **진입만** 막는다 —
+        # 같은 사건에 경보 둘이 겹치지 않게 하되, 급변이 해제된 뒤에도 앵커와
+        # 다른 채 유지되면 표류가 이어받는다("바뀐 채 유지"가 작업 중에는
+        # 정상이 되지 않는다). 이미 활성인 표류는 자기 조건으로만 산다.
+        if self._anchor is not None:
+            a_luma = float(fast["luma"] - self._anchor["luma"])
+            a_cells = np.asarray(fast["grid"]) - np.asarray(self._anchor["grid"])
+            a_moved = int(np.sum((np.abs(a_cells) > self.cfg.cell_jump)
+                                 & (np.sign(a_cells) == np.sign(a_luma or 1.0))))
+            d_bright = abs(a_luma) > self.cfg.drift_luma and a_moved >= self.cfg.global_cells
+            if "brightness" in self._active and "drift_brightness" not in self._active:
+                d_bright = False
+            a_rg = float(fast["rg"] - self._anchor["rg"])
+            a_bg = float(fast["bg"] - self._anchor["bg"])
+            d_color = max(abs(a_rg), abs(a_bg)) > self.cfg.drift_color
+            if "color" in self._active and "drift_color" not in self._active:
+                d_color = False
+            since = round(t - self._anchor_t) if self._anchor_t is not None else 0
+            self._step("drift_brightness", d_bright,
+                       {"type": "drift_brightness", "delta": round(a_luma, 1),
+                        "since_s": since})
+            self._step("drift_color", d_color,
+                       {"type": "drift_color", "delta_rg": round(a_rg, 3),
+                        "delta_bg": round(a_bg, 3), "since_s": since})
         return list(self._active.values())
 
     def _step(self, name: str, candidate: bool, detail: dict) -> None:

@@ -9,6 +9,8 @@ feature/lighting-watch.md §5·§6 의 발행자 + 알람 소비자 1호.
   (수집·추론 화면, 뷰어, 나중의 오케스트레이터)는 이 계약만 본다
 - **판정**: `piper_cam.lighting.Judge` (EWMA 두 개 + 전역성 + 히스테리시스).
   활성 경보는 `device_watch._collect()` 가 가져가 기존 add/clear·WS 경로를 탄다
+- **표류**: 수집·추론 중에는 작업 시작 시점을 앵커로 동결해 누적 변화를 따로
+  판정한다 — 급변 판정(fast−slow)은 분당 +20/255 보다 느린 변화를 영영 못 본다
 
 호출은 main.py 의 장치 감시 루프가 2초마다 한다 (`sample()` — to_thread).
 문구는 여기서만 만든다 — device_watch 와 같은 규칙이다.
@@ -41,6 +43,31 @@ def _color_alert(cam_id: str, name: str, d_rg: float, d_bg: float) -> Alert:
         f"(ΔR/G {d_rg:+.2f}, ΔB/G {d_bg:+.2f}, log₂). "
         "조명이 바뀌었거나 화이트밸런스가 움직인 것입니다. 데이터 색 일관성이 "
         "깨질 수 있으니 확인하세요.")
+
+
+def _mins(since_s: float) -> int:
+    return max(1, int(round(since_s / 60)))
+
+
+def _drift_brightness_alert(cam_id: str, name: str, delta: float, since_s: float) -> Alert:
+    updown = "밝아" if delta > 0 else "어두워"
+    return Alert(
+        "camera", f"light:{cam_id}:drift_brightness", name, "lighting",
+        f"카메라 {name} 화면이 작업 시작 후 서서히 {updown}졌습니다 "
+        f"(밝기 {delta:+.0f}/255, 약 {_mins(since_s)}분 누적). 완만한 변화라 "
+        "급변 경보에는 안 잡히지만, 학습 데이터와 조명이 이미 달라졌을 수 "
+        "있습니다 — 조명을 확인하거나 작업을 다시 시작하세요.")
+
+
+def _drift_color_alert(cam_id: str, name: str, d_rg: float, d_bg: float,
+                       since_s: float) -> Alert:
+    warm = d_rg >= 0 if abs(d_rg) >= abs(d_bg) else d_bg < 0
+    tone = "따뜻한(붉은)" if warm else "차가운(푸른)"
+    return Alert(
+        "camera", f"light:{cam_id}:drift_color", name, "lighting",
+        f"카메라 {name} 의 색이 작업 시작 후 서서히 변했습니다 — {tone} 쪽 "
+        f"(ΔR/G {d_rg:+.2f}, ΔB/G {d_bg:+.2f}, log₂, 약 {_mins(since_s)}분 누적). "
+        "자연광 변화나 화이트밸런스 표류입니다. 데이터 색 일관성을 확인하세요.")
 
 
 # ⚠ **노출·게인은 밝기와 달리 공짜가 아니다.** 밝기는 shm 프레임에서 재지만
@@ -83,6 +110,7 @@ class LightWatch:
         alerts: list[Alert] = []
         seen: set[str] = set()
         now = time.monotonic()
+        task = self._task_active()
         for cam in cams.values():
             seg = segment_for_camera(cam.id)
             if seg.endswith("_depth"):
@@ -107,7 +135,7 @@ class LightWatch:
             seen.add(cam.id)
             label = cam.label or cam.name
             self._latest[cam.id] = {"id": cam.id, "label": label, **feats,
-                                    **self._knobs_for(cam, now)}
+                                    **self._knobs_for(cam, now, quiet=task)}
 
             bus = self._connect()
             if bus is not None:
@@ -119,11 +147,25 @@ class LightWatch:
             judge = self._judges.get(cam.id)
             if judge is None:
                 judge = self._judges[cam.id] = Judge()
+            # 표류 앵커는 작업(수집·추론) 상태를 따라간다 — 작업 중이면 걸고
+            # (도중 연결된 카메라 포함), 아니면 푼다. 둘 다 멱등이라 에지 추적이
+            # 필요 없고, 게이트웨이가 작업 도중 재시작해도 다음 샘플에서 복구된다.
+            if task:
+                if not judge.anchored:
+                    judge.set_anchor()
+            else:
+                judge.clear_anchor()
             for p in judge.update(feats, now):
                 if p["type"] == "brightness":
                     alerts.append(_brightness_alert(cam.id, label, p["delta"]))
-                else:
+                elif p["type"] == "color":
                     alerts.append(_color_alert(cam.id, label, p["delta_rg"], p["delta_bg"]))
+                elif p["type"] == "drift_brightness":
+                    alerts.append(_drift_brightness_alert(
+                        cam.id, label, p["delta"], p["since_s"]))
+                else:
+                    alerts.append(_drift_color_alert(
+                        cam.id, label, p["delta_rg"], p["delta_bg"], p["since_s"]))
 
         # 끊긴 카메라는 상태를 버린다 — 재연결하면 기준선을 새로 잡는다(워밍업).
         # 몇 시간 전 기준선으로 재연결 직후를 판정하면 그게 오보다.
@@ -134,16 +176,36 @@ class LightWatch:
                 self._knobs.pop(cid, None)
         self._alerts = alerts
 
-    def _knobs_for(self, cam, now: float) -> dict:
+    def _task_active(self) -> bool:
+        """수집이나 추론이 돌고 있는가 — 표류 앵커를 걸어 둘 구간.
+
+        이 감시의 목적이 "학습 데이터와 같은 조명인가"라서 기준은 1분 전이
+        아니라 **작업 시작 시점**이어야 한다. 평시에는 앵커를 안 건다 —
+        아침→낮 자연광 변화로 하루 종일 울리는 경보는 곧 무시되는 경보다.
+        """
+        try:
+            from app.services.exclusivity import Activity, is_running
+            return is_running(Activity.RECORDING) or is_running(Activity.INFERENCE)
+        except Exception:
+            return False
+
+    def _knobs_for(self, cam, now: float, quiet: bool = False) -> dict:
         """이 카메라의 노출(µs)·게인. 느린 주기로 캐시한다.
 
         ⚠ **실패하면 직전 값을 그대로 둔다.** 장치 질의는 타임아웃으로 빈 목록을
         돌려줄 수 있는데(rsd 의 `_run_guarded`), 그때 화면에서 숫자가 사라지면
         사람은 "노출이 0 이 됐나" 로 읽는다. 모르는 것과 없는 것은 다르다.
+
+        ⚠ **quiet(작업 중)면 장치를 아예 찌르지 않는다.** UVC 컨트롤 질의는
+        D405 를 커널 D-state 로 물린 전례가 있고, 그때는 프레임이 실제로 멈춘다
+        — 수집·추론이 도는 동안 감수할 위험이 아니다. 프로파일이 작업 시작에
+        고정되므로 그동안 값이 변할 일도 없다. 직전 값을 그대로 보여준다.
         """
         from piper_cam.controls import exposure_us
 
         prev = self._knobs.get(cam.id)
+        if quiet:
+            return prev[1] if prev else {}
         if prev is not None and now - prev[0] < KNOBS_EVERY_S:
             return prev[1]
         values: dict = {}

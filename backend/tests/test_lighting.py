@@ -161,3 +161,133 @@ def test_the_rest_mirror_serves_what_the_bus_gets(monkeypatch):
     assert r.status_code == 200
     cams = r.json()["cameras"]
     assert cams[0]["label"] == "탑뷰" and cams[0]["luma"] == 123.4
+
+
+# ── 표류 (앵커 대비) — 완만한 변화는 급변 판정이 영영 못 본다 ──
+
+
+def _ramp(judge: Judge, start: float, rate_per_min: float, minutes: float,
+          t0: float = 0.0, dt: float = 2.0) -> list[list[dict]]:
+    """분당 rate 로 밝아지는 장면을 먹인다. 격자도 같이 움직인다(전역)."""
+    out = []
+    n = int(minutes * 60 / dt)
+    for i in range(n + 1):
+        t = t0 + i * dt
+        luma = start + rate_per_min * (t - t0) / 60.0
+        out.append(judge.update(_feats(luma), t))
+    return out
+
+
+def test_a_slow_ramp_never_trips_the_jump_alarm():
+    """⚠ **실기에서 그렇게 놓쳤다.** fast−slow 는 변화율×(τslow−τfast)≈r×58초에
+    수렴하므로 분당 +20/255 보다 느린 변화는 급변 임계(20)를 영영 못 넘는다 —
+    해 뜨기·구름 걷힘·형광등 워밍업이 전부 조용히 "새 정상"이 된다.
+    이 테스트는 그 눈멂이 **급변 판정의 성질**임을 박아 둔다(표류 판정의 존재
+    이유). 앵커 없이 10분간 +60 이 되어도 경보가 없어야 한다."""
+    judge = Judge()
+    flows = _ramp(judge, 100.0, rate_per_min=6.0, minutes=10.0)
+    assert all(not f for f in flows), "급변 판정이 완만한 변화에 울리면 이 테스트가 낡은 것"
+
+
+def test_an_anchored_task_catches_the_slow_ramp():
+    """작업 중에는 시작 시점이 기준이다 — 아무리 느려도 누적되면 잡는다."""
+    judge = Judge()
+    _ramp(judge, 100.0, rate_per_min=0.0, minutes=1.0)      # 안정된 뒤
+    judge.set_anchor()                                       # 작업 시작
+    flows = _ramp(judge, 100.0, rate_per_min=6.0, minutes=10.0, t0=60.0)
+    hits = [p for f in flows for p in f]
+    assert any(p["type"] == "drift_brightness" for p in hits), "표류를 못 잡았다"
+    assert all(p["type"] != "brightness" for p in hits), "급변으로 잘못 분류"
+    last = [p for p in flows[-1] if p["type"] == "drift_brightness"][0]
+    assert last["delta"] > 20 and last["since_s"] > 60, "누적량·경과가 안 실린다"
+
+
+def test_clearing_the_anchor_withdraws_the_drift_alarm():
+    """작업이 끝나면 표류 경보도 함께 내려간다 — 평시 기준은 다시 slow 다."""
+    judge = Judge()
+    _ramp(judge, 100.0, rate_per_min=0.0, minutes=1.0)
+    judge.set_anchor()
+    _ramp(judge, 100.0, rate_per_min=6.0, minutes=10.0, t0=60.0)
+    judge.clear_anchor()
+    flow = judge.update(_feats(160.0), 700.0)
+    assert all(p["type"] not in ("drift_brightness", "drift_color") for p in flow)
+
+
+def test_a_jump_hands_over_to_drift_while_the_task_runs():
+    """급변 후 유지: 평시엔 "한 번 뜨고 새 정상"이지만 **작업 중에는 정상이
+    되면 안 된다** — 급변 경보가 slow 수렴으로 해제된 뒤 표류가 이어받는다.
+    같은 사건에 둘이 동시에 진입하지는 않는다(진입 게이트)."""
+    judge = Judge()
+    _ramp(judge, 100.0, rate_per_min=0.0, minutes=1.0)
+    judge.set_anchor()
+    # 급변: +40 으로 점프해 유지
+    flows = _ramp(judge, 140.0, rate_per_min=0.0, minutes=6.0, t0=60.0)
+    early = [p["type"] for p in flows[3]]
+    assert "brightness" in early and "drift_brightness" not in early, \
+        "급변 활성 중에 표류가 같이 진입했다"
+    late = [p["type"] for p in flows[-1]]
+    assert "drift_brightness" in late and "brightness" not in late, \
+        "급변 해제 뒤 표류가 이어받지 않았다"
+
+
+def test_the_anchor_does_not_slide_on_a_second_set():
+    """작업 중 set_anchor 재호출은 무시된다 — 기준이 미끄러지면 표류 판정도
+    급변 판정과 같은 병(기준선이 따라감)에 걸린다. light_watch 는 샘플마다
+    '앵커 없으면 건다'를 부르므로 이 멱등성이 계약이다."""
+    judge = Judge()
+    _ramp(judge, 100.0, rate_per_min=0.0, minutes=1.0)
+    judge.set_anchor()
+    _ramp(judge, 100.0, rate_per_min=6.0, minutes=5.0, t0=60.0)
+    judge.set_anchor()                                       # 미끄러뜨리기 시도
+    flow = judge.update(_feats(131.0), 400.0)
+    assert any(p["type"] == "drift_brightness" for p in flow), "앵커가 미끄러졌다"
+
+
+def test_a_camera_connected_mid_task_anchors_at_its_first_sample():
+    """작업 도중 연결된 카메라는 첫 샘플이 기준이다 — 그때부터의 변화만 표류다."""
+    judge = Judge()
+    judge.set_anchor()                                       # 샘플 전 — 보류
+    assert judge.anchored
+    _ramp(judge, 100.0, rate_per_min=0.0, minutes=1.0)       # 첫 샘플들(워밍업 포함)
+    flows = _ramp(judge, 100.0, rate_per_min=6.0, minutes=10.0, t0=60.0)
+    assert any(p["type"] == "drift_brightness" for f in flows for p in f)
+
+
+def test_the_watch_anchors_only_while_recording_or_inference_runs():
+    """앵커는 작업 상태를 따른다 — 평시 표류(아침→낮)는 알람 가치가 없다.
+    문구는 light_watch 가 만든다(backend 한 곳 원칙): 표류 문구에는 누적량과
+    경과 시간이 실려야 사람이 "급변 못 봤는데?"를 안 묻는다."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "app" / "services" / "light_watch.py").read_text()
+    assert "is_running(Activity.RECORDING) or is_running(Activity.INFERENCE)" in src
+    assert "clear_anchor()" in src, "작업이 끝나도 앵커가 남는다"
+    assert "drift_brightness" in src and "drift_color" in src
+    assert "분 누적" in src, "표류 문구에 경과가 없다"
+
+
+def test_knob_queries_pause_while_a_task_runs():
+    """⚠ **UVC 컨트롤 질의는 D405 를 커널 D-state 로 물린 전례가 있다** —
+    프레임이 실제로 멈출 수 있는 유일한 자리다. 작업(수집·추론) 중에는
+    프로파일이 시작에 고정되어 값이 변할 일도 없으니 질의 자체를 쉰다.
+    화면에는 직전 값을 계속 보여준다 — 모르는 것과 없는 것은 다르다."""
+    from app.services.light_watch import LightWatch
+
+    class _Cam:
+        id = "cam1"
+
+        def get_controls(self):
+            raise AssertionError("작업 중에 장치를 찔렀다")
+
+    lw = LightWatch()
+    lw._knobs["cam1"] = (0.0, {"exposure_us": 8300.0, "gain": 64})
+    # 캐시가 아무리 낡아도(5초 훌쩍 지남) quiet 면 안 찌른다
+    assert lw._knobs_for(_Cam(), now=999.0, quiet=True) == \
+        {"exposure_us": 8300.0, "gain": 64}
+    # 캐시가 아예 없어도 빈 값으로 버틴다 — 질의로 채우려 들지 않는다
+    assert lw._knobs_for(_Cam.__class__("_C2", (), {"id": "cam2",
+        "get_controls": _Cam.get_controls})(), now=999.0, quiet=True) == {}
+    # sample() 이 작업 상태를 quiet 로 넘기는 배선
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "app" / "services" / "light_watch.py").read_text()
+    assert "quiet=task" in src, "작업 상태가 knob 질의에 안 닿는다"
