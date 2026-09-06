@@ -152,6 +152,15 @@ export default function EpisodesPage() {
   const [showJoints, setShowJoints] = useState(
     () => localStorage.getItem('episodes-show-joints') === '1')
 
+  // ⚠ **한 줄에 몇 개인지는 사람이 정한다.** 카메라가 가로 영상이면 세로로만
+  //   쌓을 때 한 대만 봐도 화면이 꽉 차서 나머지는 스크롤해야 나온다 — 같은
+  //   순간의 두 시점을 견주려고 보는 화면인데 동시에 못 본다. 대수도 배치도
+  //   설치마다 달라 코드가 정할 수 있는 값이 아니다.
+  const [camCols, setCamCols] = useState(() => {
+    const v = Number(localStorage.getItem('episodes-cam-cols'))
+    return v >= 1 && v <= 4 ? v : 3
+  })
+
   const [videoError, setVideoError] = useState(false)
   const [cacheMissing, setCacheMissing] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
@@ -988,7 +997,23 @@ export default function EpisodesPage() {
           </div>
         ) : (
           <>
-            <div className="flex justify-end">
+            <div className="flex items-center justify-end gap-2">
+              <span className="text-[11px] text-neutral-500">한 줄에</span>
+              <div className="flex items-center gap-0.5 rounded bg-neutral-900 p-0.5">
+                {[1, 2, 3, 4].map((n) => (
+                  <button key={n}
+                    onClick={() => {
+                      setCamCols(n)
+                      localStorage.setItem('episodes-cam-cols', String(n))
+                    }}
+                    title={`카메라를 한 줄에 ${n}개씩 보여줍니다`}
+                    className={`rounded px-2 py-0.5 text-xs ${camCols === n
+                      ? 'bg-neutral-600 text-white'
+                      : 'text-neutral-400 hover:text-neutral-200'}`}>
+                    {n}
+                  </button>
+                ))}
+              </div>
               <LayoutToggle layout={layout} onChange={switchLayout} />
             </div>
             {/* 가로 배치는 **사진 | 시간축** 이다.
@@ -1006,14 +1031,21 @@ export default function EpisodesPage() {
             >
             <div className={splitOn ? 'space-y-3 min-w-0' : 'space-y-3'}
                  style={splitOn ? { width: 'var(--split)' } : undefined}>
-            {/* 카메라 — 동영상 또는 프레임 캐시. **항상 세로로 쌓는다.**
+            {/* 카메라 — 동영상 또는 프레임 캐시. 한 줄에 몇 개인지는 **사람이 고른다.**
 
-                배치 토글과 무관하다. 가로 배치에서도 사진 칸은 세로로 길고, 거기에
-                카메라를 나란히 두면 폭을 반씩 나눠 갖고 **아래는 통째로 빈다.**
-                쌓으면 각자 칸 폭을 다 쓴다 — 프레임을 뜯어보는 화면이라 그게 낫다. */}
-            <div className="flex flex-col gap-3">
+                ⚠ 예전에는 늘 세로로 쌓았다. "가로 배치에서 나란히 두면 폭을 반씩
+                나눠 갖고 아래가 빈다" 는 이유였는데, 카메라가 **가로 영상**이면
+                반대가 된다 — 한 대만으로 칸이 꽉 차서 두 번째 시점은 스크롤해야
+                나온다. 같은 순간의 두 시점을 견주려고 보는 화면인데 동시에 못 본다.
+
+                대수도 화면 비율도 설치마다 다르니 코드가 정할 값이 아니다.
+                기본 3 개, 1~4 중에서 고르고 그 선택을 기억한다. */}
+            <div className="grid gap-3"
+                 style={{ gridTemplateColumns: `repeat(${camCols}, minmax(0, 1fr))` }}>
               {cams.map((cam) => (
-                <figure key={cam} className="w-full max-w-[720px]">
+                // ⚠ 한 줄에 하나일 때만 폭을 묶는다. 여럿일 때 720px 상한이 걸리면
+                //   칸이 남는데도 영상이 안 커진다.
+                <figure key={cam} className={camCols === 1 ? 'w-full max-w-[720px]' : 'w-full min-w-0'}>
                   {videoActive ? (
                     <video
                       ref={(el) => { videoRefs.current[cam] = el as VideoWithRVFC | null }}

@@ -153,19 +153,31 @@ def test_the_charts_and_the_video_end_up_in_different_columns():
     assert "프레임으로 색인되는 것은" in body[cam:chart], "두 칸으로 안 갈린다"
 
 
-def test_the_cameras_always_stack():
-    """⚠ 두 번 틀렸던 자리다.
+def test_the_camera_row_count_is_the_users_choice():
+    """⚠ **세 번 고친 자리다.** 처음엔 늘 나란히, 다음엔 `layout` 상태에 묶었다가
+    (두 칸이 되는지는 브레이크포인트가 정하므로 좁은 화면에서 어긋났다), 다음엔
+    늘 세로로 쌓았다.
 
-    처음엔 배치와 무관하게 늘 나란히였고, 다음엔 `layout` 상태만 보게 했는데
-    두 칸이 되는지는 브레이크포인트가 정하므로 좁은 화면에서 어긋났다.
+    쌓기도 답이 아니었다. 카메라가 **가로 영상**이면 한 대만으로 칸이 꽉 차서
+    두 번째 시점은 스크롤해야 나온다 — 같은 순간의 두 시점을 견주려고 보는
+    화면인데 동시에 못 본다. 대수도 화면 비율도 설치마다 다르니 **코드가 정할
+    값이 아니다.** 사람이 1~4 중에서 고른다.
 
-    실제로는 **어느 배치에서도 쌓는 게 맞다.** 가로 배치의 사진 칸은 세로로 긴데,
-    거기에 나란히 두면 폭을 반씩 나눠 갖고 아래가 통째로 빈다.
+    다만 두 번 틀렸던 교훈은 그대로다: **배치 토글에 묶지 않는다.**
     """
     src = (_SRC / "pages" / "EpisodesPage.tsx").read_text()
-    cam = src.split("{/* 카메라 —", 1)[1][:700]
-    assert 'className="flex flex-col gap-3"' in cam, "세로 쌓기가 아니다"
+    cam = src.split("{/* 카메라 —", 1)[1][:900]
+    assert "gridTemplateColumns" in cam and "camCols" in cam, "사람이 고른 값을 안 쓴다"
     assert "layout ===" not in cam, "배치 토글에 다시 묶였다"
+
+
+def test_the_camera_row_count_defaults_to_three_and_is_remembered():
+    """고르고 나면 기억해야 한다 — 에피소드를 넘길 때마다 다시 고르면 안 쓴다."""
+    src = (_SRC / "pages" / "EpisodesPage.tsx").read_text()
+    setup = src.split("const [camCols", 1)[1][:400]
+    assert "'episodes-cam-cols'" in setup, "선택을 기억하지 않는다"
+    assert ": 3" in setup, "기본이 3 이 아니다"
+    assert "v >= 1 && v <= 4" in setup, "1~4 밖의 값을 걸러내지 않는다"
 
 
 def test_everything_indexed_by_frame_shares_a_column():
