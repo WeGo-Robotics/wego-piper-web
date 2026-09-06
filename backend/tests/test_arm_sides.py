@@ -124,8 +124,9 @@ def test_four_port_cards_fit_one_row_at_fhd():
     """⚠ 팔이 넷인 배치가 기본이다. 세 장에서 끊기면 **마지막 하나만 다음 줄로**
     떨어져 넷을 한눈에 못 본다 — 어느 포트가 비었는지 세려고 보는 화면이다.
 
-    1280px 에서 넷은 [연결 중…] 버튼이 눌리므로 1536px(`2xl`)부터 넷으로 간다.
-    FHD(1920)는 그 위다.
+    ⚠ **`2xl`(1536px)로는 FHD 에서 안 걸렸다.** 브레이크포인트는 물리 해상도가
+    아니라 CSS 픽셀이라, 1920 화면이라도 배율이 125% 면 유효 뷰포트가 ~1511px 다 —
+    25px 차이로 계속 세 장이었다. `xl`(1280px)이어야 배율이 걸려도 넷이 된다.
     """
     from pathlib import Path
 
@@ -136,5 +137,5 @@ def test_four_port_cards_fit_one_row_at_fhd():
     grid = [ln for ln in src.splitlines()
             if "grid-cols-1" in ln and "sm:grid-cols-2" in ln]
     assert grid, "포트 카드 그리드를 못 찾았다"
-    assert any("2xl:grid-cols-4" in ln for ln in grid), \
-        f"FHD 에서 네 장이 한 줄에 안 들어간다: {grid}"
+    assert any("xl:grid-cols-4" in ln and "2xl:grid-cols-4" not in ln for ln in grid), \
+        f"FHD 에서 네 장이 한 줄에 안 들어간다 (2xl 은 배율이 걸리면 못 미친다): {grid}"

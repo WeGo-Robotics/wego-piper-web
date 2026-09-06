@@ -796,9 +796,13 @@ export default function RobotsPage() {
         ) : (
           // ⚠ FHD 에서 **네 장이 한 줄**에 들어가야 한다. 팔이 넷인 배치가 기본
           //    이라, 세 장에서 끊기면 마지막 하나만 다음 줄로 떨어져 한눈에 안
-          //    들어온다. 1536px 부터 넷 — 1280px 에서 넷은 [연결 중…] 버튼이
-          //    눌린다.
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-2">
+          //    들어온다.
+          //
+          // ⚠ **`2xl`(1536px)은 FHD 에 안 걸린다.** 브레이크포인트는 물리 해상도가
+          //    아니라 **CSS 픽셀**이라, 1920 화면이라도 브라우저 확대나 디스플레이
+          //    배율이 125% 면 유효 뷰포트가 ~1511px 이다 — 25px 차이로 못 미쳐
+          //    계속 세 장이었다. `xl`(1280px)로 내려 배율이 걸려도 넷이 되게 한다.
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
             {ports.map((port) => {
               const isUp = port.state === 'UP'
               return (
