@@ -81,6 +81,18 @@ async def upload_stop():
     return {"status": "stopped"}
 
 
+@router.get("/edit-status")
+async def edit_status():
+    """편집 유닛의 결과. **"안 돌고 있음" 은 성공이 아니다.**
+
+    ⚠ 실기에서 삭제가 조용히 실패했다. 유닛의 PATH 에 conda `bin` 이 없어
+    `lerobot-edit-dataset` 을 못 찾고 `status=127` 로 0.1 초 만에 죽었는데,
+    화면은 "안 돌고 있으니 끝났다" 로 읽고 **"삭제 완료" 라고 답했다** —
+    데이터셋은 그대로인데 지웠다고 믿게 된다. 실패는 실패라고 말해야 한다.
+    """
+    return {"state": _edit_pm.state.value, "running": _edit_pm.is_running}
+
+
 @router.get("/hf-cli")
 async def get_hf_cli():
     """huggingface-cli 경로 조회."""

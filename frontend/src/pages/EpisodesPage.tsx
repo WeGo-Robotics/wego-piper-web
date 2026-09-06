@@ -220,37 +220,67 @@ export default function EpisodesPage() {
   const toggleMark = (idx: number) =>
     setMarked((m) => m.includes(idx) ? m.filter((i) => i !== idx) : [...m, idx].sort((a, b) => a - b))
 
+  /** edit 유닛이 끝날 때까지 기다리고 **결과를 확인한다** (최대 4분).
+   *
+   * ⚠ **"안 돌고 있음" 은 성공이 아니다.** 예전에는 `/activity` 만 보고 안 돌면
+   * 끝났다고 했다. 유닛의 PATH 에 conda `bin` 이 없어 `lerobot-edit-dataset` 을
+   * 못 찾고 `status=127` 로 0.1 초 만에 죽는데, 첫 폴링(1초 뒤)에는 이미 안
+   * 돌고 있으니 **"삭제 완료" 가 떴다** — 데이터셋은 그대로인데 지웠다고 믿는다.
+   * systemd 는 실패를 `failed` 로 남기므로 그 상태를 보고 판정한다.
+   */
   const waitEditDone = async () => {
-    // edit 유닛이 끝날 때까지 (최대 4분). 실패해도 폴링만 끊긴다 — 편집은 유닛이라 계속 돈다
     for (let i = 0; i < 240; i++) {
       await new Promise((r) => setTimeout(r, 1000))
       try {
-        const s = await api.get<{ running: string[] }>('/activity')
-        if (!s.running.includes('dataset_edit')) return
-      } catch { /* 게이트웨이 순단은 무시 */ }
+        const s = await api.get<{ state: string; running: boolean }>(
+          '/datasets/edit-status')
+        if (s.running) continue
+        if (s.state === 'error') {
+          throw new Error('편집 유닛이 실패했습니다 — 데이터셋은 그대로입니다 '
+                          + '(journalctl --user -u piper-xfer-edit)')
+        }
+        return
+      } catch (e) {
+        // ⚠ 우리가 던진 실패는 올려보낸다. 게이트웨이 순단만 삼킨다.
+        if (e instanceof Error && e.message.startsWith('편집 유닛이')) throw e
+      }
     }
   }
 
-  const handleDeleteMarked = async () => {
-    if (!dsId || marked.length === 0) return
+  /** 에피소드를 지운다. 사이드바의 표시 삭제와 뷰어의 [이 에피소드 삭제] 가
+   *  **같은 함수**를 쓴다 — 갈라 두면 한쪽만 사이드카 동기화를 빠뜨린다. */
+  const deleteEpisodes = async (list: number[]) => {
+    if (!dsId || list.length === 0) return
     const ok = await askConfirm(
-      `에피소드 ${marked.map((i) => `#${i}`).join(', ')} — ${marked.length}개를 삭제하시겠습니까?\n` +
-      '삭제 후 뒤 에피소드 번호가 당겨지고, 페이즈 라벨·신호는 자동으로 따라옵니다.')
+      `에피소드 ${list.map((i) => `#${i}`).join(', ')} — ${list.length}개를 삭제하시겠습니까?\n` +
+      '삭제 후 뒤 에피소드 번호가 당겨지고, 페이즈 라벨·신호는 자동으로 따라옵니다.\n\n' +
+      '되돌릴 수 없습니다.')
     if (!ok) return
     setLifecycleBusy(true)
     try {
       await api.post(`/datasets/${dsId}/edit`, {
         operation: 'delete_episodes',
-        params: { episode_indices: JSON.stringify(marked) },
+        params: { episode_indices: JSON.stringify(list) },
       })
       await waitEditDone()
-      setMarked([])
+      setMarked((m) => m.filter((i) => !list.includes(i)))
+      // ⚠ **지운 에피소드를 계속 열어 두면 안 된다.** 뒤 번호가 당겨지므로 같은
+      //   번호가 이제 **다른 에피소드**다 — 화면은 그대로인데 내용이 바뀐다.
+      //   목록을 다시 읽기 전에 닫는다.
+      if (ep !== null && list.includes(ep)) setEp(null)
       await selectDataset(dsId)
-      notify({ level: 'info', text: '삭제 완료 — 번호 재정렬 + 사이드카 동기화됨', source: '에피소드' })
+      // ⚠ **`_old` 백업이 남는다.** `lerobot-edit-dataset` 이 안전용으로 통째
+      //   복사해 두는데, 그게 데이터셋 목록에 그대로 뜬다 — 모르면 디스크만 먹고,
+      //   최악은 실수로 그걸 학습에 쓴다. 지우지는 않는다(유일한 되돌리기다).
+      notify({ level: 'info', source: '에피소드',
+               text: `삭제 완료 — 번호 재정렬 + 사이드카 동기화됨. `
+                     + `되돌리기용 백업 '${dsId}_old' 가 남았습니다 — 확인 후 지우세요.` })
     } catch (e) {
       notifyError(e instanceof Error ? e.message : '삭제 실패')
     } finally { setLifecycleBusy(false) }
   }
+
+  const handleDeleteMarked = () => deleteEpisodes(marked)
 
   const handleTaskUpdate = async () => {
     if (!dsId || marked.length === 0 || !taskInput.trim()) return
@@ -998,7 +1028,20 @@ export default function EpisodesPage() {
         ) : (
           <>
             <div className="flex items-center justify-end gap-2">
-              <span className="text-[11px] text-neutral-500">한 줄에</span>
+              {/* ⚠ **보고 있는 그것을 지운다.** 사이드바 체크는 여러 개를 골라
+                  한꺼번에 지우는 길이라, 재생으로 확인한 직후 "이건 버리자" 가
+                  안 된다 — 목록으로 돌아가 번호를 다시 찾아 체크해야 했고,
+                  그 사이에 엉뚱한 번호를 짚기 쉽다. */}
+              {ep !== null && (
+                <button onClick={() => void deleteEpisodes([ep])}
+                  disabled={lifecycleBusy}
+                  title={`에피소드 #${ep} 를 지웁니다 — 되돌릴 수 없습니다`}
+                  className="rounded bg-red-600/80 px-2 py-0.5 text-xs text-white
+                             hover:bg-red-600 disabled:opacity-50">
+                  {lifecycleBusy ? '작업 중…' : `#${ep} 삭제`}
+                </button>
+              )}
+              <span className="ml-2 text-[11px] text-neutral-500">한 줄에</span>
               <div className="flex items-center gap-0.5 rounded bg-neutral-900 p-0.5">
                 {[1, 2, 3, 4].map((n) => (
                   <button key={n}

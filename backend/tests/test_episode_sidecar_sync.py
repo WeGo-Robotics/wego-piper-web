@@ -83,3 +83,39 @@ def test_edit_args_route_through_wrapper():
     assert "--repo_id=u/ds" in args
     assert "--operation.type=delete_episodes" in args
     assert "--operation.episode_indices=[1,3]" in args
+
+
+def test_the_wrapper_does_not_trust_path_alone():
+    """⚠ **삭제가 조용히 실패했다.** 편집은 systemd 유닛으로 도는데 유닛의 PATH 에는
+    conda `bin` 이 없다 — `lerobot-edit-dataset` 을 못 찾고 `status=127` 로 0.1 초
+    만에 죽었다. 셸에서는 보이니 직접 돌리면 되고, 화면으로 누르면 안 됐다.
+
+    우리를 띄운 인터프리터 옆이 가장 확실하다 — 같은 환경에 설치된 CLI 다.
+    """
+    import inspect
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "wrapper"))
+    import edit_dataset
+
+    src = inspect.getsource(edit_dataset._find_cli)
+    assert "sys.executable" in src, "PATH 만 믿는다 — 유닛에서 못 찾는다"
+    assert edit_dataset._find_cli(), "CLI 를 못 찾는다"
+
+
+def test_not_running_is_not_success():
+    """⚠ 화면이 `/activity` 만 보고 "안 돌고 있으니 끝났다" 로 읽었다. 유닛이
+    127 로 즉사하면 첫 폴링(1초 뒤)에는 이미 안 돌고 있어 **"삭제 완료" 가
+    떴다** — 데이터셋은 그대로인데 지웠다고 믿는다. systemd 는 실패를 `failed`
+    로 남기므로 그 상태를 보고 판정해야 한다.
+    """
+    from pathlib import Path
+
+    from conftest import code_only
+
+    src = code_only((Path(__file__).resolve().parents[2]
+                     / "frontend/src/pages/EpisodesPage.tsx").read_text())
+    wait = src.split("const waitEditDone", 1)[1][:900]
+    assert "edit-status" in wait, "편집 결과를 안 본다"
+    assert "'error'" in wait, "실패를 성공과 구분하지 않는다"

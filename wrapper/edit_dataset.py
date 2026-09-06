@@ -34,11 +34,30 @@ def _flag(args: list[str], name: str) -> str | None:
     return None
 
 
+def _find_cli() -> str | None:
+    """`lerobot-edit-dataset` 의 경로. **PATH 만 믿으면 안 된다.**
+
+    ⚠ 실기에서 이것 때문에 삭제가 조용히 실패했다. 편집은 systemd 유닛으로 도는데
+    유닛의 PATH 에는 conda `bin` 이 없다 — 셸에서는 보이니 직접 돌리면 되고,
+    화면으로 누르면 `status=127` 로 죽었다. 그런데 **UI 는 "삭제 완료" 라고
+    답했다**(`waitEditDone` 이 "안 돌고 있음"을 완료로 읽는다). 데이터셋은
+    그대로인데 지웠다고 믿게 된다.
+
+    우리를 띄운 인터프리터 옆이 가장 확실하다 — 같은 환경에 설치된 CLI 다.
+    """
+    beside = Path(sys.executable).parent / "lerobot-edit-dataset"
+    if beside.is_file() and os.access(beside, os.X_OK):
+        return str(beside)
+    return shutil.which("lerobot-edit-dataset")
+
+
 def main() -> int:
     args = sys.argv[1:]
-    cli = shutil.which("lerobot-edit-dataset")
+    cli = _find_cli()
     if not cli:
-        logger.error("lerobot-edit-dataset 를 PATH 에서 찾을 수 없습니다")
+        logger.error(
+            "lerobot-edit-dataset 를 찾을 수 없습니다 (PATH: %s, 인터프리터 옆: %s)",
+            os.environ.get("PATH", ""), Path(sys.executable).parent)
         return 127
 
     rc = subprocess.call([cli, *args])
