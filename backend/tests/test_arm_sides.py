@@ -118,3 +118,23 @@ def test_the_enable_is_not_paid_on_every_press():
     assert "_ensure_enabled()" in body
     ttl = arm.split("ENABLE_TTL_S = ", 1)[1].split("\n", 1)[0]
     assert float(ttl) > 0
+
+
+def test_four_port_cards_fit_one_row_at_fhd():
+    """⚠ 팔이 넷인 배치가 기본이다. 세 장에서 끊기면 **마지막 하나만 다음 줄로**
+    떨어져 넷을 한눈에 못 본다 — 어느 포트가 비었는지 세려고 보는 화면이다.
+
+    1280px 에서 넷은 [연결 중…] 버튼이 눌리므로 1536px(`2xl`)부터 넷으로 간다.
+    FHD(1920)는 그 위다.
+    """
+    from pathlib import Path
+
+    from conftest import code_only
+
+    src = code_only((Path(__file__).resolve().parents[2]
+                     / "frontend/src/pages/RobotsPage.tsx").read_text())
+    grid = [ln for ln in src.splitlines()
+            if "grid-cols-1" in ln and "sm:grid-cols-2" in ln]
+    assert grid, "포트 카드 그리드를 못 찾았다"
+    assert any("2xl:grid-cols-4" in ln for ln in grid), \
+        f"FHD 에서 네 장이 한 줄에 안 들어간다: {grid}"

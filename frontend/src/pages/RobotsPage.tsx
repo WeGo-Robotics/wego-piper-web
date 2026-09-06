@@ -794,7 +794,11 @@ export default function RobotsPage() {
         {ports.length === 0 ? (
           <p className="text-xs text-neutral-400">"스캔"을 눌러 CAN 포트를 검색하세요</p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          // ⚠ FHD 에서 **네 장이 한 줄**에 들어가야 한다. 팔이 넷인 배치가 기본
+          //    이라, 세 장에서 끊기면 마지막 하나만 다음 줄로 떨어져 한눈에 안
+          //    들어온다. 1536px 부터 넷 — 1280px 에서 넷은 [연결 중…] 버튼이
+          //    눌린다.
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-2">
             {ports.map((port) => {
               const isUp = port.state === 'UP'
               return (
