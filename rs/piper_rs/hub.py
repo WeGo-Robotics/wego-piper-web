@@ -649,6 +649,8 @@ class _RSDevice:
             ok = self._ensure_streams({s for s, c in self._refcount.items() if c > 0})
             if not ok:
                 self._refcount[stream] = max(0, self._refcount[stream] - 1)
+            elif self.lost_at:
+                self.lost_at = 0.0     # 파이프라인이 다시 섰다 — 스캔 없이 연결만 해도 해제
             return ok
 
     def disconnect_stream(self, stream: str) -> None:
@@ -868,6 +870,15 @@ class RealSenseHub:
                     dev.model = model
                     dev.usb_port = usb_port
                     dev.available = available
+                    # ⚠ **다시 보이면 잃어버림 판정을 지운다.** 안 지우면 스캔이
+                    # 살려낸 카메라를 게이트웨이 감시가 lost() 를 보고 2초 안에
+                    # 도로 없음 처리한다 — 화면에서 "나왔다가 사라지는" 것이
+                    # 그것이다. 팔의 브리지 복귀와 같은 병 (커밋 221800a).
+                    # 열거는 "프레임이 나온다"의 보증은 아니지만, 진짜 안 나오면
+                    # 연결 시 읽기 루프가 다시 판정한다 — 회복 경로가 있다.
+                    if dev.lost_at:
+                        logger.info("RealSense %s 가 다시 보입니다 — 잃어버림 해제", serial)
+                        dev.lost_at = 0.0
             for stream in STREAM_TYPES:
                 if stream not in available:
                     continue

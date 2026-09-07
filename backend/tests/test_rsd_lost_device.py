@@ -73,3 +73,19 @@ def test_the_leak_is_written_down():
     "정리 안 하네" 하고 되돌리면 데몬이 다시 죽는다."""
     body = _src().split("def _stop_pipeline", 1)[1].split("\n    def ", 1)[0]
     assert "SIGABRT" in body and "코어덤프" in body
+
+
+def test_a_returning_device_clears_the_lost_mark():
+    """⚠ **실측 (오늘): 카메라는 있는데 화면에서 나왔다 사라졌다 했다.**
+    13:49 의 순간 이탈로 `lost_at` 이 찍힌 뒤 장치가 돌아와도 지워지지 않아,
+    스캔이 살려낸 카메라를 게이트웨이 감시가 `lost()` 를 보고 2초 안에 도로
+    없음 처리했다. 팔의 브리지 복귀와 같은 병이다 (커밋 221800a).
+
+    해제는 두 신호로 한다: 스캔 열거에 다시 보이거나(대부분 안 연 채로 꽂혀만
+    있는 카메라), 파이프라인이 실제로 다시 서거나(연결). 열거는 프레임의
+    보증이 아니지만 진짜 안 나오면 읽기 루프가 다시 판정한다 — 회복 경로가 있다."""
+    src = _src()
+    scan_body = src.split("def scan", 1)[1].split("\n    def ", 1)[0]
+    assert "dev.lost_at = 0.0" in scan_body, "스캔이 돌아온 장치의 lost 를 안 지운다"
+    conn = src.split("def connect_stream", 1)[1].split("\n    def ", 1)[0]
+    assert "self.lost_at = 0.0" in conn, "연결 성공이 lost 를 안 지운다"
