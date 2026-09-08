@@ -176,7 +176,7 @@ def test_serial_ports_ride_the_ports_route_as_their_own_kind():
     body = router.split('"/ports"', 1)[1].split("@router.post", 1)[0]
     assert '"serial": serial' in body
     page = (REPO / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
-    assert "serialPorts.length > 0 &&" in page, "데몬 없을 때 패널이 안 접힌다"
+    assert "ports.length + serialPorts.length === 0" in page, "시리얼만 있을 때 빈 상태로 보인다"
     assert "미캘리브레이션" in page, "캘리브레이션 없는 팔이 표시가 안 된다"
 
 
@@ -723,3 +723,39 @@ def test_the_recording_form_offers_so101_leaders_and_sends_the_type():
     assert "sp.attached.calibrated" in page, "미캘리브레이션 팔이 선택지에 오른다"
     assert "teleop_type: 'so101_leader'" in page
     assert "(SO-101)" in page
+
+
+def test_the_so101_side_control_looks_and_cycles_like_pipers():
+    """좌/우 지정은 Piper 카드와 **같은 순환 버튼**이다 (왼팔 → 오른팔 → 미지정).
+    두 카드의 같은 개념이 다르게 생기면(하나는 드롭박스) 사람이 "뭐가 다른가"를
+    묻는다 — 실제로 물었다. 스타일 클래스까지 같아야 눈이 같은 것으로 읽는다."""
+    page = (REPO / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
+    so101 = page.split("{/* SO-101 로봇 카드", 1)[1].split("{robotArms.map((arm) =>", 1)[0]
+    assert "<select" not in so101, "SO-101 좌/우가 아직 드롭박스다"
+    assert "att.side === 'left' ? 'right' : att.side === 'right' ? '' : 'left'" in so101, \
+        "Piper 와 같은 순환(왼팔→오른팔→미지정)이 아니다"
+    for shared in ("bg-purple-600/30 text-purple-300 border-purple-500/40",
+                   "? '왼팔' :", "'오른팔' : '좌/우?'"):
+        assert shared in so101, f"Piper 버튼과 다르게 생겼다: {shared}"
+
+
+def test_can_and_serial_share_one_ui_frame():
+    """⚠ **전송(CAN/시리얼)이 달라도 UI 틀은 하나다** — 사용자가 그렇게 정했다.
+    포트 패널에는 **포트의 사실만**(CAN 카드와 같은 그리드·같은 카드 틀), [연결]
+    하면 팔은 **로봇 패널**로 내려가 Piper 카드와 같은 틀에 선다. 팔의 일
+    (좌/우·캘리브레이션·텔레옵·해제)이 포트 카드에 남아 있으면 안 된다."""
+    page = (REPO / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
+    port_panel = page.split("{/* 포트 — 스캔된 CAN 포트 카드", 1)[1].split("{calibArm && (", 1)[0]
+    # 시리얼 카드가 CAN 과 같은 그리드 안에 있다 (그리드가 하나뿐이다)
+    assert port_panel.count("grid grid-cols-1 sm:grid-cols-2") == 1
+    assert "serialPorts.map((sp) =>" in port_panel
+    # 포트 카드에는 팔의 일이 없다
+    for arm_thing in ("handleSerialSide", "setCalibArm", "setTeleopArm", "handleSerialRelease"):
+        assert arm_thing not in port_panel, f"포트 카드에 팔의 일이 남아 있다: {arm_thing}"
+    robot_panel = page.split("{/* 로봇 — 연결·등록된 팔 카드", 1)[1]
+    assert "so101Arms.map((att) =>" in robot_panel, "SO-101 이 로봇 패널에 안 선다"
+    assert "robotArms.length + so101Arms.length === 0" in robot_panel
+    # Piper 로봇 카드와 같은 카드 틀·같은 버튼 크기
+    so101 = robot_panel.split("so101Arms.map((att) =>", 1)[1].split("{robotArms.map((arm) =>", 1)[0]
+    assert "rounded border p-2.5 transition-shadow" in so101
+    assert so101.count("px-2.5 py-1 text-xs rounded") >= 3

@@ -310,7 +310,8 @@ function ArmDetailModal({ arm, leader, onConfig, onClose }: {
   onConfig: (cfg: Record<string, unknown>) => void
   onClose: () => void
 }) {
-  const [dtab, setDtab] = useState<'parking' | 'zero' | 'jog' | 'config'>('parking')
+  const [dtab, setDtab] = useState<
+    'parking' | 'zero' | 'jog' | 'load' | 'config'>('parking')
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
          onClick={onClose}>
@@ -757,6 +758,10 @@ export default function RobotsPage() {
   // 로봇 패널 = 등록됐거나 연결된 팔 전부. [연결]이 등록까지 하므로 보통 같지만,
   // 옛 세션·프리셋 잔재로 연결-미등록이 남을 수 있어 둘 다 담는다.
   const robotArms = arms.filter((a) => a.ready || a.connected)
+  // SO-101 은 robotd 등록부(arms)에 없다 — so101d 가 attach 한 팔이 곧 로봇 카드다.
+  // 포트 패널에는 포트 사실만 남기고, 팔의 사실(좌/우·캘리브레이션·텔레옵)은
+  // Piper 와 같은 자리(로봇 패널)에 그린다 — 전송이 달라도 UI 틀은 하나다.
+  const so101Arms = serialPorts.flatMap((sp) => sp.attached?.running ? [sp.attached] : [])
   // ⚠ **전체에서 찾는다.** `connectedArms` 는 `!ready` 라 등록하는 순간 빠지는데,
   //   거기서 리더를 찾으면 등록된 팔끼리는 릴레이 버튼이 영영 안 뜬다.
   // ⚠ **같은 쪽 리더만 짝이 된다.** 예전에는 연결된 첫 리더를 아무 팔에나
@@ -843,8 +848,8 @@ export default function RobotsPage() {
             {scanning ? <><Spinner className="inline" /> 스캔 중...</> : '스캔'}
           </button>
         </div>
-        {ports.length === 0 ? (
-          <p className="text-xs text-neutral-400">"스캔"을 눌러 CAN 포트를 검색하세요</p>
+        {ports.length + serialPorts.length === 0 ? (
+          <p className="text-xs text-neutral-400">"스캔"을 눌러 포트(CAN·시리얼)를 검색하세요</p>
         ) : (
           // ⚠ FHD 에서 **네 장이 한 줄**에 들어가야 한다. 팔이 넷인 배치가 기본
           //    이라, 세 장에서 끊기면 마지막 하나만 다음 줄로 떨어져 한눈에 안
@@ -916,81 +921,37 @@ export default function RobotsPage() {
                 </div>
               )
             })}
-          </div>
-        )}
-        {/* 시리얼(SO-101) — CAN 과 카드 종류를 나눈다: 링크 상태·Rx/Tx 가
-            없는 장치를 그 틀에 욱여넣지 않는다. so101d 가 없으면 목록이
-            비어 이 블록 자체가 안 그려진다. */}
-        {serialPorts.length > 0 && (
-          <div className="space-y-1.5 pt-1">
-            <p className="text-[11px] text-neutral-500">시리얼 (SO-101)</p>
+            {/* 시리얼(SO-101) 포트 — CAN 카드와 **같은 틀**로 그린다: 이름 줄 /
+                통계 줄 / 식별 줄 / 버튼 줄. 링크 UP/DOWN·Rx/Tx 가 없는 자리엔
+                시리얼의 사실(present·bps·by-id)을 놓는다. 팔의 사실은 여기 없다 —
+                [연결]하면 아래 로봇 패널로 간다 (Piper 와 같은 동선). */}
             {serialPorts.map((sp) => {
               const shortId = sp.id.replace(/^usb-.*_([0-9A-Fa-f]+)(-if\d+)?$/, '$1')
-              const att = sp.attached
+              const attached = !!sp.attached?.running
               return (
                 <div key={sp.id}
-                     className={`rounded border p-2.5 ${att?.running
-                       ? 'border-green-500/30 bg-green-500/5'
-                       : 'border-neutral-600 bg-neutral-800/60'}`}>
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div className="flex items-center gap-2 flex-wrap min-w-0">
-                      <span className="text-sm font-medium">SO-101</span>
-                      <span className="text-xs text-neutral-400 font-mono">{shortId}</span>
-                      <span className="text-[11px] text-neutral-500">{(sp.baud / 1e6).toFixed(0)}Mbps</span>
-                      {att?.running && (
-                        <span className="text-[11px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">
-                          {att.arm}</span>
-                      )}
-                      {att?.running && (
-                        <select value={att.side ?? ''}
-                          onChange={(e) => handleSerialSide(att.arm, e.target.value)}
-                          title="텔레옵 짝짓기용 좌/우 — 재연결·재기동에도 유지됩니다"
-                          className="text-[11px] rounded bg-neutral-700 border border-neutral-600 px-1 py-0.5">
-                          <option value="">좌우 미지정</option>
-                          <option value="left">왼쪽</option>
-                          <option value="right">오른쪽</option>
-                        </select>
-                      )}
-                      {att?.running && !att.calibrated && (
-                        <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300"
-                              title="lerobot-calibrate 로 이 팔의 캘리브레이션을 만들어야 수집에 쓸 수 있습니다">
-                          ⚠ 미캘리브레이션</span>
-                      )}
-                    </div>
-                    <div className="flex gap-1.5">
-                      {att?.running && att.calibrated && (
-                        <button onClick={() => setTeleopArm({ arm: att.arm, side: att.side })}
-                          disabled={serialBusy !== null}
-                          title="이 리더로 Piper 팔로워를 조종합니다"
-                          className="px-3 py-1 text-xs rounded bg-green-700 hover:bg-green-600 text-white disabled:opacity-40">
-                          텔레옵
-                        </button>
-                      )}
-                      {att?.running && (
-                        <button onClick={() => setCalibArm(att.arm)}
-                          disabled={serialBusy !== null}
-                          title="중앙 자세·범위 스윕을 단계별로 안내합니다"
-                          className={`px-3 py-1 text-xs rounded text-white disabled:opacity-40 ${
-                            att.calibrated ? 'bg-neutral-600 hover:bg-neutral-500'
-                                           : 'bg-amber-600 hover:bg-amber-500'}`}>
-                          캘리브레이션
-                        </button>
-                      )}
-                      {att?.running ? (
-                        <button onClick={() => handleSerialRelease(att.arm)}
-                          disabled={serialBusy !== null}
-                          className="px-3 py-1 text-xs rounded bg-neutral-600 hover:bg-neutral-500 text-white disabled:opacity-40">
-                          {serialBusy === att.arm ? <><Spinner className="inline" /> 해제 중…</> : '해제'}
-                        </button>
-                      ) : (
-                        <button onClick={() => handleSerialAttach(sp.id)}
-                          disabled={serialBusy !== null}
-                          title="연결 + 6모터 확인 + 토크 OFF"
-                          className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">
-                          {serialBusy === sp.id ? <><Spinner className="inline" /> 연결 중…</> : '연결'}
-                        </button>
-                      )}
-                    </div>
+                     className={`rounded border p-2.5 space-y-1.5 ${
+                       attached ? 'border-green-500/40 bg-green-500/5' : 'border-neutral-700'}`}>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm" title={sp.id}>{shortId}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-600/25 text-green-400">
+                      SERIAL
+                    </span>
+                    {attached && <span className="text-[10px] text-green-400">연결됨</span>}
+                  </div>
+                  <p className="text-[11px] text-neutral-400 tabular-nums">
+                    SO-101 · {(sp.baud / 1e6).toFixed(0)}M bps
+                  </p>
+                  <p className="truncate text-[10px] text-neutral-600">{sp.port}</p>
+                  <div className="flex gap-1">
+                    <button onClick={() => handleSerialAttach(sp.id)}
+                      disabled={attached || serialBusy !== null}
+                      title={attached ? '이미 연결됨 — 아래 로봇 패널에서 다룹니다'
+                        : '연결 + 6모터 확인 + 토크 OFF'}
+                      className="flex-1 px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">
+                      {serialBusy === sp.id ? <><Spinner className="inline" /> 연결 중…</>
+                        : attached ? '연결됨' : '연결'}
+                    </button>
                   </div>
                 </div>
               )
@@ -1014,10 +975,57 @@ export default function RobotsPage() {
           (마스터는 지령, 슬레이브는 피드백으로 — 백엔드가 가려서 잰다). */}
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
         <h2 className="text-sm font-semibold">로봇</h2>
-        {robotArms.length === 0 ? (
+        {robotArms.length + so101Arms.length === 0 ? (
           <p className="text-xs text-neutral-400">등록된 로봇이 없습니다 — 포트에서 [연결]을 누르세요.</p>
         ) : (
           <div className="space-y-1.5">
+            {/* SO-101 로봇 카드 — Piper 카드와 같은 틀. 버튼은 capabilities 로 정해진다:
+                마스터/슬레이브·리셋·상세(파킹/영점/조그)는 SO-101 에 없어 안 그리고,
+                이 팔의 일(캘리브레이션·텔레옵)이 그 자리에 온다. */}
+            {so101Arms.map((att) => (
+              <div key={att.arm}
+                   className={`rounded border p-2.5 transition-shadow ${
+                     att.calibrated ? 'border-green-500/30 bg-green-500/5'
+                                    : 'border-amber-500/30 bg-amber-500/5'}`}>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap min-w-0">
+                    <span className="text-green-400 text-sm">✓</span>
+                    <span className="font-mono text-sm">{att.arm}</span>
+                    <span className="px-1.5 py-0.5 text-[10px] rounded bg-neutral-900 border border-neutral-600 text-neutral-300">
+                      SO-101 · leader
+                    </span>
+                    <button onClick={() => handleSerialSide(att.arm,
+                        att.side === 'left' ? 'right' : att.side === 'right' ? '' : 'left')}
+                      title="텔레옵 짝짓기용 좌/우 (클릭해서 변경) — 재연결·재기동에도 유지됩니다"
+                      className={`px-1.5 py-0.5 text-[10px] rounded border ${
+                        att.side ? 'bg-purple-600/30 text-purple-300 border-purple-500/40'
+                                 : 'bg-neutral-700/50 text-neutral-500 border-neutral-600'}`}>
+                      {att.side === 'left' ? '왼팔' : att.side === 'right' ? '오른팔' : '좌/우?'}
+                    </button>
+                    {!att.calibrated && (
+                      <span className="rounded bg-amber-600/25 px-1.5 py-0.5 text-[10px] text-amber-300"
+                            title="캘리브레이션을 완주해야 텔레옵·수집에 쓸 수 있습니다">
+                        ⚠ 미캘리브레이션</span>
+                    )}
+                  </div>
+                  <div className="flex gap-1 flex-wrap">
+                    <button onClick={() => setCalibArm(att.arm)} disabled={serialBusy !== null}
+                      title="범위 스윕으로 중앙을 자동 산출합니다"
+                      className={`px-2.5 py-1 text-xs rounded text-white disabled:opacity-40 ${
+                        att.calibrated ? 'bg-neutral-700 hover:bg-neutral-600'
+                                       : 'bg-amber-600 hover:bg-amber-500'}`}>캘리브레이션</button>
+                    <button onClick={() => setTeleopArm({ arm: att.arm, side: att.side })}
+                      disabled={!att.calibrated || serialBusy !== null}
+                      title={att.calibrated ? '이 리더로 Piper 팔로워를 조종합니다' : '캘리브레이션을 먼저 완주하세요'}
+                      className="px-2.5 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-40">텔레옵</button>
+                    <button onClick={() => handleSerialRelease(att.arm)} disabled={serialBusy !== null}
+                      className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white disabled:opacity-40">
+                      {serialBusy === att.arm ? <><Spinner className="inline" /> 해제 중…</> : '해제'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
             {robotArms.map((arm) => (
               <div key={arm.iface}
                    className={`rounded border p-2.5 transition-shadow ${
