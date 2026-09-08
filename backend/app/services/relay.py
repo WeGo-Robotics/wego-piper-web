@@ -84,6 +84,14 @@ POSE_HZ = 20.0
 POSE_MAX_STEP_MM = 30.0
 POSE_MAX_STEP_DEG = 20.0
 
+# ⚠ **관절 공간 걸음 상한 — 직교 상한과 다른 것을 잡는다.** 특이점 근처에서는
+# 말단이 조금 움직여도 IK 해가 한 관절을 수십 도 튕긴다(실측: SO-101 pan 15°
+# 가 Piper 90°). 직교 상한(mm/deg)은 그걸 통과시키고, 그 목표가 robotd 변화율
+# 상한에 잘려 팔이 한계로 기어들어가 폴트 래치가 걸린다("꼬여서 죽는다").
+# 한 스텝에 이보다 많이 도는 해는 **보내지 않는다** — 5-DOF 리더 → 6-DOF
+# 팔로워 자세 매핑이 도달 불가·가지 뒤집힘 영역을 지날 때의 안전장치다.
+POSE_MAX_JOINT_STEP_DEG = 25.0
+
 
 #: POSE 모드에는 명령 세그먼트가 없다. `_writer` 자리에 이걸 넣어 "열려 있음"만 표시한다.
 _POSE_MODE = object()
@@ -145,6 +153,18 @@ class RelaySession:
         self._follower_model = None
         #: POSE 모드에서 왜 안 보내고 있나. 화면이 그대로 보여준다.
         self._blocked = ""
+        # ── 크로스 모델 (SO-101 리더 등) — 정합(클러치) 상태 ──
+        # 두 팔은 영점 규약도 시작 자세도 다르다. 절대 매핑 대신 [정합] 순간의
+        # 양쪽을 앵커로 잡고 변화량만 얹는다 (feature/so101d.md §5-공통):
+        # 물리는 순간 점프가 구조적으로 0 이고, 재정합으로 작업 공간을 이어 쓴다.
+        self._leader_arm = "piper"
+        self._cross = False
+        self._engaged = False
+        self._spans: dict[str, float] | None = None
+        self._l_anchor: dict[str, float] | None = None
+        self._f_anchor_rad = None
+        self._l_T0 = None
+        self._f_T0 = None
 
     @property
     def is_running(self) -> bool:
@@ -177,54 +197,144 @@ class RelaySession:
             if not ok:
                 reader.close()
                 raise RelayError(why)
-            # 두 모드 다 **관절 목표**로 끝나므로 같은 세그먼트를 쓴다.
-            # (온보드 IK 로 MoveP 를 쏘던 때는 pose 모드가 이걸 안 열었다 —
-            #  데드맨이 JointCtrl 로 힘겨루기를 했기 때문이다. 이제는 아니다.)
-            try:
-                self._writer = open_action_writer(follower, DEADMAN_MS)
-            except ArmBusyError as exc:
-                reader.close(); teleop_session.stop()
-                raise RelayError(str(exc)) from exc
-            except Exception as exc:
-                reader.close(); teleop_session.stop()
-                raise RelayError(f"명령 경로를 열지 못했습니다: {exc}") from exc
 
-            # 버스가 죽어 있으면 여기서 말한다 — 안 그러면 슬라이더는
-            # 움직이는데 팔만 안 움직여 소프트웨어를 의심하게 된다
-            require_healthy_bus(follower)
-            # 토크부터 켠다 — 안 켜면 명령이 나가도 팔이 힘을 안 쓴다
-            enable_torque(follower)
-            self._reader, self._leader, self._follower = reader, leader, follower
-            self._mode = mode
-            self._seed = self._last_target = None
-            self._ik_iters = 0
-            self._blocked = ""
-            if mode == "pose":
-                from piper_robot.armmodel import ArmModel
-                try:
+            # ⚠ **teleop_session 을 연 뒤로는 무슨 예외가 나든 전부 되감는다.**
+            #   예전에는 단계마다 정리를 따로 붙였는데, `require_healthy_bus`·
+            #   `enable_torque` 에는 아예 없어서 거기서 터지면 세션이 열린 채
+            #   남았다 — 실기에서 "토크는 들어갔는데 조작 안 되고, 재시도하니
+            #   수동 조작 실행 중"이 그것이다. 정리를 한 곳으로 모은다.
+            try:
+                # 두 모드 다 **관절 목표**로 끝나므로 같은 세그먼트를 쓴다.
+                self._writer = open_action_writer(follower, DEADMAN_MS)
+                # 버스가 죽어 있으면 여기서 말한다 — 안 그러면 슬라이더는
+                # 움직이는데 팔만 안 움직여 소프트웨어를 의심하게 된다
+                require_healthy_bus(follower)
+                # 토크부터 켠다 — 안 켜면 명령이 나가도 팔이 힘을 안 쓴다
+                enable_torque(follower)
+                self._reader, self._leader, self._follower = reader, leader, follower
+                self._mode = mode
+                self._leader_arm = leader_arm
+                self._cross = leader_arm != follower_arm
+                self._engaged = not self._cross     # 같은 모델은 절대 복제 그대로
+                self._seed = self._last_target = None
+                self._ik_iters = 0
+                self._blocked = ""
+                if self._cross:
+                    # 크로스는 리더 각도가 필요하다 — 캘리브레이션 폭이 그 재료.
+                    # 관절 모드도 마찬가지: 폭을 모르면 변화량의 배율이 틀린다.
+                    from piper_so101 import relay_map
+                    self._spans = relay_map.load_spans(leader)
+                if mode == "pose" or self._cross:
+                    from piper_robot.armmodel import ArmModel
                     self._leader_model = ArmModel.load(leader_arm)
                     self._follower_model = ArmModel.load(follower_arm)
-                except (FileNotFoundError, ValueError) as exc:
-                    reader.close(); teleop_session.stop()
-                    raise RelayError(str(exc)) from exc
-                # ⚠ **모델과 하드웨어가 맞는지 시작할 때 본다.** 안 보면 루프
-                #   안에서 터지는데, 그때는 이미 세션이 열려 있고 사용자는
-                #   "릴레이가 죽었다"만 본다.
-                #
-                #   ⚠ 쓰기 경로는 아직 **Piper 전용**이다 — 명령 세그먼트가
-                #     `joints.JOINT_ORDER`(Piper 6축+그리퍼) 로 되어 있다.
-                #     다른 팔을 실제로 붙이려면 그 팔의 전송 계층이 따로 필요하다.
-                #     기구학 모델만 준비된 상태다.
-                why = _transport_mismatch(self._follower_model)
-                if why:
-                    reader.close(); teleop_session.stop()
-                    raise RelayError(why)
-            self._sent, self._stale_since = 0, 0.0
-            self._stop.clear()
-            self._thread = threading.Thread(target=self._loop, daemon=True,
-                                            name=f"relay-{leader}-{follower}")
-            self._thread.start()
-            logger.info("릴레이 시작: %s → %s (%s 모드)", leader, follower, mode)
+                    # ⚠ 쓰기 경로는 아직 **Piper 전용**이다 — 명령 세그먼트가
+                    #   Piper 6축+그리퍼다. 관절 수가 같은 팔로워만 실린다.
+                    why = _transport_mismatch(self._follower_model)
+                    if why:
+                        raise RelayError(why)
+                self._sent, self._stale_since = 0, 0.0
+                if self._cross:
+                    # 첫 정합 — 시작이 곧 클러치. 실패하면 시작 자체를 접는다.
+                    self._engage_locked()
+                self._stop.clear()
+                self._thread = threading.Thread(
+                    target=self._loop, daemon=True,
+                    name=f"relay-{leader}-{follower}")
+                self._thread.start()
+            except RelayError:
+                self._unwind_start(reader)
+                raise
+            except ArmBusyError as exc:
+                self._unwind_start(reader)
+                raise RelayError(str(exc)) from exc
+            except Exception as exc:
+                self._unwind_start(reader)
+                raise RelayError(f"릴레이를 시작하지 못했습니다: {exc}") from exc
+            logger.info("릴레이 시작: %s → %s (%s 모드, leader_arm=%s)",
+                        leader, follower, mode, leader_arm)
+
+    def _unwind_start(self, reader) -> None:
+        """실패한 start 를 **완전히** 되감는다 — 명령 세그먼트·리더·teleop
+        세션 전부. 하나라도 남으면 다음 시작이 "수동 조작 실행 중"으로 막힌다."""
+        w = self._writer
+        self._writer = self._reader = None
+        self._leader = self._follower = None
+        if w is not None:
+            try:
+                close_action_writer(w, self._follower)
+            except Exception:
+                pass
+        try:
+            reader.close()
+        except Exception:
+            pass
+        teleop_session.stop()
+
+    # ── 정합 (클러치) — 크로스 모델 전용 ──
+
+    def engage(self) -> None:
+        """[정합] — 지금의 리더·팔로워를 앵커로 잡고 전송을 켠다. 재정합 포함."""
+        with self._lock:
+            if not self.is_running:
+                raise RelayError("릴레이가 돌고 있지 않습니다")
+            if not self._cross:
+                raise RelayError("같은 모델 릴레이에는 정합이 없습니다 — 절대 복제입니다")
+            self._engage_locked()
+
+    def disengage(self) -> None:
+        """[해제] — 전송만 멈춘다 (세션 유지). 리더를 편한 자세로 옮긴 뒤
+        재정합하면 작업 공간을 이어 쓴다 — 마우스를 들어 옮기는 것과 같다."""
+        with self._lock:
+            self._engaged = False
+            self._blocked = "해제됨 — 리더를 옮긴 뒤 [정합]을 누르세요"
+
+    def _engage_locked(self) -> None:
+        from piper_so101 import relay_map
+
+        rec = self._reader.read() if self._reader else None
+        if rec is None:
+            raise RelayError("리더 상태를 읽지 못했습니다")
+        age = (time.time_ns() - rec.get("can_wall_ns", 0)) / 1e9
+        if age > STALE_S:
+            raise RelayError(f"리더 상태가 {age:.1f}초 낡았습니다 — 발행 중인가요?")
+        q_f = self._follower_seed()
+        if q_f is None:
+            raise RelayError("팔로워 상태를 읽지 못했습니다 — 연결돼 있나요?")
+        lead = relay_map.leader_rad(rec["values"], self._spans)
+        self._l_anchor = lead
+        self._f_anchor_rad = q_f
+        if self._mode == "pose":
+            import numpy as np
+            lm, fm = self._leader_model, self._follower_model
+            q_l = np.array([lead[n] for n, _, _ in relay_map.PAIRS])
+            self._l_T0 = lm.fk(q_l)
+            self._f_T0 = fm.fk(q_f)
+        # 앵커가 바뀌었으니 걸음 상한·시드 기준도 다시 잡는다
+        self._seed = self._last_target = None
+        self._engaged = True
+        self._blocked = ""
+        logger.info("정합: %s → %s (%s)", self._leader, self._follower, self._mode)
+
+    def _send_joint_mapped(self, values: dict) -> None:
+        """관절 매칭 (§5a): 팔로워 = 앵커 + 부호×(리더 변화량). joint4 는 앵커
+        유지 — 조그로 미리 세팅한 전완 롤이 그대로 간다. 그리퍼는 절대 통과."""
+        from piper_so101 import relay_map
+
+        if not self._engaged:
+            return
+        lead = relay_map.leader_rad(values, self._spans)
+        goal_rad = relay_map.map_joint_goal(lead, self._l_anchor,
+                                            self._f_anchor_rad)
+        goal = _norm_from_rad(goal_rad)
+        if "gripper" in values:
+            goal["gripper"] = float(values["gripper"])
+        try:
+            self._writer.publish(goal)
+            self._sent += 1
+            self._blocked = ""
+        except Exception as exc:
+            logger.warning("릴레이 발행 실패: %s", exc)
 
     def stop(self) -> None:
         with self._lock:
@@ -275,6 +385,9 @@ class RelaySession:
                 self._stale_since = 0.0
 
             if self._mode == "joint":
+                if self._cross:
+                    self._send_joint_mapped(rec["values"])
+                    continue
                 try:
                     writer.publish(rec["values"])
                     self._sent += 1
@@ -297,9 +410,18 @@ class RelaySession:
         from app.services.robot_manager import _call
 
         lm, fm = self._leader_model, self._follower_model
+        if self._cross and not self._engaged:
+            return
         try:
-            q_lead = K.norm_to_rad(
-                np.array([[values[j] for j in K.ARM_JOINTS]], float))[0]
+            if self._leader_arm == "piper":
+                q_lead = K.norm_to_rad(
+                    np.array([[values[j] for j in K.ARM_JOINTS]], float))[0]
+            else:
+                # SO-101: 정규화 → 라디안은 캘리브레이션 폭이 정한다. 중앙(2047)
+                # =0 이고 URDF 한계 중점도 ≈0° (실측) — FK 입력으로 성립한다.
+                from piper_so101 import relay_map
+                lead = relay_map.leader_rad(values, self._spans)
+                q_lead = np.array([lead[n] for n, _, _ in relay_map.PAIRS])
         except (KeyError, ValueError) as exc:
             self._block(f"리더 관절값을 읽지 못했습니다: {exc}")
             return
@@ -311,6 +433,12 @@ class RelaySession:
             return
 
         target = lm.fk(q_lead)
+        if self._cross:
+            # 정합 상대 자세 (§5b): 목표 = T_f0 · (T_l0⁻¹ · T_l). 리더 변화량을
+            # 팔로워 정합 자세에 얹는다 — 정합 순간 첫 목표 = 팔로워 현재 자세라
+            # 기존 절대 POSE 의 "첫 프레임 점프" 문제가 여기엔 없다.
+            from piper_so101 import relay_map
+            target = relay_map.relative_target(target, self._l_T0, self._f_T0)
 
         # 2. 한 걸음 상한 — 리더가 튀면 IK 가 먼 목표를 풀고, 그 관절 목표는
         #    robotd 변화율 상한에 잘려 팔이 엉뚱하게 기어간다. 먼저 막는다.
@@ -346,6 +474,19 @@ class RelaySession:
             #   같은 팔이어도 관절 한계 경계에서는 해가 없다.
             self._block(f"{fm.name} 로는 그 자세에 못 갑니다 — {sol.reason}")
             return
+
+        # 3b. **관절 공간 걸음 상한.** IK 는 성공했지만 해가 직전에서 크게
+        #     뛰었으면(특이점·가지 뒤집힘) 보내지 않는다 — robotd 변화율 상한에
+        #     잘려 팔이 한계로 기어들어가 폴트가 걸리는 것을 여기서 막는다.
+        ref = self._seed if self._seed is not None else self._follower_seed()
+        if ref is not None:
+            jump = float(np.degrees(np.abs(sol.q - ref)).max())
+            if jump > POSE_MAX_JOINT_STEP_DEG:
+                self._block(f"팔로워 관절이 한 번에 {jump:.0f}° 튑니다 "
+                            f"(특이점·가지 뒤집힘 근처) — 리더를 그 자세에서 "
+                            "조금 물러나거나 관절 매칭 모드를 쓰세요")
+                # 시드는 유지한다 — 다음 프레임이 같은 기준에서 다시 잰다
+                return
 
         # 4. 바닥. 이제는 **근사가 아니다** — 팔로워 관절을 우리가 알기 때문이다.
         #    (온보드 IK 를 쓰던 때는 몰라서 리더 자세로 대신 봤다.)
@@ -406,8 +547,9 @@ class RelaySession:
                 "follower": self._follower, "sent": self._sent,
                 "stale": bool(self._stale_since),
                 "mode": self._mode, "blocked": self._blocked,
+                "cross": self._cross, "engaged": self._engaged,
                 "ik_iters": self._ik_iters,
-                "leader_arm": getattr(self._leader_model, "name", None),
+                "leader_arm": getattr(self._leader_model, "name", None) or self._leader_arm,
                 "follower_arm": getattr(self._follower_model, "name", None)}
 
 

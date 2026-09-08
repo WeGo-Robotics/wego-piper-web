@@ -446,3 +446,138 @@ def test_the_side_survives_replug_and_daemon_restart(monkeypatch, tmp_path):
     # 데몬 재기동 (새 허브가 세션을 읽는다)
     hub2 = hub_mod.So101Hub()
     assert hub2.attach("usb-1a86_TEST-if00", "")["side"] == "left"
+
+
+# ── 릴레이 (4단계) — 관절 매칭·POSE 정합의 순수 계산 ──
+
+
+def test_norm_to_radians_uses_the_calibrated_span():
+    """정규화 v 의 각도는 캘리브레이션 폭이 정한다: (v/200)·span·(2π/4096).
+    정규화 공간에서 그대로 매핑하면 두 팔의 범위 차이만큼 각도가 왜곡된다 —
+    Piper 마스터 그리퍼 사고와 같은 병이라 각도 공간이 정본이다."""
+    import math
+
+    from piper_so101 import relay_map
+
+    spans = {n: 2048.0 for n in SO101_JOINTS}       # 반바퀴 스윕
+    rad = relay_map.leader_rad({"joint1": 100.0}, spans)
+    # +100 = 중앙에서 폭의 절반(1024틱) = 1024/4096 바퀴 = π/2
+    assert rad["shoulder_pan"] == pytest.approx(math.pi / 2)
+    assert "gripper" not in rad, "그리퍼는 각도가 아니다 — 절대 통과"
+
+
+def test_the_joint_map_moves_deltas_and_freezes_the_forearm():
+    """관절 매칭의 본식: 팔로워 = 앵커 + 부호×(리더 변화량). 영점 규약·시작
+    자세 차이는 앵커가 지운다 (ACT-delta 와 같은 산수). 대응 없는 Piper
+    joint4(전완 롤)는 **정합 시점 값 유지** — 0 강제가 아니다."""
+    import numpy as np
+
+    from piper_so101 import relay_map
+
+    f_anchor = np.array([0.1, 0.2, 0.3, 0.7, 0.5, 0.6])
+    l_anchor = {n: 0.0 for n in SO101_JOINTS if n != "gripper"}
+    lead = dict(l_anchor, shoulder_pan=0.25, wrist_roll=-0.1)
+    goal = relay_map.map_joint_goal(lead, l_anchor, f_anchor)
+    assert goal[0] == pytest.approx(0.1 + 0.25)     # pan → joint1
+    assert goal[5] == pytest.approx(0.6 - 0.1)      # wrist_roll → joint6
+    assert goal[3] == pytest.approx(0.7), "joint4 가 앵커를 안 지킨다"
+    # 리더가 앵커 그대로면 팔로워도 앵커 그대로 — 정합 순간 점프 0 의 근거
+    same = relay_map.map_joint_goal(l_anchor, l_anchor, f_anchor)
+    assert np.allclose(same, f_anchor)
+
+
+def test_the_relative_pose_target_is_identity_at_engage():
+    """POSE 정합의 본식: 목표 = T_f0·(T_l0⁻¹·T_l). 정합 순간(T_l == T_l0)의
+    목표가 곧 팔로워 정합 자세다 — 기존 절대 POSE 의 첫 프레임 점프가 여기엔
+    구조적으로 없다."""
+    import numpy as np
+
+    from piper_so101 import relay_map
+
+    rng = np.random.default_rng(7)
+
+    def _rot(ax: int, a: float) -> "np.ndarray":
+        c, s_ = np.cos(a), np.sin(a)
+        m = np.eye(3)
+        i, j = [(1, 2), (0, 2), (0, 1)][ax]
+        m[i, i] = m[j, j] = c
+        m[i, j], m[j, i] = -s_, s_
+        return m
+
+    def _t():
+        m = np.eye(4)
+        m[:3, :3] = _rot(0, rng.uniform(-2, 2)) @ _rot(2, rng.uniform(-2, 2))
+        m[:3, 3] = rng.uniform(-0.3, 0.3, 3)
+        return m
+    t_l0, t_f0 = _t(), _t()
+    assert np.allclose(relay_map.relative_target(t_l0, t_l0, t_f0), t_f0)
+    # 리더가 x 로 5cm 가면 목표도 팔로워 프레임에서 그만큼 이동한다
+    t_l = t_l0.copy()
+    t_l[:3, 3] += t_l0[:3, :3] @ np.array([0.05, 0, 0])
+    moved = relay_map.relative_target(t_l, t_l0, t_f0)
+    assert np.linalg.norm(moved[:3, 3] - t_f0[:3, 3]) == pytest.approx(0.05)
+
+
+def test_cross_relay_engages_at_start_and_disengage_holds():
+    """크로스 릴레이는 시작이 곧 첫 정합이고(실패하면 시작 자체를 접는다 —
+    반쯤 열린 세션이 최악), 해제는 전송만 멈춘다: robotd 데드맨이 팔로워를
+    세우는 쪽이 정직하다. 같은 모델(Piper끼리)은 기존 절대 복제 그대로 —
+    행동이 하나도 안 바뀐다."""
+    src = (REPO / "backend" / "app" / "services" / "relay.py").read_text()
+    assert "self._engaged = not self._cross" in src, "같은 모델의 동작이 바뀌었다"
+    start = src.split("def start", 1)[1].split("\n    def ", 1)[0]
+    assert "_engage_locked()" in start, "시작이 첫 정합이 아니다"
+    dis = src.split("def disengage", 1)[1].split("\n    def ", 1)[0]
+    assert "publish" not in dis and "_engaged = False" in dis
+    # 관절 크로스는 매핑 경로, 그리퍼는 절대 통과
+    assert "_send_joint_mapped" in src
+    mapped = src.split("def _send_joint_mapped", 1)[1].split("\n    def ", 1)[0]
+    assert 'goal["gripper"] = float(values["gripper"])' in mapped
+    # POSE 크로스는 상대 자세
+    assert "relay_map.relative_target" in src
+
+
+def test_an_external_leader_does_not_need_a_piper_master():
+    """⚠ **실기: Piper 마스터가 없어 SO-101 을 리더로 쓰려는데 "마스터가
+    없다"로 막혔다.** 같은쪽 리더 검사는 Piper 마스터 등록부를 보는데, 외부
+    리더는 거기 없다 — 정체는 so101d 에게 묻는다: 연결·캘리브레이션을 확인하고,
+    좌우는 **둘 다 지정됐을 때만** 강제한다 (팔 하나 구성에서 미지정을 막으면
+    지정할 이유가 없는 사람까지 막는다)."""
+    router = (REPO / "backend" / "app" / "routers" / "robots.py").read_text()
+    body = router.split('"/relay/start"', 1)[1].split("@router.", 2)[1]
+    body = router.split('"/relay/start"', 1)[1].split("\n@router", 1)[0]
+    assert 'if body.leader_arm == "piper":' in body, "외부 리더 분기가 없다"
+    assert "so101_client.info" in body
+    assert "캘리브레이션" in body
+    assert "lside and fside and lside != fside" in body, "좌우 강제가 무조건이다"
+
+
+def test_pose_mode_refuses_wild_joint_jumps_instead_of_faulting():
+    """⚠ **실기: POSE 모드가 관절을 엉뚱한 방향으로 밀어 로봇이 꼬여 죽었다.**
+    5-DOF 리더 → 6-DOF 팔로워 자세 매핑은 pan·roll 같은 동작에서 도달
+    불가이거나 IK 해가 한 관절을 수십 도 튕긴다(오프라인 실측: SO-101 pan
+    15° → Piper 90°). 직교(mm/deg) 걸음 상한은 그걸 통과시키므로 **관절 공간**
+    상한이 따로 있어야 한다 — 크게 뛰는 해는 보내지 않고 막는다."""
+    src = (REPO / "backend" / "app" / "services" / "relay.py").read_text()
+    assert "POSE_MAX_JOINT_STEP_DEG" in src
+    body = src.split("def _send_pose", 1)[1].split("\n    def ", 1)[0]
+    assert "POSE_MAX_JOINT_STEP_DEG" in body, "관절 걸음 상한이 _send_pose 에 없다"
+    # IK 성공 뒤(3b) 여야 한다 — 실패 경로는 이미 막는다
+    assert body.index("sol.ok") < body.index("POSE_MAX_JOINT_STEP_DEG")
+    # 막을 때 발행하지 않는다: 상한 검사가 publish 보다 앞
+    assert body.index("POSE_MAX_JOINT_STEP_DEG") < body.rindex("_writer.publish")
+
+
+def test_a_failed_relay_start_leaves_no_session_open():
+    """⚠ **실기: 시작이 반쯤 실패해 토크만 들어가고, 재시도하니 "수동 조작
+    실행 중"이었다.** teleop_session 을 연 뒤로는 어느 단계에서 터지든 전부
+    되감아야 한다 — 명령 세그먼트·리더·teleop 세션. 정리를 한 곳(_unwind_start)
+    으로 모은다."""
+    src = (REPO / "backend" / "app" / "services" / "relay.py").read_text()
+    assert "_unwind_start" in src
+    start = src.split("def start", 1)[1].split("\n    def ", 1)[0]
+    # teleop_session.start 이후 전 구간이 하나의 try 로 감싸여 실패 시 되감는다
+    assert start.count("_unwind_start(reader)") >= 2, "실패 경로가 되감지 않는다"
+    unwind = src.split("def _unwind_start", 1)[1].split("\n    def ", 1)[0]
+    assert "teleop_session.stop()" in unwind
+    assert "self._writer = self._reader = None" in unwind

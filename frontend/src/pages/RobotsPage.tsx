@@ -8,6 +8,7 @@ import VersionPanel from '../components/VersionPanel'
 import JogPanel from '../components/JogPanel'
 import { ZeroCalibrationPanel } from '../components/ZeroCalibrationModal'
 import So101CalibrationWizard from '../components/So101CalibrationWizard'
+import So101TeleopPanel from '../components/So101TeleopPanel'
 import { JOINT_NAMES } from '../config/joints'
 
 // ── 파킹 보정 모달 ──
@@ -452,6 +453,7 @@ export default function RobotsPage() {
   const [serialPorts, setSerialPorts] = useState<SerialPortInfo[]>([])
   const [serialBusy, setSerialBusy] = useState<string | null>(null)
   const [calibArm, setCalibArm] = useState<string | null>(null)
+  const [teleopArm, setTeleopArm] = useState<{ arm: string; side?: string } | null>(null)
   // 상세 창 (파킹/영점/조작 탭). 팔 하나에 고정된 모달 — 행 펼침은 긴 목록에서
   // 다른 행을 밀어낸다는 판단을 그대로 잇는다.
   const [detailIface, setDetailIface] = useState<string | null>(null)
@@ -956,6 +958,14 @@ export default function RobotsPage() {
                       )}
                     </div>
                     <div className="flex gap-1.5">
+                      {att?.running && att.calibrated && (
+                        <button onClick={() => setTeleopArm({ arm: att.arm, side: att.side })}
+                          disabled={serialBusy !== null}
+                          title="이 리더로 Piper 팔로워를 조종합니다"
+                          className="px-3 py-1 text-xs rounded bg-green-700 hover:bg-green-600 text-white disabled:opacity-40">
+                          텔레옵
+                        </button>
+                      )}
                       {att?.running && (
                         <button onClick={() => setCalibArm(att.arm)}
                           disabled={serialBusy !== null}
@@ -992,6 +1002,12 @@ export default function RobotsPage() {
       {calibArm && (
         <So101CalibrationWizard arm={calibArm}
           onClose={() => { setCalibArm(null); loadPorts() }} />
+      )}
+      {teleopArm && (
+        <So101TeleopPanel arm={teleopArm.arm} side={teleopArm.side}
+          followers={robotArms.filter((a) => a.connected && a.role !== 'leader')
+            .map((a) => ({ iface: a.iface, label: a.iface, side: a.side }))}
+          onClose={() => setTeleopArm(null)} />
       )}
 
       {/* 로봇 — 연결·등록된 팔 카드. 움직임이 감지되면 깜빡인다

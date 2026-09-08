@@ -81,6 +81,8 @@ def test_the_list_covers_every_mutating_post():
         "/serial/estop",
         "/serial/calib",     # 위저드 단계 — 상태는 so101d 가 든다
         "/serial/side",      # 좌우 지정 — so101d 세션(by_id 별)에 남는다
+        "/relay/engage",     # 정합(클러치) — 세션 상태는 릴레이가 든다
+        "/relay/disengage",
         # CAN 인터페이스 DOWN — 장치 조작일 뿐, 세션에 실을 것이 없다.
         "/can/down",
         # 0x150 리셋 — 세션에 실을 것이 없다. 장치의 보고 프레임을

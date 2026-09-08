@@ -1176,16 +1176,44 @@ async def relay_start(body: RelayStartRequest):
 
     # ⚠ **같은 쪽 리더만 쓴다.** 왼팔을 오른쪽 리더로 끄는 것은 조작자의 손과
     #   팔의 방향이 뒤집힌다는 뜻이고, 그건 사람이 실수하는 자리다.
-    same = _leader_on_side(follower.side)
-    if same is None:
-        raise HTTPException(
-            409, f"{_side_label(follower.side)}에 리더 팔이 없습니다 — "
-                 f"그 쪽 팔 하나를 [마스터] 로 설정하세요.")
-    if same.iface != body.leader:
-        raise HTTPException(
-            409, f"{_side_label(follower.side)}의 리더는 {same.iface} 입니다 "
-                 f"({body.leader} 아님) — 같은 쪽 리더만 쓸 수 있습니다.")
-    leader = same
+    #
+    #   리더가 Piper 면 마스터 팔 등록부에서 찾고, 외부 리더(SO-101)면 그
+    #   등록부에 없다 — 정체는 so101d 가 안다. Piper 마스터 검사를 그대로
+    #   적용하면 "마스터가 없다"로 막힌다 (실기에서 그렇게 막혔다: Piper
+    #   마스터가 없어서 SO-101 을 리더로 쓰려는 상황이 바로 그 경우다).
+    if body.leader_arm == "piper":
+        same = _leader_on_side(follower.side)
+        if same is None:
+            raise HTTPException(
+                409, f"{_side_label(follower.side)}에 리더 팔이 없습니다 — "
+                     f"그 쪽 팔 하나를 [마스터] 로 설정하세요.")
+        if same.iface != body.leader:
+            raise HTTPException(
+                409, f"{_side_label(follower.side)}의 리더는 {same.iface} 입니다 "
+                     f"({body.leader} 아님) — 같은 쪽 리더만 쓸 수 있습니다.")
+    else:
+        import asyncio
+
+        from app.services.so101_client import so101_client
+
+        arms = {a["arm"]: a
+                for a in (await asyncio.to_thread(so101_client.info))["arms"]}
+        la = arms.get(body.leader)
+        if la is None or not la.get("running"):
+            raise HTTPException(
+                409, f"{body.leader} 가 연결돼 있지 않습니다 — 디바이스 탭에서 "
+                     "[연결]하세요")
+        if not la.get("calibrated"):
+            raise HTTPException(
+                409, f"{body.leader} 는 캘리브레이션이 없습니다 — 카드의 "
+                     "[캘리브레이션]을 완주하세요")
+        # 좌우는 둘 다 지정됐을 때만 강제한다 — 팔이 하나뿐인 구성에서
+        # 미지정을 막으면 지정할 이유가 없는 사람까지 막는다
+        lside, fside = str(la.get("side") or ""), str(follower.side or "")
+        if lside and fside and lside != fside:
+            raise HTTPException(
+                409, f"리더는 {_side_label(lside)}, 팔로워는 "
+                     f"{_side_label(fside)}입니다 — 같은 쪽끼리 이으세요")
     try:
         relay_session.start(body.leader, body.follower, body.mode,
                             body.leader_arm, body.follower_arm)
@@ -1205,6 +1233,28 @@ async def relay_arms():
     from piper_robot.armmodel import ArmModel
 
     return {"arms": ArmModel.available()}
+
+
+@router.post("/relay/engage")
+async def relay_engage():
+    """[정합] — 크로스 모델 릴레이의 클러치. 지금의 양쪽 자세를 앵커로 잡고
+    전송을 켠다. 재정합 = 리더를 옮겨 작업 공간 이어 쓰기."""
+    from app.services.relay import RelayError, relay_session
+
+    try:
+        relay_session.engage()
+    except RelayError as exc:
+        raise HTTPException(400, str(exc))
+    return relay_session.status()
+
+
+@router.post("/relay/disengage")
+async def relay_disengage():
+    """[해제] — 전송만 멈춘다 (세션 유지). 팔로워는 robotd 데드맨이 세운다."""
+    from app.services.relay import relay_session
+
+    relay_session.disengage()
+    return relay_session.status()
 
 
 @router.post("/relay/stop")
