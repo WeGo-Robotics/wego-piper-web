@@ -1,0 +1,100 @@
+<mujoco model="piper_scene">
+  <compiler angle="radian" meshdir="../../../vendor/agx_arm_urdf/piper/meshes" balanceinertia="true" />
+  <option timestep="0.002" gravity="0 0 -9.81" />
+  <visual>
+    <global offwidth="1280" offheight="960" />
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.6 0.6 0.6" />
+  </visual>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.6 0.7 0.85" rgb2="0.2 0.25 0.35" width="256" height="256" />
+    <texture name="tabletex" type="2d" builtin="checker" rgb1="0.82 0.8 0.76" rgb2="0.7 0.68 0.64" width="64" height="64" />
+    <material name="tablemat" texture="tabletex" texrepeat="6 6" reflectance="0.05" />
+    <material name="armmat" rgba="0.85 0.85 0.87 1" />
+    <material name="fingermat" rgba="0.25 0.25 0.28 1" />
+    <material name="cubemat" rgba="0.85 0.2 0.15 1" />
+    <material name="binmat" rgba="0.2 0.35 0.7 1" />
+    <mesh name="base_link" content_type="model/stl" file="base_link.stl" />
+    <mesh name="link1" content_type="model/stl" file="link1.stl" />
+    <mesh name="link2" content_type="model/stl" file="link2.stl" />
+    <mesh name="link3" content_type="model/stl" file="link3.stl" />
+    <mesh name="link4" content_type="model/stl" file="link4.stl" />
+    <mesh name="link5" content_type="model/stl" file="link5.stl" />
+    <mesh name="link6" content_type="model/stl" file="link6.stl" />
+  </asset>
+  <worldbody>
+    <light name="sun" pos="0.5 -0.5 1.5" dir="-0.3 0.3 -1" directional="true" diffuse="0.8 0.8 0.8" />
+    <light name="fill" pos="-0.5 0.5 1.2" dir="0.3 -0.3 -1" diffuse="0.4 0.4 0.4" />
+    <geom name="table" type="box" size="0.6 0.5 0.02" pos="0.35 0 -0.02" material="tablemat" />
+    <camera name="top" pos="0.35 0 0.9" quat="1 0 0 0" fovy="55" />
+    <camera name="front" pos="1.1 0 0.45" xyaxes="0 1 0 -0.4 0 1" fovy="50" />
+    <body name="piper_base" pos="0 0 0" gravcomp="1">
+      <geom type="mesh" mesh="base_link" material="armmat" />
+      <body name="link1" pos="0 0 0.123" gravcomp="1">
+        <inertial pos="0.00032 -0.00041 -0.00348" quat="0.737007 0.671914 -0.0484837 0.0547877" mass="0.71" diaginertia="0.0005012 0.00045752 0.00040836" />
+        <joint name="joint1" range="-2.61799 2.61799" actuatorfrcrange="-100 100" damping="8" />
+        <geom type="mesh" mesh="link1" material="armmat" />
+        <body name="link2" quat="0.047971 -0.0479709 -0.705478 -0.705478" gravcomp="1">
+          <inertial pos="0.21852 -0.00861 0.00126" quat="0.479919 0.532436 0.466857 0.517913" mass="1.16" diaginertia="0.0676841 0.0675582 0.00106833" />
+          <joint name="joint2" range="0 3.14159" actuatorfrcrange="-100 100" damping="8" />
+          <geom type="mesh" mesh="link2" material="armmat" />
+          <body name="link3" pos="0.28503 0 0" quat="0.624016 0 0 -0.781412" gravcomp="1">
+            <inertial pos="-0.01999 -0.14808 -0.00053" quat="0.70534 0.70619 0.0352022 0.0505251" mass="0.5" diaginertia="0.0136724 0.0136332 0.000267444" />
+            <joint name="joint3" range="-2.96706 0" actuatorfrcrange="-100 100" damping="6" />
+            <geom type="mesh" mesh="link3" material="armmat" />
+            <body name="link4" pos="-0.02198 -0.25075 0" quat="0.707107 0.707107 0 0" gravcomp="1">
+              <inertial pos="0.00013 -0.00076 -0.00394" quat="0.727848 0.0276487 -0.0387803 0.684082" mass="0.38" diaginertia="0.000189565 0.00017841 0.000145735" />
+              <joint name="joint4" range="-1.74533 1.74533" actuatorfrcrange="-100 100" damping="3" />
+              <geom type="mesh" mesh="link4" material="armmat" />
+              <body name="link5" quat="0.707107 -0.707107 0 0" gravcomp="1">
+                <inertial pos="0.00018 -0.06104 -0.00227" quat="0.709375 0.704813 -0.00301298 0.00422225" mass="0.383" diaginertia="0.00172319 0.00171178 0.000179292" />
+                <joint name="joint5" range="-1.22173 1.22173" actuatorfrcrange="-100 100" damping="3" />
+                <geom type="mesh" mesh="link5" material="armmat" />
+                <body name="link6" pos="8.8259e-05 -0.091 0" quat="0.707107 0.707107 0 0" gravcomp="1">
+                  <inertial pos="-3e-05 6e-05 -0.002" quat="0.999971 -8.01245e-07 -0.00107878 0.00748677" mass="0.007" diaginertia="0.00152116 0.00138623 0.000311514" />
+                  <joint name="joint6" range="-2.0944 2.0944" actuatorfrcrange="-100 100" damping="2" />
+                  <geom type="mesh" mesh="link6" material="armmat" />
+                  <body name="gripper_base" pos="0 0 0.035">
+                    <geom type="box" size="0.03 0.015 0.012" material="fingermat" mass="0.05" />
+                    <camera name="wrist" pos="0 -0.04 0.02" xyaxes="1 0 0 0 0 1" fovy="70" />
+                    <body name="finger_l" pos="0 0.008 0.03">
+                      <joint name="gripper_l" type="slide" axis="0 1 0" range="0 0.034" damping="2" />
+                      <geom type="box" size="0.008 0.004 0.025" pos="0 0.004 0" material="fingermat" mass="0.02" friction="1.5 0.02 0.001" />
+                    </body>
+                    <body name="finger_r" pos="0 -0.008 0.03">
+                      <joint name="gripper_r" type="slide" axis="0 -1 0" range="0 0.034" damping="2" />
+                      <geom type="box" size="0.008 0.004 0.025" pos="0 -0.004 0" material="fingermat" mass="0.02" friction="1.5 0.02 0.001" />
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+    <body name="cube" pos="0.35 0.0 0.02">
+      <freejoint name="cube_free" />
+      <geom name="cube_geom" type="box" size="0.02 0.02 0.02" mass="0.05" material="cubemat" />
+    </body>
+    <body name="bin" pos="0.35 -0.25 0">
+      <geom type="box" size="0.08 0.08 0.003" pos="0 0 0.003" material="binmat" />
+      <geom type="box" size="0.003 0.08 0.03" pos="0.08 0 0.03" material="binmat" />
+      <geom type="box" size="0.003 0.08 0.03" pos="-0.08 0 0.03" material="binmat" />
+      <geom type="box" size="0.08 0.003 0.03" pos="0 0.08 0.03" material="binmat" />
+      <geom type="box" size="0.08 0.003 0.03" pos="0 -0.08 0.03" material="binmat" />
+    </body>
+  </worldbody>
+  <contact>
+    <exclude body1="piper_base" body2="link1" />
+  </contact>
+  <actuator>
+    <position name="joint1" joint="joint1" kp="400" ctrlrange="-2.61799 2.61799" />
+    <position name="joint2" joint="joint2" kp="400" ctrlrange="0 3.14159" />
+    <position name="joint3" joint="joint3" kp="300" ctrlrange="-2.96706 0" />
+    <position name="joint4" joint="joint4" kp="150" ctrlrange="-1.74533 1.74533" />
+    <position name="joint5" joint="joint5" kp="150" ctrlrange="-1.22173 1.22173" />
+    <position name="joint6" joint="joint6" kp="80" ctrlrange="-2.0944 2.0944" />
+    <position name="gripper_l" joint="gripper_l" kp="200" ctrlrange="0 0.034" />
+    <position name="gripper_r" joint="gripper_r" kp="200" ctrlrange="0 0.034" />
+  </actuator>
+</mujoco>

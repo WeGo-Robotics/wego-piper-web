@@ -114,6 +114,10 @@ class CameraInfo:
     @property
     def _hub(self):
         """장치를 소유한 데몬의 클라이언트. **이 한 줄이 유일한 분기다.**"""
+        # 시뮬(simd)은 세 번째 데몬이다 — 분기는 여기 **한 곳**뿐이다
+        if self.cam_type == "sim":
+            from app.services.sim_camera_client import sim_camera_hub
+            return sim_camera_hub
         return realsense_hub if self.cam_type == "realsense" else v4l2_hub
 
     @property
@@ -272,6 +276,12 @@ class CameraManager:
         for d in realsense_hub.scan():
             seen.add(d["id"])
             self._absorb(d, cam_type="realsense")
+
+        # 시뮬 — simd. 데몬이 없으면 빈 목록 (죽은 데몬을 기다리지 않는 클라이언트)
+        from app.services.sim_camera_client import sim_camera_hub
+        for d in sim_camera_hub.scan():
+            seen.add(d["id"])
+            self._absorb(d, cam_type="sim")
 
         # ⚠ **안 보인 카메라는 없는 것으로 표시한다.** 예전에는 보고된 것만 순회해서,
         # USB 가 빠져도 목록이 마지막 상태에 머물렀다 — 사용자가 스캔을 눌러도

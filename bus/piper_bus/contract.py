@@ -256,6 +256,7 @@ CAMERAD: Final = "camerad"  # v4l2 데몬
 ROBOTD: Final = "robotd"    # CAN 독점 + 안전층
 ESTOPD: Final = "estopd"    # E-stop watchdog
 SO101D: Final = "so101d"    # SO-101 (Feetech 시리얼) 데몬
+SIMD: Final = "simd"        # MuJoCo 시뮬레이션 데몬
 
 # 데몬이 실제로 import 하는 소스 — 자기 보고(`mark_alive` info)의 mtime 스캔 범위.
 # 넓게 잡으면 "낡았다" 경고가 늘 켜져 있어 아무도 안 본다.
@@ -265,6 +266,7 @@ DAEMON_SOURCES: Final = {
     ROBOTD: ("daemons/robotd.py", "robot", "shm", "bus"),
     ESTOPD: ("daemons/estopd.py", "bus"),
     SO101D: ("daemons/so101d.py", "so101", "shm", "bus"),
+    SIMD: ("daemons/simd.py", "sim", "robot", "shm", "bus"),
 }
 
 

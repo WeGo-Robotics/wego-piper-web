@@ -1,0 +1,25 @@
+# simd — MuJoCo 세계를 드는 시뮬레이션 데몬 (feature/sim-env.md).
+#
+# 설치: deploy/install-daemons.sh simd   (하드웨어 기본 목록에 없다 — 개발 머신용)
+#
+# ⚠ 실장치 데몬(robotd/camerad/rsd)과 같은 shm 계약을 발행한다. 실기 팔과
+# 이름이 겹치지 않게 sim_ 접두사를 쓴다.
+
+[Unit]
+Description=Piper simulation daemon (MuJoCo world publishing arm/camera shm)
+Documentation=file://@REPO@/feature/sim-env.md
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+ExecStart=@PY@ @REPO@/daemons/simd.py
+Environment=PIPER_REDIS_URL=redis://127.0.0.1:6379/0
+# 헤드리스 GPU 렌더 (2단계 카메라). 유닛에는 DISPLAY 가 없다.
+Environment=MUJOCO_GL=egl
+
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

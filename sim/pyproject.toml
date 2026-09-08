@@ -1,0 +1,19 @@
+[project]
+name = "piper-sim"
+version = "0.1.0"
+description = "Piper MuJoCo simulation daemon core — publishes the same shm contracts as robotd"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+# piper-robot: 정규화 표(joints)·안전 필터(safety)·기구학(armmodel)을 **그대로** 쓴다 —
+# 표가 둘이면 실기 정책이 시뮬에서 다른 숫자를 본다 (feature/sim-env.md §2).
+dependencies = ["mujoco>=3.1", "numpy", "piper-shm", "piper-robot", "piper-bus", "piper-cam"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["piper_sim*"]
+
+[tool.setuptools.package-data]
+piper_sim = ["assets/*.xml"]
