@@ -43,6 +43,18 @@ class So101Error(RuntimeError):
     pass
 
 
+def _unwrap(raw: int, last_raw: int | None, last_uw: int | None) -> int:
+    """롤오버 이어붙이기. 첫 견본은 raw 그대로."""
+    if last_raw is None or last_uw is None:
+        return int(raw)
+    d = int(raw) - int(last_raw)
+    if d > 2048:
+        d -= 4096
+    elif d < -2048:
+        d += 4096
+    return int(last_uw) + d
+
+
 class So101Bridge:
     """팔 하나: Feetech 버스 ↔ shm. 상태를 흘리고 명령을 받아 쓴다."""
 
@@ -62,6 +74,23 @@ class So101Bridge:
         self._state: StateWriter | None = None
         self._last_ticks: dict[str, int] = {}
         self._deadman_held = False
+        # 캘리브레이션 위저드 상태 (feature/so101d.md §3 — UI 단계 진행).
+        # 발행 루프가 60Hz 로 이미 raw 를 읽으므로 범위 스윕은 여기서 공짜다.
+        # 추적은 **언랩 좌표**로 한다: 60Hz 면 사람 손 이동이 스텝당 수십 틱이라
+        # 2048 틱 넘는 점프 = 0/4095 롤오버로 판정해 이어붙인다 — 가동범위가
+        # 롤오버를 걸치는 조립도 min/max 가 안 찢어진다.
+        self.calib_stage: str | None = None      # None | "range"
+        self.last_raw: dict[str, int] = {}
+        self._calib_min: dict[str, int] = {}
+        self._calib_max: dict[str, int] = {}
+        self._uw: dict[str, int] = {}            # 언랩 누적 위치
+        self._uw_last_raw: dict[str, int] = {}
+        self._cal_backup: dict | None = None
+        # EEPROM 쓰기 동안 읽기 루프를 쉰다 — 60Hz sync read 와 겹치면 응답이
+        # 엉켜 쓰기가 간헐적으로 실패했다 (실기: 저장을 여러 번 눌러야 했다)
+        self.io_pause = False
+        # 좌/우 지정 — 텔레옵 짝짓기용. 데몬 세션에 by_id 별로 남는다
+        self.side: str = ""
 
     @property
     def running(self) -> bool:
@@ -123,6 +152,9 @@ class So101Bridge:
                 pass
             self._state = None
         A.unlink(A.segment_name(self.arm_name, A.KIND_ACTION))
+        # 포트도 놓는다 — 물고 있으면 재연결 attach 가 죽은 fd 와 같은 포트를
+        # 두고 싸운다 (실측: 브리지 11개가 한 포트에서 multiple access 예외)
+        self.bus.close()
 
     def _publish_loop(self) -> None:
         period = 1.0 / STATE_HZ
@@ -136,6 +168,9 @@ class So101Bridge:
                 if not Path(self.bus.port_name).exists():
                     self._declare_lost("USB 시리얼 어댑터가 사라졌습니다")
                     return
+            if self.io_pause:
+                time.sleep(period)
+                continue
             ticks_by_id = self.bus.sync_read_positions()
             if ticks_by_id is None:
                 fails += 1
@@ -147,6 +182,17 @@ class So101Bridge:
                 continue
             fails = 0
             ticks = {name: ticks_by_id[MOTOR_IDS[name]] for name in SO101_JOINTS}
+            self.last_raw = ticks
+            if self.calib_stage == "range":
+                for name, v in ticks.items():
+                    u = _unwrap(v, self._uw_last_raw.get(name),
+                                self._uw.get(name))
+                    self._uw_last_raw[name] = v
+                    self._uw[name] = u
+                    if name not in self._calib_min or u < self._calib_min[name]:
+                        self._calib_min[name] = u
+                    if name not in self._calib_max or u > self._calib_max[name]:
+                        self._calib_max[name] = u
             norm = cal_mod.normalize(ticks, self.cal)
             if self._state is not None:
                 self._state.publish(to_record(norm))
@@ -188,8 +234,8 @@ class So101Bridge:
                     logger.warning("데드맨 (%s): 명령 중단 — 현 위치 유지",
                                    self.arm_name)
                 continue
-            if self._estopped:
-                continue                    # E-stop 후에는 새 정합까지 무시
+            if self._estopped or self.calib_stage is not None:
+                continue    # E-stop 후·캘리브레이션 중에는 명령을 안 받는다
             self._deadman_held = False
             self._apply(from_record(got["values"]))
 
@@ -213,12 +259,48 @@ class So101Bridge:
         self.sent += 1
 
 
+#: 좌/우 지정이 남는 곳 — 팔의 정체는 어댑터(by_id)라 그 열쇠로 저장한다.
+_SESSION_PATH = Path.home() / ".config" / "piper-web" / "so101_session.json"
+
+
 class So101Hub:
     """so101d 의 RPC 표면. 데몬 계약 동사 + 진단."""
 
     def __init__(self) -> None:
         self.bridges: dict[str, So101Bridge] = {}     # arm_name → bridge
         self._ports: dict[str, str] = {}              # arm_name → by-id
+        self._session: dict[str, dict] = self._load_session()
+
+    @staticmethod
+    def _load_session() -> dict[str, dict]:
+        import json
+        try:
+            return json.loads(_SESSION_PATH.read_text())
+        except Exception:
+            return {}
+
+    def _save_session(self) -> None:
+        import json
+        try:
+            _SESSION_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _SESSION_PATH.write_text(json.dumps(self._session, indent=2))
+        except Exception as exc:
+            logger.warning("so101 세션 저장 실패: %s", exc)
+
+    def set_side(self, arm_name: str, side: str) -> dict:
+        """좌/우 지정 — 텔레옵 짝짓기(어느 팔로워를 몰 것인가)의 재료.
+        어댑터(by_id) 열쇠로 세션에 남아 재연결·재기동에도 유지된다."""
+        if side not in ("left", "right", ""):
+            raise So101Error(f"side 는 left/right/빈값이어야 합니다: {side}")
+        b = self.bridges.get(arm_name)
+        if b is None:
+            raise So101Error(f"모르는 팔: {arm_name}")
+        b.side = side
+        by_id = self._ports.get(arm_name)
+        if by_id:
+            self._session.setdefault(by_id, {})["side"] = side
+            self._save_session()
+        return self.info(arm_name)
 
     # ── 스캔 ──
 
@@ -233,8 +315,11 @@ class So101Hub:
                 if not p.name.startswith(_KNOWN_VID):
                     continue
                 seen_ids.add(p.name)
-                attached = next((a for a, bid in self._ports.items()
-                                 if bid == p.name), None)
+                attached = next(
+                    (a for a, bid in self._ports.items() if bid == p.name
+                     and self.bridges.get(a) and self.bridges[a].running),
+                    None) or next((a for a, bid in self._ports.items()
+                                   if bid == p.name), None)
                 entries.append({
                     "id": p.name, "port": str(p.resolve()), "baud": BAUD,
                     "model": "so101", "transport": "serial",
@@ -249,8 +334,26 @@ class So101Hub:
 
     # ── 연결 수명주기 ──
 
-    def attach(self, by_id: str, arm_name: str, calib: str | None = None) -> dict:
+    def attach(self, by_id: str, arm_name: str = "", calib: str | None = None) -> dict:
         import re
+
+        # ⚠ **어댑터당 브리지는 하나다.** 케이블이 빠져 브리지가 죽은 채 남으면
+        # 이름을 점유한 채 스캔 매핑까지 물고 있어, 재연결 클릭이 leader2, 3…을
+        # 계속 만들며 한 포트를 두고 싸웠다 (실측: 11개, multiple access 예외).
+        # 죽은 것은 여기서 치우고 **같은 이름으로 부활**시킨다 — 재연결은 새
+        # 팔이 아니다.
+        old = next((a for a, bid in self._ports.items() if bid == by_id), None)
+        if old is not None:
+            if self.bridges.get(old) and self.bridges[old].running:
+                raise So101Error(f"{old} 이 이미 이 어댑터에 연결돼 있습니다")
+            self.release(old)
+            if not arm_name:
+                arm_name = old
+        if not arm_name:
+            n = 1
+            while f"so101_leader{n}" in self.bridges:
+                n += 1
+            arm_name = f"so101_leader{n}"
         if not re.fullmatch(r"so101_[a-z0-9_]+", arm_name):
             # 접두사가 계약이다 — sweep_stale 이 자기 세그먼트를 이걸로 가른다
             raise So101Error(f"팔 이름은 so101_ 로 시작해야 합니다: {arm_name}")
@@ -297,6 +400,7 @@ class So101Hub:
             bus.set_torque(MOTOR_IDS[name], False)
 
         bridge = So101Bridge(arm_name, bus, cal, calibrated)
+        bridge.side = str(self._session.get(by_id, {}).get("side", ""))
         bridge.start()
         self.bridges[arm_name] = bridge
         self._ports[arm_name] = by_id
@@ -326,6 +430,7 @@ class So101Hub:
         def one(a: str, b: So101Bridge) -> dict:
             return {
                 "arm": a, "by_id": self._ports.get(a, ""),
+                "side": b.side,
                 "running": b.running, "calibrated": b.calibrated,
                 "published": b.published, "sent": b.sent,
                 "torque_on": b.torque_on,
@@ -350,6 +455,116 @@ class So101Hub:
         """**데몬이 판정한** 사라진 팔들 (robotd·rsd 와 같은 계약)."""
         return [{"id": a, "at": b.lost_at}
                 for a, b in self.bridges.items() if b.lost_at]
+
+    # ── 캘리브레이션 위저드 (feature/so101d.md §3 — lerobot-calibrate 의 UI 판) ──
+    #
+    # 단계: begin(토크 해제·공장 초기화) → center(중앙 자세 호밍 굽기) →
+    # range(발행 루프가 min/max 추적) → save(리밋 굽기 + JSON — LeRobot 과 같은
+    # 포맷·자리라 어느 쪽으로 만들었든 호환).
+
+    #: 관절이 "움직였다"고 인정할 최소 스윕 폭 (틱). 4096 = 360° 기준 약 26°.
+    #: 안 움직인 관절로 저장하면 범위가 퇴화해 그 팔의 정규화가 통째로 깨진다.
+    CALIB_MIN_SPAN = 300
+
+    def _calib_bridge(self, arm_name: str) -> So101Bridge:
+        b = self.bridges.get(arm_name)
+        if b is None or not b.running:
+            raise So101Error(f"{arm_name} 이 연결돼 있지 않습니다")
+        return b
+
+    def calib_begin(self, arm_name: str) -> dict:
+        """토크 해제 + EEPROM 잠금 해제 + 공장 초기화(호밍 0·리밋 전범위) →
+        바로 범위 스윕. **중앙 자세를 사람이 잡지 않는다** — 양 끝까지 훑으면
+        중앙은 산수(min+max)/2 다. 사람이 "중앙"을 눈대중으로 잡는 것보다
+        정확하고, 단계도 하나 준다. 초기화하는 이유: 이전 호밍 위에 겹으로
+        구우면 기준이 틀어진다 (lerobot reset_calibration 과 같은 순서)."""
+        b = self._calib_bridge(arm_name)
+        b._cal_backup = dict(b.cal)
+        b.io_pause = True        # 읽기와 겹치면 EEPROM 쓰기가 응답을 놓친다
+        try:
+            for name in SO101_JOINTS:
+                mid = MOTOR_IDS[name]
+                b.bus.set_torque(mid, False)
+                b.bus.unlock_eeprom(mid)
+                if not (b.bus.write_homing(mid, 0)
+                        and b.bus.write_limits(mid, 0, 4095)):
+                    raise So101Error(f"{name} 초기화 쓰기 실패 — 전원·케이블을 보세요")
+        finally:
+            b.io_pause = False
+        b.torque_on = False
+        # 위저드 동안 화면·발행은 전범위 폴백으로 — 낡은 캘리브레이션으로
+        # 정규화한 값이 "실시간 위치"로 보이면 사람이 헷갈린다
+        b.cal = cal_mod.default_calibration()
+        b.calibrated = False
+        b._calib_min, b._calib_max = {}, {}
+        b._uw, b._uw_last_raw = {}, {}
+        b.calib_stage = "range"
+        return self.calib_status(arm_name)
+
+    def calib_status(self, arm_name: str) -> dict:
+        b = self._calib_bridge(arm_name)
+        spans = {n: (b._calib_max.get(n, 0) - b._calib_min.get(n, 0))
+                 for n in SO101_JOINTS}
+        return {
+            "arm": arm_name, "stage": b.calib_stage,
+            "raw": {n: b.last_raw.get(n) for n in SO101_JOINTS},
+            "min": b._calib_min, "max": b._calib_max, "spans": spans,
+            "min_span": self.CALIB_MIN_SPAN,
+            "ok": {n: spans[n] >= self.CALIB_MIN_SPAN for n in SO101_JOINTS},
+            "calibrated": b.calibrated,
+        }
+
+    def calib_save(self, arm_name: str) -> dict:
+        b = self._calib_bridge(arm_name)
+        if b.calib_stage != "range":
+            raise So101Error("범위 기록 단계가 아닙니다")
+        lacking = [n for n in SO101_JOINTS
+                   if (b._calib_max.get(n, 0) - b._calib_min.get(n, 0))
+                   < self.CALIB_MIN_SPAN]
+        if lacking:
+            raise So101Error("아직 안 움직인 관절이 있습니다: " + ", ".join(lacking)
+                             + " — 양 끝까지 움직인 뒤 다시 저장하세요")
+        # 중앙 = 스윕의 중점 (언랩 좌표). 호밍 = 중앙 − 2047 → 그 중앙이 2047
+        # 로 읽히고, 범위는 2047±(폭/2) 로 옮겨 앉는다. 부호-크기 한도(±2047)
+        # 는 중앙을 0..4095 로 접은 뒤라 넘을 수 없다 (2048 경계만 클램프).
+        homing: dict[str, int] = {}
+        range_min: dict[str, int] = {}
+        range_max: dict[str, int] = {}
+        b.io_pause = True        # 읽기와 겹치면 EEPROM 쓰기가 응답을 놓친다
+        try:
+            for name in SO101_JOINTS:
+                mn, mx = b._calib_min[name], b._calib_max[name]
+                span = mx - mn
+                center = ((mn + mx) // 2) % 4096
+                homing[name] = min(2047, max(-2047, center - 2047))
+                range_min[name] = max(0, 2047 - span // 2)
+                range_max[name] = min(4095, 2047 + (span - span // 2))
+                if not b.bus.write_homing(MOTOR_IDS[name], homing[name]):
+                    raise So101Error(f"{name} 호밍 쓰기 실패")
+                if not b.bus.write_limits(MOTOR_IDS[name],
+                                          range_min[name], range_max[name]):
+                    raise So101Error(f"{name} 리밋 쓰기 실패")
+        finally:
+            b.io_pause = False
+        path = cal_mod.save_calibration(arm_name, homing, range_min, range_max)
+        b.cal = cal_mod.load_calibration(path)
+        b.calibrated = True
+        b.calib_stage = None
+        b._cal_backup = None
+        logger.info("%s: 캘리브레이션 저장 — %s", arm_name, path)
+        return self.calib_status(arm_name)
+
+    def calib_cancel(self, arm_name: str) -> dict:
+        """중단 — 이전 캘리브레이션으로 되돌린다. ⚠ 호밍을 이미 구웠으면
+        (center 이후) 서보 쪽은 새 호밍이고 파일은 옛 것이라 어긋난다 —
+        그래서 취소해도 '처음부터 다시'가 안내다 (status 가 stage 로 말한다)."""
+        b = self._calib_bridge(arm_name)
+        if b._cal_backup is not None:
+            b.cal = b._cal_backup
+            b._cal_backup = None
+            b.calibrated = cal_mod.find_calibration(arm_name) is not None
+        b.calib_stage = None
+        return self.calib_status(arm_name)
 
     def sweep_stale(self) -> list[str]:
         """지난 프로세스가 남긴 **so101 세그먼트만** 정리. robotd 것을 지우면

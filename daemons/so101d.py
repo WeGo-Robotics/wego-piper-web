@@ -40,6 +40,7 @@ _running = True
 # 게이트웨이가 부르는 것만 노출한다 — 데몬을 임의 호출 창구로 만들지 않는다.
 _METHODS = {
     "scan", "attach", "release", "release_all", "estop", "info", "lost",
+    "calib_begin", "calib_status", "calib_save", "calib_cancel", "set_side",
 }
 
 

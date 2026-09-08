@@ -76,6 +76,11 @@ def test_the_list_covers_every_mutating_post():
         # 연결+슬레이브+토크OFF+등록 복합 — register 를 거치며 **세션을 저장한다**
         # (save_session 호출 포함). 세션 반영이 목적인 라우트다.
         "/attach",
+        "/serial/attach",     # SO-101 — so101d 위임 (세션은 데몬이 든다)
+        "/serial/release",
+        "/serial/estop",
+        "/serial/calib",     # 위저드 단계 — 상태는 so101d 가 든다
+        "/serial/side",      # 좌우 지정 — so101d 세션(by_id 별)에 남는다
         # CAN 인터페이스 DOWN — 장치 조작일 뿐, 세션에 실을 것이 없다.
         "/can/down",
         # 0x150 리셋 — 세션에 실을 것이 없다. 장치의 보고 프레임을

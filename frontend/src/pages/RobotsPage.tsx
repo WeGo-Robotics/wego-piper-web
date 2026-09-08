@@ -7,6 +7,7 @@ import DiagnosticsPanel from '../components/DiagnosticsPanel'
 import VersionPanel from '../components/VersionPanel'
 import JogPanel from '../components/JogPanel'
 import { ZeroCalibrationPanel } from '../components/ZeroCalibrationModal'
+import So101CalibrationWizard from '../components/So101CalibrationWizard'
 import { JOINT_NAMES } from '../config/joints'
 
 // ── 파킹 보정 모달 ──
@@ -283,6 +284,19 @@ type PortInfo = {
   connected: boolean; ready: boolean
 }
 
+// 시리얼(SO-101) 포트 — CAN 카드와 종류가 다르다: 링크 UP/DOWN·Rx/Tx 가 없다.
+// 버튼은 attached.capabilities.features 로 그린다 (feature/so101d.md §4.2) —
+// 모델 문자열 분기를 프론트에 만들면 로봇 셋째부터 수술이 반복된다.
+type SerialArmInfo = {
+  arm: string; running: boolean; calibrated: boolean; torque_on: boolean
+  side?: string
+  capabilities?: { model: string; dof: number; joint_names: string[] }
+}
+type SerialPortInfo = {
+  id: string; port: string; baud: number
+  arm?: string | null; attached?: SerialArmInfo | null
+}
+
 /**
  * 로봇 카드의 [상세] — 파킹 / 영점 / 조작 / 설정 탭.
  *
@@ -435,6 +449,9 @@ export default function RobotsPage() {
   const [connectingIface, setConnectingIface] = useState<string | null>(null)
   // 포트 패널 — 스캔된 포트 + 버스 통계(Rx/Tx·bps). 스캔은 버튼, 통계는 폴링.
   const [ports, setPorts] = useState<PortInfo[]>([])
+  const [serialPorts, setSerialPorts] = useState<SerialPortInfo[]>([])
+  const [serialBusy, setSerialBusy] = useState<string | null>(null)
+  const [calibArm, setCalibArm] = useState<string | null>(null)
   // 상세 창 (파킹/영점/조작 탭). 팔 하나에 고정된 모달 — 행 펼침은 긴 목록에서
   // 다른 행을 밀어낸다는 판단을 그대로 잇는다.
   const [detailIface, setDetailIface] = useState<string | null>(null)
@@ -485,8 +502,9 @@ export default function RobotsPage() {
   }
 
   const loadPorts = useCallback(() => {
-    api.get<{ ports: PortInfo[] }>('/robots/ports')
-      .then((r) => setPorts(r.ports)).catch(() => {})
+    api.get<{ ports: PortInfo[]; serial?: SerialPortInfo[] }>('/robots/ports')
+      .then((r) => { setPorts(r.ports); setSerialPorts(r.serial ?? []) })
+      .catch(() => {})
   }, [])
 
   // 디바이스 탭이 열려 있는 동안: 포트 통계 3초, 팔 상태(움직임 감지) 2초.
@@ -567,6 +585,38 @@ export default function RobotsPage() {
       setPortState(iface, 'DOWN')
       loadPorts()
     } catch (e) { notifyError(e instanceof Error ? e.message : 'CAN DOWN 실패') }
+  }
+
+  // ── 시리얼(SO-101) ──
+
+  const handleSerialAttach = async (byId: string) => {
+    setSerialBusy(byId)
+    try {
+      await api.post('/robots/serial/attach', { by_id: byId })
+      loadPorts()
+    } catch (e) {
+      // 데몬이 만든 문구(케이블 힌트·캘리브레이션 거부)가 곧 화면 문구다
+      notifyError(e instanceof Error ? e.message : 'SO-101 연결 실패')
+    } finally { setSerialBusy(null) }
+  }
+
+  const handleSerialSide = async (arm: string, side: string) => {
+    try {
+      await api.post('/robots/serial/side', { arm, side })
+      loadPorts()
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : '좌우 지정 실패')
+    }
+  }
+
+  const handleSerialRelease = async (arm: string) => {
+    setSerialBusy(arm)
+    try {
+      await api.post('/robots/serial/release', { arm })
+      loadPorts()
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : 'SO-101 해제 실패')
+    } finally { setSerialBusy(null) }
   }
 
   // [연결] — 연결 + **슬레이브 설정 + 토크 OFF** + follower 등록까지 한 번에.
@@ -866,7 +916,83 @@ export default function RobotsPage() {
             })}
           </div>
         )}
+        {/* 시리얼(SO-101) — CAN 과 카드 종류를 나눈다: 링크 상태·Rx/Tx 가
+            없는 장치를 그 틀에 욱여넣지 않는다. so101d 가 없으면 목록이
+            비어 이 블록 자체가 안 그려진다. */}
+        {serialPorts.length > 0 && (
+          <div className="space-y-1.5 pt-1">
+            <p className="text-[11px] text-neutral-500">시리얼 (SO-101)</p>
+            {serialPorts.map((sp) => {
+              const shortId = sp.id.replace(/^usb-.*_([0-9A-Fa-f]+)(-if\d+)?$/, '$1')
+              const att = sp.attached
+              return (
+                <div key={sp.id}
+                     className={`rounded border p-2.5 ${att?.running
+                       ? 'border-green-500/30 bg-green-500/5'
+                       : 'border-neutral-600 bg-neutral-800/60'}`}>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap min-w-0">
+                      <span className="text-sm font-medium">SO-101</span>
+                      <span className="text-xs text-neutral-400 font-mono">{shortId}</span>
+                      <span className="text-[11px] text-neutral-500">{(sp.baud / 1e6).toFixed(0)}Mbps</span>
+                      {att?.running && (
+                        <span className="text-[11px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">
+                          {att.arm}</span>
+                      )}
+                      {att?.running && (
+                        <select value={att.side ?? ''}
+                          onChange={(e) => handleSerialSide(att.arm, e.target.value)}
+                          title="텔레옵 짝짓기용 좌/우 — 재연결·재기동에도 유지됩니다"
+                          className="text-[11px] rounded bg-neutral-700 border border-neutral-600 px-1 py-0.5">
+                          <option value="">좌우 미지정</option>
+                          <option value="left">왼쪽</option>
+                          <option value="right">오른쪽</option>
+                        </select>
+                      )}
+                      {att?.running && !att.calibrated && (
+                        <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300"
+                              title="lerobot-calibrate 로 이 팔의 캘리브레이션을 만들어야 수집에 쓸 수 있습니다">
+                          ⚠ 미캘리브레이션</span>
+                      )}
+                    </div>
+                    <div className="flex gap-1.5">
+                      {att?.running && (
+                        <button onClick={() => setCalibArm(att.arm)}
+                          disabled={serialBusy !== null}
+                          title="중앙 자세·범위 스윕을 단계별로 안내합니다"
+                          className={`px-3 py-1 text-xs rounded text-white disabled:opacity-40 ${
+                            att.calibrated ? 'bg-neutral-600 hover:bg-neutral-500'
+                                           : 'bg-amber-600 hover:bg-amber-500'}`}>
+                          캘리브레이션
+                        </button>
+                      )}
+                      {att?.running ? (
+                        <button onClick={() => handleSerialRelease(att.arm)}
+                          disabled={serialBusy !== null}
+                          className="px-3 py-1 text-xs rounded bg-neutral-600 hover:bg-neutral-500 text-white disabled:opacity-40">
+                          {serialBusy === att.arm ? <><Spinner className="inline" /> 해제 중…</> : '해제'}
+                        </button>
+                      ) : (
+                        <button onClick={() => handleSerialAttach(sp.id)}
+                          disabled={serialBusy !== null}
+                          title="연결 + 6모터 확인 + 토크 OFF"
+                          className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">
+                          {serialBusy === sp.id ? <><Spinner className="inline" /> 연결 중…</> : '연결'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
+
+      {calibArm && (
+        <So101CalibrationWizard arm={calibArm}
+          onClose={() => { setCalibArm(null); loadPorts() }} />
+      )}
 
       {/* 로봇 — 연결·등록된 팔 카드. 움직임이 감지되면 깜빡인다
           (마스터는 지령, 슬레이브는 피드백으로 — 백엔드가 가려서 잰다). */}

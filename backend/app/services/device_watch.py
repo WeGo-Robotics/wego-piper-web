@@ -316,6 +316,14 @@ class DeviceWatch:
         except Exception as exc:
             logger.debug("robotd lost() 조회 실패: %s", exc)
             declared = []
+        # so101d 의 lost 는 그대로 중계해도 된다 — 브리지(=attach 된 팔)만
+        # 보고하므로 전부 "쓰려던 팔"이다 (robotd 와 달리 등록부 대조가 불필요).
+        try:
+            from app.services.so101_client import so101_client
+            declared += [_device_gone("robot", i["id"], i["id"])
+                         for i in so101_client.lost() if i.get("id")]
+        except Exception as exc:
+            logger.debug("so101d lost() 조회 실패: %s", exc)
         if declared:
             return declared
 

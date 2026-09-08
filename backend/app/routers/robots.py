@@ -721,6 +721,112 @@ async def attach_arm(body: ConnectRequest):
     return {**(arm.to_dict() if arm else {}), "warnings": warnings}
 
 
+class SerialAttachRequest(BaseModel):
+    by_id: str
+    arm: str = ""          # 비우면 so101_leader1, 2, … 첫 빈 이름
+    calib: str = ""        # 비우면 팔 이름으로 캘리브레이션을 찾는다
+
+
+class SerialArmRequest(BaseModel):
+    arm: str
+
+
+@router.post("/serial/attach")
+async def serial_attach(body: SerialAttachRequest):
+    """시리얼 포트 카드의 [연결] — so101d 로 위임한다.
+
+    실패 사유(케이블 힌트·캘리브레이션 거부)를 400 으로 그대로 올린다 —
+    데몬이 만든 문구가 곧 화면 문구다. **이름은 짓지 않는다** — 같은 어댑터의
+    죽은 브리지를 부활시킬지 새 이름을 줄지는 허브만 안다. 여기서 지으면
+    재연결 클릭마다 leader2, 3… 이 생기는 사고(실측 11개)를 우회로 되살린다.
+    """
+    import asyncio
+
+    from app.services.so101_client import so101_client
+
+    try:
+        return await asyncio.to_thread(
+            so101_client.attach, body.by_id, body.arm, body.calib or None)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/serial/release")
+async def serial_release(body: SerialArmRequest):
+    import asyncio
+
+    from app.services.so101_client import so101_client
+
+    if not await asyncio.to_thread(so101_client.release, body.arm):
+        raise HTTPException(400, f"해제 실패: {body.arm}")
+    return {"status": "released", "arm": body.arm}
+
+
+class SerialSideRequest(BaseModel):
+    arm: str
+    side: Literal["left", "right", ""]
+
+
+@router.post("/serial/side")
+async def serial_set_side(body: SerialSideRequest):
+    """SO-101 좌/우 지정 — 텔레옵 짝짓기의 재료. 데몬 세션에 남는다."""
+    import asyncio
+
+    from app.services.so101_client import so101_client
+
+    try:
+        return await asyncio.to_thread(so101_client.set_side, body.arm, body.side)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+class SerialCalibRequest(BaseModel):
+    arm: str
+    step: Literal["begin", "save", "cancel"]
+
+
+@router.post("/serial/calib")
+async def serial_calib(body: SerialCalibRequest):
+    """캘리브레이션 위저드 한 단계 진행 — so101d 로 위임.
+
+    단계 이름을 자유 문자열로 받지 않는다(Literal) — 데몬 RPC 이름
+    (`calib_<step>`)으로 이어지는 자리라 열어두면 임의 호출 창구가 된다.
+    실패 사유(안 움직인 관절·쓰기 실패)는 데몬 문구 그대로 400.
+    """
+    import asyncio
+
+    from app.services.so101_client import so101_client
+
+    try:
+        return await asyncio.to_thread(so101_client.calib, body.step, body.arm)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.get("/serial/calib/status")
+async def serial_calib_status(arm: str):
+    """위저드가 300ms 폴링하는 자리 — raw 위치·min/max·스팬 판정."""
+    import asyncio
+
+    from app.services.so101_client import so101_client
+
+    try:
+        return await asyncio.to_thread(so101_client.calib, "status", arm)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/serial/estop")
+async def serial_estop(body: SerialArmRequest):
+    """SO-101 토크 차단. 팔 하나(arm)나 전부(arm="")."""
+    import asyncio
+
+    from app.services.so101_client import so101_client
+
+    hit = await asyncio.to_thread(so101_client.estop, body.arm)
+    return {"status": "estopped", "arms": hit}
+
+
 class PortDownRequest(BaseModel):
     iface: str
 
@@ -770,7 +876,20 @@ async def list_ports():
             "connected": bool(arm.connected),
             "ready": bool(arm.ready),
         })
-    return {"ports": out}
+
+    # 시리얼(SO-101) 포트 — CAN 카드와 **종류가 다르다**: 링크 UP/DOWN 개념이
+    # 없어 그 틀에 욱여넣지 않는다 (feature/so101d.md §4.3). so101d 의 scan 은
+    # /dev 디렉토리 조회라 폴링해도 공짜고, 돌아온 어댑터의 lost 해제까지
+    # 겸한다. 데몬이 없으면 빈 목록 — 화면이 패널 자체를 접는 근거다.
+    from app.services.so101_client import so101_client
+
+    serial = await asyncio.to_thread(so101_client.scan)
+    if serial:
+        arms_info = {a["arm"]: a
+                     for a in (await asyncio.to_thread(so101_client.info))["arms"]}
+        for entry in serial:
+            entry["attached"] = arms_info.get(entry.get("arm"))
+    return {"ports": out, "serial": serial}
 
 
 @router.post("/disconnect")

@@ -105,6 +105,22 @@ def default_calibration() -> dict[str, MotorCal]:
             for name in SO101_JOINTS}
 
 
+def save_calibration(name: str, homing: dict[str, int],
+                     range_min: dict[str, int], range_max: dict[str, int]) -> Path:
+    """위저드 결과를 **LeRobot 과 같은 포맷·같은 자리**에 쓴다 — 어느 쪽
+    (웹 위저드 / lerobot-calibrate)으로 만들었든 두 경로 모두 읽을 수 있다.
+    drive_mode 는 SO-101 전 관절 0 (LeRobot so101 설정과 동일)."""
+    d = _search_dirs()[0]
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"{name}.json"
+    data = {j: {"id": MOTOR_IDS[j], "drive_mode": 0,
+                "homing_offset": int(homing[j]),
+                "range_min": int(range_min[j]), "range_max": int(range_max[j])}
+            for j in SO101_JOINTS}
+    path.write_text(json.dumps(data, indent=4))
+    return path
+
+
 def normalize(ticks: dict[str, int], cal: dict[str, MotorCal]) -> dict[str, float]:
     """틱 → 정규화. LeRobot `_normalize` 와 같은 수식 (범위 클램프 포함)."""
     out: dict[str, float] = {}
