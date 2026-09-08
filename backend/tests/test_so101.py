@@ -581,3 +581,18 @@ def test_a_failed_relay_start_leaves_no_session_open():
     unwind = src.split("def _unwind_start", 1)[1].split("\n    def ", 1)[0]
     assert "teleop_session.stop()" in unwind
     assert "self._writer = self._reader = None" in unwind
+
+
+def test_cross_model_pose_is_disabled_on_both_ends():
+    """⚠ **실기 결정: 말단(POSE) 모드는 5-DOF 리더에서 이상하다 — 비활성화.**
+    프론트에서 선택지를 빼는 것만으로는 부족하다(API 로 켤 수 있다) —
+    백엔드가 크로스 모델 POSE 를 거부해야 한다. Piper끼리의 POSE 는 별개라
+    그대로 살아 있다. 되살리려면 양쪽을 함께 푼다."""
+    relay = (REPO / "backend" / "app" / "services" / "relay.py").read_text()
+    start = relay.split("def start", 1)[1].split("\n    def ", 1)[0]
+    assert 'mode == "pose" and leader_arm != follower_arm' in start, \
+        "백엔드가 크로스 POSE 를 안 막는다"
+    panel = (REPO / "frontend" / "src" / "components" / "So101TeleopPanel.tsx").read_text()
+    assert "'말단 POSE'" not in panel.split("{running && st &&", 1)[0], \
+        "시작 화면에 POSE 선택지가 남아 있다"
+    assert "const mode = 'joint' as const" in panel

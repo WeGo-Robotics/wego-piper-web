@@ -1,11 +1,10 @@
 /**
  * SO-101 리더 → Piper 팔로워 텔레옵 (feature/so101d.md §5).
  *
- * 두 모드(관절 매칭 / 말단 POSE)를 사람이 고르고 실측으로 비교한다 — 어느
- * 쪽을 정식으로 열지는 §5c 의 숫자가 정한다. 두 팔은 영점도 시작 자세도
- * 달라 [정합](클러치) 방식이다: 물리는 순간 양쪽 자세가 앵커가 되어 점프가
- * 구조적으로 0, [해제] 후 리더를 편한 자세로 옮겨 재정합하면 작업 공간을
- * 이어 쓴다.
+ * 관절 매칭 모드만 연다 — 말단(POSE)은 5-DOF 리더에서 팔이 꼬여 비활성화했다
+ * (§5b-실측, 백엔드도 거부). 두 팔은 영점도 시작 자세도 달라 [정합](클러치)
+ * 방식이다: 물리는 순간 양쪽 자세가 앵커가 되어 점프가 구조적으로 0,
+ * [해제] 후 리더를 편한 자세로 옮겨 재정합하면 작업 공간을 이어 쓴다.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../services/api'
@@ -25,7 +24,9 @@ export default function So101TeleopPanel({ arm, side, followers, onClose }: {
   // 좌우가 지정돼 있으면 같은 쪽 팔로워를 기본으로 민다
   const preferred = followers.find((f) => side && f.side === side) ?? followers[0]
   const [follower, setFollower] = useState(preferred?.iface ?? '')
-  const [mode, setMode] = useState<'joint' | 'pose'>('joint')
+  // 말단(POSE) 모드는 5-DOF 리더에서 팔이 꼬여 비활성화했다 (feature/so101d.md
+  // §5b-실측). 관절 매칭만 쓴다. 되살리려면 백엔드 크로스 POSE 거부도 함께 푼다.
+  const mode = 'joint' as const
   const [st, setSt] = useState<RelayStatus | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -72,20 +73,9 @@ export default function So101TeleopPanel({ arm, side, followers, onClose }: {
                 ))}
               </select>
             </label>
-            <div className="flex gap-2 text-xs">
-              {([['joint', '관절 매칭'], ['pose', '말단 POSE']] as const).map(([m, label]) => (
-                <button key={m} onClick={() => setMode(m)}
-                  className={`flex-1 px-2 py-1.5 rounded border ${mode === m
-                    ? 'border-blue-500 bg-blue-500/20 text-blue-200'
-                    : 'border-neutral-600 text-neutral-400 hover:text-white'}`}>
-                  {label}
-                </button>
-              ))}
-            </div>
             <p className="text-[11px] text-neutral-500 leading-relaxed">
-              {mode === 'joint'
-                ? '축이 겹치는 관절끼리 변화량을 잇습니다. Piper 전완 롤(J4)은 정합 시점 값을 유지 — 조그로 미리 세팅해 두세요.'
-                : '리더 손끝의 자세 변화를 팔로워 손끝에 얹습니다 (IK). 특이점 근처에서는 잠시 멈출 수 있습니다.'}
+              관절 매칭: 축이 겹치는 관절끼리 변화량을 잇습니다. Piper 전완 롤(J4)은
+              정합 시점 값을 유지하니 조그로 미리 세팅해 두세요.
             </p>
             <button onClick={() => call(() => api.post('/robots/relay/start', {
                 leader: arm, follower, mode,

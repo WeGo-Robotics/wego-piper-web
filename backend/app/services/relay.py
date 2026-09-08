@@ -181,6 +181,14 @@ class RelaySession:
                 raise RelayError("리더와 팔로워가 같은 팔입니다")
             if mode not in ("joint", "pose"):
                 raise RelayError(f"모르는 모드입니다: {mode}")
+            # ⚠ **크로스 모델 POSE 는 막는다.** 5-DOF 리더 → 6-DOF 팔로워 자세
+            #   매핑은 pan·roll 에서 도달 불가이거나 관절을 수십 도 튕겨 팔이
+            #   꼬인다(feature/so101d.md §5b-실측). 관절 매칭이 작동하는 경로다.
+            #   Piper끼리의 POSE 는 별개라 그대로 둔다.
+            if mode == "pose" and leader_arm != follower_arm:
+                raise RelayError(
+                    "말단(POSE) 모드는 다른 기종 리더에서 아직 쓸 수 없습니다 "
+                    "— 관절 매칭 모드를 쓰세요 (feature/so101d.md §5b).")
 
             try:
                 reader = shm_arm.StateReader(leader)
