@@ -115,6 +115,11 @@ def _apply_arm_params(params: dict, *, cam_w: int, cam_h: int, cam_fps: int) -> 
     robot_ports = params.pop("robot_ports", None) or []
     teleop_ports = params.pop("teleop_ports", None) or []
 
+    # SO-101 리더: 텔레오퍼레이터가 정합 앵커를 읽을 팔로워가 필요하다 —
+    # 녹화 로봇과 같은 팔이므로 프론트에 묻지 않고 여기서 채운다
+    if str(params.get("teleop_type", "")).startswith("so101"):
+        params["teleop_follower"] = params.get("robot_port", "")
+
     if len(robot_ports) >= 2:
         params.pop("robot_port", None)
         params.pop("teleop_port", None)
@@ -213,6 +218,26 @@ async def start_recording(body: RecordStartRequest):
 
     arm_ports = (body.robot_ports + body.teleop_ports) if bimanual \
         else [body.robot_port, body.teleop_port]
+    so101_leader = not bimanual and body.teleop_type.startswith("so101")
+    if so101_leader:
+        # 외부 리더는 robotd 등록부에 없다 — 정체는 so101d 에게 묻는다
+        # (릴레이 시작과 같은 규칙). prepare_arms 에는 Piper 만 넘긴다.
+        import asyncio
+
+        from app.services.so101_client import so101_client
+
+        arms = {a["arm"]: a
+                for a in (await asyncio.to_thread(so101_client.info))["arms"]}
+        la = arms.get(body.teleop_port)
+        if la is None or not la.get("running"):
+            raise HTTPException(
+                400, f"{body.teleop_port} 가 연결돼 있지 않습니다 — 로봇 디바이스 "
+                     "탭에서 [연결]하세요")
+        if not la.get("calibrated"):
+            raise HTTPException(
+                400, f"{body.teleop_port} 는 캘리브레이션이 없습니다 — 카드의 "
+                     "[캘리브레이션]을 완주하세요")
+        arm_ports = [body.robot_port]
     try:
         prepare_arms(arm_ports, purpose="recording")
     except ArmPrepareError as e:

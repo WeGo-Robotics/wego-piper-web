@@ -15,6 +15,8 @@ from .bipipershm import (
     BiPiperShmLeader,
     BiPiperShmLeaderConfig,
 )
+from .config_so101shmleader import So101ShmLeaderConfig
+from .so101shmleader import So101ShmLeader
 from .shm_motors_bus import PiperShmMotorsBus
 
 __all__ = [
@@ -22,5 +24,6 @@ __all__ = [
     "PiperShmLeader", "PiperShmLeaderConfig",
     "BiPiperShmFollower", "BiPiperShmFollowerConfig",
     "BiPiperShmLeader", "BiPiperShmLeaderConfig",
+    "So101ShmLeader", "So101ShmLeaderConfig",
     "PiperShmMotorsBus",
 ]

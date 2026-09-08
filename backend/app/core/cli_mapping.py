@@ -29,6 +29,9 @@ SHM_ROBOT_TYPES: dict[str, str] = {
 SHM_TELEOP_TYPES: dict[str, str] = {
     "piper_leader": "piper_leader_shm",
     "bi_piper_leader": "bi_piper_leader_shm",
+    # SO-101 리더는 shm 경로**만** 있다 — 시리얼은 so101d 가 독점하므로 직접
+    # 드라이버가 없다. `direct` 전송에서는 그대로 실려 draccus 가 거절한다.
+    "so101_leader": "so101_leader_shm",
 }
 
 # 양팔 robot.type — 관절 수 검증(inference.py)과 인자 조립이 이 집합으로 분기한다
@@ -457,6 +460,8 @@ RECORD_ARGS_MAP: dict[str, str] = {
     "teleop_type": "--teleop.type",
     "teleop_port": "--teleop.port",
     "teleop_id": "--teleop.id",
+    # SO-101 리더 전용 — 정합 앵커를 읽을 팔로워 (recording.py 가 robot_port 로 채운다)
+    "teleop_follower": "--teleop.follower",
     # ── 양팔 (bi_piper_*) — 중첩 설정 인자. draccus 는 점 경로를 그대로 받으므로
     # 평면 매핑으로 충분하다. 단팔 키(robot_port 등)와 섞어 쓰면 안 된다 —
     # 조립은 recording.py 가 모드에 따라 어느 한쪽 키 집합만 넣는 것으로 보장한다.

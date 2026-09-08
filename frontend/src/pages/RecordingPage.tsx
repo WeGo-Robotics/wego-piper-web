@@ -45,6 +45,10 @@ export default function RecordingPage() {
   const { notify, confirm: askConfirm } = useSystemMessage()
   const [followers, setFollowers] = useState<ReadyArm[]>([])
   const [leaders, setLeaders] = useState<ReadyArm[]>([])
+  // SO-101 리더 — robotd 등록부(/robots/ready)에 없다. so101d 가 연결·캘리브레이션
+  // 완료한 팔만 Leader 선택지에 얹는다. 고르면 teleop_type 이 so101_leader 가 된다
+  // (플러그인 so101_leader_shm 이 정합 기준 관절 매칭을 LeRobot 안에서 돌린다).
+  const [so101Leaders, setSo101Leaders] = useState<ReadyArm[]>([])
   const [cameras, setCameras] = useState<ReadyCam[]>([])
 
   // 설정
@@ -161,6 +165,12 @@ export default function RecordingPage() {
       setFollowers(all.filter(a => a.role === 'follower'))
       setLeaders(all.filter(a => a.role === 'leader'))
     }).catch(() => {})
+    api.get<{ serial?: { attached?: { arm: string; running: boolean; calibrated: boolean; side?: string } | null }[] }>('/robots/ports')
+      .then((r) => setSo101Leaders((r.serial ?? [])
+        .filter((sp) => sp.attached?.running && sp.attached.calibrated)
+        .map((sp) => ({ iface: sp.attached!.arm, role: 'leader',
+                        side: (sp.attached!.side || null) as ReadyArm['side'] } as ReadyArm))))
+      .catch(() => {})
     api.get<ReadyCam[]>('/cameras/ready').then(setCameras).catch(() => {})
     api.get<{ username: string }>('/hub/whoami').then((r) => setHfUser(r.username || '')).catch(() => {})
     api.get<RecordStatusData>('/recording/status').then((s) => setRecordState(s.state as ProcessState)).catch(() => {})
@@ -180,7 +190,10 @@ export default function RecordingPage() {
         robot_type: 'bi_piper_follower', teleop_type: 'bi_piper_leader',
         robot_ports: [leftFollower, rightFollower], teleop_ports: [leftLeader, rightLeader],
       }
-    : { robot_port: followerPort, teleop_port: leaderPort }
+    : {
+        robot_port: followerPort, teleop_port: leaderPort,
+        ...(so101Leaders.some((a) => a.iface === leaderPort) ? { teleop_type: 'so101_leader' } : {}),
+      }
 
   // 설정값 변경 시 localStorage에 통합 저장
   useEffect(() => {
@@ -356,6 +369,7 @@ export default function RecordingPage() {
                   className="w-full px-2 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
                   <option value="">선택...</option>
                   {leaders.map(a => <option key={a.iface} value={a.iface}>{a.iface}</option>)}
+                  {so101Leaders.map(a => <option key={a.iface} value={a.iface}>{a.iface} (SO-101)</option>)}
                 </select>
               </div>
             </div>

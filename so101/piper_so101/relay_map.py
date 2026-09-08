@@ -97,3 +97,18 @@ def relative_target(t_lead, t_lead_anchor, t_follower_anchor):
 
     return np.asarray(t_follower_anchor) @ (
         np.linalg.inv(np.asarray(t_lead_anchor)) @ np.asarray(t_lead))
+
+
+def piper_norm_from_rad(q_rad) -> dict[str, float]:
+    """Piper 6축 라디안 → 정규화 dict (joint1..joint6). 변환은 저장소 정본
+    (`piper_robot.joints`)을 쓴다 — 여기서 식을 다시 적으면 캘리브레이션이
+    두 벌이 된다. 릴레이(backend)와 녹화 플러그인(LeRobot 프로세스)이 같은
+    함수를 쓰라고 여기(설치 패키지)에 둔다."""
+    import numpy as np
+
+    from piper_robot import kinematics as K
+    from piper_robot.joints import normalize_joint
+
+    return {name: float(normalize_joint(
+                name, float(np.degrees(q_rad[i]) * K.MILLIDEG_PER_DEG)))
+            for i, name in enumerate(K.ARM_JOINTS)}

@@ -596,3 +596,130 @@ def test_cross_model_pose_is_disabled_on_both_ends():
     assert "'말단 POSE'" not in panel.split("{running && st &&", 1)[0], \
         "시작 화면에 POSE 선택지가 남아 있다"
     assert "const mode = 'joint' as const" in panel
+
+
+# ── 수집 (5단계) — SO-101 리더로 Piper 를 녹화한다 ──
+
+
+def test_the_so101_teleoperator_is_a_registered_lerobot_plugin_type():
+    """녹화는 LeRobot record CLI 가 돌린다 — 텔레오퍼레이터가 플러그인으로
+    등록돼 있어야 `--teleop.type=so101_leader_shm` 이 풀린다. 패키지 import 만으로
+    등록되는 것이 계약이다 (register_third_party_plugins 가 그렇게 부른다)."""
+    lerobot_robot_pipershm = pytest.importorskip("lerobot_robot_pipershm")
+    from lerobot.teleoperators.config import TeleoperatorConfig
+
+    assert "so101_leader_shm" in TeleoperatorConfig.get_known_choices()
+    assert lerobot_robot_pipershm.So101ShmLeader.name == "so101_leader_shm"
+
+
+def test_the_teleoperator_maps_deltas_from_the_connect_anchor(monkeypatch, tmp_path):
+    """액션은 **팔로워(Piper) 관절계**다 — 학습·추론이 그대로 맞는다. connect
+    순간이 정합이라 첫 액션 = 팔로워 현재 자세(점프 0), 이후 리더 변화량이
+    관절쌍 부호로 얹힌다. 그리퍼는 절대 통과. 세그먼트는 읽기만 한다 —
+    라이터는 로봇 클래스 하나여야 한다."""
+    import json
+    import time
+
+    pytest.importorskip("lerobot_robot_pipershm")
+    from lerobot_robot_pipershm import so101shmleader as M
+    from lerobot_robot_pipershm.config_so101shmleader import So101ShmLeaderConfig
+
+    # 캘리브레이션 — 폭 2048 (반바퀴)
+    cal = {n: {"id": MOTOR_IDS[n], "drive_mode": 0, "homing_offset": 0,
+               "range_min": 1024, "range_max": 3072} for n in SO101_JOINTS}
+    (tmp_path / "so101_leader1.json").write_text(json.dumps(cal))
+    monkeypatch.setenv("PIPER_SO101_CALIB_DIR", str(tmp_path))
+
+    class _Reader:
+        """가짜 StateReader — 이름별로 미리 정한 값을 돌려준다."""
+        values = {
+            "so101_leader1": {"joint1": 0.0, "joint2": 0.0, "joint3": 0.0,
+                              "joint4": 0.0, "joint5": 0.0, "joint6": 0.0, "gripper": 40.0},
+            "can0": {"joint1": 10.0, "joint2": 20.0, "joint3": -30.0,
+                     "joint4": 5.0, "joint5": 0.0, "joint6": 0.0, "gripper": 0.0},
+        }
+        opened: list[str] = []
+
+        def __init__(self, name):
+            self.name = name
+            _Reader.opened.append(name)
+
+        def read(self):
+            return {"values": dict(_Reader.values[self.name]),
+                    "can_wall_ns": time.time_ns()}
+
+        def age_s(self):
+            return 0.0
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(M, "StateReader", _Reader)
+    t = M.So101ShmLeader(So101ShmLeaderConfig(port="so101_leader1", follower="can0"))
+    t.connect()
+    assert sorted(_Reader.opened) == ["can0", "so101_leader1"], "읽기 세그먼트 둘만 연다"
+    assert "ActionWriter" not in open(M.__file__).read(), "리더가 명령 세그먼트를 만든다"
+
+    first = t.get_action()
+    # 정합 순간: 팔로워 현재 자세 그대로 (joint4 포함), 그리퍼는 리더 절대값
+    for j, v in (("joint1", 10.0), ("joint2", 20.0), ("joint3", -30.0), ("joint4", 5.0)):
+        assert first[f"{j}.pos"] == pytest.approx(v, abs=0.05), j
+    assert first["gripper.pos"] == 40.0
+
+    # 리더 pan 을 +50 (폭 2048 의 1/4 = 512틱 = 45°) → Piper joint1 도 +45°
+    _Reader.values["so101_leader1"]["joint1"] = 50.0
+    moved = t.get_action()
+    from piper_robot.joints import JOINT_CALIBRATION
+    lo, hi = JOINT_CALIBRATION["joint1"]
+    per_deg_norm = 200.0 / ((hi - lo) / 1000.0)        # joint1 정규화 1당 각도
+    assert moved["joint1.pos"] - first["joint1.pos"] == pytest.approx(45.0 * per_deg_norm, rel=0.02)
+    assert moved["joint4.pos"] == pytest.approx(5.0, abs=0.05), "joint4 는 앵커 유지"
+    assert set(t.action_features) == {f"{m}.pos" for m in
+                                      ("joint1", "joint2", "joint3", "joint4",
+                                       "joint5", "joint6", "gripper")}
+
+
+def test_record_args_carry_the_so101_teleoperator_and_its_anchor_follower():
+    """CLI 조립: teleop_type so101_leader → shm 타입으로 풀리고, 정합 앵커를
+    읽을 팔로워(`--teleop.follower`)가 실린다. 프론트는 follower 를 따로 안
+    보낸다 — 녹화 로봇과 같은 팔이라 recording.py 가 robot_port 로 채운다."""
+    from app.core.config import settings
+    from app.core.cli_mapping import build_record_args
+
+    old = settings.robot_transport
+    settings.robot_transport = "shm"
+    try:
+        args = build_record_args({"robot_type": "piper_follower", "robot_port": "can0",
+                                  "teleop_type": "so101_leader",
+                                  "teleop_port": "so101_leader1",
+                                  "teleop_follower": "can0", "repo_id": "x/y"})
+    finally:
+        settings.robot_transport = old
+    joined = " ".join(args)
+    assert "--teleop.type=so101_leader_shm" in joined
+    assert "--teleop.port=so101_leader1" in joined
+    assert "--teleop.follower=can0" in joined
+    assert "--robot.type=piper_follower_shm" in joined
+
+
+def test_recording_start_asks_so101d_and_keeps_the_leader_out_of_prepare_arms():
+    """외부 리더는 robotd 등록부에 없다 — `prepare_arms` 에 넘기면 "팔을 찾을 수
+    없습니다"로 막힌다(릴레이가 처음에 그렇게 막혔던 것과 같은 병). 정체는
+    so101d 에게 묻고(연결·캘리브레이션), prepare 에는 Piper 만 넘긴다.
+    앵커 팔로워는 미리보기와 시작이 같은 조립기에서 채운다."""
+    src = (REPO / "backend" / "app" / "routers" / "recording.py").read_text()
+    assert 'params["teleop_follower"] = params.get("robot_port", "")' in src
+    start = src.split("prepare_arms(arm_ports", 1)[0]
+    assert "so101_client.info" in start
+    assert "arm_ports = [body.robot_port]" in start, "리더가 prepare_arms 로 새어 간다"
+    assert "캘리브레이션" in start
+
+
+def test_the_recording_form_offers_so101_leaders_and_sends_the_type():
+    """수집 폼은 so101d 가 연결·캘리브레이션한 팔만 Leader 로 얹고, 고르면
+    teleop_type 을 so101_leader 로 보낸다 — 기본값(piper_leader)으로 가면
+    LeRobot 이 SO-101 세그먼트를 Piper 리더로 읽어 관절이 어긋난다."""
+    page = (REPO / "frontend" / "src" / "pages" / "RecordingPage.tsx").read_text()
+    assert "sp.attached.calibrated" in page, "미캘리브레이션 팔이 선택지에 오른다"
+    assert "teleop_type: 'so101_leader'" in page
+    assert "(SO-101)" in page
