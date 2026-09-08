@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: piper-so101
+Version: 0.1.0
+Summary: SO-101 (Feetech serial bus) daemon core — owns /dev/serial adapters
+License-Expression: Apache-2.0
+Requires-Python: >=3.11
+Requires-Dist: piper-shm
+Requires-Dist: feetech-servo-sdk

@@ -1,0 +1,23 @@
+# so101d — SO-101 (Feetech 시리얼 버스) 팔을 독점하는 데몬 (feature/so101d.md).
+#
+# 설치: deploy/install-daemons.sh so101d
+#
+# ⚠ robotd 와 합치지 않는다 — Feetech 시리얼이 걸리면 죽는 것이 이 유닛
+# 하나여야 하고, CAN 제어(robotd)는 살아야 한다.
+
+[Unit]
+Description=Piper SO-101 daemon (owns Feetech serial bus adapters)
+Documentation=file://@REPO@/feature/so101d.md
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+ExecStart=@PY@ @REPO@/daemons/so101d.py
+Environment=PIPER_REDIS_URL=redis://127.0.0.1:6379/0
+
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

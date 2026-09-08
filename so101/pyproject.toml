@@ -1,0 +1,16 @@
+[project]
+name = "piper-so101"
+version = "0.1.0"
+description = "SO-101 (Feetech serial bus) daemon core — owns /dev/serial adapters"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+# scservo_sdk 는 배포명이 feetech-servo-sdk 다. LeRobot 은 의존하지 않는다 —
+# 캘리브레이션은 JSON **파일**로만 호환한다 (feature/so101d.md §3).
+dependencies = ["piper-shm", "feetech-servo-sdk"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["piper_so101*"]

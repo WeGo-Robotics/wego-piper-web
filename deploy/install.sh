@@ -61,7 +61,7 @@ fi
 # ── 4. 파이썬 패키지 — **순서가 있다** ────────────────────────────────────
 echo "4. 파이썬 패키지"
 # 의존 순서: bus·shm → robot·cam → rs → phase → vendor → backend
-PKGS=(bus shm robot cam rs phase act_aux
+PKGS=(bus shm robot cam rs so101 phase act_aux
       vendor/wego_piper vendor/lerobot_robot_piper
       vendor/lerobot_robot_pipershm vendor/lerobot_camera_pipershm
       backend)
