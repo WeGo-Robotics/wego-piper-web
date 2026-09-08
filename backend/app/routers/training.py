@@ -50,6 +50,10 @@ class TrainStartRequest(BaseModel):
     rename_map: str = ""
     policy_params: dict[str, Any] = Field(default_factory=dict)
     amp: str = "bf16"  # 혼합정밀도: "off" | "bf16" | "fp16" → ACCELERATE_MIXED_PRECISION env
+    # 가중치 제목·설명 — 시작 성공 직후 output_dir/piper_notes.json 사이드카로
+    # 남는다 (제목 = name). CLI 인자가 아니다 — build_train_args 전에 뺀다.
+    title: str = ""
+    description: str = ""
 
 
 class TrainPreviewRequest(BaseModel):
@@ -169,6 +173,10 @@ async def start_training(body: TrainStartRequest):
     params = body.model_dump(exclude_none=True)
     # amp는 CLI 인자가 아니라 환경변수로 주입 → params에서 분리
     amp = params.pop("amp", "bf16")
+    # 제목·설명은 사이드카다 — 인자 빌더에 흘리지 않는다 (화이트리스트라 무시되긴
+    # 하지만, 뜻이 다른 것을 같은 dict 에 두지 않는다)
+    title = str(params.pop("title", "") or "").strip()
+    description = str(params.pop("description", "") or "").strip()
     # lr=0이면 기본값 사용 (전달하지 않음)
     if params.get("learning_rate", 0) <= 0:
         params.pop("learning_rate", None)
@@ -201,7 +209,28 @@ async def start_training(body: TrainStartRequest):
         )
     except Exception as e:
         raise HTTPException(500, f"학습 시작 실패: {e}")
-    return {"status": "started", "pid": train_manager.runner.pid, "args": args}
+
+    # 사이드카는 **시작이 성공한 뒤** 쓴다 — 실패한 시작의 흔적을 남기지 않는다.
+    # 시작 시점에 쓰는 이유: 학습이 중간에 멈추거나 게이트웨이가 재시작돼도
+    # 이름·설명은 남아야 하고, 모델 페이지의 편집기가 언제든 고칠 수 있다.
+    # ⚠ output_dir 이 비어 있으면(자동) LeRobot 이 고르는 경로를 여기서 모른다
+    #   — 그때는 못 쓴다. 폼이 그렇게 안내한다.
+    notes_written = False
+    if (title or description) and body.output_dir:
+        try:
+            from pathlib import Path as _P
+
+            from app.services.notes_sidecar import write_notes
+
+            _P(body.output_dir).mkdir(parents=True, exist_ok=True)
+            write_notes(_P(body.output_dir), kind="model",
+                        name=title, description=description)
+            notes_written = True
+        except Exception as exc:
+            logger.warning("가중치 제목·설명 사이드카 기록 실패 (%s): %s",
+                           body.output_dir, exc)
+    return {"status": "started", "pid": train_manager.runner.pid, "args": args,
+            "notes_written": notes_written}
 
 
 @router.post("/start-custom")

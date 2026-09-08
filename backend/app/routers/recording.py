@@ -36,8 +36,9 @@ class RecordStartRequest(BaseModel):
     camera_width: int = 0
     camera_height: int = 0
     camera_fps: int = 0
-    # 데이터셋 설명 — 정지 시 meta/piper_notes.json 사이드카로 남는다.
-    # LeRobot info.json 에는 이 자리가 없다 (notes_sidecar 참고).
+    # 데이터셋 제목·설명 — 정지 시 meta/piper_notes.json 사이드카로 남는다
+    # (제목 = 사이드카의 name). LeRobot info.json 에는 이 자리가 없다 (notes_sidecar 참고).
+    title: str = ""
     description: str = ""
     # 시작 전에 1회 적용할 카메라 프로파일 (노출·WB — presets domain=camera).
     # 빈 값이면 적용하지 않는다. 프로파일이 없는 이름이면 시작을 거부한다.
@@ -299,6 +300,7 @@ async def start_recording(body: RecordStartRequest):
     _last_recording["repo_id"] = body.repo_id
     _last_recording["camera_mapping"] = dict(body.camera_mapping or {})
     _last_recording["description"] = body.description
+    _last_recording["title"] = body.title
 
     try:
         await record_manager.start(args, total_episodes=body.num_episodes, env_extra=env_extra)
@@ -358,16 +360,17 @@ async def stop_recording():
     if repo_id and mapping:
         write_camera_sidecar(settings.lerobot_dir / repo_id, mapping)
 
-    # 설명도 같은 시점에 사이드카로. 비어 있으면 안 쓴다 — 기존 설명을 빈 값으로
-    # 덮는 사고를 막는다. 실패해도 정지 흐름은 막지 않는다 (카메라 사이드카와 동일).
+    # 제목·설명도 같은 시점에 사이드카로. 둘 다 비어 있으면 안 쓴다 — 기존 값을
+    # 빈 값으로 덮는 사고를 막는다. 실패해도 정지 흐름은 막지 않는다 (카메라 사이드카와 동일).
     desc = (_last_recording.get("description") or "").strip()
-    if repo_id and desc:
+    title = (_last_recording.get("title") or "").strip()
+    if repo_id and (title or desc):
         try:
             from app.services.notes_sidecar import write_notes
             write_notes(settings.lerobot_dir / repo_id, kind="dataset",
-                        name="", description=desc)
+                        name=title, description=desc)
         except Exception as exc:
-            logger.warning("설명 사이드카 기록 실패 (%s): %s", repo_id, exc)
+            logger.warning("제목·설명 사이드카 기록 실패 (%s): %s", repo_id, exc)
 
     return {"status": "stopped", "graceful": graceful}
 

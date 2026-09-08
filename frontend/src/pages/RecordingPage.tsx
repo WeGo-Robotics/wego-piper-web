@@ -77,7 +77,9 @@ export default function RecordingPage() {
   // 네임스페이스를 제안하려고 HF 로그인 사용자를 읽는다 (없으면 안내만)
   const [hfUser, setHfUser] = useState('')
   const [singleTask, setSingleTask] = useState(_saved.singleTask || '')
-  // 데이터셋 설명 — 정지 시 meta/piper_notes.json 사이드카로 남는다 (백엔드)
+  // 데이터셋 제목·설명 — 정지 시 meta/piper_notes.json 사이드카로 남는다 (백엔드).
+  // 제목이 사이드카의 name 이다 — 목록·허브 카드가 이 이름을 쓴다.
+  const [title, setTitle] = useState(_saved.title || '')
   const [description, setDescription] = useState(_saved.description || '')
   const [numEpisodes, setNumEpisodes] = useState(_saved.numEpisodes ?? 50)
   const [fps, setFps] = useState(_saved.fps ?? 15)
@@ -207,10 +209,10 @@ export default function RecordingPage() {
     localStorage.setItem('piper_record_settings', JSON.stringify({
       followerPort, leaderPort, cameraMapping, cameraProfile, camWidth, camHeight,
       armMode, leftFollower, rightFollower, leftLeader, rightLeader,
-      repoId, singleTask, description, numEpisodes, fps, episodeTime, resetTime,
+      repoId, singleTask, title, description, numEpisodes, fps, episodeTime, resetTime,
       streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled,
     }))
-  }, [followerPort, leaderPort, cameraMapping, cameraProfile, camWidth, camHeight, armMode, leftFollower, rightFollower, leftLeader, rightLeader, repoId, singleTask, description, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled])
+  }, [followerPort, leaderPort, cameraMapping, cameraProfile, camWidth, camHeight, armMode, leftFollower, rightFollower, leftLeader, rightLeader, repoId, singleTask, title, description, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled])
 
   // 데이터셋 존재 여부 확인
   useEffect(() => {
@@ -279,7 +281,7 @@ export default function RecordingPage() {
         camera_profile: cameraProfile,
         camera_width: camWidth, camera_height: camHeight, camera_fps: fps,
         repo_id: repoId, single_task: singleTask,
-        description,
+        title, description,
         num_episodes: numEpisodes, fps, episode_time_s: episodeTime, reset_time_s: resetTime,
         streaming_encoding: streamingEncoding, vcodec, encoder_threads: encoderThreads, encoder_queue_maxsize: encoderQueue, push_to_hub: pushToHub, resume,
         web_preview: webPreview,
@@ -536,6 +538,13 @@ export default function RecordingPage() {
               <input type="text" value={singleTask}
                 onChange={e => { setSingleTask(e.target.value); setCliEdited(false) }}
                 placeholder="Pick the cube and put in the box"
+                className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+            </div>
+            <div>
+              <label className="text-xs text-neutral-400">데이터셋 제목 (선택)</label>
+              <input type="text" value={title}
+                onChange={e => setTitle(e.target.value)}
+                placeholder="사람이 읽는 이름 — 목록과 허브 카드에 repo id 대신 보입니다"
                 className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
             </div>
             <div>

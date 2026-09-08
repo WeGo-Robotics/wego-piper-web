@@ -46,6 +46,10 @@ export default function TrainingPage() {
   const [pretrainedPath, setPretrainedPath] = useState(_saved.pretrainedPath || '')
   const [policyRepoId, setPolicyRepoId] = useState(_saved.policyRepoId || '')
   const [outputDir, setOutputDir] = useState(_saved.outputDir || '')
+  // 가중치 제목·설명 — 시작 성공 직후 output_dir/piper_notes.json 사이드카(제목 = name).
+  // 출력 경로가 자동(비움)이면 백엔드가 경로를 모르니 못 남긴다 — 라벨이 그렇게 말한다.
+  const [title, setTitle] = useState(_saved.title || '')
+  const [description, setDescription] = useState(_saved.description || '')
   const [batchSize, setBatchSize] = useState(_saved.batchSize ?? 8)
   const [steps, setSteps] = useState(_saved.steps ?? 100000)
   const [logFreq, setLogFreq] = useState(_saved.logFreq ?? 200)
@@ -105,12 +109,12 @@ export default function TrainingPage() {
   // 설정값 변경 시 localStorage에 저장
   useEffect(() => {
     localStorage.setItem('piper_train_settings', JSON.stringify({
-      selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir,
+      selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, title, description,
       batchSize, steps, logFreq, saveFreq, numWorkers, seed, device,
       optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset,
       stateDim, actionDim, renameMap, policyParams, amp,
     }))
-  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset, stateDim, actionDim, renameMap, policyParams, amp])
+  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, title, description, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset, stateDim, actionDim, renameMap, policyParams, amp])
 
   // 실행 상태
   const [trainState, setTrainState] = useState<ProcessState>('idle')
@@ -323,6 +327,7 @@ export default function TrainingPage() {
   const trainParams = () => ({
     dataset_repo_id: selectedDataset, policy_type: policyType,
     pretrained_path: pretrainedPath, policy_repo_id: policyRepoId, output_dir: outputDir,
+    title, description,
     batch_size: batchSize, steps, log_freq: logFreq, save_freq: saveFreq,
     num_workers: numWorkers, seed, device, optimizer_type: optimizerType,
     learning_rate: learningRate, wandb_enable: wandbEnable, wandb_project: wandbProject, resume,
@@ -797,6 +802,23 @@ export default function TrainingPage() {
                   <label className="text-xs text-neutral-400">Output Dir (비우면 자동)</label>
                   <input type="text" value={outputDir}
                     onChange={(e) => { setOutputDir(e.target.value); setCliEdited(false) }}
+                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+                </div>
+                <div>
+                  <label className="text-xs text-neutral-400">가중치 제목 (선택)</label>
+                  <input type="text" value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="사람이 읽는 이름 — 모델 목록에 경로 대신 보입니다"
+                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-xs text-neutral-400">
+                    가중치 설명 (선택){!outputDir && (title || description) &&
+                      <span className="ml-2 text-amber-400">— Output Dir 이 비어 있으면 저장할 자리를 몰라 남기지 못합니다</span>}
+                  </label>
+                  <textarea value={description} rows={2}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="어떤 데이터·조건·의도로 학습했는지 — 시작할 때 output_dir 옆에 남고, 모델 페이지에서 고칠 수 있습니다"
                     className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
                 </div>
                 <div className="col-span-2">
