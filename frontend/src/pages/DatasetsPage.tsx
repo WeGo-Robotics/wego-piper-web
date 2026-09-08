@@ -279,6 +279,7 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
                 )}
                 <p className="text-xs text-neutral-400 mt-1">
                   {ds.total_episodes} 에피소드 · {formatBytes(ds.size_bytes)}
+                  {ds.created && <> · 만든 날짜 {new Date(ds.created).toLocaleDateString('ko-KR')}</>}
                 </p>
                 <div className="flex gap-1 mt-2">
                   <button

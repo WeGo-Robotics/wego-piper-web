@@ -135,6 +135,24 @@ def extract_model_requirements(config: dict, model_dir: Path | None = None) -> d
 
 
 
+def _created_at(root: Path, *markers: Path) -> str:
+    """"만든 날짜" — dataset_scanner 와 같은 규칙 (birthtime → 표식 파일 → mtime)."""
+    cands: list[float] = []
+    try:
+        cands.append(float(root.stat().st_birthtime))
+    except (AttributeError, OSError):
+        pass
+    for m in markers:
+        try:
+            cands.append(m.stat().st_mtime)
+        except OSError:
+            pass
+    # 디렉토리 mtime 은 항상 후보 — 표식 파일이 디렉토리 변경보다 뒤에 써지면
+    # "만든 날짜 > 수정 날짜"가 된다 (dataset_scanner 와 같은 규칙).
+    cands.append(root.stat().st_mtime)
+    return datetime.fromtimestamp(min(cands)).isoformat()
+
+
 def _scan_hf_cache(models_dir: Path) -> list[dict]:
     """HuggingFace Hub 캐시 형식: models--org--name/snapshots/hash/config.json"""
     results = []
@@ -164,6 +182,7 @@ def _scan_hf_cache(models_dir: Path) -> list[dict]:
             "requirements": extract_model_requirements(config, snapshot),
             "size_bytes": _dir_size(snapshot),
             "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "created": _created_at(snapshot, config_path),
             "notes": _notes(snapshot),
             "source_dir": str(models_dir),
         })
@@ -180,6 +199,13 @@ def _scan_train_outputs(models_dir: Path) -> list[dict]:
         if not checkpoints_dir.is_dir():
             continue
         job_dir = checkpoints_dir.parent
+        # ⚠ **학습 폼의 제목·설명은 run 루트**(output_dir/piper_notes.json)에
+        #   남는다 — 체크포인트는 그 뒤에 여러 개 생기고, 이름은 학습(run)의
+        #   것이다. 체크포인트에 자기 사이드카가 없으면 run 의 것을 물려받는다;
+        #   있으면(모델 페이지 편집기로 쓴 것) 그쪽이 이긴다.
+        run_notes = _notes(job_dir)
+        run_created = _created_at(job_dir, job_dir / "train_config.json",
+                                  checkpoints_dir)
         for ckpt_dir in checkpoints_dir.iterdir():
             if not ckpt_dir.is_dir():
                 continue
@@ -212,9 +238,12 @@ def _scan_train_outputs(models_dir: Path) -> list[dict]:
                 step_num = None
 
             stat = model_dir.stat()
+            own_notes = _notes(model_dir)
             results.append({
                 "id": model_id,
                 "run": run_id,
+                "run_notes": run_notes,
+                "run_created": run_created,
                 "checkpoint": step_label,
                 "step": step_num,
                 "path": str(model_dir),
@@ -224,8 +253,10 @@ def _scan_train_outputs(models_dir: Path) -> list[dict]:
                 "requirements": extract_model_requirements(config, model_dir),
                 "size_bytes": _dir_size(model_dir),
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "created": _created_at(model_dir, config_path),
                 "source_dir": str(models_dir),
-                "notes": _notes(model_dir),
+                "notes": own_notes if (own_notes.get("name") or own_notes.get("description"))
+                         else run_notes,
             })
 
     return results

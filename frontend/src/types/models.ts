@@ -30,6 +30,10 @@ export type Model = {
   requirements: ModelRequirements
   size_bytes: number
   modified: string
+  created?: string
+  // 학습(run) 루트 사이드카 — 학습 폼의 제목·설명. 체크포인트마다 물려받는다.
+  run_notes?: SidecarNotes
+  run_created?: string
 }
 
 export type ModelDetail = Model & {
@@ -49,6 +53,7 @@ export type Dataset = {
   features: Record<string, unknown>
   size_bytes: number
   modified: string
+  created?: string
   /** ACT-Aux 용으로 구운 사본이면 그 정보 (backend dataset_scanner.baked_info). 원본이면 null/undefined. */
   baked?: BakedInfo | null
 }

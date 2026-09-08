@@ -47,6 +47,29 @@ def _parse_meta(meta_path: Path) -> dict:
 
 
 
+def _created_at(root: Path, *markers: Path) -> str:
+    """"만든 날짜". 디렉토리 mtime 은 마지막 수정이라 에피소드를 추가할 때마다
+    앞으로 밀린다 — 만든 날짜가 아니다. 파일시스템 생성시각(statx birthtime,
+    ext4 지원)을 먼저 보고, 없으면 만들 때 생기는 표식 파일(info.json 등)의
+    mtime 중 가장 이른 것, 그것도 없으면 디렉토리 mtime."""
+    cands: list[float] = []
+    try:
+        cands.append(float(root.stat().st_birthtime))      # Linux ≥ py3.12 + statx
+    except (AttributeError, OSError):
+        pass
+    for m in markers:
+        try:
+            cands.append(m.stat().st_mtime)
+        except OSError:
+            pass
+    # ⚠ 디렉토리 mtime 은 **항상** 후보다 — 폴백이 아니다. 표식 파일은 디렉토리의
+    #   마지막 항목 변경보다 뒤에 써질 수 있어(meta/ 생성 → info.json 기록),
+    #   birthtime 이 없는 파일시스템에서는 "만든 날짜 > 수정 날짜"가 나온다
+    #   (테스트에서 138µs 로 잡혔다). 만든 날짜는 어떤 시각보다도 이르다.
+    cands.append(root.stat().st_mtime)
+    return datetime.fromtimestamp(min(cands)).isoformat()
+
+
 def _scan_hub_datasets(datasets_dir: Path) -> list[dict]:
     """HuggingFace Hub 캐시 스캔 (datasets--org--name/snapshots/hash/)."""
     if not datasets_dir.exists():
@@ -76,6 +99,7 @@ def _scan_hub_datasets(datasets_dir: Path) -> list[dict]:
             "features": meta.get("features", {}),
             "size_bytes": _dir_size(snapshot),
             "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "created": _created_at(snapshot, info_path),
             "notes": _notes(snapshot),
         })
     return results
@@ -108,6 +132,7 @@ def _scan_lerobot_datasets(lerobot_dir: Path) -> list[dict]:
                 "features": meta.get("features", {}),
                 "size_bytes": _dir_size(ds_dir),
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "created": _created_at(ds_dir, info_path),
                 "baked": baked_info(ds_dir),
                 "notes": _notes(ds_dir),
             })
@@ -298,6 +323,7 @@ def get_dataset(dataset_id: str) -> dict | None:
         "tasks": tasks,
         "size_bytes": _dir_size(ds_path),
         "modified": datetime.fromtimestamp(ds_path.stat().st_mtime).isoformat(),
+        "created": _created_at(ds_path, ds_path / "meta" / "info.json"),
     }
 
 

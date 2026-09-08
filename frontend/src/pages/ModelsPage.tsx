@@ -176,9 +176,17 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                   <button type="button" onClick={() => toggleRun(g.run)}
                     className="flex w-full items-center gap-2 rounded border border-neutral-700 bg-neutral-800/60 px-3 py-2 text-left text-sm hover:border-neutral-600">
                     <span className="text-neutral-500">{open ? '▾' : '▸'}</span>
-                    <span className="truncate font-medium">{g.run || '그 외 (직접 받은 모델)'}</span>
+                    {/* 학습 폼의 제목이 run 의 이름이다 — 있으면 경로 대신 앞세우고 경로는 뒤에 */}
+                    <span className="truncate font-medium">
+                      {g.run && g.list[0]?.run_notes?.name
+                        ? <>{g.list[0].run_notes.name} <span className="text-neutral-500 font-normal">({g.run})</span></>
+                        : (g.run || '그 외 (직접 받은 모델)')}
+                    </span>
                     <span className="ml-auto shrink-0 text-xs text-neutral-500">
-                      {g.run && g.list[0]?.policy_type ? `${g.list[0].policy_type} · ` : ''}{g.list.length}개
+                      {g.run && g.list[0]?.policy_type ? `${g.list[0].policy_type} · ` : ''}
+                      {g.run && g.list[0]?.run_created
+                        ? `${new Date(g.list[0].run_created).toLocaleDateString('ko-KR')} · ` : ''}
+                      {g.list.length}개
                     </span>
                   </button>
                   {open && (
@@ -195,9 +203,14 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                   >
                     <div className="flex justify-between items-start">
                       <div className="min-w-0">
-                        <p className="font-medium truncate">{m.id}</p>
+                        <p className="font-medium truncate">
+                          {m.notes?.name && !m.run
+                            ? <>{m.notes.name} <span className="text-neutral-500 font-normal">({m.id})</span></>
+                            : m.id}
+                        </p>
                         <p className="text-xs text-neutral-400 mt-1">
                           {m.policy_type} · {formatBytes(m.size_bytes)}
+                          {m.created && <> · {new Date(m.created).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })}</>}
                         </p>
                       </div>
                     </div>
