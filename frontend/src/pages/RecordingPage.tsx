@@ -173,7 +173,14 @@ export default function RecordingPage() {
       .catch(() => {})
     api.get<ReadyCam[]>('/cameras/ready').then(setCameras).catch(() => {})
     api.get<{ username: string }>('/hub/whoami').then((r) => setHfUser(r.username || '')).catch(() => {})
-    api.get<RecordStatusData>('/recording/status').then((s) => setRecordState(s.state as ProcessState)).catch(() => {})
+    // ⚠ `status`(phase) 도 여기서 복원한다. WS 푸시는 **단계가 바뀔 때만** 오므로
+    //   리셋 대기 중에 다른 페이지를 갔다 오면 다음 푸시가 올 계기가 없다 —
+    //   `status` 가 null 로 남아 "준비 완료" 녹색 버튼이 사라졌다 (실기 보고).
+    //   REST 미러가 WS 와 같은 모양을 주니 둘 다 여기서 채운다.
+    api.get<RecordStatusData>('/recording/status').then((s) => {
+      setRecordState(s.state as ProcessState)
+      setStatus(s)
+    }).catch(() => {})
   }, [])
 
   // 좌/우 프리필 — 등록(side)이 정본이라 화면은 채워 줄 뿐이다 (RobotsPage 에서 지정)
