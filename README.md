@@ -196,5 +196,6 @@ joint1.pos                           0.456      2.345
 | | 어디 |
 |---|---|
 | 개발 (저장소에서 직접 실행) | [CLAUDE.md](CLAUDE.md) |
+| 버전마다 무엇이 달라졌나 | [CHANGELOG.md](CHANGELOG.md) |
 | 릴리스 (이미지 굽기·배포) | [deploy/RELEASE-CHECKLIST.md](deploy/RELEASE-CHECKLIST.md) |
 | 라이선스 | [LICENSE](LICENSE) (Apache-2.0) · [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) |
