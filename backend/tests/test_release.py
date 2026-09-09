@@ -42,10 +42,10 @@ def _detect(prev: str, tag: str) -> set[str]:
             layers.add("frontend")
         if p.startswith(("daemons/", "deploy/systemd/")) or p == "deploy/install-daemons.sh":
             layers.add("daemons")
-        for pkg in ("bus", "shm", "robot"):
+        for pkg in ("bus", "shm", "robot", "so101"):
             if p.startswith(pkg + "/"):
                 layers |= {"backend", "wheels"}
-        for pkg in ("cam", "rs"):
+        for pkg in ("cam", "rs", "sim"):
             if p.startswith(pkg + "/"):
                 layers.add("wheels")
     return layers
@@ -70,14 +70,19 @@ def test_tests_and_docs_do_not_trigger_a_rebuild():
 
 
 def test_the_shared_packages_go_to_both_layers():
-    """⚠ `bus/`·`shm/`·`robot/` 은 **이미지에도 들어가고 호스트 venv 에도 깔린다.**
-    한쪽만 올리면 컨테이너와 데몬이 다른 코드로 돈다."""
+    """⚠ `bus/`·`shm/`·`robot/`·`so101/` 은 **이미지에도 들어가고 호스트 venv 에도
+    깔린다.** 한쪽만 올리면 컨테이너와 데몬이 다른 코드로 돈다. so101 은 데몬이
+    호스트라 호스트 전용으로 착각하기 쉬운데, 관절 매핑 표(`relay_map`)를 게이트웨이
+    릴레이와 컨테이너 안 녹화 프로세스(so101_leader_shm)가 읽는다 — 이미지에 없으면
+    SO-101 리더로 시작하는 순간 ModuleNotFoundError 다 (2026-09-09 설치 점검에서 발견)."""
     dockerfile = (REPO / "backend" / "Dockerfile").read_text()
-    for pkg in ("bus", "shm", "robot"):
+    for pkg in ("bus", "shm", "robot", "so101"):
         assert f"COPY {pkg}/" in dockerfile, f"{pkg} 가 이미지에 안 들어간다"
+        assert f"/tmp/pkg/{pkg}" in dockerfile.split("pip install --no-deps", 1)[1].split("&&", 1)[0], \
+            f"{pkg} 를 복사만 하고 설치하지 않는다"
     assert _detect("v0.3.1", "v0.3.2") >= {"backend"} or True  # 아래가 본 검사
     src = RELEASE.read_text()
-    for pkg in ("bus", "shm", "robot"):
+    for pkg in ("bus", "shm", "robot", "so101"):
         line = next(ln for ln in src.splitlines() if ln.strip().startswith(f"{pkg}/*)"))
         assert "need_backend=1" in line and "need_wheels=1" in line, \
             f"{pkg} 가 한쪽 레이어에만 간다: {line.strip()}"
@@ -661,3 +666,14 @@ def test_the_readme_names_the_data_that_survives():
     wipe = _wipe_section()
     for keep in ("/srv/piper-data", "huggingface/lerobot", ".config/piper-web"):
         assert keep in wipe, f"보존 목록에 {keep} 이 없다"
+
+
+def test_apply_checks_the_device_groups_like_the_source_installer():
+    """데몬은 그 사용자로 돈다 — `video` 없으면 카메라 스캔 0개(실측), `dialout` 없으면
+    SO-101 시리얼을 못 연다. install.sh 는 보는데 apply.sh 만 안 봐서 배포 호스트에서는
+    "장치 0개" 로만 드러났다. 고치는 손은 사람(sudo) — 스크립트는 명령만 찍는다."""
+    from conftest import code_only
+    src = code_only(APPLY.read_text())
+    assert "for g in video dialout" in src
+    assert 'NEED_SUDO+=("usermod -aG $g $USER")' in src
+    assert "for g in video dialout" in (REPO / "deploy" / "install.sh").read_text()

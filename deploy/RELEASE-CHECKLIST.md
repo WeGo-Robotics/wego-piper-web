@@ -20,11 +20,12 @@
 | 레이어 | 내용물 | 배포 방식 |
 |---|---|---|
 | **이미지** | backend, frontend (`docker-compose.yml`) | 로컬 빌드 → `docker save` → `scp` → 호스트 `docker load` |
-| **데몬 라이브러리** | `bus/ cam/ rs/ robot/ shm/` (순수 파이썬, `daemons/*.py`가 직접 import) | 로컬에서 wheel 빌드 → `scp` → 호스트 전용 venv에 `pip install` |
+| **데몬 라이브러리** | `bus/ cam/ rs/ robot/ shm/ so101/ sim/` (순수 파이썬, `daemons/*.py`가 직접 import) | 로컬에서 wheel 빌드 → `scp` → 호스트 전용 venv에 `pip install`. so101·sim 의 바깥 의존(feetech-servo-sdk·mujoco)은 apply.sh 가 PyPI 에서 |
 | **데몬 소스 + 유닛 정의** | `daemons/*.py`, `deploy/systemd/*.service`, `deploy/install-daemons.sh` | 소스 그대로 tar로 묶어 `scp` (이건 wheel이 아니라 daemons/의 엔트리포인트 자체라 패키징 대상이 아님) |
 
 `phase/`, `vendor/*`는 데몬이 import하지 않는다 — `backend/Dockerfile`이 이미지 빌드 때
-같이 넣으므로 별도 wheel 불필요 (`bus/shm/robot/phase/vendor`만 COPY, `cam/rs`는 호스트 전용).
+같이 넣으므로 별도 wheel 불필요 (`bus/shm/robot/so101/phase/vendor`만 COPY, `cam/rs/sim`은 호스트 전용 —
+so101 은 데몬이 호스트여도 관절 매핑 표를 게이트웨이 릴레이·컨테이너 안 녹화 프로세스가 읽어 양쪽이다).
 
 레지스트리는 둘 다 쓴다 (처음엔 "안 쓰기로 했다"였는데 뒤집었다 — tar 는 무엇을
 고쳤든 매번 3.46GB 를 옮기기 때문이다):
@@ -95,8 +96,8 @@ diff 로 정한다. 아래 [절차](#절차-수동)는 그 스크립트가 하�
 |---|---|
 | `backend/ wrapper/ policies/ act_aux/ phase/ vendor/` | backend 이미지 |
 | `frontend/` | frontend 이미지 |
-| `bus/ shm/ robot/` | **backend 이미지 + 데몬 wheel** (양쪽이 쓴다) |
-| `cam/ rs/` | 데몬 wheel (호스트 전용 — 이미지엔 없다) |
+| `bus/ shm/ robot/ so101/` | **backend 이미지 + 데몬 wheel** (양쪽이 쓴다 — so101 은 `relay_map` 때문) |
+| `cam/ rs/ sim/` | 데몬 wheel (호스트 전용 — 이미지엔 없다) |
 | `daemons/ deploy/systemd/ deploy/install-daemons.sh` | 데몬 소스·유닛 |
 | `tests/ *.md refactor/ feature/ docs/` | **아무것도** — 도는 것을 안 바꾼다 |
 

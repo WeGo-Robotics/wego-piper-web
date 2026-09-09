@@ -62,6 +62,16 @@ if command -v docker >/dev/null; then
     NEED_SUDO+=("usermod -aG docker $USER")
   fi
 fi
+# 장치 그룹 — 데몬은 이 사용자로 돈다. `video` 가 없으면 `/dev/video*` 를 못 열어
+# 카메라·RealSense 스캔이 0개가 되고(실측), `dialout` 이 없으면 SO-101 리더의
+# `/dev/ttyACM*` 와 slcan 어댑터를 못 연다. install.sh 와 같은 검사다 — 여기만
+# 빠져 있어서 소스 설치에서는 잡히던 것이 배포 호스트에서는 "장치 0개" 로만 보였다.
+for g in video dialout; do
+  if id -nG | tr ' ' '\n' | grep -qx "$g"; then ok "그룹 $g"; else
+    bad "그룹 $g 없음 — 그룹은 **다시 로그인해야** 반영된다"
+    NEED_SUDO+=("usermod -aG $g $USER")
+  fi
+done
 # ⚠ `venv` 는 파이썬에 딸려오지 않는다 — 데비안 계열은 `python3-venv` 가 따로다.
 #   없으면 아래 2절의 `python3 -m venv` 가 깨진다.
 python3 -c "import venv" >/dev/null 2>&1 && ok "python3 venv" \

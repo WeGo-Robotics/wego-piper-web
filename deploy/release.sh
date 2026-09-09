@@ -66,7 +66,9 @@ while read -r f; do
     robot/*) need_backend=1; need_wheels=1; WHEEL_PKGS+=(robot) ;;
     cam/*)   need_wheels=1; WHEEL_PKGS+=(cam) ;;   # 호스트 전용 — 이미지엔 없다
     rs/*)    need_wheels=1; WHEEL_PKGS+=(rs)  ;;
-    so101/*) need_wheels=1; WHEEL_PKGS+=(so101) ;; # 선택 데몬 — 깔되 켜지 않는다
+    # so101 도 **양쪽**이다 — 관절 매핑 표를 게이트웨이 릴레이와 컨테이너 안 녹화
+    # 프로세스(so101_leader_shm)가 읽는다. sim 은 호스트 전용 (게이트웨이는 버스만 쓴다)
+    so101/*) need_backend=1; need_wheels=1; WHEEL_PKGS+=(so101) ;;
     sim/*)   need_wheels=1; WHEEL_PKGS+=(sim) ;;
   esac
 done <<< "$CHANGED"

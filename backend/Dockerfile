@@ -20,7 +20,13 @@ COPY robot/ /tmp/pkg/robot/
 COPY phase/ /tmp/pkg/phase/
 # act_aux: 배포명 `lerobot_policy_act_aux` — lerobot-train 이 접두사로 자동 import 한다 (feature/act-aux.md §2)
 COPY act_aux/ /tmp/pkg/act_aux/
+# so101: 데몬(so101d)은 호스트지만 **관절 매핑 표**(`piper_so101.relay_map`)는 게이트웨이의
+# 릴레이와, 이 컨테이너 안에서 도는 녹화 프로세스의 `so101_leader_shm` 드라이버가 읽는다.
+# 없으면 SO-101 리더로 릴레이·수집을 시작하는 순간 ModuleNotFoundError 다. 순수
+# 파이썬이다 — Feetech SDK 는 데몬의 feetech.py 안에서만 늦게 import 되니 여기엔 없다.
+COPY so101/ /tmp/pkg/so101/
 RUN pip install --no-deps /tmp/pkg/bus /tmp/pkg/shm /tmp/pkg/robot /tmp/pkg/phase /tmp/pkg/act_aux \
+        /tmp/pkg/so101 \
     && pip install redis \
     && rm -rf /tmp/pkg
 
