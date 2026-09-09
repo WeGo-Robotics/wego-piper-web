@@ -6,13 +6,15 @@
  * 방식이다: 물리는 순간 양쪽 자세가 앵커가 되어 점프가 구조적으로 0,
  * [해제] 후 리더를 편한 자세로 옮겨 재정합하면 작업 공간을 이어 쓴다.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
 
 type RelayStatus = {
   running: boolean; leader: string | null; follower: string | null
   sent: number; stale: boolean; mode: string; blocked: string
   engaged: boolean; cross: boolean
+  /** 팔로워 명령 경로를 쥐고 있는가 — 해제하면 false (수집·추론이 팔을 쓸 수 있다) */
+  holding?: boolean
 }
 
 export default function So101TeleopPanel({ arm, side, followers, onClose }: {
@@ -50,6 +52,15 @@ export default function So101TeleopPanel({ arm, side, followers, onClose }: {
   }
 
   const running = !!st?.running && st.leader === arm
+  const runningRef = useRef(false)
+  runningRef.current = running
+
+  // ⚠ 화면을 떠나면 **반드시 끝낸다** — 조그 패널과 같은 규칙. 이 정리가 없어서
+  //   [해제]만 누르고 다른 화면으로 간 세션이 한 시간 넘게 남아 수집·추론·
+  //   게이트웨이 재시작을 "수동 조작 중"으로 막았다 (2026-09-09 실측).
+  useEffect(() => () => {
+    if (runningRef.current) api.post('/robots/relay/stop', {}).catch(() => {})
+  }, [])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -93,7 +104,8 @@ export default function So101TeleopPanel({ arm, side, followers, onClose }: {
             <div className="text-xs text-neutral-300 space-y-1">
               <p>{st.leader} → {st.follower} · {st.mode === 'joint' ? '관절 매칭' : '말단 POSE'}</p>
               <p className={st.engaged ? 'text-green-400' : 'text-amber-400'}>
-                {st.engaged ? `● 정합됨 — 전송 ${st.sent}회` : '○ 해제됨 — 팔로워 정지'}
+                {st.engaged ? `● 정합됨 — 전송 ${st.sent}회`
+                  : '○ 해제됨 — 팔로워를 놓았습니다 (수집·추론 가능). 닫으면 릴레이가 끝납니다'}
               </p>
               {st.stale && <p className="text-amber-400">리더 상태가 낡았습니다 — 발행 확인</p>}
               {st.blocked && <p className="text-amber-300">{st.blocked}</p>}

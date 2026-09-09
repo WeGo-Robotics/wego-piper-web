@@ -222,3 +222,60 @@ def test_the_leader_must_be_on_the_same_side():
 def test_the_side_is_passed_so_the_panel_can_explain():
     """좌/우 미지정 팔은 짝을 정할 수 없다 — 화면이 그 이유를 말해야 한다."""
     assert "side={arm.side}" in _page()
+
+
+def test_disengaging_lets_go_of_the_follower_but_remembers_the_pair(wired, monkeypatch):
+    """⚠ **실측(2026-09-09)**: [해제]가 전송만 멈추고 세션을 쥔 채 두어, 17:14 해제
+    뒤 18:20 까지 수집·추론·게이트웨이 재시작이 "수동 조작 중"으로 막혔다. 해제는
+    팔로워 명령 경로와 teleop 잠금을 **놓는다** — 팔로워는 데드맨이 세운다. 짝·
+    리더는 남아 [정합]이 다시 쥔다. 그 사이 남이 팔을 잡았으면 정합이 그 사유로
+    거절하고 짝은 남는다."""
+    from app.services import exclusivity as ex
+    from app.services.teleop import teleop_session
+
+    s = wired()
+    s.start("can0", "can1")
+    writer0 = s._writer
+    # 크로스 정합 로직은 SO-101 캘리브레이션이 필요하다 — 여기서는 잠금·자원만 본다
+    s._cross = True
+    monkeypatch.setattr(s, "_engage_locked", lambda: None)
+
+    s.disengage()
+    assert s.is_running and not s.holding, "짝은 남고 명령 경로는 놓아야 한다"
+    assert writer0.closed and not s._reader.closed
+    assert not ex.is_running(ex.Activity.TELEOP), "해제했는데 수동 조작 잠금이 남았다"
+    s._thread.join(1.0)
+    assert not s._thread.is_alive(), "writer 를 놓았는데 루프가 산다"
+    assert s.status()["running"] and not s.status()["holding"]
+
+    s.engage()
+    assert s.holding and ex.is_running(ex.Activity.TELEOP)
+    assert s._writer is not writer0 and s._thread.is_alive()
+
+    s.disengage()
+    ok, _ = teleop_session.start("can1", "joint")      # 그 사이 남이 팔을 잡았다
+    assert ok
+    with pytest.raises(RelayError, match="이미"):
+        s.engage()
+    assert s.is_running and not s.holding, "거절됐으면 짝은 남고 경로는 안 쥔다"
+    teleop_session.stop()
+    s.stop()
+    assert not s.is_running and not s.holding
+
+
+def test_a_stale_leader_pauses_sending_and_says_so_without_calling_it_a_stop():
+    """저널의 "릴레이 중단" 을 세션 종료로 읽어 한참 헤맸다 — 세션은 그대로고
+    전송만 쉬는 것이니 그렇게 말한다."""
+    from app.services import relay
+    loop = inspect.getsource(relay.RelaySession._loop)
+    assert "전송 보류" in loop and "릴레이 중단" not in loop
+
+
+def test_closing_the_so101_teleop_panel_ends_the_relay_too():
+    """조그 패널과 같은 규칙 — 화면을 떠나면 반드시 끝낸다. 이 정리가 없어서
+    [해제]만 누르고 다른 화면으로 간 세션이 한 시간 넘게 남았다."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "components"
+           / "So101TeleopPanel.tsx").read_text()
+    cleanup = src.split("useEffect(() => () =>", 1)[1][:200]
+    assert "/robots/relay/stop" in cleanup

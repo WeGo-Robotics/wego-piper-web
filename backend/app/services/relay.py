@@ -168,6 +168,13 @@ class RelaySession:
 
     @property
     def is_running(self) -> bool:
+        """짝(리더 → 팔로워)이 잡혀 있는가. 해제 중에도 True — 세션은 남는다."""
+        return self._leader is not None
+
+    @property
+    def holding(self) -> bool:
+        """팔로워의 **명령 경로를 쥐고 있는가.** 이게 True 인 동안만 수집·추론·재시작이
+        막힌다. 해제하면 False 다 — 팔로워는 데드맨이 세우고, 짝은 기억한다."""
         return self._writer is not None
 
     def start(self, leader: str, follower: str, mode: str = "joint",
@@ -245,11 +252,7 @@ class RelaySession:
                 if self._cross:
                     # 첫 정합 — 시작이 곧 클러치. 실패하면 시작 자체를 접는다.
                     self._engage_locked()
-                self._stop.clear()
-                self._thread = threading.Thread(
-                    target=self._loop, daemon=True,
-                    name=f"relay-{leader}-{follower}")
-                self._thread.start()
+                self._spawn_loop_locked()
             except RelayError:
                 self._unwind_start(reader)
                 raise
@@ -279,23 +282,69 @@ class RelaySession:
             pass
         teleop_session.stop()
 
+    def _spawn_loop_locked(self) -> None:
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._loop, daemon=True,
+            name=f"relay-{self._leader}-{self._follower}")
+        self._thread.start()
+
+    def _release_follower_locked(self) -> None:
+        """팔로워의 명령 경로를 **놓는다** — 세그먼트를 지우고 teleop 잠금을 푼다.
+        루프는 writer 가 없으면 스스로 끝난다. 짝·리더·앵커는 그대로다."""
+        self._stop.set()
+        writer, follower = self._writer, self._follower
+        self._writer = None
+        if writer is not None:
+            close_action_writer(writer, follower)
+        teleop_session.stop()
+
     # ── 정합 (클러치) — 크로스 모델 전용 ──
 
     def engage(self) -> None:
-        """[정합] — 지금의 리더·팔로워를 앵커로 잡고 전송을 켠다. 재정합 포함."""
+        """[정합] — 지금의 리더·팔로워를 앵커로 잡고 전송을 켠다. 재정합 포함.
+
+        해제로 놓았던 명령 경로를 **여기서 다시 쥔다.** 그 사이 수집·추론이 팔을
+        잡았으면 teleop 세션이 거절한다 — 그 사유가 그대로 사용자에게 간다.
+        """
         with self._lock:
             if not self.is_running:
                 raise RelayError("릴레이가 돌고 있지 않습니다")
             if not self._cross:
                 raise RelayError("같은 모델 릴레이에는 정합이 없습니다 — 절대 복제입니다")
+            if self._writer is None:
+                ok, why = teleop_session.start(self._follower, "leader")
+                if not ok:
+                    raise RelayError(why)
+                try:
+                    self._writer = open_action_writer(self._follower, DEADMAN_MS)
+                    require_healthy_bus(self._follower)
+                    enable_torque(self._follower)
+                    self._engage_locked()
+                    self._spawn_loop_locked()
+                except Exception as exc:
+                    # 짝은 남긴다 — 사람이 사유를 보고 다시 [정합]할 수 있게
+                    self._release_follower_locked()
+                    self._engaged = False
+                    if isinstance(exc, RelayError):
+                        raise
+                    raise RelayError(str(exc)) from exc
+                return
             self._engage_locked()
 
     def disengage(self) -> None:
-        """[해제] — 전송만 멈춘다 (세션 유지). 리더를 편한 자세로 옮긴 뒤
-        재정합하면 작업 공간을 이어 쓴다 — 마우스를 들어 옮기는 것과 같다."""
+        """[해제] — 전송을 멈추고 **팔로워를 놓는다.** 짝·앵커·리더는 남아 [정합]이
+        이어 쓴다 — 마우스를 들어 옮기는 것과 같다.
+
+        ⚠ 예전에는 세션을 쥔 채 전송만 멈췄다. 그러면 팔로워 명령 경로와 teleop
+        잠금이 그대로라 해제 뒤 한 시간이 지나도 수집·추론·게이트웨이 재시작이
+        "수동 조작 중"으로 막혔다 (2026-09-09 실측: 17:14 해제 → 18:20 까지).
+        팔로워는 어차피 데드맨이 세우니 쥐고 있을 이유가 없다.
+        """
         with self._lock:
             self._engaged = False
-            self._blocked = "해제됨 — 리더를 옮긴 뒤 [정합]을 누르세요"
+            self._release_follower_locked()
+            self._blocked = "해제됨 — 팔로워를 놓았습니다. 리더를 옮긴 뒤 [정합]을 누르세요"
 
     def _engage_locked(self) -> None:
         from piper_so101 import relay_map
@@ -351,6 +400,7 @@ class RelaySession:
             leader, follower = self._leader, self._follower
             self._writer = self._reader = None
             self._leader = self._follower = None
+            self._engaged = False
         close_action_writer(writer, follower)
         if reader is not None:
             try:
@@ -385,7 +435,9 @@ class RelaySession:
                 #   데드맨이 팔을 그 자리에 세운다 — 그쪽이 정직하다.
                 if not self._stale_since:
                     self._stale_since = time.time()
-                    logger.warning("리더 %s 상태가 %.1f초 낡음 — 릴레이 중단",
+                    # "중단"이 아니다 — 세션은 그대로고 전송만 쉰다. 저널에서
+                    # 끝난 것으로 읽혀 한참 헤맸다.
+                    logger.warning("리더 %s 상태가 %.1f초 낡음 — 전송 보류 (세션 유지)",
                                    self._leader, age)
                 continue
             if self._stale_since:
@@ -551,7 +603,8 @@ class RelaySession:
         self._blocked = why
 
     def status(self) -> dict:
-        return {"running": self.is_running, "leader": self._leader,
+        return {"running": self.is_running, "holding": self.holding,
+                "leader": self._leader,
                 "follower": self._follower, "sent": self._sent,
                 "stale": bool(self._stale_since),
                 "mode": self._mode, "blocked": self._blocked,
