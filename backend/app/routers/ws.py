@@ -65,6 +65,15 @@ async def broadcast_device_alert(added: list, cleared: list) -> None:
     })
 
 
+async def broadcast_load_alert(alerts: list[dict]) -> None:
+    """관절 과부하 — **사건마다 한 번.** 상태가 아니라 지난 일을 알린다.
+
+    robotd 는 이걸 이미 잡아 로그에 적고 있었는데 화면까지 오는 길이 없었다
+    (`app/services/load_alerts.py` 머리말).
+    """
+    await broadcast({"type": M.ROBOT_LOAD_ALERT, "data": {"alerts": alerts}})
+
+
 def _setup_callbacks() -> None:
     loop = asyncio.get_running_loop()
 

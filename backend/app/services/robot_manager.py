@@ -147,6 +147,36 @@ def set_safety(patch: dict) -> dict | None:
     return _call("set_safety", patch)
 
 
+def get_load_limits(iface: str) -> dict | None:
+    """관절 부하 감시 임계 (층 1). robotd 가 없으면 `None`.
+
+    ⚠ `get_safety` 와 같은 이유로 **게이트웨이가 기본값을 지어내지 않는다.**
+    데몬이 내려간 동안 화면이 "6.0N·m 로 감시 중" 이라고 말하면, 실제로는
+    아무것도 안 재고 있는데 사람은 지켜지고 있다고 믿는다.
+    """
+    return _call("get_load_limits", iface)
+
+
+def set_load_limits(iface: str, patch: dict) -> dict | None:
+    return _call("set_load_limits", iface, patch)
+
+
+def load_status(iface: str) -> dict | None:
+    """관절별 지금 토크·전류와 그동안의 최대. 임계를 고를 근거가 이것뿐이다."""
+    return _call("load_status", iface)
+
+
+# 경보 폴러의 RPC 한도 (초). 기본 20초는 **2초 루프 안에서 쓰기엔 너무 길다** —
+# robotd 가 긴 작업(검사·영점) 중이면 그동안 장치 감시가 통째로 멎는다.
+# 이건 안전 경로가 아니라 알림이라, 한 주기 걸러도 다음에 카운터로 따라잡는다.
+LOAD_POLL_TIMEOUT_S = 3
+
+
+def load_status_all() -> dict | None:
+    """연결된 팔 전부의 부하 현황 — **왕복 한 번.**"""
+    return _call("load_status_all", timeout=LOAD_POLL_TIMEOUT_S)
+
+
 def lost_arms() -> list[dict]:
     """**robotd 가 판정한** 사라진 팔. 게이트웨이가 세그먼트로 추론하지 않는다.
 

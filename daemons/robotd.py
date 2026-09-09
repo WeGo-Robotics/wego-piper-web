@@ -70,6 +70,8 @@ _METHODS = {
     "jog_end_pose", "read_end_pose",
     "get_safety", "set_safety",
     "set_hardware_zero", "read_raw_all", "stream_end_pose", "read_motion_status",
+    "load_status", "load_status_all", "load_history",
+    "get_load_limits", "set_load_limits",
     "init_interface", "check_active", "sniff_ids", "rename_interface", "recover_usb", "usb_info",
     "lost",
 }
@@ -99,6 +101,48 @@ class _Serving(RobotHub):
     def release_all(self) -> bool:
         publish.arm_bridge_manager.stop_all()
         return super().release_all()
+
+    def clear_errors(self, ifaces: list[str]) -> list[dict]:
+        """리셋 보고에 **그 창의 부하 기록**을 실어 보내고, 창을 새로 연다.
+
+        층 1(부하 감시)과 층 2(리셋 간극)는 **짝으로만 뜻이 있다.** 여기가 그
+        둘이 만나는 유일한 지점이다: `slip_raw` 가 "실제로 몇 도 밀렸나" 를
+        말하고, `load` 가 "그동안 토크가 어디까지 갔나" 를 말한다.
+
+        - 경보가 떴는데 `slip_raw` 가 0 → 그냥 무거웠던 것이다 (임계가 낮다)
+        - 경보가 없었는데 `slip_raw` 가 크다 → **임계가 높다**. 놓친 것이다
+
+        임계값이 잠정인 동안(`load.PROVISIONAL_WARN_NM`) 그 숫자를 고칠 근거가
+        여기서만 나온다. 그래서 리셋이 창을 닫을 때 기록을 버리지 않고 실어 보낸다.
+        """
+        report = super().clear_errors(ifaces)
+        for row in report:
+            row["load"] = publish.arm_bridge_manager.load_reset(row["iface"])
+        return report
+
+    def load_status(self, iface: str) -> dict:
+        """관절 부하 현황 (층 1)."""
+        return publish.arm_bridge_manager.load_snapshot(iface)
+
+    def load_status_all(self) -> dict:
+        """연결된 팔 전부의 부하 현황 — **왕복 한 번.** 경보 폴러가 쓴다."""
+        return publish.arm_bridge_manager.load_snapshot_all()
+
+    def get_load_limits(self, iface: str) -> dict:
+        """이 팔의 부하 임계. **팔마다 다르다** (`load_store` 머리말)."""
+        from piper_robot import load_store
+
+        m = publish.arm_bridge_manager
+        return load_store.as_dict(iface, m.load_limits(iface))
+
+    def set_load_limits(self, iface: str, patch: dict) -> dict:
+        from piper_robot import load_store
+
+        m = publish.arm_bridge_manager
+        return load_store.as_dict(iface, m.set_load_limits(iface, patch))
+
+    def load_history(self, iface: str, limit: int | None = None) -> dict:
+        return publish.arm_bridge_manager.load_history(iface, limit)
 
     def lost(self) -> list[dict]:
         """**데몬이 판정한** 사라진 팔들.

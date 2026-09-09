@@ -31,7 +31,8 @@ from piper_robot.can import iface_exists
 from piper_robot.joints import denormalize_all
 from dataclasses import replace
 
-from piper_robot import safety_store
+from piper_robot import load_store, safety_store
+from piper_robot.load import LoadLimits, LoadWatch, describe as describe_load
 from piper_robot.safety import (
     FloorConfig, Reason, SafetyConfig, filter_goal,
 )
@@ -50,6 +51,15 @@ ACTION_POLL_S = 0.001
 
 # 에러 코드·제어 모드 갱신 주기. 화면용 진단 값이라 관절만큼 급하지 않다.
 DIAG_PERIOD_S = 0.1
+
+# 관절 부하(전류·토크) 표본 주기. 20Hz — `load.DEFAULT_DWELL_S`(0.30초) 안에
+# 여섯 표본이 들어가므로 지속 판정이 표본 하나에 좌우되지 않는다.
+#
+# ⚠ **100Hz 로 올리지 마라.** 발행 루프가 이미 매 사이클 팔 락을 잡는데, 여기서
+#   한 번 더 잡으면 정작 급한 관절 읽기가 그만큼 밀린다. 대신 표본 사이의 피크는
+#   놓친다 — 우리가 쫓는 준정적 과부하는 초 단위라 문제가 안 되지만, 충돌 순간의
+#   최대 토크를 재는 용도로는 이 값이 부족하다는 뜻이기도 하다.
+LOAD_PERIOD_S = 0.05
 
 # 소비자가 명령 세그먼트를 만들기를 기다리는 주기. `/dev/shm` stat 한 번이라
 # 촘촘해도 공짜다. **넉넉하게 잡으면 그만큼 첫 명령들이 버려진다** —
@@ -82,6 +92,9 @@ class ArmBridge:
         self._err_counters: dict | None = None
         self._deadman_held = False
         self._last_logged = Reason.OK
+        #: 관절 부하 감시 (층 1). ⚠ **소비자가 붙어 있는지와 무관하게 돈다** —
+        #: 슬립은 조그·파킹·텔레옵 중에도 나고, 그때가 오히려 최다 트리거다.
+        self.load = LoadWatch(name=arm.iface)
 
     @property
     def running(self) -> bool:
@@ -168,6 +181,7 @@ class ArmBridge:
         next_diag = 0.0
         next_presence = 0.0
         next_err = 0.0
+        next_load = 0.0
         fails = 0
         err_code = ctrl_mode = 0
         while self._running:
@@ -191,6 +205,9 @@ class ArmBridge:
                     # ⚠ `arm.ctrl_mode` 는 화면용 **문자열**("0x06")이다 — 정수는 이쪽이다
                     ctrl_mode = self.arm.refresh_ctrl_mode() or 0
                     next_diag = t0 + DIAG_PERIOD_S
+                if t0 >= next_load:
+                    next_load = t0 + LOAD_PERIOD_S
+                    self._sample_load()
 
                 values = self.arm.read_joints_normalized()
                 if values is not None and self._state is not None:
@@ -207,6 +224,26 @@ class ArmBridge:
                 self._declare_lost("연속으로 관절 상태를 읽지 못했습니다")
                 return
             time.sleep(max(0.0, period - (time.monotonic() - t0)))
+
+    def _sample_load(self) -> None:
+        """관절 부하를 한 표본 먹이고 **새로 선** 경보만 로그로 낸다 (층 1).
+
+        ⚠ **일정은 monotonic, 표시는 wall clock 이다.** 루프 스케줄링은 시계가
+          뒤로 가면 안 되므로 monotonic 이지만, 그 값을 그대로 기록에 넣으면
+          화면이 "언제 피크였나" 를 사람의 시각으로 못 옮긴다 (`bus_watch` 도
+          `time.time()` 을 쓴다). NTP 점프는 `load.MAX_GAP_S` 가 흡수한다.
+
+        ⚠ **읽기 실패는 조용히 넘긴다.** 부하 감시가 상태 발행을 막으면 안 된다 —
+          관절을 못 읽는 것은 이미 `fails` 가 세고 있고 판정도 거기서 한다.
+        """
+        rows = self.arm.read_load()
+        if not rows:
+            return
+        for ev in self.load.feed(
+                time.time(),
+                {j: r["effort_nm"] for j, r in rows.items()},
+                {j: r["current_a"] for j, r in rows.items()}):
+            logger.warning("%s", describe_load(self.iface, ev))
 
     def _declare_lost(self, why: str) -> None:
         """팔이 없어졌다고 판정하고 **발행을 끊는다.**
@@ -338,12 +375,20 @@ class ArmBridgeManager:
         # 뽑았다 꽂을 때 기본값으로 돌아가고, 그러면 꺼둔 줄 알았던 필터가
         # 조용히 다시 켜진다.
         self._floor = safety_store.load()
+        # ⚠ 부하 임계는 **팔마다** 다르다 (`load_store` 머리말). 바닥 필터처럼
+        #   하나로 묶으면, 슬립이 잦은 한 관절을 잡으려고 조인 임계가 멀쩡한
+        #   나머지 팔을 종일 울린다.
+        self._load: dict[str, LoadLimits] = load_store.load()
 
     def start(self, arm) -> ArmBridge:
         b = self.bridges.get(arm.iface)
         if b is None:
             b = self.bridges[arm.iface] = ArmBridge(
                 arm, SafetyConfig(floor=self._floor))
+        # ⚠ **연결할 때마다 다시 걸어준다.** 브리지 객체는 재연결에 재사용되지만
+        #   저장된 임계가 자기 발로 따라오지는 않는다 — 안 걸면 팔을 뽑았다 꽂는
+        #   순간 잠정 기본값으로 조용히 돌아간다.
+        b.load.retune(self._load.get(arm.iface, LoadLimits()))
         b.start()
         return b
 
@@ -375,6 +420,58 @@ class ArmBridgeManager:
         """**데몬이 판정한** 사라진 팔들. 게이트웨이가 추론하지 않게 하려는 것이다."""
         return [{"id": iface, "at": b.lost_at}
                 for iface, b in self.bridges.items() if b.lost_at]
+
+    def load_limits(self, iface: str) -> LoadLimits:
+        """저장된 임계. 없는 팔은 잠정 기본값."""
+        return self._load.get(iface, LoadLimits())
+
+    def set_load_limits(self, iface: str, patch: dict) -> LoadLimits:
+        """임계를 바꾸고 **살아 있는 브리지에 곧바로 적용**한다.
+
+        저장만 하고 적용을 안 하면 다음 연결까지 안 바뀌는데 사용자는 화면에서
+        바꿨으니 바뀐 줄 안다 — 바닥 필터에서와 같은 이유로 안전 설정에서 그
+        어긋남은 위험하다.
+        """
+        cfg = load_store._apply(self.load_limits(iface), patch)
+        self._load[iface] = cfg
+        load_store.save(self._load)
+        b = self.bridges.get(iface)
+        if b is not None:
+            b.load.retune(cfg)
+        return cfg
+
+    def load_snapshot(self, iface: str) -> dict:
+        """관절 부하 현황 (층 1). 브리지가 없으면 빈 dict — 연결 안 된 팔이다."""
+        b = self.bridges.get(iface)
+        return b.load.snapshot() if b else {}
+
+    def load_snapshot_all(self) -> dict[str, dict]:
+        """살아 있는 브리지 전부의 부하 현황.
+
+        ⚠ **팔마다 부르면 안 되는 자리가 있다.** 게이트웨이의 경보 폴러는 2초
+        루프 안에서 도는데, RPC 하나가 최대 20초(`RPC_TIMEOUT_S`)까지 기다린다 —
+        팔 4대면 최악 80초 동안 장치 감시가 통째로 멎는다. 한 번에 받으면
+        그 위험이 `lost()` 와 같은 크기로 준다.
+        """
+        return {iface: b.load.snapshot()
+                for iface, b in self.bridges.items() if b.running}
+
+    def load_history(self, iface: str, limit: int | None = None) -> dict:
+        b = self.bridges.get(iface)
+        return b.load.history(limit) if b else {"joints": [], "rows": []}
+
+    def load_reset(self, iface: str) -> dict:
+        """누적을 버리기 **전에** 그 창의 기록을 돌려준다.
+
+        ⚠ 버리기만 하면 창이 닫힌 순간의 값이 사라진다 — 이걸 부르는 자리가
+        0x150 리셋(층 2)이라, 실제 슬립각과 짝지을 부하 기록이 바로 그 값이다.
+        """
+        b = self.bridges.get(iface)
+        if b is None:
+            return {}
+        snap = b.load.snapshot()
+        b.load.reset()
+        return snap
 
     def sweep_stale(self) -> list[str]:
         """지난 프로세스가 남긴 팔 세그먼트 정리. **기동 시 한 번만.**

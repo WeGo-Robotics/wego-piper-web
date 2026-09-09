@@ -73,6 +73,17 @@ export type DeviceAlert = {
 
 export type DeviceAlertData = { alerts: DeviceAlert[]; added: DeviceAlert[]; cleared: DeviceAlert[] }
 
+/** 관절 과부하 사건 하나. 문구는 **잰 쪽(robotd)이** 만든다. */
+export type LoadAlert = {
+  id: string
+  iface: string
+  joint: string
+  text: string
+  peak_nm?: number
+  over_s?: number
+  at?: number
+}
+
 export type WsMessage =
   // 추론
   | { type: 'log'; data: string }
@@ -98,6 +109,10 @@ export type WsMessage =
   | { type: 'upload_state'; data: ProcessState }
   // 장치 사라짐 (CAN·카메라). **전이에서만** 온다 — 현재 목록은 /api/devices/alerts
   | { type: 'device_alert'; data: DeviceAlertData }
+  // 관절 과부하 (슬립 위험 구간). ⚠ 장치 경보와 달리 **사건**이다 — 조건이
+  // 풀려도 지워지지 않는다. 과부하는 몇 초 만에 끝나므로 상태로 다루면
+  // 자리를 비웠던 사람에게는 아무 일도 없던 것이 된다.
+  | { type: 'robot_load_alert'; data: { alerts: LoadAlert[] } }
   // 연결 유지
   | { type: 'pong'; data?: undefined }
   // ⚠ **클라이언트가 보내는** 유일한 메시지 (나머지는 전부 서버 → 화면).

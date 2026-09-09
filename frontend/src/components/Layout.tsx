@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import DeviceAlerts from './DeviceAlerts'
+import LoadAlerts from './LoadAlerts'
 import EStopButton from './EStopButton'
 import Sidebar from './Sidebar'
 import StatusBar from './StatusBar'
@@ -42,6 +43,7 @@ export default function Layout() {
           ⚠ 문서 흐름에 배너를 두면 긴 페이지에서 스크롤을 올려야 보인다 —
           수집 페이지에서 안 보인다는 지적이 그거였다. 호스트는 `fixed` 다. */}
       <DeviceAlerts />
+      <LoadAlerts />
       <SystemMessageHost />
       {/* ⚠ E-stop 은 자리를 안 옮긴다. 사이드바가 접히든 펴지든, 어느 페이지든
           **같은 자리**여야 한다 — 그게 안전 장치의 요건이다. */}

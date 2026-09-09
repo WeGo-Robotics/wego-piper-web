@@ -22,6 +22,7 @@ from piper_robot.can import (
     init_can_interface,
 )
 from piper_robot.joints import denormalize_all, normalize_all
+from piper_robot.kinematics import ARM_JOINTS
 
 logger = logging.getLogger(__name__)
 
@@ -1022,6 +1023,36 @@ class Arm:
                 return None
         flags = [name for bit, name in self._ERR_BITS.items() if err_code & (1 << bit)]
         return {"err_code": err_code, "flags": flags}
+
+    # ── 부하(전류·토크) ──
+
+    def read_load(self) -> dict | None:
+        """관절별 전류·토크·모터 속도 (0x251~0x256 고속 피드백).
+
+        ⚠ **왕복이 없다.** 팔이 스스로 주기적으로 뿌리는 보고를 SDK 가 캐시해
+        둔 것을 읽을 뿐이라, 관절 읽기와 같은 값의 연산이다 — 100Hz 발행 루프
+        옆에 둬도 부담이 아니다. 물어보는 호출(`Search*`)과 헷갈리면 안 된다.
+
+        `effort` 는 SDK 가 전류에 관절군별 고정 계수를 곱해 만든 값이다
+        (J1~3 ×1.18125, J4~6 ×0.95844). 단위는 0.001N·m 이라 여기서 N·m 로 낸다.
+        """
+        with self._lock:
+            if not self._piper:
+                return None
+            try:
+                hi = self._piper.GetArmHighSpdInfoMsgs()
+            except Exception as e:
+                logger.debug("read_load failed on %s: %s", self.iface, e)
+                return None
+        out: dict[str, dict] = {}
+        for i, name in enumerate(ARM_JOINTS, start=1):
+            m = getattr(hi, f"motor_{i}", None)
+            if m is None:
+                continue
+            out[name] = {"current_a": m.current / 1000.0,
+                         "effort_nm": m.effort / 1000.0,
+                         "speed_rad_s": m.motor_speed / 1000.0}
+        return out
 
     # 리셋 전후 보고값 차이가 이보다 크면 슬립으로 친다. raw 단위 0.001° —
     # 2000 = 2.0°. 정지 상태의 잡음·양자화는 수십 단위라 여유가 크다.

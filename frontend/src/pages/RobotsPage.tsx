@@ -6,6 +6,7 @@ import BusStatusPanel from '../components/BusStatusPanel'
 import DiagnosticsPanel from '../components/DiagnosticsPanel'
 import VersionPanel from '../components/VersionPanel'
 import JogPanel from '../components/JogPanel'
+import LoadGuardPanel from '../components/LoadGuardPanel'
 import { ZeroCalibrationPanel } from '../components/ZeroCalibrationModal'
 import So101CalibrationWizard from '../components/So101CalibrationWizard'
 import So101TeleopPanel from '../components/So101TeleopPanel'
@@ -303,10 +304,14 @@ type SerialPortInfo = {
 type SimPortInfo = { iface: string; scene: string; connected: boolean; ready: boolean }
 
 /**
- * 로봇 카드의 [상세] — 파킹 / 영점 / 조작 / 설정 탭.
+ * 로봇 카드의 [상세] — 파킹 / 영점 / 조작 / 부하 / 설정 탭.
  *
- * 셋 다 팔 하나에 고정된 조작이라 한 창에 모은다. 이전에는 파킹·영점·조작이
+ * 전부 팔 하나에 고정된 조작이라 한 창에 모은다. 이전에는 파킹·영점·조작이
  * 제각각 모달이었는데, 같은 팔을 다루면서 창을 갈아타야 했다.
+ *
+ * ⚠ **[부하]가 [설정] 이 아니라 따로 있는 이유**: 임계가 아직 잠정이라 숫자를
+ *   고르려면 그 팔이 지금 내고 있는 토크를 **같은 화면에서** 봐야 한다. 설정
+ *   탭의 다른 항목들처럼 값만 적어 두는 칸이 아니다.
  */
 function ArmDetailModal({ arm, leader, onConfig, onClose }: {
   arm: ArmInfo
@@ -338,7 +343,7 @@ function ArmDetailModal({ arm, leader, onConfig, onClose }: {
 
         <div className="flex overflow-hidden rounded border border-neutral-700 text-xs">
           {([['parking', '파킹'], ['zero', '영점'], ['jog', '조작'],
-             ['config', '설정']] as const).map(([k, label]) => (
+             ['load', '부하'], ['config', '설정']] as const).map(([k, label]) => (
             <button key={k} onClick={() => setDtab(k)}
               className={`px-4 py-1.5 ${dtab === k
                 ? 'bg-neutral-700 text-white' : 'bg-neutral-900 text-neutral-400 hover:text-white'}`}>
@@ -371,6 +376,7 @@ function ArmDetailModal({ arm, leader, onConfig, onClose }: {
             </button>
           </div>
         )}
+        {dtab === 'load' && <LoadGuardPanel iface={arm.iface} />}
         {dtab === 'config' && (
           <div className="space-y-2">
             <h4 className="text-xs font-semibold text-neutral-400">

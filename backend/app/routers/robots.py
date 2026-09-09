@@ -587,6 +587,45 @@ async def set_safety(body: SafetyRequest):
     return {"floor": out}
 
 
+# ── 부하 감시(전류·토크) 임계 ──
+
+class LoadLimitsRequest(BaseModel):
+    iface: str
+    enabled: bool | None = None
+    warn_nm: float | None = None
+    dwell_s: float | None = None
+    #: 관절별 덮어쓰기. 값이 `None` 이면 "공통값을 쓴다" 는 뜻이라 지워진다.
+    per_joint: dict[str, float | None] | None = None
+
+
+@router.get("/load")
+async def get_load(iface: str):
+    """이 팔의 부하 임계 + **지금 관절이 실제로 내고 있는 토크·전류.**
+
+    ⚠ 둘을 한 응답에 담는다. 임계값은 아직 잠정이라(`provisional`) 사람이
+    숫자를 고르려면 "이 팔이 평소 어디까지 가나" 를 같은 화면에서 봐야 한다 —
+    따로 부르게 두면 화면이 둘을 다른 시각의 값으로 나란히 보여준다.
+    """
+    limits = robot_manager_mod.get_load_limits(iface)
+    if limits is None:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    return {"limits": limits, "status": robot_manager_mod.load_status(iface)}
+
+
+@router.post("/load")
+async def set_load(body: LoadLimitsRequest):
+    # `exclude_none` 은 **필드**만 걷어낸다 — `per_joint` 안의 `None` 은 그대로
+    # 남아 데몬까지 간다. 그게 필요하다: 관절 입력을 비운 것은 "이 관절은
+    # 공통값을 쓴다" 는 뜻이라, 덮어쓰기를 지우라는 지시로 전달돼야 한다.
+    patch = body.model_dump(exclude_none=True, exclude={"iface"})
+    if not patch:
+        raise HTTPException(400, "바꿀 값이 없습니다")
+    out = robot_manager_mod.set_load_limits(body.iface, patch)
+    if out is None:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    return {"limits": out}
+
+
 # ── USB 진단 / 복구 ──
 
 class UsbRecoverRequest(BaseModel):

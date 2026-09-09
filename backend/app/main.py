@@ -54,9 +54,10 @@ _DEVICE_WATCH_S = 2.0
 
 async def _watch_devices() -> None:
     """전이가 있을 때만 방송한다. 실패해도 게이트웨이를 죽이지 않는다."""
-    from app.routers.ws import broadcast_device_alert
+    from app.routers.ws import broadcast_device_alert, broadcast_load_alert
     from app.services.device_watch import device_watch
     from app.services.light_watch import light_watch
+    from app.services.load_alerts import load_alert_watch
 
     while True:
         try:
@@ -67,6 +68,17 @@ async def _watch_devices() -> None:
                 await asyncio.to_thread(light_watch.sample)
             except Exception as exc:
                 logger.debug("조명 감시 실패: %s", exc)
+            # 관절 과부하는 **사건**이라 장치 경보와 따로 나간다 — 조건이
+            # 풀렸다고 지워지면 안 된다 (`load_alerts` 머리말).
+            try:
+                overloads = await asyncio.to_thread(load_alert_watch.check)
+            except Exception as exc:
+                logger.debug("부하 경보 확인 실패: %s", exc)
+                overloads = []
+            if overloads:
+                for a in overloads:
+                    logger.warning("관절 과부하: %s", a["text"])
+                await broadcast_load_alert(overloads)
             added, cleared = await asyncio.to_thread(device_watch.check)
             if not added and not cleared:
                 continue

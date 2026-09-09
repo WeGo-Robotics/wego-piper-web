@@ -51,6 +51,13 @@ UPLOAD_STATE: Final = "upload_state"
 # **전이에서만** 온다 — 같은 사실을 반복해 띄우면 아무도 안 읽는다.
 DEVICE_ALERT: Final = "device_alert"
 
+# ── 관절 과부하 (슬립 위험 구간) ──
+#
+# ⚠ `DEVICE_ALERT` 와 달리 **사건**이다 — 상태가 아니다. 과부하는 몇 초 만에
+# 끝나므로 상태로 다루면 배너가 떴다 스스로 사라지고, 자리를 비웠던 사람에게는
+# 아무 일도 없던 것이 된다. 알아야 할 것은 "눌렸었다" 라서 지우는 것은 사람이 한다.
+ROBOT_LOAD_ALERT: Final = "robot_load_alert"
+
 # ── 연결 유지 ──
 PONG: Final = "pong"
 
@@ -70,6 +77,7 @@ ALL: Final[frozenset[str]] = frozenset({
     ORCHESTRATOR,
     UPLOAD_LOG, UPLOAD_STATE,
     DEVICE_ALERT,
+    ROBOT_LOAD_ALERT,
     PONG,
     HEARTBEAT,
 })
