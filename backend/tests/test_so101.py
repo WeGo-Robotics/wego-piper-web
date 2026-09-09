@@ -176,7 +176,8 @@ def test_serial_ports_ride_the_ports_route_as_their_own_kind():
     body = router.split('"/ports"', 1)[1].split("@router.post", 1)[0]
     assert '"serial": serial' in body
     page = (REPO / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
-    assert "ports.length + serialPorts.length === 0" in page, "시리얼만 있을 때 빈 상태로 보인다"
+    assert "ports.length + serialPorts.length + simPorts.length === 0" in page, \
+        "시리얼(또는 시뮬)만 있을 때 빈 상태로 보인다"
     assert "미캘리브레이션" in page, "캘리브레이션 없는 팔이 표시가 안 된다"
 
 

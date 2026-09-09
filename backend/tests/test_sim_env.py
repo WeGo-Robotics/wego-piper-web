@@ -209,3 +209,95 @@ def test_the_light_control_scales_the_headlight_too():
     render = src.split("def _render(", 1)[1].split("\n    def ", 1)[0]
     assert "vis.headlight.diffuse" in render and "vis.headlight.ambient" in render
     assert "light_diffuse" in render
+
+
+# ── 3단계: 등록 — SimArmInfo ──
+
+
+def test_sim_arm_has_the_whole_arminfo_surface_without_robotd():
+    """게이트웨이 25곳이 `robot_manager.arms[iface]` 의 ArmInfo 표면을 가정한다 —
+    SimArmInfo 가 같은 표면을 지키면 그 25곳은 무수정이다. RPC 를 타는 메서드는
+    전부 시뮬로 넘겨야 한다: 하나라도 robotd `_call` 로 새면 robotd 가 그 이름을
+    몰라 조용히 실패한다."""
+    import inspect
+
+    from app.services.robot_manager import ArmInfo, SimArmInfo
+
+    def _src(f) -> str:
+        try:
+            return inspect.getsource(f)
+        except (OSError, TypeError):
+            return ""        # dataclass 가 만든 __init__/__eq__ 등 — 소스가 없다
+
+    rpc_methods = [n for n, f in vars(ArmInfo).items()
+                   if callable(f) and not n.startswith("__") and "_call(" in _src(f)]
+    assert rpc_methods, "ArmInfo 에 RPC 메서드가 없다? 앵커가 낡았다"
+    for n in rpc_methods:
+        assert n in vars(SimArmInfo), f"SimArmInfo 가 {n} 을 robotd 로 흘린다"
+        body = inspect.getsource(vars(SimArmInfo)[n])
+        assert "_call(" not in body or "sim.call(" in body, n
+    a = SimArmInfo(iface="sim_follower1")
+    assert a.transport == "sim" and a.to_dict()["transport"] == "sim"
+
+
+def test_scan_merges_sim_arms_and_keeps_them_seen(monkeypatch):
+    """⚠ `scan()` 은 `seen` 에 없는 팔을 mark_absent 한다. simd 가 보고한 팔을
+    같은 스캔에서 seen 에 넣지 않으면 robotd 스캔 때마다 연결이 내려간다."""
+    from app.services import robot_manager as rm
+    from app.services import sim_robot_client as sim
+
+    monkeypatch.setattr(rm, "_call", lambda method, *a, **k: [] if method == "scan" else None)
+    monkeypatch.setattr(sim, "call", lambda method, *a, **k:
+                        [{"id": "sim_follower1", "arm": "sim_follower1"}] if method == "scan" else None)
+    mgr = rm.RobotManager()
+    mgr.scan()
+    arm = mgr.arms["sim_follower1"]
+    assert isinstance(arm, rm.SimArmInfo) and arm.connected, "스캔이 sim 팔을 없음 처리했다"
+    mgr.scan()
+    assert mgr.arms["sim_follower1"].connected, "두 번째 스캔에서 없음 처리됐다"
+
+
+def test_the_session_and_ports_and_page_know_the_transport():
+    """세션이 transport 를 남겨야 복원이 클래스를 가르고, /ports 는 sim 을 CAN 통계
+    루프에서 빼 자기 카드로 내며, 페이지는 sim 팔에서 마스터/슬레이브·0x150 을
+    안 그린다 (capabilities — 시뮬에 없는 기능은 없다고 선언)."""
+    rm_src = (REPO / "backend" / "app" / "services" / "robot_manager.py").read_text()
+    assert '"transport": arm.transport' in rm_src
+    router = (REPO / "backend" / "app" / "routers" / "robots.py").read_text()
+    ports = router.split('"/ports"', 1)[1].split("@router.post", 1)[0]
+    assert '"sim": sim_ports' in ports and 'transport", "can") == "sim"' in ports
+    page = (REPO / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
+    assert "simPorts.map((sp) =>" in page
+    assert "arm.transport !== 'sim' && <>" in page, "sim 팔에 마스터/슬레이브·리셋이 그려진다"
+
+
+def test_a_stale_can_entry_for_a_sim_arm_is_upgraded_keeping_its_registration(monkeypatch):
+    """⚠ **실측: 옛 세션이 sim_follower1 을 `transport: can` 으로 굳혀 둬** 포트
+    카드가 CAN 쪽에 섞이고 raw 읽기가 robotd 로 새어 503 이 났다. 스캔은 기존
+    항목을 교체하지 않고 **승격**한다(role/side/ready 유지) — simd 가 아직 안
+    떠도 `sim_` 접두사면 시뮬 팔이다."""
+    from app.services import robot_manager as rm
+    from app.services import sim_robot_client as sim
+
+    monkeypatch.setattr(rm, "_call", lambda method, *a, **k: [] if method == "scan" else None)
+    monkeypatch.setattr(sim, "call", lambda method, *a, **k: [])      # simd 죽어 있음
+    mgr = rm.RobotManager()
+    stale = rm.ArmInfo(iface="sim_follower1")
+    stale.role, stale.side, stale.ready = "follower", "left", True
+    mgr.arms["sim_follower1"] = stale
+    mgr.scan()
+    arm = mgr.arms["sim_follower1"]
+    assert isinstance(arm, rm.SimArmInfo) and arm.transport == "sim"
+    assert (arm.role, arm.side, arm.ready) == ("follower", "left", True), "승격이 등록을 날렸다"
+
+
+def test_the_raw_joint_route_reads_sim_arms_through_the_arm_object():
+    """`/joints/raw` 는 ArmInfo 표면을 우회해 robotd 로 직행하던 유일한 읽기 경로다
+    — 시뮬 팔에서 503 이 났다(실측). sim 이면 팔 객체(shm)로 읽어 같은 모양
+    (밀리도 dict)으로 돌려준다. 나머지 직접 RPC(진단·버스 통계)는 CAN 전용이라
+    그대로다."""
+    router = (REPO / "backend" / "app" / "routers" / "robots.py").read_text()
+    body = router.split('@router.get("/joints/raw/{iface}")', 1)[1].split("@router.", 1)[0]
+    assert 'transport", "can") == "sim"' in body
+    assert "arm.read_joints_normalized()" in body and "denormalize_all(norm)" in body
+    assert body.index('== "sim"') < body.index('_call("read_raw_all"'), "sim 분기가 robotd 호출 뒤에 있다"

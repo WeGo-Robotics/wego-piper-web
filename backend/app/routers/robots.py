@@ -234,6 +234,15 @@ async def read_joints_raw(iface: str):
     arm = robot_manager.arms.get(iface)
     if not arm or not arm.connected:
         raise HTTPException(404, f"{iface} 가 연결되어 있지 않습니다")
+    if getattr(arm, "transport", "can") == "sim":
+        # 시뮬 팔은 robotd 가 모른다 — 팔 객체(shm)로 읽어 같은 모양(밀리도 dict)으로.
+        # (실측: robotd 로 직행해 503 이 났다 — ArmInfo 표면을 우회한 유일한 읽기 경로)
+        from piper_robot.joints import denormalize_all
+
+        norm = arm.read_joints_normalized()
+        if not norm:
+            raise HTTPException(503, "관절값을 읽지 못했습니다")
+        return denormalize_all(norm)
     raw = robot_manager_mod._call("read_raw_all", iface)
     if not raw:
         raise HTTPException(503, "관절값을 읽지 못했습니다")
@@ -860,7 +869,13 @@ async def list_ports():
     from piper_robot.can import bus_stats
 
     out = []
+    sim_ports = []
     for iface, arm in sorted(robot_manager.arms.items()):
+        if getattr(arm, "transport", "can") == "sim":
+            # 시뮬 팔 — CAN 통계가 없다. 카드 종류를 나눈다 (시리얼과 같은 규칙)
+            sim_ports.append({"iface": iface, "scene": "piper_scene",
+                              "connected": bool(arm.connected), "ready": bool(arm.ready)})
+            continue
         stats = await asyncio.to_thread(bus_stats, iface)
         out.append({
             "iface": iface,
@@ -889,7 +904,7 @@ async def list_ports():
                      for a in (await asyncio.to_thread(so101_client.info))["arms"]}
         for entry in serial:
             entry["attached"] = arms_info.get(entry.get("arm"))
-    return {"ports": out, "serial": serial}
+    return {"ports": out, "serial": serial, "sim": sim_ports}
 
 
 @router.post("/disconnect")

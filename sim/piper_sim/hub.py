@@ -115,6 +115,20 @@ class SimHub:
 
     # ── 시뮬 전용 ──
 
+    def go_to(self, arm_name: str, norm_goal: dict) -> bool:
+        """파킹 등 게이트웨이가 시키는 이동 — 안전 필터를 지나 세계 목표로.
+        action 세그먼트를 거치지 않는 이유: 데드맨(300ms)이 한 번 쓴 목표를
+        곧 되감아, 파킹처럼 몇 초 걸리는 이동은 세그먼트로는 완주하지 못한다."""
+        from piper_robot.safety import filter_goal
+
+        b = self.bridges.get(arm_name)
+        if b is None or not b.running:
+            raise SimError(f"{arm_name} 이 연결돼 있지 않습니다")
+        now = self._world().snapshot()
+        goal, _reason = filter_goal(now, dict(norm_goal), b.safety, deadman_tripped=False)
+        self._world().set_goal(goal)
+        return True
+
     def cube_pos(self) -> list[float]:
         return self._world().cube_pos()
 

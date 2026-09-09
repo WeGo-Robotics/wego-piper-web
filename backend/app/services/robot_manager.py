@@ -238,6 +238,8 @@ class ArmInfo:
     # iface 이름에 묶으면 포트를 바꿔 꽂는 순간 데이터셋이 거울상으로 오염된다.
     side: str | None = None      # "left" | "right" | None(단팔)
     ready: bool = False
+    #: 전송 계층 — "can"(robotd) / "sim"(simd). 세션에 남아 복원 때 클래스를 가른다.
+    transport: str = "can"
     # ── 설정값 (게이트웨이 소유) ──
     disable_torque_on_disconnect: bool = True
     max_relative_target: float | None = None
@@ -280,6 +282,7 @@ class ArmInfo:
             "slot": self.slot,
             "side": self.side,
             "ready": self.ready,
+            "transport": self.transport,
             # 역할과 팔의 실제 모드가 어긋났는가. **판정은 여기서** — 화면이
             # 두 값을 놓고 직접 비교하면 규칙이 두 곳에 살게 된다.
             "mode_mismatch": self.mode_mismatch(),
@@ -407,6 +410,110 @@ class ArmInfo:
                           default=False, timeout=30))
 
 
+class SimArmInfo(ArmInfo):
+    """시뮬 팔 — `ArmInfo` 와 같은 표면, 바닥은 robotd 대신 simd (feature/sim-env.md §3).
+
+    ⚠ 게이트웨이 25곳(조그·릴레이·정렬·수집·추론 시작·prepare_arms)이
+    `robot_manager.arms[iface]` 가 이 표면을 갖는다고 가정한다. 여기서 같은
+    표면을 지키면 그 25곳은 **무수정**이다. 시뮬에 없는 기능(마스터/슬레이브·
+    0x150·영점굽기)은 조용한 no-op 이 아니라 capabilities 로 "없음" 선언 —
+    UI 가 안 그린다. 관절 읽기는 RPC 가 아니라 **shm 상태 세그먼트**를 직접
+    읽는다 — 릴레이·조그가 읽는 것과 같은 출처라 두 값이 어긋날 수 없다.
+    """
+
+    def __init__(self, **kw) -> None:
+        # ⚠ `__post_init__` 이 아니다. 부모(ArmInfo)는 dataclass 라 생성된 __init__ 이
+        #   **자기 정의 시점의** 훅만 부른다 — 자식이 나중에 붙인 __post_init__ 은 안
+        #   불린다 (실측: transport 가 "can" 으로 남아 포트 카드가 CAN 쪽에 섞였다).
+        super().__init__(**kw)
+        self.transport = "sim"
+        self.bus_info = "sim"
+        self.is_master = False
+        self.responding = True
+
+    @classmethod
+    def upgrade(cls, old: "ArmInfo") -> "SimArmInfo":
+        """일반 ArmInfo 를 **등록을 지킨 채** 시뮬 팔로 승격한다 — 옛 세션이
+        `transport: can` 으로 굳혀 둔 sim_ 팔, 또는 simd 가 늦게 뜬 뒤 합류하는 경우."""
+        arm = cls(iface=old.iface)
+        for k in ("role", "slot", "side", "ready", "connected",
+                  "disable_torque_on_disconnect", "max_relative_target", "cameras",
+                  "gripper_open_pos"):
+            setattr(arm, k, getattr(old, k))
+        return arm
+
+    def connect(self, bitrate: int = 1_000_000) -> tuple[bool, str]:
+        from app.services import sim_robot_client as sim
+
+        r = sim.call("attach", self.iface, timeout=30)
+        if not isinstance(r, dict) or not r.get("running"):
+            return False, "simd 연결 실패 — 데몬이 떠 있나요?"
+        self.connected = True
+        self.state = "UP"
+        return True, "OK"
+
+    def disconnect(self) -> None:
+        from app.services import sim_robot_client as sim
+
+        sim.call("release", self.iface)
+        self.connected = False
+
+    def refresh_mode(self, classify: bool = False) -> None:
+        return None                      # 모드가 없다
+
+    def refresh_ctrl_mode(self) -> int | None:
+        return 0
+
+    def set_master_slave(self, master: bool) -> tuple[bool, str]:
+        # 시뮬 팔은 항상 "슬레이브"(명령을 듣는다). 마스터 요청은 뜻이 없다.
+        return (True, "시뮬 팔은 모드가 없습니다") if not master else \
+               (False, "시뮬 팔은 마스터가 될 수 없습니다 — 리더는 스크립트 시연이나 실물 리더로")
+
+    def motor_enabled(self) -> dict:
+        return {f"joint{i}": True for i in range(1, 7)}
+
+    def read_joints_normalized(self) -> dict[str, float] | None:
+        from piper_shm import arm as shm_arm
+
+        try:
+            reader = shm_arm.StateReader(self.iface)
+        except Exception:
+            return None
+        try:
+            rec = reader.read()
+        finally:
+            reader.close()
+        return dict(rec["values"]) if rec else None
+
+    def read_joints_raw(self) -> list[int] | None:
+        from piper_robot.joints import denormalize_all
+
+        norm = self.read_joints_normalized()
+        if not norm:
+            return None
+        raw = denormalize_all(norm)
+        return [raw[f"joint{i}"] for i in range(1, 7)] + [raw.get("gripper", 0)]
+
+    def read_error(self) -> dict | None:
+        return {"err_code": 0}
+
+    def clear_error(self) -> bool:
+        return True
+
+    def enable_torque(self) -> bool:
+        return True
+
+    def disable_torque(self) -> bool:
+        return True
+
+    def go_parking(self, target: dict | None = None) -> bool:
+        from app.services import sim_robot_client as sim
+
+        goal = target or {"joint1": 0.0, "joint2": -100.0, "joint3": 100.0,
+                          "joint4": 0.0, "joint5": 0.0, "joint6": 0.0, "gripper": 0.0}
+        return bool(sim.call("go_to", self.iface, goal, default=False, timeout=30))
+
+
 class RobotManager:
     def __init__(self) -> None:
         self.arms: dict[str, ArmInfo] = {}
@@ -433,6 +540,28 @@ class RobotManager:
             if arm is None:
                 arm = self.arms[iface] = ArmInfo(iface=iface)
             arm.absorb(info)
+        # 시뮬(simd) 팔 — 같은 등록부에 SimArmInfo 로 합류한다. ⚠ 반드시 `seen` 에
+        # 넣는다: 안 넣으면 robotd 스캔 때마다 mark_absent 로 연결이 내려간다.
+        from app.services import sim_robot_client as sim
+
+        for info in sim.call("scan", default=[], timeout=10) or []:
+            iface = info.get("id")
+            if not iface:
+                continue
+            seen.add(iface)
+            arm = self.arms.get(iface)
+            if arm is None:
+                arm = self.arms[iface] = SimArmInfo(iface=iface)
+            elif not isinstance(arm, SimArmInfo):
+                # 교체가 아니라 **승격** — 교체하면 role/side/ready 가 날아간다
+                arm = self.arms[iface] = SimArmInfo.upgrade(arm)
+            arm.connected = bool(info.get("arm"))
+            arm.state = "UP"
+        # `sim_` 접두사는 계약이다(so101_ 과 같은 규칙). simd 가 아직 안 떠서 스캔에
+        # 안 왔어도 이름이 sim_ 이면 시뮬 팔이다 — 옛 세션의 `transport: can` 을 치유
+        for iface, arm in list(self.arms.items()):
+            if iface.startswith("sim_") and not isinstance(arm, SimArmInfo):
+                self.arms[iface] = SimArmInfo.upgrade(arm)
         for iface, arm in self.arms.items():
             if iface not in seen:
                 arm.mark_absent()
@@ -901,6 +1030,7 @@ class RobotManager:
                 data["arms"].append({
                     "iface": arm.iface,
                     "bus_info": arm.bus_info,
+                    "transport": arm.transport,
                     "role": arm.role,
                     "slot": arm.slot,
                     "side": arm.side,

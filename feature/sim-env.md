@@ -142,8 +142,20 @@ fps, controls) / disconnect / list_controls / set_control / lost`.
    전부(probe 포함); ② 씬 밝기의 절반이 카메라 헤드라이트라 월드 라이트만
    스케일하면 조명이 안 변한다(244→225, 포화) → 헤드라이트도 함께. 표류 알람은
    작업(수집·추론) 중에만 앵커가 걸리므로 4단계 E2E 에서 본다.
-3. **등록 UI** — `SimArmInfo`, 포트 패널 sim 카드, 로봇 카드(capabilities).
-   **검증: 등록→세션 저장→게이트웨이 재시작 후 복원.**
+3. ✅ **등록 UI** (2026-09-09) — `SimArmInfo(ArmInfo)`: RPC 를 타는 표면 전부를
+   simd/shm 으로 넘긴다(테스트가 ArmInfo 의 `_call` 메서드 목록을 뽑아 하나도 새지
+   않는지 대조). `scan()` 이 simd 스캔을 합류시키되 **교체가 아니라 승격**(role·side·
+   ready 유지)하고, `sim_` 접두사를 계약으로 삼아 simd 가 늦게 떠도·옛 세션이
+   `transport: can` 으로 굳혔어도 치유한다. 세션에 `transport` 저장. `/ports` 는
+   sim 을 CAN 통계 루프에서 빼 자기 카드로, 로봇 카드는 sim 이면 마스터/슬레이브·
+   0x150 을 안 그린다. `/joints/raw` 는 sim 이면 팔 객체(shm)로 읽는다.
+   실측: `/attach` 로 등록 → `/ports` sim 카드 → **웹 조그(`/robots/jog/goal`)로
+   시뮬 팔 이동** joint1 0→40, joint2 −100→−40, 그리퍼 0→100. 잡은 결함 둘:
+   ① 자식 클래스의 `__post_init__` 은 dataclass 부모가 만든 `__init__` 이 부르지
+   않는다 → `transport` 가 "can" 으로 남아 포트 카드가 CAN 쪽에 섞였다 → 명시적
+   `__init__`; ② 실기 스크립트가 jog/start 뒤 예외로 죽어 teleop 세션이 남자
+   "작업 없음" 게이트가 **재시작을 건너뛰어** 옛 코드가 계속 서빙됐다 — 재시작
+   전엔 `running` 을 반드시 눈으로 본다(데몬 stale-code 메모의 게이트웨이판).
 4. **스크립트 시연 → 수집 → 학습 → 추론 → 자동 판정** — E2E 한 바퀴.
    **검증: 시연 20 에피소드 → ACT 학습 → 시뮬 추론 성공률이 `/eval/stats`
    에 찍힌다.** 이게 이 기획의 인수 기준이다.

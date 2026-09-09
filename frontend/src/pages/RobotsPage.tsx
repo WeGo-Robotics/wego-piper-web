@@ -267,6 +267,8 @@ function Spinner({ className = '' }: { className?: string }) {
 
 type ArmInfo = {
   iface: string; bus_info: string; state: string; connected: boolean
+  /** "can"(robotd) | "sim"(simd) — sim 은 마스터/슬레이브·0x150 이 없다 (capabilities) */
+  transport?: string
   role: string; ctrl_mode: string; master_slave?: 'master' | 'slave' | null
   /** 버스에서 무언가 오고 있나. false = 팔이 조용하다 — 마스터와 다르다. */
   responding?: boolean | null
@@ -297,6 +299,8 @@ type SerialPortInfo = {
   id: string; port: string; baud: number
   arm?: string | null; attached?: SerialArmInfo | null
 }
+// 시뮬(simd) 포트 — 세계 하나에 팔 하나. CAN 통계도 링크 상태도 없다.
+type SimPortInfo = { iface: string; scene: string; connected: boolean; ready: boolean }
 
 /**
  * 로봇 카드의 [상세] — 파킹 / 영점 / 조작 / 설정 탭.
@@ -452,6 +456,7 @@ export default function RobotsPage() {
   // 포트 패널 — 스캔된 포트 + 버스 통계(Rx/Tx·bps). 스캔은 버튼, 통계는 폴링.
   const [ports, setPorts] = useState<PortInfo[]>([])
   const [serialPorts, setSerialPorts] = useState<SerialPortInfo[]>([])
+  const [simPorts, setSimPorts] = useState<SimPortInfo[]>([])
   const [serialBusy, setSerialBusy] = useState<string | null>(null)
   const [calibArm, setCalibArm] = useState<string | null>(null)
   const [teleopArm, setTeleopArm] = useState<{ arm: string; side?: string } | null>(null)
@@ -505,8 +510,8 @@ export default function RobotsPage() {
   }
 
   const loadPorts = useCallback(() => {
-    api.get<{ ports: PortInfo[]; serial?: SerialPortInfo[] }>('/robots/ports')
-      .then((r) => { setPorts(r.ports); setSerialPorts(r.serial ?? []) })
+    api.get<{ ports: PortInfo[]; serial?: SerialPortInfo[]; sim?: SimPortInfo[] }>('/robots/ports')
+      .then((r) => { setPorts(r.ports); setSerialPorts(r.serial ?? []); setSimPorts(r.sim ?? []) })
       .catch(() => {})
   }, [])
 
@@ -848,7 +853,7 @@ export default function RobotsPage() {
             {scanning ? <><Spinner className="inline" /> 스캔 중...</> : '스캔'}
           </button>
         </div>
-        {ports.length + serialPorts.length === 0 ? (
+        {ports.length + serialPorts.length + simPorts.length === 0 ? (
           <p className="text-xs text-neutral-400">"스캔"을 눌러 포트(CAN·시리얼)를 검색하세요</p>
         ) : (
           // ⚠ FHD 에서 **네 장이 한 줄**에 들어가야 한다. 팔이 넷인 배치가 기본
@@ -956,6 +961,30 @@ export default function RobotsPage() {
                 </div>
               )
             })}
+            {/* 시뮬(simd) 포트 — CAN·시리얼과 같은 카드 틀. [연결]은 Piper 와 같은
+                /attach 경로다 (SimArmInfo 가 robotd 대신 simd 로 간다). */}
+            {simPorts.map((sp) => (
+              <div key={sp.iface}
+                   className={`rounded border p-2.5 space-y-1.5 ${
+                     sp.connected ? 'border-green-500/40 bg-green-500/5' : 'border-neutral-700'}`}>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm">{sp.iface}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-600/25 text-purple-300">SIM</span>
+                  {sp.connected && <span className="text-[10px] text-green-400">연결됨</span>}
+                </div>
+                <p className="text-[11px] text-neutral-400">MuJoCo · {sp.scene}</p>
+                <p className="truncate text-[10px] text-neutral-600">simd</p>
+                <div className="flex gap-1">
+                  <button onClick={() => handleAttach(sp.iface)}
+                    disabled={sp.connected || connectingIface === sp.iface}
+                    title={sp.connected ? '이미 연결됨 — 아래 로봇 패널에서 다룹니다' : '시뮬 팔 연결 + 등록'}
+                    className="flex-1 px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">
+                    {connectingIface === sp.iface ? <><Spinner className="inline" /> 연결 중…</>
+                      : sp.connected ? '연결됨' : '연결'}
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -1047,7 +1076,9 @@ export default function RobotsPage() {
                       <option value="leader">leader</option>
                       <option value="follower">follower</option>
                     </select>
-                    <MasterSlaveBadge ms={arm.master_slave} responding={arm.responding} />
+                    {arm.transport === 'sim'
+                      ? <span className="px-1.5 py-0.5 text-[10px] rounded bg-purple-600/25 text-purple-300">SIM</span>
+                      : <MasterSlaveBadge ms={arm.master_slave} responding={arm.responding} />}
                     <button onClick={() => handleSideToggle(arm)}
                       title="양팔에서 이 팔의 좌/우 (클릭해서 변경)"
                       className={`px-1.5 py-0.5 text-[10px] rounded border ${
@@ -1069,6 +1100,7 @@ export default function RobotsPage() {
                         {connectingIface === arm.iface ? '연결 중…' : '연결'}
                       </button>
                     )}
+                    {arm.transport !== 'sim' && <>
                     <button onClick={() => handleSetMasterSlave(arm.iface, true)} disabled={settingMs === arm.iface}
                       className="px-2.5 py-1 text-xs rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50"
                       title="이 팔을 마스터(示教入力)로 설정">마스터</button>
@@ -1089,6 +1121,7 @@ export default function RobotsPage() {
                     <button onClick={() => handleResetArm(arm.iface)} disabled={!arm.connected}
                       title="0x150 재동기화 — 슬립으로 밀린 보고 위치를 실제에 맞춥니다"
                       className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-40">리셋</button>
+                    </>}
                     <button onClick={() => setDetailIface(arm.iface)} disabled={!arm.connected}
                       className="px-2.5 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-40">상세</button>
                     <button onClick={() => handleDetach(arm.iface)}
