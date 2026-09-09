@@ -74,9 +74,19 @@ class SimArmBridge:
 
     def _publish_loop(self) -> None:
         period = 1.0 / STATE_HZ
+        next_check = 0.0
         while self._running:
             t0 = time.monotonic()
             try:
+                if self._state is not None and t0 >= next_check:
+                    next_check = t0 + 1.0
+                    # 누가 내 세그먼트를 unlink 하면 열린 fd 로는 계속 써져 조용히
+                    # 깨진다 (so101d 가 robotd 의 기동 정리에 당했다) — 다시 만든다
+                    if self._state.orphaned:
+                        logger.warning("%s: 상태 세그먼트가 사라졌습니다(누가 unlink) — 다시 만듭니다",
+                                       self.arm_name)
+                        self._state.close(unlink_segment=False)
+                        self._state = StateWriter(self.arm_name)
                 if self._state is not None:
                     self._state.publish(self.world.snapshot())
                     self.published += 1

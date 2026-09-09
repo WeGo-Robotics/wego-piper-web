@@ -238,6 +238,26 @@ async def start_recording(body: RecordStartRequest):
             raise HTTPException(
                 400, f"{body.teleop_port} 는 캘리브레이션이 없습니다 — 카드의 "
                      "[캘리브레이션]을 완주하세요")
+        # ⚠ so101d 가 "발행 중"이라 해도 세그먼트 **경로**가 살아 있어야 녹화 프로세스가
+        #   연다 — 다른 데몬의 기동 정리가 unlink 해 버린 뒤에도 so101d 는 모르고 계속
+        #   발행했다(2026-09-09: 프로세스가 트레이스백으로 죽음). 여기서 열어 본다.
+        from piper_shm.arm import ArmSegmentError, StateReader
+
+        def _leader_segment_ok() -> str | None:
+            try:
+                reader = StateReader(body.teleop_port)
+            except ArmSegmentError as exc:
+                return f"{body.teleop_port} 의 상태 세그먼트가 없습니다 ({exc}) — 로봇 " \
+                       "디바이스 탭에서 [해제] 후 [연결]하거나 so101d 를 재시작하세요"
+            try:
+                return None if reader.read() else \
+                    f"{body.teleop_port} 의 상태 세그먼트가 비어 있습니다 — so101d 가 발행 중인지 보세요"
+            finally:
+                reader.close()
+
+        problem = await asyncio.to_thread(_leader_segment_ok)
+        if problem:
+            raise HTTPException(400, problem)
         arm_ports = [body.robot_port]
     try:
         prepare_arms(arm_ports, purpose="recording")

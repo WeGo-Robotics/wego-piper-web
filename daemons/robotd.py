@@ -38,6 +38,16 @@ from piper_robot import publish
 from piper_robot.bus_watch import bus_watch
 from piper_robot.hub import RobotHub
 
+
+def owns_segment(name: str) -> bool:
+    """이 세그먼트가 robotd 것인가 — `<iface>.state|.action` 의 iface 가 CAN 이름
+    (`can0`, `vcan1`)일 때만. 다른 데몬(so101d `so101_*`, simd `sim_*`)의 세그먼트는
+    **살아 있는 발행자의 것**일 수 있다 — 기동 정리는 자기 것만 지운다."""
+    import re
+
+    iface = name.rsplit(".", 1)[0]
+    return re.match(r"^v?can\d+$", iface) is not None
+
 REPO = Path(__file__).resolve().parents[1]
 
 logging.basicConfig(
@@ -203,10 +213,14 @@ def main() -> int:
     hub = _Serving()
     # ⚠ 지난 프로세스가 죽으면 `/dev/shm` 세그먼트가 남는다. 치우지 않으면 소비자가
     # 발행자 없는 세그먼트를 열고 **멈춘 자세**를 관측으로 받는다 — 그건 그럴듯해 보인다.
+    # ⚠ **자기 것만** 지운다 (so101d·simd·rsd 와 같은 규칙). 필터 없이 전부 지웠더니
+    #   살아 있는 so101d 의 리더 세그먼트를 지웠다 — so101d 는 unlink 된 inode 에
+    #   계속 발행하고(fd "(deleted)", published 350만), 경로로는 아무도 못 열어
+    #   수집이 "팔 세그먼트가 없습니다" 로 죽었다 (2026-09-09 실측).
     try:
         from piper_shm import arm as A
 
-        stale = A.list_segments()
+        stale = [n for n in A.list_segments() if owns_segment(n)]
         for name in stale:
             A.unlink(name)
         if stale:

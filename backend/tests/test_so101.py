@@ -760,3 +760,42 @@ def test_can_and_serial_share_one_ui_frame():
     so101 = robot_panel.split("so101Arms.map((att) =>", 1)[1].split("{robotArms.map((arm) =>", 1)[0]
     assert "rounded border p-2.5 transition-shadow" in so101
     assert so101.count("px-2.5 py-1 text-xs rounded") >= 3
+
+
+def test_every_daemon_startup_sweep_removes_only_its_own_segments():
+    """⚠ **실측 사고(2026-09-09)**: robotd 의 기동 정리가 필터 없이 `piper.arm.*` 전부를
+    지워 **살아 있는** so101d 의 리더 세그먼트를 지웠다. so101d 는 unlink 된 inode 에
+    계속 발행하고(fd "(deleted)", published 350만) 경로로는 아무도 못 열어 수집이
+    "팔 세그먼트가 없습니다" 로 죽었다. 규칙: 기동 정리는 자기 것만 — robotd 는 CAN
+    이름의 세그먼트만, so101d 는 so101_*, simd 는 sim_*."""
+    import re
+    robotd = (REPO / "daemons" / "robotd.py").read_text()
+    sweep = robotd.split("def main", 1)[1].split("list_segments()", 1)[1][:200]
+    assert "owns_segment(n)" in sweep, "robotd 기동 정리가 다른 데몬 세그먼트까지 지운다"
+    helper = robotd.split("def owns_segment", 1)[1].split("\ndef ", 1)[0]
+    pat = re.search(r'r"([^"]+)"', helper).group(1)
+    assert all(re.match(pat, i) for i in ("can0", "can3", "vcan1"))
+    assert not any(re.match(pat, i) for i in ("so101_leader1", "sim_follower1", "rs_0"))
+    assert '".sim_" in n' in (REPO / "daemons" / "simd.py").read_text()
+    assert "so101 세그먼트만" in (REPO / "daemons" / "so101d.py").read_text()
+
+
+def test_the_leader_bridge_recreates_its_segment_when_someone_unlinks_it():
+    """unlink 된 뒤에도 열린 fd 로는 계속 써져 조용히 깨진다 — StateWriter.orphaned 가
+    그걸 보라고 있는데 아무도 안 봤다. 발행 루프가 주기적으로 보고 다시 만든다.
+    (so101 브리지·시뮬 브리지 둘 다. robotd 의 발행자는 정리하는 쪽이라 자기 것은
+    안 지운다.)"""
+    loop = HUB_SRC.split("def _publish_loop", 1)[1].split("\n    def ", 1)[0]
+    assert "self._state.orphaned" in loop and "StateWriter(self.arm_name)" in loop
+    assert "close(unlink_segment=False)" in loop, "새로 만든 파일을 지우면 안 된다"
+    sim = (REPO / "sim" / "piper_sim" / "bridge.py").read_text().split("def _publish_loop", 1)[1].split("\n    def ", 1)[0]
+    assert "self._state.orphaned" in sim and "StateWriter(self.arm_name)" in sim
+
+
+def test_recording_start_opens_the_leader_segment_before_launching_the_process():
+    """so101d 가 running=True 라 답해도 세그먼트 경로가 없으면 녹화 프로세스는
+    트레이스백으로 죽는다 — 게이트웨이가 먼저 열어 보고 사람 말로 거절한다."""
+    src = (REPO / "backend" / "app" / "routers" / "recording.py").read_text()
+    branch = src.split("so101_leader = not bimanual", 1)[1].split("prepare_arms(arm_ports", 1)[0]
+    assert "StateReader(body.teleop_port)" in branch and "ArmSegmentError" in branch
+    assert "상태 세그먼트가 없습니다" in branch and "so101d 를 재시작" in branch
