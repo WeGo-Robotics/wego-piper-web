@@ -870,6 +870,9 @@ async def list_ports():
 
     out = []
     sim_ports = []
+    # 시뮬 팔은 lost 를 안 낸다 — simd 재시작으로 풀린 연결은 여기서 데몬 사실로
+    # 내린다 (so101 의 lost 해제와 같은 자리·같은 규칙). simd scan 은 메모리 조회.
+    await asyncio.to_thread(robot_manager.sync_sim_arms)
     for iface, arm in sorted(robot_manager.arms.items()):
         if getattr(arm, "transport", "can") == "sim":
             # 시뮬 팔 — CAN 통계가 없다. 카드 종류를 나눈다 (시리얼과 같은 규칙)

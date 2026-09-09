@@ -447,7 +447,11 @@ class SimArmInfo(ArmInfo):
 
         r = sim.call("attach", self.iface, timeout=30)
         if not isinstance(r, dict) or not r.get("running"):
-            return False, "simd 연결 실패 — 데몬이 떠 있나요?"
+            # 데몬이 이미 붙들고 있으면(게이트웨이만 재시작) attach 는 "이미 연결"로
+            # 거절된다 — 그건 실패가 아니라 원하던 상태다. 데몬 사실로 판정한다.
+            if not any(e.get("arm") == self.iface
+                       for e in (sim.call("scan", default=[], timeout=10) or [])):
+                return False, "simd 연결 실패 — 데몬이 떠 있나요?"
         self.connected = True
         self.state = "UP"
         return True, "OK"
@@ -511,7 +515,21 @@ class SimArmInfo(ArmInfo):
 
         goal = target or {"joint1": 0.0, "joint2": -100.0, "joint3": 100.0,
                           "joint4": 0.0, "joint5": 0.0, "joint6": 0.0, "gripper": 0.0}
-        return bool(sim.call("go_to", self.iface, goal, default=False, timeout=30))
+        if not sim.call("go_to", self.iface, goal, default=False, timeout=10):
+            return False
+        # simd 의 go_to 는 램프를 **시작만** 한다(RPC 루프가 단일 스레드라 거기서 못
+        # 기다린다). robotd 의 go_parking 처럼 완주까지 여기서 기다려 사실대로 답한다.
+        import time
+
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            info = sim.call("info", self.iface, default=None, timeout=5)
+            if not isinstance(info, dict):
+                return False
+            if not info.get("moving"):
+                return bool(info.get("reached"))
+            time.sleep(0.2)
+        return False
 
 
 class RobotManager:
@@ -566,6 +584,25 @@ class RobotManager:
             if iface not in seen:
                 arm.mark_absent()
         return [a.to_dict() for a in self.arms.values()]
+
+    def sync_sim_arms(self) -> None:
+        """시뮬 팔의 `connected` 를 **simd 의 사실**로 맞춘다 — 폴링 자리(`/ports`)용.
+
+        ⚠ simd 가 재시작하면 브리지가 전부 풀리는데(종료 시 release_all) 시뮬 팔은
+        `lost` 를 내지 않는다("사라지지 않는다"). robotd 는 device_watch 가 lost 로
+        내려 주지만 sim 은 그 길이 없어 게이트웨이가 `connected=True` 로 남았다 —
+        실측: 카드는 "연결됨", 조그는 "관절값을 읽지 못했습니다". simd 의 scan 은
+        메모리 조회라 폴링해도 공짜다 (robotd 의 CAN 스캔과 다르다 — 그쪽은 안 된다).
+        데몬이 죽어 있으면 세그먼트도 없으니 전부 내린다.
+        """
+        from app.services import sim_robot_client as sim
+
+        sims = {i: a for i, a in self.arms.items() if isinstance(a, SimArmInfo)}
+        if not sims:
+            return
+        attached = {e.get("arm") for e in (sim.call("scan", default=[], timeout=10) or [])}
+        for iface, arm in sims.items():
+            arm.connected = iface in attached
 
     def connect_arm(self, iface: str) -> tuple[bool, str]:
         arm = self.arms.get(iface)

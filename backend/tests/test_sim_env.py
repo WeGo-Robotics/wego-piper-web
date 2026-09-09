@@ -6,6 +6,7 @@
 척도가 실기 0..68000µm 과 같은 뜻, 명령이 안전 필터를 지난다, 계약 동사.
 """
 
+import inspect
 import math
 from pathlib import Path
 
@@ -301,3 +302,106 @@ def test_the_raw_joint_route_reads_sim_arms_through_the_arm_object():
     assert 'transport", "can") == "sim"' in body
     assert "arm.read_joints_normalized()" in body and "denormalize_all(norm)" in body
     assert body.index('== "sim"') < body.index('_call("read_raw_all"'), "sim 분기가 robotd 호출 뒤에 있다"
+
+
+def test_the_wrist_camera_looks_along_the_fingers_with_up_away_from_the_palm(model):
+    """⚠ **사용자 보고: 손목 뷰에 그리퍼가 가운데, 바닥이 아래가 아니다.** 옛 카메라는
+    옆(+y)을 봐 그리퍼 자체를 정면으로 찍었다. 렌더 비교 실측으로 고른 자세:
+    손가락 축(+z)을 25° 기울여 보고, 이미지 위 = -y(툴이 앞·아래를 향할 때 하늘이
+    위), 2cm 뒤 — 손가락 끝이 아래 가장자리 중앙, 바닥 61~66%, 큐브 중앙."""
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "wrist")
+    body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "gripper_base")
+    R_cam = data.cam_xmat[cam].reshape(3, 3)
+    R_body = data.xmat[body].reshape(3, 3)
+    view = -R_cam[:, 2]                      # MuJoCo 카메라는 -z 를 본다
+    assert float(view @ R_body[:, 2]) > 0.85, "손가락 축(+z)을 안 본다 — 그리퍼가 화면 가운데 온다"
+    # ⚠ 롤은 툴 축 이름이 아니라 **세계 위**로 잰다 — 첫 시도(이미지 위 = 툴 -y)는
+    # 툴 y 가 피치 축이라 세계 아래가 이미지 오른쪽에 갔다(테이블이 오른쪽 벽).
+    # q=0 에서 이미지 위 = 세계 +z 여야 하고, 관절 2·3·5 가 같은 피치 축이라
+    # 피치 자세(파킹·앞·아래)에서도 이미지 위가 수직면(x-z)에 남아야 한다.
+    # 0.94 = 25° 기울기의 몫 (위 = -0.906x + 0.423z, z_tool 이 앞을 보니 0.906+0.04)
+    assert float(R_cam[2, 1]) > 0.9, "q=0 에서 이미지 위가 세계 위가 아니다 — 바닥이 옆으로 간다"
+    for j, deg in (("joint2", -100.0), ("joint3", 100.0)):     # 파킹 자세
+        data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, j)]] = math.radians(deg * 0.95)
+    mujoco.mj_forward(model, data)
+    up = data.cam_xmat[cam].reshape(3, 3)[:, 1]
+    assert abs(float(up[1])) < 0.05 and float(up[2]) > 0.0, "파킹 자세에서 이미지 위가 수직면을 벗어났다"
+    # ⚠ 위쪽(-x) 오프셋이 베이스 상자 반폭(3cm)+여유보다 작으면 상자 면이 렌즈 앞에
+    # 와 시야를 막는다 (실측 4.5cm: 60% 가림). 8cm/25° 스윕 실측: 상자 4%.
+    base_geom = next(g for g in range(model.ngeom) if model.geom_bodyid[g] == body)
+    assert float(model.cam_pos[cam][0]) <= -(float(model.geom_size[base_geom][0]) + 0.04), \
+        "손목 카메라가 그리퍼 베이스 상자에 너무 붙어 있다 — 상자가 시야를 막는다"
+    src = (REPO / "tools" / "build_sim_scene.py").read_text()
+    assert 'xyaxes="1 0 0 0 0 1"' not in src.split("GRIPPER_XML", 1)[1].split('"""', 2)[1], "옛 옆보기 카메라가 남아 있다"
+
+
+def test_a_sim_arm_released_by_a_simd_restart_is_shown_disconnected_on_the_ports_poll(monkeypatch):
+    """⚠ **실측 결함**: simd 재시작으로 브리지가 풀려도 시뮬 팔은 lost 를 안 내
+    (robotd 는 device_watch 가 lost 로 내린다) 게이트웨이가 connected=True 로 남았다 —
+    카드는 "연결됨", 조그는 "관절값을 읽지 못했습니다". 폴링 자리(`/ports`)에서
+    simd 의 사실로 맞춘다. 데몬이 죽어 있으면 세그먼트도 없으니 전부 내린다."""
+    from app.services import robot_manager as rm, sim_robot_client as sim
+    mgr = rm.RobotManager()
+    mgr.arms["sim_follower1"] = rm.SimArmInfo(iface="sim_follower1")
+    mgr.arms["sim_follower1"].connected = True
+    monkeypatch.setattr(sim, "call", lambda m, *a, default=None, **k: [{"id": "sim_follower1", "arm": None}] if m == "scan" else default)
+    mgr.sync_sim_arms()
+    assert mgr.arms["sim_follower1"].connected is False, "데몬이 풀었는데 연결됨으로 남았다"
+    monkeypatch.setattr(sim, "call", lambda m, *a, default=None, **k: [{"id": "sim_follower1", "arm": "sim_follower1"}] if m == "scan" else default)
+    mgr.sync_sim_arms()
+    assert mgr.arms["sim_follower1"].connected is True
+    monkeypatch.setattr(sim, "call", lambda m, *a, default=None, **k: default)     # 데몬 죽음
+    mgr.sync_sim_arms()
+    assert mgr.arms["sim_follower1"].connected is False, "데몬이 죽었는데 연결됨으로 남았다"
+    src = inspect.getsource(__import__("app.routers.robots", fromlist=["list_ports"]).list_ports)
+    assert "sync_sim_arms" in src, "/ports 폴링이 sim 연결 사실을 안 맞춘다"
+
+
+def test_attaching_a_sim_arm_the_daemon_already_holds_counts_as_connected(monkeypatch):
+    """게이트웨이만 재시작하면 simd 는 브리지를 아직 붙들고 있어 attach 가 "이미
+    연결"로 거절된다 — 그건 원하던 상태이지 실패가 아니다. 데몬 사실로 판정."""
+    from app.services import robot_manager as rm, sim_robot_client as sim
+    arm = rm.SimArmInfo(iface="sim_follower1")
+    monkeypatch.setattr(sim, "call", lambda m, *a, default=None, **k:
+                        [{"id": "sim_follower1", "arm": "sim_follower1"}] if m == "scan" else default)
+    ok, _ = arm.connect()
+    assert ok and arm.connected, "데몬이 이미 붙든 팔의 연결이 실패로 둔갑했다"
+    monkeypatch.setattr(sim, "call", lambda m, *a, default=None, **k: default)
+    ok, msg = rm.SimArmInfo(iface="sim_follower1").connect()
+    assert not ok and "simd" in msg
+
+
+def test_go_to_walks_to_the_target_instead_of_one_rate_limited_step():
+    """⚠ **실측 결함**: 안전 필터는 호출 한 번에 관절당 step_limit 만큼만 허용하는데
+    go_to 가 한 번만 지나 목표를 세팅하고 끝나 파킹이 −100 → −80 에서 멈췄다(웹
+    파킹 버튼 완주 못 함). 램프는 매 걸음 지금 자세에서 필터를 다시 지나 걸어가고,
+    브리지가 죽으면 그 자리에서 선다."""
+    from piper_robot.safety import SafetyConfig
+    from piper_sim.hub import ramp_goal
+    world = {"joint1": 0.0, "joint2": -100.0, "joint3": 100.0, "joint4": 0.0, "joint5": 0.0, "joint6": 0.0, "gripper": 0.0}
+    steps: list[dict] = []
+    def set_goal(g):                      # 가짜 세계: 세팅한 목표에 즉시 도달
+        steps.append(dict(g)); world.update(g)
+    target = {"joint1": 0.0, "joint2": 6.0, "joint3": 12.0, "joint4": 0.0, "joint5": 100.0, "joint6": 0.0, "gripper": 100.0}
+    assert ramp_goal(lambda: dict(world), set_goal, target, SafetyConfig(), dt=0.0) is True
+    assert len(steps) > 1, "한 걸음에 끝났다 — 필터의 변화율 제한을 안 걷는다"
+    assert abs(world["joint2"] - 6.0) <= 0.5 and abs(world["joint5"] - 100.0) <= 0.5
+    world.update({"joint2": -100.0, "joint3": 100.0, "joint5": 0.0}); steps.clear()
+    alive = iter([True, True, False])
+    assert ramp_goal(lambda: dict(world), set_goal, target, SafetyConfig(), running=lambda: next(alive, False), dt=0.0) is False
+    assert len(steps) == 2 and world["joint2"] < 0, "브리지가 죽었는데 계속 걸었다"
+
+
+def test_go_to_does_not_block_the_single_threaded_rpc_loop_and_parking_waits_for_arrival():
+    """simd 의 RPC 루프는 요청 하나를 처리해 답하는 단일 스레드다 — go_to 가 램프
+    내내 블로킹하면 scan/info/카메라가 10초 멈춘다(`/ports` 폴링·컨트롤). 램프는
+    스레드로, 완주는 info 의 moving/reached 로; 게이트웨이 go_parking 이 그걸 기다린다."""
+    from piper_sim.hub import SimHub
+    from app.services.robot_manager import SimArmInfo
+    src = inspect.getsource(SimHub.go_to)
+    assert "Thread(" in src and "ramp_goal" in src and "return True" in src
+    assert "moving" in inspect.getsource(SimHub.info) and "reached" in inspect.getsource(SimHub.info)
+    park = inspect.getsource(SimArmInfo.go_parking)
+    assert '"info"' in park and "moving" in park and "reached" in park, "파킹이 램프 완주를 안 기다린다"

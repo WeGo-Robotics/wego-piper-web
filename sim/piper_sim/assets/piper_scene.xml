@@ -55,7 +55,7 @@
                   <geom type="mesh" mesh="link6" material="armmat" />
                   <body name="gripper_base" pos="0 0 0.035">
                     <geom type="box" size="0.03 0.015 0.012" material="fingermat" mass="0.05" />
-                    <camera name="wrist" pos="0 -0.04 0.02" xyaxes="1 0 0 0 0 1" fovy="70" />
+                    <camera name="wrist" pos="-0.08 0 -0.02" xyaxes="0 -1 0 -0.906 0 0.423" fovy="70" />
                     <body name="finger_l" pos="0 0.008 0.03">
                       <joint name="gripper_l" type="slide" axis="0 1 0" range="0 0.034" damping="2" />
                       <geom type="box" size="0.008 0.004 0.025" pos="0 0.004 0" material="fingermat" mass="0.02" friction="1.5 0.02 0.001" />

@@ -4,6 +4,9 @@
 """
 
 import logging
+import threading
+import time
+from typing import Callable
 
 from piper_sim.bridge import SimArmBridge
 from piper_sim.world import World
@@ -12,15 +15,49 @@ logger = logging.getLogger(__name__)
 
 ARM_NAME = "sim_follower1"
 
+#: 램프 걸음 간격·예산·도달 허용치(정규화 단위). 50Hz 는 조그가 목표를 보내는
+#: 빈도와 같은 급 — 필터의 step_limit 이 그 빈도를 전제로 잡혀 있다.
+RAMP_DT_S = 0.02
+RAMP_BUDGET_S = 10.0
+RAMP_TOL = 0.5
+
 
 class SimError(RuntimeError):
     pass
+
+
+def ramp_goal(snapshot: Callable[[], dict], set_goal: Callable[[dict], None],
+              target: dict, safety, running: Callable[[], bool] = lambda: True,
+              stop: threading.Event | None = None,
+              dt: float = RAMP_DT_S, budget_s: float = RAMP_BUDGET_S) -> bool:
+    """목표까지 **걸어간다** — 안전 필터(`filter_goal`)는 호출 한 번에 관절당
+    step_limit 만큼만 허용하므로 한 번 세팅하면 한 걸음만 가고 멈춘다(실측: 파킹
+    −100 → −80 정지). 매 걸음 지금 자세에서 필터를 다시 지나 다음 목표를 세팅한다.
+    브리지가 죽거나(`running`) 새 램프가 오면(`stop`) 그 자리에서 멈춘다.
+    반환: 예산 안에 모든 관절이 허용치 안에 들어왔는가. 부작용은 set_goal 뿐."""
+    from piper_robot.safety import filter_goal
+
+    deadline = time.monotonic() + budget_s
+    while running() and not (stop and stop.is_set()):
+        now = snapshot()
+        if all(abs(now.get(j, 0.0) - v) <= RAMP_TOL for j, v in target.items()):
+            return True
+        goal, _reason = filter_goal(now, dict(target), safety, deadman_tripped=False)
+        set_goal(goal)
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(dt)
+    return False
 
 
 class SimHub:
     def __init__(self) -> None:
         self.world: World | None = None
         self.bridges: dict[str, SimArmBridge] = {}
+        # go_to 램프 — RPC 루프가 단일 스레드라 여기서 블로킹하면 램프 내내
+        # scan/info/카메라가 멈춘다. 스레드로 돌리고 info 의 moving/reached 로 알린다.
+        self._ramps: dict[str, tuple[threading.Thread, threading.Event]] = {}
+        self._ramp_result: dict[str, bool | None] = {}
         # 카메라 — 팔과 같은 세계를 그린다. RPC 이름이 팔 동사(scan/info/lost)와
         # 겹쳐 `cam_` 접두사로 나른다; 게이트웨이 클라이언트가 어휘를 되돌린다.
         from piper_sim.cameras import SimCameraHub
@@ -72,10 +109,14 @@ class SimHub:
 
     def info(self, arm_name: str = "") -> dict:
         def one(a: str, b: SimArmBridge) -> dict:
+            ramp = self._ramps.get(a)
             return {
                 "arm": a, "running": b.running, "published": b.published,
                 "sent": b.sent, "filtered": b.filtered,
                 "last_reason": b.last_reason.value, "torque_on": b.torque_on,
+                # go_to 램프 — moving 이 False 가 된 뒤의 reached 가 완주 여부
+                "moving": bool(ramp and ramp[0].is_alive()),
+                "reached": self._ramp_result.get(a),
                 "capabilities": {
                     "model": "piper", "transport": "sim", "dof": 6, "gripper": True,
                     "kinematics": "piper",
@@ -124,9 +165,27 @@ class SimHub:
         b = self.bridges.get(arm_name)
         if b is None or not b.running:
             raise SimError(f"{arm_name} 이 연결돼 있지 않습니다")
-        now = self._world().snapshot()
-        goal, _reason = filter_goal(now, dict(norm_goal), b.safety, deadman_tripped=False)
-        self._world().set_goal(goal)
+        # ⚠ 필터는 호출 한 번에 관절당 step_limit 만큼만 허용한다 — 한 번 세팅하고
+        #   끝내면 **한 걸음(20)만 가고 멈춘다**(실측: 파킹 −100 → −80 에서 정지).
+        #   robotd 의 go_parking 처럼 완주까지 걸어간다 — 단 RPC 루프가 단일
+        #   스레드라 **여기서 기다리지 않는다**: 스레드가 걷고, 완주 여부는
+        #   info(arm)['moving'/'reached'] 로 게이트웨이가 폴링한다.
+        old = self._ramps.pop(arm_name, None)
+        if old is not None:
+            old[1].set()
+            old[0].join(timeout=1.0)
+        w = self._world()
+        stop = threading.Event()
+        self._ramp_result[arm_name] = None
+
+        def run() -> None:
+            self._ramp_result[arm_name] = ramp_goal(
+                w.snapshot, w.set_goal, dict(norm_goal), b.safety,
+                running=lambda: b.running, stop=stop)
+
+        t = threading.Thread(target=run, name=f"sim-ramp-{arm_name}", daemon=True)
+        self._ramps[arm_name] = (t, stop)
+        t.start()
         return True
 
     def cube_pos(self) -> list[float]:
