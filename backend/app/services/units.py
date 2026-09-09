@@ -36,15 +36,16 @@ REPO = Path(__file__).resolve().parents[3]
 # 기동 시각이 아니라 계속 갱신되는 값이라 늘 "방금"으로 나온다(실제로 그랬다).
 _STARTED = time.time()
 
+from piper_bus import contract as C
+
 # 유닛 → 그 유닛이 읽는 소스. 없는 유닛은 아래 기본값을 쓴다.
 #
 # ⚠ 넓게 잡으면 경고가 늘 켜져 있어 아무도 안 본다. 좁게 잡으면 진짜를 놓친다.
-#   데몬이 실제로 import 하는 패키지만 적는다.
+#   데몬이 실제로 import 하는 패키지만 적는다 — 그 표는 **계약(`DAEMON_SOURCES`)**
+#   에 있다. 데몬의 자기 보고와 여기 판정이 같은 표를 읽어야 둘이 안 어긋난다
+#   (so101d·simd 를 여기에 빠뜨려 "모르는 유닛"으로 다뤘던 적이 있다).
 _SOURCES: dict[str, tuple[str, ...]] = {
-    "piper-rsd": ("daemons/rsd.py", "rs", "cam", "shm", "bus"),
-    "piper-camerad": ("daemons/camerad.py", "cam", "shm", "bus"),
-    "piper-robotd": ("daemons/robotd.py", "robot", "shm", "bus"),
-    "piper-estopd": ("daemons/estopd.py", "bus"),
+    **{f"piper-{d}": src for d, src in C.DAEMON_SOURCES.items()},
     "piper-gateway": ("backend/app", "wrapper", "bus", "shm"),
     # ⚠ **프론트는 판정하지 않는다.** vite dev 로 도는 동안에는 소스를 고치면
     #   그 자리에서 반영된다 — "낡았다"가 성립하지 않는다. 빌드본을 서빙하도록
@@ -101,6 +102,12 @@ class Unit:
     pid: int | None
     description: str = ""
     restartable: bool = True   # 컨테이너에서 버스로만 보이는 유닛은 재시작 불가
+    # ── 켜기/끄기·부팅 시 시작 (unitd 가 있을 때만 채워진다) ──
+    kind: str = "core"          # core | optional (UNIT_CATALOG)
+    enabled: bool | None = None  # 부팅 시 시작. None = 모른다(unitd 없음·static)
+    controllable: bool = False   # 켜기/끄기/부팅 시 시작을 여기서 바꿀 수 있는가
+    installed: bool = True
+    readonly: bool = False       # estopd — 상태만 본다
 
     def to_dict(self) -> dict:
         return {
@@ -110,6 +117,9 @@ class Unit:
             "description": self.description,
             "restartable": self.restartable,
             "age_s": round(time.time() - self.since) if self.since else None,
+            "kind": self.kind, "enabled": self.enabled,
+            "controllable": self.controllable, "installed": self.installed,
+            "readonly": self.readonly,
         }
 
 
@@ -128,7 +138,11 @@ def _parse_since(value: str) -> float:
 
 
 def list_units() -> list[Unit]:
-    """`piper-*` 사용자 유닛. systemd 가 안 보이면 버스 생존 키로 폴백."""
+    """`piper-*` 사용자 유닛. **unitd 가 있으면 그 목록**(enabled·installed 까지),
+    없으면 로컬 systemctl, 그것도 없으면 버스 생존 키로 폴백."""
+    via = _units_from_unitd()
+    if via is not None:
+        return via
     try:
         out = _systemctl("list-units", "piper-*", "--all",
                          "--no-pager", "--no-legend", "--plain").stdout
@@ -175,11 +189,9 @@ def list_units() -> list[Unit]:
 # 재시작은 데몬에게 `restart` RPC 를 보낸다 — 데몬이 스스로 죽으면 유닛의
 # Restart=always 가 되살린다. estopd 는 RPC 창구가 없다: 안전장치에 원격 종료
 # 경로를 다는 것은 별개의 결정이라, 여기서는 재시작 불가로 남긴다.
-_BUS_DAEMONS: tuple[tuple[str, str, bool], ...] = (
-    ("piper-camerad", "Piper v4l2 camera daemon", True),
-    ("piper-estopd", "Piper E-stop watchdog", False),
-    ("piper-robotd", "Piper robot daemon", True),
-    ("piper-rsd", "Piper RealSense daemon", True),
+_BUS_DAEMONS: tuple[tuple[str, str, bool], ...] = tuple(
+    (f"piper-{d}", desc, d not in C.UNIT_READONLY)
+    for d, (desc, _kind) in C.UNIT_CATALOG.items() if d in C.DAEMON_SOURCES
 )
 
 _bus_singleton = None
@@ -213,6 +225,87 @@ def _units_from_bus() -> list[Unit]:
         logger.debug("버스 생존 키 조회 실패: %s", exc)
         return []
     return units
+
+
+def unitd_available() -> bool:
+    try:
+        return bool(_bus().is_alive(C.UNITD))
+    except Exception:
+        return False
+
+
+def _units_from_unitd() -> list[Unit] | None:
+    """unitd 의 목록. 없으면 None — 호출자가 다음 길을 찾는다.
+
+    unitd 는 **설치 안 된 유닛도** 낸다(`installed: False`) — 화면이 "simd 가 왜
+    없지"를 보게 하려면 없는 것도 줄로 보여야 한다. stale 판정은 여기서 한다:
+    unitd 는 소스를 모르고, 이 프로세스는 저장소가 보인다(소스로 도는 기계) —
+    컨테이너에서는 저장소가 없어 code_mtime 이 0 이라 stale 은 늘 False 다.
+    그 경우의 stale 은 데몬의 자기 보고(버스)가 더 정확하다 — 둘을 합친다.
+    """
+    if not unitd_available():
+        return None
+    try:
+        rows = _bus().rpc_call(C.UNITD, "list", [], timeout=10)
+    except Exception as exc:
+        logger.warning("unitd 목록 실패: %s", exc)
+        return None
+    units: list[Unit] = []
+    for r in rows or []:
+        name = r["name"]
+        known = name in _SOURCES
+        code = _newest_mtime(_SOURCES[name]) if known else 0.0
+        since = float(r.get("since") or 0)
+        if not code:
+            # 저장소가 안 보이는 컨테이너 — 데몬의 자기 보고로 판정한다
+            try:
+                info = _bus().daemon_info(r["short"]) or {}
+                code = float(info.get("code_mtime") or 0)
+                since = since or float(info.get("started") or 0)
+            except Exception:
+                pass
+        units.append(Unit(
+            name=name, active=bool(r.get("active")), since=since,
+            stale=bool(known and since and code and code > since + _GRACE_S),
+            code_mtime=code, pid=r.get("pid"), description=r.get("description", ""),
+            restartable=bool(r.get("installed")) and not r.get("readonly") and not r.get("self"),
+            kind=r.get("kind", "core"), enabled=r.get("enabled"),
+            controllable=bool(r.get("installed")) and not r.get("readonly"),
+            installed=bool(r.get("installed")), readonly=bool(r.get("readonly")),
+        ))
+    return units
+
+
+def control_unit(name: str, action: str) -> tuple[bool, str]:
+    """켜기/끄기/재시작/부팅 시 시작 — **unitd 를 거친다.** 통로가 하나여야 어느
+    환경에서 되고 어느 환경에서 안 되는 일이 없다. unitd 가 없는 기계(설치 전)만
+    로컬 systemctl 로 폴백하고, 그것도 없으면 사유를 말한다."""
+    if not name.startswith("piper-") or "/" in name or ".." in name:
+        return False, f"우리 유닛이 아닙니다: {name}"
+    if unitd_available():
+        try:
+            _bus().rpc_call(C.UNITD, "control", [name, action], timeout=40)
+        except Exception as exc:
+            return False, str(exc)
+        logger.warning("unitd: %s %s", action, name)
+        return True, "OK"
+    try:
+        from daemons.unitd import check_action  # 같은 허용 규칙 — 표는 계약에 있다
+        unit = check_action(name, action)
+    except ValueError as exc:
+        return False, str(exc)
+    except Exception:
+        unit = f"{name}.service"
+    try:
+        r = _systemctl(action, unit)
+    except FileNotFoundError:
+        return False, "서비스 관리 데몬(piper-unitd)이 없습니다 — deploy/install-daemons.sh unitd"
+    except Exception as exc:
+        return False, f"{action} 실패: {exc}"
+    if r.returncode != 0:
+        return False, (r.stderr or "").strip() or f"종료 코드 {r.returncode}"
+    logger.warning("systemctl: %s %s", action, name)
+    return True, "OK"
 
 
 def _restart_via_bus(name: str) -> tuple[bool, str]:

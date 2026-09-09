@@ -19,14 +19,16 @@ cd "$REPO"
 rm -rf "$OUT"; mkdir -p "$OUT/wheels" "$OUT/udev"
 
 # ── 데몬 wheel ────────────────────────────────────────────────────────────
-# ⚠ **다섯 개 전부 만든다.** 어느 것이 바뀌었는지 따지지 않는다 — 이미지가 곧
-#   배포 단위이므로 부분만 담으면 호스트에 옛 wheel 이 남는다. 다 합쳐 155KB 다.
+# ⚠ **일곱 개 전부 만든다.** 어느 것이 바뀌었는지 따지지 않는다 — 이미지가 곧
+#   배포 단위이므로 부분만 담으면 호스트에 옛 wheel 이 남는다. 다 합쳐 200KB 안쪽이다.
 # ⚠ 전부 `py3-none-any`(순수 파이썬)라 호스트 파이썬 버전과 무관하다. 확인:
 #     ls .hostside/wheels   → piper_*-0.1.0-py3-none-any.whl
-for p in bus shm robot cam rs; do
+#   so101·sim 의 바깥 의존(feetech-servo-sdk·mujoco)은 wheel 에 없다 — apply.sh 가
+#   PyPI 에서 깐다 (mujoco 는 플랫폼 wheel 이라 여기서 못 싣는다).
+for p in bus shm robot cam rs so101 sim; do
   python3 -m pip wheel --no-deps -q -w "$OUT/wheels" "./$p"
 done
-rm -rf bus/build shm/build robot/build cam/build rs/build 2>/dev/null || true
+rm -rf bus/build shm/build robot/build cam/build rs/build so101/build sim/build 2>/dev/null || true
 
 # ── 데몬 소스·유닛·설치 스크립트 ──────────────────────────────────────────
 # ⚠ **번들과 똑같은 모양으로 싣는다.** 예전에는 `daemons/`·`systemd/` 를 디렉토리로

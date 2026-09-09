@@ -66,6 +66,8 @@ while read -r f; do
     robot/*) need_backend=1; need_wheels=1; WHEEL_PKGS+=(robot) ;;
     cam/*)   need_wheels=1; WHEEL_PKGS+=(cam) ;;   # 호스트 전용 — 이미지엔 없다
     rs/*)    need_wheels=1; WHEEL_PKGS+=(rs)  ;;
+    so101/*) need_wheels=1; WHEEL_PKGS+=(so101) ;; # 선택 데몬 — 깔되 켜지 않는다
+    sim/*)   need_wheels=1; WHEEL_PKGS+=(sim) ;;
   esac
 done <<< "$CHANGED"
 # 중복 제거

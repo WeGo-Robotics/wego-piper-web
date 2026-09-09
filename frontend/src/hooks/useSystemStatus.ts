@@ -21,6 +21,7 @@ import { api } from '../services/api'
 export type Unit = {
   name: string; active: boolean; stale: boolean
   age_s: number | null; description: string
+  kind?: 'core' | 'optional'; enabled?: boolean | null; installed?: boolean
 }
 export type Gateway = { stale: boolean; age_s: number | null }
 export type Gpu = {

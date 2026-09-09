@@ -68,6 +68,10 @@ python3 -c "import venv" >/dev/null 2>&1 && ok "python3 venv" \
   || { bad "python3-venv 없음"; NEED_APT+=(python3-venv); }
 command -v redis-server >/dev/null && ok "redis-server" \
   || { bad "redis-server 없음"; NEED_APT+=(redis-server); }
+# 시뮬 카메라(simd)의 헤드리스 렌더 — 선택 데몬이라 **경고만** 한다
+ldconfig -p 2>/dev/null | grep -q "libEGL.so.1" && ok "libEGL (시뮬 카메라)" \
+  || { warn "libEGL 없음 — 시뮬 카메라(simd)를 쓰려면 아래를 따로 (선택이라 멈추지 않는다):"
+       echo "      sudo apt install libegl1 libgl1-mesa-dri"; }
 # ⚠ **Ubuntu 아카이브에 없다** — NVIDIA 저장소를 먼저 붙여야 한다. 그래서 위
 #   `apt install` 한 줄에 같이 넣지 않는다: 넣으면 "패키지를 찾을 수 없음" 으로
 #   **그 줄 전체가 실패해** 나머지도 안 깔린다.
@@ -281,6 +285,15 @@ if [ -n "${wheels:-}" ]; then
   else
     "$VENV/bin/pip" install -q --no-deps --force-reinstall "$HERE"/wheels/*.whl
     ok "wheel $(ls "$HERE"/wheels | wc -l) 개"
+    # 선택 데몬의 바깥 의존 — simd 는 mujoco(플랫폼 wheel, ~20MB), so101d 는 Feetech SDK.
+    # ⚠ **실패해도 멈추지 않는다.** 이 둘은 선택이라, PyPI 가 안 닿는 호스트에서
+    #   핵심 데몬 설치까지 막으면 안 된다. 못 깔면 웹 [서비스] 에서 켜도 안 뜬다 —
+    #   그때 저널이 import 오류를 말한다.
+    if "$VENV/bin/pip" install -q mujoco feetech-servo-sdk 2>/dev/null; then
+      ok "선택 데몬 의존 (mujoco · feetech-servo-sdk)"
+    else
+      warn "선택 데몬 의존(mujoco·feetech-servo-sdk) 설치 실패 — simd/so101d 는 못 켠다 (PyPI 접근?)"
+    fi
   fi
 else
   say "2. 데몬 wheel — 이번 릴리스에 없음"
@@ -304,8 +317,10 @@ if [ -n "${daemons:-}" ]; then
     ok "풀었다: $SRC"
     # ⚠ 설치 스크립트는 **지금 셸의 python3** 를 유닛에 박는다. venv 를 켜고 불러야
     #   데몬이 wheel 을 볼 수 있다 (deploy/install-daemons.sh 참고).
-    ( . "$VENV/bin/activate" && "$SRC/deploy/install-daemons.sh" estopd robotd camerad rsd )
-    ok "유닛 설치·기동"
+    # simd·so101d 는 **깔되 켜지 않는다** — 사람이 웹 [설정 → 서비스] 에서 켜고
+    # "부팅 시 시작"을 고른다. 재배포는 그 선택을 지킨다 (install-daemons.sh --optional).
+    ( . "$VENV/bin/activate" && "$SRC/deploy/install-daemons.sh" estopd robotd camerad rsd unitd --optional simd so101d )
+    ok "유닛 설치·기동 (simd·so101d 는 설치만)"
   fi
 else
   say "3. 데몬 소스·유닛 — 이번 릴리스에 없음"

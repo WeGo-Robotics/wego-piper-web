@@ -196,8 +196,9 @@ git tag --sort=-v:refname | head -1     # 예: v0.3.1 → 다음은 v0.3.2
 
 ### 5. systemd 데몬 설치 + 상시 기동
 
-- [x] `deploy/install-daemons.sh` 실행 (estopd, robotd, camerad, rsd 전부) — venv activate된
-      셸에서 실행해야 함
+- [x] `deploy/install-daemons.sh estopd robotd camerad rsd unitd --optional simd so101d`
+      — venv activate된 셸에서 실행해야 함. simd·so101d 는 **깔리되 꺼진 채** —
+      웹 [설정 → 서비스] 에서 켜고 "부팅 시 시작"을 고른다 (feature/services.md)
 - [x] `loginctl show-user $USER`로 `Linger=yes` 확인
 - [ ] (선택) 로컬 판단 LLM — Ollama 바이너리를 `~/tools/bin` 에 풀고
       `deploy/install-daemons.sh ollama` + `ollama pull qwen2.5:7b` +
@@ -247,7 +248,8 @@ git tag --sort=-v:refname | head -1     # 예: v0.3.1 → 다음은 v0.3.2
 | `docker compose up` | 정상, frontend `:8081`, backend `/health` 200 |
 | GPU | RTX 4050, `docker --gpus all` 검증 완료 |
 | redis | unixsocket + TCP 둘 다 동작 |
-| 데몬 4개 (estopd/robotd/camerad/rsd) | systemd 유저 유닛, active, 재시작 0회 |
+| 데몬 5개 (estopd/robotd/camerad/rsd/unitd) | systemd 유저 유닛, active, 재시작 0회 |
+| 선택 데몬 (simd/so101d) | 설치됨·inactive·disabled — 웹 [서비스] 에서 켜면 active |
 | CAN | `can0`(follower) + `can1`(leader) 둘 다 UP, 1Mbps |
 | RealSense | 장치 인식됨 (color/depth/infrared) |
 | v4l2loopback | 불필요 (shm 방식 채택으로 대체됨) |

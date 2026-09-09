@@ -22,16 +22,29 @@ NPM="$(command -v npm || true)"
 NODE_BIN="$(dirname "${NPM:-/usr/bin/npm}")"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
-DAEMONS=("$@")
-if [ ${#DAEMONS[@]} -eq 0 ]; then
+# ⚠ `--optional` 뒤의 것은 **깔되 켜지 않는다** (feature/services.md). simd·so101d 처럼
+#   있어도 없어도 되는 데몬이다 — 사람이 웹 [설정 → 서비스] 에서 켜고 "부팅 시 시작"을
+#   고른다. 재배포 때는 **그 선택을 지킨다**: 이미 enable 돼 있으면 재시작만 한다.
+#   기본 목록에 넣어 무조건 켜면 시뮬 데몬이 실기 로봇 호스트에서도 돌게 된다.
+DAEMONS=()
+OPTIONAL=()
+mode=core
+for a in "$@"; do
+  case "$a" in
+    --optional) mode=optional ;;
+    *) if [ $mode = core ]; then DAEMONS+=("$a"); else OPTIONAL+=("$a"); fi ;;
+  esac
+done
+if [ ${#DAEMONS[@]} -eq 0 ] && [ ${#OPTIONAL[@]} -eq 0 ]; then
   # 게이트웨이·프론트는 기본에 안 넣는다 — 배포 대상(.120)은 컨테이너로 돌아서
   # 여기 유닛이 붙으면 같은 포트를 두고 다툰다. 이 기계처럼 소스로 돌리는 곳만
   # `install-daemons.sh gateway frontend` 로 따로 깐다.
-  DAEMONS=(estopd robotd camerad rsd)
+  # unitd 는 기본이다 — 웹 [서비스] 의 켜기/끄기가 이 데몬을 거친다.
+  DAEMONS=(estopd robotd camerad rsd unitd)
 fi
 
 mkdir -p "$UNIT_DIR"
-for d in "${DAEMONS[@]}"; do
+for d in "${DAEMONS[@]}" ${OPTIONAL[@]+"${OPTIONAL[@]}"}; do
   src="$REPO/deploy/systemd/piper-$d.service"
   [ -f "$src" ] || { echo "✗ 유닛 파일이 없습니다: $src" >&2; exit 1; }
   sed "s|@REPO@|$REPO|g; s|@PY@|$PY|g; s|@NPM@|$NPM|g; s|@NODE_BIN@|$NODE_BIN|g" \
@@ -69,6 +82,15 @@ sleep 1
 for d in "${DAEMONS[@]}"; do
   systemctl --user enable --now "piper-$d"
 done
+# 선택 데몬: 사람이 켜 둔 것만 되살린다. 처음이면 꺼진 채로 둔다.
+for d in ${OPTIONAL[@]+"${OPTIONAL[@]}"}; do
+  if systemctl --user is-enabled --quiet "piper-$d" 2>/dev/null; then
+    systemctl --user restart "piper-$d"
+    echo "· piper-$d: 켜 둔 상태 유지 (재시작)"
+  else
+    echo "· piper-$d: 설치만 — 웹 [설정 → 서비스] 에서 켠다"
+  fi
+done
 
 if ! loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes"; then
   echo
@@ -77,8 +99,9 @@ if ! loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes"; then
 fi
 
 echo
-for d in "${DAEMONS[@]}"; do
-  printf '%-22s %s\n' "piper-$d" "$(systemctl --user is-active "piper-$d")"
+for d in "${DAEMONS[@]}" ${OPTIONAL[@]+"${OPTIONAL[@]}"}; do
+  printf '%-22s %s (부팅 시 %s)\n' "piper-$d" "$(systemctl --user is-active "piper-$d")" \
+    "$(systemctl --user is-enabled "piper-$d" 2>/dev/null || echo disabled)"
 done
 echo
 echo "로그:  journalctl --user -u piper-robotd -f"

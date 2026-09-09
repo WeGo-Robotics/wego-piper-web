@@ -1,0 +1,23 @@
+# unitd — piper-* 유닛을 켜고 끄는 데몬 (feature/services.md).
+#
+# 설치: deploy/install-daemons.sh unitd   (기본 목록에 있다 — 모든 기계)
+#
+# ⚠ 컨테이너 게이트웨이는 systemctl 이 없다. 화면의 [서비스] 켜기/끄기·"부팅 시
+# 시작"은 전부 이 데몬이 버스로 받아 실행한다. estopd 는 읽기 전용이다.
+
+[Unit]
+Description=Piper unit manager (start/stop/enable piper-* units over the bus)
+Documentation=file://@REPO@/feature/services.md
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+ExecStart=@PY@ @REPO@/daemons/unitd.py
+Environment=PIPER_REDIS_URL=redis://127.0.0.1:6379/0
+
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

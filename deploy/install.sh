@@ -32,6 +32,10 @@ if [ ${#MISSING_SYS[@]} -gt 0 ]; then
 else
   ok "redis-server · node · npm · ip"
 fi
+# 시뮬 카메라(simd)는 EGL 로 헤드리스 렌더한다 — 없으면 팔은 돌지만 카메라 연결이
+# 실패한다. 선택 데몬이라 **경고만** 한다.
+ldconfig -p 2>/dev/null | grep -q "libEGL.so.1" && ok "libEGL (시뮬 카메라 렌더)" \
+  || warn "libEGL 없음 — 시뮬 카메라를 쓰려면: sudo apt install libegl1 libgl1-mesa-dri"
 
 # ⚠ Redis 는 **버스 전체**다. 없으면 데몬끼리 말을 못 하고 웹은 "데몬 없음"만 띄운다.
 if redis-cli ping >/dev/null 2>&1; then ok "redis 응답"; else bad "redis 가 안 떠 있다 — sudo systemctl enable --now redis-server"; fi
@@ -109,7 +113,8 @@ for d in estopd robotd camerad rsd gateway frontend; do
     && [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/piper-$d.service" ] \
     && ok "piper-$d" || bad "piper-$d 미설치"
 done
-[ $CHECK_ONLY -eq 0 ] && "$REPO/deploy/install-daemons.sh" estopd robotd camerad rsd gateway frontend
+# simd·so101d 는 **깔되 켜지 않는다** — 웹 [설정 → 서비스] 에서 켜고 "부팅 시 시작"을 고른다
+[ $CHECK_ONLY -eq 0 ] && "$REPO/deploy/install-daemons.sh" estopd robotd camerad rsd unitd gateway frontend --optional simd so101d
 
 # ⚠ linger 가 꺼져 있으면 **로그아웃할 때 데몬이 통째로 죽는다** — 학습·녹화까지.
 loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes" \

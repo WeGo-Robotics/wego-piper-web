@@ -257,6 +257,7 @@ ROBOTD: Final = "robotd"    # CAN 독점 + 안전층
 ESTOPD: Final = "estopd"    # E-stop watchdog
 SO101D: Final = "so101d"    # SO-101 (Feetech 시리얼) 데몬
 SIMD: Final = "simd"        # MuJoCo 시뮬레이션 데몬
+UNITD: Final = "unitd"      # 유닛 관리 데몬 (systemctl 을 대신 쥔다 — 컨테이너 게이트웨이용)
 
 # 데몬이 실제로 import 하는 소스 — 자기 보고(`mark_alive` info)의 mtime 스캔 범위.
 # 넓게 잡으면 "낡았다" 경고가 늘 켜져 있어 아무도 안 본다.
@@ -267,7 +268,34 @@ DAEMON_SOURCES: Final = {
     ESTOPD: ("daemons/estopd.py", "bus"),
     SO101D: ("daemons/so101d.py", "so101", "shm", "bus"),
     SIMD: ("daemons/simd.py", "sim", "robot", "shm", "bus"),
+    UNITD: ("daemons/unitd.py", "bus"),
 }
+
+# ── 유닛 카탈로그 — 화면의 [서비스] 가 그리는 것 ─────────────────────────────
+#
+# 유닛 이름(`piper-` 뒤) → (설명, 종류). 게이트웨이(목록·게이트)와 unitd(허용 목록)가
+# **같은 표**를 읽는다 — 둘이면 한쪽만 고쳐져 "화면엔 있는데 못 끈다"가 된다.
+#
+#   core     — 장치·안전. 설치 스크립트가 켜 두고, 웹에서는 재시작·잠깐 끄기만
+#   optional — 있어도 없어도 되는 것. 설치는 되지만 **처음엔 꺼져 있고**, 사람이
+#              웹에서 켜고 "부팅 시 시작"을 고른다 (deploy/install-daemons.sh --optional)
+#
+# ⚠ estopd 는 여기 있지만 **웹에서 끄거나 재시작할 수 없다** — 안전장치에 원격
+#   종료 경로를 다는 것은 별개의 결정이다 (UNIT_READONLY).
+UNIT_CATALOG: Final[dict[str, tuple[str, str]]] = {
+    ESTOPD: ("E-stop 감시 — heartbeat 가 끊기면 활동 프로세스를 죽인다", "core"),
+    ROBOTD: ("Piper 팔 (CAN) — 상태 발행·안전 필터·파킹", "core"),
+    CAMERAD: ("USB 카메라 (V4L2)", "core"),
+    RSD: ("RealSense 카메라", "core"),
+    UNITD: ("서비스 관리 — 이 화면의 켜기/끄기를 실행한다", "core"),
+    SO101D: ("SO-101 리더암 (Feetech 시리얼)", "optional"),
+    SIMD: ("MuJoCo 시뮬레이션 — 가상 팔·카메라", "optional"),
+    "ollama": ("판단 LLM 런타임 (로컬)", "optional"),
+}
+#: 웹에서 상태만 보고 손대지 않는 유닛
+UNIT_READONLY: Final = frozenset({ESTOPD})
+#: 자기 자신 — 끄면 이 화면의 켜기/끄기가 같이 죽는다
+UNIT_SELF: Final = UNITD
 
 
 # ── 기본값 ────────────────────────────────────────────────────────────────────

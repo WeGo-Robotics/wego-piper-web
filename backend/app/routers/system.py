@@ -72,6 +72,29 @@ async def restart_service(body: RestartRequest):
     return {"status": "restarted", "name": body.name}
 
 
+class ControlRequest(BaseModel):
+    name: str
+    action: str     # start | stop | restart | enable | disable
+
+
+@router.post("/services/control")
+async def control_service(body: ControlRequest):
+    """켜기/끄기/재시작/부팅 시 시작 (feature/services.md).
+
+    ⚠ **끄기·재시작은 활동 중에 막는다** — robotd 를 끄면 팔 상태 발행이 멈추고
+    rsd 를 끄면 카메라가 끊겨 돌고 있는 에피소드가 깨진다. 켜기와 "부팅 시 시작"은
+    지금 도는 것에 영향이 없어 막지 않는다. estopd 는 unitd 가 거절한다.
+    """
+    if body.action not in ("start", "stop", "restart", "enable", "disable"):
+        raise HTTPException(400, f"모르는 동작입니다: {body.action}")
+    if body.action in ("stop", "restart"):
+        require_idle(Activity.CAMERA_ACCESS)
+    ok, msg = await asyncio.to_thread(units.control_unit, body.name, body.action)
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"status": body.action, "name": body.name}
+
+
 @router.post("/restart")
 async def restart_gateway():
     """게이트웨이(이 프로세스)를 다시 띄운다.

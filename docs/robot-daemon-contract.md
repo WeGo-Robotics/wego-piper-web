@@ -65,6 +65,9 @@ Piper 전용 확장(마스터/슬레이브·0x150·진단)을 더 가진다.
 `deploy/systemd/piper-<이름>d.service` (Restart=always) +
 `deploy/install-daemons.sh <이름>d` 로 설치. 로컬 패키지는
 `deploy/install.sh` 의 PKGS 에 — 가드 테스트(`test_install.py`)가 잡는다.
+유닛은 `piper_bus.contract.UNIT_CATALOG` 에도 넣는다 — 화면 [서비스] 가 그리는 표이자
+unitd 의 허용 목록이다(`test_unitd.py` 가 유닛 파일과 대조). 있어도 없어도 되는
+데몬은 `optional` 로 — 설치는 되지만 사람이 웹에서 켠다 (feature/services.md).
 
 ## 게이트웨이 쪽 의무
 
