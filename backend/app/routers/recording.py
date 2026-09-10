@@ -1,5 +1,6 @@
 """데이터셋 레코딩 API."""
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException
@@ -9,6 +10,7 @@ from app.core.cli_mapping import build_record_args
 from app.core.hf_layout import repo_id_error
 from app.core.config import settings
 from app.services.exclusivity import Activity, require_idle
+from app.services.web_leader import LEADER_NAME as WEB_LEADER
 from app.services.record_manager import record_manager
 
 # 정지 시점에 사이드카를 쓰려면 시작 때의 매핑이 필요하다.
@@ -149,6 +151,13 @@ def _apply_arm_params(params: dict, *, cam_w: int, cam_h: int, cam_fps: int) -> 
 @router.post("/start")
 async def start_recording(body: RecordStartRequest):
     """녹화 시작."""
+    # 웹 리더(키보드·마우스) — 릴레이가 팔로워를 쥐고 있으면 **먼저 놓는다**: 녹화 프로세스가
+    # 팔을 움직인다(feature/web-leader.md §6). 세그먼트 발행은 계속되고 창은 입력만 보낸다.
+    # require_idle 보다 앞이어야 한다 — 릴레이가 수동 조작 잠금을 쥐고 있기 때문이다.
+    web_leader_rec = not (len(body.robot_ports) >= 2) and body.teleop_port == WEB_LEADER
+    if web_leader_rec:
+        from app.services.web_leader import web_leader
+        await asyncio.to_thread(web_leader.release_follower)
     require_idle(Activity.RECORDING)
     # LeRobot 은 `repo_id.split("/")` 를 2개로 언패킹한다 — 슬래시가 없으면
     # 팔·카메라를 다 잡은 뒤 ValueError 로 죽어서 원인을 알기 어렵다. 시작 전에 막는다.
@@ -202,8 +211,6 @@ async def start_recording(body: RecordStartRequest):
     # 찍힌 에피소드가 조용히 섞이는 것보다 낫다.
     profile_report: dict | None = None
     if body.camera_profile:
-        import asyncio
-
         from app.services import camera_profiles
 
         profile_report = await asyncio.to_thread(
@@ -220,11 +227,21 @@ async def start_recording(body: RecordStartRequest):
     arm_ports = (body.robot_ports + body.teleop_ports) if bimanual \
         else [body.robot_port, body.teleop_port]
     so101_leader = not bimanual and body.teleop_type.startswith("so101")
-    if so101_leader:
+    if web_leader_rec:
+        # 리더 세그먼트가 없으면 발행만 시작한다(앵커 = 팔로워 지금 자세). 창은 나중에 열어도
+        # 된다 — 열면 "이미 돌고 있다"로 붙는다. 녹화 프로세스는 piper_leader_shm 으로 읽는다.
+        from app.services.web_leader import web_leader
+        if not web_leader.is_running:
+            try:
+                await asyncio.to_thread(web_leader.start, body.robot_port, "joint", False)
+            except RuntimeError as exc:
+                raise HTTPException(400, f"웹 리더를 시작하지 못했습니다: {exc}")
+        arm_ports = [body.robot_port]
+    elif so101_leader:
         # 외부 리더는 robotd 등록부에 없다 — 정체는 so101d 에게 묻는다
         # (릴레이 시작과 같은 규칙). prepare_arms 에는 Piper 만 넘긴다.
-        import asyncio
-
+        # ⚠ 여기서 `import asyncio` 를 하면 함수 전체에서 asyncio 가 **지역 변수**가 되어
+        #   위쪽(웹 리더 분기)의 asyncio 가 UnboundLocalError 로 죽는다(실측). 모듈 import 를 쓴다.
         from app.services.so101_client import so101_client
 
         arms = {a["arm"]: a
@@ -348,8 +365,6 @@ GRACEFUL_STOP_S = 60
 @router.post("/stop")
 async def stop_recording():
     """녹화 정지. `escape` 로 정상 종료를 요청하고, 안 끝나면 프로세스를 내린다."""
-    import asyncio
-
     record_manager.send_key("escape")
 
     # 스스로 끝나면 그 즉시 빠져나온다 — 다 기다리지 않는다.

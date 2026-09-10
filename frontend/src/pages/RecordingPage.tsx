@@ -379,7 +379,17 @@ export default function RecordingPage() {
                   <option value="">선택...</option>
                   {leaders.map(a => <option key={a.iface} value={a.iface}>{a.iface}</option>)}
                   {so101Leaders.map(a => <option key={a.iface} value={a.iface}>{a.iface} (SO-101)</option>)}
+                  {/* 웹 리더 — 장치가 아니라 리더 종류다. 녹화 프로세스는 piper_leader_shm 으로
+                      그 세그먼트를 읽고, 조종은 별도 창이 한다 (feature/web-leader.md §6) */}
+                  <option value="web_leader1">웹 리더 (키보드·마우스)</option>
                 </select>
+                {leaderPort === 'web_leader1' && (
+                  <button type="button" onClick={() => window.open(`/teleop?follower=${encodeURIComponent(followerPort)}`, 'piper-teleop', 'popup,width=1280,height=820')}
+                    disabled={!followerPort}
+                    className="mt-1 w-full px-2 py-1 text-xs rounded bg-purple-800 hover:bg-purple-700 text-white disabled:opacity-40">
+                    조종 창 열기
+                  </button>
+                )}
               </div>
             </div>
             ) : (

@@ -364,6 +364,13 @@ function ArmDetailModal({ arm, leader, onConfig, onClose }: {
                 : '역할을 모릅니다 — 카드의 역할 선택에서 지정하세요'}
               leader={leader}
               side={arm.side} />
+            {arm.role === 'follower' && (
+              <button onClick={() => window.open(`/teleop?follower=${encodeURIComponent(arm.iface)}`, 'piper-teleop', 'popup,width=1280,height=820')}
+                title="키보드·마우스로 조종하는 별도 창 — 리더암 없이 (feature/web-leader.md)"
+                className="w-full px-3 py-1.5 text-xs rounded bg-purple-800 hover:bg-purple-700 text-white">
+                조종 창 열기 (키보드·마우스)
+              </button>
+            )}
             <button onClick={async () => {
               try {
                 await api.post('/robots/parking/torque?enable=true', { iface: arm.iface })

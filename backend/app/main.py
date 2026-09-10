@@ -26,6 +26,7 @@ from app.routers import (
     eval_log, external, health, hub, inference, logs, models, orchestrator, params, phase,
     policies, policy_server, presets, recording, robots, system, training, vision,
     ws, yolo_train,
+    web_leader,
 )
 
 # 라우터 목록 — 등록 누락을 구조적으로 막는다.
@@ -38,6 +39,7 @@ ROUTERS = [
     robots, cameras, logs, debug_logs, training, recording, policy_server, system,
     encoder, activity, policies, presets, phase, devices, vision, yolo_train,
     orchestrator, external, alignment,
+    web_leader,
 ]
 from app.services.estop_bridge import estop_bridge
 from app.services.param_bridge import param_bridge
