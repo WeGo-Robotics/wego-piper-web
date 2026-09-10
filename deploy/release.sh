@@ -122,10 +122,12 @@ if [ ${#IMAGES[@]} -gt 0 ]; then
   case " ${IMAGES[*]} " in *" backend "*) "$REPO/deploy/build-base.sh" ;; esac
   # ⚠ 호스트 코드는 **이미지 안에** 들어간다. 이미지를 굽기 전에 모아야 한다 —
   #   순서가 뒤집히면 옛 데몬이 실린 이미지가 나가는데 아무 에러가 안 난다.
-  "$REPO/deploy/stage-hostside.sh"
+  # 태그를 wheel 버전과 이미지 ENV 에 박는다 — 화면의 [버전] 이 그걸 읽는다
+  PIPER_VERSION="$VERSION" "$REPO/deploy/stage-hostside.sh"
   write_manifest "$REPO/.hostside/manifest.txt"
   echo "· 이미지 빌드: ${IMAGES[*]}"
-  docker compose build "${IMAGES[@]}"
+  # 태그를 이미지 ENV 로 — compose 의 build.args 가 환경에서 받는다 (feature/version-update.md)
+  PIPER_VERSION="$VERSION" docker compose build "${IMAGES[@]}"
   TAGS=()
   for s in "${IMAGES[@]}"; do
     docker tag "piper-web-$s:latest" "piper-web-$s:$VERSION"
@@ -196,8 +198,10 @@ if [ $need_daemons = 1 ]; then
   echo "· 데몬 소스 묶기"
   # ⚠ `__pycache__` 는 빼고 묶는다. 빌드 머신은 py3.13, 호스트는 py3.12 라
   #   그 `.pyc` 는 호스트에서 쓰이지도 않는다 — 번들만 지저분해진다.
+  # piper-install.sh 도 싣는다 — 호스트의 unitd 가 웹 [받기] 를 이걸로 돌린다
+  # (`current/deploy/piper-install.sh --pull-only vX`, feature/version-update.md §4)
   tar czf "$OUT/daemons.tar.gz" --exclude='__pycache__' --exclude='*.pyc' \
-      daemons deploy/systemd deploy/install-daemons.sh
+      daemons deploy/systemd deploy/install-daemons.sh deploy/piper-install.sh deploy/update-source.sh
 fi
 
 # ── compose + env 예시 — **항상 넣는다** ──────────────────────────────────

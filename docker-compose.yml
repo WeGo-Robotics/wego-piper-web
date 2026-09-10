@@ -25,6 +25,9 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      # 릴리스 태그를 이미지에 박는다 — release.sh 가 환경으로 준다 (feature/version-update.md §2)
+      args:
+        PIPER_VERSION: ${PIPER_VERSION:-unknown}
     image: piper-web-backend
     container_name: piper-web-backend
     # ⚠ `network_mode: host` 를 **뺐다.** 로봇이 shm 프록시로 바뀌어 raw CAN 을

@@ -16,6 +16,12 @@ set -euo pipefail
 IMAGE="${PIPER_IMAGE:-ghcr.io/wego-robotics/piper-web-backend}"
 VERSION="${1:-latest}"
 WORK="${PIPER_WORK:-$HOME/piper-web-deploy}"
+# `--pull-only`: 받고 꺼내기까지만 — 웹의 [받기] 가 이걸로 돈다 (feature/version-update.md §3).
+#   받기는 안전하다: 아무것도 실행하지 않는다. [적용] 은 따로 `<WORK>/<버전>/apply.sh`.
+PULL_ONLY=0; PASS=()
+for a in "${@:2}"; do
+  case "$a" in --pull-only) PULL_ONLY=1 ;; *) PASS+=("$a") ;; esac
+done
 
 ok()  { printf "  \033[32m✓\033[0m %s\n" "$1"; }
 bad() { printf "  \033[31m✗\033[0m %s\n" "$1"; }
@@ -67,8 +73,13 @@ docker cp "$cid:/opt/piper-host/." "$DEST/"
 docker rm -f "$cid" >/dev/null; trap - EXIT
 [ -f "$DEST/apply.sh" ] || { bad "이미지에 호스트 코드가 없습니다 (/opt/piper-host)"; exit 1; }
 ok "$DEST"
+if [ $PULL_ONLY = 1 ]; then
+  say "받기 끝 — 적용은 하지 않았습니다"
+  echo "  $DEST/apply.sh      # 적용하려면"
+  exit 0
+fi
 
 # ── 3. 넘긴다 ─────────────────────────────────────────────────────────────
 # 여기서부터는 `apply.sh` 가 전부 한다. 전제 확인·udev·wheel·데몬·컨테이너.
 say "3. 설치"
-exec "$DEST/apply.sh" "${@:2}"
+exec "$DEST/apply.sh" ${PASS[@]+"${PASS[@]}"}

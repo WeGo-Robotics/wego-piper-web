@@ -468,5 +468,39 @@ def self_report(repo, sources, rescan_s: float = 10.0) -> dict:
                 except OSError:
                     pass
         _self_scan.update(at=now, mtime=newest)
+    if "versions" not in _self_scan:
+        _self_scan["versions"] = dist_versions(sources)
     return {"pid": os.getpid(), "started": _SELF_STARTED,
-            "code_mtime": _self_scan["mtime"]}
+            "code_mtime": _self_scan["mtime"],
+            # 이 데몬이 실제로 깐 패키지 버전 — 화면의 [버전] 이 그린다. 한 번만 잰다:
+            # 프로세스가 도는 동안 바뀔 수 없다 (바뀌면 그건 재시작이다)
+            "versions": _self_scan["versions"]}
+
+
+def dist_versions(sources) -> dict[str, str]:
+    """이 데몬의 소스 목록에서 **pip 배포명**을 끌어내 버전을 잰다.
+
+    `bus` → `piper-bus` 처럼 우리 패키지는 디렉토리 이름에서, 바깥 것(mujoco·
+    pyrealsense2…)은 계약의 `DAEMON_DISTS` 에서 — 데몬 이름은 `daemons/<이름>.py` 로
+    안다. 없는 배포는 **빼놓는다** — "-" 를 지어내지 않는다.
+    """
+    from importlib import metadata
+
+    from piper_bus import contract as C
+
+    wanted: list[str] = []
+    for rel in sources:
+        rel = str(rel)
+        if rel.startswith("daemons/") and rel.endswith(".py"):
+            wanted.extend(C.DAEMON_DISTS.get(rel[len("daemons/"):-3], ()))
+        elif "/" not in rel:
+            wanted.append(f"piper-{rel}")
+    out: dict[str, str] = {}
+    for name in wanted:
+        try:
+            out[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            continue
+        except Exception:
+            continue
+    return out

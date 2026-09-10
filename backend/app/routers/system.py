@@ -54,6 +54,94 @@ async def list_services():
             "gateway": units.gateway_status()}
 
 
+@router.get("/version")
+async def version_info():
+    """지금 도는 버전 + 바깥 소프트웨어 (feature/version-update.md §2).
+    정본은 코드 밖(이미지 매니페스트·git)이라 여기서 지어내지 않는다."""
+    from app.services import version
+
+    return await asyncio.to_thread(version.collect)
+
+
+@router.get("/update/check")
+async def update_check(force: bool = False):
+    """새 버전이 있나 — 레지스트리(배포 기계) 또는 git 원격 태그(소스 기계). 배지만."""
+    from app.services import version
+
+    return await asyncio.to_thread(version.check_update, force)
+
+
+class UpdateRequest(BaseModel):
+    version: str
+
+
+def _unitd_update(version_str: str, stage: str) -> dict:
+    from app.services import units, version as V
+    from piper_bus import contract as C
+
+    if not V.VERSION_RE.match(version_str):
+        raise HTTPException(400, f"버전 모양이 아닙니다: {version_str}")
+    if not units.unitd_available():
+        raise HTTPException(400, "서비스 관리 데몬(piper-unitd)이 없습니다 — 업데이트는 호스트의 unitd 가 실행합니다")
+    try:
+        return units._bus().rpc_call(C.UNITD, "update", [version_str, stage, V.update_mode()], timeout=30)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/update/pull")
+async def update_pull(body: UpdateRequest):
+    """[받기] — 이미지를 받고 호스트 코드를 꺼낸다. **아무것도 실행하지 않는다.**"""
+    return await asyncio.to_thread(_unitd_update, body.version, "pull")
+
+
+@router.post("/update/apply")
+async def update_apply(body: UpdateRequest):
+    """[적용] / [이전 버전으로] — 받아 둔 버전의 apply.sh (소스 기계는 update-source.sh).
+
+    ⚠ **활동 중이면 막는다** — 마지막 단계가 게이트웨이 컨테이너와 데몬을 갈아치운다.
+    돌고 있는 녹화·추론·학습·수동 조작이 그대로 깨진다. 이 응답 뒤 곧 연결이 끊긴다.
+    """
+    from app.services import exclusivity as ex
+
+    busy = ex.running()
+    if busy:
+        labels = ", ".join(ex.LABELS.get(a, a.value) for a in busy)
+        raise HTTPException(409, f"{labels} 중에는 업데이트할 수 없습니다 — 끝내고 다시 누르세요")
+    return await asyncio.to_thread(_unitd_update, body.version, "apply")
+
+
+@router.get("/update/status")
+async def update_status():
+    from app.services import units
+    from piper_bus import contract as C
+
+    if not units.unitd_available():
+        return {"active": False, "finished": False, "log": "", "need_sudo": [], "unitd": False}
+    try:
+        st = await asyncio.to_thread(units._bus().rpc_call, C.UNITD, "update_status", [], 10)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+    return {**st, "unitd": True}
+
+
+@router.get("/update/notes")
+async def update_notes(version: str):
+    """받아 둔 번들의 CHANGELOG 에서 그 버전의 절 — 받기 전엔 빈 문자열."""
+    from app.services import units, version as V
+    from piper_bus import contract as C
+
+    if not V.VERSION_RE.match(version):
+        raise HTTPException(400, f"버전 모양이 아닙니다: {version}")
+    if not units.unitd_available():
+        return {"version": version, "notes": ""}
+    try:
+        notes = await asyncio.to_thread(units._bus().rpc_call, C.UNITD, "notes", [version], 10)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+    return {"version": version, "notes": notes or ""}
+
+
 class RestartRequest(BaseModel):
     name: str
 

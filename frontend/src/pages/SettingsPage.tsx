@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import FloorGuardPanel from '../components/FloorGuardPanel'
 import HfAccountPanel from '../components/HfAccountPanel'
 import ServicesPanel from '../components/ServicesPanel'
+import VersionCard from '../components/VersionCard'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 
@@ -99,11 +100,14 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {tab === 'services' && (
+      {tab === 'services' && (<>
+        <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5">
+          <VersionCard />
+        </div>
         <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5">
           <ServicesPanel />
         </div>
-      )}
+      </>)}
 
       {tab === 'hub' && <HfAccountPanel />}
 

@@ -25,10 +25,19 @@ rm -rf "$OUT"; mkdir -p "$OUT/wheels" "$OUT/udev"
 #     ls .hostside/wheels   → piper_*-0.1.0-py3-none-any.whl
 #   so101·sim 의 바깥 의존(feetech-servo-sdk·mujoco)은 wheel 에 없다 — apply.sh 가
 #   PyPI 에서 깐다 (mujoco 는 플랫폼 wheel 이라 여기서 못 싣는다).
+# ⚠ **wheel 버전에 릴리스 태그를 도장 찍는다.** 저장소의 pyproject 는 전부 `0.1.0` 이라
+#   호스트 venv 에 어느 릴리스의 wheel 이 깔렸는지 아무도 모른다 — 데몬 자기 보고가
+#   `piper-robot 0.4.5` 라고 말해야 화면의 [버전] 이 게이트웨이와 대조할 수 있다
+#   (feature/version-update.md §2). 저장소는 안 건드린다 — 굽는 사본만 바꾼다.
+STAMP="${PIPER_VERSION#v}"
+TMPB="$(mktemp -d)"; trap 'rm -rf "$TMPB"' EXIT
 for p in bus shm robot cam rs so101 sim; do
-  python3 -m pip wheel --no-deps -q -w "$OUT/wheels" "./$p"
+  rm -rf "$TMPB/$p"; cp -r "./$p" "$TMPB/$p"; rm -rf "$TMPB/$p/build" "$TMPB/$p"/*.egg-info
+  if [ -n "$STAMP" ]; then
+    sed -i "s/^version = \"[^\"]*\"/version = \"$STAMP\"/" "$TMPB/$p/pyproject.toml"
+  fi
+  python3 -m pip wheel --no-deps -q -w "$OUT/wheels" "$TMPB/$p"
 done
-rm -rf bus/build shm/build robot/build cam/build rs/build so101/build sim/build 2>/dev/null || true
 
 # ── 데몬 소스·유닛·설치 스크립트 ──────────────────────────────────────────
 # ⚠ **번들과 똑같은 모양으로 싣는다.** 예전에는 `daemons/`·`systemd/` 를 디렉토리로
@@ -40,6 +49,10 @@ rm -rf bus/build shm/build robot/build cam/build rs/build so101/build sim/build 
 tar czf "$OUT/daemons.tar.gz" --exclude='__pycache__' --exclude='*.pyc' \
     daemons deploy/systemd deploy/install-daemons.sh
 cp deploy/apply.sh "$OUT/"
+# 웹 업데이트가 쓰는 둘 (feature/version-update.md): 받기 스크립트, 그리고 받은 뒤
+# "무엇이 달라졌나"를 보여 줄 변경 이력 — `.dockerignore` 가 `*.md` 를 빼므로 여기서 싣는다
+cp deploy/piper-install.sh "$OUT/"
+cp CHANGELOG.md "$OUT/"
 
 # ── compose · env 예시 ────────────────────────────────────────────────────
 cp docker-compose.yml "$OUT/"

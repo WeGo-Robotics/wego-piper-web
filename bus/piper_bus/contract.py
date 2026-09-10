@@ -271,6 +271,19 @@ DAEMON_SOURCES: Final = {
     UNITD: ("daemons/unitd.py", "bus"),
 }
 
+# 데몬이 자기 보고에 싣는 **바깥 소프트웨어** (pip 배포명). 컨테이너 게이트웨이는
+# 호스트 venv 를 들여다볼 수 없다 — 데몬이 자기 것을 재서 말하는 길뿐이다
+# (feature/version-update.md §2). `piper_*` 는 DAEMON_SOURCES 에서 자동으로 딸려간다.
+DAEMON_DISTS: Final = {
+    RSD: ("pyrealsense2",),
+    CAMERAD: ("opencv-python-headless", "opencv-python"),
+    ROBOTD: ("piper-sdk", "python-can"),
+    ESTOPD: (),
+    SO101D: ("feetech-servo-sdk", "pyserial"),
+    SIMD: ("mujoco",),
+    UNITD: (),
+}
+
 # ── 유닛 카탈로그 — 화면의 [서비스] 가 그리는 것 ─────────────────────────────
 #
 # 유닛 이름(`piper-` 뒤) → (설명, 종류). 게이트웨이(목록·게이트)와 unitd(허용 목록)가

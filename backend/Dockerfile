@@ -10,6 +10,12 @@
 ARG BASE_TAG=cu130-2
 FROM piper-web-base:${BASE_TAG}
 
+# 릴리스 태그가 곧 버전이다 — release.sh 가 --build-arg 로 박는다. 앱은 자기 버전을
+# 모르므로(package.json 0.0.0) 이게 게이트웨이가 "나는 v0.4.5" 라고 말할 첫 근거다
+# (feature/version-update.md §2). 없으면 매니페스트, 그다음 git.
+ARG PIPER_VERSION=unknown
+ENV PIPER_VERSION=${PIPER_VERSION}
+
 # ── 버스·shm 계약 패키지 ──
 # 게이트웨이와 데몬이 **공유하는 계약**이다. 데몬 자체(rsd/camerad/robotd)는
 # 호스트 systemd 로 뜨지만, 이 컨테이너 안의 LeRobot 프로세스가 같은 포맷으로

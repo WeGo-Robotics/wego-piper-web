@@ -363,12 +363,16 @@ fi
 say "4. 기동"
 if [ $CHECK = 0 ]; then
   # 데몬이 먼저다 — 컨테이너는 세그먼트와 버스가 있어야 뭔가 보인다.
-  for d in estopd robotd camerad rsd; do systemctl --user restart "piper-$d" 2>/dev/null || true; done
+  # unitd 도 새 코드로 — 안 그러면 웹의 켜기/끄기·버전 카드가 옛 데몬을 통한다.
+  for d in estopd robotd camerad rsd unitd; do systemctl --user restart "piper-$d" 2>/dev/null || true; done
   ok "데몬 재시작"
   ( cd "$SRC" && docker compose up -d ) && ok "컨테이너 기동" || \
     bad "docker compose 실패 — $SRC 에서 직접 보세요"
+  # 적용본 기록 — unitd 가 읽어 화면의 [버전] 이 "적용본 vX" 를 말한다
+  # (feature/version-update.md §2). 이미지 안 매니페스트와 다르면 그게 곧 문제다.
+  echo "$version" > "$SRC/VERSION"
 fi
-for d in estopd robotd camerad rsd; do
+for d in estopd robotd camerad rsd unitd; do
   systemctl --user is-active --quiet "piper-$d" && ok "piper-$d" || bad "piper-$d 안 돎"
 done
 
