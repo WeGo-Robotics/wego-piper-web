@@ -28,6 +28,8 @@ RPC 를 보내는 게 지금까지의 전부였는데, 그건 "끄기"가 못 �
 import json
 import logging
 import os
+import re
+import select
 import signal
 import subprocess
 import sys
@@ -304,6 +306,9 @@ class UnitHub:
             "need_sudo": parse_need_sudo(log), **state,
         }
 
+    def logs(self, unit: str = "all", lines: int = 300, level: str = "info", since: str | None = None) -> dict:
+        return fetch_logs(unit, lines, level, since)
+
     def notes(self, version: str) -> str:
         """받아 둔 번들의 CHANGELOG 에서 그 버전의 절만. 없으면 빈 문자열."""
         if not is_version(version):
@@ -346,7 +351,189 @@ def changelog_section(text: str, version: str) -> str:
     return text[i:j if j > 0 else None].strip()
 
 
-_METHODS = {"list", "control", "host_info", "update", "update_status", "notes"}
+# ── 로그 — 데몬 저널을 웹에서 (feature/version-update.md 의 이웃, 사용자 요청 2026-09-10) ──
+#
+# 컨테이너 게이트웨이는 호스트 저널을 못 읽는다 — unitd 가 읽어 준다. 데몬은 stdout 으로
+# 찍으므로 journald 우선순위는 전부 6(info)이다 — 레벨은 **메시지 토큰**에서 가른다:
+# 파이썬 로깅 `[ERROR]`·`[WARNING]`, uvicorn `ERROR:`·`WARNING:`, systemd 의 "Failed" 줄.
+
+LOG_LINE_CAP = 5000
+LOG_BUDGET_S = 8.0     # 저널 훑기 시간 예산 — RPC 타임아웃(30초) 안에 답한다
+# journalctl -g (PCRE, 대소문자 구분) — 레벨 토큰과 트레이스백의 줄 모양
+LOG_GREP_ERROR = r"\[(ERROR|CRITICAL)\]|^(ERROR|CRITICAL):|Traceback \(most recent|^\s+File \"|^[A-Za-z_.]*(Error|Exception)\b|Failed with result"
+LOG_GREP_WARNING = r"\[(WARNING|ERROR|CRITICAL)\]|^(WARNING|ERROR|CRITICAL):|Traceback \(most recent|^\s+File \"|^[A-Za-z_.]*(Error|Exception)\b|Failed with result"
+LEVEL_RANK = {"error": 3, "warning": 2, "info": 1, "debug": 0}
+_TB_LINE = re.compile(r"^\s+File \"|^[A-Za-z_.]*(Error|Exception)\b")
+_TOKEN = re.compile(r"\[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\]|^(DEBUG|INFO|WARNING|ERROR|CRITICAL):\s")
+
+
+def infer_level(msg: str, prio: str | int | None) -> str:
+    m = _TOKEN.search(msg or "")
+    if m:
+        tok = (m.group(1) or m.group(2)).lower()
+        return {"critical": "error", "warn": "warning"}.get(tok, tok)
+    m0 = msg or ""
+    # 트레이스백의 줄들은 **그 자체로** 오류다 — journald 가 -g 로 골라 보내면 "Traceback"
+    # 첫 줄이 창 밖에 있을 수 있어 묶기만으로는 info 로 되돌아간다(실측: 24줄 걸리고 0줄).
+    if ("Traceback (most recent call last)" in m0 or "Failed with result" in m0
+            or _TB_LINE.match(m0)):
+        return "error"
+    try:
+        p = int(prio) if prio is not None else 6
+    except (TypeError, ValueError):
+        p = 6
+    return "error" if p <= 3 else "warning" if p == 4 else "debug" if p >= 7 else "info"
+
+
+def parse_journal_lines(text: str) -> list[dict]:
+    """`journalctl -o json` 줄들 → [{t, unit, level, msg}]. 깨진 줄은 건너뛴다."""
+    out: list[dict] = []
+    in_tb: dict[str, bool] = {}
+    for line in (text or "").splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        msg = e.get("MESSAGE")
+        if isinstance(msg, list):                       # 비-UTF8 은 바이트 배열로 온다
+            msg = bytes(b for b in msg if isinstance(b, int)).decode(errors="replace")
+        msg = msg or ""
+        try:
+            t = int(e.get("__REALTIME_TIMESTAMP", 0)) / 1e6
+        except (TypeError, ValueError):
+            t = 0.0
+        unit = str(e.get("_SYSTEMD_USER_UNIT") or e.get("_SYSTEMD_UNIT") or e.get("UNIT") or "")
+        unit = unit.removeprefix("piper-").removesuffix(".service")
+        if unit in ("init.scope", ""):
+            unit = "systemd"                     # 사용자 관리자 자신의 줄 (Started/Failed …)
+        level = infer_level(msg, e.get("PRIORITY"))
+        # 트레이스백은 한 덩어리다 — 첫 줄만 error 로 두면 "오류만" 에서 프레임·예외 줄이
+        # 빠져 무엇이 터졌는지 못 본다. 다음 레벨 토큰 줄이 나올 때까지 error 로 잇는다.
+        if "Traceback (most recent call last)" in msg:
+            in_tb[unit] = True
+        elif in_tb.get(unit):
+            if _TOKEN.search(msg):
+                in_tb[unit] = False
+            else:
+                level = "error"
+        out.append({"t": t, "unit": unit, "level": level, "msg": msg})
+    return out
+
+
+def log_units(name: str) -> list[str]:
+    """웹이 고른 이름 → journalctl -u 인자. 카탈로그 + gateway·frontend·update, `all` 은 glob."""
+    if name == "all":
+        # glob(`piper-*`)보다 명시 목록이 빠르다 — journald 가 유닛 색인으로 바로 간다(실측 1초 차)
+        return [f"piper-{s}.service" for s in (*C.UNIT_CATALOG, "gateway", "frontend", "update")]
+    short = name.removeprefix("piper-").removesuffix(".service")
+    if short in C.UNIT_CATALOG or short in ("gateway", "frontend", "update"):
+        return [f"piper-{short}.service"]
+    raise ValueError(f"모르는 유닛입니다: {name}")
+
+
+_SINCE = re.compile(r"^(\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?|\d+ ?(min|minutes?|hours?|days?) ago|today|yesterday)$")
+
+
+def fetch_logs(unit: str, lines: int = 300, level: str = "info", since: str | None = None,
+               docker_container: str | None = "piper-web-backend") -> dict:
+    """저널(또는 배포 호스트의 gateway 컨테이너 로그)을 읽어 레벨로 거른다.
+    거를수록 더 읽는다 — 오류 30줄을 보려면 info 3천 줄을 봐야 할 수 있다."""
+    if level not in LEVEL_RANK:
+        raise ValueError(f"모르는 레벨입니다: {level}")
+    if since and not _SINCE.match(since):
+        raise ValueError(f"시각 모양이 아닙니다: {since}")
+    lines = max(1, min(int(lines), LOG_LINE_CAP))
+    units = log_units(unit)
+    # 거를 때는 journald 에게 먼저 거르게 한다(`-g`, C 로 전 구간) — 게이트웨이 접근 로그가
+    # 시간당 수천 줄이라 "마지막 5000줄" 창으로는 어제 오류가 안 잡혔다(실측). 패턴은
+    # 레벨 토큰 + 트레이스백 줄(들여쓴 File·예외 클래스·Failed) — 묶기가 되게.
+    filtered = level not in ("info", "debug")
+    want = lines * 10 if filtered else lines
+    entries: list[dict] = []
+    source = "journal"
+    partial = False
+    unit_exists = _systemctl("show", units[0], "--property=LoadState").stdout.strip() not in ("LoadState=not-found", "")
+    if units[0] == "piper-gateway.service" and not unit_exists and docker_container:
+        # 배포 호스트 — 게이트웨이는 컨테이너다
+        source = "docker"
+        cmd = ["docker", "logs", "--timestamps", "--tail", str(want)]
+        if since:
+            cmd += ["--since", since.replace(" ago", "").replace("min", "m").replace("hour", "h").replace("day", "d").replace("s", "").replace(" ", "")] if "ago" in since else []
+        r = subprocess.run(cmd + [docker_container], capture_output=True, text=True, timeout=15)
+        for line in (r.stdout + r.stderr).splitlines():
+            ts, _, msg = line.partition(" ")
+            try:
+                from datetime import datetime
+                t = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                t, msg = 0.0, line
+            entries.append({"t": t, "unit": "gateway", "level": infer_level(msg, 6), "msg": msg})
+    else:
+        # ⚠ `-r`(최신부터) 로 스트리밍하고 **시간 예산** 안에 온 만큼만 쓴다. `-g` 는
+        #   게이트웨이 접근 로그(시간당 수천 줄)를 PCRE 로 거꾸로 훑는데, "오류만 · 2일"이
+        #   16초 걸렸다(실측) — RPC 타임아웃(30초)에 걸리면 400 이고 아무것도 못 본다.
+        #   최신 오류가 먼저 오므로 부분 결과도 쓸모가 있다. `partial` 로 말한다.
+        cmd = ["journalctl", "--user", "-o", "json", "--no-pager", "-r", "-n", str(want)]
+        for x in units:
+            cmd += ["-u", x]
+        if since:
+            cmd += ["--since", since]
+        if filtered:
+            cmd += ["-g", LOG_GREP_WARNING if level == "warning" else LOG_GREP_ERROR]
+        text, partial = _journal_stream(cmd, want, LOG_BUDGET_S)
+        entries = list(reversed(parse_journal_lines(text)))
+    need = LEVEL_RANK[level]
+    kept = collapse_repeats([e for e in entries if LEVEL_RANK.get(e["level"], 1) >= need])
+    return {"entries": kept[-lines:], "scanned": len(entries), "source": source,
+            "truncated": len(kept) > lines, "partial": partial}
+
+
+def _journal_stream(cmd: list[str], want: int, budget_s: float) -> tuple[str, bool]:
+    """journalctl 을 띄워 줄 단위로 읽는다 — `want` 줄이 차거나 예산이 다하면 멈춘다.
+    반환: (읽은 텍스트, 예산에 걸렸는가)."""
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    deadline = time.monotonic() + budget_s
+    lines: list[str] = []
+    partial = False
+    try:
+        while len(lines) < want:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                partial = True
+                break
+            ready, _, _ = select.select([proc.stdout], [], [], min(left, 0.5))
+            if not ready:
+                if proc.poll() is not None:
+                    break
+                continue
+            line = proc.stdout.readline()
+            if not line:
+                break
+            lines.append(line)
+    finally:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        proc.wait(timeout=2)
+    return "".join(lines), partial
+
+
+def collapse_repeats(rows: list[dict]) -> list[dict]:
+    """같은 유닛의 같은 줄이 연달아 오면 하나로(`count`, 마지막 시각 `t_last`) — 프론트
+    개발 서버가 게이트웨이 재시작 사이에 `ECONNREFUSED` 를 24번 찍어 "오류만" 창을
+    통째로 채웠다(실측). 세는 것이 지우는 것보다 정직하다."""
+    out: list[dict] = []
+    for e in rows:
+        if out and out[-1]["unit"] == e["unit"] and out[-1]["msg"] == e["msg"]:
+            out[-1]["count"] = out[-1].get("count", 1) + 1
+            out[-1]["t_last"] = e["t"]
+            continue
+        out.append(dict(e, count=1, t_last=e["t"]))
+    return out
+
+
+_METHODS = {"list", "control", "host_info", "update", "update_status", "notes", "logs"}
 
 
 def serve(bus: Bus, hub: UnitHub) -> None:

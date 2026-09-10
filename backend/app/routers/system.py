@@ -142,6 +142,28 @@ async def update_notes(version: str):
     return {"version": version, "notes": notes or ""}
 
 
+@router.get("/logs")
+async def system_logs(unit: str = "all", lines: int = 300, level: str = "info",
+                      since: str | None = None, format: str = "json"):
+    """데몬 저널 (설정 → 로그). `level` 은 error|warning|info — 데몬은 stdout 이라 journald
+    우선순위가 전부 info 여서 메시지의 `[ERROR]` 토큰으로 가른다. `format=text` 는 내려받기."""
+    from fastapi.responses import PlainTextResponse
+
+    from app.services import syslog
+
+    if level not in ("error", "warning", "info", "debug"):
+        raise HTTPException(400, f"모르는 레벨입니다: {level}")
+    try:
+        out = await asyncio.to_thread(syslog.fetch, unit, max(1, min(lines, 5000)), level, since or None)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc))
+    if format == "text":
+        name = f"piper-{unit}-{level}.log"
+        return PlainTextResponse(syslog.as_text(out["entries"]),
+                                 headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    return out
+
+
 class RestartRequest(BaseModel):
     name: str
 

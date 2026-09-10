@@ -48,7 +48,7 @@ const ACTION_LABEL: Record<Action, string> = {
   start: '켜짐', stop: '꺼짐', restart: '재시작됨', enable: '부팅 시 시작', disable: '부팅 시 시작 해제',
 }
 
-export default function ServicesPanel() {
+export default function ServicesPanel({ onShowLog }: { onShowLog?: (unit: string) => void } = {}) {
   const { notify, confirm } = useSystemMessage()
   const [units, setUnits] = useState<Unit[]>([])
   const [gateway, setGateway] = useState<Gateway | null>(null)
@@ -150,11 +150,11 @@ export default function ServicesPanel() {
             onRestart={restartGateway}
           />
         )}
-        {core.map((u) => <UnitRow key={u.name} u={u} busy={busy === u.name} onAct={act} />)}
+        {core.map((u) => <UnitRow key={u.name} u={u} busy={busy === u.name} onAct={act} onShowLog={onShowLog} />)}
         {optional.length > 0 && (
           <p className="pt-2 text-[11px] uppercase tracking-wide text-neutral-500">선택 데몬</p>
         )}
-        {optional.map((u) => <UnitRow key={u.name} u={u} busy={busy === u.name} onAct={act} />)}
+        {optional.map((u) => <UnitRow key={u.name} u={u} busy={busy === u.name} onAct={act} onShowLog={onShowLog} />)}
         {units.length === 0 && !gateway && (
           <p className="text-xs text-neutral-500">systemd 유닛을 찾지 못했습니다.</p>
         )}
@@ -163,7 +163,7 @@ export default function ServicesPanel() {
   )
 }
 
-function UnitRow({ u, busy, onAct }: { u: Unit; busy: boolean; onAct: (u: Unit, a: Action) => void }) {
+function UnitRow({ u, busy, onAct, onShowLog }: { u: Unit; busy: boolean; onAct: (u: Unit, a: Action) => void; onShowLog?: (unit: string) => void }) {
   const detail = !u.installed
     ? '설치 안 됨 — deploy/install-daemons.sh ' + u.name.replace(/^piper-/, '')
     : `${u.active
@@ -176,6 +176,7 @@ function UnitRow({ u, busy, onAct }: { u: Unit; busy: boolean; onAct: (u: Unit, 
       description={u.description} busy={busy}
       restartDisabled={u.restartable === false || !u.active}
       onRestart={() => onAct(u, 'restart')}
+      onLog={onShowLog ? () => onShowLog(u.name.replace(/^piper-/, '')) : undefined}
       power={u.installed !== false ? {
         on: u.active, disabled: !u.controllable, title: lock,
         onToggle: () => onAct(u, u.active ? 'stop' : 'start'),
@@ -188,9 +189,9 @@ function UnitRow({ u, busy, onAct }: { u: Unit; busy: boolean; onAct: (u: Unit, 
   )
 }
 
-function Row({ name, active, stale, detail, description, busy, restartDisabled, onRestart, power, boot }: {
+function Row({ name, active, stale, detail, description, busy, restartDisabled, onRestart, onLog, power, boot }: {
   name: string; active: boolean; stale: boolean; detail: string; description?: string
-  busy: boolean; restartDisabled?: boolean; onRestart: () => void
+  busy: boolean; restartDisabled?: boolean; onRestart: () => void; onLog?: () => void
   power?: { on: boolean; disabled: boolean; title?: string; onToggle: () => void }
   boot?: { on: boolean; disabled: boolean; title?: string; onToggle: () => void }
 }) {
@@ -207,6 +208,12 @@ function Row({ name, active, stale, detail, description, busy, restartDisabled, 
         </p>
         <p className="text-[11px] text-neutral-500 tabular-nums">{detail}</p>
       </div>
+      {onLog && (
+        <button onClick={onLog} title="이 데몬의 저널"
+          className="shrink-0 px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-200">
+          로그
+        </button>
+      )}
       {boot && (
         <label className={`flex shrink-0 items-center gap-1 text-[11px] ${boot.disabled
           ? 'text-neutral-600' : 'text-neutral-400'}`} title={boot.title}>
