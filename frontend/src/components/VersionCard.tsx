@@ -15,12 +15,20 @@ import { api } from '../services/api'
  * [적용] 뒤 화면은 **끊길 것을 알고** /health 를 두드리다 돌아오면 새로고침한다.
  *
  * sudo 가 필요한 전제는 자동화하지 않는다 — apply.sh 가 찍은 명령을 복사 가능한
- * 블록으로 보여 주고 "실행한 뒤 다시 [적용]". 게이트웨이 버전과 데몬 wheel 버전이
- * 다르면 노란 줄: 업데이트 뒤 데몬이 재시작을 못 받았다는 뜻이다.
+ * 블록으로 보여 주고 "실행한 뒤 다시 [적용]". **이번 릴리스가 실제로 건드린** wheel
+ * 만 게이트웨이 버전과 견준다(매니페스트의 `wheels`) — 다르면 노란 줄: 업데이트 뒤
+ * 그 데몬이 재시작을 못 받았다는 뜻이다.
+ *
+ * ⚠ **게이트웨이 버전 == 모든 wheel 버전은 틀린 전제다.** `release.sh` 는 바뀐
+ * 패키지만 굽는다(feature/version-update.md 자체가 "판정은 diff로"). v0.4.8~
+ * v0.4.10처럼 bus/shm/robot/cam/rs 를 안 건드린 패치에서는 그 wheel 들이 예전
+ * 버전 그대로인 게 **정상**이다 — 매번 다 굽지 않는 게 이 프로젝트의 설계다.
+ * .120 실기에서 이걸 "모든 게 최신"으로 잘못 가정해 매 패치마다 오탐이 났다.
  */
 
 type VersionInfo = {
-  gateway: { version: string; source: string | null; built_at?: string | null; prev?: string | null; registry?: string | null }
+  gateway: { version: string; source: string | null; built_at?: string | null; prev?: string | null
+    registry?: string | null; wheels?: string | null }
   container: Record<string, string>
   host: Record<string, string>
   deploy: { work?: string; current?: string | null; applied_at?: number | null
@@ -47,13 +55,20 @@ function fmtDate(iso?: string | null): string {
   return isNaN(d.getTime()) ? iso : d.toLocaleString('ko-KR', { hour12: false })
 }
 
-/** `piper-robot 0.4.5` 처럼 태그가 도장 찍힌 wheel 만 비교한다 — `0.1.0` 은 도장 전 빌드 */
-function wheelMismatch(gw: string, daemons: Record<string, Record<string, string>>): string[] {
+/** `piper-robot 0.4.5` 처럼 태그가 도장 찍힌 wheel 만, **이번 릴리스가 실제로
+ * 건드린 패키지**만 비교한다(매니페스트 `wheels`, 공백으로 나뉜 짧은 이름 —
+ * `bus` → `piper-bus`). `wheels` 가 없거나 비었으면 이번 릴리스는 wheel 을
+ * 하나도 안 구웠다는 뜻이라 아무것도 비교하지 않는다 — 안 그러면 wheel 을
+ * 안 건드린 패치마다 모든 데몬이 "낡았다"로 나온다. `0.1.0` 은 도장 전 빌드. */
+function wheelMismatch(gw: string, wheels: string | null | undefined,
+                        daemons: Record<string, Record<string, string>>): string[] {
   const tag = gw.replace(/^v/, '').replace(/-.*$/, '')
+  const touched = new Set((wheels ?? '').split(/\s+/).filter(Boolean).map((p) => `piper-${p}`))
+  if (touched.size === 0) return []
   const out: string[] = []
   for (const [d, vs] of Object.entries(daemons)) {
     for (const [pkg, v] of Object.entries(vs)) {
-      if (pkg.startsWith('piper-') && v !== '0.1.0' && v !== tag) out.push(`${d} ${pkg} ${v}`)
+      if (touched.has(pkg) && v !== '0.1.0' && v !== tag) out.push(`${d} ${pkg} ${v}`)
     }
   }
   return out
@@ -147,7 +162,7 @@ export default function VersionCard() {
   if (!info) return <p className="text-xs text-neutral-500">버전을 읽는 중…</p>
 
   const gw = info.gateway
-  const mismatch = wheelMismatch(gw.version, info.daemons)
+  const mismatch = wheelMismatch(gw.version, gw.wheels, info.daemons)
   const pick = (src: Record<string, string>, order: string[]) =>
     order.filter((k) => src[k]).map((k) => [k, src[k]] as const)
   const daemonRows = Object.entries(info.daemons)

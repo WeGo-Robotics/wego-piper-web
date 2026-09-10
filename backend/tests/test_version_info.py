@@ -32,6 +32,20 @@ def test_the_version_comes_from_env_then_manifest_then_git(monkeypatch, tmp_path
     assert V.running_version() == {"version": "unknown", "source": None}
 
 
+def test_wheels_field_says_what_this_release_actually_touched(monkeypatch, tmp_path):
+    """`wheels`가 없거나 비면 이번 릴리스가 데몬 wheel 을 하나도 안 구웠다는 뜻 —
+    화면의 wheel 드리프트 경고가 이 값으로 "무엇을 견줄지"를 정한다
+    (v0.4.10을 .120에 실기로 올려 보고서야 드러난 오탐 — CHANGELOG v0.4.11)."""
+    from app.services import version as V
+    mf = tmp_path / "manifest.txt"
+    mf.write_text('version="v0.4.7"\nprev="v0.4.6"\nbuilt_at="x"\nwheels="bus robot sim"\n')
+    monkeypatch.setattr(V, "MANIFEST", mf)
+    monkeypatch.delenv("PIPER_VERSION", raising=False)
+    assert V.running_version()["wheels"] == "bus robot sim"
+    mf.write_text('version="v0.4.10"\nprev="v0.4.9"\nbuilt_at="x"\nwheels=""\n')
+    assert V.running_version()["wheels"] == ""
+
+
 def test_cuda_is_read_off_the_torch_version_string_without_importing_torch():
     """`2.11.0+cu130` → 13.0. torch 를 import 하면 무겁다 — 문자열이면 된다."""
     from app.services.version import cuda_of
@@ -94,6 +108,10 @@ def test_the_version_card_draws_only_what_arrived_and_flags_wheel_drift():
     src = (REPO / "frontend" / "src" / "components" / "VersionCard.tsx").read_text()
     assert "/system/version" in src and "wheelMismatch" in src
     assert "piper-unitd 가 말합니다" in src and "데몬 자기 보고" in src
+    # ⚠ 게이트웨이 버전 == 모든 wheel 버전은 틀린 전제였다 — 이번 릴리스가 실제로
+    # 구운 패키지(매니페스트 wheels)만 견줘야 한다. 문자열 검사라 얕지만, 옛
+    # 시그니처(`wheelMismatch(gw.version, info.daemons)`, 인자 둘)가 돌아오면 잡는다.
+    assert "wheelMismatch(gw.version, gw.wheels, info.daemons)" in src
     page = (REPO / "frontend" / "src" / "pages" / "SettingsPage.tsx").read_text()
     assert "<VersionCard />" in page.split("tab === 'services'", 1)[1][:300]
     router = (REPO / "backend" / "app" / "routers" / "system.py").read_text()

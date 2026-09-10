@@ -50,19 +50,27 @@ def parse_manifest(text: str) -> dict[str, str]:
 
 
 def running_version() -> dict:
-    """{"version", "source", "built_at", "prev"} — 정본을 **순서대로** 찾는다."""
+    """{"version", "source", "built_at", "prev", "wheels"} — 정본을 **순서대로** 찾는다.
+
+    ⚠ **`wheels` 가 없으면 이번 릴리스는 데몬 wheel 을 안 건드렸다는 뜻이다** —
+    `release.sh` 가 바뀐 패키지만 골라 굽는다(`bus/shm/robot/cam/rs/so101/sim`
+    이 안 바뀌면 `wheels=""`). 그래서 데몬이 예전 버전의 wheel 을 그대로 쓰는 건
+    **정상**이다. v0.4.10 을 .120 에 실기로 올려 보고서야 드러났다: 화면이 이걸
+    "게이트웨이 버전 == 이번에 올린 모든 wheel 버전" 으로 잘못 가정해서, wheel 을
+    안 건드린 패치마다(v0.4.8~v0.4.10) 매번 "재시작을 못 받았다" 는 오탐을 냈다."""
     env = os.environ.get("PIPER_VERSION", "").strip()
     if env and env != "unknown":
         info = {"version": env, "source": "env"}
         if MANIFEST.exists():
             m = parse_manifest(MANIFEST.read_text())
-            info.update(built_at=m.get("built_at"), prev=m.get("prev"), registry=m.get("registry"))
+            info.update(built_at=m.get("built_at"), prev=m.get("prev"), registry=m.get("registry"),
+                        wheels=m.get("wheels"))
         return info
     if MANIFEST.exists():
         m = parse_manifest(MANIFEST.read_text())
         if m.get("version"):
             return {"version": m["version"], "source": "manifest",
-                    "built_at": m.get("built_at"), "prev": m.get("prev"),
+                    "built_at": m.get("built_at"), "prev": m.get("prev"), "wheels": m.get("wheels"),
                     "registry": m.get("registry")}
     try:
         r = subprocess.run(["git", "describe", "--tags", "--dirty", "--always"],
