@@ -263,34 +263,47 @@ export default function VersionCard() {
         </div>
       )}
 
-      <div className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-[auto_1fr]">
+      {/* ⚠ **값이 카드 밖으로 넘쳐 가로 스크롤바가 생겼다.** 항목 span 들이
+          `whitespace-nowrap` 인데 JSX 가 그 사이에 공백 없이 붙여서, "0.5.0" 과
+          "torch" 경계에 **줄바꿈 기회가 아예 없었다** — 한 줄 전체가 쪼갤 수 없는
+          덩어리였다. 거기에 `1fr` 트랙은 최소값이 auto(=min-content)라 그 덩어리
+          폭만큼 늘었다. 재현: 700px 창에서 scrollWidth 1224.
+
+          그래서 두 겹으로 막는다: 값 트랙은 `minmax(0,1fr)` 로 내용에 안 밀리고,
+          값 줄은 flex-wrap 이라 **항목 경계에서** 접힌다(텍스트 줄바꿈 기회와 무관).
+          "lerobot 0.5.0" 같은 항목 하나만 nowrap 으로 붙들어 둔다.
+          라벨 열의 nowrap 은 그대로다 — 한 글자씩 세로로 쌓이던 것을 막는 자리다. */}
+      <div className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-[auto_minmax(0,1fr)]">
         <span className="whitespace-nowrap text-neutral-500">컨테이너</span>
-        <span className="text-neutral-300">
+        <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-neutral-300">
           {pick(info.container, CONTAINER_ORDER).map(([k, v]) => (
-            <span key={k} className="mr-3 whitespace-nowrap">{LABEL[k] ?? k} <b className="font-mono font-normal text-neutral-200">{v}</b></span>
+            <span key={k} className="whitespace-nowrap">{LABEL[k] ?? k} <b className="font-mono font-normal text-neutral-200">{v}</b></span>
           ))}
           {pick(info.container, CONTAINER_ORDER).length === 0 && <span className="text-neutral-600">—</span>}
-        </span>
+        </div>
         <span className="whitespace-nowrap text-neutral-500">호스트</span>
-        <span className="text-neutral-300">
+        <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-neutral-300">
           {pick(info.host, HOST_ORDER).map(([k, v]) => (
-            <span key={k} className="mr-3 whitespace-nowrap">{LABEL[k] ?? k} <b className="font-mono font-normal text-neutral-200">{v}</b></span>
+            <span key={k} className="whitespace-nowrap">{LABEL[k] ?? k} <b className="font-mono font-normal text-neutral-200">{v}</b></span>
           ))}
           {pick(info.host, HOST_ORDER).length === 0 && (
             <span className="text-neutral-600">— (서비스 관리 데몬 piper-unitd 가 말합니다)</span>
           )}
-        </span>
+        </div>
         <span className="whitespace-nowrap text-neutral-500">데몬</span>
-        <span className="text-neutral-300">
+        <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-neutral-300">
           {daemonRows.map(([d, vs]) => (
-            <span key={d} className="mr-3 whitespace-nowrap">
-              {d} {vs.map(([k, v]) => (
-                <span key={k} className="ml-1">{LABEL[k] ?? k.replace(/^piper-/, 'piper_')} <b className="font-mono font-normal text-neutral-200">{v}</b></span>
+            // ⚠ 데몬 하나를 통째로 nowrap 으로 묶으면 그 묶음이 칸보다 길 때 또 넘친다
+            //   (robotd 는 패키지가 넷이다). 묶음도 접히게 하고 이름·패키지 하나씩만 붙든다.
+            <span key={d} className="inline-flex min-w-0 flex-wrap items-baseline gap-x-1">
+              <span className="whitespace-nowrap">{d}</span>
+              {vs.map(([k, v]) => (
+                <span key={k} className="whitespace-nowrap">{LABEL[k] ?? k.replace(/^piper-/, 'piper_')} <b className="font-mono font-normal text-neutral-200">{v}</b></span>
               ))}
             </span>
           ))}
           {daemonRows.length === 0 && <span className="text-neutral-600">— (데몬 자기 보고에서 옵니다)</span>}
-        </span>
+        </div>
       </div>
 
       {others.length > 0 && canControl && (

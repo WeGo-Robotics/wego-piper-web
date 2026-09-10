@@ -116,3 +116,27 @@ def test_the_version_card_draws_only_what_arrived_and_flags_wheel_drift():
     assert "<VersionCard />" in page.split("tab === 'services'", 1)[1][:300]
     router = (REPO / "backend" / "app" / "routers" / "system.py").read_text()
     assert '@router.get("/version")' in router
+
+
+def test_the_version_rows_wrap_inside_the_card():
+    """⚠ 값이 카드 밖으로 넘쳐 **가로 스크롤바**가 생겼다.
+
+    항목 span 들이 `whitespace-nowrap` 인데 JSX 가 그 사이에 공백 없이 붙여서
+    항목 경계에 줄바꿈 기회가 없었다 — 한 줄 전체가 쪼갤 수 없는 덩어리였고,
+    `auto_1fr` 의 `1fr` 은 최소값이 min-content 라 그 폭만큼 늘었다(700px 창에서
+    scrollWidth 1224). 트랙은 `minmax(0,1fr)`, 줄은 flex-wrap 이어야 한다.
+
+    ⚠ 라벨의 nowrap 은 **지우면 안 된다** — 좁은 폭에서 한글 라벨이 한 글자씩
+    세로로 쌓이던 것을 막은 자리다(b67bdf1).
+    """
+    from conftest import code_only
+
+    src = code_only((REPO / "frontend" / "src" / "components" / "VersionCard.tsx").read_text())
+    assert "sm:grid-cols-[auto_minmax(0,1fr)]" in src, "값 트랙이 내용에 밀린다"
+    assert "sm:grid-cols-[auto_1fr]" not in src
+    rows = src.split(">컨테이너</span>", 1)[1].split("받아 둔 다른 버전", 1)[0]
+    assert rows.count("flex-wrap") >= 4, "값 줄(셋)이나 데몬 묶음이 안 접힌다"
+    assert "mr-3 whitespace-nowrap" not in rows, "항목을 margin 으로 이어 붙이던 옛 구조가 남았다"
+    for label in ("컨테이너", "호스트", "데몬"):
+        assert f'className="whitespace-nowrap text-neutral-500">{label}' in src, \
+            f"{label} 라벨이 다시 한 글자씩 접힌다"
