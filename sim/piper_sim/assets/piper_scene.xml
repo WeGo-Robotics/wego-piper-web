@@ -1,5 +1,5 @@
 <mujoco model="piper_scene">
-  <compiler angle="radian" meshdir="../../../vendor/agx_arm_urdf/piper/meshes" balanceinertia="true" />
+  <compiler angle="radian" meshdir="meshes" balanceinertia="true" />
   <option timestep="0.002" gravity="0 0 -9.81" />
   <visual>
     <global offwidth="1280" offheight="960" />

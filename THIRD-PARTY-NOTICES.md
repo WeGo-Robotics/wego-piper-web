@@ -13,6 +13,17 @@ for d in md.distributions():
     print(m["Name"], m["Version"], m.get("License-Expression") or m.get("License"))'
 ```
 
+## 손으로 쓴 항목 — 자동 추출에 안 잡히는 것
+
+⚠ **아래는 위 명령으로 다시 뽑아도 안 나온다.** pip 패키지가 아니라 우리가 wheel
+안에 실어 재배포하는 **자산 파일**이기 때문이다. 재생성할 때 이 절을 지우지 말 것.
+
+| 구성요소 | 무엇 | 라이선스 |
+|---|---|---|
+| [agx_arm_urdf](https://github.com/agilexrobotics/agx_arm_urdf) | Piper 팔의 3D 메시 (STL 7 개) — `piper_sim` wheel 의 `assets/meshes/` 로 나간다. 시뮬레이터 씬이 이걸 읽는다 | MIT (Copyright (c) 2026 aalicecc) |
+
+전체 라이선스 원문은 서브모듈의 [vendor/agx_arm_urdf/LICENSE](vendor/agx_arm_urdf/LICENSE) 에 있다.
+
 ## 요약
 
 | 구분 | 개수 | 우리 배포에 지우는 의무 |

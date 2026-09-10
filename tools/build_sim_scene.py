@@ -13,7 +13,17 @@
    테이블·큐브·통·조명·카메라(top/wrist)·**그리퍼**(공식 URDF 엔 없다 —
    평행 슬라이드 손가락 둘, 스트로크 68mm = 실기 gripper 캘리브레이션
    0..68000µm 과 같은 뜻)·위치 액추에이터.
-3. meshdir 은 **상대 경로**로 바꾼다 — 절대 경로가 박히면 다른 기계에서 안 열린다.
+3. 쓰인 메시를 **산출물 옆(`assets/meshes/`)으로 복사**하고 meshdir 을 `meshes`
+   로 둔다.
+
+⚠ **예전엔 서브모듈을 상대경로로 가리켰다** (`../../../vendor/agx_arm_urdf/...`).
+   그 경로는 저장소를 통째로 체크아웃해 `sim/` 이 루트 바로 아래 있을 때만 맞는다 —
+   wheel 로 설치하면 `site-packages/piper_sim/assets/` 에서 세 단계 위라 아무 데도
+   안 닿는다. 실기(.120, v0.4.6)에서 simd 가 `link6.stl` 을 못 찾아 월드가 안 뜨고,
+   팔도 카메라도 등록되지 않았다 — 같은 원인, 두 증상.
+
+   절대경로로 굽는 것도 답이 아니다(다른 기계에서 안 열린다). 패키지 안에 넣으면
+   개발 체크아웃과 설치본이 **같은 상대경로**를 쓴다.
 """
 
 import argparse
@@ -132,6 +142,30 @@ def dump_arm(urdf: Path, meshdir: Path) -> ET.Element:
     return root
 
 
+def copy_meshes(arm: ET.Element, src: Path, dst: Path) -> list[Path]:
+    """씬이 참조하는 메시만 산출물 옆으로 복사한다. 복사한 파일 목록.
+
+    ⚠ **쓰지 않는 것은 안 담는다.** 서브모듈 전체가 203MB 인데 wheel 에 다 넣으면
+    시뮬을 안 쓰는 호스트도 그걸 받는다.
+    """
+    import shutil
+
+    names = sorted({e.get("file") for e in arm.iter("mesh") if e.get("file")})
+    dst.mkdir(parents=True, exist_ok=True)
+    # 안 쓰게 된 것은 지운다 — 남겨 두면 다음 사람이 왜 있는지 모른다
+    for stale in dst.glob("*.stl"):
+        if stale.name not in names:
+            stale.unlink()
+    out = []
+    for n in names:
+        s = src / n
+        if not s.is_file():
+            raise SystemExit(f"메시가 없습니다: {s}")
+        shutil.copy2(s, dst / n)
+        out.append(dst / n)
+    return out
+
+
 def compose(arm: ET.Element, meshdir_rel: str) -> ET.Element:
     scene = ET.fromstring(SCENE_TEMPLATE.format(meshdir=meshdir_rel))
     # 메시 자산
@@ -178,8 +212,10 @@ def main() -> int:
     if not a.urdf.exists():
         raise SystemExit(f"URDF 가 없습니다: {a.urdf} — `git submodule update --init vendor/agx_arm_urdf`")
     arm = dump_arm(a.urdf, a.meshes)
-    import os
-    rel = os.path.relpath(a.meshes, a.out.parent)
+    # ⚠ 쓰이는 메시만 옆에 복사한다. 서브모듈 전체는 203MB, `piper/meshes` 만도
+    #   28MB 인데 씬이 참조하는 것은 STL 일곱 개(7.9MB)뿐이다.
+    rel = "meshes"
+    used = copy_meshes(arm, a.meshes, a.out.parent / rel)
     scene = compose(arm, rel)
     ET.indent(scene, space="  ")
     a.out.parent.mkdir(parents=True, exist_ok=True)
@@ -187,7 +223,8 @@ def main() -> int:
     # 산출물이 실제로 열리는지 여기서 본다 — 안 열리는 씬을 커밋하지 않는다
     import mujoco
     m = mujoco.MjModel.from_xml_path(str(a.out))
-    print(f"wrote {a.out} — nq={m.nq} nu={m.nu} nbody={m.nbody} ncam={m.ncam} meshdir={rel}")
+    print(f"wrote {a.out} — nq={m.nq} nu={m.nu} nbody={m.nbody} ncam={m.ncam} "
+          f"meshdir={rel} ({len(used)} 개, {sum(f.stat().st_size for f in used)/1e6:.1f}MB)")
     return 0
 
 
