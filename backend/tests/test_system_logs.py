@@ -145,3 +145,43 @@ def test_repeated_lines_are_counted_not_listed():
     c = u.collapse_repeats(rows)
     assert [(r["unit"], r["count"]) for r in c] == [("frontend", 24), ("so101d", 1), ("frontend", 1)]
     assert c[0]["t"] == 0 and c[0]["t_last"] == 23
+
+
+# ── 유닛 목록은 한 곳에서만 나온다 ──────────────────────────────────────────
+
+def test_the_unit_list_has_one_home():
+    """⚠ 화면이 배열을 손으로 들면 **조용히 갈라진다.** 카탈로그에 데몬을 더하면
+    (`so101d`·`simd` 를 더했던 것처럼) 백엔드는 따라가고 화면은 안 따라가는데,
+    에러가 안 나서 아무도 눈치 못 챈다 — 새 데몬 로그를 개별로 못 볼 뿐이다.
+    실제로 `frontend` 가 그렇게 빠져 있었다: 백엔드는 받아주는데 고를 수 없었다.
+    """
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2]
+           / "frontend/src/components/SystemLogPanel.tsx").read_text()
+    assert "/system/log-units" in src, "화면이 목록을 서버에서 안 받는다"
+    # 폴백은 "전체" 하나뿐이어야 한다 — 목록을 다시 손으로 들면 같은 사고다
+    block = src.split("FALLBACK_UNITS", 1)[1].split("\n", 2)[0]
+    for daemon in ("robotd", "camerad", "rsd", "simd", "so101d"):
+        assert daemon not in block, f"폴백에 {daemon} 이 박혀 있다 — 목록이 둘이다"
+
+
+def test_every_offered_unit_is_actually_accepted():
+    """고를 수 있는 것은 전부 읽을 수 있어야 한다 — 목록과 허용이 갈리면
+    드롭다운이 400 을 부르는 항목을 보여준다."""
+    from piper_bus import contract as C
+
+    log_units = _unitd().log_units
+    for opt in C.log_unit_options():
+        if opt["id"] == "all":
+            continue
+        assert log_units(opt["id"]), f"{opt['id']} 를 고를 수 있는데 못 읽는다"
+
+
+def test_nothing_readable_is_missing_from_the_list():
+    """반대 방향 — 백엔드가 받아주는데 화면에 없으면 볼 방법이 없다."""
+    from piper_bus import contract as C
+
+    offered = {o["id"] for o in C.log_unit_options()}
+    readable = set(C.UNIT_CATALOG) | set(C.LOG_EXTRA_UNITS)
+    assert readable <= offered, f"고를 수 없는 유닛: {sorted(readable - offered)}"

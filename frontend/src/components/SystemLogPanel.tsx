@@ -12,14 +12,15 @@ import { api } from '../services/api'
 type Entry = { t: number; t_last?: number; count?: number; unit: string; level: 'error' | 'warning' | 'info' | 'debug'; msg: string }
 type Result = { entries: Entry[]; scanned: number; source: string; truncated: boolean; partial?: boolean; via: string }
 
-const UNITS: { id: string; label: string }[] = [
-  { id: 'all', label: '전체 piper-*' },
-  { id: 'robotd', label: 'robotd — Piper 팔' }, { id: 'camerad', label: 'camerad — USB 카메라' },
-  { id: 'rsd', label: 'rsd — RealSense' }, { id: 'estopd', label: 'estopd — E-stop' },
-  { id: 'so101d', label: 'so101d — SO-101' }, { id: 'simd', label: 'simd — 시뮬레이션' },
-  { id: 'unitd', label: 'unitd — 서비스 관리' }, { id: 'ollama', label: 'ollama' },
-  { id: 'gateway', label: 'gateway — 웹 서버' }, { id: 'update', label: '업데이트 실행' },
-]
+type UnitOpt = { id: string; label: string }
+
+/** ⚠ **목록은 서버가 준다.** 예전엔 여기 배열을 손으로 들었는데, 카탈로그에 데몬을
+ *  더하면(`so101d`·`simd` 를 더했던 것처럼) 백엔드는 따라가고 화면은 안 따라간다 —
+ *  새 데몬 로그를 개별로 못 보는데 에러도 안 나서 아무도 눈치 못 챈다. 실제로
+ *  `frontend` 가 그렇게 빠져 있었다: 백엔드는 받아주는데 고를 수가 없었다.
+ *
+ *  못 받았을 때만 쓰는 최소 폴백 — 서버가 답할 때까지 셀렉트가 비면 안 된다. */
+const FALLBACK_UNITS: UnitOpt[] = [{ id: 'all', label: '전체 piper-*' }]
 const SINCE: { id: string; label: string }[] = [
   { id: '1 hour ago', label: '최근 1시간' }, { id: '6 hours ago', label: '최근 6시간' },
   { id: 'today', label: '오늘' }, { id: '', label: '기간 제한 없음' },
@@ -40,7 +41,16 @@ export default function SystemLogPanel({ initialUnit }: { initialUnit?: string }
   const [res, setRes] = useState<Result | null>(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [units, setUnits] = useState<UnitOpt[]>(FALLBACK_UNITS)
   const endRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    let live = true
+    api.get<{ units: UnitOpt[] }>('/system/log-units')
+      .then((r) => { if (live && r.units?.length) setUnits(r.units) })
+      .catch(() => { /* 폴백으로 둔다 — 목록을 못 받아도 전체는 볼 수 있다 */ })
+    return () => { live = false }
+  }, [])
 
   useEffect(() => { if (initialUnit) setUnit(initialUnit) }, [initialUnit])
 
@@ -77,7 +87,7 @@ export default function SystemLogPanel({ initialUnit }: { initialUnit?: string }
         </div>
         <div className="flex flex-wrap items-center gap-1.5 text-xs">
           <select value={unit} onChange={(e) => setUnit(e.target.value)} className="rounded bg-neutral-700 border border-neutral-600 px-2 py-1">
-            {UNITS.map((u) => <option key={u.id} value={u.id}>{u.label}</option>)}
+            {units.map((u) => <option key={u.id} value={u.id}>{u.label}</option>)}
           </select>
           <select value={level} onChange={(e) => setLevel(e.target.value as typeof level)} className="rounded bg-neutral-700 border border-neutral-600 px-2 py-1">
             <option value="error">오류만</option><option value="warning">경고 이상</option><option value="info">전부</option>

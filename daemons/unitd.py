@@ -424,9 +424,10 @@ def log_units(name: str) -> list[str]:
     """웹이 고른 이름 → journalctl -u 인자. 카탈로그 + gateway·frontend·update, `all` 은 glob."""
     if name == "all":
         # glob(`piper-*`)보다 명시 목록이 빠르다 — journald 가 유닛 색인으로 바로 간다(실측 1초 차)
-        return [f"piper-{s}.service" for s in (*C.UNIT_CATALOG, "gateway", "frontend", "update")]
+        return [f"piper-{s}.service"
+                for s in (*C.UNIT_CATALOG, *C.LOG_EXTRA_UNITS)]
     short = name.removeprefix("piper-").removesuffix(".service")
-    if short in C.UNIT_CATALOG or short in ("gateway", "frontend", "update"):
+    if short in C.UNIT_CATALOG or short in C.LOG_EXTRA_UNITS:
         return [f"piper-{short}.service"]
     raise ValueError(f"모르는 유닛입니다: {name}")
 

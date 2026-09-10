@@ -305,6 +305,34 @@ UNIT_CATALOG: Final[dict[str, tuple[str, str]]] = {
     SIMD: ("MuJoCo 시뮬레이션 — 가상 팔·카메라", "optional"),
     "ollama": ("판단 LLM 런타임 (로컬)", "optional"),
 }
+#: 저널은 볼 수 있지만 **데몬 카탈로그에는 없는** 유닛 — 컨테이너와 일시 유닛이다.
+#: 켜고 끄는 대상이 아니라 `UNIT_CATALOG` 에 넣을 수 없지만, 로그는 봐야 한다.
+LOG_EXTRA_UNITS: Final[dict[str, str]] = {
+    "gateway": "웹 서버 (컨테이너)",
+    "frontend": "웹 프론트 (컨테이너)",
+    "update": "업데이트 실행 (일시 유닛)",
+}
+
+
+def log_unit_options() -> list[dict[str, str]]:
+    """로그 화면이 고를 수 있는 유닛 — **여기가 유일한 목록이다.**
+
+    ⚠ 예전엔 프론트가 배열을 손으로 들고 있었다. 카탈로그에 데몬을 더하면
+    (`so101d`·`simd` 를 더했던 것처럼) **백엔드는 따라가고 화면은 안 따라간다** —
+    새 데몬 로그를 개별로 못 보는데 에러도 안 나서 아무도 눈치 못 챈다. 실제로
+    `frontend` 가 그렇게 빠져 있었다: 백엔드는 받아주는데 고를 수가 없었다.
+
+    라벨은 카탈로그 설명의 **첫 마디**다 — 드롭다운에 한 줄로 들어가야 하고,
+    설명 전체는 두 번째 `—` 뒤로 길다.
+    """
+    out = [{"id": "all", "label": "전체 piper-*"}]
+    for name, (desc, _tier) in UNIT_CATALOG.items():
+        out.append({"id": name, "label": f"{name} — {desc.split(' — ')[0]}"})
+    for name, desc in LOG_EXTRA_UNITS.items():
+        out.append({"id": name, "label": f"{name} — {desc}"})
+    return out
+
+
 #: 웹에서 상태만 보고 손대지 않는 유닛
 UNIT_READONLY: Final = frozenset({ESTOPD})
 #: 자기 자신 — 끄면 이 화면의 켜기/끄기가 같이 죽는다

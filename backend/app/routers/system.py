@@ -142,6 +142,15 @@ async def update_notes(version: str):
     return {"version": version, "notes": notes or ""}
 
 
+@router.get("/log-units")
+async def system_log_units():
+    """로그 화면이 고를 수 있는 유닛. **목록은 계약이 갖는다** — 화면이 배열을
+    손으로 들면 카탈로그에 데몬을 더했을 때 조용히 갈라진다."""
+    from piper_bus import contract as C
+
+    return {"units": C.log_unit_options()}
+
+
 @router.get("/logs")
 async def system_logs(unit: str = "all", lines: int = 300, level: str = "info",
                       since: str | None = None, format: str = "json"):
