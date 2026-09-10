@@ -8,7 +8,7 @@ import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import { LOCAL_JOB_ID, type JobRecord, type ProcessState } from '../types/ws'
 import { useActivity, isStateMessage } from '../hooks/useActivity'
 import { usePolicies } from '../hooks/usePolicies'
-import LayoutToggle, { useLayout } from '../components/LayoutToggle'
+import LayoutToggle, { useLayout, twoColumns } from '../components/LayoutToggle'
 import PresetBar from '../components/PresetBar'
 import LogViewer from '../components/LogViewer'
 import TrainingMetrics, { type MetricsData, type HistoryData } from '../components/TrainingMetrics'
@@ -427,11 +427,11 @@ export default function TrainingPage() {
               values={presetValues} onApply={applyPreset} disabled={isRunning} />
           </div>
 
-          <div className="grid gap-6 grid-cols-1 lg:grid-cols-2 items-start">
+          <div {...twoColumns([1, 1], [420, 420])}>
           {/* ⚠ 열을 **따로 흘린다.** 카드들을 그리드에 직접 담으면 행 단위로
               묶여, 짧은 카드 밑에 옆 칸 높이만큼 빈 공간이 생긴다 — 데이터셋
               카드 밑이 데이터셋 정보 높이만큼 비어 보였던 그 공백이다.
-              대신 좁은 화면에서는 열 단위로 쌓인다 (쌍 교차가 아니라). */}
+              좁은 창에서도 쌓지 않는다 — 최소 폭 아래로는 가로로 스크롤한다(`twoColumns`). */}
           <div className="space-y-6">
           {/* 데이터셋 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
@@ -893,9 +893,9 @@ export default function TrainingPage() {
               어느 쪽을 넓게 볼지는 화면 크기와 그때 보고 싶은 것이 정한다. */}
           <LayoutToggle layout={layout} onChange={switchLayout} />
 
-          <div className={layout === 'row'
-            ? 'grid grid-cols-1 xl:grid-cols-[3fr_2fr] gap-4 items-start'
-            : 'space-y-4'}>
+          <div {...(layout === 'row'
+            ? twoColumns([3, 2], [480, 360], 16)
+            : { className: 'space-y-4' })}>
           <div className="space-y-4">
           <TrainingMetrics metrics={metrics} history={history} />
 

@@ -9,6 +9,7 @@ import LogViewer from '../components/LogViewer'
 import CameraProfilePicker from '../components/CameraProfilePicker'
 import LightStrip from '../components/LightStrip'
 import RecordPreview from '../components/RecordPreview'
+import { twoColumns } from '../components/LayoutToggle'
 import { camOptionText, type ReadyCam } from '../types/camera'
 
 type ReadyArm = { iface: string; role: string; side?: string | null }
@@ -344,7 +345,7 @@ export default function RecordingPage() {
           {/* 설정 화면 — 로봇·데이터셋을 한 줄에 나란히 두고,
               로그와 CLI 는 가로를 다 쓴다. 예전에는 2:1 세로 분할이라
               로그가 좁고 길게 눌려 한 줄이 자꾸 접혔다. */}
-          <div className="grid gap-6 grid-cols-1 lg:grid-cols-2 items-start">
+          <div {...twoColumns([1, 1], [420, 420])}>
           {/* 로봇 선택 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
             <div className="flex items-center justify-between">
@@ -462,7 +463,7 @@ export default function RecordingPage() {
                       }}
                       className="w-16 px-1.5 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 font-mono" />
                     <select value={devId} onChange={e => { setCameraMapping(prev => ({ ...prev, [name]: e.target.value })); setCliEdited(false) }}
-                      className="flex-1 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
+                      className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
                       <option value="">없음</option>
                       {cameras.map(c => {
                         const usedBy = Object.entries(cameraMapping).find(([k, v]) => v === c.id && k !== name)
@@ -654,7 +655,7 @@ export default function RecordingPage() {
       ) : (
         <>
           {/* 녹화 중 — 미리보기가 주인공이라 좌측을 넓게 준다 */}
-          <div className="grid gap-6 grid-cols-1 lg:grid-cols-[2fr_1fr] items-start">
+          <div {...twoColumns([2, 1], [480, 320])}>
             <div className="space-y-4">
               {webPreview && <RecordPreview />}
               {/* 조명 급변은 경보로 오지만, "지금 몇인가"는 여기서 계속 보인다 */}

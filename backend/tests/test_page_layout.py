@@ -39,13 +39,13 @@ def test_log_is_not_inside_a_narrow_column(page):
 def test_settings_use_two_columns_not_a_narrow_strip(page):
     """설정은 2열로 담는다 — 로그를 빼고 전체폭이 되면 입력창이 과하게 넓어진다."""
     src = (_PAGES / f"{page}.tsx").read_text()
-    assert "lg:grid-cols-2" in src, f"{page}: 설정을 2열로 담지 않는다"
+    assert "twoColumns([1, 1]" in src, f"{page}: 설정을 2열로 담지 않는다"
 
 
 def test_recording_keeps_a_wide_preview_while_running():
     """녹화 중에는 미리보기가 주인공이라 좌우 분할이 남아 있어야 한다."""
     src = (_PAGES / "RecordingPage.tsx").read_text()
-    assert "lg:grid-cols-[2fr_1fr]" in src, "녹화 중 미리보기 우선 배치가 사라졌다"
+    assert "twoColumns([2, 1]" in src, "녹화 중 미리보기 우선 배치가 사라졌다"
 
 
 # ── 배치 토글 (학습·비전) ────────────────────────────────────────────────────
@@ -191,3 +191,64 @@ def test_everything_indexed_by_frame_shares_a_column():
         assert marker in right, f"{marker} 가 시간축 칸에 없다"
     left = src.split("프레임으로 색인되는 것은", 1)[0]
     assert 'type="range"' not in left, "진행바가 사진 쪽에 남아 있다"
+
+
+# ── 2열이 내용에 안 밀리는가 (수집·학습·추론) ──────────────────────────────
+
+_TWO_COL_PAGES = ("RecordingPage", "TrainingPage", "InferencePage")
+
+
+def test_two_column_tracks_have_a_fixed_minimum():
+    """⚠ 2열 폭이 **시시각각** 바뀌었다. `grid-cols-[1fr_2fr]` 는 `1fr 2fr` 이 되고
+    fr 트랙의 최소값은 auto(=min-content)라 쪼갤 수 없는 내용이 트랙을 민다 —
+    실제 추론 페이지에서 카메라 행 하나로 541:1083 이 1226:706 으로 뒤집혔고,
+    긴 로그 한 줄로 195:2268 이 됐다. 최소값은 고정 px 여야 한다."""
+    from conftest import code_only
+
+    helper = code_only((_SRC / "components" / "LayoutToggle.tsx").read_text())
+    body = helper.split("export function twoColumns", 1)[1].split("export default", 1)[0]
+    assert "minmax(${min[0]}px" in body and "minmax(${min[1]}px" in body, "최소가 고정값이 아니다"
+    assert "minmax(0" not in body
+    assert "minWidth" in body, "좁아지면 스크롤 대신 찌그러진다"
+
+
+@pytest.mark.parametrize("page", _TWO_COL_PAGES)
+def test_no_content_sensitive_fr_tracks_remain(page):
+    """임의값 fr 트랙이 하나라도 남으면 그 자리만 다시 흔들린다."""
+    from conftest import code_only
+
+    src = code_only((_PAGES / f"{page}.tsx").read_text())
+    left = re.findall(r"grid-cols-\[[^\]]*fr[^\]]*\]", src)
+    assert not left, f"{page}: 내용에 밀리는 fr 트랙 — {left}"
+    assert "twoColumns(" in src, f"{page}: 공용 2열 헬퍼를 안 쓴다"
+
+
+def _selects(src: str) -> list[str]:
+    """`<select` 여는 태그의 className 들.
+
+    ⚠ `<select[^>]*className=` 로는 못 잡는다 — 여는 태그 안의 `onChange={e => …}`
+    화살표의 `>` 에서 끊겨 **아무것도 안 잡히고**, 그러면 "전부 줄 수 있다" 가
+    헛통과한다. 첫 `<option`/`</select>` 전까지에서 찾는다.
+    """
+    out = []
+    for m in re.finditer(r"<select\b", src):
+        rest = src[m.start():]
+        ends = [i for i in (rest.find("<option"), rest.find("</select>")) if i >= 0]
+        cm = re.search(r'className="([^"]*)"', rest[:min(ends) if ends else len(rest)])
+        if cm:
+            out.append(cm.group(1))
+    return out
+
+
+@pytest.mark.parametrize("page", _TWO_COL_PAGES)
+def test_flex_selects_can_shrink(page):
+    """⚠ `flex-1` 셀렉트에 `min-w-0` 이 없으면 **가장 긴 옵션 폭**이 최소 폭이 된다.
+    fr 트랙이면 열을 밀고(추론 페이지에서 카메라 행 하나로 541:1083 → 1226:706),
+    고정 트랙이어도 카드 밖으로 삐져나온다. 처음엔 카메라 행 둘만 고쳤는데 같은
+    모양의 셀렉트가 추론 페이지에 다섯 개 더 있었다."""
+    from conftest import code_only
+
+    classes = _selects(code_only((_PAGES / f"{page}.tsx").read_text()))
+    assert classes, f"{page}: 셀렉트를 하나도 못 찾았다 — 추출이 깨졌다"
+    stuck = [c[:50] for c in classes if "flex-1" in c.split() and "min-w-0" not in c.split()]
+    assert not stuck, f"{page}: 줄지 못하는 셀렉트 — {stuck}"

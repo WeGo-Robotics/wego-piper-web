@@ -16,6 +16,7 @@ import { useSystemMessage } from '../components/SystemMessages'
 import LightStrip from '../components/LightStrip'
 import TelemetryPanel, { type TelemetryData } from '../components/TelemetryPanel'
 import ManualControlPanel from '../components/ManualControlPanel'
+import { twoColumns } from '../components/LayoutToggle'
 import { camOptionText, type ReadyCam } from '../types/camera'
 
 function CameraPreview({ cameraNames }: { cameraNames: string[] }) {
@@ -384,7 +385,7 @@ export default function InferencePage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-6">
+        <div {...twoColumns([1, 2], [380, 480])}>
           {/* 좌측: 설정 */}
           <div className="space-y-4">
             {/* Follower */}
@@ -412,7 +413,7 @@ export default function InferencePage() {
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-neutral-400 w-10">왼팔</span>
                       <select value={leftFollower} onChange={(e) => setLeftFollower(e.target.value)}
-                        className="flex-1 px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
+                        className="flex-1 min-w-0 px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
                         <option value="">선택...</option>
                         {readyFollowers.map((a) => (
                           <option key={a.iface} value={a.iface} disabled={a.iface === rightFollower}>
@@ -424,7 +425,7 @@ export default function InferencePage() {
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-neutral-400 w-10">오른팔</span>
                       <select value={rightFollower} onChange={(e) => setRightFollower(e.target.value)}
-                        className="flex-1 px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
+                        className="flex-1 min-w-0 px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
                         <option value="">선택...</option>
                         {readyFollowers.map((a) => (
                           <option key={a.iface} value={a.iface} disabled={a.iface === leftFollower}>
@@ -480,7 +481,7 @@ export default function InferencePage() {
                       <span className="w-24 text-neutral-300 font-medium">{cam.name}{cam.model_name && cam.model_name !== cam.name ? <span className="text-neutral-500 text-[10px] ml-1">({cam.model_name})</span> : ''}</span>
                       <span className="text-neutral-500 w-20">{cam.width && cam.height ? `${cam.width}x${cam.height}` : ''}</span>
                       <select value={cameraMapping[cam.name] ?? ''} onChange={(e) => setCameraMapping((prev) => ({ ...prev, [cam.name]: e.target.value }))}
-                        className="flex-1 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500">
+                        className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500">
                         <option value="">카메라 선택...</option>
                         {readyCameras.map((c) => {
                           const usedBy = Object.entries(cameraMapping).find(([k, v]) => v === c.id && k !== cam.name)
@@ -543,7 +544,7 @@ export default function InferencePage() {
                   <div className="flex items-center gap-2 text-xs">
                     <span className="text-neutral-400 w-20">Policy</span>
                     <select value={policyType} onChange={(e) => { setPolicyType(e.target.value); setCliEdited(false) }}
-                      className="flex-1 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
+                      className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
                       {inferable.map((p) => (
                         <option key={p.type} value={p.type}>{p.label}</option>
                       ))}
@@ -559,7 +560,7 @@ export default function InferencePage() {
                   <div className="flex items-center gap-2 text-xs">
                     <span className="text-neutral-400 w-20">Aggregate</span>
                     <select value={aggregateFn} onChange={(e) => { setAggregateFn(e.target.value); setCliEdited(false) }}
-                      className="flex-1 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
+                      className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
                       <option value="weighted_average">weighted_average (0.3/0.7)</option>
                       <option value="average">average (0.5/0.5)</option>
                       <option value="conservative">conservative (0.7/0.3)</option>
@@ -575,7 +576,7 @@ export default function InferencePage() {
                   <div className="flex items-center gap-2 text-xs">
                     <span className="text-neutral-400 w-20">Smoothing</span>
                     <select value={smoothing} onChange={(e) => { setSmoothing(e.target.value); setCliEdited(false) }}
-                      className="flex-1 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
+                      className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
                       <option value="none">none (필터 없음)</option>
                       <option value="moving_avg">이동평균</option>
                       <option value="exponential">지수이동평균 (EMA)</option>
