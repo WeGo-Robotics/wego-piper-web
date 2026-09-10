@@ -264,25 +264,47 @@ def check_can_active(iface: str, interval: float = 0.3) -> bool:
     return rx2 > rx1
 
 
+#: iface → bus-info. **장치가 꽂혀 있는 동안 불변**이라 한 번만 묻는다.
+# ⚠ 전엔 스캔마다 `sudo ethtool -i` 를 인터페이스마다 불렀다 — bus_watch 가 2초마다
+#   스캔하니 초당 2번 sudo 를 포크했고, pam 이 sudo 한 번에 저널 3줄을 남겨 robotd
+#   저널이 6시간에 13.5만 줄(초당 6줄)이 됐다. 웹 [로그] 의 "오류만" 이 그 더미를 훑느라
+#   7초씩 걸렸다(실측 2026-09-10). `ethtool -i` 는 sudo 가 필요 없다(확인).
+_bus_info_cache: dict[str, str] = {}
+
+
+def _bus_info(iface: str) -> str:
+    if iface in _bus_info_cache:
+        return _bus_info_cache[iface]
+    bus_info = ""
+    rc, out, _ = _run_cmd(["ethtool", "-i", iface])
+    if rc == 0:
+        for ln in out.splitlines():
+            if ln.strip().startswith("bus-info:"):
+                bus_info = ln.split(":", 1)[1].strip()
+                break
+    if bus_info:                      # 못 읽었으면 다음에 다시 묻는다
+        _bus_info_cache[iface] = bus_info
+    return bus_info
+
+
 def scan_can_interfaces() -> list[dict]:
     rc, out, _ = _run_cmd(["ip", "-br", "link", "show", "type", "can"])
     if rc != 0 or not out.strip():
+        _bus_info_cache.clear()
         return []
     result = []
+    seen: set[str] = set()
     for line in out.splitlines():
         parts = line.split()
         if len(parts) < 2:
             continue
         iface, state = parts[0], parts[1]
-        bus_info = ""
-        rc2, out2, _ = _run_cmd(["ethtool", "-i", iface], sudo=True)
-        if rc2 == 0:
-            for ln in out2.splitlines():
-                if ln.strip().startswith("bus-info:"):
-                    bus_info = ln.split(":", 1)[1].strip()
-                    break
+        seen.add(iface)
         rx = _read_can_rx(iface) if state == "UP" else 0
-        result.append({"iface": iface, "bus_info": bus_info, "state": state, "rx_packets": rx})
+        result.append({"iface": iface, "bus_info": _bus_info(iface), "state": state, "rx_packets": rx})
+    # 사라진 인터페이스의 캐시는 버린다 — 다시 꽂히면 다른 포트일 수 있다
+    for gone in [k for k in _bus_info_cache if k not in seen]:
+        _bus_info_cache.pop(gone, None)
     return result
 
 

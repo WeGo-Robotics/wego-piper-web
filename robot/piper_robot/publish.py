@@ -90,6 +90,9 @@ class ArmBridge:
         self.last_reason = Reason.OK
         #: 직전 CAN 오류 카운터. 증가분만 로그로 낸다 (절대값은 재열거에서 0이 된다).
         self._err_counters: dict | None = None
+        self._err_since = 0.0
+        self._err_last_log = 0.0
+        self._err_accum: dict[str, int] = {}
         self._deadman_held = False
         self._last_logged = Reason.OK
         #: 관절 부하 감시 (층 1). ⚠ **소비자가 붙어 있는지와 무관하게 돈다** —
@@ -149,6 +152,8 @@ class ArmBridge:
 
     #: CAN 오류 카운터를 다시 볼 간격 (초). `ip` 호출이 3~4ms 라 자주 부르면 안 된다.
     ERR_SAMPLE_S = 10.0
+    #: 계속 나쁠 때 요약 경고 간격 (초)
+    ERR_SUMMARY_S = 300.0
 
     def _sample_can_errors(self) -> None:
         """오류 카운터가 **올랐을 때만** 로그에 남긴다.
@@ -170,11 +175,33 @@ class ArmBridge:
         if before is None:
             return
         grew = {k: now[k] - before[k] for k in now if now[k] > before.get(k, 0)}
+        # ⚠ 억제 — 버스가 계속 나쁘면(can2 ERROR-WARNING) 10초마다 같은 경고가 쌓여
+        #   6시간에 6,281줄이 됐다(실측). 처음엔 바로, 그 뒤는 ERR_SUMMARY_S 마다 누적
+        #   요약, 한 창 동안 안 늘면 "멈췄다" 한 번. 세는 것이 조용히 지우는 것보다 정직하다.
+        import time as _t
+        now_t = _t.monotonic()
         if grew:
-            logger.warning("CAN 오류가 늘었습니다 (%s, 최근 %.0f초): %s — "
-                           "케이블·종단저항·허브를 보세요",
-                           self.iface, self.ERR_SAMPLE_S,
-                           ", ".join(f"{k} +{v}" for k, v in sorted(grew.items())))
+            for k, v in grew.items():
+                self._err_accum[k] = self._err_accum.get(k, 0) + v
+            if not self._err_since:
+                self._err_since = now_t
+                self._err_last_log = now_t
+                logger.warning("CAN 오류가 늘었습니다 (%s, 최근 %.0f초): %s — "
+                               "케이블·종단저항·허브를 보세요. 계속되면 %.0f분마다 요약합니다",
+                               self.iface, self.ERR_SAMPLE_S,
+                               ", ".join(f"{k} +{v}" for k, v in sorted(grew.items())),
+                               self.ERR_SUMMARY_S / 60)
+            elif now_t - self._err_last_log >= self.ERR_SUMMARY_S:
+                self._err_last_log = now_t
+                logger.warning("CAN 오류가 계속 늘고 있습니다 (%s, %.0f분째): 누적 %s",
+                               self.iface, (now_t - self._err_since) / 60,
+                               ", ".join(f"{k} +{v}" for k, v in sorted(self._err_accum.items())))
+        elif self._err_since:
+            logger.info("CAN 오류 증가가 멈췄습니다 (%s, %.0f분 동안 누적 %s)",
+                        self.iface, (now_t - self._err_since) / 60,
+                        ", ".join(f"{k} +{v}" for k, v in sorted(self._err_accum.items())))
+            self._err_since = 0.0
+            self._err_accum = {}
 
     def _publish_loop(self) -> None:
         period = 1.0 / STATE_HZ
