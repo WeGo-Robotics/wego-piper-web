@@ -146,7 +146,7 @@ export default function DebugLogsPage() {
     <div className="min-h-screen bg-neutral-900 text-neutral-100">
       <header className="border-b border-neutral-700 bg-neutral-900/80 backdrop-blur sticky top-0 z-40">
         <div className="px-4 flex items-center h-14 gap-4">
-          <span className="font-bold text-lg">Piper</span>
+          <span className="font-bold text-lg">Piper Studio</span>
           <h1 className="text-sm font-semibold text-neutral-300">디버그 로그 뷰어</h1>
           <div className="flex-1" />
           <button onClick={fetchRuns} className="px-3 py-1.5 text-sm rounded bg-neutral-700 hover:bg-neutral-600 transition-colors">

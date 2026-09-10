@@ -113,7 +113,7 @@ export default function StatusBar() {
   return (
     <header className="h-12 shrink-0 border-b border-neutral-800 bg-neutral-900
                        flex items-center gap-4 px-4">
-      <span className="font-bold">Piper</span>
+      <span className="font-bold">Piper Studio</span>
 
       <div className="flex flex-1 items-center gap-2 overflow-x-auto">
         {running.length === 0 ? (
