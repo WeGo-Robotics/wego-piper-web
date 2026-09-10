@@ -3,3 +3,4 @@ numpy
 piper-shm
 piper-robot
 piper-bus
+piper-cam

@@ -1,6 +1,7 @@
 pyproject.toml
 piper_sim/__init__.py
 piper_sim/bridge.py
+piper_sim/cameras.py
 piper_sim/hub.py
 piper_sim/scene.py
 piper_sim/world.py
@@ -9,3 +10,11 @@ piper_sim.egg-info/SOURCES.txt
 piper_sim.egg-info/dependency_links.txt
 piper_sim.egg-info/requires.txt
 piper_sim.egg-info/top_level.txt
+piper_sim/assets/piper_scene.xml
+piper_sim/assets/meshes/base_link.stl
+piper_sim/assets/meshes/link1.stl
+piper_sim/assets/meshes/link2.stl
+piper_sim/assets/meshes/link3.stl
+piper_sim/assets/meshes/link4.stl
+piper_sim/assets/meshes/link5.stl
+piper_sim/assets/meshes/link6.stl

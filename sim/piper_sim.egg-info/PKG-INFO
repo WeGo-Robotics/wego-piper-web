@@ -9,3 +9,4 @@ Requires-Dist: numpy
 Requires-Dist: piper-shm
 Requires-Dist: piper-robot
 Requires-Dist: piper-bus
+Requires-Dist: piper-cam
