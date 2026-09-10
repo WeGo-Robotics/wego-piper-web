@@ -264,14 +264,14 @@ export default function VersionCard() {
       )}
 
       <div className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-[auto_1fr]">
-        <span className="text-neutral-500">컨테이너</span>
+        <span className="whitespace-nowrap text-neutral-500">컨테이너</span>
         <span className="text-neutral-300">
           {pick(info.container, CONTAINER_ORDER).map(([k, v]) => (
             <span key={k} className="mr-3 whitespace-nowrap">{LABEL[k] ?? k} <b className="font-mono font-normal text-neutral-200">{v}</b></span>
           ))}
           {pick(info.container, CONTAINER_ORDER).length === 0 && <span className="text-neutral-600">—</span>}
         </span>
-        <span className="text-neutral-500">호스트</span>
+        <span className="whitespace-nowrap text-neutral-500">호스트</span>
         <span className="text-neutral-300">
           {pick(info.host, HOST_ORDER).map(([k, v]) => (
             <span key={k} className="mr-3 whitespace-nowrap">{LABEL[k] ?? k} <b className="font-mono font-normal text-neutral-200">{v}</b></span>
@@ -280,7 +280,7 @@ export default function VersionCard() {
             <span className="text-neutral-600">— (서비스 관리 데몬 piper-unitd 가 말합니다)</span>
           )}
         </span>
-        <span className="text-neutral-500">데몬</span>
+        <span className="whitespace-nowrap text-neutral-500">데몬</span>
         <span className="text-neutral-300">
           {daemonRows.map(([d, vs]) => (
             <span key={d} className="mr-3 whitespace-nowrap">
