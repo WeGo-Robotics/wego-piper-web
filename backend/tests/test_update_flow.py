@@ -130,6 +130,8 @@ def test_the_transient_unit_runs_the_bundled_scripts(monkeypatch, tmp_path):
     run = calls[-1]
     assert run[:4] == ["systemd-run", "--user", "--unit", "piper-update"]
     assert "--remain-after-exit" in run and "--collect" not in run, "끝난 유닛이 사라지면 끝났는지 알 길이 없다"
+    # 이 프로세스는 저장소 체크아웃에서 돈다 — 최상위엔 없고 `deploy/` 밑에 있다.
+    # 배포된 번들(최상위)에서도 같은 호출이 되는 것은 아래 레이아웃 테스트가 본다.
     assert run[-3:] == [str(u.REPO / "deploy" / "piper-install.sh"), "v0.4.6", "--pull-only"]
     assert "PIPER_IMAGE=piper-build:5000/piper-web-backend" in run
     hub.update("v0.4.6", "apply", "image")
@@ -164,9 +166,42 @@ def test_apply_is_refused_while_anything_runs_and_pull_never_executes_anything()
 
 
 def test_the_bundle_carries_what_the_web_update_needs():
-    """호스트의 unitd 가 쓰는 받기 스크립트와, 받은 뒤 보여 줄 변경 이력."""
+    """호스트의 unitd 가 쓰는 받기 스크립트와, 받은 뒤 보여 줄 변경 이력.
+
+    ⚠ **`REPO` 가 두 가지 모양으로 온다.** 배포된 번들(`stage-hostside.sh` 가
+    이미지 안에 `piper-install.sh` 를 최상위에 둔다)에서 돌 때는 번들 루트,
+    저장소를 체크아웃해 돌릴 때는 저장소 루트라 `deploy/` 밑에 있다.
+    실기(.120)에서 웹 [받기] 를 처음 눌러 보니 최상위만 보던 옛 코드가
+    "이 번들이 낡았다" 로 잘못 보고했다 — 둘 다 보게 고쳤다. 이 테스트는
+    최상위(배포 번들) 쪽을, 위의 `test_the_transient_unit_runs_the_bundled_scripts`
+    는 `deploy/` 밑(저장소 체크아웃) 쪽을 지킨다."""
     stage = (REPO / "deploy" / "stage-hostside.sh").read_text()
     assert 'cp deploy/piper-install.sh "$OUT/"' in stage and 'cp CHANGELOG.md "$OUT/"' in stage
+    unitd_src = (REPO / "daemons" / "unitd.py").read_text()
+    assert 'REPO / "piper-install.sh"' in unitd_src and 'REPO / "deploy" / "piper-install.sh"' in unitd_src, \
+        "unitd 의 받기 경로가 배포 번들·저장소 체크아웃 중 하나를 다시 놓쳤다"
+
+
+def test_pull_finds_the_script_at_the_top_of_a_deployed_bundle(monkeypatch, tmp_path):
+    """실기(.120) 재현: `REPO` 가 배포된 번들 루트일 때는 `piper-install.sh` 가
+    최상위에 있다(`deploy/` 밑이 아니다) — 그게 이 버그가 난 자리였다."""
+    u = _unitd()
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "piper-install.sh").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(u, "REPO", bundle)
+    monkeypatch.setenv("PIPER_WORK", str(tmp_path / "work"))
+    (tmp_path / "work").mkdir()
+    hub = u.UnitHub()
+    monkeypatch.setattr(hub, "update_status", lambda: {"active": False})
+    calls: list[list[str]] = []
+
+    class R:
+        returncode = 0; stdout = ""; stderr = ""
+    monkeypatch.setattr(u.subprocess, "run", lambda cmd, **k: (calls.append(list(cmd)), R())[1])
+    monkeypatch.setattr(u, "_systemctl", lambda *a, **k: R())
+    hub.update("v0.4.7", "pull", "image")
+    assert calls[-1][-3:] == [str(bundle / "piper-install.sh"), "v0.4.7", "--pull-only"]
     rel = (REPO / "deploy" / "release.sh").read_text()
     assert "deploy/piper-install.sh deploy/update-source.sh" in rel, "daemons.tar.gz 에 받기 스크립트가 없다"
     src = (REPO / "deploy" / "update-source.sh").read_text()
