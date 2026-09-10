@@ -117,7 +117,7 @@ export default function StatusBar() {
 
       <div className="flex flex-1 items-center gap-2 overflow-x-auto">
         {running.length === 0 ? (
-          <span className="text-sm text-neutral-600">유휴</span>
+          <span className="text-sm text-neutral-600">대기중</span>
         ) : (
           running.map((a) => (
             <span key={a}

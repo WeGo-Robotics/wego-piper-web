@@ -191,7 +191,7 @@ export default function DashboardPage() {
         <div className="space-y-4">
           <Card title="지금 돌고 있는 것">
             {running.length === 0 ? (
-              <p className="text-sm text-neutral-500">없음 — 유휴</p>
+              <p className="text-sm text-neutral-500">없음 — 대기중</p>
             ) : (
               <ul className="space-y-1">
                 {running.map((a) => (
