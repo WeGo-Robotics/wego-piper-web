@@ -52,6 +52,7 @@ cp deploy/apply.sh "$OUT/"
 # 웹 업데이트가 쓰는 둘 (feature/version-update.md): 받기 스크립트, 그리고 받은 뒤
 # "무엇이 달라졌나"를 보여 줄 변경 이력 — `.dockerignore` 가 `*.md` 를 빼므로 여기서 싣는다
 cp deploy/piper-install.sh "$OUT/"
+cp deploy/pull-progress.py "$OUT/"
 cp CHANGELOG.md "$OUT/"
 
 # ── compose · env 예시 ────────────────────────────────────────────────────

@@ -32,6 +32,7 @@ chmod +x piper-install.sh
 ⚠ **전제가 빠져 있으면 명령을 찍고 멈춘다.** sudo 가 필요한 것은 스크립트가 직접
 하지 않는다 — 무엇이 바뀌었는지 모르는 채로 설치가 끝나는 편이 더 나쁘다.
 그 명령만 실행하고 다시 부르면 된다.
+멈추거나, 끝났는데 뭔가 안 보이면 → [docs/install-troubleshooting.md](docs/install-troubleshooting.md) — 증상으로 찾는다.
 
 시뮬레이션(simd)·SO-101 리더암(so101d)은 **깔리되 꺼진 채**다. 웹 [설정 → 서비스]
 에서 켜고 "부팅 시 시작"을 고른다 — 재설치해도 그 선택은 그대로다.
@@ -198,4 +199,5 @@ joint1.pos                           0.456      2.345
 | 개발 (저장소에서 직접 실행) | [CLAUDE.md](CLAUDE.md) |
 | 버전마다 무엇이 달라졌나 | [CHANGELOG.md](CHANGELOG.md) |
 | 릴리스 (이미지 굽기·배포) | [deploy/RELEASE-CHECKLIST.md](deploy/RELEASE-CHECKLIST.md) |
+| 설치가 멈추거나 장치가 안 보일 때 | [docs/install-troubleshooting.md](docs/install-troubleshooting.md) — 증상으로 찾는다 |
 | 라이선스 | [LICENSE](LICENSE) (Apache-2.0) · [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) |

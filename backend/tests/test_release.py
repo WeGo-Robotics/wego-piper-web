@@ -271,7 +271,7 @@ def test_apply_picks_pull_or_load_from_the_manifest():
     # ⚠ **주석을 걷어내고 본다.** 이 파일은 왜 그렇게 했는지를 주석으로 길게
     #   적어 두므로, 첫 등장으로 순서를 재면 설명문을 코드로 착각한다.
     src = code_only(APPLY.read_text())
-    i_pull = src.find("docker pull -q")
+    i_pull = src.find("pull-progress.py")        # 진행률 있는 받기 (docker pull 은 그 폴백)
     i_load = src.find("docker load")
     assert i_pull != -1 and i_load != -1, "두 경로가 다 있어야 한다"
     assert 'elif [ -n "${registry:-}" ]' in APPLY.read_text(), "매니페스트로 안 가른다"

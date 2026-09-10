@@ -252,7 +252,9 @@ if [ -n "${images:-}" ]; then
     # ⚠ **이미 있는 레이어는 안 받는다.** 그게 tar 를 버린 이유다 — 실측으로
     #   v0.3.9 를 가진 호스트가 다음 릴리스에서 받는 양이 3.46GB → 104.5MB 였다.
     for s in $images; do
-      docker pull -q "$registry/piper-web-$s:$version"
+      # 진행률 — `-q` 는 몇 분을 말없이 기다리게 했다 (번들의 pull-progress.py, 없으면 docker pull)
+      if [ -f "$HERE/pull-progress.py" ]; then python3 "$HERE/pull-progress.py" "$registry/piper-web-$s:$version" --label "piper-web-$s"
+      else docker pull "$registry/piper-web-$s:$version"; fi
       # 로컬 이름으로 옮긴다. compose 는 `image: piper-web-backend` 로 참조하므로
       # `:latest` 가 없으면 **다시 빌드하려 든다.**
       docker tag "$registry/piper-web-$s:$version" "piper-web-$s:$version"

@@ -234,6 +234,8 @@ git tag --sort=-v:refname | head -1     # 예: v0.3.1 → 다음은 v0.3.2
 
 ## 겪은 문제와 해결
 
+받는 쪽이 볼 증상별 처방은 [docs/install-troubleshooting.md](../docs/install-troubleshooting.md) 에 있다 — 여기는 배포하는 쪽의 기록이다.
+
 | 문제 | 원인 | 해결 |
 |---|---|---|
 | GPU 드라이버는 깔려 있는데 `nvidia-smi`가 커널과 통신 실패 | `nvidia-driver-580-open` 메타패키지가 특정 커널 버전용 `linux-modules-nvidia-580-open-<kernel>` 패키지에 의존하는데, 호스트가 커널을 여러 번 업데이트하는 동안 **현재 실행 중인 커널(6.17.0-35)용 모듈 패키지가 한 번도 설치된 적이 없었음** (dkms 자체도 미설치라 자동 재빌드도 안 됨) | `apt install dkms nvidia-dkms-580-open` (dkms 기반 패키지로 전환 — 커널이 또 바뀌어도 자동 재빌드됨) → `depmod -a && modprobe nvidia` — **재부팅 불필요**, 새로 빌드된 모듈을 바로 올릴 수 있었다 |
