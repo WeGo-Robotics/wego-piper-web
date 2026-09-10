@@ -222,10 +222,23 @@ class UnitHub:
                     return line.split("=", 1)[1].strip().strip('"') or None
         return None
 
+    def _latest_bundle(self) -> Path | None:
+        """가장 최근에 받아 둔 버전 디렉토리 (`<WORK>/vX.Y.Z/`).
+
+        ⚠ **`current/` 는 여기서 못 쓴다.** `apply.sh` 가 `daemons.tar.gz` 만 그
+        안에 풀어 둔다(`SRC=$HOME/piper-web-deploy/current`) — `piper-install.sh`
+        자체는 버전 디렉토리에만 있고 `current/` 로는 절대 안 온다. `unitd.py`
+        의 `__file__` 로 잡는 `REPO` 는 바로 그 `current/` 라 늘 못 찾았다(실기:
+        .120 에서 웹 [받기] 를 처음 눌러 봤을 때 "이 번들이 낡았다"). `_registry()`
+        가 이미 하던 것과 같은 자리를 본다."""
+        dirs = [p for p in self._work().glob("v*") if p.is_dir() and is_version(p.name)]
+        return max(dirs, key=lambda p: version_key(p.name)) if dirs else None
+
     def update(self, version: str, stage: str, mode: str = "image") -> dict:
         """받기(pull) 또는 적용(apply)을 일시 유닛으로 띄운다. 즉시 돌아온다.
 
-        - image/pull  : `REPO/piper-install.sh <ver> --pull-only` (받고 꺼내기만)
+        - image/pull  : 가장 최근에 받아 둔 버전의 `piper-install.sh <ver> --pull-only`
+                        (받고 꺼내기만; 받아 둔 것이 없으면 저장소 체크아웃의 것)
         - image/apply : `<WORK>/<ver>/apply.sh`  (받아 둔 것만 — 없으면 거절)
         - source/apply: `REPO/deploy/update-source.sh <ver>`
         활동 중인지의 판단은 **게이트웨이**가 하고 온다 — 여기는 활동을 모른다.
@@ -242,17 +255,17 @@ class UnitHub:
             if reg:
                 env["PIPER_IMAGE"] = f"{reg}/piper-web-backend"
             if stage == "pull":
-                # ⚠ `REPO` 는 두 가지 모양으로 온다. 배포된 번들에서 돌 때는
-                # 번들 루트라 `stage-hostside.sh` 가 놓은 대로 최상위에 있고,
-                # 저장소를 직접 체크아웃해 돌릴 때(개발·이 테스트)는 저장소
-                # 루트라 `deploy/` 밑에 있다 — 둘 다 본다. 실기: .120 에서
-                # 웹 [받기] 가 최상위만 찾는 옛 코드로 "이 번들이 낡았다" 를
-                # 잘못 보고했다(번들 레이아웃과 안 맞았다).
-                script = REPO / "piper-install.sh"
-                if not script.exists():
+                # ⚠ 저장소를 직접 체크아웃해 돌릴 때(개발·테스트)만 `REPO` 를
+                # 쓴다 — 그때는 `deploy/piper-install.sh` 가 진짜 있다. 배포된
+                # 번들에서는 `_latest_bundle()`(최근 받아 둔 버전 디렉토리)이
+                # 우선한다: `piper-install.sh` 는 그 안에만 있고, `unitd.py`
+                # 가 도는 `current/` 로는 안 온다(위 `_latest_bundle` 참고).
+                latest = self._latest_bundle()
+                script = (latest / "piper-install.sh") if latest else None
+                if not script or not script.exists():
                     script = REPO / "deploy" / "piper-install.sh"
                 if not script.exists():
-                    raise RuntimeError(f"받기 스크립트가 없습니다: {REPO / 'piper-install.sh'} — 이 번들이 낡았다")
+                    raise RuntimeError(f"받기 스크립트가 없습니다: {self._work() / 'v*' / 'piper-install.sh'} — 이 번들이 낡았다")
                 cmd = [str(script), version, "--pull-only"]
             else:
                 script = self._work() / version / "apply.sh"
