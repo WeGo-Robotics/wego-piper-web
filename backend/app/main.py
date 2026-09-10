@@ -168,7 +168,7 @@ async def lifespan(app: FastAPI):
 
 
 
-app = FastAPI(title="Piper Web", lifespan=lifespan)
+app = FastAPI(title="Piper Studio", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

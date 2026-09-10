@@ -1,4 +1,4 @@
-# Piper Web
+# Piper Studio
 
 LeRobot 웹 인터페이스 — 로봇 모방학습 프레임워크를 웹에서 제어.
 
