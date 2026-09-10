@@ -48,6 +48,50 @@ def test_the_check_uses_the_registry_on_deploy_hosts_and_git_tags_on_source_mach
     assert r["error"] == "no network" and not r["available"]
 
 
+def test_registry_tags_builds_the_right_url_for_private_and_public_registries(monkeypatch):
+    """사설(`host:port`)은 http·인증 없이 그대로. 공개(`ghcr.io/<조직>`)는 https 에
+    `/v2/<조직>/<이미지>/...` 순서로, 401 을 만나면 WWW-Authenticate 챌린지를 따라
+    토큰을 받아 재시도한다. 예전 코드는 `http://ghcr.io/wego-robotics/v2/.../tags/list`
+    처럼 `/v2/` 를 조직 이름 뒤에 붙여 늘 404 였다."""
+    import json
+    import urllib.error
+    from contextlib import contextmanager
+
+    from app.services import version as V
+
+    @contextmanager
+    def _resp(payload):
+        class R:
+            def read(self): return json.dumps(payload).encode()
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        yield R()
+
+    calls = []
+
+    def fake_urlopen(req, timeout=None):
+        url = req if isinstance(req, str) else req.full_url
+        calls.append(url)
+        if url == "http://piper-build:5000/v2/piper-web-backend/tags/list":
+            return _resp({"tags": ["v0.4.5"]}).__enter__()
+        if url == "https://ghcr.io/v2/wego-robotics/piper-web-backend/tags/list":
+            if not req.get_header("Authorization"):
+                raise urllib.error.HTTPError(
+                    url, 401, "unauthorized",
+                    {"WWW-Authenticate": 'Bearer realm="https://ghcr.io/token",service="ghcr.io",'
+                                         'scope="repository:wego-robotics/piper-web-backend:pull"'},
+                    None)
+            assert req.get_header("Authorization") == "Bearer tok123"
+            return _resp({"tags": ["v0.4.6"]}).__enter__()
+        if url.startswith("https://ghcr.io/token?"):
+            return _resp({"token": "tok123"}).__enter__()
+        raise AssertionError(f"예상 못 한 URL: {url}")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    assert V._registry_tags("piper-build:5000") == ["v0.4.5"]
+    assert V._registry_tags("ghcr.io/wego-robotics") == ["v0.4.6"]
+
+
 def test_unitd_refuses_odd_versions_and_stages_and_wants_a_pulled_bundle_before_apply(monkeypatch, tmp_path):
     """받기 없이 적용은 없다. 버전은 vX.Y.Z 만 — 남의 이름으로 스크립트를 부르지 않는다."""
     u = _unitd()

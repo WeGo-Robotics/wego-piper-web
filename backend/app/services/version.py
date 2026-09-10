@@ -151,11 +151,42 @@ def update_mode(running: dict | None = None) -> str:
 
 
 def _registry_tags(registry: str, image: str = "piper-web-backend", timeout: float = 4.0) -> list[str]:
+    """`registry`: 사설 평문(`host:port`, 포트 있음 — registry.sh, 인증 없음) 또는
+    공개 HTTPS(`host[/namespace]`, 포트 없음 — ghcr.io/<조직> 등, v2 토큰 인증 필요).
+    구분은 `release.sh`의 push 분기와 같은 규칙(포트 유무)을 쓴다."""
     import json
+    import re
+    import urllib.error
     import urllib.request
 
-    with urllib.request.urlopen(f"http://{registry}/v2/{image}/tags/list", timeout=timeout) as r:
-        return list(json.load(r).get("tags") or [])
+    host, _, namespace = registry.partition("/")
+    private = bool(re.search(r":\d+$", host))
+    repo = f"{namespace}/{image}" if namespace else image
+    url = f"{'http' if private else 'https'}://{host}/v2/{repo}/tags/list"
+
+    def _get(req_url: str, token: str | None = None) -> list[str]:
+        req = urllib.request.Request(req_url)
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return list(json.load(r).get("tags") or [])
+
+    try:
+        return _get(url)
+    except urllib.error.HTTPError as exc:
+        if private or exc.code != 401:
+            raise
+        # 공개 레지스트리는 익명 pull 토큰이 필요하다 — 401 의 WWW-Authenticate 챌린지
+        # 그대로 따른다(Docker Registry v2 스펙, GHCR·Docker Hub 공통).
+        challenge = exc.headers.get("WWW-Authenticate", "")
+        params = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
+        realm = params.get("realm")
+        if not realm:
+            raise
+        qs = "&".join(f"{k}={v}" for k, v in params.items() if k != "realm")
+        with urllib.request.urlopen(f"{realm}?{qs}", timeout=timeout) as r:
+            token = json.load(r).get("token")
+        return _get(url, token)
 
 
 def _remote_git_tags(timeout: float = 8.0) -> list[str]:
