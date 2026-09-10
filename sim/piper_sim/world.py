@@ -10,7 +10,8 @@ import logging
 import threading
 import time
 
-from piper_sim.scene import JointMap, load_model
+from piper_sim.scene import (ARM_JOINTS, FINGERS, JOINT_CALIBRATION,
+                              JointMap, MILLIDEG_PER_RAD, denormalize_all, load_model)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,31 @@ class World:
                 self.model, mujoco.mjtObj.mjOBJ_JOINT, "cube_free")]
             self.data.qpos[adr:adr + 7] = [x, y, 0.02, 1, 0, 0, 0]
             self.data.qvel[:] = 0
+            mujoco.mj_forward(self.model, self.data)
+
+    def reset(self, arm_norm: dict[str, float], cube_x: float | None = None, cube_y: float | None = None) -> None:
+        """환경 리셋 — 큐브를 시작 위치로, 팔을 파킹으로, 속도 0 (feature/web-leader.md §5).
+
+        ⚠ 팔 qpos 를 파킹으로 **스냅**하고 목표·ctrl 도 파킹으로 래치한다. qpos 만 옮기고
+        목표를 안 바꾸면 서보가 다음 스텝에 옛 목표로 도로 끌어당긴다. 리더(릴레이/웹)가
+        계속 옛 자세를 명령하면 팔은 다시 끌려간다 — 그건 게이트웨이가 리더도 함께
+        리셋해서 막는다(web_leader.reset_to_parking)."""
+        import mujoco
+
+        with self._lock:
+            for n, v in denormalize_all({k: v for k, v in arm_norm.items() if k in JOINT_CALIBRATION}).items():
+                if n in ARM_JOINTS:
+                    self.data.qpos[self.jm.qadr[n]] = v / MILLIDEG_PER_RAD
+            for f in FINGERS:
+                self.data.qpos[self.jm.qadr[f]] = 0.0        # 파킹은 그리퍼 닫힘(0)
+            if cube_x is not None and cube_y is not None:      # 팔만 리셋(T)이면 큐브는 그대로
+                cube_adr = self.model.jnt_qposadr[mujoco.mj_name2id(
+                    self.model, mujoco.mjtObj.mjOBJ_JOINT, "cube_free")]
+                self.data.qpos[cube_adr:cube_adr + 7] = [cube_x, cube_y, 0.02, 1, 0, 0, 0]
+            self.data.qvel[:] = 0
+            self.jm.write_ctrl(self.data, arm_norm)          # 서보 목표도 파킹
+            self._goal = dict(arm_norm)
+            self._hold = False
             mujoco.mj_forward(self.model, self.data)
 
     def _loop(self) -> None:

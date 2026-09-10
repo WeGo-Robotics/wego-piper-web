@@ -41,15 +41,21 @@ FINGER_STROKE_M = 0.034
 
 SCENE_TEMPLATE = """<mujoco model="piper_scene">
   <compiler angle="radian" meshdir="{meshdir}" balanceinertia="true"/>
-  <option timestep="0.002" gravity="0 0 -9.81"/>
+  <!-- ⚠ impratio: 기본 1 이면 잡은 물체가 슬슬 미끄러진다(실측 3.7mm/s, 6초에 20mm →
+       빠짐, 사용자 보고 2026). MuJoCo 는 잡기에서 impratio 를 올리라고 권한다 — 마찰
+       제약을 법선력 대비 단단히 푼다. 50 에서 0.1mm/s(사실상 정지), 흔들어도 견딘다. -->
+  <option timestep="0.002" gravity="0 0 -9.81" impratio="50"/>
   <visual>
     <global offwidth="1280" offheight="960"/>
     <headlight ambient="0.4 0.4 0.4" diffuse="0.6 0.6 0.6"/>
   </visual>
   <asset>
     <texture type="skybox" builtin="gradient" rgb1="0.6 0.7 0.85" rgb2="0.2 0.25 0.35" width="256" height="256"/>
-    <texture name="tabletex" type="2d" builtin="checker" rgb1="0.82 0.8 0.76" rgb2="0.7 0.68 0.64" width="64" height="64"/>
-    <material name="tablemat" texture="tabletex" texrepeat="6 6" reflectance="0.05"/>
+    <!-- 바닥 격자 — 대비를 키우고(밝은 회색↔진한 청회색) 반사를 없앤다. 전엔 두 색이
+         거의 같고(0.82 vs 0.70) specular 기본 0.5 라 조명 반사에 격자가 씻겨 희미했다
+         (사용자 보고 2026). width 큰 텍스처로 경계도 또렷하게. -->
+    <texture name="tabletex" type="2d" builtin="checker" rgb1="0.9 0.9 0.93" rgb2="0.32 0.36 0.44" width="512" height="512"/>
+    <material name="tablemat" texture="tabletex" texrepeat="12 10" texuniform="true" reflectance="0" specular="0.05" shininess="0.1"/>
     <material name="armmat" rgba="0.85 0.85 0.87 1"/>
     <material name="fingermat" rgba="0.25 0.25 0.28 1"/>
     <material name="cubemat" rgba="0.85 0.2 0.15 1"/>
@@ -59,13 +65,19 @@ SCENE_TEMPLATE = """<mujoco model="piper_scene">
     <light name="sun" pos="0.5 -0.5 1.5" dir="-0.3 0.3 -1" directional="true" diffuse="0.8 0.8 0.8"/>
     <light name="fill" pos="-0.5 0.5 1.2" dir="0.3 -0.3 -1" diffuse="0.4 0.4 0.4"/>
     <geom name="table" type="box" size="0.6 0.5 0.02" pos="0.35 0 -0.02" material="tablemat"/>
-    <camera name="top" pos="0.35 0 0.9" quat="1 0 0 0" fovy="55"/>
+    <!-- 탑뷰 — 광학축(−z) 기준 반시계 90°: 이미지 위 = +x(앞, 팔이 뻗는 쪽),
+         오른쪽 = −y. EE 마우스 면(위=앞, 오른쪽=−y)과 정확히 맞아 조종이 직관적이다
+         (사용자 보고 2026: 마우스 면과 탑뷰가 90° 어긋나 조종이 힘들다). -->
+    <camera name="top" pos="0.35 0 0.9" xyaxes="0 -1 0 1 0 0" fovy="55"/>
     <camera name="front" pos="1.1 0 0.45" xyaxes="0 1 0 -0.4 0 1" fovy="50"/>
     <body name="piper_base" pos="0 0 0">
     </body>
     <body name="cube" pos="0.35 0.0 0.02">
       <freejoint name="cube_free"/>
-      <geom name="cube_geom" type="box" size="0.02 0.02 0.02" mass="0.05" material="cubemat"/>
+      <!-- 잡히는 물체 — condim6 은 비틀림·구름 마찰(핀치에서 돌아 빠지는 것 방지),
+           solref 단단하게(접촉 크리프 감소). 손가락과 같은 마찰. -->
+      <geom name="cube_geom" type="box" size="0.02 0.02 0.02" mass="0.05" material="cubemat"
+            condim="6" friction="1.5 0.05 0.001" solref="0.005 1"/>
     </body>
     <body name="bin" pos="0.35 -0.25 0">
       <geom type="box" size="0.08 0.08 0.003" pos="0 0 0.003" material="binmat"/>
@@ -101,14 +113,17 @@ GRIPPER_XML = """<body name="gripper_base" pos="0 0 0.035">
        앞·아래에서 테이블 86%·손가락 끝 4% 가 아래 가장자리(행 0.90) 띠로만 남는다.
        ⚠ 첫 시도의 "바닥 65%·손가락 아래" 실측은 기울기·비율만 본 것이라 롤 오류를
        못 잡았다 — 롤은 이미지위·세계위 내적으로 잰다(테스트). -->
+  <!-- 손목 카메라 롤 — 시선은 그대로 손가락 축(25° 기울임). 광학축 기준 시계 90°
+         (사용자 보고 2026): 이미지 위 = 그리퍼 x-z 평면(위·뒤), 오른쪽 = 그리퍼 −y.
+         탑뷰는 마우스 면에 맞춰 두고 손목만 이 방향이 손 느낌과 맞았다. -->
   <camera name="wrist" pos="-0.08 0 -0.02" xyaxes="0 -1 0 -0.906 0 0.423" fovy="70"/>
   <body name="finger_l" pos="0 0.008 0.03">
     <joint name="gripper_l" type="slide" axis="0 1 0" range="0 {s}" damping="2"/>
-    <geom type="box" size="0.008 0.004 0.025" pos="0 0.004 0" material="fingermat" mass="0.02" friction="1.5 0.02 0.001"/>
+    <geom type="box" size="0.008 0.004 0.025" pos="0 0.004 0" material="fingermat" mass="0.02" friction="1.5 0.05 0.001" condim="6" solref="0.005 1"/>
   </body>
   <body name="finger_r" pos="0 -0.008 0.03">
     <joint name="gripper_r" type="slide" axis="0 -1 0" range="0 {s}" damping="2"/>
-    <geom type="box" size="0.008 0.004 0.025" pos="0 -0.004 0" material="fingermat" mass="0.02" friction="1.5 0.02 0.001"/>
+    <geom type="box" size="0.008 0.004 0.025" pos="0 -0.004 0" material="fingermat" mass="0.02" friction="1.5 0.05 0.001" condim="6" solref="0.005 1"/>
   </body>
 </body>
 """

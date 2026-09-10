@@ -25,7 +25,7 @@ REPO = Path(__file__).resolve().parents[1]
 _running = True
 
 _METHODS = {"scan", "attach", "release", "release_all", "estop", "info", "lost",
-            "cube_pos", "reset_cube", "set_light", "go_to",
+            "cube_pos", "reset_cube", "reset", "set_light", "go_to",
             # 카메라 — camerad 어휘에 cam_ 접두사
             "cam_scan", "cam_connect", "cam_disconnect", "cam_release_all", "cam_probe",
             "cam_list_controls", "cam_set_control", "cam_apply_controls",

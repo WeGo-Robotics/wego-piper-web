@@ -307,8 +307,9 @@ def test_the_raw_joint_route_reads_sim_arms_through_the_arm_object():
 def test_the_wrist_camera_looks_along_the_fingers_with_up_away_from_the_palm(model):
     """⚠ **사용자 보고: 손목 뷰에 그리퍼가 가운데, 바닥이 아래가 아니다.** 옛 카메라는
     옆(+y)을 봐 그리퍼 자체를 정면으로 찍었다. 렌더 비교 실측으로 고른 자세:
-    손가락 축(+z)을 25° 기울여 보고, 이미지 위 = -y(툴이 앞·아래를 향할 때 하늘이
-    위), 2cm 뒤 — 손가락 끝이 아래 가장자리 중앙, 바닥 61~66%, 큐브 중앙."""
+    손가락 축(+z)을 25° 기울여 보고, 광학축 기준 **시계 90°**(사용자 보고 2026 —
+    손 느낌과 맞춤): 이미지 위 = 그리퍼 x-z 평면(위·뒤), 오른쪽 = 그리퍼 −y.
+    시선은 그대로 손가락 축이다."""
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
     cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "wrist")
@@ -317,17 +318,13 @@ def test_the_wrist_camera_looks_along_the_fingers_with_up_away_from_the_palm(mod
     R_body = data.xmat[body].reshape(3, 3)
     view = -R_cam[:, 2]                      # MuJoCo 카메라는 -z 를 본다
     assert float(view @ R_body[:, 2]) > 0.85, "손가락 축(+z)을 안 본다 — 그리퍼가 화면 가운데 온다"
-    # ⚠ 롤은 툴 축 이름이 아니라 **세계 위**로 잰다 — 첫 시도(이미지 위 = 툴 -y)는
-    # 툴 y 가 피치 축이라 세계 아래가 이미지 오른쪽에 갔다(테이블이 오른쪽 벽).
-    # q=0 에서 이미지 위 = 세계 +z 여야 하고, 관절 2·3·5 가 같은 피치 축이라
-    # 피치 자세(파킹·앞·아래)에서도 이미지 위가 수직면(x-z)에 남아야 한다.
-    # 0.94 = 25° 기울기의 몫 (위 = -0.906x + 0.423z, z_tool 이 앞을 보니 0.906+0.04)
-    assert float(R_cam[2, 1]) > 0.9, "q=0 에서 이미지 위가 세계 위가 아니다 — 바닥이 옆으로 간다"
-    for j, deg in (("joint2", -100.0), ("joint3", 100.0)):     # 파킹 자세
-        data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, j)]] = math.radians(deg * 0.95)
-    mujoco.mj_forward(model, data)
-    up = data.cam_xmat[cam].reshape(3, 3)[:, 1]
-    assert abs(float(up[1])) < 0.05 and float(up[2]) > 0.0, "파킹 자세에서 이미지 위가 수직면을 벗어났다"
+    # ⚠ 롤은 **그리퍼 프레임**으로 잰다 — 팔이 어디 있든 성립한다. 사용자 보고(2026)로
+    # 손목만 광학축 기준 시계 90°: **이미지 위 = 그리퍼 x-z 평면(위·뒤, y 성분 0)**,
+    # 오른쪽 = 그리퍼 −y. (탑뷰는 마우스 면에 맞춰 반대 방향으로 두었다.)
+    up_g = R_body.T @ R_cam[:, 1]           # 이미지 위를 그리퍼 프레임으로
+    right_g = R_body.T @ R_cam[:, 0]
+    assert abs(up_g[1]) < 0.05 and up_g[0] < -0.5, f"이미지 위가 x-z 평면(위·뒤)이 아니다(시계 90°): {up_g.round(2)}"
+    assert abs(right_g[1] + 1.0) < 0.05, f"이미지 오른쪽이 그리퍼 −y 가 아니다: {right_g.round(2)}"
     # ⚠ 위쪽(-x) 오프셋이 베이스 상자 반폭(3cm)+여유보다 작으면 상자 면이 렌즈 앞에
     # 와 시야를 막는다 (실측 4.5cm: 60% 가림). 8cm/25° 스윕 실측: 상자 4%.
     base_geom = next(g for g in range(model.ngeom) if model.geom_bodyid[g] == body)
@@ -335,6 +332,47 @@ def test_the_wrist_camera_looks_along_the_fingers_with_up_away_from_the_palm(mod
         "손목 카메라가 그리퍼 베이스 상자에 너무 붙어 있다 — 상자가 시야를 막는다"
     src = (REPO / "tools" / "build_sim_scene.py").read_text()
     assert 'xyaxes="1 0 0 0 0 1"' not in src.split("GRIPPER_XML", 1)[1].split('"""', 2)[1], "옛 옆보기 카메라가 남아 있다"
+
+
+def test_the_floor_grid_is_visible_not_washed_out():
+    """사용자 보고(2026): 바닥 격자가 반사에 씻겨 희미하다. 두 격자색 대비를 키우고
+    specular·reflectance 를 낮춘다."""
+    src = (REPO / "tools" / "build_sim_scene.py").read_text()
+    tex = src.split('name="tabletex"', 1)[1].split("/>", 1)[0]
+    import re
+    rgb1 = [float(x) for x in re.search(r'rgb1="([^"]+)"', tex).group(1).split()]
+    rgb2 = [float(x) for x in re.search(r'rgb2="([^"]+)"', tex).group(1).split()]
+    assert abs(rgb1[0] - rgb2[0]) > 0.4, "격자 두 색 대비가 낮아 희미하다"
+    mat = src.split('name="tablemat"', 1)[1].split("/>", 1)[0]
+    assert 'reflectance="0"' in mat and 'specular="0.05"' in mat, "반사가 격자를 씻는다"
+
+
+def test_the_gripper_holds_a_grasped_cube_instead_of_letting_it_slip(model):
+    """⚠ **사용자 보고(2026)**: 큐브를 집었는데 슬슬 미끄러져 빠진다. 원인은 impratio=1
+    (기본) — MuJoCo 가 마찰 제약을 법선력 대비 부드럽게 푼다. 잡기에선 올려야 한다
+    (실측: imp1 6초 20mm 흐름 → imp50 0.1mm/s 사실상 정지). condim6 은 비틀림·구름
+    마찰(핀치에서 돌아 빠지는 것 방지), 단단한 접촉(solref)은 크리프를 더 줄인다."""
+    assert model.opt.impratio >= 50, f"impratio 가 낮아 잡은 물체가 미끄러진다: {model.opt.impratio}"
+    names = {"cube_geom"}
+    for g in range(model.ngeom):
+        body = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, model.geom_bodyid[g]) or ""
+        gname = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+        if gname in names or body.startswith("finger"):
+            assert model.geom_condim[g] == 6, f"{gname or body}: condim 이 6 이 아니다(비틀림 마찰 없음)"
+            assert model.geom_friction[g][0] >= 1.5, f"{gname or body}: 미끄럼 마찰이 낮다"
+
+
+def test_the_top_camera_matches_the_ee_mouse_plane(model):
+    """EE 마우스 면은 베이스 좌표로 위=앞(+x)·오른쪽=−y 다(web_leader._step_ee). 탑뷰가
+    90° 어긋나면 조종이 안 맞는다(사용자 보고 2026) — 반시계 90° 로 이미지 위=+x,
+    오른쪽=−y 로 맞춘다. 세계-고정 카메라라 자세와 무관하다."""
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "top")
+    R = data.cam_xmat[cam].reshape(3, 3)
+    assert R[0, 1] > 0.95, "이미지 위가 +x(앞) 가 아니다 — 마우스 위와 안 맞는다"
+    assert R[1, 0] < -0.95, "이미지 오른쪽이 −y 가 아니다 — 마우스 오른쪽과 안 맞는다"
+    assert -R[2, 2] < -0.95, "탑뷰가 아래를 안 본다"
 
 
 def test_a_sim_arm_released_by_a_simd_restart_is_shown_disconnected_on_the_ports_poll(monkeypatch):
@@ -405,3 +443,27 @@ def test_go_to_does_not_block_the_single_threaded_rpc_loop_and_parking_waits_for
     assert "moving" in inspect.getsource(SimHub.info) and "reached" in inspect.getsource(SimHub.info)
     park = inspect.getsource(SimArmInfo.go_parking)
     assert '"info"' in park and "moving" in park and "reached" in park, "파킹이 램프 완주를 안 기다린다"
+
+
+def test_sim_cameras_track_the_daemon_connected_state_so_the_window_reconnects(monkeypatch):
+    """⚠ **사용자 보고(2026)**: 조종 창은 뜨는데 카메라가 안 나온다. simd 가 재시작하면
+    카메라 세그먼트가 사라지는데 게이트웨이가 connected=True 로 캐시한 채면 창이 연결을
+    건너뛰어 렌더가 안 돌고 화면이 빈다 — sim 팔의 `sync_sim_arms` 와 같은 버그·같은 처방:
+    스캔이 simd 의 connected 를 그대로 반영한다."""
+    from app.services import camera_manager as cm
+    mgr = cm.CameraManager()
+    mgr.cameras["sim:top"] = cm.CameraInfo(id="sim:top", name="Sim top", cam_type="sim")
+    mgr.cameras["sim:top"].connected = True                     # 옛 세션이 남긴 True
+    monkeypatch.setattr(cm, "v4l2_hub", type("H", (), {"scan": staticmethod(lambda: [])})())
+    monkeypatch.setattr(cm, "realsense_hub", type("H", (), {"scan": staticmethod(lambda: [])})())
+    from app.services import sim_camera_client
+    monkeypatch.setattr(sim_camera_client.sim_camera_hub, "scan",
+                        lambda: [{"id": "sim:top", "name": "Sim top", "connected": False}])
+    mgr.scan()
+    assert mgr.cameras["sim:top"].connected is False, "simd 가 렌더 안 하는데 연결됨으로 남았다 — 화면이 빈다"
+    monkeypatch.setattr(sim_camera_client.sim_camera_hub, "scan",
+                        lambda: [{"id": "sim:top", "name": "Sim top", "connected": True}])
+    mgr.scan()
+    assert mgr.cameras["sim:top"].connected is True
+    # simd 쪽 스캔이 실제로 connected 를 싣는가
+    assert '"connected": c.connected' in (REPO / "sim" / "piper_sim" / "cameras.py").read_text()

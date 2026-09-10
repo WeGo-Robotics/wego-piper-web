@@ -282,6 +282,11 @@ class CameraManager:
         for d in sim_camera_hub.scan():
             seen.add(d["id"])
             self._absorb(d, cam_type="sim")
+            # ⚠ 시뮬 카메라는 simd 의 사실로 connected 를 맞춘다 (sim 팔의 sync_sim_arms 와
+            #   같은 규칙). simd 가 재시작하면 세그먼트가 사라지는데 게이트웨이가 True 로
+            #   캐시한 채면 창이 연결을 건너뛰어 렌더가 안 돌고 화면이 빈다(사용자 보고 2026).
+            if "connected" in d:
+                self.cameras[d["id"]].connected = bool(d["connected"])
 
         # ⚠ **안 보인 카메라는 없는 것으로 표시한다.** 예전에는 보고된 것만 순회해서,
         # USB 가 빠져도 목록이 마지막 상태에 머물렀다 — 사용자가 스캔을 눌러도

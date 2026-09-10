@@ -195,3 +195,20 @@ class SimHub:
         w = self._world()
         w.reset_cube(float(x), float(y))
         return w.cube_pos()
+
+    #: 씬의 큐브 시작 위치·파킹 자세 (build_sim_scene.py 와 같은 값)
+    CUBE_START = (0.35, 0.0)
+    PARKING = {"joint1": 0.0, "joint2": -100.0, "joint3": 100.0, "joint4": 0.0,
+               "joint5": 0.0, "joint6": 0.0, "gripper": 0.0}
+
+    def reset(self, arm_only: bool = False, cube_x: float | None = None, cube_y: float | None = None) -> dict:
+        """환경 리셋 — 팔 파킹·속도 0. arm_only 면 큐브·조명은 그대로(T: 로봇 위치만
+        초기화), 아니면 큐브도 시작 위치로 (feature/web-leader.md §5)."""
+        w = self._world()
+        if arm_only:
+            w.reset(self.PARKING, None, None)
+        else:
+            cx = self.CUBE_START[0] if cube_x is None else float(cube_x)
+            cy = self.CUBE_START[1] if cube_y is None else float(cube_y)
+            w.reset(self.PARKING, cx, cy)
+        return {"cube": w.cube_pos(), "parking": self.PARKING, "arm_only": arm_only}

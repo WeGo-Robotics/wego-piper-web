@@ -1,14 +1,14 @@
 <mujoco model="piper_scene">
   <compiler angle="radian" meshdir="meshes" balanceinertia="true" />
-  <option timestep="0.002" gravity="0 0 -9.81" />
+  <option timestep="0.002" gravity="0 0 -9.81" impratio="50" />
   <visual>
     <global offwidth="1280" offheight="960" />
     <headlight ambient="0.4 0.4 0.4" diffuse="0.6 0.6 0.6" />
   </visual>
   <asset>
     <texture type="skybox" builtin="gradient" rgb1="0.6 0.7 0.85" rgb2="0.2 0.25 0.35" width="256" height="256" />
-    <texture name="tabletex" type="2d" builtin="checker" rgb1="0.82 0.8 0.76" rgb2="0.7 0.68 0.64" width="64" height="64" />
-    <material name="tablemat" texture="tabletex" texrepeat="6 6" reflectance="0.05" />
+    <texture name="tabletex" type="2d" builtin="checker" rgb1="0.9 0.9 0.93" rgb2="0.32 0.36 0.44" width="512" height="512" />
+    <material name="tablemat" texture="tabletex" texrepeat="12 10" texuniform="true" reflectance="0" specular="0.05" shininess="0.1" />
     <material name="armmat" rgba="0.85 0.85 0.87 1" />
     <material name="fingermat" rgba="0.25 0.25 0.28 1" />
     <material name="cubemat" rgba="0.85 0.2 0.15 1" />
@@ -25,7 +25,7 @@
     <light name="sun" pos="0.5 -0.5 1.5" dir="-0.3 0.3 -1" directional="true" diffuse="0.8 0.8 0.8" />
     <light name="fill" pos="-0.5 0.5 1.2" dir="0.3 -0.3 -1" diffuse="0.4 0.4 0.4" />
     <geom name="table" type="box" size="0.6 0.5 0.02" pos="0.35 0 -0.02" material="tablemat" />
-    <camera name="top" pos="0.35 0 0.9" quat="1 0 0 0" fovy="55" />
+    <camera name="top" pos="0.35 0 0.9" xyaxes="0 -1 0 1 0 0" fovy="55" />
     <camera name="front" pos="1.1 0 0.45" xyaxes="0 1 0 -0.4 0 1" fovy="50" />
     <body name="piper_base" pos="0 0 0" gravcomp="1">
       <geom type="mesh" mesh="base_link" material="armmat" />
@@ -58,11 +58,11 @@
                     <camera name="wrist" pos="-0.08 0 -0.02" xyaxes="0 -1 0 -0.906 0 0.423" fovy="70" />
                     <body name="finger_l" pos="0 0.008 0.03">
                       <joint name="gripper_l" type="slide" axis="0 1 0" range="0 0.034" damping="2" />
-                      <geom type="box" size="0.008 0.004 0.025" pos="0 0.004 0" material="fingermat" mass="0.02" friction="1.5 0.02 0.001" />
+                      <geom type="box" size="0.008 0.004 0.025" pos="0 0.004 0" material="fingermat" mass="0.02" friction="1.5 0.05 0.001" condim="6" solref="0.005 1" />
                     </body>
                     <body name="finger_r" pos="0 -0.008 0.03">
                       <joint name="gripper_r" type="slide" axis="0 -1 0" range="0 0.034" damping="2" />
-                      <geom type="box" size="0.008 0.004 0.025" pos="0 -0.004 0" material="fingermat" mass="0.02" friction="1.5 0.02 0.001" />
+                      <geom type="box" size="0.008 0.004 0.025" pos="0 -0.004 0" material="fingermat" mass="0.02" friction="1.5 0.05 0.001" condim="6" solref="0.005 1" />
                     </body>
                   </body>
                 </body>
@@ -74,7 +74,7 @@
     </body>
     <body name="cube" pos="0.35 0.0 0.02">
       <freejoint name="cube_free" />
-      <geom name="cube_geom" type="box" size="0.02 0.02 0.02" mass="0.05" material="cubemat" />
+      <geom name="cube_geom" type="box" size="0.02 0.02 0.02" mass="0.05" material="cubemat" condim="6" friction="1.5 0.05 0.001" solref="0.005 1" />
     </body>
     <body name="bin" pos="0.35 -0.25 0">
       <geom type="box" size="0.08 0.08 0.003" pos="0 0 0.003" material="binmat" />

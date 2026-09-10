@@ -90,7 +90,10 @@ class SimCameraHub:
     # ── 계약 동사 (camerad 어휘) ──
 
     def scan(self) -> list[dict]:
-        return [{"id": c.id, "name": f"Sim {c.name}", "usb_port": "sim",
+        # ⚠ connected 를 싣는다 — 게이트웨이가 이 사실로 자기 connected 를 맞춘다.
+        #   simd 가 재시작하면 여기가 False 가 되고, 게이트웨이가 True 로 캐시한 채면
+        #   창이 연결을 건너뛰어 렌더가 안 돌고 화면이 빈다(사용자 보고 2026, sim 팔과 같은 버그).
+        return [{"id": c.id, "name": f"Sim {c.name}", "usb_port": "sim", "connected": c.connected,
                  "usb_speed_mbps": 0, "cam_type": "sim"} for c in self.cams.values()]
 
     def _cam(self, cam_id: str) -> _SimCamera | None:
