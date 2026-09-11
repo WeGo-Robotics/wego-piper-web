@@ -55,6 +55,20 @@ PIPER_WEB_PORT=8081 ./piper-install.sh   # 80 대신 다른 포트 (한 번 주�
 이미 돼 있는 것은 건너뛴다. 두 번 돌려도 같다. 두 번째 설치부터는 바뀐 레이어만
 받으므로 **~100MB** 다.
 
+### 제거
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/WeGo-Robotics/wego-piper-web/master/deploy/piper-uninstall.sh
+chmod +x piper-uninstall.sh
+./piper-uninstall.sh                # 유닛·컨테이너·이미지·venv·배포 디렉토리 — 데이터는 남긴다
+./piper-uninstall.sh --dry-run      # 무엇을 지울지만
+./piper-uninstall.sh --purge-data   # ⚠ 데이터셋·모델·설정까지
+```
+
+설치와 같은 규칙이다 — sudo 는 직접 안 쓰고(udev 규칙처럼 root 로 놓은 것은 명령을 찍어
+준다), 이 호스트의 `docker-compose.override.yml` 은 `~/override.keep.yml` 로 빼 두어 다시
+깔면 되돌아온다. 번들에도 들어 있다(`~/piper-web-deploy/<버전>/piper-uninstall.sh`).
+
 ### 스크립트가 확인하는 것
 
 못 맞추면 멈추고 무엇을 해야 하는지 찍는다.

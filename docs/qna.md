@@ -55,3 +55,15 @@ GPU 예약 없는 compose 조합을 배포 디렉토리 `.env` 의 `COMPOSE_FILE
 ⚠ GPU 없는 기계에서 **나중에** `docker-compose.override.yml` 을 만들면 `.env` 의
 `COMPOSE_FILE` 끝에 `:docker-compose.override.yml` 을 붙이거나 `apply.sh` 를 다시 돌린다 —
 `COMPOSE_FILE` 을 쓰는 동안은 compose 의 기본 탐색(override 자동 포함)이 꺼져 있다.
+
+## 지우고 싶으면?
+
+`./piper-uninstall.sh` — 설치 스크립트와 같은 자리에서 받는다(README 의 "제거"). 유닛·
+컨테이너·이미지·venv·`~/piper-web-deploy` 를 되돌리고 **데이터는 남긴다**(`/srv/piper-data`,
+`~/.cache/huggingface/lerobot`, `~/.config/piper-web`). 지우려면 `--purge-data` 를 명시한다.
+`--dry-run` 이 무엇을 지울지 먼저 보여 준다. `--keep-images` 는 이미지를 둔다(다시 깔 때
+3.5GB 를 안 받게).
+
+sudo 는 직접 안 쓴다 — udev 규칙처럼 root 로 놓은 것은 명령을 찍어 준다. 이 호스트의
+`docker-compose.override.yml` 은 `~/override.keep.yml` 로 빼 두므로 다시 깔면 apply.sh 가
+되돌린다. `PIPER_WEB_PORT` 를 썼다면 값을 찍어 주니 다시 깔 때 앞에 붙인다.

@@ -122,6 +122,41 @@ def test_the_python_floor_is_3_10_everywhere_it_is_stated():
     assert "requires a different Python" in DOC.read_text()
 
 
+def test_the_uninstall_script_reverses_the_install_but_keeps_the_data():
+    """설치가 만든 것(유닛·컨테이너·이미지·venv·배포 디렉토리)을 되돌린다(사용자 요청
+    2026-09-11). 설치와 같은 규칙 둘 — 데이터는 `--purge-data` 를 명시해야 지우고, sudo 는
+    직접 안 쓴다(명령을 찍어 준다). 이 호스트의 사정(override)은 지우기 **전에**
+    ~/override.keep.yml 로 빼 두어 다시 깔면 apply.sh 가 되돌린다. 번들 두 경로에 실린다."""
+    import os
+    import re
+    from conftest import code_only
+
+    p = REPO / "deploy" / "piper-uninstall.sh"
+    assert p.exists() and os.access(p, os.X_OK), "제거 스크립트가 없거나 실행 권한이 없다"
+    code = code_only(p.read_text())
+    assert "set -euo pipefail" in code
+    for line in code.splitlines():
+        s = line.strip()
+        if s.startswith("echo"):
+            continue
+        assert not re.match(r"^sudo\s", s), f"sudo 를 직접 실행한다: {s}"
+    # 자리는 apply.sh 와 같아야 한다 — 어긋나면 지우는 척만 한다
+    apply = (REPO / "deploy" / "apply.sh").read_text()
+    for var in ('VENV="$HOME/.venvs/piper-daemons"', 'DATA="${PIPER_DATA_ROOT:-/srv/piper-data}"'):
+        assert var in code and var in apply, f"{var} 가 두 스크립트에서 다르다"
+    assert 'SRC="$WORK/current"' in code and 'SRC="$HOME/piper-web-deploy/current"' in apply
+    # 데이터는 명시할 때만, override 는 지우기 전에
+    assert "--purge-data" in code and code.index("if [ $PURGE = 1 ]") < code.index('rm -rf "$d"')
+    assert code.index("override.keep.yml") < code.index('rm -rf "$WORK"'), "override 를 빼 두기 전에 배포 디렉토리를 지운다"
+    # 순서: 컨테이너 내리기 → 유닛 → 이미지
+    assert code.index("docker compose down") < code.index("disable --now") < code.index("docker image rm")
+    assert "systemctl --user daemon-reload" in code and "--dry-run" in code
+    for f in ("stage-hostside.sh", "release.sh"):
+        assert 'cp deploy/piper-uninstall.sh "$OUT/"' in (REPO / "deploy" / f).read_text(), f"{f} 가 제거 스크립트를 안 싣는다"
+    assert "piper-uninstall.sh" in (REPO / "README.md").read_text(), "README 에 제거 절이 없다"
+    assert "## 지우고 싶으면?" in (REPO / "docs" / "qna.md").read_text()
+
+
 def test_the_qna_doc_keeps_the_questions_as_asked_and_agrees_with_the_scripts():
     """질문이 **나온 말 그대로** 남는 곳(사용자: "QnA 문서에 남겨두자", 2026-09-11). 답이
     스크립트와 어긋나면 안 된다 — 접속 주소, 포트 바꾸기, 설치 뒤 바꾸기(frontend 만 다시

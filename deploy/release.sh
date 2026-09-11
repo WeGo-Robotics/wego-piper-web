@@ -66,7 +66,7 @@ while read -r f; do
   #   wheel 도 같은 이유 — 이미지의 매니페스트·wheel 이 옛것이면 온라인 경로는 새 wheel 을
   #   알지도 못한다(v0.4.13 은 backend 가 우연히 같이 바뀌어 괜찮았을 뿐이다).
   case "$f" in
-    deploy/apply.sh|deploy/piper-install.sh|deploy/pull-progress.py|deploy/update-source.sh|deploy/stage-hostside.sh|deploy/env.example|deploy/udev/*|docker-compose.yml|docker-compose.*.yml|cam/*|rs/*|sim/*) need_backend=1 ;;
+    deploy/apply.sh|deploy/piper-install.sh|deploy/piper-uninstall.sh|deploy/pull-progress.py|deploy/update-source.sh|deploy/stage-hostside.sh|deploy/env.example|deploy/udev/*|docker-compose.yml|docker-compose.*.yml|cam/*|rs/*|sim/*) need_backend=1 ;;
   esac
   # `bus/ shm/ robot/` 은 **양쪽**이다 — 이미지 안에도 들어가고 호스트 venv 에도 깔린다
   case "$f" in
@@ -222,6 +222,7 @@ fi
 #   빼 두었다. 번들이 덮으면 그 설정이 조용히 사라지고 포트 충돌로 안 뜬다.
 cp docker-compose.yml "$OUT/"
 cp docker-compose.nogpu.yml "$OUT/"    # GPU 없는 호스트 조각 — apply.sh 3c 절이 COMPOSE_FILE 로 끼운다
+cp deploy/piper-uninstall.sh "$OUT/"   # 제거도 번들에서 — 설치가 만든 것을 되돌린다 (데이터는 남긴다)
 cp deploy/env.example "$OUT/backend.env.example"
 
 # ── udev 규칙 — **항상 넣는다** ───────────────────────────────────────────

@@ -50,8 +50,9 @@ def _detect(prev: str, tag: str) -> set[str]:
                 layers.add("wheels")
         # 호스트 코드는 이미지 안(/opt/piper-host)으로 간다 — stage-hostside 가 싣는 것이
         # 바뀌면 backend 를 다시 굽는다(온라인 설치가 거기서 꺼낸다). wheel 도 거기 실린다.
-        if p in ("deploy/apply.sh", "deploy/piper-install.sh", "deploy/pull-progress.py",
-                 "deploy/update-source.sh", "deploy/stage-hostside.sh", "deploy/env.example") \
+        if p in ("deploy/apply.sh", "deploy/piper-install.sh", "deploy/piper-uninstall.sh",
+                 "deploy/pull-progress.py", "deploy/update-source.sh", "deploy/stage-hostside.sh",
+                 "deploy/env.example") \
                 or p.startswith(("deploy/udev/", "docker-compose.", "cam/", "rs/", "sim/")):
             layers.add("backend")
     return layers
