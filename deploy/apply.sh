@@ -162,7 +162,9 @@ if [ -n "${registry:-}" ]; then
   fi
 fi
 
-[ -d "$DATA" ] && ok "데이터 루트 $DATA" || { bad "$DATA 없음"; NEED_SUDO+=("mkdir -p $DATA && chown $USER $DATA"); }
+# ⚠ `&&` 뒤에도 `sudo` — 출력은 줄 앞에만 sudo 를 붙이므로 뒤 명령은 일반 사용자로 돈다.
+#   실기(NUC, 2026-09-11)에서 그대로 붙여 넣자 chown 이 "Operation not permitted" 였다.
+[ -d "$DATA" ] && ok "데이터 루트 $DATA" || { bad "$DATA 없음"; NEED_SUDO+=("mkdir -p $DATA && sudo chown $USER $DATA"); }
 # ⚠ 컨테이너는 유닉스 소켓으로만 버스에 붙는다. 설정만 하고 redis 를 재시작 안 하면
 #   소켓 파일이 없어 backend 가 "E-stop 버스에 연결할 수 없습니다" 로 뜬다(실제 사고).
 # ⚠ redis 가 **아직 안 깔렸으면 건너뛴다.** 없는 `/etc/redis/redis.conf` 에 sed 를

@@ -174,7 +174,7 @@ git tag --sort=-v:refname | head -1     # 예: v0.3.1 → 다음은 v0.3.2
 
 ### 4. 호스트 인프라 준비 (sudo 필요)
 
-- [x] `sudo mkdir -p /srv/piper-data && chown $USER /srv/piper-data`
+- [x] `sudo mkdir -p /srv/piper-data && sudo chown $USER /srv/piper-data` (⚠ `&&` 뒤에도 sudo — 없으면 chown 이 "Operation not permitted")
 - [x] `apt-get install -y redis-server` + `/etc/redis/redis.conf`에
       `unixsocket /run/redis/redis-server.sock` / `unixsocketperm 770` 추가 +
       **`systemctl restart redis-server`** (컨테이너는 유닉스소켓, 호스트 데몬은 기본 TCP

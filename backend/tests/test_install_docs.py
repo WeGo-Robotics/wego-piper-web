@@ -30,6 +30,17 @@ def test_every_sudo_prescription_apply_prints_is_in_the_doc():
         assert phrase in doc, phrase
 
 
+def test_every_chained_sudo_prescription_carries_sudo_on_each_part():
+    """⚠ 실기(NUC, 2026-09-11): 스크립트가 찍은 `sudo mkdir -p /srv/piper-data && chown wego
+    /srv/piper-data` 를 그대로 붙여 넣자 chown 이 "Operation not permitted" — 출력은 줄 앞에만
+    `sudo` 를 붙이므로 `&&` 뒤는 일반 사용자로 돈다. 처방은 복사해 붙이면 끝나야 한다."""
+    import re
+    apply = (REPO / "deploy" / "apply.sh").read_text()
+    for cmd in re.findall(r'NEED_SUDO\+=\("([^"]+)"\)', apply):
+        for part in cmd.split("&&")[1:]:
+            assert part.strip().startswith("sudo "), f"`&&` 뒤에 sudo 가 없다: {cmd}"
+
+
 def test_the_install_ends_by_saying_where_to_open_the_browser():
     """설치가 끝나면 **어디로 가야 하는지** 아무도 안 알려 줬다(사용자 지적 2026-09-11).
     README 는 주소를 적고, 스크립트는 마지막 줄에 실제 IP·포트로 찍는다 — 포트는
