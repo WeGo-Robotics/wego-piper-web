@@ -341,6 +341,7 @@ docker images -q --filter reference='piper-web-*' | sort -u | xargs -r docker rm
 | v0.4.14 | 09-11 14:09 | **backend 이미지만** (GHCR, 4 파일 — apply.sh·compose 조각·stage) | GPU 없는 NUC 에 v0.4.13 을 깔아 보고: chown 처방 `&&` 뒤 sudo 누락 · GPU 없는 호스트는 `.env` COMPOSE_FILE 로 nogpu 조각(`!reset`, compose 2.24+) · release.sh 가 이미지에 실리는 호스트 코드(apply.sh·compose·udev·cam/rs/sim)를 backend 로 판정 — 이 릴리스 자체가 그 판정에 막혔었다 |
 | v0.4.15 | 09-11 14:18 | **backend 이미지만** (GHCR, 1 파일 — apply.sh) | ⚠ v0.4.14 를 **처음** 깔면 아무것도 안 깔렸다 — apply.sh 가 매니페스트(바뀐 것)만 적용해 frontend 이미지·venv/wheel·데몬이 비었다. 없는 것은 번들에서 깐다(없는 이미지는 레지스트리 `:latest`). GHCR 경로의 첫 신규 설치(NUC)에서 드러남 |
 | v0.4.16 | 09-11 14:36 | **backend 이미지 + wheel 7개** (GHCR, 9 파일 — apply.sh·piper-install.sh·pyproject 7) | NUC 2·3차 시도: 꺼낸 디렉토리에 남은 옛 wheel(`docker cp` 겹침) → 꺼내기 전 비우기 + 매니페스트 도장 wheel 만 설치 · 22.04 의 파이썬 3.10 을 거절하던 `requires-python >=3.11` → 코드 실측대로 3.10 으로(apply.sh 가 venv 전에 확인, README 전제 표) · 시스템에 없는 numpy·opencv 는 venv 에 |
+| v0.4.17 | 09-11 15:27 | **backend 이미지 + wheel** robot·shm·sim·so101 (GHCR, 10 파일) | NUC 설치 뒤 시뮬 팔이 안 움직임 — 컨테이너(root) 릴레이가 만든 action 세그먼트가 0600 이라 호스트 simd 가 못 읽고 명령 스레드가 조용히 죽음 → 세그먼트 0644(fchmod) · simd/robotd 는 열기 실패 재시도 · apply.sh 가 켜져 있던 simd/so101d 도 재시작 · `piper-uninstall.sh`(데이터 보존, sudo 직접 안 씀, override 백업) · ⚠ 호스트가 먼저 만들어 두는 우회는 `fs.protected_regular` 로 불가 |
 
 ⚠ **v0.4.4 는 체크포인트를 무효화한다.** J6 캘리브레이션을 `(-100000, 130000)` →
 `(-120000, 120000)` 으로 고치면서 데이터셋 25 개 339,845 프레임을 재정규화했다
