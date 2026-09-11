@@ -183,15 +183,13 @@ class UnitHub:
         except Exception:
             pass
         # 배포 디렉토리 — piper-install.sh 가 버전마다 꺼내 두고 apply.sh 가 적용본을 기록한다
-        work = Path(os.environ.get("PIPER_WORK", Path.home() / "piper-web-deploy"))
+        work = self._work()
         versions: list[dict] = []
-        for mf in sorted(work.glob("v*/manifest.txt")):
-            entry = {"version": mf.parent.name}
-            for line in mf.read_text().splitlines():
-                if "=" in line:
-                    k, val = line.split("=", 1)
-                    entry[k.strip()] = val.strip().strip('"')
-            versions.append(entry)
+        for ver, d in self._bundles():
+            mf = d / "manifest.txt"
+            if not mf.exists():
+                continue
+            versions.append({"version": ver, **_manifest(mf)})
         current = work / "current" / "VERSION"
         info["deploy"] = {
             "work": str(work), "versions": versions,
@@ -213,17 +211,43 @@ class UnitHub:
     def _work(self) -> Path:
         return Path(os.environ.get("PIPER_WORK", Path.home() / "piper-web-deploy"))
 
+    # ⚠ 반환 타입을 문자열로 — 클래스 본문에선 아래 `list` 메서드(유닛 목록)가 내장 list 를 가려
+    #   `list[...]` 가 "'function' object is not subscriptable" 로 죽는다(실측).
+    def _bundles(self) -> "list[tuple[str, Path]]":
+        """받아 둔 번들 전부 — (버전, 디렉토리), 버전 오름차순.
+
+        버전 이름 디렉토리(`vX.Y.Z/`)가 기본이다. ⚠ 옛 설치는 `latest/` **실제 디렉토리**에
+        풀려 있다 — README 대로 버전 없이 깔면 v0.4.17 까지의 piper-install.sh 가 그랬고,
+        여기가 `v*` 만 봐서 웹 [업데이트]가 "받기 스크립트가 없습니다"로 거절했다(NUC,
+        2026-09-11). 그건 매니페스트의 version= 으로 읽는다. 링크 `latest`(v0.4.18+)는
+        가리키는 디렉토리가 이미 목록에 있으니 건너뛴다."""
+        out: list[tuple[str, Path]] = []
+        for p in self._work().glob("*"):
+            if not p.is_dir() or p.is_symlink():
+                continue
+            if is_version(p.name):
+                out.append((p.name, p))
+            elif p.name == "latest":
+                ver = _manifest(p / "manifest.txt").get("version", "")
+                if is_version(ver):
+                    out.append((ver, p))
+        out.sort(key=lambda t: version_key(t[0]))
+        return out
+
+    def _bundle_dir(self, version: str) -> Path | None:
+        """그 버전을 받아 둔 디렉토리 — 없으면 None."""
+        return next((d for v, d in self._bundles() if v == version), None)
+
     def _registry(self) -> str | None:
         """가장 최근 번들의 매니페스트가 말하는 레지스트리. 없으면 None(ghcr 기본)."""
-        mfs = sorted(self._work().glob("v*/manifest.txt"), key=lambda p: version_key(p.parent.name))
-        for mf in reversed(mfs):
-            for line in mf.read_text().splitlines():
-                if line.startswith("registry="):
-                    return line.split("=", 1)[1].strip().strip('"') or None
+        for _ver, d in reversed(self._bundles()):
+            mf = _manifest(d / "manifest.txt")
+            if "registry" in mf:
+                return mf["registry"] or None
         return None
 
     def _latest_bundle(self) -> Path | None:
-        """가장 최근에 받아 둔 버전 디렉토리 (`<WORK>/vX.Y.Z/`).
+        """가장 최근에 받아 둔 번들 디렉토리 (`<WORK>/vX.Y.Z/`, 옛 설치는 `latest/`).
 
         ⚠ **`current/` 는 여기서 못 쓴다.** `apply.sh` 가 `daemons.tar.gz` 만 그
         안에 풀어 둔다(`SRC=$HOME/piper-web-deploy/current`) — `piper-install.sh`
@@ -231,8 +255,8 @@ class UnitHub:
         의 `__file__` 로 잡는 `REPO` 는 바로 그 `current/` 라 늘 못 찾았다(실기:
         .120 에서 웹 [받기] 를 처음 눌러 봤을 때 "이 번들이 낡았다"). `_registry()`
         가 이미 하던 것과 같은 자리를 본다."""
-        dirs = [p for p in self._work().glob("v*") if p.is_dir() and is_version(p.name)]
-        return max(dirs, key=lambda p: version_key(p.name)) if dirs else None
+        bundles = self._bundles()
+        return bundles[-1][1] if bundles else None
 
     def update(self, version: str, stage: str, mode: str = "image") -> dict:
         """받기(pull) 또는 적용(apply)을 일시 유닛으로 띄운다. 즉시 돌아온다.
@@ -265,10 +289,12 @@ class UnitHub:
                 if not script or not script.exists():
                     script = REPO / "deploy" / "piper-install.sh"
                 if not script.exists():
-                    raise RuntimeError(f"받기 스크립트가 없습니다: {self._work() / 'v*' / 'piper-install.sh'} — 이 번들이 낡았다")
+                    raise RuntimeError(f"받아 둔 번들이 없습니다 ({self._work()}/v*/ 또는 latest/ 에 piper-install.sh 가 없다) "
+                                       "— 터미널에서 한 번 ./piper-install.sh 를 돌리면 그 뒤로 웹에서 됩니다")
                 cmd = [str(script), version, "--pull-only"]
             else:
-                script = self._work() / version / "apply.sh"
+                d = self._bundle_dir(version)
+                script = (d / "apply.sh") if d else self._work() / version / "apply.sh"
                 if not script.exists():
                     raise RuntimeError(f"{version} 을 아직 받지 않았습니다 — 먼저 [받기]")
                 cmd = [str(script)]
@@ -338,6 +364,18 @@ class UnitHub:
             if cand.exists():
                 return changelog_section(cand.read_text(), version)
         return ""
+
+
+def _manifest(path: Path) -> dict[str, str]:
+    """`key="value"` 줄들 — 없으면 빈 dict. 번들 디렉토리의 정체는 이 파일이 말한다."""
+    if not path.exists():
+        return {}
+    out: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        if "=" in line and not line.startswith("#"):
+            k, val = line.split("=", 1)
+            out[k.strip()] = val.strip().strip('"')
+    return out
 
 
 def is_version(v: str) -> bool:

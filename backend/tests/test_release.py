@@ -164,9 +164,13 @@ def test_the_unpack_dir_is_emptied_first_and_only_stamped_wheels_install():
     from conftest import code_only
 
     inst = code_only((REPO / "deploy" / "piper-install.sh").read_text())
-    i_rm = inst.find('case "$VERSION" in latest|v[0-9]*) rm -rf "$DEST" ;; esac')
-    assert i_rm != -1, "꺼내기 전에 비우지 않는다"
-    assert i_rm < inst.find('docker cp "$cid:/opt/piper-host/."'), "비우기가 꺼낸 뒤다"
+    # 빈 임시 디렉토리에 꺼낸 뒤, 이름을 정한 자리를 비우고 옮긴다 — 어느 쪽에도 옛 파일이 못 남는다
+    i_tmp = inst.find('TMPD="$WORK/.extract.$$"; rm -rf "$TMPD"; mkdir -p "$TMPD"')
+    assert i_tmp != -1 and i_tmp < inst.find('docker cp "$cid:/opt/piper-host/."'), "빈 자리에 꺼내지 않는다"
+    i_rm = inst.find('case "$REAL" in latest|v[0-9]*) rm -rf "$DEST" ;; esac')
+    assert i_rm != -1 and i_rm < inst.find('mv "$TMPD" "$DEST"'), "옮길 자리를 비우지 않는다"
+    assert 'rm -rf "$WORK"' not in inst.replace('rm -rf "$WORK/$VERSION"', "").replace('rm -rf "$WORK/', ""), \
+        "배포 디렉토리를 통째로 지운다"
     apply = code_only(APPLY.read_text())
     assert "bundle_wheels() {" in apply and '"$HERE"/wheels/*-"$v"-*.whl' in apply, "도장 찍힌 wheel 만 고르지 않는다"
     assert 'pip" install -q --no-deps --force-reinstall "${WHLS[@]}"' in apply

@@ -319,20 +319,32 @@ ok "$IMAGE:$VERSION"
 say "2. 호스트 코드 꺼내기"
 # ⚠ `docker create` 는 **컨테이너를 실행하지 않는다.** 받은 이미지를 돌려보지
 #   않고 파일만 꺼내려는 것이다 — 설치 전에 남의 코드를 실행할 이유가 없다.
-DEST="$WORK/${VERSION}"
+# ⚠ 꺼낸 번들은 **버전 이름 디렉토리**(`<WORK>/vX.Y.Z/`)에 둔다 — `latest` 로 받아도 매니페스트의
+#   version= 으로 이름을 정한다. 웹 [업데이트](unitd)가 `v*/` 를 보기 때문이다: README 대로
+#   버전 없이 깔면 번들이 `latest/` 에만 있어 "받기 스크립트가 없습니다"로 거절했다(NUC,
+#   2026-09-11). `latest` 는 사람이 찾기 쉽게 그 디렉토리를 가리키는 링크로 남긴다.
 # ⚠ 꺼내는 자리는 **비우고** 꺼낸다. `docker cp` 는 있는 디렉토리에 **겹쳐** 놓아 이전 시도의
-#   파일이 남는다 — NUC(2026-09-11)에서 `latest/wheels/` 에 piper_bus 0.4.13 과 0.4.15 가
-#   나란히 남아 pip 가 "conflicting dependencies" 로 죽었다. $DEST 는 꺼낸 사본일 뿐이라
-#   지워도 잃는 것이 없다(적용본은 current/, venv 는 ~/.venvs). 이름이 버전 꼴일 때만 —
-#   `current` 같은 것을 여기로 넘겨도 절대 지우지 않는다.
-case "$VERSION" in latest|v[0-9]*) rm -rf "$DEST" ;; esac
-mkdir -p "$DEST"
+#   파일이 남는다 — `latest/wheels/` 에 piper_bus 0.4.13 과 0.4.15 가 나란히 남아 pip 가
+#   "conflicting dependencies" 로 죽었다. 꺼낸 사본일 뿐이라 지워도 잃는 것이 없다(적용본은
+#   current/, venv 는 ~/.venvs). 임시 디렉토리에 꺼낸 뒤 이름을 정해 옮긴다 — 이름이 버전
+#   꼴일 때만 지우고, `current` 같은 것은 절대 지우지 않는다.
+TMPD="$WORK/.extract.$$"; rm -rf "$TMPD"; mkdir -p "$TMPD"
 cid="$(docker create "$IMAGE:$VERSION")"
-trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
-docker cp "$cid:/opt/piper-host/." "$DEST/"
-docker rm -f "$cid" >/dev/null; trap - EXIT
-[ -f "$DEST/apply.sh" ] || { bad "이미지에 호스트 코드가 없습니다 (/opt/piper-host)"; exit 1; }
-ok "$DEST"
+trap 'docker rm -f "$cid" >/dev/null 2>&1 || true; rm -rf "$TMPD"' EXIT
+docker cp "$cid:/opt/piper-host/." "$TMPD/"
+docker rm -f "$cid" >/dev/null
+[ -f "$TMPD/apply.sh" ] || { bad "이미지에 호스트 코드가 없습니다 (/opt/piper-host)"; exit 1; }
+REAL="$(sed -n 's/^version="\(v[0-9][^"]*\)"$/\1/p' "$TMPD/manifest.txt" 2>/dev/null | head -n1 || true)"
+case "$REAL" in v[0-9]*) ;; *) REAL="$VERSION" ;; esac      # 매니페스트가 없거나 이상하면 요청한 이름 그대로
+DEST="$WORK/$REAL"
+case "$REAL" in latest|v[0-9]*) rm -rf "$DEST" ;; esac
+mv "$TMPD" "$DEST"; trap - EXIT
+if [ "$REAL" != "$VERSION" ]; then
+  # 옛 설치의 `latest` 는 **실제 디렉토리**다 — 지우고 링크로 바꾼다. 안 지우면 ln 이 그 안에 링크를 만든다.
+  if [ -d "$WORK/$VERSION" ] && [ ! -L "$WORK/$VERSION" ]; then rm -rf "$WORK/$VERSION"; fi
+  ln -sfn "$REAL" "$WORK/$VERSION"
+fi
+ok "$DEST$([ "$REAL" != "$VERSION" ] && echo "  ($VERSION → $REAL)" || true)"
 if [ $PULL_ONLY = 1 ]; then
   say "받기 끝 — 적용은 하지 않았습니다"
   echo "  $DEST/apply.sh      # 적용하려면"

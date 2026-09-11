@@ -177,6 +177,49 @@ def test_pull_picks_the_numerically_latest_bundle_not_the_last_glob_hit(monkeypa
     assert u.UnitHub()._latest_bundle() == tmp_path / "v0.4.10"
 
 
+def test_a_legacy_latest_dir_counts_as_a_bundle_by_its_manifest_version(monkeypatch, tmp_path):
+    """⚠ 실기(NUC, 2026-09-11): README 대로 버전 없이 깔면 v0.4.17 까지의 piper-install.sh 가
+    번들을 `latest/` 실제 디렉토리에 풀었는데 unitd 는 `v*/` 만 봐서 웹 [업데이트]가 "받기
+    스크립트가 없습니다"로 거절했다. `latest/` 는 매니페스트의 version= 으로 읽고, 링크
+    `latest`(새 설치)는 가리키는 디렉토리가 이미 목록에 있으니 두 번 세지 않는다."""
+    import shutil
+
+    u = _unitd()
+    monkeypatch.setenv("PIPER_WORK", str(tmp_path))
+    (tmp_path / "v0.4.16").mkdir()
+    (tmp_path / "v0.4.16" / "manifest.txt").write_text('version="v0.4.16"\nregistry="piper-build:5000"\n')
+    (tmp_path / "latest").mkdir()
+    (tmp_path / "latest" / "manifest.txt").write_text('version="v0.4.17"\nregistry="ghcr.io/wego-robotics"\n')
+    (tmp_path / "latest" / "piper-install.sh").write_text("#!/bin/sh\n")
+    hub = u.UnitHub()
+    assert [v for v, _ in hub._bundles()] == ["v0.4.16", "v0.4.17"]
+    assert hub._latest_bundle() == tmp_path / "latest"
+    assert hub._registry() == "ghcr.io/wego-robotics"
+    assert hub._bundle_dir("v0.4.17") == tmp_path / "latest"
+    assert [e["version"] for e in hub.host_info()["deploy"]["versions"]] == ["v0.4.16", "v0.4.17"]
+    # 새 설치: latest 는 링크 — 두 번 세지 않는다
+    shutil.rmtree(tmp_path / "latest")
+    (tmp_path / "v0.4.18").mkdir()
+    (tmp_path / "v0.4.18" / "manifest.txt").write_text('version="v0.4.18"\n')
+    (tmp_path / "latest").symlink_to("v0.4.18")
+    assert [v for v, _ in hub._bundles()] == ["v0.4.16", "v0.4.18"]
+    src = (REPO / "daemons" / "unitd.py").read_text()
+    assert 'raise RuntimeError(f"받아 둔 번들이 없습니다' in src, "문구가 아직 엉뚱하다"
+    assert 'raise RuntimeError(f"받기 스크립트가 없습니다' not in src, "옛 문구(이 번들이 낡았다)가 남았다"
+
+
+def test_the_installer_lands_the_bundle_in_a_version_dir_and_links_latest():
+    """`latest` 로 받아도 매니페스트의 version= 으로 버전 이름 디렉토리에 두고 `latest` 는
+    링크로 — unitd 의 `v*` 탐색과 웹 [업데이트]가 그 이름을 전제한다."""
+    from conftest import code_only
+
+    inst = code_only((REPO / "deploy" / "piper-install.sh").read_text())
+    assert r'''sed -n 's/^version="\(v[0-9][^"]*\)"$/\1/p' "$TMPD/manifest.txt"''' in inst, "매니페스트 버전을 안 읽는다"
+    assert 'DEST="$WORK/$REAL"' in inst and 'ln -sfn "$REAL" "$WORK/$VERSION"' in inst
+    assert 'if [ -d "$WORK/$VERSION" ] && [ ! -L "$WORK/$VERSION" ]; then rm -rf "$WORK/$VERSION"; fi' in inst, \
+        "옛 latest 실제 디렉토리를 링크로 못 바꾼다"
+
+
 def test_sudo_lines_are_lifted_out_of_the_log_and_the_changelog_section_is_cut():
     u = _unitd()
     log = "1. 전제\n  ✗ 그룹 video 없음\n  아래를 먼저 실행하세요:\n    sudo usermod -aG video sw\n    sudo apt install -y redis-server\n"
