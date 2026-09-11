@@ -4,6 +4,7 @@ piper_so101/calibration.py
 piper_so101/feetech.py
 piper_so101/hub.py
 piper_so101/joints.py
+piper_so101/relay_map.py
 piper_so101.egg-info/PKG-INFO
 piper_so101.egg-info/SOURCES.txt
 piper_so101.egg-info/dependency_links.txt
