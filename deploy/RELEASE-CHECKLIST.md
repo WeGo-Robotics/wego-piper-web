@@ -98,8 +98,9 @@ diff 로 정한다. 아래 [절차](#절차-수동)는 그 스크립트가 하�
 | `backend/ wrapper/ policies/ act_aux/ phase/ vendor/` | backend 이미지 |
 | `frontend/` | frontend 이미지 |
 | `bus/ shm/ robot/ so101/` | **backend 이미지 + 데몬 wheel** (양쪽이 쓴다 — so101 은 `relay_map` 때문) |
-| `cam/ rs/ sim/` | 데몬 wheel (호스트 전용 — 이미지엔 없다) |
-| `daemons/ deploy/systemd/ deploy/install-daemons.sh` | 데몬 소스·유닛 |
+| `cam/ rs/ sim/` | 데몬 wheel **+ backend 이미지** (컨테이너가 import 하진 않지만 wheel 이 이미지 안 `/opt/piper-host` 로 실려 나간다 — v0.4.14) |
+| `daemons/ deploy/systemd/ deploy/install-daemons.sh` | 데몬 소스·유닛 (+ backend 이미지 — 컨테이너도 `/app/daemons` 로 돌린다) |
+| `deploy/apply.sh piper-install.sh pull-progress.py update-source.sh stage-hostside.sh env.example deploy/udev/ docker-compose*.yml` | **backend 이미지** — 이미지에 실리는 호스트 코드. 안 구우면 새 apply.sh 는 아무 데도 안 간다 (v0.4.14 가 이 판정에 막혔었다) |
 | `tests/ *.md refactor/ feature/ docs/` | **아무것도** — 도는 것을 안 바꾼다 |
 
 `bus`·`shm`·`robot` 이 양쪽인 것이 요점이다. 한쪽만 올리면 **컨테이너와 데몬이
