@@ -45,6 +45,8 @@ _METHODS = {
     "scan", "connect", "disconnect", "release_all",
     "probe", "list_controls", "set_control", "info",
     "apply_controls", "last_apply_report", "lost",
+    # 회색 카드 — rsd 와 같은 동사. USB 웹캠으로 눌러 보니 여기 없어서 "Not a RealSense id" 였다
+    "measure_gray_card", "calibrate_gray_card",
 }
 
 

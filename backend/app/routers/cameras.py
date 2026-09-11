@@ -392,12 +392,13 @@ async def measure_gray_card(cam_id: str, body: GrayCardRequest):
     """카드 영역을 **재기만** 한다 — 장치를 안 건드리므로 배타 가드도 안 탄다.
 
     상자를 옮기며 부를 용도라 싸야 한다: 마지막 프레임 하나를 읽고 평균을 낸다.
-    """
-    from app.services.realsense_manager import realsense_hub
 
+    ⚠ `camera_manager` 를 거친다 — 카메라 종류(rsd·camerad·simd)를 가르는 분기는 거기
+    한 곳이다. 예전엔 rsd 로 직행해 USB 웹캠이 "Not a RealSense id" 로 거절됐다(2026-09-11).
+    """
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        _executor, lambda: realsense_hub.measure_gray_card(cam_id, body.roi))
+        _executor, lambda: camera_manager.measure_gray_card(cam_id, body.roi))
 
 
 @router.post("/{cam_id:path}/calibrate-gray-card")
@@ -411,12 +412,11 @@ async def calibrate_gray_card(cam_id: str, body: GrayCardRequest):
     달라지는데, 정책이 그걸 장면 변화로 배운다 (`_guard_device_access` 와 같은 이유).
     """
     from app.services.exclusivity import Activity, require_idle
-    from app.services.realsense_manager import realsense_hub
 
     require_idle(Activity.CAMERA_ACCESS)
     loop = asyncio.get_event_loop()
     report = await loop.run_in_executor(
-        _executor, lambda: realsense_hub.calibrate_gray_card(
+        _executor, lambda: camera_manager.calibrate_gray_card(
             cam_id, body.roi, body.target, body.adjust))
     if not report.get("ok") and report.get("error"):
         raise HTTPException(400, report["error"])

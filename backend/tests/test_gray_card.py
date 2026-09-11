@@ -127,6 +127,88 @@ def test_an_unusable_reading_stops_before_changing_anything():
     assert "before.usable" in head and "return" in head, "못 믿는 측정에도 진행한다"
 
 
+def test_camerad_speaks_the_gray_card_verbs_too():
+    """⚠ USB 웹캠으로 눌러 보니 "Not a RealSense id" — 동사가 rsd 에만 있었다(2026-09-11).
+    계산(graycard.py)은 공용이니 camerad 도 같은 동사·같은 보고를 낸다. 재려면 마지막
+    프레임을 들고 있어야 한다 — 발행만 하고 버리던 카메라가 한 장 붙든다."""
+    repo = Path(__file__).resolve().parents[2]
+    src = (repo / "daemons" / "camerad.py").read_text()
+    methods = src.split("_METHODS = {", 1)[1].split("}", 1)[0]
+    assert '"measure_gray_card"' in methods and '"calibrate_gray_card"' in methods
+    from piper_cam.hub import V4l2Hub, _V4l2Camera
+
+    assert callable(getattr(V4l2Hub, "measure_gray_card", None))
+    assert callable(getattr(V4l2Hub, "calibrate_gray_card", None))
+    assert callable(getattr(_V4l2Camera, "get_frame", None)), "마지막 프레임을 들고 있지 않으면 잴 수 없다"
+
+
+def test_a_v4l2_webcam_is_calibrated_by_measuring_the_card(monkeypatch):
+    """가짜 UVC 웹캠: 수동이면 노출(×100µs)·gain 에 비례해 밝아지고, WB 설정이 조명(5200K)
+    보다 낮으면 푸르게 나온다. rsd 와 같은 절차가 V4L2 이름으로 돌아 목표 밝기·중성에 닿고,
+    끝났을 때 자동 노출은 수동(1)·AWB 는 꺼져 있어야 한다 — 켜 두면 카드를 치우는 순간
+    흔들린다. 값싼 웹캠(수동 WB 없음)은 그 단계를 건너뛰고 말한다."""
+    from piper_cam import hub as H
+
+    state = {"auto_exposure": 3, "white_balance_automatic": 1, "white_balance_temperature": 4600,
+             "exposure_time_absolute": 50, "gain": 16}
+    ranges = {"auto_exposure": (3, 1, 3), "white_balance_automatic": (2, 0, 1),
+              "white_balance_temperature": (1, 2800, 6500),
+              "exposure_time_absolute": (1, 1, 5000), "gain": (1, 0, 255)}   # type, min, max
+
+    def list_controls(dev):
+        return [{"name": n, "cid": i, "type": t, "min": lo, "max": hi, "value": state[n],
+                 "default": state[n], "inactive": False, "readonly": False}
+                for i, (n, (t, lo, hi)) in enumerate(ranges.items())]
+
+    def set_control(dev, cid, value):
+        state[list(ranges)[cid]] = int(value)
+        return True
+
+    monkeypatch.setattr(H.v4l2, "v4l2_list_controls", list_controls)
+    monkeypatch.setattr(H.v4l2, "v4l2_set_control", set_control)
+    monkeypatch.setattr(H.time, "sleep", lambda s: None)
+
+    class FakeCam:
+        connected = True
+
+        def get_frame(self):
+            if state["auto_exposure"] == 3:           # 자동이면 카메라가 알아서 근처를 잡았다고 친다
+                luma = 110.0
+            else:
+                luma = 118.0 * (state["exposure_time_absolute"] / 200.0) * (state["gain"] / 16.0)
+            k = state.get("white_balance_temperature", 5200) / 5200.0   # 조명보다 낮으면 푸르다
+            r, b = luma * k ** 0.5, luma / k ** 0.5
+            frame = np.zeros((240, 320, 3), dtype=np.uint8)
+            frame[..., 0] = np.clip(b, 0, 255); frame[..., 1] = np.clip(luma, 0, 255); frame[..., 2] = np.clip(r, 0, 255)
+            return frame
+
+    hub = H.V4l2Hub(); hub.cams["/dev/video9"] = FakeCam()
+    r = hub.calibrate_gray_card("/dev/video9")
+    assert r["ok"], r
+    assert abs(r["after"]["luma"] - G.TARGET_LUMA) <= G.LUMA_TOLERANCE
+    assert r["after"]["neutral_error_pct"] <= G.NEUTRAL_TOLERANCE_PCT
+    assert state["auto_exposure"] == 1 and state["white_balance_automatic"] == 0
+    assert 4800 <= state["white_balance_temperature"] <= 5600
+    assert r["exposure_us"] == state["exposure_time_absolute"] * 100 and r["skipped"] == []
+    # 수동 WB 가 없는 값싼 웹캠 — 밝기는 맞추되 WB 단계는 건너뛰고 말한다
+    del ranges["white_balance_temperature"]; del state["white_balance_temperature"]
+    r2 = hub.calibrate_gray_card("/dev/video9")
+    assert any("white_balance_temperature" in s for s in r2["skipped"]), r2
+
+
+def test_the_gateway_routes_the_gray_card_by_camera_kind_not_to_rsd_only():
+    """카메라 종류 분기는 `camera_manager` 한 곳이다 — 라우터가 rsd 로 직행하면 웹캠이 죽는다."""
+    repo = Path(__file__).resolve().parents[2]
+    src = (repo / "backend" / "app" / "routers" / "cameras.py").read_text()
+    for ep in ("measure_gray_card", "calibrate_gray_card"):
+        body = src.split(f"async def {ep}", 1)[1].split("\n@router", 1)[0]
+        assert f"camera_manager.{ep}(" in body and "realsense_hub" not in body, f"{ep} 가 rsd 로 직행한다"
+    mgr = (repo / "backend" / "app" / "services" / "camera_manager.py").read_text()
+    assert "def measure_gray_card" in mgr and "def calibrate_gray_card" in mgr
+    cli = (repo / "backend" / "app" / "services" / "v4l2_client.py").read_text()
+    assert '"measure_gray_card"' in cli and '"calibrate_gray_card"' in cli
+
+
 def test_calibration_is_blocked_while_a_camera_is_in_use():
     """도중에 노출이 바뀌면 한 에피소드 안에서 밝기가 달라지고,
     정책은 그걸 장면 변화로 배운다."""

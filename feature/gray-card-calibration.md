@@ -150,3 +150,28 @@ roi=[700, 340,120,120]  밝기 120.3  치우침  2.39%  얼룩 27.6%  거절
   숫자로 보여주는 것. 정책에는 이게 실제 목표에 가깝다
 - **camerad(USB 웹캠) 경로** — 순수 로직은 `piper_cam` 에 있어 공유 가능하지만
   절차는 rsd 에만 붙였다
+
+## camerad(V4L2 웹캠)도 같은 절차다 — 2026-09-11
+
+USB 웹캠으로 [보정]을 누르니 "Not a RealSense id" 였다. 동사(`measure_gray_card` ·
+`calibrate_gray_card`)가 rsd 에만 있었고, 게이트웨이 라우터도 rsd 로만 보냈다 —
+화면은 depth 만 아니면 버튼을 보여 줬으니 웹캠에서도 눌리고 그렇게 실패했다.
+
+계산(`graycard.py`)은 처음부터 `piper_cam` 공용이라 camerad 에 **같은 절차**를 붙였다.
+다른 것은 컨트롤 이름과 자동 스위치의 값뿐이다:
+
+| 단계 | RealSense (rsd) | V4L2 (camerad) |
+|---|---|---|
+| 자동 노출 켜기/끄기 | `enable_auto_exposure` 1/0 | `auto_exposure` **3 = 자동, 1 = 수동** (menu — 반직관적, controls.py) |
+| AWB 끄기 | `enable_auto_white_balance` 0 | `white_balance_automatic` 0 |
+| WB 값 | `white_balance` (K) | `white_balance_temperature` (K) |
+| 밝기 — 노출 | `exposure` (센서마다 단위 다름) | `exposure_time_absolute` (**×100µs**) |
+| 밝기 — gain | `gain` | `gain` |
+
+⚠ 값싼 웹캠은 수동 WB·gain 컨트롤이 **아예 없다.** 그 단계는 건너뛰고 보고의 `skipped`
+에 적는다 — 밝기만이라도 맞추는 편이 아무것도 안 하는 것보다 낫고, 무엇을 못 했는지는
+말해야 한다. 마지막 프레임은 `_V4l2Camera` 가 한 장 들고 있다(`get_frame`) — 발행만 하고
+버리던 것을 붙들었다.
+
+게이트웨이는 `camera_manager` 를 거친다 — 카메라 종류(rsd·camerad·simd)를 가르는 분기는
+`CameraInfo._hub` 한 곳이고, 시뮬 카메라처럼 동사가 없는 허브에는 "지원하지 않는다"로 답한다.

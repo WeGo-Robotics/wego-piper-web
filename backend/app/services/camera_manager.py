@@ -251,6 +251,19 @@ class CameraInfo:
     def last_apply_report(self) -> dict:
         return self._hub.last_apply_report(self.id)
 
+    def measure_gray_card(self, roi=None) -> dict:
+        """카드 영역을 재기만 — 장치를 쥔 데몬이 한다(rsd·camerad 가 같은 동사). 시뮬엔 없다."""
+        fn = getattr(self._hub, "measure_gray_card", None)
+        if fn is None:
+            return {"ok": False, "error": "이 카메라는 회색 카드 보정을 지원하지 않습니다"}
+        return fn(self.id, roi)
+
+    def calibrate_gray_card(self, roi=None, target=None, adjust: str = "exposure") -> dict:
+        fn = getattr(self._hub, "calibrate_gray_card", None)
+        if fn is None:
+            return {"ok": False, "error": "이 카메라는 회색 카드 보정을 지원하지 않습니다"}
+        return fn(self.id, roi, target, adjust)
+
     def capture_preview(self) -> bytes | None:
         """최신 프레임 JPEG. 세그먼트에서 직접 읽는다 — RPC 가 아니다."""
         return self._hub.get_jpeg(self.id)
@@ -422,6 +435,35 @@ class CameraManager:
         if not cam:
             return None
         return cam.capture_preview()
+
+    def _hub_for_id(self, cam_id: str):
+        """등록 전 카메라의 폴백 — id 모양으로 데몬을 고른다. 등록된 것은 `CameraInfo._hub`."""
+        if cam_id.startswith("rs:"):
+            return realsense_hub
+        if cam_id.startswith("/dev/"):
+            return v4l2_hub
+        return None
+
+    def measure_gray_card(self, cam_id: str, roi=None) -> dict:
+        """⚠ 예전엔 라우터가 **rsd 로만** 보내 USB 웹캠이 "Not a RealSense id" 로 거절됐다
+        (2026-09-11). 카메라 종류 분기는 `CameraInfo._hub` 한 곳이다 — 여기서도 그것을 탄다."""
+        cam = self.cameras.get(cam_id)
+        if cam:
+            return cam.measure_gray_card(roi)
+        hub = self._hub_for_id(cam_id)
+        if hub is None:
+            return {"ok": False, "error": f"모르는 카메라: {cam_id}"}
+        return hub.measure_gray_card(cam_id, roi)
+
+    def calibrate_gray_card(self, cam_id: str, roi=None, target=None,
+                            adjust: str = "exposure") -> dict:
+        cam = self.cameras.get(cam_id)
+        if cam:
+            return cam.calibrate_gray_card(roi, target, adjust)
+        hub = self._hub_for_id(cam_id)
+        if hub is None:
+            return {"ok": False, "error": f"모르는 카메라: {cam_id}"}
+        return hub.calibrate_gray_card(cam_id, roi, target, adjust)
 
     def get_controls(self, cam_id: str) -> list[dict]:
         cam = self.cameras.get(cam_id)

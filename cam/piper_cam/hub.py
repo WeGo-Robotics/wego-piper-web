@@ -6,6 +6,7 @@
 이름이 갈리면 호출부마다 분기가 생기고, 그 분기가 곧 두 번째 진실이 된다.
 
     scan · connect · disconnect · release_all · probe · list_controls · set_control
+    · measure_gray_card · calibrate_gray_card
 
 프레임은 여기 없다 — `/dev/shm` 세그먼트로 나가고 소비자가 직접 읽는다.
 """
@@ -38,10 +39,17 @@ class _V4l2Camera:
         # 장치가 사라졌다고 **데몬이 판정한** 시각. 게이트웨이가 추론하지 않게 하려고
         # 여기서 결론을 낸다 (`lost()` RPC 로 나간다).
         self.lost_at: float = 0.0
+        # 마지막으로 읽은 프레임(BGR) — 회색 카드 측정이 쓴다. 발행은 shm 으로 나가지만
+        # 세그먼트를 되읽는 것보다 여기 한 장 들고 있는 편이 싸고 정확하다.
+        self._last = None
 
     @property
     def connected(self) -> bool:
         return self._cap is not None
+
+    def get_frame(self):
+        """마지막으로 읽은 프레임(BGR) — 없으면 None. rsd 의 `dev.get_frame` 에 해당한다."""
+        return self._last
 
     def _open(self):
         import cv2
@@ -82,6 +90,7 @@ class _V4l2Camera:
             return False, f"Cannot open {self.id}"
         self._cap = cap
         self._running = True
+        self._last = frame
         self._publish(frame)
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -120,6 +129,7 @@ class _V4l2Camera:
             except Exception:
                 ok, frame = False, None
             if ok and frame is not None:
+                self._last = frame
                 self._publish(frame)
                 failing_since = 0.0
             else:
@@ -291,6 +301,196 @@ class V4l2Hub:
 
     def last_apply_report(self, cam_id: str) -> dict:
         return self._last_apply.get(cam_id, {})
+
+    # ── 회색 카드 (feature/gray-card-calibration.md) ──────────────────────────
+    # rsd 와 **같은 절차**다 — 계산은 piper_cam.graycard 한 벌이고, 다른 것은 컨트롤 이름과
+    # 자동 스위치의 값뿐이다. ⚠ USB 웹캠으로 눌러 보니 "Not a RealSense id" 였다(2026-09-11):
+    # 동사가 rsd 에만 있었고 게이트웨이도 rsd 로만 보냈다.
+    _CAL_SETTLE_S = 2.0     # 자동 노출이 자리 잡는 시간
+    _CAL_ROUNDS = 3         # read-back 반복 상한
+    # V4L2 이름은 커널 세대·장치마다 다르다 — 있는 것을 고른다. 없으면 그 단계는 건너뛰고
+    # 보고(`skipped`)에 적는다 — 값싼 웹캠은 수동 WB 나 gain 이 아예 없다.
+    _AE_NAMES = ("auto_exposure", "exposure_auto")
+    _AWB_NAMES = ("white_balance_automatic", "white_balance_temperature_auto")
+    _WB_NAMES = ("white_balance_temperature",)
+    _EXPOSURE_NAMES = ("exposure_time_absolute", "exposure_absolute")
+    _GAIN_NAMES = ("gain",)
+
+    @staticmethod
+    def _pick(controls: list[dict], names, writable: bool = True) -> dict | None:
+        by = {c.get("name"): c for c in controls}
+        for n in names:
+            c = by.get(n)
+            if c is not None and not (writable and c.get("readonly")):
+                return c
+        return None
+
+    @staticmethod
+    def _auto_value(ctrl: dict) -> int:
+        """이 스위치를 **자동**으로 돌리는 값. bool 은 1, menu(auto_exposure)는 3 —
+        V4L2_EXPOSURE_APERTURE_PRIORITY. UVC 웹캠이 지원하는 자동은 보통 이것뿐이다
+        (0 = V4L2_EXPOSURE_AUTO 는 대개 목록에 없다). 수동은 controls.manual_value 가 안다."""
+        if ctrl.get("type") == 2:
+            return 1
+        lo, hi = ctrl.get("min", 0), ctrl.get("max", 3)
+        return 3 if lo <= 3 <= hi else int(hi)
+
+    @staticmethod
+    def _num(v, d: float) -> float:
+        # ⚠ `or` 로 거르면 안 된다 — gain 은 0 이 유효값이다. None 만 결측이다.
+        return d if v is None else float(v)
+
+    def measure_gray_card(self, cam_id: str, roi=None) -> dict:
+        """카드 영역을 **재기만** 한다. 장치는 안 건드린다 — rsd 와 같은 보고."""
+        from piper_cam import graycard as gc
+
+        cam = self.cams.get(cam_id)
+        if cam is None or not cam.connected:
+            return {"ok": False, "error": f"{cam_id} 가 연결돼 있지 않습니다"}
+        frame = cam.get_frame()
+        if frame is None:
+            return {"ok": False, "error": "프레임을 받지 못했습니다"}
+        try:
+            reading = gc.measure(frame, tuple(roi) if roi else None)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        ok, verdict = reading.verdict()
+        return {"ok": ok, "verdict": verdict, "reading": reading.to_dict(),
+                "frame": [int(frame.shape[1]), int(frame.shape[0])],
+                "roi": list(roi) if roi else list(gc.center_roi(frame.shape))}
+
+    def calibrate_gray_card(self, cam_id: str, roi=None, target: float | None = None,
+                            adjust: str = "exposure") -> dict:
+        """회색 카드로 WB·밝기를 맞춘다 — `RealSenseHub.calibrate_gray_card` 와 같은 절차.
+
+        1. 자동 노출만 켜고 기다린다 (AWB 는 끈다 — 수렴값이 읽히지 않는다, rsd 주석)
+        2. 자동을 끈다 — AE 가 찾은 노출이 얼어붙는다
+        3. WB 를 카드로 직접 맞춘다 (`white_balance_temperature`)
+        4. 밝기 손잡이 하나 — `exposure_time_absolute`(×100µs) 또는 `gain` — 를 비례 보정한다
+        5. 다시 재서 보고한다
+
+        ⚠ V4L2 `auto_exposure` 는 값이 반직관적이다(1 = 수동, 3 = 자동) — controls.py.
+        ⚠ 값싼 웹캠은 수동 WB·gain 이 없다 — 그 단계는 건너뛰고 `skipped` 에 적는다.
+        값을 저장하지는 않는다 — 저장은 프로파일이 한다.
+        """
+        from piper_cam import graycard as gc
+
+        cam = self.cams.get(cam_id)
+        if cam is None or not cam.connected:
+            return {"ok": False, "error": f"{cam_id} 가 연결돼 있지 않습니다"}
+        if adjust not in ("exposure", "gain"):
+            return {"ok": False, "error": f"모르는 보정 손잡이: {adjust!r}"}
+        target = gc.TARGET_LUMA if target is None else float(target)
+        steps: list[dict] = []
+        skipped: list[str] = []
+
+        def _controls() -> list[dict]:
+            return v4l2.v4l2_list_controls(cam_id)
+
+        def _read():
+            frame = cam.get_frame()
+            return None if frame is None else gc.measure(frame, tuple(roi) if roi else None)
+
+        def _range(name: str, fallback):
+            for c in _controls():
+                if c.get("name") == name:
+                    return (self._num(c.get("min"), fallback[0]), self._num(c.get("max"), fallback[1]),
+                            self._num(c.get("value"), fallback[2]))
+            return fallback
+
+        ctrls = _controls()
+        ae = self._pick(ctrls, self._AE_NAMES)
+        awb = self._pick(ctrls, self._AWB_NAMES)
+        wb = self._pick(ctrls, self._WB_NAMES)
+        knob = self._pick(ctrls, self._EXPOSURE_NAMES if adjust == "exposure" else self._GAIN_NAMES)
+        ae_manual = controls_mod.manual_value(ae) if ae is not None else None
+        if ae is not None and ae_manual is None:
+            ae_manual = 1
+
+        # 1) 자동 노출만 수렴시킨다. gain 모드는 노출 고정 약속이라 AE 를 끈다. AWB 는 끈다.
+        if ae is not None:
+            self.set_control(cam_id, ae["name"], ae_manual if adjust == "gain" else self._auto_value(ae))
+        else:
+            skipped.append("자동 노출 스위치 없음")
+        if awb is not None:
+            self.set_control(cam_id, awb["name"], 0)
+        time.sleep(self._CAL_SETTLE_S if adjust == "exposure" else 0.5)
+
+        before = _read()
+        if before is None:
+            return {"ok": False, "error": "프레임을 받지 못했습니다"}
+        usable, why = before.usable
+        if not usable:
+            # 못 믿을 측정으로 값을 정하면 다음 주에 재현이 안 된다 — 이 기능의 존재 이유다
+            return {"ok": False, "error": why, "before": before.to_dict()}
+
+        # 2) 자동을 끈다 — 노출이 얼어붙는다
+        if ae is not None:
+            self.set_control(cam_id, ae["name"], ae_manual)
+            time.sleep(0.4)
+
+        # 3) WB 를 카드로 직접 맞춘다
+        reading = _read() or before
+        if wb is None:
+            skipped.append("수동 white_balance_temperature 없음 — WB 는 못 맞춘다")
+        else:
+            wb_lo, wb_hi, wb_cur = _range(wb["name"], (2800.0, 6500.0, 4600.0))
+            for _ in range(self._CAL_ROUNDS):
+                if reading.neutral_error_pct <= gc.NEUTRAL_TOLERANCE_PCT:
+                    break
+                new_wb = gc.white_balance_for(reading, max(wb_cur, 1.0), wb_lo, wb_hi)
+                if abs(new_wb - wb_cur) < 10:
+                    break
+                self.set_control(cam_id, wb["name"], new_wb)
+                wb_cur = new_wb
+                time.sleep(0.4)
+                reading = _read() or reading
+                steps.append({"white_balance": round(wb_cur),
+                              "neutral_pct": round(reading.neutral_error_pct, 1),
+                              "luma": round(reading.luma, 1)})
+
+        # 4) 밝기 손잡이 하나. V4L2 노출은 ×100µs 단위(controls.py), gain 은 원시값.
+        if knob is None:
+            skipped.append(("exposure_time_absolute" if adjust == "exposure" else "gain") + " 없음 — 밝기는 못 맞춘다")
+        else:
+            lo, hi, cur = _range(knob["name"], (1.0, 5000.0, 100.0) if adjust == "exposure" else (0.0, 255.0, 16.0))
+            cur = max(cur, 1.0)          # 비례 보정은 0 에 갇힌다
+            scale = 100 if adjust == "exposure" else 1
+            for _ in range(self._CAL_ROUNDS):
+                if abs(reading.luma - target) <= gc.LUMA_TOLERANCE:
+                    break
+                new = gc.exposure_for(reading, cur, max(lo, 1.0), hi, target)
+                if abs(new - cur) < 1:
+                    break
+                self.set_control(cam_id, knob["name"], new)
+                cur = new
+                time.sleep(0.4)
+                reading = _read() or reading
+                steps.append({("gain" if adjust == "gain" else "exposure_us"): round(cur * scale),
+                              "luma": round(reading.luma, 1)})
+
+        # 보고 — 두 손잡이의 최종값을 다 싣는다. 화면이 "무엇이 움직였나"를 말하려면 안 움직인
+        # 쪽 값도 알아야 한다. rsd 와 같은 키. 없는 손잡이는 0.
+        final = _controls()
+        exp_c = self._pick(final, self._EXPOSURE_NAMES, writable=False)
+        gain_c = self._pick(final, self._GAIN_NAMES, writable=False)
+        wb_c = self._pick(final, self._WB_NAMES, writable=False)
+        exp_us = self._num(exp_c.get("value"), 0.0) * 100 if exp_c else 0.0
+        gain_now = self._num(gain_c.get("value"), 0.0) if gain_c else 0.0
+        wb_now = self._num(wb_c.get("value"), 0.0) if wb_c else 0.0
+        ok, verdict = reading.verdict(target)
+        if skipped:
+            verdict = f"{verdict} (건너뜀: {'; '.join(skipped)})"
+        logger.info("회색 카드 보정 %s (%s): %s (노출 %.0fus, gain %.0f, WB %.0fK, 밝기 %.0f, 치우침 %.1f%%)",
+                    cam_id, adjust, verdict, exp_us, gain_now, wb_now,
+                    reading.luma, reading.neutral_error_pct)
+        frame = cam.get_frame()
+        return {"ok": ok, "verdict": verdict, "target": target, "adjust": adjust,
+                "before": before.to_dict(), "after": reading.to_dict(),
+                "exposure_us": round(exp_us), "gain": round(gain_now),
+                "white_balance": round(wb_now), "steps": steps, "skipped": skipped,
+                "roi": list(roi) if roi else list(gc.center_roi(
+                    frame.shape if frame is not None else (480, 640, 3)))}
 
     def lost(self) -> list[dict]:
         """**데몬이 판정한** 사라진 장치들. 게이트웨이가 추론하지 않게 하려는 것이다.
