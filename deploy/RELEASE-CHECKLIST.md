@@ -337,6 +337,7 @@ docker images -q --filter reference='piper-web-*' | sort -u | xargs -r docker rm
 | v0.4.8 | 09-10 17:00 | **세 레이어 전부** (GHCR, 15 파일) | 키보드·마우스 시뮬 텔레옵(웹 리더) · 그리퍼 마찰(impratio) · 카메라 회전·재연결 · 바닥 격자 · 환경/팔 리셋 |
 | v0.4.9~v0.4.12 | 09-10 | 이 표에 안 남았다 — 레이어는 CHANGELOG 참고 | 웹 [받기] 경로 수정(v0.4.9 진단 오류 → v0.4.10) · wheel 드리프트 경고 오탐(v0.4.11) · 버전 카드 라벨 세로 쪼개짐(v0.4.12) |
 | v0.4.13 | 09-11 10:59 | **세 레이어 전부** (GHCR, 22 파일: 이미지 backend+frontend · wheel sim · 데몬 소스) | 시뮬 조종 창 블럭 옮기기(B)·도움말 패널 · 로그 페이지 통합(저널 탭 기본, 설정 탭 제거) · 추론 분석(셸 안·추론 옆·그래프 칸 예약) · 접속 주소 안내·`PIPER_WEB_PORT`·QnA · 그 사이 실린 Piper Studio 개명·2열 고정 최소 폭·버전 카드 접힘 |
+| v0.4.14 | 09-11 14:09 | **backend 이미지만** (GHCR, 4 파일 — apply.sh·compose 조각·stage) | GPU 없는 NUC 에 v0.4.13 을 깔아 보고: chown 처방 `&&` 뒤 sudo 누락 · GPU 없는 호스트는 `.env` COMPOSE_FILE 로 nogpu 조각(`!reset`, compose 2.24+) · release.sh 가 이미지에 실리는 호스트 코드(apply.sh·compose·udev·cam/rs/sim)를 backend 로 판정 — 이 릴리스 자체가 그 판정에 막혔었다 |
 
 ⚠ **v0.4.4 는 체크포인트를 무효화한다.** J6 캘리브레이션을 `(-100000, 130000)` →
 `(-120000, 120000)` 으로 고치면서 데이터셋 25 개 339,845 프레임을 재정규화했다
