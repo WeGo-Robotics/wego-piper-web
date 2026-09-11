@@ -59,6 +59,15 @@ while read -r f; do
     daemons/*) need_daemons=1; need_backend=1 ;;
     deploy/systemd/*|deploy/install-daemons.sh) need_daemons=1 ;;
   esac
+  # ⚠ **호스트 코드는 이미지 안(/opt/piper-host)으로 간다.** `stage-hostside.sh` 가 싣는 것
+  #   (apply.sh·piper-install.sh·compose 파일·udev·wheel 전부)이 바뀌면 backend 이미지를 다시
+  #   구워야 온라인 설치(`piper-install.sh` → `docker pull`)가 새 것을 받는다. v0.4.14 에서
+  #   apply.sh 와 compose 조각만 바뀌자 "바뀐 것이 없다"로 판정돼 릴리스가 막혔다. cam·rs·sim
+  #   wheel 도 같은 이유 — 이미지의 매니페스트·wheel 이 옛것이면 온라인 경로는 새 wheel 을
+  #   알지도 못한다(v0.4.13 은 backend 가 우연히 같이 바뀌어 괜찮았을 뿐이다).
+  case "$f" in
+    deploy/apply.sh|deploy/piper-install.sh|deploy/pull-progress.py|deploy/update-source.sh|deploy/stage-hostside.sh|deploy/env.example|deploy/udev/*|docker-compose.yml|docker-compose.*.yml|cam/*|rs/*|sim/*) need_backend=1 ;;
+  esac
   # `bus/ shm/ robot/` 은 **양쪽**이다 — 이미지 안에도 들어가고 호스트 venv 에도 깔린다
   case "$f" in
     bus/*)   need_backend=1; need_wheels=1; WHEEL_PKGS+=(bus) ;;

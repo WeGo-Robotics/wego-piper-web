@@ -48,6 +48,12 @@ def _detect(prev: str, tag: str) -> set[str]:
         for pkg in ("cam", "rs", "sim"):
             if p.startswith(pkg + "/"):
                 layers.add("wheels")
+        # 호스트 코드는 이미지 안(/opt/piper-host)으로 간다 — stage-hostside 가 싣는 것이
+        # 바뀌면 backend 를 다시 굽는다(온라인 설치가 거기서 꺼낸다). wheel 도 거기 실린다.
+        if p in ("deploy/apply.sh", "deploy/piper-install.sh", "deploy/pull-progress.py",
+                 "deploy/update-source.sh", "deploy/stage-hostside.sh", "deploy/env.example") \
+                or p.startswith(("deploy/udev/", "docker-compose.", "cam/", "rs/", "sim/")):
+            layers.add("backend")
     return layers
 
 
@@ -88,12 +94,42 @@ def test_the_shared_packages_go_to_both_layers():
             f"{pkg} 가 한쪽 레이어에만 간다: {line.strip()}"
 
 
-def test_host_only_packages_do_not_rebuild_the_image():
-    """`cam/`·`rs/` 는 데몬 전용이다 — 이미지엔 없다."""
+def _hostside_rule() -> list[str]:
+    """release.sh 의 "이미지에 실리는 호스트 코드 → backend" 판정 줄의 패턴들."""
+    src = RELEASE.read_text()
+    line = next(ln for ln in src.splitlines() if "deploy/apply.sh|" in ln and "need_backend=1" in ln)
+    return line.split(")", 1)[0].strip().split("|")
+
+
+def test_host_only_packages_are_not_installed_in_the_image_but_still_ride_in_it():
+    """`cam/`·`rs/` 는 데몬 전용이다 — 컨테이너는 그 코드를 import 하지 않으니 이미지에
+    **설치**하진 않는다. ⚠ 그래도 backend 이미지는 다시 굽는다: wheel 이 `/opt/piper-host`
+    에 실려 나가고 온라인 설치(`piper-install.sh` → `docker pull`)가 거기서 꺼내 깐다.
+    v0.4.13 까지는 wheel 만 판정돼, backend 가 우연히 같이 바뀌지 않았다면 옛 wheel 이
+    든 이미지가 나갔을 것이다."""
     dockerfile = (REPO / "backend" / "Dockerfile").read_text()
     for pkg in ("cam", "rs"):
         assert f"COPY {pkg}/" not in dockerfile
-    assert _detect("v0.3.3", "v0.3.4") >= {"wheels"}
+    assert _detect("v0.3.3", "v0.3.4") >= {"wheels", "backend"}
+    for pkg in ("cam", "rs", "sim"):
+        assert f"{pkg}/*" in _hostside_rule(), f"{pkg} wheel 이 바뀌어도 이미지를 안 굽는다"
+
+
+def test_everything_the_image_carries_for_the_host_rebuilds_the_image():
+    """⚠ v0.4.14 가 막혔다 — `apply.sh` 와 compose 조각만 바뀐 릴리스를 "바뀐 것이 없다"로
+    판정했다. `stage-hostside.sh` 가 `/opt/piper-host` 에 싣는 것은 전부 backend 이미지
+    안으로 가고, 온라인 설치는 거기서 꺼낸다 — 이미지를 안 구우면 새 apply.sh 는 아무
+    데도 안 간다. 싣는 목록과 판정 목록이 어긋나면 같은 일이 또 나므로, stage 의 `cp`
+    대상마다 판정에 있는지 본다(.md 는 설계상 판정 밖, backend/* 는 이미 backend)."""
+    import fnmatch
+    pats = _hostside_rule()
+    stage = (REPO / "deploy" / "stage-hostside.sh").read_text()
+    files = re.findall(r"^cp (?:-r )?([\w./-]+)\s", stage, re.M)
+    assert "deploy/apply.sh" in files and "docker-compose.nogpu.yml" in files, "stage 의 cp 목록을 못 읽었다"
+    for f in files:
+        if f.endswith(".md") or f.startswith("backend/"):
+            continue
+        assert any(fnmatch.fnmatch(f, p) for p in pats), f"{f} 를 이미지에 싣는데 판정엔 없다"
 
 
 # ── 적용 쪽 ─────────────────────────────────────────────────────────────────
