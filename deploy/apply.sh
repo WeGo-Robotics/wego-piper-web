@@ -254,47 +254,78 @@ if [ ${#NEED_APT[@]} -gt 0 ] || [ ${#NEED_SUDO[@]} -gt 0 ]; then
 fi
 
 # ── 1. 이미지 ─────────────────────────────────────────────────────────────
-if [ -n "${images:-}" ]; then
-  say "1. 이미지 ($images)"
-  if [ $CHECK = 1 ]; then
-    for s in $images; do
+# ⚠ **처음 설치는 번들에 실린 전부, 매니페스트는 재적용 범위만 좁힌다.** `images=` 는
+#   "이번 릴리스에서 바뀐 것"이라 직전 릴리스가 깔린 호스트를 전제한다 — 처음 설치하는
+#   호스트(NUC, 2026-09-11)는 backend 만 든 v0.4.14 로 frontend 를 영영 못 받아 compose 가
+#   이미지를 못 찾았다. 매니페스트에 없는 이미지는 **없을 때만** 레지스트리의 `:latest`
+#   (= 그 이미지를 마지막으로 구운 것)를 받는다. compose 의 서비스 둘이 곧 목록이다.
+SERVICES="backend frontend"
+in_list() { case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+say "1. 이미지 (${images:-이번 릴리스엔 없음})"
+if [ $CHECK = 1 ]; then
+  for s in $SERVICES; do
+    if in_list "$s" "${images:-}"; then
       docker image inspect "piper-web-$s:$version" >/dev/null 2>&1 \
         && ok "piper-web-$s:$version" || bad "piper-web-$s:$version 미적용"
-    done
-  elif [ -n "${registry:-}" ]; then
-    # ⚠ **이미 있는 레이어는 안 받는다.** 그게 tar 를 버린 이유다 — 실측으로
-    #   v0.3.9 를 가진 호스트가 다음 릴리스에서 받는 양이 3.46GB → 104.5MB 였다.
-    for s in $images; do
-      # 진행률 — `-q` 는 몇 분을 말없이 기다리게 했다 (번들의 pull-progress.py, 없으면 docker pull)
-      if [ -f "$HERE/pull-progress.py" ]; then python3 "$HERE/pull-progress.py" "$registry/piper-web-$s:$version" --label "piper-web-$s"
-      else docker pull "$registry/piper-web-$s:$version"; fi
-      # 로컬 이름으로 옮긴다. compose 는 `image: piper-web-backend` 로 참조하므로
-      # `:latest` 가 없으면 **다시 빌드하려 든다.**
-      docker tag "$registry/piper-web-$s:$version" "piper-web-$s:$version"
-      docker tag "$registry/piper-web-$s:$version" "piper-web-$s:latest"
-      ok "pull piper-web-$s:$version → :latest"
-    done
-  elif [ ! -f "$HERE/images.tar.gz" ]; then
-    # ⚠ 이미지를 가져올 방법이 없다. 예전에는 없는 tar 를 풀려다 gunzip 오류로
-    #   죽어서, 무엇이 잘못됐는지 알 수 없었다.
-    bad "이미지를 가져올 방법이 없습니다 — 번들에 tar 도 없고 매니페스트에 registry 도 없습니다"
-    exit 1
-  else
-    gunzip -c "$HERE/images.tar.gz" | docker load
-    # ⚠ compose 는 `image: piper-web-backend` (태그 생략=latest) 로 참조한다.
-    #   `:latest` 로도 달아두지 않으면 compose 가 **다시 빌드하려 든다.**
-    for s in $images; do
+    else
+      docker image inspect "piper-web-$s:latest" >/dev/null 2>&1 \
+        && ok "piper-web-$s (이번 릴리스엔 없음 — 있는 것 그대로)" \
+        || bad "piper-web-$s 없음 — 처음 설치라 받아야 한다 (적용하면 :latest 를 받는다)"
+    fi
+  done
+elif [ -n "${registry:-}" ]; then
+  # ⚠ **이미 있는 레이어는 안 받는다.** 그게 tar 를 버린 이유다 — 실측으로
+  #   v0.3.9 를 가진 호스트가 다음 릴리스에서 받는 양이 3.46GB → 104.5MB 였다.
+  for s in $SERVICES; do
+    note=""
+    if in_list "$s" "${images:-}"; then tag="$version"
+    elif docker image inspect "piper-web-$s:latest" >/dev/null 2>&1; then continue   # 안 바뀌었고 있다
+    else tag="latest"; note=" (처음 설치 — 이번 릴리스엔 없던 이미지)"; fi
+    # 진행률 — `-q` 는 몇 분을 말없이 기다리게 했다 (번들의 pull-progress.py, 없으면 docker pull)
+    if [ -f "$HERE/pull-progress.py" ]; then python3 "$HERE/pull-progress.py" "$registry/piper-web-$s:$tag" --label "piper-web-$s"
+    else docker pull "$registry/piper-web-$s:$tag"; fi
+    # 로컬 이름으로 옮긴다. compose 는 `image: piper-web-backend` 로 참조하므로
+    # `:latest` 가 없으면 **다시 빌드하려 든다.**
+    [ "$tag" = latest ] || docker tag "$registry/piper-web-$s:$tag" "piper-web-$s:$tag"
+    docker tag "$registry/piper-web-$s:$tag" "piper-web-$s:latest"
+    ok "pull piper-web-$s:$tag → :latest$note"
+  done
+elif [ ! -f "$HERE/images.tar.gz" ]; then
+  # ⚠ 이미지를 가져올 방법이 없다. 예전에는 없는 tar 를 풀려다 gunzip 오류로
+  #   죽어서, 무엇이 잘못됐는지 알 수 없었다.
+  bad "이미지를 가져올 방법이 없습니다 — 번들에 tar 도 없고 매니페스트에 registry 도 없습니다"
+  exit 1
+else
+  gunzip -c "$HERE/images.tar.gz" | docker load
+  # ⚠ compose 는 `image: piper-web-backend` (태그 생략=latest) 로 참조한다.
+  #   `:latest` 로도 달아두지 않으면 compose 가 **다시 빌드하려 든다.**
+  for s in $SERVICES; do
+    if in_list "$s" "${images:-}"; then
       docker tag "piper-web-$s:$version" "piper-web-$s:latest"
       ok "piper-web-$s:$version → :latest"
-    done
-  fi
-else
-  say "1. 이미지 — 이번 릴리스에 없음"
+    elif ! docker image inspect "piper-web-$s:latest" >/dev/null 2>&1; then
+      # 오프라인 번들은 바뀐 이미지만 담는다 — 처음 설치엔 그 이미지가 든 번들이 먼저다
+      bad "piper-web-$s 가 없고 이 번들(오프라인)엔 안 들어 있다 — 그 이미지가 든 번들을 먼저 까세요"
+      exit 1
+    fi
+  done
 fi
 
 # ── 2. 데몬 라이브러리 ────────────────────────────────────────────────────
-if [ -n "${wheels:-}" ]; then
-  say "2. 데몬 wheel ($wheels)"
+# ⚠ 번들엔 wheel 이 **전부** 실려 있다(stage-hostside). `wheels=` 는 이번에 바뀐 것일 뿐 —
+#   바뀐 게 없어도 venv 가 없거나(처음 설치) 실린 wheel 중 안 깔린 배포가 있으면 전부
+#   깐다. v0.4.14(wheels 비어 있음)를 처음 깔던 NUC 이 venv 없이 4절로 갔다.
+wheels_missing() {   # 번들의 wheel 중 venv 에 없는 배포가 있으면 0
+  local w n
+  for w in "$HERE"/wheels/*.whl; do
+    [ -f "$w" ] || return 1
+    n="$(basename "$w" | cut -d- -f1 | tr _ -)"
+    "$VENV/bin/pip" show "$n" >/dev/null 2>&1 || return 0
+  done
+  return 1
+}
+if [ -n "${wheels:-}" ] || [ ! -d "$VENV" ] || wheels_missing; then
+  say "2. 데몬 wheel (${wheels:-처음 설치 — 번들 전부})"
   if [ ! -d "$VENV" ]; then
     if [ $CHECK = 1 ]; then bad "$VENV 없음"; else
       # ⚠ `--system-site-packages` 로 만든다 — numpy·opencv·piper-sdk 를 다시 안 깐다.
@@ -303,10 +334,13 @@ if [ -n "${wheels:-}" ]; then
     fi
   fi
   if [ $CHECK = 1 ]; then
-    for p in $wheels; do
-      "$VENV/bin/pip" show "piper-${p}" >/dev/null 2>&1 || "$VENV/bin/pip" show "piper_${p}" >/dev/null 2>&1 \
-        && ok "piper-$p" || bad "piper-$p 미설치"
-    done
+    if [ -d "$VENV" ]; then
+      for p in ${wheels:-}; do
+        "$VENV/bin/pip" show "piper-${p}" >/dev/null 2>&1 || "$VENV/bin/pip" show "piper_${p}" >/dev/null 2>&1 \
+          && ok "piper-$p" || bad "piper-$p 미설치"
+      done
+      wheels_missing && bad "번들의 wheel 중 안 깔린 것이 있다 — 적용하면 전부 깐다" || ok "번들 wheel 전부 설치됨"
+    fi
   else
     "$VENV/bin/pip" install -q --no-deps --force-reinstall "$HERE"/wheels/*.whl
     ok "wheel $(ls "$HERE"/wheels | wc -l) 개"
@@ -326,14 +360,22 @@ fi
 
 # ── 3. 데몬 소스 + 유닛 ───────────────────────────────────────────────────
 SRC="$HOME/piper-web-deploy/current"
-if [ -n "${daemons:-}" ]; then
-  say "3. 데몬 소스·유닛"
+# ⚠ `daemons=` 도 이번에 바뀐 것일 뿐 — 소스가 없거나(처음 설치) estopd 유닛이 안 깔려
+#   있으면 번들의 것을 푼다(이미지 경로엔 daemons.tar.gz 가 항상 있다).
+if [ -n "${daemons:-}" ] || [ ! -d "$SRC/daemons" ] || ! systemctl --user cat piper-estopd.service >/dev/null 2>&1; then
+  say "3. 데몬 소스·유닛$([ -n "${daemons:-}" ] || echo ' (처음 설치)')"
   if [ $CHECK = 1 ]; then
     [ -d "$SRC/daemons" ] && ok "$SRC" || bad "$SRC 없음"
+    systemctl --user cat piper-estopd.service >/dev/null 2>&1 && ok "유닛 설치됨" || bad "유닛 없음 — 적용하면 깐다"
   else
     # ⚠ **`&&` 로 이으면 조용히 넘어간다.** tar 가 실패해도 `set -e` 는 `&&` 리스트의
     #   중간 명령을 봐주므로, 그 다음 줄이 **옛 `$SRC` 의 설치 스크립트로 낡은
     #   데몬을 깔았다.** 실기에서 그렇게 됐다 — 화면에는 "유닛 설치·기동 ✓" 만 떴다.
+    if [ ! -f "$HERE/daemons.tar.gz" ]; then
+      # 오프라인 번들은 바뀐 것만 담는다 — 처음 설치엔 데몬이 든 번들이 먼저다
+      bad "이 번들(오프라인)엔 데몬 소스가 없다 — 처음 설치엔 데몬이 든 번들을 먼저 까세요"
+      exit 1
+    fi
     mkdir -p "$SRC"
     if ! tar xzf "$HERE/daemons.tar.gz" -C "$SRC"; then
       bad "데몬 소스를 못 풀었습니다: $HERE/daemons.tar.gz"

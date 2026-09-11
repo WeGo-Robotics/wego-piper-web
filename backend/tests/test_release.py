@@ -134,6 +134,25 @@ def test_everything_the_image_carries_for_the_host_rebuilds_the_image():
 
 # ── 적용 쪽 ─────────────────────────────────────────────────────────────────
 
+def test_a_fresh_host_installs_everything_the_bundle_carries():
+    """⚠ 실기(NUC, 2026-09-11): backend 만 든 v0.4.14 를 **처음** 설치하면 frontend 이미지·
+    venv/wheel·데몬 유닛을 하나도 못 받았다 — `images=`/`wheels=`/`daemons=` 는 "이번에
+    바뀐 것"이라 직전 릴리스가 깔린 호스트를 전제한다. 이미지 번들엔 셋 다 항상 실려
+    있으니(stage-hostside), 매니페스트는 재적용 범위만 좁히고 **없는 것은 깐다**:
+    없는 이미지는 레지스트리의 `:latest`(마지막으로 구운 그 이미지), venv 가 없거나 실린
+    wheel 중 안 깔린 게 있으면 전부, 데몬 소스·유닛이 없으면 푼다."""
+    from conftest import code_only
+
+    src = code_only(APPLY.read_text())
+    assert 'SERVICES="backend frontend"' in src and "for s in $SERVICES" in src, "매니페스트의 이미지만 돈다"
+    assert 'else tag="latest"; note=' in src, "없는 이미지를 :latest 로 안 받는다"
+    assert '[ ! -d "$VENV" ] || wheels_missing' in src, "venv 없는 처음 설치가 wheel 절을 건너뛴다"
+    assert '[ ! -d "$SRC/daemons" ]' in src and "systemctl --user cat piper-estopd.service" in src, \
+        "데몬 없는 처음 설치가 3절을 건너뛴다"
+    # 있는 호스트는 그대로 — 안 바뀌었고 있으면 안 받는다
+    assert "continue   # 안 바뀌었고 있다" in APPLY.read_text()
+
+
 def test_install_and_update_are_the_same_command():
     """⚠ 절차가 갈리면 "업데이트인 줄 알았는데 첫 설치였다" 가 생기고, 그때
     빠뜨리는 것은 늘 sudo 쪽(redis 소켓·linger)이라 증상이 "웹은 뜨는데 아무것도
