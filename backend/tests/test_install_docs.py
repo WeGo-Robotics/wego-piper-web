@@ -174,7 +174,12 @@ def test_the_readme_admits_the_first_install_takes_two_runs_and_a_relogin():
     assert "docs/inference-logs.md" in body and (REPO / "docs" / "inference-logs.md").exists()
     assert "## 9. 팔을 쓰려면" in DOC.read_text() and "list-can-adapters.py --write-rule" not in body, \
         "CAN 규칙 상세가 README 에 남았다"
-    assert len(body.splitlines()) <= 100, f"README 가 다시 길어졌다: {len(body.splitlines())}줄"
+    # 첫머리 스크린샷 표(2열×3행, 10줄)는 글이 아니다 — 상한은 그만큼만 올렸다
+    assert len(body.splitlines()) <= 115, f"README 가 다시 길어졌다: {len(body.splitlines())}줄"
+    for n in ("robot", "camera", "collect", "graph", "study", "inference", "sim"):
+        assert f"docs/images/{n}.jpg" in body and (REPO / "docs" / "images" / f"{n}.jpg").exists(), \
+            f"스크린샷 {n}.jpg 가 README 에 없거나 파일이 없다"
+        assert (REPO / "docs" / "images" / f"{n}.jpg").stat().st_size < 150_000, f"{n}.jpg 가 안 줄었다"
 
 
 def test_the_qna_doc_keeps_the_questions_as_asked_and_agrees_with_the_scripts():

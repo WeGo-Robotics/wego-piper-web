@@ -4,6 +4,17 @@ LeRobot 웹 인터페이스 — 로봇 모방학습 프레임워크를 웹에서
 데이터 수집(에피소드 녹화), 추론·평가(체크포인트 배포, 실시간 파라미터 튜닝), 학습 모니터링,
 비전 검출, 시뮬레이터, E-stop 안전 정지.
 
+<table><tr>
+<td><img src="docs/images/robot.jpg" alt="로봇 — CAN 포트 스캔, 팔 등록·역할"><br><sub>로봇 — CAN 포트, 팔 등록·역할</sub></td>
+<td><img src="docs/images/camera.jpg" alt="카메라 — RealSense 스캔·프로파일·미리보기"><br><sub>카메라 — 스캔·프로파일·미리보기</sub></td>
+</tr><tr>
+<td><img src="docs/images/collect.jpg" alt="데이터 수집 — 녹화 진행, 에피소드 제어, task"><br><sub>수집 — 에피소드 녹화</sub></td>
+<td><img src="docs/images/graph.jpg" alt="에피소드 — 재생, 페이즈 트랙, 신호 그래프"><br><sub>에피소드 — 재생·페이즈·신호 그래프</sub></td>
+</tr><tr>
+<td><img src="docs/images/study.jpg" alt="학습 — 손실 곡선, 메트릭, 로그"><br><sub>학습 — 손실 곡선·메트릭·로그</sub></td>
+<td><img src="docs/images/inference.jpg" alt="추론 — 카메라, 실시간 필터 튜닝, 관절 위치"><br><sub>추론 — 실시간 파라미터 튜닝</sub></td>
+</tr></table>
+
 **GPU 없는 PC 에도 깔린다.** 수집·시뮬레이션·조종은 GPU 없이 되고, 학습·추론만 NVIDIA GPU 가
 필요하다 — 수집용 기계와 학습용 기계를 나눠 둘 수 있다.
 
