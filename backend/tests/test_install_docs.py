@@ -73,7 +73,11 @@ def test_a_non_default_web_port_is_one_env_var_and_survives_updates():
     assert '> "$SRC/.env"' not in apply.replace('>> "$SRC/.env"', ""), ".env 를 통째로 덮어쓴다"
     assert 'env_put PIPER_WEB_PORT "$PIPER_WEB_PORT"' in apply
     assert "web_port() {" in apply and 'port="${port:-$(web_port)}"' in apply, "접속 줄이 .env 값으로 폴백하지 않는다"
-    assert "PIPER_WEB_PORT=8081 ./piper-install.sh" in (REPO / "README.md").read_text(), "README 가 방법을 안 적는다"
+    readme = (REPO / "README.md").read_text()
+    assert "PIPER_WEB_PORT=8081 ./piper-install.sh" in readme, "README 가 방법을 안 적는다"
+    # 포트를 바꾸면 주소가 달라진다 — 그걸 안 적으면 :80 으로 열고 "안 뜬다"고 한다(사용자 지적 2026-09-11)
+    assert "http://<이 기계의 IP>:8081/" in readme, "바뀐 포트의 주소를 안 적는다"
+    assert "http://<이 기계의 IP>:8081/" in (REPO / "docs" / "qna.md").read_text()
     assert "PIPER_WEB_PORT=8081" in DOC.read_text(), "트러블슈팅이 옛 override 방식만 안다"
     # 설치 스크립트는 apply.sh 를 exec 하므로 환경변수가 그대로 넘어간다 — 그게 이 방식의 전제다
     assert 'exec "$DEST/apply.sh"' in (REPO / "deploy" / "piper-install.sh").read_text()
@@ -155,6 +159,22 @@ def test_the_uninstall_script_reverses_the_install_but_keeps_the_data():
         assert 'cp deploy/piper-uninstall.sh "$OUT/"' in (REPO / "deploy" / f).read_text(), f"{f} 가 제거 스크립트를 안 싣는다"
     assert "piper-uninstall.sh" in (REPO / "README.md").read_text(), "README 에 제거 절이 없다"
     assert "## 지우고 싶으면?" in (REPO / "docs" / "qna.md").read_text()
+
+
+def test_the_readme_admits_the_first_install_takes_two_runs_and_a_relogin():
+    """"원터치"라 했지만 처음 설치는 그렇지 않다 — 스크립트가 sudo 명령을 찍고 멈추고,
+    그룹(docker·video·dialout)은 **다시 로그인**해야 반영되며, 드라이버를 올렸으면 재부팅이다
+    (NUC, 2026-09-11 — 사용자가 짚었다). 설치 절이 그걸 숨기면 두 번째 실행에서 헤맨다.
+    그리고 README 는 짧아야 한다 — 설치와 무관한 절(추론 로그·CAN 규칙 상세)은 docs 로."""
+    body = (REPO / "README.md").read_text()
+    section = body.split("## 설치", 1)[1].split("\n## ", 1)[0]
+    for phrase in ("처음 한 번은 두 번 돌린다", "다시 로그인", "재부팅"):
+        assert phrase in section, f"설치 절이 말하지 않는다: {phrase}"
+    assert "아직 올라가지 않았다" not in body, "낡은 경고가 남았다 — 이미지도 master 도 올라가 있다"
+    assert "docs/inference-logs.md" in body and (REPO / "docs" / "inference-logs.md").exists()
+    assert "## 9. 팔을 쓰려면" in DOC.read_text() and "list-can-adapters.py --write-rule" not in body, \
+        "CAN 규칙 상세가 README 에 남았다"
+    assert len(body.splitlines()) <= 100, f"README 가 다시 길어졌다: {len(body.splitlines())}줄"
 
 
 def test_the_qna_doc_keeps_the_questions_as_asked_and_agrees_with_the_scripts():

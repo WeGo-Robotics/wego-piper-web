@@ -35,7 +35,7 @@ systemctl --user list-units 'piper-*'            # 무엇이 돌고 무엇이 �
 | `nvidia-smi` 가 "커널과 통신 실패" | 커널을 여러 번 올리는 동안 **지금 커널용 모듈 패키지가 한 번도 안 깔림**(dkms 도 없음) | `sudo apt install dkms nvidia-dkms-580-open && sudo depmod -a && sudo modprobe nvidia` — 재부팅 없이 올라왔다 |
 | `레지스트리 … insecure-registries 에 없다` | 사내 레지스트리는 평문(HTTP)이다 | `/etc/docker/daemon.json` 에 `{"insecure-registries": ["piper-build:5000"]}` → `sudo systemctl restart docker` |
 | `udev … 없음` | RealSense libusb 규칙 | 찍힌 `cp` + `sudo udevadm control --reload-rules && sudo udevadm trigger` |
-| `CAN 이름 규칙이 없다 — 어댑터는 꽂혀 있다` | 규칙이 없으면 커널 열거 순서로 붙어 **두 팔 이름이 뒤바뀐다** | [README 의 CAN 절](../README.md) — `list-can-adapters.py --watch` 로 어느 쪽이 어느 팔인지 확인하고 규칙을 **이 기계에서** 만든다 |
+| `CAN 이름 규칙이 없다 — 어댑터는 꽂혀 있다` | 규칙이 없으면 커널 열거 순서로 붙어 **두 팔 이름이 뒤바뀐다** | 아래 **9절** — `list-can-adapters.py --watch` 로 어느 쪽이 어느 팔인지 확인하고 규칙을 **이 기계에서** 만든다 |
 
 ⚠ 그룹은 **재로그인**이 반영 조건이다. `newgrp video` 는 그 셸만 바꾼다. 이미 도는
 데몬은 옛 그룹을 쥐고 있으니 그룹을 넣은 뒤 `apply.sh` 를 다시 돌려 재시작시킨다.
@@ -116,3 +116,38 @@ systemctl --user list-units 'piper-*'            # 무엇이 돌고 무엇이 �
 요점 둘: **데이터(`/srv/piper-data`·`~/.cache/huggingface/lerobot`·`~/.config/piper-web`)는
 지우지 않는다**, `docker-compose.override.yml` 을 먼저 빼돌린다. 다시 까는 명령은
 평소 업데이트와 같은 `apply.sh` 다.
+
+## 9. 팔을 쓰려면 — CAN 이름 규칙 (설치 뒤 한 번)
+
+⚠ 규칙이 없으면 인터페이스가 커널 열거 순서대로 붙어, 포트를 바꿔 꽂거나 부팅 순서가
+달라지는 순간 **두 팔의 이름이 뒤바뀐다** — 등록·슬롯·프리셋이 이름을 키로 쓰므로
+**저장된 설정이 반대 팔을 가리킨다.**
+
+⚠ **규칙은 배포물에 안 들어 있다.** 시리얼이 어댑터마다 달라서, 남의 시리얼이 든 규칙은
+이 머신에서 아무 줄도 매칭되지 않는다 — 그런데 udev 는 그걸 에러로 치지 않아 증상이
+"팔 0개" 뿐이다. **이 머신에서 만든다:**
+
+```bash
+cd ~/piper-web-deploy/<버전>/udev
+python3 list-can-adapters.py --watch     # 팔을 움직여 어느 쪽이 어느 팔인지 확인
+python3 list-can-adapters.py --write-rule | sudo tee /etc/udev/rules.d/99-piper-can.rules
+sudo nano /etc/udev/rules.d/99-piper-can.rules   # can_arm1/2 → can_leader1/can_follower1
+sudo udevadm control --reload-rules              # 그 뒤 어댑터를 다시 꽂는다
+```
+
+⚠ 이름(`can_arm1`)은 **임시다.** 어느 쪽이 어느 팔인지는 시리얼로도 펌웨어로도 알 수 없다 —
+움직여 본 사람만 안다. 그럴듯한 이름을 지어내는 것보다 임시 이름을 두고 고치게 하는 편이
+안전하다.
+
+## 10. GPU 하한 — 왜 드라이버를 올려도 안 되나
+
+이미지의 torch 는 cu130 빌드라 컴파일된 아키텍처가 `sm_75·80·86·90·100·120` 뿐이고 **PTX 가
+없어 JIT 으로도 못 메꾼다.** 컴퓨트 능력 7.5 미만(Pascal·Volta)은 GPU 를 바꿔야 한다. 값이
+바뀌면 컨테이너에 직접 물어서 확인한다:
+
+```bash
+docker run --rm --gpus all --entrypoint python piper-web-backend:latest \
+  -c 'import torch; print(torch.cuda.get_arch_list())'
+```
+
+GPU 가 아예 없는 기계는 된다 — 학습·추론만 빠진다(QnA "GPU 없는 기계에 설치하면?").

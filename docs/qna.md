@@ -17,7 +17,9 @@ PIPER_WEB_PORT=8081 ./piper-install.sh     # 한 번만
 ```
 
 한 번 주면 `apply.sh` 가 `~/piper-web-deploy/current/.env` 에 적어 두어 업데이트에도 유지된다.
-바뀌는 것은 **바깥** 포트뿐이다 — 안쪽 :80 은 컨테이너 안 nginx 가 듣는 포트다.
+**주소는 `http://<이 기계의 IP>:8081/`** — 기본 포트(80)가 아니면 포트를 붙여야 한다. 스크립트
+마지막 줄도 그렇게 찍는다. 바뀌는 것은 **바깥** 포트뿐이다 — 안쪽 :80 은 컨테이너 안 nginx 가
+듣는 포트다.
 
 예전 방식(`docker-compose.override.yml` 에 `ports: !override`)도 그대로 동작하고, 있으면
 그쪽이 이긴다 — `!override` 는 포트 목록을 통째로 치환하기 때문이다. 그 태그를 빼먹으면
