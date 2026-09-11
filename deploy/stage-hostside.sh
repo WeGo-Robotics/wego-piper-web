@@ -57,6 +57,7 @@ cp CHANGELOG.md "$OUT/"
 
 # ── compose · env 예시 ────────────────────────────────────────────────────
 cp docker-compose.yml "$OUT/"
+cp docker-compose.nogpu.yml "$OUT/"    # GPU 없는 호스트 조각 — apply.sh 3c 절이 COMPOSE_FILE 로 끼운다
 cp deploy/env.example "$OUT/backend.env.example"
 
 # ── udev ──────────────────────────────────────────────────────────────────

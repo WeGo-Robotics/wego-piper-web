@@ -63,6 +63,7 @@ systemctl --user list-units 'piper-*'            # 무엇이 돌고 무엇이 �
 | "팔 세그먼트가 없습니다 (robotd 가 떠 있나요?)" 인데 데몬은 돈다 | 다른 데몬의 기동 정리가 살아 있는 세그먼트를 지웠던 사고(v0.4.4 이전). 발행자는 unlink 된 파일에 계속 써서 **published 는 오르는데 아무도 못 연다** | v0.4.4 이상으로. 그 전이면 발행 데몬 재시작 |
 | SO-101 리더가 "연결돼 있지 않습니다" — 데몬 재시작 직후 | so101d 는 기동 시 스스로 붙지 않는다 | 로봇 페이지 시리얼 카드의 **[연결]** |
 | frontend 가 포트를 못 잡는다 | 이 호스트의 `:80`/`:8080` 을 남이 쓴다(WMS 등) | **`PIPER_WEB_PORT=8081 ./piper-install.sh`** — 한 번 주면 배포 디렉토리 `.env` 에 남아 업데이트에도 유지된다(`ss -ltnp` 로 빈 포트 확인). 예전 방식 `~/piper-web-deploy/current/docker-compose.override.yml` 재배정도 그대로 동작한다 — 단 `ports:` 병합은 append 라 **`!override`** 태그가 있어야 실제로 바뀐다. `apply.sh` 는 override 를 보존한다 |
+| backend 가 `could not select device driver "nvidia" with capabilities: [[gpu]]` 로 안 뜬다 | GPU 없는 호스트인데 compose 조합에 GPU 예약이 남아 있다 — v0.4.13 이하 번들(경고만 하고 넘김)이거나, compose 가 2.24 미만이라 nogpu 조각의 `!reset` 이 안 먹는다 | `docker compose version` 확인 → 2.24 미만이면 `docker-compose-v2`(docker.com 저장소는 `docker-compose-plugin`)를 올리고 `apply.sh` 를 다시 돌린다 — 3c 절이 `.env` 의 `COMPOSE_FILE` 에 `docker-compose.nogpu.yml` 을 끼운다. 옛 번들이면 override 파일에 `services: backend: deploy: !reset {}` |
 | backend 가 버스에 못 붙는다 | redis 소켓 없음(§1) | `sudo systemctl restart redis-server` 뒤 `docker compose restart backend` |
 
 ## 4. 고쳤는데 그대로다

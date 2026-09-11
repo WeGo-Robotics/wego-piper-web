@@ -40,3 +40,18 @@ compose 가 설정 차이를 보고 **frontend 컨테이너만** 다시 만든�
 `PIPER_WEB_PORT=9000 ./piper-install.sh <지금 깔린 버전>` 으로도 되지만 무겁다 — 버전을 안
 붙이면 최신으로 올라가는 부작용이 있고, `apply.sh` 는 데몬 다섯을 전부 재시작한다.
 포트 하나 바꾸는 일에는 과하다.
+
+## GPU 없는 기계에 설치하면?
+
+된다 — 학습·추론만 못 돌고 수집·시뮬레이터·조종 창은 된다. `apply.sh` 가 nvidia 가 없으면
+GPU 예약 없는 compose 조합을 배포 디렉토리 `.env` 의 `COMPOSE_FILE` 에 적는다
+(`docker-compose.yml:docker-compose.nogpu.yml`, override 파일이 있으면 그 뒤에). GPU 가 있는
+기계에선 그 키를 지워 예전 그대로다. (v0.4.13 이하 번들은 경고만 하고 넘겨서 4절
+`docker compose up` 이 `could not select device driver "nvidia"` 로 죽었다 — NUC 에서 실제로.)
+
+⚠ 조각이 `!reset` 을 써서 **compose 2.24 이상**이어야 한다 — 낮으면 스크립트가 멈추고
+올리라고 한다(Ubuntu 아카이브는 `docker-compose-v2`, docker.com 저장소면 `docker-compose-plugin`).
+
+⚠ GPU 없는 기계에서 **나중에** `docker-compose.override.yml` 을 만들면 `.env` 의
+`COMPOSE_FILE` 끝에 `:docker-compose.override.yml` 을 붙이거나 `apply.sh` 를 다시 돌린다 —
+`COMPOSE_FILE` 을 쓰는 동안은 compose 의 기본 탐색(override 자동 포함)이 꺼져 있다.

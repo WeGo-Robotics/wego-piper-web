@@ -212,6 +212,7 @@ fi
 #   로봇 호스트 은 :80 을 WMS 가, :8080 을 다른 node 앱이 쓰고 있어 8081 로
 #   빼 두었다. 번들이 덮으면 그 설정이 조용히 사라지고 포트 충돌로 안 뜬다.
 cp docker-compose.yml "$OUT/"
+cp docker-compose.nogpu.yml "$OUT/"    # GPU 없는 호스트 조각 — apply.sh 3c 절이 COMPOSE_FILE 로 끼운다
 cp deploy/env.example "$OUT/backend.env.example"
 
 # ── udev 규칙 — **항상 넣는다** ───────────────────────────────────────────

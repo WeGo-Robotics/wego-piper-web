@@ -79,6 +79,10 @@ docker run --rm --gpus all --entrypoint python piper-web-backend:latest \
   -c 'import torch; print(torch.cuda.get_arch_list())'
 ```
 
+GPU 가 **아예 없는 기계**에도 깔린다 — 학습·추론만 빠지고 수집·시뮬레이터·조종 창은 된다.
+스크립트가 알아서 GPU 예약 없는 compose 조합을 고른다(compose 2.24 이상 필요). 자세한 건
+[QnA](docs/qna.md).
+
 ⚠ **팔을 쓴다면 CAN 이름 규칙을 만들어야 한다.** 규칙이 없으면 인터페이스가
 커널 열거 순서대로 붙어, 포트를 바꿔 꽂거나 부팅 순서가 달라지는 순간 **두 팔의
 이름이 뒤바뀐다** — 등록·슬롯·프리셋이 이름을 키로 쓰므로 **저장된 설정이 반대

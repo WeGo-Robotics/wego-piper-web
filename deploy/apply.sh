@@ -95,7 +95,9 @@ MIN_CC=7.5      # Turing. RTX 20xx·T4 부터
 MIN_CUDA=13.0   # 이미지가 실은 CUDA 런타임 (nvidia-cuda-runtime 13.0.96)
 # "$1 >= $2" 인가
 vge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]; }
+HAVE_GPU=0   # 3c 절이 본다 — 없으면 compose 조합에서 GPU 예약을 뺀다
 if command -v nvidia-smi >/dev/null 2>&1; then
+  HAVE_GPU=1
   command -v nvidia-ctk >/dev/null && ok "nvidia-container-toolkit" || {
     bad "nvidia-container-toolkit 없음 — compose 의 GPU 예약이 실패한다"
     warn "  NVIDIA 저장소부터: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html"
@@ -126,7 +128,16 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     warn "  드라이버를 올리면 **재부팅해야** 반영된다"
   fi
 else
-  warn "NVIDIA GPU 가 안 보인다 — 학습·추론은 못 돈다"
+  warn "NVIDIA GPU 가 안 보인다 — 학습·추론은 못 돈다 (수집·시뮬·조종은 된다). compose 에서 GPU 예약을 뺀다"
+  # ⚠ 예약을 빼는 조각(docker-compose.nogpu.yml)은 `!reset` 을 쓴다 — compose 2.24+ 다.
+  #   그 아래면 조각을 얹어도 예약이 남아 backend 가 `could not select device driver "nvidia"`
+  #   로 안 뜬다. 여기서 막아야 4절에서 엉뚱한 에러로 드러나지 않는다.
+  COMPOSE_VER="$(docker compose version --short 2>/dev/null | sed 's/^v//; s/[^0-9.].*$//' || true)"
+  if [ -n "$COMPOSE_VER" ] && ! vge "$COMPOSE_VER" "2.24"; then
+    bad "docker compose $COMPOSE_VER — GPU 없는 호스트는 2.24 이상이어야 한다 (nogpu 조각의 !reset)"
+    warn "  Ubuntu 아카이브는 docker-compose-v2, docker.com 저장소면 docker-compose-plugin 을 올린다"
+    NEED_APT+=(docker-compose-v2)
+  fi
 fi
 
 # ⚠ 평문 레지스트리는 **daemon.json 에 적어야만** 붙는다. 안 적으면 pull 이
@@ -340,6 +351,12 @@ else
   say "3. 데몬 소스·유닛 — 이번 릴리스에 없음"
 fi
 
+# 배포 디렉토리 .env 의 키 하나 — ⚠ 파일은 덮지 않는다. 사람이 PIPER_DATA_ROOT 등을 적어
+# 뒀을 수 있다. 그 키 한 줄만 바꾸고(env_put)·지우고(env_drop)·읽는다(env_get).
+env_put()  { touch "$SRC/.env"; sed -i "/^$1=/d" "$SRC/.env"; echo "$1=$2" >> "$SRC/.env"; }
+env_drop() { [ -f "$SRC/.env" ] && sed -i "/^$1=/d" "$SRC/.env" || true; }
+env_get()  { [ -f "$SRC/.env" ] && sed -n "s/^$1=//p" "$SRC/.env" | tail -n1 || true; }
+
 # ── 3b. compose 파일 ──────────────────────────────────────────────────────
 say "3b. compose"
 mkdir -p "$SRC"
@@ -355,17 +372,14 @@ else
   # 이 키 한 줄만 바꾼다. (예전 방식 docker-compose.override.yml 은 아래에서 그대로 보존)
   if [ -n "${PIPER_WEB_PORT:-}" ]; then
     case "$PIPER_WEB_PORT" in *[!0-9]*) bad "PIPER_WEB_PORT 는 숫자여야 합니다: $PIPER_WEB_PORT"; exit 1 ;; esac
-    touch "$SRC/.env"
-    sed -i '/^PIPER_WEB_PORT=/d' "$SRC/.env"
-    echo "PIPER_WEB_PORT=$PIPER_WEB_PORT" >> "$SRC/.env"
+    env_put PIPER_WEB_PORT "$PIPER_WEB_PORT"
     ok "웹 포트 $PIPER_WEB_PORT (.env 에 기록 — 업데이트에도 유지)"
   fi
 fi
 # 웹 포트의 유효값 — 이번에 넘긴 값 → 배포 디렉토리 .env 에 적힌 값 → 80
 web_port() {
   if [ -n "${PIPER_WEB_PORT:-}" ]; then echo "$PIPER_WEB_PORT"; return; fi
-  local p=''
-  [ -f "$SRC/.env" ] && p="$(sed -n 's/^PIPER_WEB_PORT=//p' "$SRC/.env" | tail -n1)" || true
+  local p; p="$(env_get PIPER_WEB_PORT)"
   echo "${p:-80}"
 }
 # ⚠ **override 는 손대지 않는다.** 그 호스트의 사정(포트 충돌 회피)이 거기 있다.
@@ -379,6 +393,36 @@ elif [ -f "$HOME/override.keep.yml" ]; then
   ok "override 복원: ~/override.keep.yml"
 else
   warn "override 없음 — :$(web_port) 이 비어 있는지 확인하세요 (ss -ltnp). 다른 포트: PIPER_WEB_PORT=8081 ./piper-install.sh"
+fi
+
+# ── 3c. compose 조합 — GPU 없는 호스트 ─────────────────────────────────────
+# ⚠ compose 는 `deploy.resources.reservations.devices: nvidia` 를 **하드 요구**한다 — GPU 가
+#   없으면 4절 `up` 이 `could not select device driver "nvidia"` 로 죽는다. 경고만 하고
+#   넘기던 것이 실기(NUC, 2026-09-11)에서 그렇게 막혔다. nvidia 가 없으면 예약을 지우는
+#   조각(docker-compose.nogpu.yml)을 .env 의 COMPOSE_FILE 로 끼운다. override 파일은
+#   **손대지 않고** 있으면 뒤에 붙인다 — COMPOSE_FILE 을 쓰면 기본 탐색이 꺼져 명시해야
+#   한다. GPU 호스트는 키를 지워 예전 그대로(기본 탐색: docker-compose.yml + override).
+#   override 블록 **뒤**여야 한다 — 위에서 ~/override.keep.yml 을 되돌렸을 수 있다.
+if [ $CHECK = 1 ]; then
+  cf="$(env_get COMPOSE_FILE)"
+  if [ $HAVE_GPU = 1 ]; then
+    [ -z "$cf" ] && ok "compose 조합: 기본 (GPU)" || warn "COMPOSE_FILE=$cf — GPU 가 있는데 조합이 남아 있다. 다음 적용이 지운다"
+  else
+    case "$cf" in
+      *docker-compose.nogpu.yml*) ok "compose 조합: GPU 예약 없음 ($cf)" ;;
+      *) bad "GPU 없는데 COMPOSE_FILE 에 nogpu 조각이 없다 — 적용하면 넣는다" ;;
+    esac
+  fi
+else
+  cp "$HERE/docker-compose.nogpu.yml" "$SRC/"
+  if [ $HAVE_GPU = 1 ]; then
+    env_drop COMPOSE_FILE
+  else
+    cf="docker-compose.yml:docker-compose.nogpu.yml"
+    [ -f "$SRC/docker-compose.override.yml" ] && cf="$cf:docker-compose.override.yml"
+    env_put COMPOSE_FILE "$cf"
+    ok "GPU 없음 → COMPOSE_FILE=$cf (.env)"
+  fi
 fi
 
 # ── 4. 기동 ───────────────────────────────────────────────────────────────

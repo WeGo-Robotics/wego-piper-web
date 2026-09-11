@@ -68,14 +68,42 @@ def test_a_non_default_web_port_is_one_env_var_and_survives_updates():
     assert '"${PIPER_WEB_PORT:-80}:80"' in compose, "바깥 포트가 변수가 아니다"
     assert '"80:80"' not in compose
     apply = (REPO / "deploy" / "apply.sh").read_text()
-    assert "sed -i '/^PIPER_WEB_PORT=/d' \"$SRC/.env\"" in apply \
-        and 'echo "PIPER_WEB_PORT=$PIPER_WEB_PORT" >> "$SRC/.env"' in apply, ".env 에 키만 갱신하지 않는다"
+    assert 'env_put()  { touch "$SRC/.env"; sed -i "/^$1=/d" "$SRC/.env"; echo "$1=$2" >> "$SRC/.env"; }' in apply, \
+        ".env 에 키만 갱신하지 않는다"
     assert '> "$SRC/.env"' not in apply.replace('>> "$SRC/.env"', ""), ".env 를 통째로 덮어쓴다"
+    assert 'env_put PIPER_WEB_PORT "$PIPER_WEB_PORT"' in apply
     assert "web_port() {" in apply and 'port="${port:-$(web_port)}"' in apply, "접속 줄이 .env 값으로 폴백하지 않는다"
     assert "PIPER_WEB_PORT=8081 ./piper-install.sh" in (REPO / "README.md").read_text(), "README 가 방법을 안 적는다"
     assert "PIPER_WEB_PORT=8081" in DOC.read_text(), "트러블슈팅이 옛 override 방식만 안다"
     # 설치 스크립트는 apply.sh 를 exec 하므로 환경변수가 그대로 넘어간다 — 그게 이 방식의 전제다
     assert 'exec "$DEST/apply.sh"' in (REPO / "deploy" / "piper-install.sh").read_text()
+
+
+def test_a_host_without_a_gpu_gets_a_compose_combination_without_the_reservation():
+    """⚠ 실기(NUC, 2026-09-11): compose 가 `deploy.resources.reservations.devices: nvidia` 를
+    하드 요구하는데 apply.sh 는 "GPU 가 안 보인다"고 **경고만 하고 넘겼다** — 4절 `up` 이
+    `could not select device driver "nvidia"` 로 죽는다. "설치 한 방"의 구멍.
+
+    기본 compose 는 그대로(GPU 호스트·개발 무변경). nvidia 가 없으면 예약을 지우는 조각
+    (`!reset`, compose 2.24+)을 배포 디렉토리 .env 의 COMPOSE_FILE 로 끼운다 — override
+    파일은 손대지 않고 있으면 뒤에 붙인다(COMPOSE_FILE 을 쓰면 기본 탐색이 꺼진다). GPU
+    호스트는 키를 지운다. 조각은 두 번들 경로(이미지·오프라인) 모두에 실린다.
+    """
+    piece = (REPO / "docker-compose.nogpu.yml").read_text()
+    assert "deploy: !reset {}" in piece.split("backend:", 1)[1], "조각이 backend 의 GPU 예약을 안 지운다"
+    apply = (REPO / "deploy" / "apply.sh").read_text()
+    assert "HAVE_GPU=0" in apply and "HAVE_GPU=1" in apply
+    sec = apply.split("3c. compose 조합", 1)[1]
+    assert 'cf="docker-compose.yml:docker-compose.nogpu.yml"' in sec
+    assert 'cf="$cf:docker-compose.override.yml"' in sec, "override 가 조합에서 빠진다"
+    assert 'env_put COMPOSE_FILE "$cf"' in sec and "env_drop COMPOSE_FILE" in sec
+    assert apply.index("override 보존") < apply.index("3c. compose 조합"), "override 복원보다 먼저 조합을 정한다"
+    assert 'vge "$COMPOSE_VER" "2.24"' in apply, "compose 2.24 미만을 안 막는다 — !reset 이 조용히 무시된다"
+    for f in ("stage-hostside.sh", "release.sh"):
+        assert 'cp docker-compose.nogpu.yml "$OUT/"' in (REPO / "deploy" / f).read_text(), f"{f} 가 조각을 안 싣는다"
+    assert "GPU 가 **아예 없는 기계**" in (REPO / "README.md").read_text()
+    assert "## GPU 없는 기계에 설치하면?" in (REPO / "docs" / "qna.md").read_text()
+    assert 'could not select device driver "nvidia"' in DOC.read_text()
 
 
 def test_the_qna_doc_keeps_the_questions_as_asked_and_agrees_with_the_scripts():

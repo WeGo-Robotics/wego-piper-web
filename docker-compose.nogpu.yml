@@ -1,0 +1,11 @@
+# GPU 없는 호스트용 조각 — docker-compose.yml **뒤에** 얹어 backend 의 GPU 예약을 지운다.
+#
+# ⚠ 이 파일을 사람이 고르지 않는다. `apply.sh` 가 nvidia-smi 가 없으면 배포 디렉토리 .env 의
+#   COMPOSE_FILE 에 끼워 넣는다(docker-compose.yml:docker-compose.nogpu.yml[:override]).
+#   GPU 호스트에선 그 키를 지워 기본 탐색(docker-compose.yml + override) 그대로다.
+# ⚠ `!reset` 은 compose 2.24+ 다 — 그 아래에선 조각을 얹어도 예약이 남아 backend 가
+#   `could not select device driver "nvidia"` 로 안 뜬다. apply.sh 가 버전을 본다.
+#   실측(2.40): 얹으면 `docker compose config` 에 nvidia 가 0 번 나온다.
+services:
+  backend:
+    deploy: !reset {}
