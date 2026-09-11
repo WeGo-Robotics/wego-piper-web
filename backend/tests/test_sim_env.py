@@ -467,3 +467,24 @@ def test_sim_cameras_track_the_daemon_connected_state_so_the_window_reconnects(m
     assert mgr.cameras["sim:top"].connected is True
     # simd 쪽 스캔이 실제로 connected 를 싣는가
     assert '"connected": c.connected' in (REPO / "sim" / "piper_sim" / "cameras.py").read_text()
+
+
+def test_a_top_view_click_maps_to_a_table_position_for_the_cube(model):
+    """블럭 옮기기(사용자 요청 2026): 탑뷰 클릭 픽셀(정규화 u,v)을 카메라 광선으로 쏴
+    테이블 평면 교점으로 큐브를 옮긴다. 가운데=카메라 바로 아래(0.35,0), 위쪽=+x(앞),
+    오른쪽=−y(탑뷰가 반시계 90°라). 테이블 밖은 가장자리로 클램프."""
+    from piper_sim.world import World
+    import mujoco
+    w = World.__new__(World)
+    w.model = model; w.data = mujoco.MjData(model)
+    import threading; w._lock = threading.Lock()
+    mujoco.mj_forward(model, w.data)
+    cx, cy, _ = w.cube_from_ray("top", 0.5, 0.5, 640 / 480)          # 가운데
+    assert abs(cx - 0.35) < 0.02 and abs(cy) < 0.02, (cx, cy)
+    fx, fy, _ = w.cube_from_ray("top", 0.5, 0.15, 640 / 480)         # 위쪽 → 앞(+x)
+    assert fx > cx + 0.1, "위쪽 클릭이 앞(+x)으로 안 간다"
+    rx, ry, _ = w.cube_from_ray("top", 0.85, 0.5, 640 / 480)         # 오른쪽 → −y
+    assert ry < cy - 0.1, "오른쪽 클릭이 −y 로 안 간다"
+    ex, ey, _ = w.cube_from_ray("top", 0.02, 0.5, 640 / 480)         # 위 끝 → 테이블 밖 클램프
+    assert ex <= 0.35 + 0.55 + 1e-6, "테이블 밖으로 안 클램프됐다"
+    assert '"cube_from_view"' in (REPO / "daemons" / "simd.py").read_text()

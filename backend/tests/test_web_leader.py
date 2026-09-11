@@ -269,7 +269,7 @@ def test_t_key_resets_only_the_arm_not_the_cube(monkeypatch):
     win = (REPO / "frontend" / "src" / "pages" / "TeleopWindowPage.tsx").read_text()
     assert "e.code === 'KeyT'" in win and "resetWorld(true)" in win
     assert "KeyT:" not in win, "T 가 KEY_OF 에 남아 관절 모드로 샌다"
-    assert "Q/A 롤" in win and "W/S 피치" in win and "E/D 요" in win
+    assert "롤 (+/−)" in win and "피치 (+/−)" in win and "요 (+/−)" in win, "EE 회전 키가 도움말에 없다"
 
 
 def test_ee_resyncs_to_the_real_arm_when_they_diverge_so_it_never_gets_stuck(monkeypatch):
@@ -356,7 +356,7 @@ def test_the_teleop_window_shows_a_loading_gate_and_skips_the_slow_scan_for_sim(
     프로브(~5초)를 건너뛰고 알려진 sim 카메라를 바로 연결한다(사용자 보고 2026)."""
     src = (REPO / "frontend" / "src" / "pages" / "TeleopWindowPage.tsx").read_text()
     assert "const [loading, setLoading] = useState(true)" in src
-    assert "조종 화면 준비 중" in src and "z-20" in src and "if (loading) return" in src, "로딩 오버레이가 클릭을 안 막는다"
+    assert "조종 화면 준비 중" in src and "z-20" in src and "if (loading || moveBlock) return" in src, "로딩 오버레이가 클릭을 안 막는다"
     # 시뮬 빠른 경로: scan 대신 알려진 sim 카메라 직접 연결
     simpath = src.split("follower.startsWith('sim_')", 1)[1].split("} else {", 1)[0]
     assert "'sim:top', 'sim:front', 'sim:wrist'" in simpath
@@ -378,3 +378,36 @@ def test_the_window_streams_only_the_big_camera_and_shows_video_vs_input_livenes
     assert "영상 멈춤" in src and "영상 {videoFps" in src
     assert "입력 {inputLive" in src and "전달 중" in src
     assert "relay?.sent" in src, "입력 흐름을 relay 전송 증가로 판정하지 않는다"
+
+
+def test_the_move_block_button_and_b_key_send_a_normalized_click():
+    """블럭 옮기기 — 버튼·B 키로 켜고 큰 화면 클릭 → 정규화 u,v 를 /cube 로. 라우트는
+    시뮬 카메라만 받는다. 클릭이 조종을 시작하지 않게 arena 전파를 막는다."""
+    win = (REPO / "frontend" / "src" / "pages" / "TeleopWindowPage.tsx").read_text()
+    assert "e.code === 'KeyB'" in win and "블럭 옮기기" in win
+    assert "/leader/web/cube" in win and "placeBlock" in win
+    assert "loading || moveBlock" in win, "블럭 모드에서 클릭이 조종을 시작하면 안 된다"
+    assert "object-contain" in win and "naturalWidth" in win, "레터박스 보정 없이 픽셀→u,v 하면 어긋난다"
+    router = (REPO / "backend" / "app" / "routers" / "web_leader.py").read_text()
+    cube = router.split("async def move_cube", 1)[1].split("\n@router", 1)[0]
+    assert 'cam.startswith("sim:")' in cube and '"cube_from_view"' in cube
+
+
+def test_the_help_button_opens_a_structured_panel_matching_the_backend_mappings():
+    """도움말 — 창 안 버튼(또는 Shift+/)이 div 오버레이를 띄운다. 한 줄 요약이 아니라
+    관절·EE·공통을 키/설명 행으로 나눠 읽히게 한다(사용자 요청 2026). 매핑은 백엔드와
+    어긋나면 안 된다 — ⚠ 옛 도움말은 관절5 를 T/G 로 적었지만 T 는 팔 리셋이고 관절5 는
+    가운데 드래그·휠 선택으로만 움직인다."""
+    win = (REPO / "frontend" / "src" / "pages" / "TeleopWindowPage.tsx").read_text()
+    # 버튼(또는 Shift+/)이 오버레이를 여닫는다
+    assert ">도움말</button>" in win and "e.code === 'Slash' && e.shiftKey" in win
+    # 세 묶음을 키/설명 행으로
+    assert "JOINT_ROWS" in win and "EE_ROWS" in win and "COMMON_ROWS" in win
+    assert "조작 도움말" in win and win.count("<HelpSection ") == 3
+    # 배경 클릭은 닫되 전파를 막아 조종(포인터 락)이 시작되지 않는다
+    ov = win.split("{help && (", 1)[1].split(")}", 1)[0]
+    assert "z-30" in ov and "e.stopPropagation(); setHelp(false)" in ov
+    # ⚠ 관절5=T/G 오탐 재발 방지: 관절 묶음엔 T 행이 없고 관절5 는 가운데 드래그로
+    joint = win.split("JOINT_ROWS", 1)[1].split("const EE_ROWS", 1)[0]
+    assert "'T " not in joint and "T/G" not in joint, "관절5 를 다시 T 로 적었다(T 는 팔 리셋)"
+    assert "'관절5'" in joint and "가운데 버튼 상하 드래그" in joint

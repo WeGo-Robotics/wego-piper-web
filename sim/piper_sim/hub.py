@@ -201,6 +201,13 @@ class SimHub:
     PARKING = {"joint1": 0.0, "joint2": -100.0, "joint3": 100.0, "joint4": 0.0,
                "joint5": 0.0, "joint6": 0.0, "gripper": 0.0}
 
+    def cube_from_view(self, cam: str = "top", u: float = 0.5, v: float = 0.5,
+                       aspect: float = 4.0 / 3.0) -> dict:
+        """클릭한 카메라 픽셀로 큐브를 옮긴다. cam 은 `sim:top`/`top` 둘 다 받는다."""
+        name = str(cam).split(":", 1)[-1]
+        hit = self._world().cube_from_ray(name, float(u), float(v), float(aspect))
+        return {"cube": hit, "ok": hit is not None}
+
     def reset(self, arm_only: bool = False, cube_x: float | None = None, cube_y: float | None = None) -> dict:
         """환경 리셋 — 팔 파킹·속도 0. arm_only 면 큐브·조명은 그대로(T: 로봇 위치만
         초기화), 아니면 큐브도 시작 위치로 (feature/web-leader.md §5)."""

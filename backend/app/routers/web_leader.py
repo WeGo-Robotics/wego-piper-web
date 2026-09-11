@@ -74,6 +74,26 @@ class ResetRequest(BaseModel):
     arm_only: bool = False      # T 키: 팔만 파킹, 큐브·조명 유지
 
 
+class CubeRequest(BaseModel):
+    cam: str = "sim:top"
+    u: float
+    v: float
+    aspect: float = 4.0 / 3.0
+
+
+@router.post("/cube")
+async def move_cube(body: CubeRequest):
+    """블럭 옮기기 — 탑뷰 클릭 픽셀(정규화 u,v)로 큐브를 테이블 위 그 자리로 순간이동."""
+    from app.services import sim_robot_client as sim
+
+    if not body.cam.startswith("sim:"):
+        raise HTTPException(400, "시뮬 카메라에서만 블럭을 옮길 수 있습니다")
+    r = await asyncio.to_thread(sim.call, "cube_from_view", body.cam, body.u, body.v, body.aspect)
+    if not isinstance(r, dict):
+        raise HTTPException(400, "simd 가 응답하지 않습니다")
+    return r
+
+
 @router.post("/reset")
 async def reset_world(body: ResetRequest):
     """환경 리셋 — 큐브 시작 위치, 팔 파킹, 속도 0 (feature/web-leader.md §5).

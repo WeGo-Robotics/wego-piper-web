@@ -28,8 +28,60 @@ const KEY_OF: Record<string, string> = {
 const SELECT_OF: Record<string, string> = {
   Digit1: 'joint1', Digit2: 'joint2', Digit3: 'joint3', Digit4: 'joint4', Digit5: 'joint5', Digit6: 'joint6', Digit7: 'gripper',
 }
-const JOINT_HELP = 'Q/A W/S E/D R/F T/G Y/H 관절 1~6 · [ ] 그리퍼 · 1~7 선택 후 휠 · 우드래그 j1/j2 (Shift: j4/j3) · 가운데 드래그 j6/j5 · Shift 빠르게 · Ctrl 미세'
-const EE_HELP = '마우스 이동 = 앞뒤·좌우 · 휠 = 위아래 · Q/A 롤 · W/S 피치 · E/D 요 (마우스와 동시) · 왼쪽 닫기 · 오른쪽 열기 · 가운데 자세고정 · Ctrl 미세'
+// 조작 도움말 — 키/버튼 → 설명. 백엔드 매핑(web_leader.py JOINT_KEYS·EE_KEYS)과 **일치해야
+// 한다**. ⚠ 옛 한 줄 도움말은 관절5 를 `T/G` 로 적었지만 T 는 팔 리셋(가로챔)이고 관절5 는
+// 가운데 드래그·휠 선택으로만 움직인다 — 그 오탐을 여기서 바로잡는다.
+type HelpRow = [string, string]
+const JOINT_ROWS: HelpRow[] = [
+  ['Q / A', '관절1 — 베이스 회전 (+/−)'],
+  ['W / S', '관절2 — 어깨 (+/−)'],
+  ['E / D', '관절3 — 팔꿈치 (+/−)'],
+  ['R / F', '관절4 — 손목 회전 (+/−)'],
+  ['Y / H', '관절6 — 그리퍼 회전 (+/−)'],
+  ['관절5', '가운데 버튼 상하 드래그, 또는 5 누른 뒤 휠'],
+  ['우클릭 드래그', '관절1(좌우)·관절2(상하) — Shift 시 관절4·관절3'],
+  ['가운데 드래그', '관절6(좌우)·관절5(상하)'],
+  ['1 ~ 7', '관절·그리퍼 선택 → 휠로 조절'],
+  ['[  ]', '그리퍼 열기·닫기'],
+]
+const EE_ROWS: HelpRow[] = [
+  ['마우스 이동', '앞뒤(세로)·좌우(가로) 이동'],
+  ['휠', '위아래 (Z)'],
+  ['Q / A', '롤 (+/−)'],
+  ['W / S', '피치 (+/−)'],
+  ['E / D', '요 (+/−)'],
+  ['왼쪽 버튼', '그리퍼 닫기'],
+  ['오른쪽 버튼', '그리퍼 열기'],
+  ['가운데 버튼', '자세 고정 토글'],
+]
+const COMMON_ROWS: HelpRow[] = [
+  ['Tab', '관절 ↔ EE 모드 전환'],
+  ['Shift', '빠르게 (관절 이동·우드래그 축 전환)'],
+  ['Ctrl', '미세 조작'],
+  ['Space', '정지 — 모든 입력 초기화'],
+  ['Esc', '조종(포인터 락) 해제'],
+  ['X', '자세 고정 토글'],
+  ['R', '환경 리셋 — 큐브 + 팔 원위치'],
+  ['T', '팔 초기화 — 팔만 원위치, 큐브·조명 유지'],
+  ['B', '블럭 옮기기 — 켠 뒤 탑뷰를 클릭한 자리로'],
+  ['? / Shift + /', '이 도움말 열기·닫기'],
+]
+
+function HelpSection({ title, rows }: { title: string; rows: HelpRow[] }) {
+  return (
+    <div>
+      <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-blue-300">{title}</h3>
+      <dl className="space-y-1">
+        {rows.map(([k, d]) => (
+          <div key={k} className="flex gap-2">
+            <dt className="w-32 shrink-0 font-mono text-neutral-100">{k}</dt>
+            <dd className="text-neutral-400">{d}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  )
+}
 
 export default function TeleopWindowPage() {
   const params = new URLSearchParams(window.location.search)
@@ -153,7 +205,24 @@ export default function TeleopWindowPage() {
     try { await api.post('/leader/web/stop', {}) } catch { /* 이미 끝남 */ }
   }, [])
 
+  // 블럭 옮기기: 큰 화면(카메라 뷰)에서 클릭한 픽셀 → 정규화 u,v(object-contain 보정) →
+  // 백엔드가 그 카메라 광선으로 테이블 좌표를 풀어 큐브를 옮긴다.
+  const placeBlock = useCallback(async (e: React.MouseEvent<HTMLImageElement>) => {
+    const img = e.currentTarget
+    const rect = img.getBoundingClientRect()
+    const ar = (img.naturalWidth || 4) / (img.naturalHeight || 3)   // 그려진 프레임 비율
+    const er = rect.width / rect.height
+    const dw = er > ar ? rect.height * ar : rect.width
+    const dh = er > ar ? rect.height : rect.width / ar
+    const ox = (rect.width - dw) / 2, oy = (rect.height - dh) / 2
+    const u = (e.clientX - rect.left - ox) / dw, v = (e.clientY - rect.top - oy) / dh
+    if (u < 0 || u > 1 || v < 0 || v > 1) return                    // 레터박스 밖
+    try { await api.post('/leader/web/cube', { cam: big, u, v, aspect: ar }) }
+    catch (err) { setErr(err instanceof Error ? err.message : '블럭 옮기기 실패') }
+  }, [big])
+
   const [resetting, setResetting] = useState(false)
+  const [moveBlock, setMoveBlock] = useState(false)   // 블럭 옮기기 모드 (B) — 큰 화면 클릭으로 큐브 순간이동
   const resetWorld = useCallback(async (armOnly = false) => {
     // 리셋 — 큐브까지(환경 리셋) 또는 팔만(T). 조종 중이면 리더도 파킹으로(백엔드가 처리).
     setResetting(true)
@@ -164,7 +233,7 @@ export default function TeleopWindowPage() {
 
   // 포인터 락 — 창을 클릭해야 걸린다. 그 클릭은 그리퍼가 아니다.
   const onArenaClick = async () => {
-    if (loading) return                    // 준비 전 클릭 무시
+    if (loading || moveBlock) return       // 준비 전·블럭 옮기기 중엔 조종 시작 안 함
     if (document.pointerLockElement === arena.current) return
     if (!running.current) { if (!(await start())) return }
     arena.current?.requestPointerLock()
@@ -184,6 +253,7 @@ export default function TeleopWindowPage() {
       if (e.code === 'KeyX') { pending.current.toggle_lock = true; return }
       if (e.code === 'KeyR' && !e.repeat) { e.preventDefault(); resetWorld(false); return }
       if (e.code === 'KeyT' && !e.repeat) { e.preventDefault(); resetWorld(true); return }
+      if (e.code === 'KeyB' && !e.repeat) { e.preventDefault(); setMoveBlock((m) => { if (!m) document.exitPointerLock(); return !m }); return }
       if (SELECT_OF[e.code]) { pending.current.select = SELECT_OF[e.code]; return }
       const k = KEY_OF[e.code]; if (k) { e.preventDefault(); keys.current.add(k) }
       mods.current = { shift: e.shiftKey, ctrl: e.ctrlKey }
@@ -248,8 +318,11 @@ export default function TeleopWindowPage() {
             className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50">팔 초기화</button>
           <button onClick={() => resetWorld(false)} disabled={resetting} title="큐브를 시작 위치로, 팔을 파킹으로 (R)"
             className="px-2 py-0.5 rounded bg-amber-700 hover:bg-amber-600 disabled:opacity-50">{resetting ? '리셋 중…' : '환경 리셋'}</button>
+          <button onClick={() => setMoveBlock((m) => { if (!m) document.exitPointerLock(); return !m })} title="블럭 옮기기 (B) — 켠 뒤 화면을 클릭하면 그 자리로"
+            className={`px-2 py-0.5 rounded ${moveBlock ? 'bg-cyan-600 text-white' : 'bg-neutral-700 hover:bg-neutral-600'}`}>블럭 옮기기</button>
           {st.running && <button onClick={stop} className="px-2 py-0.5 rounded bg-red-700 hover:bg-red-600">끝내기</button>}
-          <button onClick={() => setHelp((h) => !h)} className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600">?</button>
+          <button onClick={() => setHelp((h) => !h)} title="조작 도움말 (Shift+/)"
+            className={`px-2 py-0.5 rounded ${help ? 'bg-blue-600 text-white' : 'bg-neutral-700 hover:bg-neutral-600'}`}>도움말</button>
         </div>
       </div>
       <div ref={arena} onClick={onArenaClick} className={`relative flex-1 grid grid-cols-[3fr_1fr] gap-1 p-1 ${loading ? 'cursor-wait' : 'cursor-crosshair'}`}>
@@ -261,11 +334,18 @@ export default function TeleopWindowPage() {
             <p className="text-[11px] text-neutral-500">카메라를 연결하고 있습니다 — 잠시만요</p>
           </div>
         )}
+        {moveBlock && (
+          <div className="absolute inset-x-0 top-0 z-10 bg-cyan-600/90 py-1 text-center text-xs text-white"
+               onClick={(e) => e.stopPropagation()}>
+            블럭 옮기기 — 화면에서 놓을 자리를 클릭하세요 (B 또는 Esc 로 끄기)
+          </div>
+        )}
         <div className="relative bg-black rounded overflow-hidden">
           {big ? <img src={`/api/cameras/${encodeURIComponent(big)}/preview?t=${bigTick}`} alt={big}
                       onLoad={() => { frameAt.current.push(performance.now()); window.setTimeout(() => setBigTick((n) => n + 1), 66) }}
                       onError={() => window.setTimeout(() => setBigTick((n) => n + 1), 200)}
-                      className="w-full h-full object-contain" draggable={false} />
+                      onClick={moveBlock ? (e) => { e.stopPropagation(); placeBlock(e) } : undefined}
+                      className={`w-full h-full object-contain ${moveBlock ? 'cursor-cell' : ''}`} draggable={false} />
             : <p className="p-4 text-sm text-neutral-500">카메라가 없습니다</p>}
           <span className="absolute left-2 top-2 text-[11px] text-neutral-300 bg-black/50 px-1 rounded">{big}</span>
           {!loading && (
@@ -284,10 +364,23 @@ export default function TeleopWindowPage() {
           ))}
         </div>
         {help && (
-          <div className="absolute inset-x-8 top-8 rounded border border-neutral-600 bg-neutral-900/95 p-4 text-xs text-neutral-200 space-y-2" onClick={(e) => e.stopPropagation()}>
-            <p><b>관절 모드:</b> {JOINT_HELP}</p>
-            <p><b>EE 모드:</b> {EE_HELP}</p>
-            <p><b>공통:</b> Tab 모드 전환 · Space 정지 · Esc 락 해제 · X 자세 고정 · R 환경 리셋 · T 팔 초기화 · ? 이 도움말</p>
+          // 도움말 — 창 안 버튼(또는 Shift+/)이 이 div 오버레이를 띄운다. 배경을 누르면 닫히고,
+          // 패널 클릭은 전파를 막아 조종(포인터 락)이 시작되지 않는다.
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 p-4"
+               onClick={(e) => { e.stopPropagation(); setHelp(false) }}>
+            <div className="max-h-full w-full max-w-3xl overflow-y-auto rounded-lg border border-neutral-600 bg-neutral-900/98 p-5 text-xs text-neutral-200 shadow-xl"
+                 onClick={(e) => e.stopPropagation()}>
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-neutral-100">조작 도움말</h2>
+                <button onClick={() => setHelp(false)}
+                        className="rounded px-2 py-0.5 text-neutral-400 hover:bg-neutral-700 hover:text-white">닫기</button>
+              </div>
+              <div className="grid gap-5 sm:grid-cols-3">
+                <HelpSection title="관절 모드" rows={JOINT_ROWS} />
+                <HelpSection title="EE 모드 · 마우스 이동 + 키 회전(동시)" rows={EE_ROWS} />
+                <HelpSection title="공통 · 단축키" rows={COMMON_ROWS} />
+              </div>
+            </div>
           </div>
         )}
       </div>

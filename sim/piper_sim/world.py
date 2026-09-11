@@ -82,6 +82,41 @@ class World:
             self.data.qvel[:] = 0
             mujoco.mj_forward(self.model, self.data)
 
+    def cube_from_ray(self, cam_name: str, u: float, v: float, aspect: float) -> list[float] | None:
+        """탑뷰 등에서 클릭한 픽셀(정규화 u,v: 0..1, u=오른쪽 v=아래)을 카메라 광선으로
+        쏴 **테이블 평면과 만나는 지점**으로 큐브를 옮긴다 (사용자 요청 2026: 블럭을 손으로
+        옮기기 어렵다 → 클릭으로 순간이동). 카메라 자세·fovy 를 아는 여기서 계산해야
+        정확하다. 테이블 밖은 가장자리로 클램프. 못 맞히면(뒤·평행) None."""
+        import math
+
+        import mujoco
+        import numpy as np
+
+        with self._lock:
+            cid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, cam_name)
+            if cid < 0:
+                return None
+            pos = np.array(self.data.cam_xpos[cid], float)
+            R = np.array(self.data.cam_xmat[cid], float).reshape(3, 3)
+            tan_v = math.tan(math.radians(float(self.model.cam_fovy[cid])) / 2.0)
+            tan_u = tan_v * max(aspect, 1e-3)
+            # MuJoCo 카메라는 -z 를 본다. 이미지 오른쪽=+x_cam, 위=+y_cam.
+            d_cam = np.array([(u - 0.5) * 2.0 * tan_u, (0.5 - v) * 2.0 * tan_v, -1.0])
+            d = R @ d_cam
+            z_plane = 0.02                     # 큐브 중심 안착 높이(테이블 위)
+            if abs(d[2]) < 1e-6 or (z_plane - pos[2]) / d[2] <= 0:
+                return None                    # 광선이 평면과 평행하거나 뒤로 간다
+            hit = pos + (z_plane - pos[2]) / d[2] * d
+            # 테이블(중심 0.35,0 · 반폭 0.6×0.5) 안으로, 큐브 반폭 여유
+            x = float(np.clip(hit[0], 0.35 - 0.55, 0.35 + 0.55))
+            y = float(np.clip(hit[1], -0.45, 0.45))
+            adr = self.model.jnt_qposadr[mujoco.mj_name2id(
+                self.model, mujoco.mjtObj.mjOBJ_JOINT, "cube_free")]
+            self.data.qpos[adr:adr + 7] = [x, y, z_plane, 1, 0, 0, 0]
+            self.data.qvel[:] = 0
+            mujoco.mj_forward(self.model, self.data)
+            return [x, y, z_plane]
+
     def reset(self, arm_norm: dict[str, float], cube_x: float | None = None, cube_y: float | None = None) -> None:
         """환경 리셋 — 큐브를 시작 위치로, 팔을 파킹으로, 속도 0 (feature/web-leader.md §5).
 
