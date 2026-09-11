@@ -2,7 +2,7 @@
 name = "piper-robot"
 version = "0.1.0"
 description = "Piper arm CAN ownership, safety filter, shm publishing (robotd body)"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 license = "Apache-2.0"
 dependencies = ["piper-shm", "piper-bus", "numpy>=1.24"]
 

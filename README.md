@@ -64,6 +64,7 @@ PIPER_WEB_PORT=8081 ./piper-install.sh   # 80 대신 다른 포트 (한 번 주�
 | docker · docker compose v2 | 있을 것 | `apt install docker.io docker-compose-v2` |
 | docker 그룹 | 사용자가 속할 것 | `usermod -aG docker $USER` + **다시 로그인** |
 | python3-venv · redis-server | 있을 것 | `apt install python3-venv redis-server` |
+| **Python** | **3.10 이상** (Ubuntu 22.04+) | 20.04(3.8) 는 OS 를 올려야 한다 — 데몬 wheel 이 그 아래에선 안 깔린다 |
 | **GPU 컴퓨트 능력** | **7.5 이상** (Turing / RTX 20xx·T4) | **GPU 를 바꿔야 한다** — Pascal·Volta 는 드라이버를 올려도 안 된다 |
 | 드라이버 CUDA | **13.0 이상** | `apt install nvidia-driver-580` + 재부팅 |
 | nvidia-container-toolkit | 있을 것 | NVIDIA 저장소를 먼저 붙여야 한다 (Ubuntu 아카이브에 없다) |

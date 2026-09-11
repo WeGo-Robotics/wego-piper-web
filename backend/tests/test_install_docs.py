@@ -106,6 +106,22 @@ def test_a_host_without_a_gpu_gets_a_compose_combination_without_the_reservation
     assert 'could not select device driver "nvidia"' in DOC.read_text()
 
 
+def test_the_python_floor_is_3_10_everywhere_it_is_stated():
+    """⚠ 실기(NUC, 2026-09-11, Ubuntu 22.04 = 파이썬 3.10): wheel 이 `>=3.11` 을 **선언**해
+    pip 가 거절했다. 코드는 3.10 에서 7개 패키지의 모든 모듈이 import 되는 것을 `python:3.10`
+    컨테이너로 실측했다 — 선언이 코드보다 엄했다. 하한은 3.10 이고, 그 숫자는 세 곳
+    (pyproject 7개·apply.sh 의 검사·README 전제 표)이 같아야 한다 — 한 곳만 올리면 설치가
+    다시 이유 없이 거절된다."""
+    for p in ("bus", "shm", "robot", "cam", "rs", "so101", "sim"):
+        assert 'requires-python = ">=3.10"' in (REPO / p / "pyproject.toml").read_text(), f"{p} 의 하한이 3.10 이 아니다"
+    apply = (REPO / "deploy" / "apply.sh").read_text()
+    assert "sys.version_info >= (3, 10)" in apply, "apply.sh 가 파이썬 하한을 안 본다"
+    assert apply.index("sys.version_info >= (3, 10)") < apply.index('python3 -m venv --system-site-packages "$VENV"'), \
+        "venv 를 만든 뒤에야 본다"
+    assert "**3.10 이상**" in (REPO / "README.md").read_text(), "README 전제 표에 파이썬이 없다"
+    assert "requires a different Python" in DOC.read_text()
+
+
 def test_the_qna_doc_keeps_the_questions_as_asked_and_agrees_with_the_scripts():
     """질문이 **나온 말 그대로** 남는 곳(사용자: "QnA 문서에 남겨두자", 2026-09-11). 답이
     스크립트와 어긋나면 안 된다 — 접속 주소, 포트 바꾸기, 설치 뒤 바꾸기(frontend 만 다시

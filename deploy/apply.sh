@@ -76,6 +76,17 @@ done
 #   없으면 아래 2절의 `python3 -m venv` 가 깨진다.
 python3 -c "import venv" >/dev/null 2>&1 && ok "python3 venv" \
   || { bad "python3-venv 없음"; NEED_APT+=(python3-venv); }
+# ⚠ 데몬 wheel 의 파이썬 하한은 **3.10**(Ubuntu 22.04 의 시스템 파이썬). 실기(NUC, 2026-09-11):
+#   wheel 이 `>=3.11` 을 선언해 3.10 venv 에서 pip 가 거절했는데, 코드는 3.10 에서 전부
+#   import 되는 것을 실측하고 하한을 코드에 맞췄다(pyproject 7개). 그 아래(20.04 의 3.8)는
+#   안 된다 — venv 를 만들기 전에 여기서 막는다. apt 로는 못 고치니 처방은 OS 다.
+PYV="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "?")"
+if python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+  ok "python3 $PYV"
+else
+  bad "python3 $PYV — 데몬 wheel 은 3.10 이상이 필요하다 (Ubuntu 22.04+). 이 OS 로는 못 깐다"
+  [ $CHECK = 0 ] && exit 1
+fi
 command -v redis-server >/dev/null && ok "redis-server" \
   || { bad "redis-server 없음"; NEED_APT+=(redis-server); }
 # 시뮬 카메라(simd)의 헤드리스 렌더 — 선택 데몬이라 **경고만** 한다
@@ -315,17 +326,6 @@ fi
 # ⚠ 번들엔 wheel 이 **전부** 실려 있다(stage-hostside). `wheels=` 는 이번에 바뀐 것일 뿐 —
 #   바뀐 게 없어도 venv 가 없거나(처음 설치) 실린 wheel 중 안 깔린 배포가 있으면 전부
 #   깐다. v0.4.14(wheels 비어 있음)를 처음 깔던 NUC 이 venv 없이 4절로 갔다.
-wheels_missing() {   # 번들의 wheel 중 venv 에 없는 배포가 있으면 0
-  local w n
-  for w in "$HERE"/wheels/*.whl; do
-    [ -f "$w" ] || return 1
-    n="$(basename "$w" | cut -d- -f1 | tr _ -)"
-    "$VENV/bin/pip" show "$n" >/dev/null 2>&1 || found=0
-  done < <(bundle_wheels)
-  [ $found = 0 ]
-}
-if [ -n "${wheels:-}" ] || [ ! -d "$VENV" ] || wheels_missing; then
-  say "2. 데몬 wheel (${wheels:-처음 설치 — 번들 전부})"
 # 번들의 wheel — **매니페스트 버전으로 도장 찍힌 것만.** ⚠ 꺼내는 디렉토리(piper-install.sh
 # 의 $DEST)에 이전 시도의 wheel 이 남아 있으면 같은 배포가 두 버전 있어 pip 가 "conflicting
 # dependencies" 로 죽는다 — NUC(2026-09-11)에서 piper_bus 0.4.13 과 0.4.15 가 나란히 남았다.
@@ -337,11 +337,27 @@ bundle_wheels() {
   for w in "$HERE"/wheels/*.whl; do [ -f "$w" ] && echo "$w"; done
   return 0
 }
+wheels_missing() {   # 번들의 wheel 중 venv 에 없는 배포가 있으면 0
+  local w n found=1
+  while read -r w; do
+    [ -n "$w" ] || continue
+    n="$(basename "$w" | cut -d- -f1 | tr _ -)"
+    "$VENV/bin/pip" show "$n" >/dev/null 2>&1 || found=0
+  done < <(bundle_wheels)
+  [ $found = 0 ]
+}
+if [ -n "${wheels:-}" ] || [ ! -d "$VENV" ] || wheels_missing; then
+  say "2. 데몬 wheel (${wheels:-처음 설치 — 번들 전부})"
   if [ ! -d "$VENV" ]; then
     if [ $CHECK = 1 ]; then bad "$VENV 없음"; else
       # ⚠ `--system-site-packages` 로 만든다 — numpy·opencv·piper-sdk 를 다시 안 깐다.
       python3 -m venv --system-site-packages "$VENV" && ok "venv 생성"
       "$VENV/bin/pip" install -q redis pyrealsense2 && ok "PyPI 의존(redis·pyrealsense2)"
+      # 시스템 site-packages 에 numpy·opencv 가 없는 맨 우분투(ROS 없음)는 camerad/rsd 가 못 뜬다 —
+      # 둘이 import 안 될 때만 PyPI 에서 받는다(있으면 그대로 쓴다). 못 받으면 경고만.
+      if "$VENV/bin/python" -c "import numpy, cv2" 2>/dev/null; then ok "numpy·opencv (시스템)"
+      elif "$VENV/bin/pip" install -q numpy opencv-python-headless 2>/dev/null; then ok "numpy·opencv (PyPI)"
+      else warn "numpy·opencv 를 못 깔았다 — camerad/rsd 가 못 뜬다 (PyPI 접근?)"; fi
     fi
   fi
   if [ $CHECK = 1 ]; then
