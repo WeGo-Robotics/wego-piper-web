@@ -9,6 +9,22 @@
 
 ---
 
+## v0.4.14 — 2026-09-11
+
+v0.4.13 을 GPU 없는 NUC 에 깔아 보고 드러난 둘 — "설치 한 방"의 구멍.
+
+**설치**
+- 처방 `sudo mkdir -p /srv/piper-data && chown …` 의 `&&` 뒤에 sudo 가 없어, 그대로 붙여
+  넣으면 chown 이 "Operation not permitted" 였다. 출력은 줄 앞에만 sudo 를 붙인다 —
+  뒤에도 붙였고, 처방마다 `&&` 뒤에 sudo 가 있는지 테스트가 본다
+- GPU 없는 호스트: compose 가 nvidia 예약을 하드 요구하는데 스크립트는 "GPU 가 안
+  보인다"고 경고만 하고 넘겨, 4절 `docker compose up` 이 `could not select device driver
+  "nvidia"` 로 죽었다. 이제 nvidia 가 없으면 예약을 지우는 조각(`docker-compose.nogpu.yml`,
+  `!reset`)을 배포 디렉토리 `.env` 의 `COMPOSE_FILE` 에 끼운다 — override 파일은 손대지
+  않고 있으면 뒤에 붙이며, GPU 호스트는 키를 지워 예전 그대로. 조각은 compose 2.24+ 라
+  낮으면 멈추고 올리라고 한다. 학습·추론만 빠지고 수집·시뮬·조종은 된다
+- QnA 에 "GPU 없는 기계에 설치하면?", 트러블슈팅에 그 에러 문구 행
+
 ## v0.4.13 — 2026-09-11
 
 하루치 화면 정리와 설치 안내 — 시뮬 조종 창(블럭 옮기기·도움말), 로그 페이지 통합,
