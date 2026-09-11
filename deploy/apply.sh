@@ -320,12 +320,23 @@ wheels_missing() {   # 번들의 wheel 중 venv 에 없는 배포가 있으면 0
   for w in "$HERE"/wheels/*.whl; do
     [ -f "$w" ] || return 1
     n="$(basename "$w" | cut -d- -f1 | tr _ -)"
-    "$VENV/bin/pip" show "$n" >/dev/null 2>&1 || return 0
-  done
-  return 1
+    "$VENV/bin/pip" show "$n" >/dev/null 2>&1 || found=0
+  done < <(bundle_wheels)
+  [ $found = 0 ]
 }
 if [ -n "${wheels:-}" ] || [ ! -d "$VENV" ] || wheels_missing; then
   say "2. 데몬 wheel (${wheels:-처음 설치 — 번들 전부})"
+# 번들의 wheel — **매니페스트 버전으로 도장 찍힌 것만.** ⚠ 꺼내는 디렉토리(piper-install.sh
+# 의 $DEST)에 이전 시도의 wheel 이 남아 있으면 같은 배포가 두 버전 있어 pip 가 "conflicting
+# dependencies" 로 죽는다 — NUC(2026-09-11)에서 piper_bus 0.4.13 과 0.4.15 가 나란히 남았다.
+# 도장 없는 옛 번들(0.1.0)이면 전부.
+bundle_wheels() {
+  local v="${version#v}" w n=0
+  for w in "$HERE"/wheels/*-"$v"-*.whl; do [ -f "$w" ] && { echo "$w"; n=$((n+1)); }; done
+  [ $n -gt 0 ] && return 0
+  for w in "$HERE"/wheels/*.whl; do [ -f "$w" ] && echo "$w"; done
+  return 0
+}
   if [ ! -d "$VENV" ]; then
     if [ $CHECK = 1 ]; then bad "$VENV 없음"; else
       # ⚠ `--system-site-packages` 로 만든다 — numpy·opencv·piper-sdk 를 다시 안 깐다.
@@ -342,8 +353,10 @@ if [ -n "${wheels:-}" ] || [ ! -d "$VENV" ] || wheels_missing; then
       wheels_missing && bad "번들의 wheel 중 안 깔린 것이 있다 — 적용하면 전부 깐다" || ok "번들 wheel 전부 설치됨"
     fi
   else
-    "$VENV/bin/pip" install -q --no-deps --force-reinstall "$HERE"/wheels/*.whl
-    ok "wheel $(ls "$HERE"/wheels | wc -l) 개"
+    mapfile -t WHLS < <(bundle_wheels)
+    if [ ${#WHLS[@]} -eq 0 ]; then bad "번들에 wheel 이 없다: $HERE/wheels"; exit 1; fi
+    "$VENV/bin/pip" install -q --no-deps --force-reinstall "${WHLS[@]}"
+    ok "wheel ${#WHLS[@]} 개 (${version#v})"
     # 선택 데몬의 바깥 의존 — simd 는 mujoco(플랫폼 wheel, ~20MB), so101d 는 Feetech SDK.
     # ⚠ **실패해도 멈추지 않는다.** 이 둘은 선택이라, PyPI 가 안 닿는 호스트에서
     #   핵심 데몬 설치까지 막으면 안 된다. 못 깔면 웹 [서비스] 에서 켜도 안 뜬다 —

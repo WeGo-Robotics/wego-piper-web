@@ -320,6 +320,12 @@ say "2. 호스트 코드 꺼내기"
 # ⚠ `docker create` 는 **컨테이너를 실행하지 않는다.** 받은 이미지를 돌려보지
 #   않고 파일만 꺼내려는 것이다 — 설치 전에 남의 코드를 실행할 이유가 없다.
 DEST="$WORK/${VERSION}"
+# ⚠ 꺼내는 자리는 **비우고** 꺼낸다. `docker cp` 는 있는 디렉토리에 **겹쳐** 놓아 이전 시도의
+#   파일이 남는다 — NUC(2026-09-11)에서 `latest/wheels/` 에 piper_bus 0.4.13 과 0.4.15 가
+#   나란히 남아 pip 가 "conflicting dependencies" 로 죽었다. $DEST 는 꺼낸 사본일 뿐이라
+#   지워도 잃는 것이 없다(적용본은 current/, venv 는 ~/.venvs). 이름이 버전 꼴일 때만 —
+#   `current` 같은 것을 여기로 넘겨도 절대 지우지 않는다.
+case "$VERSION" in latest|v[0-9]*) rm -rf "$DEST" ;; esac
 mkdir -p "$DEST"
 cid="$(docker create "$IMAGE:$VERSION")"
 trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT

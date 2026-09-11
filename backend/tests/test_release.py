@@ -153,6 +153,25 @@ def test_a_fresh_host_installs_everything_the_bundle_carries():
     assert "continue   # 안 바뀌었고 있다" in APPLY.read_text()
 
 
+def test_the_unpack_dir_is_emptied_first_and_only_stamped_wheels_install():
+    """⚠ 실기(NUC, 2026-09-11): 두 번째 `./piper-install.sh` 에서 pip 가 `Cannot install
+    piper-bus 0.4.13 and piper-bus 0.4.15 … conflicting dependencies` 로 죽었다. `docker cp`
+    는 있는 디렉토리에 **겹쳐** 놓아 이전 시도의 wheel 이 `latest/wheels/` 에 남고,
+    apply.sh 는 `wheels/*.whl` 을 통째로 깔았다. 두 겹으로 막는다 — 꺼내기 전에 비우고
+    (버전 꼴 이름일 때만; `current` 는 절대 안 지운다), apply.sh 는 매니페스트 버전으로
+    도장 찍힌 wheel 만 고른다(도장 없는 옛 번들이면 전부)."""
+    from conftest import code_only
+
+    inst = code_only((REPO / "deploy" / "piper-install.sh").read_text())
+    i_rm = inst.find('case "$VERSION" in latest|v[0-9]*) rm -rf "$DEST" ;; esac')
+    assert i_rm != -1, "꺼내기 전에 비우지 않는다"
+    assert i_rm < inst.find('docker cp "$cid:/opt/piper-host/."'), "비우기가 꺼낸 뒤다"
+    apply = code_only(APPLY.read_text())
+    assert "bundle_wheels() {" in apply and '"$HERE"/wheels/*-"$v"-*.whl' in apply, "도장 찍힌 wheel 만 고르지 않는다"
+    assert 'pip" install -q --no-deps --force-reinstall "${WHLS[@]}"' in apply
+    assert 'force-reinstall "$HERE"/wheels/*.whl' not in apply, "wheel 디렉토리를 통째로 깐다 — 옛 버전이 섞이면 죽는다"
+
+
 def test_install_and_update_are_the_same_command():
     """⚠ 절차가 갈리면 "업데이트인 줄 알았는데 첫 설치였다" 가 생기고, 그때
     빠뜨리는 것은 늘 sudo 쪽(redis 소켓·linger)이라 증상이 "웹은 뜨는데 아무것도
