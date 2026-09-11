@@ -157,8 +157,18 @@ class _Writer:
         self.slot_bytes = _SLOT_BYTES[self._kind]
         total = _total_bytes(self._kind, n_slots)
         path = segment_path(self.name)
-        self._fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+        self._fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
         try:
+            # ⚠ **누구나 읽을 수 있어야 한다(0644).** 만드는 쪽과 읽는 쪽이 다른 사용자다 —
+            #   팔로워 action 은 게이트웨이 **컨테이너(root)** 가 만들고 호스트 데몬(일반
+            #   사용자의 robotd·simd)이 읽는다. 0600 이면 호스트가 `Permission denied` 로
+            #   못 열어 팔이 영영 안 움직인다(NUC 처음 설치, 2026-09-11). umask 가 깎지
+            #   못하게 fchmod 로 못박고, 이미 있던 0600 파일도 다음 open 에서 고쳐진다.
+            #   쓰기는 여전히 소유자만이다 — 만드는 쪽이 곧 쓰는 쪽이다.
+            # ⚠ "호스트가 먼저 만들어 두면 root 가 이어 쓴다"는 우회는 **안 된다.**
+            #   `fs.protected_regular`(우분투 기본 2)가 sticky 디렉토리(/dev/shm)에서 남의
+            #   파일을 O_CREAT 로 여는 것을 root 에게도 거부한다 — 실측 EACCES.
+            os.fchmod(self._fd, 0o644)
             os.ftruncate(self._fd, total)
             self._buf = mmap.mmap(self._fd, total)
         except Exception:

@@ -74,6 +74,8 @@ DEADMAN_CHECK_S = 0.05
 class ArmBridge:
     """팔 하나. 상태를 흘리고 명령을 받아 CAN 으로 보낸다."""
 
+    _open_warned = False   # 명령 세그먼트 열기 실패(권한)를 한 번만 말한다 — 인스턴스가 True 로 덮는다
+
     def __init__(self, arm, safety: SafetyConfig | None = None) -> None:
         self.arm = arm                    # `piper_robot.arm.Arm`
         self.iface = arm.iface
@@ -302,8 +304,19 @@ class ArmBridge:
                 try:
                     reader = ActionReader(self.iface)
                     logger.info("소비자 접속 (%s)", self.iface)
+                    self._open_warned = False
                 except ArmSegmentError:
                     time.sleep(ATTACH_POLL_S)
+                    continue
+                except OSError as exc:
+                    # ⚠ 세그먼트는 있는데 못 연다 — 권한이다(컨테이너 root 가 0600 으로 만든
+                    #   경우; simd 에서 먼저 드러났다, NUC 2026-09-11). 예외가 새면 이 스레드가
+                    #   **조용히 죽어** 팔이 영영 안 움직인다. 한 번 말하고 재시도한다.
+                    if not self._open_warned:
+                        logger.warning("명령 세그먼트를 못 엽니다 (%s): %s — /dev/shm 권한? 만든 쪽이 0644 로 만들어야 한다",
+                                       self.iface, exc)
+                        self._open_warned = True
+                    time.sleep(1.0)
                     continue
             try:
                 got = reader.read_new(timeout_s=DEADMAN_CHECK_S, poll_s=ACTION_POLL_S)

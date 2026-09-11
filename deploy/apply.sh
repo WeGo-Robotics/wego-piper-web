@@ -503,6 +503,14 @@ if [ $CHECK = 0 ]; then
   # unitd 도 새 코드로 — 안 그러면 웹의 켜기/끄기·버전 카드가 옛 데몬을 통한다.
   for d in estopd robotd camerad rsd unitd; do systemctl --user restart "piper-$d" 2>/dev/null || true; done
   ok "데몬 재시작"
+  # 선택 데몬(simd·so101d)은 **켜져 있을 때만** 재시작한다 — wheel 이 바뀌었는데 옛 코드로
+  # 돌면 고친 버그가 그대로다(유닛은 기동 시점의 코드로 돈다; v0.4.17 의 세그먼트 권한 수정이
+  # 그랬다). 꺼진 것은 사람의 선택이라 켜지 않는다.
+  for d in simd so101d; do
+    if systemctl --user is-active --quiet "piper-$d" 2>/dev/null; then
+      systemctl --user restart "piper-$d" 2>/dev/null && ok "piper-$d 재시작 (켜져 있던 선택 데몬)" || true
+    fi
+  done
   ( cd "$SRC" && docker compose up -d ) && ok "컨테이너 기동" || \
     bad "docker compose 실패 — $SRC 에서 직접 보세요"
   # 적용본 기록 — unitd 가 읽어 화면의 [버전] 이 "적용본 vX" 를 말한다

@@ -36,6 +36,39 @@ def _clean():
 # 저장소의 사본이라 설치되지 않고, 그걸 읽으면 안 도는 코드를 검사하게 된다.
 
 
+def test_a_writer_makes_the_segment_readable_by_other_users():
+    """⚠ NUC 처음 설치(2026-09-11): 팔로워 action 은 게이트웨이 **컨테이너(root)** 가 만들고
+    호스트의 simd(일반 사용자)가 읽는다 — 0600 이면 `Permission denied` 로 못 열어 팔이
+    영영 안 움직였다. umask 가 무엇이든 만든 세그먼트는 0644 여야 하고, 쓰기는 소유자만이다.
+    (호스트가 먼저 만들어 두는 우회는 `fs.protected_regular` 가 root 의 O_CREAT 를 막아
+    안 된다 — 만드는 쪽이 곧 쓰는 쪽이어야 한다.)"""
+    import os
+
+    old = os.umask(0o077)
+    try:
+        w = A.ActionWriter(IFACE, deadman_ms=500)
+    finally:
+        os.umask(old)
+    try:
+        mode = os.stat(A.segment_path(w.name)).st_mode & 0o777
+        assert mode == 0o644, f"세그먼트 권한 {oct(mode)} — 다른 사용자가 못 읽는다"
+    finally:
+        if hasattr(w, "close"):
+            w.close()
+
+
+def test_the_arm_daemons_survive_an_unreadable_action_segment():
+    """열기 실패(권한)는 `ArmSegmentError` 가 아니라 `OSError` 라 명령 스레드가 **조용히
+    죽었다** — 저널엔 트레이스백 한 줄, 팔은 영영 정지. simd 와 robotd 둘 다 한 번 말하고
+    재시도해야 한다."""
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    for rel in ("sim/piper_sim/bridge.py", "robot/piper_robot/publish.py"):
+        loop = (repo / rel).read_text().split("def _command_loop", 1)[1].split("read_new", 1)[0]
+        assert "except OSError as exc:" in loop and "_open_warned" in loop, f"{rel}: 열기 실패로 스레드가 죽는다"
+
+
 def test_state_roundtrip():
     w = StateWriter(IFACE)
     try:

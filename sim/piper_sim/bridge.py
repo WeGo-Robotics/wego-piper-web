@@ -33,6 +33,7 @@ class SimArmBridge:
         self.torque_on = True
         self._estopped = False
         self._deadman_held = False
+        self._open_warned = False      # 명령 세그먼트 열기 실패(권한)를 한 번만 말한다
         self._running = False
         self._threads: list[threading.Thread] = []
         self._state: StateWriter | None = None
@@ -102,8 +103,19 @@ class SimArmBridge:
                 try:
                     reader = ActionReader(self.arm_name)
                     logger.info("소비자 접속 (%s)", self.arm_name)
+                    self._open_warned = False
                 except ArmSegmentError:
                     time.sleep(0.02)
+                    continue
+                except OSError as exc:
+                    # ⚠ 세그먼트는 있는데 못 연다 — 권한이다(컨테이너 root 가 0600 으로 만든
+                    #   경우, NUC 2026-09-11). 여기서 예외가 새면 이 스레드가 **조용히 죽어**
+                    #   팔이 영영 안 움직이고 저널엔 트레이스백 한 줄뿐이다. 한 번 말하고 재시도한다.
+                    if not self._open_warned:
+                        logger.warning("명령 세그먼트를 못 엽니다 (%s): %s — /dev/shm 권한? 만든 쪽이 0644 로 만들어야 한다",
+                                       self.arm_name, exc)
+                        self._open_warned = True
+                    time.sleep(1.0)
                     continue
             try:
                 got = reader.read_new(timeout_s=DEADMAN_CHECK_S, poll_s=ACTION_POLL_S)
