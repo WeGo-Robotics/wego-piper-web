@@ -9,6 +9,24 @@
 
 ---
 
+## v0.4.16 — 2026-09-11
+
+NUC 처음 설치 두 번째 시도 — 1절(이미지)은 v0.4.15 대로 됐고 2절(wheel)에서 죽었다.
+
+**설치**
+- `docker cp` 가 있는 디렉토리에 **겹쳐** 놓아 `~/piper-web-deploy/latest/wheels/` 에 이전
+  시도의 `piper_bus-0.4.13` 이 새 `0.4.15` 옆에 남았고, apply.sh 가 `wheels/*.whl` 을
+  통째로 깔다가 pip `ResolutionImpossible`. 두 겹으로: `piper-install.sh` 는 꺼내기 전에
+  그 디렉토리를 비운다(이름이 `latest`/`v…` 꼴일 때만 — `current` 는 절대 안 지운다),
+  apply.sh 는 매니페스트 버전으로 도장 찍힌 wheel 만 고른다(도장 없는 옛 번들이면 전부).
+  그때까지의 우회: `rm -rf ~/piper-web-deploy/<버전> && ./piper-install.sh`
+- 세 번째 시도: `Package 'piper-bus' requires a different Python: 3.10.12 not in '>=3.11'` —
+  NUC 은 22.04(시스템 파이썬 3.10). wheel 7개가 `>=3.11` 을 **선언**했을 뿐 코드는 3.10 에서
+  모든 모듈이 import 되는 것을 `python:3.10` 컨테이너로 실측하고 하한을 3.10 으로 내렸다.
+  apply.sh 는 venv 를 만들기 전에 파이썬이 3.10 이상인지 확인하고 아니면 멈춘다(20.04 는
+  OS 를 올려야 한다 — README 전제 표에 추가). 시스템에 numpy·opencv 가 없는 맨 우분투는
+  venv 에 받는다(있으면 그대로)
+
 ## v0.4.15 — 2026-09-11
 
 v0.4.14 를 GPU 없는 NUC 에 **처음** 깔아 보니 — 설치가 아무것도 안 깐다.
