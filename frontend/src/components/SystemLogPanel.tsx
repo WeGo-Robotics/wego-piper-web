@@ -31,10 +31,15 @@ const LEVEL_CLASS: Record<Entry['level'], string> = {
 const ts = (t: number) => t ? new Date(t * 1000).toLocaleTimeString('ko-KR', { hour12: false }) : '--:--:--'
 const day = (t: number) => t ? new Date(t * 1000).toLocaleDateString('ko-KR', { month: '2-digit', day: '2-digit' }) : ''
 
-export default function SystemLogPanel({ initialUnit }: { initialUnit?: string }) {
+type Level = 'error' | 'warning' | 'info'
+
+// 초기값은 URL 딥링크에서 온다(/logs?unit=so101d&level=error) — 서비스 패널의 유닛별 [로그].
+export default function SystemLogPanel({ initialUnit, initialLevel, initialSince }: {
+  initialUnit?: string; initialLevel?: Level; initialSince?: string
+}) {
   const [unit, setUnit] = useState(initialUnit ?? 'all')
-  const [level, setLevel] = useState<'error' | 'warning' | 'info'>('warning')
-  const [since, setSince] = useState('6 hours ago')
+  const [level, setLevel] = useState<'error' | 'warning' | 'info'>(initialLevel ?? 'warning')
+  const [since, setSince] = useState(initialSince ?? '6 hours ago')
   const [lines, setLines] = useState(300)
   const [query, setQuery] = useState('')
   const [follow, setFollow] = useState(false)
@@ -52,7 +57,11 @@ export default function SystemLogPanel({ initialUnit }: { initialUnit?: string }
     return () => { live = false }
   }, [])
 
+  // 같은 페이지에 있는 채로 딥링크가 바뀌면(다른 유닛의 [로그]) 따라간다. 첫 렌더에선
+  // 이미 같은 값이라 no-op — 두 번 읽지 않는다.
   useEffect(() => { if (initialUnit) setUnit(initialUnit) }, [initialUnit])
+  useEffect(() => { if (initialLevel) setLevel(initialLevel) }, [initialLevel])
+  useEffect(() => { if (initialSince !== undefined) setSince(initialSince) }, [initialSince])
 
   const load = useCallback(async () => {
     setBusy(true)
@@ -80,7 +89,7 @@ export default function SystemLogPanel({ initialUnit }: { initialUnit?: string }
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-lg font-semibold">로그</h2>
+          <h2 className="text-lg font-semibold">시스템 로그</h2>
           <p className="mt-1 text-xs text-neutral-400">
             데몬 저널을 그대로 — 호스트의 서비스 관리 데몬(piper-unitd)이 읽어 줍니다. 기본은 <b>경고 이상</b>만.
           </p>

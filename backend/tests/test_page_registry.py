@@ -92,6 +92,46 @@ def test_no_page_is_stranded_when_it_leaves_the_nav():
     assert entry.get("nav"), "저장소가 내비에 없다 — 모델·데이터셋이 통째로 고립된다"
 
 
+def test_inference_analysis_lives_next_to_inference_inside_the_shell():
+    """⚠ 예전 "디버그"는 시스템 묶음에서 **새 창**(external+standalone)으로 떴다 — 로그
+    페이지와 이름이 겹치고, 앱 밖으로 나가 E-stop·상태바·내비가 없는 화면이 됐다.
+    추론 런의 분석이니 LeRobot 묶음의 **추론 바로 뒤**, 셸 안의 보통 페이지다(사용자
+    요청 2026). 경로 `/debug` 는 남긴다 — API(`/api/debug/*`)와 북마크가 그 이름이다."""
+    entries = _entries()
+    e = next(x for x in entries if x["path"] == "/debug")
+    assert e["label"] == "추론 분석" and e["group"] == "LeRobot" and e.get("nav")
+    assert not e.get("external") and not e.get("standalone"), "아직 새 창으로 뜬다"
+    nav = [x["path"] for x in entries if x.get("nav")]
+    assert nav.index("/debug") == nav.index("/inference") + 1, "추론 바로 뒤가 아니다"
+    # 셸 안 페이지는 자기 헤더("Piper Studio"·메인으로)를 갖지 않는다 — 코드만 본다,
+    # 주석은 옛 모습을 설명하느라 그 단어를 쓴다
+    from conftest import code_only
+    page = code_only((_SRC / "pages" / "DebugLogsPage.tsx").read_text())
+    for stray in ("<header", "메인으로", "min-h-screen"):
+        assert stray not in page, f"새 창 시절의 셸이 남았다: {stray}"
+    # 추론이 끝날 때 가리키는 이름도 같아야 한다
+    assert '"추론 분석"에서 확인' in (_SRC / "pages" / "InferencePage.tsx").read_text()
+
+
+def test_in_page_tabs_sit_right_beside_the_title():
+    """⚠ **규칙(사용자, 2026-09-11): 페이지 안의 탭은 항상 페이지 제목 옆에 둔다.**
+
+    로그 페이지가 탭을 같은 줄에 두고도 `justify-between` 으로 **오른쪽 끝**에 밀어
+    놓았다 — "옆"이 아니다. 카메라·로봇처럼 제목 바로 옆(`flex items-center gap-4`)
+    이어야 하고, 제목 아래 별도 줄로 쌓아도 안 된다 — 머리가 두 줄이면 정작 봐야 할
+    내용이 그만큼 밀린다.
+    """
+    from conftest import code_only
+
+    # 코드만 본다 — 머리줄 위 주석이 "justify-between 은 안 된다"고 적어 두느라 그 단어를 쓴다
+    src = code_only((_SRC / "pages" / "LogsPage.tsx").read_text())
+    head = src.split("<h1", 1)[0][-200:]            # h1 을 감싼 여는 태그
+    assert "flex items-center gap-4" in head, "탭이 제목 바로 옆 머리줄에 없다"
+    assert "justify-between" not in head, "탭을 오른쪽 끝으로 밀었다"
+    after = src.split("</h1>", 1)[1]
+    assert after.index("TABS.map") < after.index("</div>"), "탭이 제목과 같은 상자 안이 아니다"
+
+
 def test_the_estop_button_is_not_moved_into_the_bars():
     """E-stop 은 어느 페이지든 **같은 자리**여야 한다 — 안전 장치의 요건이다.
 

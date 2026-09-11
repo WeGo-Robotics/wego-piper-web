@@ -17,7 +17,7 @@ LOG_DIR = Path("/tmp")
 LOG_CATEGORIES = {
     "inference": {"dir": LOG_DIR, "glob": "piper_inference_*.csv", "label": "추론 CSV"},
     "inference_chart": {"dir": LOG_DIR, "glob": "piper_inference_*.html", "label": "추론 차트"},
-    "debug": {"dir": LOG_DIR, "glob": "grpc_wrapper_debug.log", "label": "디버그"},
+    "debug": {"dir": LOG_DIR, "glob": "grpc_wrapper_debug.log", "label": "래퍼 디버그"},   # /debug(추론 디버그 페이지)와 헷갈리지 않게
 }
 
 

@@ -1,4 +1,4 @@
-"""시스템 로그 — 데몬 저널을 SSH 없이 (설정 → 로그).
+"""시스템 로그 — 데몬 저널을 SSH 없이 (/logs 시스템 탭 — 예전엔 설정 속 탭이었다).
 
 컨테이너 게이트웨이는 호스트 저널을 못 읽어 unitd 가 읽어 준다. 데몬은 stdout 이라
 journald 우선순위가 전부 info — 레벨은 메시지 토큰으로 가른다. 기본은 경고 이상.
@@ -110,13 +110,35 @@ def test_the_gateway_route_and_the_panel_exist_with_a_warning_default():
     svc = (REPO / "backend" / "app" / "services" / "syslog.py").read_text()
     assert 'rpc_call(C.UNITD, "logs"' in svc and "from daemons.unitd import fetch_logs" in svc
     panel = (REPO / "frontend" / "src" / "components" / "SystemLogPanel.tsx").read_text()
-    assert "useState<'error' | 'warning' | 'info'>('warning')" in panel, "기본은 경고 이상"
+    assert "useState<'error' | 'warning' | 'info'>(initialLevel ?? 'warning')" in panel, "기본은 경고 이상"
     for needle in ("/system/logs?", "format: 'text'", "따라가기", "오류만", "전체 piper-*"):
         assert needle in panel, needle
-    page = (REPO / "frontend" / "src" / "pages" / "SettingsPage.tsx").read_text()
-    assert "{ id: 'logs', label: '로그' }" in page and "<SystemLogPanel initialUnit={logUnit} />" in page
+    # 패널은 /logs 의 시스템 탭에 산다 — 설정이 아니다
+    page = (REPO / "frontend" / "src" / "pages" / "LogsPage.tsx").read_text()
+    assert "<SystemLogPanel initialUnit={unit}" in page, "저널 패널이 /logs 에 없다"
+    settings = (REPO / "frontend" / "src" / "pages" / "SettingsPage.tsx").read_text()
+    assert "SystemLogPanel" not in settings and "'logs'" not in settings, "설정에 로그 탭이 남았다"
     services = (REPO / "frontend" / "src" / "components" / "ServicesPanel.tsx").read_text()
     assert "onShowLog" in services and "이 데몬의 저널" in services
+    assert "navigate(`/logs?unit=" in settings, "유닛별 [로그]가 /logs 딥링크로 안 간다"
+
+
+def test_the_two_logs_became_one_page_with_the_journal_as_the_default_tab():
+    """"로그"가 둘이었다 — 사이드바 /logs 는 /tmp 파일 관리자, 데몬 저널은 설정 속 탭.
+    고장 났을 때 보는 저널이 설정에 숨어 있었다(사용자 지적 2026). 한 페이지 두 탭으로:
+    시스템(저널, 기본)·파일. URL 이 탭·유닛·레벨을 들어 딥링크·뒤로가기가 된다."""
+    page = (REPO / "frontend" / "src" / "pages" / "LogsPage.tsx").read_text()
+    assert "useSearchParams" in page
+    assert "params.get('tab') === 'files' ? 'files' : 'system'" in page, "기본 탭이 시스템이 아니다"
+    for needle in ("params.get('unit')", "params.get('level')", "params.get('since')"):
+        assert needle in page, needle
+    assert "label: '시스템'" in page and "label: '파일'" in page
+    # 파일 관리자는 그대로(추론 CSV·차트·삭제) — 옮겼을 뿐 잃지 않았다
+    for needle in ("/logs/categories", "/api/logs/download/", "/api/logs/chart/", "/logs/delete/"):
+        assert needle in page, needle
+    # 이름 겹침 정리: /debug 는 로그가 아니라 분석 도구("추론 분석"), /logs 의 '디버그' 카테고리는 래퍼 로그
+    assert "추론 분석" in (REPO / "frontend" / "src" / "pages" / "DebugLogsPage.tsx").read_text()
+    assert '"label": "래퍼 디버그"' in (REPO / "backend" / "app" / "routers" / "logs.py").read_text()
 
 
 def test_a_traceback_is_one_error_not_one_error_line_and_many_info_lines():

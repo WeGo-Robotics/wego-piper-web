@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import FloorGuardPanel from '../components/FloorGuardPanel'
 import HfAccountPanel from '../components/HfAccountPanel'
 import ServicesPanel from '../components/ServicesPanel'
 import VersionCard from '../components/VersionCard'
-import SystemLogPanel from '../components/SystemLogPanel'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 
@@ -17,7 +17,7 @@ import { api } from '../services/api'
 const TABS = [
   { id: 'general', label: '일반' },
   { id: 'safety', label: '안전' },
-  { id: 'services', label: '서비스' }, { id: 'logs', label: '로그' },
+  { id: 'services', label: '서비스' },
   { id: 'hub', label: '저장소' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
@@ -31,7 +31,7 @@ export default function SettingsPage() {
   const notifyError = (text: string) =>
     notify({ level: 'error', text, source: '설정' })
   const [tab, setTab] = useState<TabId>('general')
-  const [logUnit, setLogUnit] = useState<string | undefined>(undefined)
+  const navigate = useNavigate()
   const [paths, setPaths] = useState<ModelPath[]>([])
   const [newPath, setNewPath] = useState('')
 
@@ -107,15 +107,10 @@ export default function SettingsPage() {
           <VersionCard />
         </div>
         <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5">
-          <ServicesPanel onShowLog={(u) => { setLogUnit(u); setTab('logs') }} />
+          {/* 유닛별 [로그]는 /logs 의 시스템 탭으로 — 저널은 설정이 아니라 로그 페이지에 산다 */}
+          <ServicesPanel onShowLog={(u) => navigate(`/logs?unit=${encodeURIComponent(u)}`)} />
         </div>
       </>)}
-
-      {tab === 'logs' && (
-        <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5">
-          <SystemLogPanel initialUnit={logUnit} />
-        </div>
-      )}
 
       {tab === 'hub' && <HfAccountPanel />}
 
