@@ -17,7 +17,7 @@ import EncoderProbePage from '../pages/EncoderProbePage'
 import LogsPage from '../pages/LogsPage'
 import SettingsPage from '../pages/SettingsPage'
 
-// 디버그 뷰어는 Plotly를 포함하므로 lazy 로드해 메인 번들에서 코드 분리
+// 추론 분석은 Plotly를 포함하므로 lazy 로드해 메인 번들에서 코드 분리
 const DebugLogsPage = lazy(() => import('../pages/DebugLogsPage'))
 // 에피소드 뷰어도 같은 이유 (신호 그래프 = Plotly)
 const EpisodesPage = lazy(() => import('../pages/EpisodesPage'))
@@ -128,6 +128,11 @@ export const pages: PageEntry[] = [
     icon: '▶',
     card: true,
   },
+  // 추론 런의 사후 분석(프레임·관절 궤적·액션 청크·필터 시뮬). 런은 추론에서 "디버그 모드"를
+  // 켜야 생기니 추론 바로 옆이 자리다. 예전엔 시스템 묶음의 "디버그"로 새 창(standalone)에
+  // 떴는데, 로그 페이지와 이름이 겹치고 앱 밖으로 나가 흐름이 끊겼다(사용자 지적 2026).
+  // 경로 `/debug` 는 남긴다 — API(`/api/debug/*`)와 북마크가 그 이름이다.
+  { path: '/debug', label: '추론 분석', component: DebugLogsPage, nav: true, group: 'LeRobot', icon: '📊' },
   { path: '/policy-server', label: '정책서버', component: PolicyServerPage, nav: true, group: 'LeRobot', icon: '🛰' },
   // 로컬 + HuggingFace Hub 를 한 화면에서 본다. 모델·데이터셋 탭이 여기 있다.
   { path: '/hub', label: '저장소', component: HubPage, nav: true, group: 'LeRobot', icon: '☁' },
@@ -167,7 +172,6 @@ export const pages: PageEntry[] = [
 
   // ── 시스템 ──
   { path: '/logs', label: '로그', component: LogsPage, nav: true, group: '시스템', icon: '📄' },
-  { path: '/debug', label: '디버그', component: DebugLogsPage, nav: true, group: '시스템', icon: '🐛', external: true, standalone: true },
   { path: '/settings', label: '설정', component: SettingsPage, nav: true, group: '시스템', icon: '⚙' },
   { path: '/teleop', label: '조종 창', component: TeleopWindowPage, nav: false, standalone: true },
 ]

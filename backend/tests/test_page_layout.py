@@ -195,7 +195,9 @@ def test_everything_indexed_by_frame_shares_a_column():
 
 # ── 2열이 내용에 안 밀리는가 (수집·학습·추론) ──────────────────────────────
 
-_TWO_COL_PAGES = ("RecordingPage", "TrainingPage", "InferencePage")
+# 추론 분석(DebugLogsPage)도 같은 부류 — 우측 열이 `1fr` 이라 그려진 Plotly SVG 폭과 긴
+# mono 모델 경로가 열을 밀었다(사용자 지적 2026, 에피소드 페이지에서 먼저 겪은 것).
+_TWO_COL_PAGES = ("RecordingPage", "TrainingPage", "InferencePage", "DebugLogsPage")
 
 
 def test_two_column_tracks_have_a_fixed_minimum():

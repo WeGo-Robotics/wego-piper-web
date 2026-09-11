@@ -182,7 +182,7 @@ export default function InferencePage() {
         setLastLogFile(filename)
         setLogs((prev) => {
           const next = [...prev, `[INFO] CSV 로그 저장 완료: ${d.csv_path} (${d.steps} steps)`]
-          if (d.debug_dir) next.push(`[INFO] 디버그 기록 저장됨: ${d.debug_dir} → "디버그" 탭에서 확인`)
+          if (d.debug_dir) next.push(`[INFO] 디버그 기록 저장됨: ${d.debug_dir} → "추론 분석"에서 확인`)
           return next
         })
       } else if (msg.type === 'log') setLogs((prev) => {

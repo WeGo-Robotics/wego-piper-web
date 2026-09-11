@@ -12,6 +12,7 @@ from pathlib import Path
 
 _CHART = Path(__file__).resolve().parents[2] / "frontend" / "src" / "components" / "PlotlyChart.tsx"
 _EPISODES = Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages" / "EpisodesPage.tsx"
+_ANALYSIS = Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages" / "DebugLogsPage.tsx"
 
 
 def test_the_trace_type_depends_on_how_many_points_there_are():
@@ -96,6 +97,25 @@ def test_the_staggered_reveal_is_gone():
     page = _EPISODES.read_text()
     assert "drawnUpTo" not in page, "진행형 렌더가 남아 있다"
     assert "onReady=" not in page, "완료 알림에 다시 기댄다"
+
+
+def test_the_analysis_page_reserves_its_chart_slots_too():
+    """추론 분석 우측 카드도 같은 문제였다(사용자 지적 2026 — "에피소드 페이지에서 그랬어").
+
+    · 청크 그래프: 추론 기록이 없는 프레임을 만나면 그래프를 **떼서** 칸이 사라지고,
+      옆 이미지 행이 다시 흐른 뒤 다음 프레임에 새 Plotly 가 흔들리는 폭에서 그려졌다
+      — 폭 0 을 한 번 잡으면 빈 채로 굳는다(PlotlyChart 의 ResizeObserver 주석).
+    · 배열 그래프: 런을 바꾸면 `sim=null` 로 그래프가 떨어져 카드가 한 줄로 접혔다가
+      결과가 오면 다시 펴졌다 — 그 사이 슬라이더가 위아래로 튄다.
+
+    칸을 그래프의 최종 높이로 먼저 잡고, 그래프는 칸 **안에서만** 바뀐다.
+    """
+    page = _ANALYSIS.read_text()
+    for h in (150, 280):
+        assert f"style={{{{ minHeight: {h} }}}}" in page and f"height={{{h}}}" in page, \
+            f"{h}px 그래프의 자리를 미리 안 잡는다"
+    assert "{chunkX.length > 1 && (" not in page, "청크 그래프가 다시 칸째 떨어진다"
+    assert "onReady=" not in page, "완료 알림에 기댄다"
 
 
 def test_the_chart_list_is_built_once():

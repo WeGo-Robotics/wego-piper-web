@@ -39,7 +39,7 @@ createRoot(document.getElementById('root')!).render(
             )
           )}
         </Route>
-        {/* standalone 페이지(디버그 뷰어 등)는 기존 UI와 별개로 전체 화면(Layout 밖)으로 렌더 */}
+        {/* standalone 페이지(조종 창)는 기존 UI와 별개로 전체 화면(Layout 밖)으로 렌더 */}
         {standalonePages.map((page) => (
           <Route
             key={page.path}

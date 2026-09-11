@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import PlotlyChart, { type Series } from '../components/PlotlyChart'
+import { twoColumns } from '../components/LayoutToggle'
 
 type RunSummary = {
   id: string
@@ -143,22 +144,23 @@ export default function DebugLogsPage() {
   const chunkX = useMemo(() => (curInf ? curInf.action_chunk.map((_, i) => i) : []), [curInf])
 
   return (
-    <div className="min-h-screen bg-neutral-900 text-neutral-100">
-      <header className="border-b border-neutral-700 bg-neutral-900/80 backdrop-blur sticky top-0 z-40">
-        <div className="px-4 flex items-center h-14 gap-4">
-          <span className="font-bold text-lg">Piper Studio</span>
-          <h1 className="text-sm font-semibold text-neutral-300">디버그 로그 뷰어</h1>
-          <div className="flex-1" />
-          <button onClick={fetchRuns} className="px-3 py-1.5 text-sm rounded bg-neutral-700 hover:bg-neutral-600 transition-colors">
-            새로고침
-          </button>
-          <a href="/" className="px-3 py-1.5 text-sm rounded text-neutral-400 hover:text-white transition-colors">
-            메인으로
-          </a>
+    // 앱 셸 안의 보통 페이지다 — 예전엔 자기 헤더("Piper Studio"·메인으로)를 가진 새 창이었다.
+    // "로그"가 아니라 추론 런의 분석 도구라 로그 페이지(/logs)와 이름이 겹치지 않게 한다.
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold">추론 분석</h1>
+          <p className="mt-1 text-xs text-neutral-400">추론에서 "디버그 모드"를 켜고 돌린 런 — 프레임·관절 궤적·액션 청크·필터 시뮬레이션</p>
         </div>
-      </header>
+        <button onClick={fetchRuns} className="shrink-0 px-3 py-1.5 text-sm rounded bg-neutral-700 hover:bg-neutral-600 transition-colors">
+          새로고침
+        </button>
+      </div>
 
-      <div className="p-4 grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-4">
+      {/* 2열 — 최소 폭 고정(수집·학습·추론과 같은 헬퍼). 우측이 `1fr` 이면 한 번 그려진
+          Plotly SVG 의 픽셀 폭과 긴 mono 모델 경로가 min-content 가 되어 열을 밀고, 넘친
+          쪽(버튼·셀렉트·그래프 오른쪽)이 잘려 사라진다. */}
+      <div {...twoColumns([1, 4], [200, 520], 16)}>
         {/* 좌: 런 목록 (컴팩트 사이드바) */}
         <div className="rounded-lg border border-neutral-700 bg-neutral-800 overflow-hidden self-start divide-y divide-neutral-700/50">
           {loading ? (
@@ -203,12 +205,13 @@ export default function DebugLogsPage() {
             <>
               {/* 메타 헤더 */}
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold font-mono">{selected}</h3>
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                  <h3 className="text-sm font-semibold font-mono break-all">{selected}</h3>
                   <span className="text-xs text-neutral-400">{detail?.mode} · obs {detail?.counts.observations} / inf {detail?.counts.inference} / ctrl {detail?.counts.control}</span>
                 </div>
-                <div className="text-xs text-neutral-400 space-x-3">
-                  <span>model: <span className="text-neutral-300 font-mono">{String(detail?.meta?.policy_path || detail?.meta?.pretrained_path || '?')}</span></span>
+                {/* 모델 경로는 공백 없는 긴 mono 한 덩어리 — 못 쪼개면 카드 밖으로 나간다 */}
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-neutral-400">
+                  <span className="min-w-0 break-all">model: <span className="text-neutral-300 font-mono">{String(detail?.meta?.policy_path || detail?.meta?.pretrained_path || '?')}</span></span>
                   <span>fps: {String(detail?.meta?.fps ?? '?')}</span>
                   <span>cameras: {detail?.cameras.join(', ') || '-'}</span>
                 </div>
@@ -253,13 +256,17 @@ export default function DebugLogsPage() {
                             </div>
                           ))}
                         </div>
-                        {chunkX.length > 1 && (
-                          <div className="pt-1">
-                            <PlotlyChart x={chunkX} series={chunkSeries} height={150}
-                              uirevision={`chunk-${selected}-${curObs?.seq}`} />
-                            <p className="text-[10px] text-neutral-500">현 시점 정책 raw action chunk (미래 예측 스텝)</p>
-                          </div>
-                        )}
+                        {/* ⚠ **자리를 미리 잡는다** (에피소드 페이지와 같다, 0f90f4e). 프레임을 넘기다
+                            추론 기록이 없는 프레임을 만나면 청크가 비는데, 그때 그래프를 **떼면** 칸이
+                            사라져 옆 이미지 행이 다시 흐르고, 다음 프레임에 새 Plotly 가 흔들리는 폭에서
+                            그려진다 — 폭 0 을 한 번 잡으면 빈 채로 굳는다. 칸은 늘 두고 안에서만 바뀐다. */}
+                        <div className="pt-1" style={{ minHeight: 150 }}>
+                          {chunkX.length > 1
+                            ? <PlotlyChart x={chunkX} series={chunkSeries} height={150}
+                                uirevision={`chunk-${selected}-${curObs?.seq}`} />
+                            : <p className="text-[10px] text-neutral-600">이 프레임엔 추론 기록이 없습니다</p>}
+                        </div>
+                        <p className="text-[10px] text-neutral-500">현 시점 정책 raw action chunk (미래 예측 스텝)</p>
                       </div>
                     </div>
                   </>
@@ -281,12 +288,17 @@ export default function DebugLogsPage() {
                   </div>
                 </div>
 
-                {sim && sim.series[motor] ? (
-                  <PlotlyChart x={sim.t} series={arraySeries} markerX={markerX} height={280}
-                    uirevision={`arr-${selected}-${motor}`} yTitle={motor} />
-                ) : (
-                  <p className="text-xs text-neutral-500">{control.length ? '시뮬레이션 준비 중...' : 'control 데이터가 없습니다.'}</p>
-                )}
+                {/* 런을 바꾸면 `sim` 이 null 이 되어 그래프가 떨어지고 카드가 한 줄로 접혔다가
+                    결과가 오면 다시 펴진다 — 그 사이 아래 슬라이더가 위아래로 튄다. 칸은 최종
+                    높이로 늘 둔다. */}
+                <div style={{ minHeight: 280 }}>
+                  {sim && sim.series[motor] ? (
+                    <PlotlyChart x={sim.t} series={arraySeries} markerX={markerX} height={280}
+                      uirevision={`arr-${selected}-${motor}`} yTitle={motor} />
+                  ) : (
+                    <p className="text-xs text-neutral-500">{control.length ? '시뮬레이션 준비 중...' : 'control 데이터가 없습니다.'}</p>
+                  )}
+                </div>
 
                 {/* 필터 파라미터 */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 pt-1">
