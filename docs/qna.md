@@ -1,0 +1,42 @@
+# 자주 묻는 것 (QnA)
+
+설치·운영에서 **실제로 나온 질문**과 답. 답이 스크립트·문서와 어긋나면 안 되므로
+`backend/tests/test_install_docs.py` 가 핵심 문구를 잠근다. 새 질문은 아래에 덧붙인다 —
+질문은 **나온 말 그대로** 적는다. 그래야 다음 사람이 같은 말로 찾는다.
+
+## 설치하고 나서 브라우저로 어디에 접속하나?
+
+**`http://<이 기계의 IP>/`** — 같은 기계라면 `http://localhost/`. 포트는 80 이고, `apply.sh` 가
+**마지막 줄**에 실제 주소를 찍어 준다(포트를 옮겼으면 그 포트로). IP 는 `hostname -I` 로 본다.
+
+## 80 이 아닌 다른 포트를 쓰고 싶으면?
+
+```bash
+PIPER_WEB_PORT=8081 ./piper-install.sh     # 한 번만
+./piper-install.sh                          # 이후 업데이트 — 8081 그대로
+```
+
+한 번 주면 `apply.sh` 가 `~/piper-web-deploy/current/.env` 에 적어 두어 업데이트에도 유지된다.
+바뀌는 것은 **바깥** 포트뿐이다 — 안쪽 :80 은 컨테이너 안 nginx 가 듣는 포트다.
+
+예전 방식(`docker-compose.override.yml` 에 `ports: !override`)도 그대로 동작하고, 있으면
+그쪽이 이긴다 — `!override` 는 포트 목록을 통째로 치환하기 때문이다. 그 태그를 빼먹으면
+80 과 새 포트를 **둘 다** 잡으려다 조용히 실패한다. 그래서 환경변수 쪽을 권한다.
+
+## 설치하고 나서 포트를 바꾸고 싶으면?
+
+```bash
+cd ~/piper-web-deploy/current
+sed -i '/^PIPER_WEB_PORT=/d' .env; echo 'PIPER_WEB_PORT=9000' >> .env
+docker compose up -d
+```
+
+compose 가 설정 차이를 보고 **frontend 컨테이너만** 다시 만든다(몇 초). 백엔드·데몬은
+그대로고, 다음 업데이트에도 `.env` 값이 남는다. 새 주소는 `http://<IP>:9000/`.
+
+⚠ **녹화·추론 중엔 하지 않는다.** 브라우저의 E-stop heartbeat 가 frontend(nginx)를 거쳐
+가는데, 컨테이너를 다시 만드는 몇 초가 2초 타임아웃을 넘겨 estopd 가 그 활동을 죽인다.
+
+`PIPER_WEB_PORT=9000 ./piper-install.sh <지금 깔린 버전>` 으로도 되지만 무겁다 — 버전을 안
+붙이면 최신으로 올라가는 부작용이 있고, `apply.sh` 는 데몬 다섯을 전부 재시작한다.
+포트 하나 바꾸는 일에는 과하다.

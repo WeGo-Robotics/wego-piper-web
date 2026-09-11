@@ -29,6 +29,12 @@ chmod +x piper-install.sh
 3. **호스트 코드를 꺼낸다** — `docker create` 로 컨테이너를 **실행하지 않고** 파일만
 4. **설치한다** — 꺼낸 `apply.sh` 가 전제 확인·udev·데몬 유닛·컨테이너까지
 
+끝나면 브라우저에서 연다 — **`http://<이 기계의 IP>/`** (같은 기계라면 `http://localhost/`).
+포트는 80 이고, 스크립트가 마지막 줄에 실제 주소를 찍어 준다. IP 는 `hostname -I` 로 본다.
+80 을 다른 것이 쓰고 있으면 **`PIPER_WEB_PORT=8081 ./piper-install.sh`** — 한 번 주면
+업데이트에도 유지된다. 설치 뒤에 바꾸는 법은 [QnA](docs/qna.md). 그래도 안 잡히면 →
+[트러블슈팅 "frontend 가 포트를 못 잡는다"](docs/install-troubleshooting.md).
+
 ⚠ **전제가 빠져 있으면 명령을 찍고 멈춘다.** sudo 가 필요한 것은 스크립트가 직접
 하지 않는다 — 무엇이 바뀌었는지 모르는 채로 설치가 끝나는 편이 더 나쁘다.
 그 명령만 실행하고 다시 부르면 된다.
@@ -43,6 +49,7 @@ chmod +x piper-install.sh
 ./piper-install.sh              # 최신
 ./piper-install.sh v0.3.10      # 특정 버전
 ./piper-install.sh --check      # 아무것도 안 바꾸고 상태만
+PIPER_WEB_PORT=8081 ./piper-install.sh   # 80 대신 다른 포트 (한 번 주면 유지)
 ```
 
 이미 돼 있는 것은 건너뛴다. 두 번 돌려도 같다. 두 번째 설치부터는 바뀐 레이어만
@@ -200,4 +207,5 @@ joint1.pos                           0.456      2.345
 | 버전마다 무엇이 달라졌나 | [CHANGELOG.md](CHANGELOG.md) |
 | 릴리스 (이미지 굽기·배포) | [deploy/RELEASE-CHECKLIST.md](deploy/RELEASE-CHECKLIST.md) |
 | 설치가 멈추거나 장치가 안 보일 때 | [docs/install-troubleshooting.md](docs/install-troubleshooting.md) — 증상으로 찾는다 |
+| 자주 묻는 것 — 접속 주소·포트 바꾸기·설치 뒤 바꾸기 | [docs/qna.md](docs/qna.md) — 나온 말 그대로 찾는다 |
 | 라이선스 | [LICENSE](LICENSE) (Apache-2.0) · [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) |

@@ -347,7 +347,25 @@ else
   cp "$HERE/docker-compose.yml" "$SRC/" && ok "docker-compose.yml"
   # env 예시는 참고용으로만 둔다 — 실제 `.env` 는 사람이 만든 것이라 안 덮는다
   cp "$HERE/backend.env.example" "$SRC/" 2>/dev/null || true
+  # 웹 포트 — `PIPER_WEB_PORT=8081 ./piper-install.sh` 로 **한 번** 주면 배포 디렉토리의
+  # .env 에 적어 두어 다음 업데이트에도 유지된다(compose 가 그 파일로 보간한다). 안 주면
+  # 적힌 값 그대로. ⚠ 파일을 덮지 않는다 — 사람이 PIPER_DATA_ROOT 등을 적어 뒀을 수 있다.
+  # 이 키 한 줄만 바꾼다. (예전 방식 docker-compose.override.yml 은 아래에서 그대로 보존)
+  if [ -n "${PIPER_WEB_PORT:-}" ]; then
+    case "$PIPER_WEB_PORT" in *[!0-9]*) bad "PIPER_WEB_PORT 는 숫자여야 합니다: $PIPER_WEB_PORT"; exit 1 ;; esac
+    touch "$SRC/.env"
+    sed -i '/^PIPER_WEB_PORT=/d' "$SRC/.env"
+    echo "PIPER_WEB_PORT=$PIPER_WEB_PORT" >> "$SRC/.env"
+    ok "웹 포트 $PIPER_WEB_PORT (.env 에 기록 — 업데이트에도 유지)"
+  fi
 fi
+# 웹 포트의 유효값 — 이번에 넘긴 값 → 배포 디렉토리 .env 에 적힌 값 → 80
+web_port() {
+  if [ -n "${PIPER_WEB_PORT:-}" ]; then echo "$PIPER_WEB_PORT"; return; fi
+  local p=''
+  [ -f "$SRC/.env" ] && p="$(sed -n 's/^PIPER_WEB_PORT=//p' "$SRC/.env" | tail -n1)" || true
+  echo "${p:-80}"
+}
 # ⚠ **override 는 손대지 않는다.** 그 호스트의 사정(포트 충돌 회피)이 거기 있다.
 if [ -f "$SRC/docker-compose.override.yml" ]; then
   ok "override 보존: $(grep -oE '"[0-9]+:[0-9]+"' "$SRC/docker-compose.override.yml" | tr '\n' ' ')"
@@ -358,7 +376,7 @@ elif [ -f "$HOME/override.keep.yml" ]; then
   cp "$HOME/override.keep.yml" "$SRC/docker-compose.override.yml"
   ok "override 복원: ~/override.keep.yml"
 else
-  warn "override 없음 — :80 이 비어 있는지 확인하세요 (ss -ltnp)"
+  warn "override 없음 — :$(web_port) 이 비어 있는지 확인하세요 (ss -ltnp). 다른 포트: PIPER_WEB_PORT=8081 ./piper-install.sh"
 fi
 
 # ── 4. 기동 ───────────────────────────────────────────────────────────────
@@ -381,3 +399,16 @@ done
 say "확인"
 echo "  ./apply.sh --check      # 적용 상태만 다시 본다"
 echo "  docker compose logs -f backend"
+
+# ── 5. 접속 ───────────────────────────────────────────────────────────────
+# 끝나고 **어디로 가야 하는지** 아무도 안 알려 줬다 (사용자 지적 2026-09-11). 포트는
+# PIPER_WEB_PORT 나 override 로 옮겨졌을 수 있으니 compose 에 묻는다 — 못 물으면
+# (--check·미기동) .env 의 PIPER_WEB_PORT, 그것도 없으면 80.
+# 마지막 줄이어야 한다 — 위에 묻히면 없는 것과 같다.
+port="$( (cd "$SRC" && docker compose port frontend 80) 2>/dev/null | head -n1 | sed 's/.*://' || true)"
+port="${port:-$(web_port)}"
+ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+url="http://${ip:-<이 기계의 IP>}"
+if [ "$port" != 80 ]; then url="$url:$port"; fi
+say "접속"
+echo "  브라우저에서 연다:  $url/"

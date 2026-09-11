@@ -18,7 +18,7 @@
 #     (경로 변경은 PIPER_DATA_ROOT 로. 컨테이너는 항상 /data 로 본다)
 #
 # 실행:  docker compose up -d --build
-# 접속:  http://<호스트IP>/        (nginx :80 → backend :8000 프록시)
+# 접속:  http://<호스트IP>/        (nginx :80 → backend :8000 프록시. 다른 포트: PIPER_WEB_PORT)
 
 services:
   backend:
@@ -86,10 +86,14 @@ services:
     image: piper-web-frontend
     container_name: piper-web-frontend
     # nginx 는 브리지 안에서 `backend:8000` 으로 프록시한다 (frontend/nginx.conf).
-    # :80 만 호스트로 낸다 — 이제 컨테이너가 호스트 네트워크에 들어갈 이유가 없다.
+    # 호스트로는 이 포트 하나만 낸다 — 이제 컨테이너가 호스트 네트워크에 들어갈 이유가 없다.
+    # ⚠ 바깥 포트만 바뀐다(PIPER_WEB_PORT). 안쪽 :80 은 컨테이너 안 nginx 가 듣는 포트.
+    #   호스트의 :80 을 남(WMS 등)이 쓰면 `PIPER_WEB_PORT=8081 ./piper-install.sh` —
+    #   apply.sh 가 배포 디렉토리 .env 에 적어 두어 업데이트에도 유지된다.
+    #   (예전 방식인 docker-compose.override.yml + `ports: !override` 도 그대로 동작한다)
     networks: [piper]
     ports:
-      - "80:80"
+      - "${PIPER_WEB_PORT:-80}:80"
     depends_on:
       - backend
     restart: unless-stopped
