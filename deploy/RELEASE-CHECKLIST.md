@@ -344,6 +344,7 @@ docker images -q --filter reference='piper-web-*' | sort -u | xargs -r docker rm
 | v0.4.17 | 09-11 15:27 | **backend 이미지 + wheel** robot·shm·sim·so101 (GHCR, 10 파일) | NUC 설치 뒤 시뮬 팔이 안 움직임 — 컨테이너(root) 릴레이가 만든 action 세그먼트가 0600 이라 호스트 simd 가 못 읽고 명령 스레드가 조용히 죽음 → 세그먼트 0644(fchmod) · simd/robotd 는 열기 실패 재시도 · apply.sh 가 켜져 있던 simd/so101d 도 재시작 · `piper-uninstall.sh`(데이터 보존, sudo 직접 안 씀, override 백업) · ⚠ 호스트가 먼저 만들어 두는 우회는 `fs.protected_regular` 로 불가 |
 | v0.4.18 | 09-11 15:40 | **backend 이미지 + 데몬 소스·유닛** (GHCR, 2 파일 — piper-install.sh·unitd.py) | NUC 웹 [업데이트] "받기 스크립트가 없습니다 …/v*/" — README 대로 버전 없이 깔면 번들이 `latest/` 에만 있었다 → installer 가 매니페스트 version 으로 버전 이름 디렉토리에 풀고 `latest` 는 링크, unitd 는 옛 `latest/` 도 매니페스트 버전으로 읽음 · 문구 정직하게 |
 | v0.4.19 | 09-11 17:40 | **backend 이미지 + cam wheel + 데몬 소스·유닛** (GHCR, 5 파일) | USB 웹캠 회색 카드 보정 "Not a RealSense id" — 동사가 rsd 에만, 라우터도 rsd 직행 → camerad 에 같은 절차(V4L2 이름: auto_exposure 3/1·white_balance_temperature·exposure_time_absolute ×100µs·gain, 없는 손잡이는 건너뜀 보고), 게이트웨이는 camera_manager 분기 경유 |
+| v0.5.0 | 09-14 01:54 | **backend 이미지** (GHCR, 1 파일 — Dockerfile) | 릴리스마다 30 레이어 중 11개 390MB 가 새로 구워져 새로 내려감 → 버전 ARG/ENV 를 모든 RUN 뒤로(맨 위면 태그마다 아래 RUN 전부 캐시 미스), 백엔드 의존성 162MB 를 소스보다 먼저(pyproject 만 복사 → tomllib 로 목록 → 소스는 `--no-deps`). 패키지 160개·`pip check` 출력 v0.4.19 와 동일. ⚠ 이 한 번은 크게 받고(레이어 경계가 새로), 다음부터 버전만 바꾼 빌드 2초·레이어 32/32 재사용(실측). minor 는 사용자 결정. GHCR 의 v0.4.18 이하 정리는 토큰에 `delete:packages` 가 없어 보류 |
 
 ⚠ **v0.4.4 는 체크포인트를 무효화한다.** J6 캘리브레이션을 `(-100000, 130000)` →
 `(-120000, 120000)` 으로 고치면서 데이터셋 25 개 339,845 프레임을 재정규화했다
