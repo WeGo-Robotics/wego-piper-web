@@ -10,11 +10,11 @@
 ARG BASE_TAG=cu130-2
 FROM piper-web-base:${BASE_TAG}
 
-# 릴리스 태그가 곧 버전이다 — release.sh 가 --build-arg 로 박는다. 앱은 자기 버전을
-# 모르므로(package.json 0.0.0) 이게 게이트웨이가 "나는 v0.4.5" 라고 말할 첫 근거다
-# (feature/version-update.md §2). 없으면 매니페스트, 그다음 git.
-ARG PIPER_VERSION=unknown
-ENV PIPER_VERSION=${PIPER_VERSION}
+# ⚠ **레이어 순서가 곧 릴리스 크기다.** 릴리스마다 안 바뀌는 것(계약 패키지·vendor·
+#   의존성)이 위, 매번 바뀌는 것(앱 소스·호스트 번들·버전 ENV)이 아래다. 순서가
+#   흐트러지면 아무 에러 없이 조용히 매번 수백 MB 를 다시 굽고 다시 올린다 —
+#   v0.4.19 까지가 그랬다(30 레이어 중 11개 390MB 가 릴리스마다 새로 나갔다).
+#   `test_release.py::test_the_dockerfile_keeps_what_changes_every_release_last` 가 지킨다.
 
 # ── 버스·shm 계약 패키지 ──
 # 게이트웨이와 데몬이 **공유하는 계약**이다. 데몬 자체(rsd/camerad/robotd)는
@@ -46,6 +46,18 @@ RUN pip install --no-deps /tmp/vendor/wego_piper \
     && pip install --no-deps /tmp/vendor/lerobot_robot_pipershm \
     && rm -rf /tmp/vendor
 
+# ── 백엔드 의존성 (fastapi/uvicorn/pyzmq/pandas/plotly/anthropic + pyrealsense2) ──
+# ⚠ **소스보다 먼저.** pyproject 만 먼저 복사해 의존성을 깔고, 소스는 뒤에 얹어
+#   `--no-deps` 로 설치한다. 소스와 같은 레이어에 두면 한 줄 고칠 때마다 이 162MB
+#   가 다시 구워지고 다시 올라간다. pyproject 가 바뀔 때만 여기가 다시 돈다.
+#   pip 에는 "의존성만" 이 없어서 tomllib 로 목록을 뽑는다 — pyproject 의
+#   `dependencies` + `[realsense]` 그대로, 다른 데 두 번 적지 않는다.
+COPY backend/pyproject.toml /tmp/backend-deps/pyproject.toml
+RUN python -c 'import tomllib; p = tomllib.load(open("/tmp/backend-deps/pyproject.toml", "rb"))["project"]; print("\n".join(p["dependencies"] + p["optional-dependencies"]["realsense"]))' \
+        > /tmp/backend-deps/requirements.txt \
+    && pip install -r /tmp/backend-deps/requirements.txt \
+    && rm -rf /tmp/backend-deps
+
 # ── 앱 소스: cli_mapping 의 parents[3] 상대경로(/app/backend ↔ /app/wrapper) 유지 ──
 WORKDIR /app
 COPY backend/ /app/backend/
@@ -75,8 +87,8 @@ ENV HF_HOME=/data/hf \
     PIPER_DEBUG_DIR=/data/logs/debug \
     PIPER_MODEL_PATHS=/data/hf/hub:/data/outputs/train
 
-# 백엔드 의존성 설치 (fastapi/uvicorn/pyzmq/pandas/plotly + pyrealsense2)
-RUN pip install -e "/app/backend[realsense]"
+# 앱 자체 — 의존성은 위에서 깔았으니 `--no-deps`. 여기가 다시 도는 건 몇 초·몇 KB 다.
+RUN pip install --no-deps -e /app/backend
 
 # LeRobot train 의 기본 output_dir 은 CWD 상대(`outputs/train/...`)이고 우리가 바꿀 수
 # 없다. CWD(/app/backend) 아래 심볼릭 링크를 걸어 체크포인트가 마운트로 떨어지게 한다.
@@ -91,7 +103,7 @@ RUN ln -s /data/outputs /app/backend/outputs
 #   파일을 여러 개 주면 하나를 빠뜨리고, 빠뜨린 것은 늘 나중에 엉뚱한 증상으로
 #   드러난다. 비용은 실측 **207KB**(이 이미지의 0.0057%)다.
 #
-# ⚠ **맨 마지막이다.** 여기가 위로 올라가면 데몬 한 줄에 그 아래 레이어가 전부
+# ⚠ **맨 마지막 레이어다.** 여기가 위로 올라가면 데몬 한 줄에 그 아래 레이어가 전부
 #   다시 구워진다. ENV·WORKDIR·CMD 는 0B 메타라 뒤에 와도 상관없다.
 #
 # ⚠ `.hostside/` 는 `deploy/stage-hostside.sh` 가 만든다(gitignore 됨).
@@ -99,6 +111,15 @@ RUN ln -s /data/outputs /app/backend/outputs
 #   "파일이 없다"로 만나는 것보다 여기서 죽는 편이 낫다.
 #   `release.sh` 는 알아서 먼저 부른다.
 COPY .hostside/ /opt/piper-host/
+
+# 릴리스 태그가 곧 버전이다 — release.sh 가 --build-arg 로 박는다. 앱은 자기 버전을
+# 모르므로(package.json 0.0.0) 이게 게이트웨이가 "나는 v0.4.5" 라고 말할 첫 근거다
+# (feature/version-update.md §2). 없으면 매니페스트, 그다음 git.
+# ⚠ **RUN 이 전부 끝난 뒤에 온다.** ARG/ENV 는 그 아래 모든 RUN 의 캐시 키에 들어가서,
+#   맨 위에 두면 태그가 바뀔 때마다 — 즉 릴리스마다 — 소스가 안 바뀐 pip install 까지
+#   전부 다시 돈다. 여기서는 어떤 RUN 도 뒤따르지 않으니 메타데이터만 바뀐다.
+ARG PIPER_VERSION=unknown
+ENV PIPER_VERSION=${PIPER_VERSION}
 
 # 두 python 진입점 모두 이 venv 를 가리키게 함 (compose 에서 override 가능)
 ENV PIPER_LOCAL_PYTHON=/opt/venv/bin/python \

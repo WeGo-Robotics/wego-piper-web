@@ -426,9 +426,8 @@ def test_the_image_carries_the_code_that_runs_outside_it():
         "이미지가 호스트 코드를 안 싣는다"
 
 
-def test_the_host_code_is_the_last_layer():
-    """⚠ 이게 위로 올라가면 데몬 한 줄에 그 아래가 전부 다시 구워진다.
-    ENV·WORKDIR·EXPOSE·CMD 는 0B 메타라 뒤에 와도 레이어를 안 만든다."""
+def _dockerfile_lines() -> list[str]:
+    """앱 Dockerfile 을 명령 한 줄씩으로 — 주석을 걷고 이어짐을 잇는다."""
     from conftest import code_only
 
     # ⚠ **줄 이어짐(`\\`)을 먼저 잇는다.** 안 이으면 `ENV A=1 \\` 다음 줄이
@@ -440,11 +439,50 @@ def test_the_host_code_is_the_last_layer():
             if buf.strip():
                 joined.append(" ".join(buf.split()))
             buf = ""
-    lines = joined
+    return joined
+
+
+# 레이어를 만들지 않는 명령 — 이것들은 마지막 COPY 뒤에 와도 된다
+_META = {"ENV", "ARG", "WORKDIR", "EXPOSE", "CMD", "ENTRYPOINT", "LABEL"}
+
+
+def test_the_host_code_is_the_last_layer():
+    """⚠ 이게 위로 올라가면 데몬 한 줄에 그 아래가 전부 다시 구워진다.
+    ENV·ARG·WORKDIR·EXPOSE·CMD 는 0B 메타라 뒤에 와도 레이어를 안 만든다."""
+    lines = _dockerfile_lines()
     i = next(n for n, l in enumerate(lines) if l.startswith("COPY .hostside/"))
     for l in lines[i + 1:]:
-        assert l.split()[0] in {"ENV", "WORKDIR", "EXPOSE", "CMD", "ENTRYPOINT", "LABEL"}, \
-            f"호스트 코드 뒤에 레이어를 만드는 것이 있다: {l}"
+        assert l.split()[0] in _META, f"호스트 코드 뒤에 레이어를 만드는 것이 있다: {l}"
+
+
+def test_the_dockerfile_keeps_what_changes_every_release_last():
+    """⚠ v0.4.19 까지 릴리스마다 30 레이어 중 **11개(390MB)** 가 새로 구워져 새로
+    올라갔다 — 바뀐 소스는 몇 MB 인데. 원인은 둘이었고 둘 다 순서다:
+
+    - `ENV PIPER_VERSION` 이 맨 위라 태그가 바뀔 때마다(=릴리스마다) 그 아래 RUN
+      전부가 캐시 미스였다 — 소스가 안 바뀐 계약 패키지·vendor 설치까지.
+      ARG/ENV 는 뒤따르는 RUN 의 캐시 키에 들어간다. RUN 뒤에 두면 메타만 바뀐다.
+    - `COPY backend/` 가 `pip install -e backend[realsense]` 앞이라 소스 한 줄에
+      의존성 162MB 를 다시 깔았다. pyproject 만 먼저 복사해 의존성을 깔고, 소스는
+      `--no-deps` 로 얹는다.
+
+    빌드 시간보다 **업데이트마다 NUC 가 받는 양**이 문제였다. 순서가 흐트러져도
+    아무 에러가 안 나므로 여기서 잡는다."""
+    lines = _dockerfile_lines()
+    last_run = max(n for n, l in enumerate(lines) if l.startswith("RUN "))
+    i_ver = next(n for n, l in enumerate(lines) if l.startswith("ENV PIPER_VERSION="))
+    i_arg = next(n for n, l in enumerate(lines) if l.startswith("ARG PIPER_VERSION"))
+    assert last_run < i_arg < i_ver, "버전 ARG/ENV 가 RUN 앞에 있다 — 릴리스마다 전부 다시 굽는다"
+
+    i_toml = next(n for n, l in enumerate(lines) if l.startswith("COPY backend/pyproject.toml "))
+    i_src = next(n for n, l in enumerate(lines) if l.startswith("COPY backend/ /app/backend/"))
+    assert i_toml < i_src, "의존성보다 소스를 먼저 복사한다"
+    deps = next(l for l in lines[i_toml:i_src] if l.startswith("RUN ") and "pip install -r" in l)
+    assert '["dependencies"]' in deps and '["realsense"]' in deps, \
+        "pyproject 의 dependencies + [realsense] 를 그대로 깔지 않는다"
+    app = next(l for l in lines[i_src:] if l.startswith("RUN ") and "/app/backend" in l and "pip install" in l)
+    assert "--no-deps" in app and "[realsense]" not in app, \
+        f"소스 설치가 의존성을 다시 해석한다 — 소스 한 줄에 162MB 가 다시 구워진다: {app}"
 
 
 def test_staging_takes_every_daemon_wheel():
