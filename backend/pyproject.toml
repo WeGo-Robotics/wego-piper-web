@@ -22,6 +22,11 @@ dependencies = [
     # 게이트웨이 SSH 키를 프로세스 안에서 만든다 — 이미지에 `ssh-keygen` 이 없다
     # (services/cloud/sshkey.py). apt 대신 pip 이라 베이스 재빌드가 없다.
     "cryptography>=42",
+    # Vast.ai 조달·키 등록은 CLI 를 래핑한다 (services/cloud, feature/vast-training.md §9-1).
+    # ⚠ 가볍지 않다 — borb(PDF)·lxml·pillow·fonttools·python-barcode·qrcode 가 딸려 오고,
+    #   `cryptography` 를 **정확히 핀**한다(49.0.0). 이미지 환경에서 dry-run 으로 충돌이
+    #   없는 것은 확인했다. 무게가 문제가 되면 REST 직접 호출로 바꾸는 선택지가 있다.
+    "vastai>=1.7",
 ]
 
 [tool.setuptools.packages.find]

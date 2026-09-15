@@ -405,6 +405,11 @@ backend/app/services/cloud/
 에도 어느 Dockerfile 에도 **없다**(§8 W1 이 예고만 해 뒀다). 배포판 게이트웨이는 컨테이너라
 사용자가 깔 방법이 자체가 없다 — 화면은 "깔아라"가 아니라 **"이 게이트웨이에 있는가"**를
 말해야 하고, 없으면 고쳐야 할 것은 사용자가 아니라 이미지다.
+**넣기로 정했다(2026-09-15).** ⚠ 다만 가볍지 않다 — `borb`(PDF)·`lxml`·`pillow`·
+`fonttools`·`python-barcode`·`qrcode` 가 딸려 오고 `cryptography` 를 **정확히 핀**한다
+(49.0.0). 이미지 환경에서 `pip install --dry-run` 으로 충돌이 없는 것은 확인했다.
+무게가 문제가 되면 필요한 서너 호출만 REST 로 치는 선택지가 있다(CLI 래핑 원칙에서는
+벗어난다).
 
 ⚠ **SSH 등록 확인은 핑거프린트를 본다.** `vastai create ssh-key "<공개키>"` 는 **계정 단위
 한 번**이면 이후 인스턴스에 심긴다. 그런데 "키가 하나라도 있으면 ✓"로 판정하면 남의 키가
@@ -483,11 +488,21 @@ TSX 에 박으면 정의가 둘로 갈라진다, cloud-training §9) · `GET /ap
 | | |
 |---|---|
 | 학습 이미지 | ☑ **GHCR push 완료** — `ghcr.io/wego-robotics/piper-train` 네 태그(full·slim × 고정·이동) |
-| 이미지 공개 | ☐ **아직 비공개** — 익명 pull 이 401. Vast 는 인증 없이 당기므로 **이게 관문**이다. GitHub 웹 UI 에서 전환(`gh` CLI 가 이 기계에 없다) |
+| 이미지 공개 | ☑ **공개 전환 완료** — 네 태그 모두 **익명 pull 확인** |
 | Vast 계정 | ☑ API 키 설정(`vastai` 1.7.0) · 크레딧 **$25** |
 | 오퍼 필터 | ☑ §2 문자열 그대로 **52개** · 최저 $0.376/h RTX 4090 — 필드명까지 확인 |
-| 계정 SSH 키 | ☐ **0개.** 이대로 빌리면 접속을 못 한다 — W0 의 실질적 다음 단계 |
-| 설정 도우미 | ☑ 기획 확정 — §9-1 (설정 → 클라우드 탭) |
-| 템플릿 | ☐ 이미지 공개 뒤 `vastai create template` 둘(full·slim) |
+| 게이트웨이 SSH 키 | ☑ **Piper Studio 가 만든다** — 설정 → 클라우드 탭(`1cdbca4`). ☐ 계정 등록 버튼은 사람이 누른다 |
+| 설정 도우미 | ◐ 기획 §9-1 · **키 부분 구현** — `GET/POST /api/cloud/ssh-key` + 등록(지문 확인) |
+| 템플릿 | ☑ **둘 생성** — `piper-train full cu126`(id 728456) · `slim cu126`(id 728457). `runtype=ssh` + `ssh_direct`, onstart `/opt/piper/bootstrap.sh`, disk 40GB |
 
-다음: 패키지 공개 → 익명 pull 확인 → SSH 키 등록 → 템플릿 → 첫 인스턴스에서 `env-check.sh`.
+⚠ **`vastai search templates` 는 기본이 공개 템플릿만이다.** 질의 없이 부르면 2048개가
+나오는데 **내 것은 하나도 없다** — 만든 템플릿은 `private: True` 라서다. `private=true` 나
+`creator_id=<id>` 를 줘야 나온다. 이걸 모르면 "템플릿이 사라졌다" 로 읽고, W2 의 프로바이더
+층이 같은 조회로 자기 것을 못 찾는다.
+
+⚠ 템플릿의 필터는 Vast 쪽 표현으로 **번역돼 저장된다** — `cuda_vers>=12.4` 가
+`{"cuda_max_good": {"gte": "12.4"}}` 로 들어갔다. 오퍼 응답의 필드명(`reliability2`)과 또
+다르므로, 파서를 쓸 때 셋을 헷갈리면 안 된다.
+
+다음: SSH 키 등록(사람) → 첫 인스턴스에서 `env-check.sh` → W0 의 나머지(데이터셋 업로드 →
+원격 학습 → 회수 → 로컬 추론).
