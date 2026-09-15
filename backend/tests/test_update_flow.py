@@ -224,6 +224,15 @@ def test_sudo_lines_are_lifted_out_of_the_log_and_the_changelog_section_is_cut()
     u = _unitd()
     log = "1. 전제\n  ✗ 그룹 video 없음\n  아래를 먼저 실행하세요:\n    sudo usermod -aG video sw\n    sudo apt install -y redis-server\n"
     assert u.parse_need_sudo(log) == ["sudo usermod -aG video sw", "sudo apt install -y redis-server"]
+    # ⚠ **`&&` 로 이어진 처방도 통째로 올라와야 한다.** CAN sudoers 줄이 그 모양이다(v0.5.1) —
+    #   앞부분만 집어 주면 사람이 반쪽짜리 명령을 복사해 실행하고, 파일은 안 놓인 채
+    #   [UP] 에서만 "a password is required" 로 막힌다. 화면은 이 문자열을 그대로 그린다.
+    chained = ("  아래를 먼저 실행하세요 (이 스크립트는 sudo 를 직접 쓰지 않습니다):\n"
+               "    sudo visudo -cf /b/sudoers/piper-can && sudo install -m 0440 -o root -g root"
+               " /b/sudoers/piper-can /etc/sudoers.d/piper-can\n")
+    assert u.parse_need_sudo(chained) == [
+        "sudo visudo -cf /b/sudoers/piper-can && sudo install -m 0440 -o root -g root"
+        " /b/sudoers/piper-can /etc/sudoers.d/piper-can"], "이어진 명령이 잘린다"
     text = "# 변경 이력\n\n## v0.4.6 — x\n\n- 하나\n\n## v0.4.5 — y\n\n- 둘\n"
     assert u.changelog_section(text, "v0.4.6") == "## v0.4.6 — x\n\n- 하나"
     assert u.changelog_section(text, "v0.4.7") == ""
