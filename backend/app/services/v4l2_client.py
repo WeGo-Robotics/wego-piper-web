@@ -31,19 +31,31 @@ class V4l2Client:
         # 카메라 하나당 `has_frame`·`info` 까지 도니 스캔 한 번이 분 단위로 멈췄다
         # (실제로 그랬다). 격리하려고 프로세스를 나눈 건데 그러면 의미가 없다 —
         # `robot_manager._call` 이 같은 이유로 먼저 이 단축을 갖고 있다.
+        # ⚠ **진짜 사유를 버리지 않는다.** 실기(2026-09-15): 회색 카드 보정이 늘
+        #   "camerad 가 응답하지 않습니다" 로 끝나 사용자가 데몬을 몇 번이나 재시작했다.
+        #   그런데 그 문구는 세 가지를 한 얼굴로 덮는다 — ① 생존 표시 없음(진짜 죽음),
+        #   ② 타임아웃, ③ **데몬이 답은 했는데 그 동사를 모름**("알 수 없는 메서드:
+        #   calibrate_gray_card" → `rpc_call` 이 RuntimeError 로 던진다). ③ 은 옛 camerad 가
+        #   도는 기계의 증상이라 **재시작해도 영원히 안 변한다** — 고칠 곳은 데몬 갱신이다.
+        #   기본값이 `{"ok": False, "error": …}` 인 호출은 그 자리를 사유로 채워 화면까지 올린다.
+        def _why(reason: str):
+            if isinstance(default, dict) and "error" in default:
+                return {**default, "error": reason}
+            return default
+
         try:
             if not _bus().is_alive(C.CAMERAD):
-                return default
-        except Exception:
-            return default
+                return _why("camerad 가 떠 있지 않습니다 (생존 표시 없음) — 서비스에서 켜세요")
+        except Exception as exc:
+            return _why(f"버스(Redis)에 못 붙었습니다: {exc}")
         try:
             return _bus().rpc_call(C.CAMERAD, method, list(args), timeout=timeout)
         except TimeoutError:
             logger.warning("camerad 응답 없음 (%s) — 데몬이 떠 있나요?", method)
-            return default
+            return _why(f"camerad 가 {timeout}초 안에 답하지 않습니다 ({method})")
         except Exception as exc:
             logger.warning("camerad.%s 실패: %s", method, exc)
-            return default
+            return _why(f"camerad.{method}: {exc}")
 
     def available(self) -> bool:
         try:

@@ -127,6 +127,47 @@ def test_an_unusable_reading_stops_before_changing_anything():
     assert "before.usable" in head and "return" in head, "못 믿는 측정에도 진행한다"
 
 
+def test_a_daemon_that_does_not_know_the_verb_does_not_look_like_a_dead_one(monkeypatch):
+    """⚠ 실기(2026-09-15): 회색 카드 보정이 "camerad 가 응답하지 않습니다" 로 끝나 사용자가
+    설정 → 서비스에서 camerad 를 몇 번이나 재시작했는데 **아무것도 안 변했다.**
+
+    그 한 문구가 세 가지를 같은 얼굴로 덮고 있었다: ① 생존 표시 없음(진짜 죽음),
+    ② 타임아웃, ③ **데몬이 답은 했는데 그 동사를 모름**(옛 camerad — `rpc_call` 이
+    `ok:false` 응답을 RuntimeError 로 던진다). ③ 은 재시작으로 영영 안 변한다. 고칠 곳은
+    데몬 갱신인데, 화면은 그걸 말해 주지 않아 사람이 엉뚱한 데를 판다."""
+    from app.services import v4l2_client as V
+
+    class _Bus:
+        def __init__(self, alive, exc):
+            self._alive, self._exc = alive, exc
+
+        def is_alive(self, _daemon):
+            return self._alive
+
+        def rpc_call(self, *a, **k):
+            raise self._exc
+
+    unknown = RuntimeError("camerad.calibrate_gray_card: 알 수 없는 메서드: calibrate_gray_card")
+    monkeypatch.setattr(V, "_bus", lambda: _Bus(True, unknown))
+    r = V.V4l2Client().calibrate_gray_card("/dev/video0")
+    assert r["ok"] is False
+    assert "알 수 없는 메서드" in r["error"], f"진짜 사유가 버려졌다: {r['error']}"
+    assert "응답하지 않습니다" not in r["error"], "죽은 데몬처럼 보인다 — 재시작해도 안 변하는데"
+
+    monkeypatch.setattr(V, "_bus", lambda: _Bus(False, unknown))
+    dead = V.V4l2Client().calibrate_gray_card("/dev/video0")
+    assert "생존 표시" in dead["error"], f"진짜 죽은 경우와 구분되지 않는다: {dead['error']}"
+
+    # 세 데몬이 같은 얼굴로 실패하면 사람은 또 헤맨다 — 같은 규율을 rsd·robotd 에도
+    from pathlib import Path
+
+    services = Path(__file__).resolve().parents[1] / "app" / "services"
+    for f in ("v4l2_client.py", "realsense_manager.py", "robot_manager.py"):
+        src = (services / f).read_text()
+        assert "def _why(reason: str)" in src, f"{f} 가 실패 사유를 담지 않는다"
+        assert src.count("_why(") >= 5, f"{f} 의 실패 갈래 일부가 아직 기본값만 돌려준다"
+
+
 def test_camerad_speaks_the_gray_card_verbs_too():
     """⚠ USB 웹캠으로 눌러 보니 "Not a RealSense id" — 동사가 rsd 에만 있었다(2026-09-11).
     계산(graycard.py)은 공용이니 camerad 도 같은 동사·같은 보고를 낸다. 재려면 마지막

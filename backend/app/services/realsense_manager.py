@@ -57,19 +57,27 @@ class RealSenseHub:
         # 카메라 하나당 `has_frame`·`info` 까지 도니 스캔 한 번이 분 단위로 멈췄다
         # (실제로 그랬다). 격리하려고 프로세스를 나눈 건데 그러면 의미가 없다 —
         # `robot_manager._call` 이 같은 이유로 먼저 이 단축을 갖고 있다.
+        # ⚠ **진짜 사유를 버리지 않는다** (v4l2_client 와 같은 규율). "rsd 가 응답하지
+        #   않습니다" 한 문구가 ① 죽음 ② 타임아웃 ③ **동사를 모름**(옛 데몬)을 다 덮으면,
+        #   ③ 인 사람은 데몬을 재시작하며 시간을 버린다 — 고칠 곳은 데몬 갱신이다.
+        def _why(reason: str):
+            if isinstance(default, dict) and "error" in default:
+                return {**default, "error": reason}
+            return default
+
         try:
             if not _bus().is_alive(C.RSD):
-                return default
-        except Exception:
-            return default
+                return _why("rsd 가 떠 있지 않습니다 (생존 표시 없음) — 서비스에서 켜세요")
+        except Exception as exc:
+            return _why(f"버스(Redis)에 못 붙었습니다: {exc}")
         try:
             return _bus().rpc_call(C.RSD, method, list(args), timeout=timeout)
         except TimeoutError:
             logger.warning("rsd 응답 없음 (%s) — 데몬이 떠 있나요?", method)
-            return default
+            return _why(f"rsd 가 {timeout}초 안에 답하지 않습니다 ({method})")
         except Exception as exc:
             logger.warning("rsd.%s 실패: %s", method, exc)
-            return default
+            return _why(f"rsd.{method}: {exc}")
 
     def scan(self) -> list[dict]:
         return self._call("scan", default=[]) or []

@@ -77,19 +77,28 @@ def _call(method: str, *args, default=None, timeout: int = C.RPC_TIMEOUT_S):
     # ⚠ **죽은 데몬을 기다리지 않는다.** 생존 표시가 없으면 즉시 포기한다 —
     # 안 그러면 호출마다 RPC 타임아웃(20초)을 통째로 기다려, robotd 가 내려간
     # 동안 웹이 통째로 굼떠진다. 격리하려고 프로세스를 나눈 건데 그러면 의미가 없다.
+    # ⚠ **진짜 사유를 버리지 않는다** (v4l2_client·realsense_manager 와 같은 규율).
+    #   한 문구가 ① 죽음 ② 타임아웃 ③ **동사를 모름**(옛 데몬)을 다 덮으면, ③ 인 사람은
+    #   데몬을 재시작하며 시간을 버린다 — 고칠 곳은 데몬 갱신이다. 기본값이
+    #   `{"ok": False, "error": …}` 인 호출만 사유를 담는다(나머지 반환 모양은 그대로).
+    def _why(reason: str):
+        if isinstance(default, dict) and "error" in default:
+            return {**default, "error": reason}
+        return default
+
     try:
         if not _bus().is_alive(C.ROBOTD):
-            return default
-    except Exception:
-        return default
+            return _why("robotd 가 떠 있지 않습니다 (생존 표시 없음) — 서비스에서 켜세요")
+    except Exception as exc:
+        return _why(f"버스(Redis)에 못 붙었습니다: {exc}")
     try:
         return _bus().rpc_call(C.ROBOTD, method, list(args), timeout=timeout)
     except TimeoutError:
         logger.warning("robotd 응답 없음 (%s) — 데몬이 떠 있나요?", method)
-        return default
+        return _why(f"robotd 가 {timeout}초 안에 답하지 않습니다 ({method})")
     except Exception as exc:
         logger.warning("robotd.%s 실패: %s", method, exc)
-        return default
+        return _why(f"robotd.{method}: {exc}")
 
 
 def _pair(result, fallback: str) -> tuple[bool, str]:
