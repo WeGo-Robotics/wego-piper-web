@@ -40,6 +40,47 @@ so101 은 데몬이 호스트여도 관절 매핑 표를 게이트웨이 릴레�
 
 ---
 
+## 릴리스 규칙 — **배포판은 개발 머신이 아니다**
+
+2026-09-15 하루에 같은 부류의 사고가 셋 났다: 로봇 등록 [UP] 이 sudo 를 물었고, 회색 카드
+보정이 "camerad 가 응답하지 않습니다" 였고, 카메라 프로파일 저장이 500 이었다. 증상은 셋 다
+달랐지만 원인은 하나다 — **개발 머신에는 있고 배포판에는 없는 것.** 개발 머신은 게이트웨이가
+저장소에서 직접 돌고 호스트에 온갖 것이 깔려 있다. 배포판은 컨테이너 안이고, 데몬은 호스트의
+사용자 유닛이며, 그 사이에 있는 것은 버스와 `/dev/shm` 뿐이다.
+
+그래서 **기능을 만들 때가 아니라 릴리스할 때** 아래를 본다. 규칙마다 그걸 지키는 테스트를
+달았다 — 규칙이 문서에만 있으면 다음에 또 빠져나간다.
+
+| # | 규칙 | 왜 (겪은 일) | 지키는 것 |
+|---|---|---|---|
+| R1 | **게이트웨이가 import 하는 데몬 패키지는 이미지에 깐다** | 이미지가 `cam` 을 "데몬 전용"이라며 뺐는데 게이트웨이가 `piper_cam` 을 import 한다 → 배포판에서만 프로파일 저장 500 | `test_every_daemon_package_the_gateway_imports_is_installed_in_the_image` — 사람의 선언이 아니라 **소스의 import 에서** 규칙을 끌어낸다 |
+| R2 | **장치·네트워크 네임스페이스가 필요한 조회는 데몬 RPC 를 거친다** | 컨테이너에는 `can0` 이 없다. 포트 카드가 `ip` 를 직접 불러 bitrate 가 빈칸이었고(초기화 안 된 것처럼 보였다), [DOWN] 은 `Cannot find device "can0"`, 버스 가드는 BUS-OFF 를 못 읽고 **조용히 통과**했다 | `test_bringing_a_can_interface_down_goes_through_robotd_like_bringing_it_up` · `test_the_teleop_bus_guard_asks_robotd_instead_of_failing_open` · `test_the_ports_card_reads_bus_stats_from_robotd_not_from_the_container` |
+| R3 | **데몬 venv 의 바깥 의존은 설치가 직접 깔고, 점검에서도 본다** | `--system-site-packages` 로 "시스템에 있겠지" 로 뒀는데 맨 우분투엔 없었다 → [연결] 이 `piper_sdk not installed` | `test_the_install_puts_piper_sdk_in_the_daemon_venv_and_checks_it` — 컨테이너와 **같은 핀**인지까지 대조 |
+| R4 | **매니페스트는 "이번에 바뀐 것"일 뿐 — 없거나 낡으면 깐다** | 데몬을 실은 릴리스를 건너뛴 기계는 영영 못 따라잡았다(camerad 가 9월 1일자로 남아 회색 카드가 죽었다). wheel 은 v0.4.15 에 같은 함정을 이미 겪었다 | `test_a_fresh_host_installs_everything_the_bundle_carries` · `test_a_host_that_skipped_a_release_still_catches_up_on_the_daemon_source` |
+| R5 | **실패는 진짜 사유를 말한다** | 한 문구가 죽음·타임아웃·**동사를 모름**(옛 데몬)을 다 덮어, 사람이 데몬을 재시작하며 시간을 버렸다 — 고칠 곳은 데몬 갱신이었다 | `test_a_daemon_that_does_not_know_the_verb_does_not_look_like_a_dead_one` |
+| R6 | **스크립트는 sudo 를 직접 쓰지 않는다. 처방은 복사하면 끝나야 한다** | 줄 앞에만 `sudo` 가 붙어 `&&` 뒤가 일반 사용자로 돌았다 | `test_apply_never_runs_sudo_itself` · `test_every_chained_sudo_prescription_carries_sudo_on_each_part` · `test_every_sudo_prescription_apply_prints_is_in_the_doc` |
+| R7 | **태그가 빌드보다 먼저. 버전은 최하위 자리만. 병행 세션을 확인한다** | 태그 없이 구우면 판정이 뒤로 밀린다. 같은 날 다른 세션이 릴리스를 내므로 `git tag --sort=-v:refname`·원격 태그·CHANGELOG 첫 항목을 대조하고, `git log v<최신>..HEAD` 의 남의 커밋도 CHANGELOG 에 싣는다 | 아래 원터치 절 · [0단계](#0-버전-번호--최하위-자리만-올린다) |
+| R8 | **릴리스 뒤 이미지 안을 열어 확인한다** | 매니페스트·wheel·데몬 소스·apply.sh 는 **이미지 안으로** 나간다. 굽고 나서 보지 않으면 "고쳤다고 믿는 것"이 안 실려 나간다 | 아래 확인 명령 |
+
+### R8 — 굽고 나서 이 한 번
+
+```bash
+docker run --rm piper-web-backend:<태그> sh -c '
+  grep -E "^(version|images|wheels|daemons)=" /opt/piper-host/manifest.txt
+  ls /opt/piper-host/wheels | head
+  python -c "import piper_cam, piper_bus, piper_shm; print(\"import OK\")"
+  grep -c "이번에 고친 표시" /opt/piper-host/apply.sh'
+```
+
+고친 것이 호스트에서 도는 것이면(데몬·apply.sh·wheel) **그 파일이 번들 안에 있는지**를 본다.
+고친 것이 게이트웨이에서 도는 것이면 **컨테이너 안에서 import 되는지**를 본다.
+
+### 규칙이 늘어나는 방식
+
+사고가 나면 고치는 것으로 끝내지 않는다 — **규칙 한 줄과 그걸 지키는 테스트 하나**를 같이
+남긴다. 위 표의 R1~R5 가 전부 그렇게 생겼다. 테스트 없이 문서에만 적은 규칙은 다음 사람이
+같은 자리에서 또 빠져나간다.
+
 ## 원터치 — 이 두 줄이 절차다
 
 ⚠ **태그가 빌드보다 먼저다.** `release.sh` 는 `git tag --sort=-v:refname` 의 첫 줄을

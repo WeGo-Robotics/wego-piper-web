@@ -182,6 +182,25 @@ def test_the_readme_admits_the_first_install_takes_two_runs_and_a_relogin():
         assert (REPO / "docs" / "images" / f"{n}.jpg").stat().st_size < 150_000, f"{n}.jpg 가 안 줄었다"
 
 
+def test_the_release_rules_name_tests_that_actually_exist():
+    """⚠ 릴리스 규칙 표(`deploy/RELEASE-CHECKLIST.md`)는 규칙마다 **그걸 지키는 테스트**를
+    단다 — 문서에만 적힌 규칙은 다음 사람이 같은 자리에서 또 빠져나가기 때문이다
+    (2026-09-15 하루에 같은 부류로 세 번: piper_sdk·piper_cam·데몬 소스).
+
+    그 인용이 낡으면 표가 **조용히 거짓**이 된다: 이름이 바뀐 테스트를 가리키는데 읽는
+    사람은 "지켜지고 있다" 고 믿는다. 규칙을 지우려면 테스트도 같이 지워야 한다."""
+    import re
+
+    doc = (REPO / "deploy" / "RELEASE-CHECKLIST.md").read_text()
+    assert "## 릴리스 규칙" in doc, "릴리스 규칙 절이 사라졌다"
+    rules = doc.split("## 릴리스 규칙", 1)[1].split("\n## 원터치", 1)[0]
+    cited = set(re.findall(r"`(test_\w+)`", rules))
+    assert len(cited) >= 8, f"규칙 표가 테스트를 거의 안 건다: {len(cited)}개"
+    have = "".join(p.read_text() for p in (REPO / "backend" / "tests").glob("test_*.py"))
+    missing = sorted(t for t in cited if f"def {t}(" not in have)
+    assert not missing, f"규칙이 없는 테스트를 가리킨다: {missing}"
+
+
 def test_the_install_grants_robotd_the_can_commands_and_nothing_more():
     """⚠ 실기(2026-09-15): 다른 기계에서 로봇 등록 [UP] 이 `set bitrate failed: sudo: a password is
     required`. robotd 는 사용자 유닛이라 CAP_NET_ADMIN 이 없고 `ip link set can…` 을 sudo 로
