@@ -19,6 +19,9 @@ dependencies = [
     "pyyaml>=6.0",
     # 외부 LLM 판단 클라이언트 (feature/llm-integration.md)
     "anthropic>=0.122",
+    # 게이트웨이 SSH 키를 프로세스 안에서 만든다 — 이미지에 `ssh-keygen` 이 없다
+    # (services/cloud/sshkey.py). apt 대신 pip 이라 베이스 재빌드가 없다.
+    "cryptography>=42",
 ]
 
 [tool.setuptools.packages.find]

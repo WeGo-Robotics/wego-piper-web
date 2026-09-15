@@ -22,7 +22,7 @@ logging.getLogger("uvicorn.access").addFilter(_QuietAccessFilter())
 # ⚠ 이 import 는 위 로깅 필터 설정 **뒤에** 있어야 한다 —
 # uvicorn.access 필터가 라우터 import 보다 먼저 붙어야 한다.
 from app.routers import (
-    activity, alignment, cameras, datasets, debug_logs, devices, encoder, estop,
+    activity, alignment, cameras, cloud, datasets, debug_logs, devices, encoder, estop,
     eval_log, external, health, hub, inference, logs, models, orchestrator, params, phase,
     policies, policy_server, presets, recording, robots, system, training, vision,
     ws, yolo_train,
@@ -38,7 +38,7 @@ ROUTERS = [
     health, ws, estop, params, models, datasets, hub, inference, eval_log,
     robots, cameras, logs, debug_logs, training, recording, policy_server, system,
     encoder, activity, policies, presets, phase, devices, vision, yolo_train,
-    orchestrator, external, alignment,
+    orchestrator, external, alignment, cloud,
     web_leader,
 ]
 from app.services.estop_bridge import estop_bridge

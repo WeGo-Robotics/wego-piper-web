@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import FloorGuardPanel from '../components/FloorGuardPanel'
 import HfAccountPanel from '../components/HfAccountPanel'
+import CloudPanel from '../components/CloudPanel'
 import ServicesPanel from '../components/ServicesPanel'
 import VersionCard from '../components/VersionCard'
 import { useSystemMessage } from '../components/SystemMessages'
@@ -19,6 +20,7 @@ const TABS = [
   { id: 'safety', label: '안전' },
   { id: 'services', label: '서비스' },
   { id: 'hub', label: '저장소' },
+  { id: 'cloud', label: '클라우드' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
 
@@ -113,6 +115,7 @@ export default function SettingsPage() {
       </>)}
 
       {tab === 'hub' && <HfAccountPanel />}
+      {tab === 'cloud' && <CloudPanel />}
 
       {tab === 'general' && (<>
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5 space-y-3">
