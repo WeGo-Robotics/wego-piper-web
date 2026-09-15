@@ -8,7 +8,7 @@
 | 작업 단계 라벨 | `observation.state`에 페이즈 슬롯 추가 + 자동 라벨러 + 편집 UI | 거의 안 겹침 → **지금 착수 가능** | [01-phase-annotation.md](01-phase-annotation.md) |
 | 카메라 프로파일 | 노출·WB 등을 이름 붙인 프로파일로 저장, **연결 시** 자동 적용 | ☑ **완료.** 개편이 원인 7개 중 4개를 삭제했고 나머지 셋을 닫았다 — 적용 지점은 데몬 `connect()` 한 곳 | [camera-profiles.md](camera-profiles.md) |
 | 클라우드 학습 | 외부 GPU에서 `lerobot-train`, 웹에서 동일하게 제어 | 0~2는 독립 리팩터, 3~4는 Redis만 필요 → **쪼개서 앞당김** → ☑ 0~4 실기 확인 | [cloud-training.md](cloud-training.md) |
-| 외부 학습 서버 (Vast.ai) | 임대 GPU 조달·파기·왕복 전송·비용 가드 — cloud-training 5~8 구체화 | 검증된 SSH 러너·레지스트리 위에 **프로바이더 층만 얹는다** — 러너 신규 없음 | [vast-training.md](vast-training.md) |
+| 외부 학습 서버 (Vast.ai) | 임대 GPU 조달·파기·왕복 전송·비용 가드·도우미 — cloud-training 5~8 구체화 | 검증된 SSH 러너·레지스트리 위에 **프로바이더 층만 얹는다** — 러너 신규 없음. ☐ 09-14 작업 분해 W0~W5 (컨테이너에 ssh 가 없다는 전제 추가) | [vast-training.md](vast-training.md) |
 | 파라미터 프리셋 | 추론·학습 설정을 이름 붙여 저장·재사용 | 추론 부분이 **#1 단계 2(PARAM_SPEC)에 의존** | [parameter-presets.md](parameter-presets.md) |
 | 데모 시나리오 격차 | [데모 시나리오](../PiPER_AI_데모_시나리오_정리.md) 수행에 필요한 공통 격차 4개(뎁스 경로·에피소드 루프·센서 입력·양팔 수집) 분석 | camerad 없이 가능한 지름길과 미룰 것을 구분 | [demo-scenario-gaps.md](demo-scenario-gaps.md) |
 | 에피소드 오케스트레이터 | 스냅샷→판단→실행→리셋 루프. 스텝은 Python, 시퀀스는 YAML 스펙 (ComfyUI 방식, Lua 기각) | 지금은 백엔드 서비스, Redis 이후 버스 클라이언트로 — 프로토콜은 불변 | [episode-orchestrator.md](episode-orchestrator.md) |
