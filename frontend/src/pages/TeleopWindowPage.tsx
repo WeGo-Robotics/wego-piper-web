@@ -24,6 +24,11 @@ const KEY_OF: Record<string, string> = {
   KeyQ: 'q', KeyA: 'a', KeyW: 'w', KeyS: 's', KeyE: 'e', KeyD: 'd', KeyR: 'r', KeyF: 'f', KeyG: 'g',   // KeyT 는 팔 리셋(가로챔)
   KeyY: 'y', KeyH: 'h', KeyI: 'i', KeyK: 'k', KeyJ: 'j', KeyL: 'l', KeyU: 'u', KeyO: 'o',
   BracketLeft: '[', BracketRight: ']',
+  // EE 이동 — 키패드(106키 방향키 8/2/4/6, +/−). e.code 는 물리 키라 NumLock 과 무관하다.
+  // 부호는 마우스와 같다(위=앞 +x, 오른쪽=−y, +=위 +z) — web_leader.py EE_KEYS 가 받는 이름.
+  // 키패드 없는 키보드용으로 방향키 묶음과 본체 −/= 도 같은 뜻이다.
+  Numpad8: 'x+', Numpad2: 'x-', Numpad4: 'y+', Numpad6: 'y-', NumpadAdd: 'z+', NumpadSubtract: 'z-',
+  ArrowUp: 'x+', ArrowDown: 'x-', ArrowLeft: 'y+', ArrowRight: 'y-', Equal: 'z+', Minus: 'z-',
 }
 const SELECT_OF: Record<string, string> = {
   Digit1: 'joint1', Digit2: 'joint2', Digit3: 'joint3', Digit4: 'joint4', Digit5: 'joint5', Digit6: 'joint6', Digit7: 'gripper',
@@ -46,7 +51,10 @@ const JOINT_ROWS: HelpRow[] = [
 ]
 const EE_ROWS: HelpRow[] = [
   ['마우스 이동', '앞뒤(세로)·좌우(가로) 이동'],
+  ['키패드 8 / 2', '앞 / 뒤 (X) — 방향키 ↑ ↓ 도 같다'],
+  ['키패드 4 / 6', '왼쪽 / 오른쪽 (Y) — 방향키 ← → 도 같다'],
   ['휠', '위아래 (Z)'],
+  ['키패드 + / −', '위 / 아래 (Z) — 본체 = / − 도 같다'],
   ['Q / A', '롤 (+/−)'],
   ['W / S', '피치 (+/−)'],
   ['E / D', '요 (+/−)'],
@@ -61,6 +69,7 @@ const COMMON_ROWS: HelpRow[] = [
   ['Space', '정지 — 모든 입력 초기화'],
   ['Esc', '조종(포인터 락) 해제'],
   ['X', '자세 고정 토글'],
+  ['0 (키패드 0)', '그리퍼 토글 — 한 번 누르면 2초에 걸쳐 닫히거나 열린다'],
   ['R', '환경 리셋 — 큐브 + 팔 원위치'],
   ['T', '팔 초기화 — 팔만 원위치, 큐브·조명 유지'],
   ['B', '블럭 옮기기 — 켠 뒤 탑뷰를 클릭한 자리로'],
@@ -92,6 +101,11 @@ export default function TeleopWindowPage() {
   const [locked, setLocked] = useState(false)
   const [mode, setMode] = useState<'joint' | 'ee'>('joint')
   const [help, setHelp] = useState(false)
+  // EE 모드에서 마우스 끄기 — 키패드로만 움직일 때 손이 스친 마우스가 팔을 밀지 않게(사용자 요청 2026-09-14).
+  // 이동·휠·버튼 전부 무시한다. 관절 모드에선 효과 없다(거긴 드래그가 관절이다). 브라우저에 기억.
+  const [mouseOff, setMouseOff] = useState(() => { try { return localStorage.getItem('piper_teleop_ee_mouse_off') === '1' } catch { return false } })
+  const mouseOffRef = useRef(mouseOff)
+  const modeRef = useRef<'joint' | 'ee'>('joint')
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)   // 카메라 준비 전엔 화면을 덮어 오조작 막는다
   const [videoFps, setVideoFps] = useState<number | null>(null)   // 큰 스트림 실측 fps (null=아직/멈춤)
@@ -194,15 +208,25 @@ export default function TeleopWindowPage() {
     return () => window.clearInterval(iv)
   }, [sendState])
 
-  const start = async () => {
+  const start = useCallback(async () => {
     setErr('')
     try { await api.post('/leader/web/start', { follower, mode }); running.current = true }
     catch (e) { setErr(e instanceof Error ? e.message : '시작 실패'); return false }
     return true
-  }
+  }, [follower, mode])
+  // 키보드 전용(EE + 마우스 끄기) — 클릭·포인터 락 없이 키가 곧 시작이다 (사용자 요청 2026-09-14:
+  // "마우스 끄기를 선택했으면 바로 키보드에 반응하게"). 전송 루프는 리더만 살아 있으면 돈다.
+  const kbOnly = mouseOff && mode === 'ee'
   const stop = useCallback(async () => {
     running.current = false
     try { await api.post('/leader/web/stop', {}) } catch { /* 이미 끝남 */ }
+  }, [])
+  // 수집 정지 — 조종 중엔 이 창에 있으니 여기서도 세울 수 있어야 한다(실기 2026-09-14: 수집 페이지로
+  // 건너가 눌렀는데 그 탭이 마비돼 못 세웠다). 이번 에피소드까지 저장하고 녹화를 끝낸다.
+  const stopRecording = useCallback(async () => {
+    setErr('')
+    try { await api.post('/recording/stop', undefined, { timeoutMs: 10_000 }) }
+    catch (e) { setErr(`수집 정지 실패: ${e instanceof Error ? e.message : ''}`) }
   }, [])
 
   // 블럭 옮기기: 큰 화면(카메라 뷰)에서 클릭한 픽셀 → 정규화 u,v(object-contain 보정) →
@@ -236,6 +260,7 @@ export default function TeleopWindowPage() {
     if (loading || moveBlock) return       // 준비 전·블럭 옮기기 중엔 조종 시작 안 함
     if (document.pointerLockElement === arena.current) return
     if (!running.current) { if (!(await start())) return }
+    if (kbOnly) return                     // 키보드 전용 — 커서를 숨길 이유가 없다
     arena.current?.requestPointerLock()
   }
   useEffect(() => {
@@ -251,24 +276,40 @@ export default function TeleopWindowPage() {
       if (e.code === 'Space') { e.preventDefault(); keys.current.clear(); mouse.current.buttons.clear(); sendState(true); return }
       if (e.code === 'Slash' && e.shiftKey) { setHelp((h) => !h); return }
       if (e.code === 'KeyX') { pending.current.toggle_lock = true; return }
+      // 0(본체·키패드) = 그리퍼 토글 — 열려 있으면 닫고, 닫혀 있으면 연다. 판단은 백엔드(지금 값을 안다).
+      if ((e.code === 'Digit0' || e.code === 'Numpad0') && !e.repeat) { e.preventDefault(); pending.current.click = 'toggle'; return }
       if (e.code === 'KeyR' && !e.repeat) { e.preventDefault(); resetWorld(false); return }
       if (e.code === 'KeyT' && !e.repeat) { e.preventDefault(); resetWorld(true); return }
       if (e.code === 'KeyB' && !e.repeat) { e.preventDefault(); setMoveBlock((m) => { if (!m) document.exitPointerLock(); return !m }); return }
       if (SELECT_OF[e.code]) { pending.current.select = SELECT_OF[e.code]; return }
-      const k = KEY_OF[e.code]; if (k) { e.preventDefault(); keys.current.add(k) }
+      const k = KEY_OF[e.code]
+      if (k) {
+        e.preventDefault(); keys.current.add(k)
+        // 키보드 전용이면 조종 키가 곧 시작 — 클릭을 기다리지 않는다 (start 는 멱등, 준비 전엔 안 됨)
+        if (!running.current && mouseOffRef.current && modeRef.current === 'ee' && !loading) void start()
+      }
       mods.current = { shift: e.shiftKey, ctrl: e.ctrlKey }
     }
     const up = (e: KeyboardEvent) => { const k = KEY_OF[e.code]; if (k) keys.current.delete(k); mods.current = { shift: e.shiftKey, ctrl: e.ctrlKey } }
     window.addEventListener('keydown', down); window.addEventListener('keyup', up)
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
-  }, [mode, sendState, resetWorld])
+  }, [mode, sendState, resetWorld, start, loading])
 
-  // 마우스 — 락이 걸린 동안만
+  // 마우스 끄기 상태를 핸들러(의존성 없는 effect)가 읽을 수 있게 ref 로 — 켜는 순간 쌓인 델타·버튼도 버린다
   useEffect(() => {
-    const move = (e: MouseEvent) => { if (document.pointerLockElement !== arena.current) return; mouse.current.dx += e.movementX; mouse.current.dy += e.movementY; mods.current = { shift: e.shiftKey, ctrl: e.ctrlKey } }
-    const wheel = (e: WheelEvent) => { if (document.pointerLockElement !== arena.current) return; e.preventDefault(); mouse.current.wheel += Math.sign(e.deltaY); mods.current = { shift: e.shiftKey, ctrl: e.ctrlKey } }
-    const down = (e: MouseEvent) => { if (document.pointerLockElement !== arena.current) return; e.preventDefault(); if (e.button === 1) { pending.current.toggle_lock = true; return } mouse.current.buttons.add(e.button); pressAt.current[e.button] = performance.now() }
-    const up = (e: MouseEvent) => { if (document.pointerLockElement !== arena.current) return; mouse.current.buttons.delete(e.button); const held = performance.now() - (pressAt.current[e.button] ?? 0); if (held < 150 && (e.button === 0 || e.button === 2)) pending.current.click = e.button === 0 ? 'close' : 'open' }
+    mouseOffRef.current = mouseOff
+    if (mouseOff) { mouse.current.dx = 0; mouse.current.dy = 0; mouse.current.wheel = 0; mouse.current.buttons.clear() }
+    try { localStorage.setItem('piper_teleop_ee_mouse_off', mouseOff ? '1' : '0') } catch { /* 저장 못 해도 동작엔 지장 없다 */ }
+  }, [mouseOff])
+  useEffect(() => { modeRef.current = mode }, [mode])
+
+  // 마우스 — 락이 걸린 동안만. EE 모드에서 "마우스 끄기"면 이동·휠·버튼 전부 무시한다.
+  useEffect(() => {
+    const off = () => mouseOffRef.current && modeRef.current === 'ee'
+    const move = (e: MouseEvent) => { if (document.pointerLockElement !== arena.current || off()) return; mouse.current.dx += e.movementX; mouse.current.dy += e.movementY; mods.current = { shift: e.shiftKey, ctrl: e.ctrlKey } }
+    const wheel = (e: WheelEvent) => { if (document.pointerLockElement !== arena.current) return; e.preventDefault(); if (off()) return; mouse.current.wheel += Math.sign(e.deltaY); mods.current = { shift: e.shiftKey, ctrl: e.ctrlKey } }
+    const down = (e: MouseEvent) => { if (document.pointerLockElement !== arena.current) return; e.preventDefault(); if (off()) return; if (e.button === 1) { pending.current.toggle_lock = true; return } mouse.current.buttons.add(e.button); pressAt.current[e.button] = performance.now() }
+    const up = (e: MouseEvent) => { if (document.pointerLockElement !== arena.current || off()) return; mouse.current.buttons.delete(e.button); const held = performance.now() - (pressAt.current[e.button] ?? 0); if (held < 150 && (e.button === 0 || e.button === 2)) pending.current.click = e.button === 0 ? 'close' : 'open' }
     const ctx = (e: Event) => e.preventDefault()
     window.addEventListener('mousemove', move); window.addEventListener('wheel', wheel, { passive: false })
     window.addEventListener('mousedown', down); window.addEventListener('mouseup', up); window.addEventListener('contextmenu', ctx)
@@ -294,14 +335,23 @@ export default function TeleopWindowPage() {
           {real && <span className="rounded bg-red-700/60 px-1.5 py-0.5 text-red-100">실기</span>}
           <span className={`px-1.5 py-0.5 rounded ${mode === 'joint' ? 'bg-blue-600/40' : 'bg-neutral-700'}`}>관절</span>
           <span className={`px-1.5 py-0.5 rounded ${mode === 'ee' ? 'bg-blue-600/40' : 'bg-neutral-700'}`}>EE</span>
-          <span className="text-neutral-500">Tab 전환 · Ctrl 미세{mode === 'ee' ? ' · Shift 회전' : ' · Shift 빠르게'}</span>
+          <span className="text-neutral-500">Tab 전환 · Ctrl 미세{mode === 'ee' ? ' · QWEASD 회전' : ' · Shift 빠르게'}</span>
+          {mode === 'ee' && (
+            // 헤더는 arena 밖이라 이 클릭은 조종을 시작하지 않는다. 포인터 락 중엔 Esc 로 풀고 누른다.
+            <label className={`flex items-center gap-1 cursor-pointer ${mouseOff ? 'text-amber-300' : 'text-neutral-400'}`}
+                   title="EE 모드에서 마우스 이동·휠·버튼을 무시 — 키패드(8/2/4/6, +/−)와 0 으로만 조종">
+              <input type="checkbox" checked={mouseOff} onChange={(e) => setMouseOff(e.target.checked)} className="accent-amber-500" />
+              마우스 끄기
+            </label>
+          )}
           {st.pose_lock && <span className="text-amber-300">자세 고정</span>}
         </div>
         <div className="flex items-center gap-2">
           <span className={st.running ? (locked ? 'text-emerald-400' : 'text-amber-300') : 'text-neutral-500'}>
             {st.running
-              ? (st.relaying === false ? '● 수집 중 — 녹화가 팔을 움직임, 여기선 입력만' : locked ? '● 조종 중 — Esc 끝' : '○ 클릭하면 이어서')
-              : '클릭해서 시작'}
+              ? (st.relaying === false ? '● 수집 중 — 녹화가 팔을 움직임, 여기선 입력만'
+                 : kbOnly ? '● 키보드 조종 중' : locked ? '● 조종 중 — Esc 끝' : '○ 클릭하면 이어서')
+              : kbOnly ? '조종 키를 누르면 시작 (마우스 끄기)' : '클릭해서 시작'}
           </span>
           {/* 멈춘 게 영상인지 입력인지 구분: 영상=스트림 fps, 입력=팔에 전송 중인가 */}
           <span className={videoFps ? 'text-neutral-500' : 'text-red-400'} title="큰 화면 스트림 상태">
@@ -320,6 +370,10 @@ export default function TeleopWindowPage() {
             className="px-2 py-0.5 rounded bg-amber-700 hover:bg-amber-600 disabled:opacity-50">{resetting ? '리셋 중…' : '환경 리셋'}</button>
           <button onClick={() => setMoveBlock((m) => { if (!m) document.exitPointerLock(); return !m })} title="블럭 옮기기 (B) — 켠 뒤 화면을 클릭하면 그 자리로"
             className={`px-2 py-0.5 rounded ${moveBlock ? 'bg-cyan-600 text-white' : 'bg-neutral-700 hover:bg-neutral-600'}`}>블럭 옮기기</button>
+          {st.running && st.relaying === false && (
+            <button onClick={stopRecording} title="수집을 세운다 — 이번 에피소드까지 저장하고 녹화 종료"
+              className="px-2 py-0.5 rounded bg-red-800 hover:bg-red-700 text-red-100">수집 정지</button>
+          )}
           {st.running && <button onClick={stop} className="px-2 py-0.5 rounded bg-red-700 hover:bg-red-600">끝내기</button>}
           <button onClick={() => setHelp((h) => !h)} title="조작 도움말 (Shift+/)"
             className={`px-2 py-0.5 rounded ${help ? 'bg-blue-600 text-white' : 'bg-neutral-700 hover:bg-neutral-600'}`}>도움말</button>
@@ -377,7 +431,7 @@ export default function TeleopWindowPage() {
               </div>
               <div className="grid gap-5 sm:grid-cols-3">
                 <HelpSection title="관절 모드" rows={JOINT_ROWS} />
-                <HelpSection title="EE 모드 · 마우스 이동 + 키 회전(동시)" rows={EE_ROWS} />
+                <HelpSection title="EE 모드 · 이동(마우스·키패드) + 키 회전(동시)" rows={EE_ROWS} />
                 <HelpSection title="공통 · 단축키" rows={COMMON_ROWS} />
               </div>
             </div>

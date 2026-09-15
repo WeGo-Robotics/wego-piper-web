@@ -33,6 +33,12 @@ INPUT_DEADMAN_S = 0.1          # 입력이 이만큼 안 오면 속도 0
 JOINT_SPEED = 30.0             # norm/s
 JOINT_FAST, JOINT_FINE = 3.0, 0.25
 GRIPPER_SPEED = 60.0           # norm/s (0..100)
+# 0 키(토글)는 스냅이 아니라 램프다 — 닫기도 열기도 **한 번 누르면 2초에 걸쳐** (사용자 요청
+# 2026-09-14: 처음엔 "30% 수준으로", 0.67초도 "너무 빠르다" → 2초).
+# ⚠ 스냅은 "속도"가 없다 — 목표를 한 번에 0 으로 두면 시뮬 액추에이터가 18ms 에 닫아 버린다
+#   (실측, kp 600). 그래서 눈에 보이는 램프로 바꿨다. 여기 하나로 조절한다(전행정 = 100/값 초).
+#   도중에 키·버튼으로 만지면 램프가 풀리고 손이 이긴다. 마우스 짧은 클릭(닫기/열기)은 스냅 그대로.
+GRIPPER_TOGGLE_SPEED = 50.0    # norm/s — 전행정 2.0초, 열림→큐브(40mm) 접촉 1.3초
 MOVE_SPEED = 0.08              # m/s
 ROT_SPEED = math.radians(30)   # rad/s
 MOUSE_JOINT_PER_PX = 20.0 / 300     # norm / px
@@ -52,10 +58,15 @@ JOINTS = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
 JOINT_KEYS = {"q": ("joint1", 1), "a": ("joint1", -1), "w": ("joint2", 1), "s": ("joint2", -1),
               "e": ("joint3", 1), "d": ("joint3", -1), "r": ("joint4", 1), "f": ("joint4", -1),
               "y": ("joint6", 1), "h": ("joint6", -1)}    # joint5 는 T 를 팔 리셋에 내주고 가운데 드래그·휠선택으로
-#: EE 모드 키 — **회전만** (이동은 마우스가 한다 → 마우스 드래그하며 키를 눌러 6D 동시).
-#  위 줄 +, 아래 줄 − (관절 모드와 같은 기억법): q/a=roll, w/s=pitch, e/d=yaw.
+#: EE 모드 키 — 회전은 QWEASD(위 줄 +, 아래 줄 −, 관절 모드와 같은 기억법: q/a=roll,
+#  w/s=pitch, e/d=yaw). 이동은 마우스가 하지만 **키패드로도 한다**(사용자 요청 2026-09-14):
+#  방향키(8/2 = 앞/뒤 x, 4/6 = 왼쪽/오른쪽 y)와 +/−(위/아래 z). 창이 e.code 를 이 이름으로
+#  바꿔 보낸다 — 부호는 마우스와 같다(위=+x, 오른쪽=−y, 휠 위=+z). 마우스를 끌며 키를 눌러
+#  6D 를 동시에 움직이는 것은 그대로다.
 EE_KEYS = {"q": ("roll", 1), "a": ("roll", -1), "w": ("pitch", 1), "s": ("pitch", -1),
-           "e": ("yaw", 1), "d": ("yaw", -1)}
+           "e": ("yaw", 1), "d": ("yaw", -1),
+           "x+": ("x", 1), "x-": ("x", -1), "y+": ("y", 1), "y-": ("y", -1),
+           "z+": ("z", 1), "z-": ("z", -1)}
 GRIPPER_KEYS = {"[": -1, "]": 1}
 
 
@@ -88,6 +99,7 @@ class Integrator:
         self.shift = self.ctrl = False
         self.mouse = {"dx": 0.0, "dy": 0.0, "wheel": 0.0, "buttons": []}
         self.gripper_snap: float | None = None
+        self.gripper_ramp_to: float | None = None   # 0 키 닫기 램프의 목표 (GRIPPER_TOGGLE_SPEED)
         self.homing: dict[str, float] | None = None   # 원점 복귀 램프 목표 (진행 중이면 자세)
         # EE
         self.model = None
@@ -115,6 +127,11 @@ class Integrator:
             self.pose_lock = not self.pose_lock
         if click in ("close", "open"):
             self.gripper_snap = 0.0 if click == "close" else 100.0
+        elif click == "toggle":
+            # 0 키 — 지금 반쯤이면 "더 열린 쪽"을 지금 상태로 본다: 50 이상이면 닫고, 아니면 연다
+            # (사용자 요청 2026-09-14). 판단은 여기서 한다 — 창이 보는 상태는 폴링이라 낡을 수 있다.
+            # 닫기도 열기도 램프(GRIPPER_TOGGLE_SPEED) — 한 번 누르면 2초에 걸쳐.
+            self.gripper_ramp_to = 0.0 if self.pose["gripper"] >= 50.0 else 100.0
 
     def set_mode(self, mode: str) -> None:
         if mode not in ("joint", "ee") or mode == self.mode:
@@ -173,9 +190,19 @@ class Integrator:
                 g += 1
         if g:
             self.pose["gripper"] = _clamp(self.pose["gripper"] + g * GRIPPER_SPEED * fine * dt, 0.0, 100.0)
+            self.gripper_ramp_to = None          # 손으로 만지면 0 키 램프는 풀린다
         if self.gripper_snap is not None:
             self.pose["gripper"] = self.gripper_snap
             self.gripper_snap = None
+            self.gripper_ramp_to = None
+        if self.gripper_ramp_to is not None:
+            # 0 키 닫기 — 한 틱에 GRIPPER_TOGGLE_SPEED·dt 만큼, 목표에 닿으면 끝
+            cur, tgt = self.pose["gripper"], self.gripper_ramp_to
+            room = GRIPPER_TOGGLE_SPEED * dt
+            if abs(tgt - cur) <= room:
+                self.pose["gripper"], self.gripper_ramp_to = tgt, None
+            else:
+                self.pose["gripper"] = cur + room * (1.0 if tgt > cur else -1.0)
         if self.mode == "joint":
             self._step_joint(keys, mouse, dt, fine)
         else:

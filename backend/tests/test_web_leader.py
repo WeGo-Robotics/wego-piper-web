@@ -241,8 +241,9 @@ def test_ee_rotation_keys_and_mouse_move_the_pose_together(monkeypatch):
     (사용자 결정 2026). q/a=roll, w/s=pitch, e/d=yaw."""
     import numpy as np
     from app.services import web_leader as W
-    assert W.EE_KEYS == {"q": ("roll", 1), "a": ("roll", -1), "w": ("pitch", 1),
-                         "s": ("pitch", -1), "e": ("yaw", 1), "d": ("yaw", -1)}
+    rot_keys = {k: v for k, v in W.EE_KEYS.items() if v[0] in ("roll", "pitch", "yaw")}
+    assert rot_keys == {"q": ("roll", 1), "a": ("roll", -1), "w": ("pitch", 1),
+                        "s": ("pitch", -1), "e": ("yaw", 1), "d": ("yaw", -1)}
     integ = W.Integrator(HOME)
     fake = _FakeModel(); integ.model = fake
     monkeypatch.setattr("app.services.relay._norm_from_rad", lambda q: {f"joint{i+1}": float(np.degrees(q[i])) for i in range(6)})
@@ -252,6 +253,120 @@ def test_ee_rotation_keys_and_mouse_move_the_pose_together(monkeypatch):
     integ.feed(400.0, keys=["w"], mouse={"dy": -150}); integ.step(400.0, 1/30)
     assert integ.T[0, 3] > x0 + 0.02, "마우스 이동이 안 먹었다"
     assert not np.allclose(integ.T[:3, :3], R0), "키 회전이 안 먹었다 (동시 6D)"
+
+
+def test_ee_mouse_can_be_switched_off_with_a_checkbox():
+    """EE 모드에서 마우스 입력을 끄는 체크박스 (사용자 요청 2026-09-14) — 키패드로만 움직일 때
+    손이 스친 마우스가 팔을 밀지 않게. 이동·휠·버튼 **전부** 무시하고, 관절 모드에선 효과가
+    없으며(거긴 드래그가 관절이다), 켜는 순간 쌓인 델타·버튼을 버리고, 브라우저에 기억한다."""
+    win = (REPO / "frontend" / "src" / "pages" / "TeleopWindowPage.tsx").read_text()
+    assert 'type="checkbox" checked={mouseOff}' in win and "마우스 끄기" in win
+    # EE 모드에서만 보인다 — 체크박스 바로 앞(몇 줄 안)에 모드 조건이 있다
+    before = win.split('type="checkbox" checked={mouseOff}', 1)[0]
+    assert "{mode === 'ee' && (" in before[-800:], "체크박스가 관절 모드에서도 보인다"
+    # 핸들러는 의존성 없는 effect 라 ref 로 읽고, EE 모드일 때만 무시한다
+    assert "const off = () => mouseOffRef.current && modeRef.current === 'ee'" in win
+    handlers = win.split("const off = () =>", 1)[1].split("const ctx =", 1)[0]
+    for h in ("const move", "const wheel", "const down", "const up"):
+        body = handlers.split(h, 1)[1].split("\n", 1)[0]
+        assert "off()" in body, f"{h} 가 마우스 끄기를 무시한다"
+    # 휠은 무시하더라도 페이지 스크롤은 막는다 (preventDefault 가 off 판정보다 먼저)
+    wheel = handlers.split("const wheel", 1)[1].split("\n", 1)[0]
+    assert wheel.index("e.preventDefault()") < wheel.index("off()")
+    # 켜는 순간 쌓인 입력을 버리고, 기억한다
+    assert "mouse.current.buttons.clear() }" in win.split("mouseOffRef.current = mouseOff", 1)[1].split("}, [mouseOff])", 1)[0]
+    assert "localStorage.setItem('piper_teleop_ee_mouse_off'" in win and "localStorage.getItem('piper_teleop_ee_mouse_off')" in win
+    # ⚠ 키보드 전용이면 **클릭 없이 키가 곧 시작**이다 (사용자 보고 2026-09-14: 클릭 전엔 키가 안 먹었다).
+    #   조종 키 keydown 이 리더를 띄우고(준비 전·이미 실행 중이면 안 띄움), 클릭해도 포인터 락을 안 건다.
+    keydown = win.split("const down = (e: KeyboardEvent)", 1)[1].split("const up = (e: KeyboardEvent)", 1)[0]
+    assert "if (!running.current && mouseOffRef.current && modeRef.current === 'ee' && !loading) void start()" in keydown
+    assert keydown.index("keys.current.add(k)") < keydown.index("void start()"), "키를 등록하기 전에 시작한다"
+    click = win.split("const onArenaClick", 1)[1].split("requestPointerLock()", 1)[0]
+    assert "if (kbOnly) return" in click, "키보드 전용인데 클릭이 커서를 숨긴다"
+    assert "조종 키를 누르면 시작" in win, "헤더가 여전히 '클릭해서 시작'이라고만 말한다"
+
+
+def test_recording_can_be_stopped_from_where_the_operator_is():
+    """실기(2026-09-14): 조종 창에 있다가 수집 페이지로 건너가 정지를 눌렀는데 그 탭이 마비돼
+    못 세웠다. 두 길을 연다 — 조종 창의 "수집 중" 상태에 [수집 정지] 버튼, 수집 페이지의 ESC
+    (라벨은 오래전부터 "(ESC)" 였는데 처리기가 없었다). 둘 다 실패를 말하고, 시간 제한이 있다."""
+    win = (REPO / "frontend" / "src" / "pages" / "TeleopWindowPage.tsx").read_text()
+    assert "api.post('/recording/stop', undefined, { timeoutMs: 10_000 })" in win
+    assert "{st.running && st.relaying === false && (" in win and ">수집 정지</button>" in win, \
+        "조종 창에 수집 정지 버튼이 없다"
+    assert "수집 정지 실패" in win, "실패를 안 말한다"
+    rec = (REPO / "frontend" / "src" / "pages" / "RecordingPage.tsx").read_text()
+    esc = rec.split("// ESC = 정지", 1)[1].split("}, [isRunning])", 1)[0]
+    assert "e.key !== 'Escape'" in esc and "void handleStop()" in esc, "ESC 가 정지를 안 부른다"
+    assert "t.tagName === 'INPUT'" in esc, "입력 칸에서 ESC 를 눌러도 정지된다"
+    assert "if (!isRunning) return" in esc, "수집 중이 아닐 때도 ESC 처리기가 걸린다"
+
+
+def test_zero_key_toggles_the_gripper_and_the_backend_decides_which_way():
+    """0(본체·키패드) = 그리퍼 토글 (사용자 요청 2026-09-14). 어느 쪽으로 갈지는 **백엔드**가
+    지금 값을 보고 정한다 — 창이 보는 상태는 폴링이라 낡을 수 있고, 반쯤 열린 채면 50 을
+    기준으로 "더 열린 쪽"을 지금 상태로 본다."""
+    from app.services import web_leader as W
+    dt = 1 / 30
+    integ = W.Integrator(HOME)
+    integ.feed(200.0, click="open"); integ.step(200.0, dt)
+    assert integ.pose["gripper"] == 100.0
+    # ⚠ 닫기도 열기도 **램프**다 — 한 번 누르면 2초에 걸쳐 (사용자 요청 2026-09-14: 0.67초도 너무 빠르다).
+    #   스냅은 시뮬에서 18ms 에 닫혀 "속도"가 없었다. 한 틱에 GRIPPER_TOGGLE_SPEED·dt 만큼, 목표에 닿으면 끝.
+    assert 1.5 <= 100.0 / W.GRIPPER_TOGGLE_SPEED <= 2.5, "전행정이 2초 언저리가 아니다"
+    integ.feed(200.1, click="toggle"); integ.step(200.1, dt)
+    assert integ.pose["gripper"] == pytest.approx(100.0 - W.GRIPPER_TOGGLE_SPEED * dt), "토글 닫기가 스냅이다"
+    for i in range(2, 45):
+        integ.feed(200.0 + i * dt, keys=[]); integ.step(200.0 + i * dt, dt)
+    assert integ.pose["gripper"] > 0.0, "1.5초 만에 다 닫혔다 — 램프가 너무 빠르다"
+    for i in range(45, 80):
+        integ.feed(200.0 + i * dt, keys=[]); integ.step(200.0 + i * dt, dt)
+    assert integ.pose["gripper"] == 0.0, "램프가 끝까지 안 닫는다"
+    # 열기도 같은 램프
+    integ.feed(203.0, click="toggle"); integ.step(203.0, dt)
+    assert integ.pose["gripper"] == pytest.approx(W.GRIPPER_TOGGLE_SPEED * dt), "닫혀 있는데 토글 열기가 램프가 아니다"
+    for i in range(1, 80):
+        integ.feed(203.0 + i * dt, keys=[]); integ.step(203.0 + i * dt, dt)
+    assert integ.pose["gripper"] == 100.0, "램프가 끝까지 안 연다"
+    # 반쯤: 30 은 닫힌 쪽 → 열기 시작, 50 은 열린 쪽 → 닫기 시작
+    integ.pose["gripper"] = 30.0
+    integ.feed(206.0, click="toggle"); integ.step(206.0, dt)
+    assert integ.pose["gripper"] == pytest.approx(30.0 + W.GRIPPER_TOGGLE_SPEED * dt), "반쯤(30) 은 닫힌 쪽 — 열어야 한다"
+    integ.pose["gripper"] = 50.0
+    integ.feed(206.1, click="toggle"); integ.step(206.1, dt)
+    assert integ.pose["gripper"] == pytest.approx(50.0 - W.GRIPPER_TOGGLE_SPEED * dt), "50 은 열린 쪽 — 닫기 시작해야 한다"
+    # 램프 도중에 손으로 만지면(] = 열기 키) 램프가 풀리고 손이 이긴다
+    integ.feed(202.3, keys=["]"]); integ.step(202.3, dt)
+    assert integ.gripper_ramp_to is None and integ.pose["gripper"] > 50.0 - W.GRIPPER_TOGGLE_SPEED * dt, "손 입력이 램프를 못 끊는다"
+    # 창: 본체 0 과 키패드 0 이 toggle 클릭으로 가고, 도움말 공통 묶음에 적혀 있다
+    win = (REPO / "frontend" / "src" / "pages" / "TeleopWindowPage.tsx").read_text()
+    assert "e.code === 'Digit0' || e.code === 'Numpad0'" in win and "pending.current.click = 'toggle'" in win
+    common = win.split("const COMMON_ROWS", 1)[1].split("function HelpSection", 1)[0]
+    assert "그리퍼 토글" in common, "0 이 도움말에 없다"
+
+
+def test_ee_keypad_keys_move_xyz_with_the_same_signs_as_the_mouse(monkeypatch):
+    """EE 이동을 마우스만이 아니라 **키패드로도** — 방향키 8/2/4/6 = 앞뒤·좌우, +/− = 위아래
+    (사용자 요청 2026-09-14). 부호는 마우스와 같아야 한다: 마우스 위(dy<0)=+x 이므로 8 도 +x,
+    마우스 오른쪽(dx>0)=−y 이므로 6 도 −y, 휠 위=+z 이므로 + 도 +z. 창은 e.code(물리 키)를
+    이 이름으로 바꿔 보내므로 NumLock 상태와 무관하다."""
+    import numpy as np
+    from app.services import web_leader as W
+    assert {k: W.EE_KEYS[k] for k in ("x+", "x-", "y+", "y-", "z+", "z-")} == {
+        "x+": ("x", 1), "x-": ("x", -1), "y+": ("y", 1), "y-": ("y", -1), "z+": ("z", 1), "z-": ("z", -1)}
+    monkeypatch.setattr("app.services.relay._norm_from_rad", lambda q: {f"joint{i+1}": float(np.degrees(q[i])) for i in range(6)})
+    for key, axis, sign in (("x+", 0, 1), ("x-", 0, -1), ("y+", 1, 1), ("y-", 1, -1), ("z+", 2, 1), ("z-", 2, -1)):
+        integ = W.Integrator(HOME); integ.model = _FakeModel(); integ.set_mode("ee")
+        before = integ.T[axis, 3]
+        integ.feed(400.0, keys=[key]); integ.step(400.0, 1 / 30)
+        assert (integ.T[axis, 3] - before) * sign > 0, f"{key} 가 {'xyz'[axis]} 를 {'+' if sign > 0 else '−'} 로 안 움직인다"
+    # 창: 키패드 8/2/4/6·+/− 가 그 이름으로 가고, 방향키 묶음도 같은 뜻, 도움말에 적혀 있다
+    win = (REPO / "frontend" / "src" / "pages" / "TeleopWindowPage.tsx").read_text()
+    for code, name in (("Numpad8", "x+"), ("Numpad2", "x-"), ("Numpad4", "y+"), ("Numpad6", "y-"),
+                       ("NumpadAdd", "z+"), ("NumpadSubtract", "z-"), ("ArrowUp", "x+"), ("ArrowRight", "y-")):
+        assert f"{code}: '{name}'" in win, f"{code} 가 {name} 으로 안 간다"
+    ee = win.split("const EE_ROWS", 1)[1].split("const COMMON_ROWS", 1)[0]
+    assert "키패드 8 / 2" in ee and "키패드 4 / 6" in ee and "키패드 + / −" in ee, "키패드 이동이 도움말에 없다"
 
 
 def test_t_key_resets_only_the_arm_not_the_cube(monkeypatch):
