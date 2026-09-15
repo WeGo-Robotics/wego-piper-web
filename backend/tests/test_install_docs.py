@@ -182,6 +182,37 @@ def test_the_readme_admits_the_first_install_takes_two_runs_and_a_relogin():
         assert (REPO / "docs" / "images" / f"{n}.jpg").stat().st_size < 150_000, f"{n}.jpg 가 안 줄었다"
 
 
+def test_the_install_grants_robotd_the_can_commands_and_nothing_more():
+    """⚠ 실기(2026-09-15): 다른 기계에서 로봇 등록 [UP] 이 `set bitrate failed: sudo: a password is
+    required`. robotd 는 사용자 유닛이라 CAP_NET_ADMIN 이 없고 `ip link set can…` 을 sudo 로
+    부르는데, 개발 머신엔 있던 비밀번호 없는 허용이 그 기계엔 없었다 — 설치가 아무 말도 안 했다.
+
+    잠그는 것: (1) 번들에 sudoers 템플릿이 실리고 (2) 허용은 `modprobe gs_usb` 와 `ip link set can*`
+    뿐이며(`ALL` 금지) (3) apply.sh 0절이 `sudo -l` 로 실행 없이 검사해 처방을 찍고 (4) 처방은
+    `visudo -cf` 로 검증한 뒤 0440 으로 놓고 (5) 제거 스크립트가 지우라고 말하고 (6) robotd 의
+    오류 문구가 처방을 가리킨다."""
+    from conftest import code_only
+    tpl = (REPO / "deploy" / "sudoers" / "piper-can.in").read_text()
+    rules = [l for l in tpl.splitlines() if l.strip() and not l.startswith("#")]
+    body = " ".join(rules)
+    assert "@USER@ ALL=(root) NOPASSWD: PIPER_CAN" in body, "허용 줄이 다르다"
+    assert "NOPASSWD: ALL" not in body and ": ALL" not in body, "전부 허용은 안 된다"
+    for cmd in ("modprobe gs_usb", "ip link set can* down", "ip link set can* up", "ip link set can* type can bitrate [0-9]*"):
+        assert cmd in body, f"허용 목록에 {cmd} 가 없다"
+    assert "/usr/sbin/ip" in body and "/usr/bin/ip" in body, "ip 경로가 배포판마다 달라 둘 다 적어야 한다"
+    stage = (REPO / "deploy" / "stage-hostside.sh").read_text()
+    assert 'cp deploy/sudoers/piper-can.in "$OUT/sudoers/"' in stage, "번들에 템플릿이 안 실린다"
+    apply = code_only((REPO / "deploy" / "apply.sh").read_text())
+    assert "sudo -n -l /usr/sbin/ip link set can0 type can bitrate 1000000" in apply, "실행 없이 허용 여부를 검사하지 않는다"
+    assert 'sed "s/@USER@/$USER/g" "$HERE/sudoers/piper-can.in" > "$HERE/sudoers/piper-can"' in apply
+    assert 'NEED_SUDO+=("visudo -cf $HERE/sudoers/piper-can && sudo install -m 0440 -o root -g root $HERE/sudoers/piper-can /etc/sudoers.d/piper-can")' in apply, \
+        "처방이 visudo 검증 없이 놓거나 권한이 0440 이 아니다"
+    assert "sudo rm -f /etc/sudoers.d/piper-can" in (REPO / "deploy" / "piper-uninstall.sh").read_text()
+    can = (REPO / "robot" / "piper_robot" / "can.py").read_text()
+    assert "password is required" in can and "sudoers.d/piper-can" in can, "robotd 오류 문구가 처방을 안 가리킨다"
+    assert "/etc/sudoers.d/piper-can" in DOC.read_text()
+
+
 def test_the_qna_doc_keeps_the_questions_as_asked_and_agrees_with_the_scripts():
     """질문이 **나온 말 그대로** 남는 곳(사용자: "QnA 문서에 남겨두자", 2026-09-11). 답이
     스크립트와 어긋나면 안 된다 — 접속 주소, 포트 바꾸기, 설치 뒤 바꾸기(frontend 만 다시

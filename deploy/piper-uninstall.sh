@@ -128,6 +128,7 @@ fi
 say "6. 호스트에 남긴 것 (sudo 필요 — 이 스크립트는 직접 안 한다)"
 echo "  지워도 되는 것 — 다른 것이 안 쓴다면 (CAN 규칙은 이 배선의 시리얼이 든 것이라 다시 쓸 거면 둔다):"
 echo "    sudo rm -f /etc/udev/rules.d/99-realsense-libusb.rules /etc/udev/rules.d/99-piper-can.rules && sudo udevadm control --reload-rules"
+echo "    sudo rm -f /etc/sudoers.d/piper-can    # robotd 의 CAN 올리기(비밀번호 없는 sudo) 허용"
 echo "  그대로 두는 것 — 공용 설정이라 손대지 않는다: docker 그룹, linger, redis-server(유닉스 소켓 설정), docker.io·python3-venv 패키지"
 
 say "끝"

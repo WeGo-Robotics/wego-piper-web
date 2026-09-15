@@ -57,6 +57,7 @@ systemctl --user list-units 'piper-*'            # 무엇이 돌고 무엇이 �
 |---|---|---|
 | 카메라 스캔 0개인데 `lsusb`·`/dev/video*` 엔 있다 | 사용자가 **`video` 그룹에 없다.** `/dev/video*` 는 `root:video` 이고 그래픽 세션 사용자에게만 ACL 이 간다 — SSH 로 들어오면 "아까는 됐는데 지금 안 됨" | `sudo usermod -aG video $USER` → 재로그인 → 데몬 재시작(`apply.sh` 또는 [설정 → 서비스]) |
 | RealSense 만 0개 | `pyrealsense2` 는 V4L2 백엔드라 `/dev/video*` 를 직접 연다 — 같은 원인. `rs.log_to_console(debug)` 에 `Permission denied` 가 찍힌다 | 위와 같다 |
+| 로봇 등록 **[UP]** 이 `set bitrate failed: sudo: a password is required` | robotd 는 사용자 유닛이라 `ip link set can0 type can bitrate …`(CAP_NET_ADMIN)를 sudo 로 부르는데, 비밀번호 없는 허용이 이 기계에 없다 | `./apply.sh` 를 다시 돌리면 0절이 찍어 주는 `sudo visudo -cf … && sudo install -m 0440 … /etc/sudoers.d/piper-can` 을 실행한다 — 허용은 `modprobe gs_usb` 와 `ip link set can* …` 뿐이다. 지우려면 `sudo rm -f /etc/sudoers.d/piper-can` |
 | CAN 이 갑자기 통째로 사라졌다(카메라도 같이) | xHCI 컨트롤러가 죽었다 — `dmesg` 에 `xhci_hcd … HC died` | 로봇 페이지 **[USB 진단/복구]** 또는 `echo -n <PCI주소> \| sudo tee /sys/bus/pci/drivers/xhci_hcd/{unbind,bind}`. 버튼은 `/etc/sudoers.d/piper-usb-recover` 의 NOPASSWD 항목이 있어야 돈다 |
 | `/health` 조차 멈춘다, 프로세스가 `D` 상태 | RealSense UVC 컨트롤 질의가 커널에서 굳었다 — SIGKILL 도 안 먹는다 | 그 카메라의 USB 포트를 리바인딩: `echo 0 > /sys/bus/usb/devices/<포트>/authorized; sleep 2; echo 1 > …`(sudo). 포트는 `lsusb -t` 로 매번 확인 — 바뀐다 |
 | 서비스 패널에 데몬이 죽어 있다 | 저널이 말한다 | `journalctl --user -u piper-<이름> -n 100`. 흔한 것: 그룹(위), 세그먼트 정리(아래), venv 에 패키지 없음(`~/.venvs/piper-daemons/bin/pip show piper-robot`) |

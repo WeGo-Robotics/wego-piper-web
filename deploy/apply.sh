@@ -72,6 +72,21 @@ for g in video dialout; do
     NEED_SUDO+=("usermod -aG $g $USER")
   fi
 done
+# ⚠ **robotd 가 CAN 을 올리려면 비밀번호 없는 sudo 가 필요하다** — `ip link set can0 type can
+#   bitrate …` 는 CAP_NET_ADMIN 이고 데몬은 사용자 유닛이라 그 권한이 없다. 없으면 로봇 등록의
+#   [UP] 이 "set bitrate failed: sudo: a password is required" 로 끝난다(실기 2026-09-15).
+#   허용은 그 명령들만(sudoers/piper-can.in): 템플릿의 @USER@ 를 이 사용자로 바꿔 번들 안에
+#   렌더하고, 설치는 사람이 한다. 검사는 `sudo -l <명령>` — 실행하지 않고 허용 여부만 본다.
+if sudo -n -l /usr/sbin/ip link set can0 type can bitrate 1000000 >/dev/null 2>&1 \
+   || sudo -n -l /usr/bin/ip link set can0 type can bitrate 1000000 >/dev/null 2>&1; then
+  ok "CAN 올리기 sudo (비밀번호 없이)"
+else
+  bad "CAN 올리기 sudo 없음 — 로봇 등록 [UP] 이 비밀번호를 요구하다 실패한다"
+  mkdir -p "$HERE/sudoers"
+  sed "s/@USER@/$USER/g" "$HERE/sudoers/piper-can.in" > "$HERE/sudoers/piper-can" 2>/dev/null \
+    || warn "  sudoers 템플릿이 번들에 없다 ($HERE/sudoers/piper-can.in) — 옛 번들이면 ./piper-install.sh 로 새로 받으세요"
+  NEED_SUDO+=("visudo -cf $HERE/sudoers/piper-can && sudo install -m 0440 -o root -g root $HERE/sudoers/piper-can /etc/sudoers.d/piper-can")
+fi
 # ⚠ `venv` 는 파이썬에 딸려오지 않는다 — 데비안 계열은 `python3-venv` 가 따로다.
 #   없으면 아래 2절의 `python3 -m venv` 가 깨진다.
 python3 -c "import venv" >/dev/null 2>&1 && ok "python3 venv" \

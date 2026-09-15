@@ -308,6 +308,20 @@ def scan_can_interfaces() -> list[dict]:
     return result
 
 
+def _sudo_hint(err: str) -> str:
+    """sudo 가 비밀번호를 묻고 있으면 원인이 아니라 **처방**을 말한다.
+
+    ⚠ 실기(2026-09-15): 다른 기계에서 로봇 등록 [UP] 이 "set bitrate failed: sudo: a password
+    is required" 로 끝났다. 데몬은 사용자 유닛이라 CAP_NET_ADMIN 이 없고, 설치가 만든
+    sudoers 허용(`/etc/sudoers.d/piper-can`)이 그 기계엔 없었다. 이 문구만 보고는 어디를
+    고칠지 알 수 없었다."""
+    err = (err or "").strip()
+    if "password is required" in err or "a terminal is required" in err:
+        return (f"{err} — robotd 가 비밀번호 없이 `ip link` 를 못 씁니다. "
+                "설치 번들에서 ./apply.sh 를 다시 돌려 안내되는 sudo 명령(sudoers.d/piper-can)을 실행하세요")
+    return err
+
+
 def init_can_interface(iface: str, bitrate: int = DEFAULT_BITRATE) -> tuple[bool, str]:
     _run_cmd(["modprobe", "gs_usb"], sudo=True)
     _run_cmd(["ip", "link", "set", iface, "down"], sudo=True)
@@ -315,10 +329,10 @@ def init_can_interface(iface: str, bitrate: int = DEFAULT_BITRATE) -> tuple[bool
         ["ip", "link", "set", iface, "type", "can", "bitrate", str(bitrate)], sudo=True
     )
     if rc != 0:
-        return False, f"set bitrate failed: {err}"
+        return False, f"set bitrate failed: {_sudo_hint(err)}"
     rc, _, err = _run_cmd(["ip", "link", "set", iface, "up"], sudo=True)
     if rc != 0:
-        return False, f"bring-up failed: {err}"
+        return False, f"bring-up failed: {_sudo_hint(err)}"
     return True, "OK"
 
 
@@ -327,7 +341,7 @@ def down_can_interface(iface: str) -> tuple[bool, str]:
     세워 두거나, 꼬인 컨트롤러를 손으로 내렸다 올릴 때 쓴다."""
     rc, _, err = _run_cmd(["ip", "link", "set", iface, "down"], sudo=True)
     if rc != 0:
-        return False, f"bring-down failed: {err}"
+        return False, f"bring-down failed: {_sudo_hint(err)}"
     return True, "OK"
 
 

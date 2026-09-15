@@ -1,0 +1,13 @@
+# Piper Studio — robotd(사용자 유닛)가 CAN 인터페이스를 올리고 내리는 데 필요한 명령만
+# 비밀번호 없이 허용한다. 그 밖의 sudo 는 그대로 비밀번호를 묻는다.
+#
+# apply.sh 0절이 @USER@ 를 설치 사용자로 바꿔 번들 안에 렌더하고, 사람이 아래를 실행한다:
+#   sudo visudo -cf <번들>/sudoers/piper-can && sudo install -m 0440 -o root -g root <번들>/sudoers/piper-can /etc/sudoers.d/piper-can
+# 없으면 로봇 등록의 [UP] 이 "set bitrate failed: sudo: a password is required" 로 끝난다 (실기 2026-09-15).
+# 지우려면: sudo rm -f /etc/sudoers.d/piper-can
+#
+# ⚠ ip 는 배포판에 따라 /usr/sbin 또는 /usr/bin 에 있고 sudo 는 secure_path 순서로 고른다 — 둘 다 적는다.
+Cmnd_Alias PIPER_CAN = /usr/sbin/modprobe gs_usb, /sbin/modprobe gs_usb, \
+    /usr/sbin/ip link set can* down, /usr/sbin/ip link set can* up, /usr/sbin/ip link set can* type can bitrate [0-9]*, \
+    /usr/bin/ip link set can* down, /usr/bin/ip link set can* up, /usr/bin/ip link set can* type can bitrate [0-9]*
+@USER@ ALL=(root) NOPASSWD: PIPER_CAN

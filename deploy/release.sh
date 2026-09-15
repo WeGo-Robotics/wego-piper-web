@@ -66,7 +66,7 @@ while read -r f; do
   #   wheel 도 같은 이유 — 이미지의 매니페스트·wheel 이 옛것이면 온라인 경로는 새 wheel 을
   #   알지도 못한다(v0.4.13 은 backend 가 우연히 같이 바뀌어 괜찮았을 뿐이다).
   case "$f" in
-    deploy/apply.sh|deploy/piper-install.sh|deploy/piper-uninstall.sh|deploy/pull-progress.py|deploy/update-source.sh|deploy/stage-hostside.sh|deploy/env.example|deploy/udev/*|docker-compose.yml|docker-compose.*.yml|cam/*|rs/*|sim/*) need_backend=1 ;;
+    deploy/apply.sh|deploy/piper-install.sh|deploy/piper-uninstall.sh|deploy/pull-progress.py|deploy/update-source.sh|deploy/stage-hostside.sh|deploy/env.example|deploy/udev/*|deploy/sudoers/*|docker-compose.yml|docker-compose.*.yml|cam/*|rs/*|sim/*) need_backend=1 ;;
   esac
   # `bus/ shm/ robot/` 은 **양쪽**이다 — 이미지 안에도 들어가고 호스트 venv 에도 깔린다
   case "$f" in
