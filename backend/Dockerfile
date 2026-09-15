@@ -31,8 +31,15 @@ COPY act_aux/ /tmp/pkg/act_aux/
 # 없으면 SO-101 리더로 릴레이·수집을 시작하는 순간 ModuleNotFoundError 다. 순수
 # 파이썬이다 — Feetech SDK 는 데몬의 feetech.py 안에서만 늦게 import 되니 여기엔 없다.
 COPY so101/ /tmp/pkg/so101/
+# cam: 장치를 여는 것은 camerad(호스트)뿐이지만, **순수 데이터·알고리즘은 게이트웨이도 읽는다** —
+# 프로파일 저장·적용(`controls.AUTO_SWITCHES`·`DEPENDENT_CONTROLS`), 조명 감시(`lighting.Judge`),
+# 컨트롤 단위(`controls.unit_for`), 정렬 태그(`tags.detect`), 데이터셋 조명 지표.
+# ⚠ 이게 빠져 있어서 배포판에서만 카메라 프로파일 저장이 500 이었다 —
+#   `ModuleNotFoundError: No module named 'piper_cam'` (실기 NUC, 2026-09-15). 개발 머신은
+#   저장소에서 돌아 우연히 보였을 뿐이다. 장치는 여전히 안 연다(그건 camerad 의 일이다).
+COPY cam/ /tmp/pkg/cam/
 RUN pip install --no-deps /tmp/pkg/bus /tmp/pkg/shm /tmp/pkg/robot /tmp/pkg/phase /tmp/pkg/act_aux \
-        /tmp/pkg/so101 \
+        /tmp/pkg/so101 /tmp/pkg/cam \
     && pip install redis \
     && rm -rf /tmp/pkg
 

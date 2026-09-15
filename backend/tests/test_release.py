@@ -102,15 +102,35 @@ def _hostside_rule() -> list[str]:
     return line.split(")", 1)[0].strip().split("|")
 
 
-def test_host_only_packages_are_not_installed_in_the_image_but_still_ride_in_it():
-    """`cam/`·`rs/` 는 데몬 전용이다 — 컨테이너는 그 코드를 import 하지 않으니 이미지에
-    **설치**하진 않는다. ⚠ 그래도 backend 이미지는 다시 굽는다: wheel 이 `/opt/piper-host`
-    에 실려 나가고 온라인 설치(`piper-install.sh` → `docker pull`)가 거기서 꺼내 깐다.
-    v0.4.13 까지는 wheel 만 판정돼, backend 가 우연히 같이 바뀌지 않았다면 옛 wheel 이
-    든 이미지가 나갔을 것이다."""
+def test_every_daemon_package_the_gateway_imports_is_installed_in_the_image():
+    """⚠ 실기(NUC, 2026-09-15): 카메라 프로파일 저장이 500. 컨테이너 안에서
+    `ModuleNotFoundError: No module named 'piper_cam'` 이었다.
+
+    이 테스트의 **옛 근거가 사실이 아니었다**: "cam·rs 는 데몬 전용이라 컨테이너는 그 코드를
+    import 하지 않는다". 게이트웨이는 `piper_cam` 을 프로파일 저장·적용, 조명 감시, 컨트롤
+    단위, 정렬 태그, 데이터셋 조명 지표에서 import 한다. 개발 머신은 저장소에서 돌아 우연히
+    보였고, 배포판(컨테이너)에서만 터졌다 — 오늘 하루에만 나온 같은 모양의 세 번째 사고다.
+
+    그래서 규칙을 **import 에서 끌어낸다**: 게이트웨이가 import 하는 데몬 패키지는 이미지에
+    깐다. 장치를 여는 것은 여전히 데몬의 일이다 — 설치와 개방은 다른 층이다.
+    ⚠ 그래도 backend 이미지는 wheel 이 바뀔 때마다 다시 굽는다: wheel 이 `/opt/piper-host` 에
+    실려 나가고 온라인 설치(`piper-install.sh` → `docker pull`)가 거기서 꺼내 깐다."""
+    import re
+
     dockerfile = (REPO / "backend" / "Dockerfile").read_text()
-    for pkg in ("cam", "rs"):
-        assert f"COPY {pkg}/" not in dockerfile
+    installed = set(re.findall(r"/tmp/pkg/(\w+)", dockerfile))
+    mod_to_pkg = {"piper_bus": "bus", "piper_shm": "shm", "piper_robot": "robot",
+                  "piper_phase": "phase", "piper_so101": "so101", "piper_cam": "cam",
+                  "piper_rs": "rs", "piper_sim": "sim"}
+    imported: set[str] = set()
+    for f in (REPO / "backend" / "app").rglob("*.py"):
+        for m in re.findall(r"^\s*(?:from|import)\s+(piper_\w+)", f.read_text(), re.M):
+            if m in mod_to_pkg:
+                imported.add(mod_to_pkg[m])
+    missing = sorted(imported - installed)
+    assert not missing, f"게이트웨이가 import 하는데 이미지에 없다 — 배포판에서만 ModuleNotFoundError: {missing}"
+    # rs 는 아직 진짜 데몬 전용이다 — import 가 생기면 위 규칙이 알아서 잡는다
+    assert "rs" not in imported and "rs" not in installed, "rs 를 import 하기 시작했다면 이미지에도 깔아야 한다"
     assert _detect("v0.3.3", "v0.3.4") >= {"wheels", "backend"}
     for pkg in ("cam", "rs", "sim"):
         assert f"{pkg}/*" in _hostside_rule(), f"{pkg} wheel 이 바뀌어도 이미지를 안 굽는다"
