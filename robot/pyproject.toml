@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "Piper arm CAN ownership, safety filter, shm publishing (robotd body)"
 requires-python = ">=3.10"
 license = "Apache-2.0"
-dependencies = ["piper-shm", "piper-bus", "numpy>=1.24"]
+# ⚠ `piper-sdk` 는 **팔을 여는 데 필수**다 (arm.connect 의 늦은 import). 선언이 없어
+#   호스트 venv 에 안 깔렸고, [연결] 이 `piper_sdk not installed` 로 끝났다 (NUC 2026-09-15).
+#   ⚠ 다만 `apply.sh` 는 wheel 을 `--no-deps` 로 깐다 — 실제 설치는 그쪽이 책임진다.
+#   여기 선언은 "이 패키지가 무엇을 필요로 하는가"의 정본이다.
+dependencies = ["piper-shm", "piper-bus", "numpy>=1.24", "piper-sdk>=0.6"]
 
 [build-system]
 requires = ["setuptools>=68"]

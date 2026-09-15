@@ -365,7 +365,10 @@ if [ -n "${wheels:-}" ] || [ ! -d "$VENV" ] || wheels_missing; then
   say "2. 데몬 wheel (${wheels:-처음 설치 — 번들 전부})"
   if [ ! -d "$VENV" ]; then
     if [ $CHECK = 1 ]; then bad "$VENV 없음"; else
-      # ⚠ `--system-site-packages` 로 만든다 — numpy·opencv·piper-sdk 를 다시 안 깐다.
+      # ⚠ `--system-site-packages` 로 만든다 — 시스템에 numpy·opencv 가 있으면 다시 안 깐다.
+      #   ⚠ **"있겠지" 로 두지 않는다.** 예전 주석은 piper-sdk 도 시스템에 있다고 적었는데,
+      #   맨 우분투(NUC)는 없었고 그래서 [연결] 이 `piper_sdk not installed` 로 끝났다.
+      #   지금은 아래 wheel 절이 없으면 직접 깐다.
       python3 -m venv --system-site-packages "$VENV" && ok "venv 생성"
       "$VENV/bin/pip" install -q redis pyrealsense2 && ok "PyPI 의존(redis·pyrealsense2)"
       # 시스템 site-packages 에 numpy·opencv 가 없는 맨 우분투(ROS 없음)는 camerad/rsd 가 못 뜬다 —
@@ -382,12 +385,28 @@ if [ -n "${wheels:-}" ] || [ ! -d "$VENV" ] || wheels_missing; then
           && ok "piper-$p" || bad "piper-$p 미설치"
       done
       wheels_missing && bad "번들의 wheel 중 안 깔린 것이 있다 — 적용하면 전부 깐다" || ok "번들 wheel 전부 설치됨"
+      # ⚠ 점검에서도 본다 — 이게 없으면 설치는 "다 됐다"고 하는데 [연결] 에서만 실패한다
+      "$VENV/bin/python" -c "import piper_sdk" 2>/dev/null \
+        && ok "piper_sdk" || bad "piper_sdk 미설치 — 로봇 [연결] 이 실패한다"
     fi
   else
     mapfile -t WHLS < <(bundle_wheels)
     if [ ${#WHLS[@]} -eq 0 ]; then bad "번들에 wheel 이 없다: $HERE/wheels"; exit 1; fi
     "$VENV/bin/pip" install -q --no-deps --force-reinstall "${WHLS[@]}"
     ok "wheel ${#WHLS[@]} 개 (${version#v})"
+    # ⚠ **robotd 의 필수 의존이다.** 없으면 로봇 등록에서 [연결] 이
+    #   `piper_sdk not installed` 로 끝난다 — CAN 은 멀쩡히 올라와 있는데 팔만 못 연다.
+    #   venv 를 `--system-site-packages` 로 만들며 "시스템에 있겠지" 로 뒀는데, 맨 우분투
+    #   (NUC, 2026-09-15)는 시스템에도 없었다. 컨테이너와 **같은 핀**으로 여기서 깐다
+    #   (Dockerfile.base 의 `piper_sdk==0.6.1 python-can==4.6.1`).
+    #   ⚠ 선택 데몬 의존과 달리 **경고로 넘기지 않는다** — 이게 없으면 팔이 통째로 안 된다.
+    if "$VENV/bin/python" -c "import piper_sdk" 2>/dev/null; then
+      ok "piper_sdk (팔 연결)"
+    elif "$VENV/bin/pip" install -q "piper_sdk==0.6.1" "python-can==4.6.1" 2>/dev/null; then
+      ok "piper_sdk 설치 (팔 연결)"
+    else
+      bad "piper_sdk 를 못 깔았다 — 로봇 [연결] 이 'piper_sdk not installed' 로 실패한다 (PyPI 접근?)"
+    fi
     # 선택 데몬의 바깥 의존 — simd 는 mujoco(플랫폼 wheel, ~20MB), so101d 는 Feetech SDK.
     # ⚠ **실패해도 멈추지 않는다.** 이 둘은 선택이라, PyPI 가 안 닿는 호스트에서
     #   핵심 데몬 설치까지 막으면 안 된다. 못 깔면 웹 [서비스] 에서 켜도 안 뜬다 —

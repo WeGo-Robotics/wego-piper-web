@@ -58,6 +58,38 @@ def test_the_installer_lists_them_in_dependency_order():
                     f"{p} 가 {name_to_dir[d]} 보다 먼저 설치된다"
 
 
+def test_the_install_puts_piper_sdk_in_the_daemon_venv_and_checks_it():
+    """⚠ 실기(NUC, 2026-09-15): CAN 은 멀쩡히 올라왔는데 로봇 등록의 [연결] 이
+    `piper_sdk not installed` 로 끝났다. `arm.connect` 가 늦게 import 하는 서드파티라
+    **어느 그물에도 안 걸렸다**: wheel 은 `--no-deps` 로 깔리고, 위의 선언 검사는
+    `piper_*` 최상위 import 만 본다.
+
+    원인은 `apply.sh` 가 venv 를 `--system-site-packages` 로 만들며 "piper-sdk 는 시스템에
+    있겠지" 로 뒀던 것이다 — 개발 머신엔 있었고 맨 우분투엔 없었다. 설치가 직접 깔고,
+    점검(`--check`)에서도 본다. 안 그러면 설치는 "다 됐다"는데 [연결] 에서만 실패한다.
+
+    ⚠ 핀은 컨테이너와 **같아야** 한다. 게이트웨이와 robotd 가 같은 팔에 서로 다른 SDK 로
+    말하는 상황을 만들지 않는다."""
+    apply_sh = (REPO / "deploy" / "apply.sh").read_text()
+    base_df = (REPO / "backend" / "Dockerfile.base").read_text()
+
+    want = re.search(r"piper_sdk==([\d.]+)", base_df)
+    assert want, "컨테이너 베이스가 piper_sdk 를 안 깐다 — 이 대조의 기준이 사라졌다"
+    got = re.search(r'pip" install -q "piper_sdk==([\d.]+)"', apply_sh)
+    assert got, "apply.sh 가 piper_sdk 를 안 깐다 — [연결] 이 'piper_sdk not installed' 로 실패한다"
+    assert got.group(1) == want.group(1), \
+        f"핀이 갈렸다: 호스트 {got.group(1)} vs 컨테이너 {want.group(1)}"
+
+    assert '"$VENV/bin/python" -c "import piper_sdk"' in apply_sh, "설치 여부를 확인하지 않는다"
+    assert "piper_sdk 미설치" in apply_sh, "점검(--check)이 빠진 것을 말하지 않는다"
+    assert "piper-sdk 를 다시 안 깐다" not in apply_sh, \
+        "'시스템에 있겠지' 주석이 남아 있다 — 이 버그의 출처다"
+
+    declared = tomllib.loads((REPO / "robot" / "pyproject.toml").read_text())["project"]["dependencies"]
+    assert any(d.replace("_", "-").startswith("piper-sdk") for d in declared), \
+        "piper-robot 이 필수 의존을 선언하지 않는다"
+
+
 def test_declared_dependencies_match_what_is_imported():
     """⚠ 실제로 있었던 구멍: `phase` 가 `piper_robot` 을 최상위에서 import 하는데
     선언에 없었다 — 깨끗한 환경에서 설치는 되고 import 에서 죽는다."""
