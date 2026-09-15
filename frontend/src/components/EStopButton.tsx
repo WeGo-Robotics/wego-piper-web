@@ -60,7 +60,9 @@ export default function EStopButton() {
         if (wsRef.current.up) {
           wsRef.current.send({ type: 'heartbeat', ...info, via: 'ws' })
         } else {
-          await api.post('/estop/heartbeat', { ...info, via: 'http' })
+          // ⚠ 짧게 끊는다. 응답이 안 오는데 0.5초마다 새로 보내면 수백 개가 쌓여 탭의 요청 한도를
+          //   먹고, 정지 버튼까지 못 나간다(실기 2026-09-14). 어차피 못 닿으면 watchdog 이 세운다.
+          await api.post('/estop/heartbeat', { ...info, via: 'http' }, { timeoutMs: 3000 })
         }
       } catch {
         // 연결 끊김 → watchdog 이 타임아웃 처리

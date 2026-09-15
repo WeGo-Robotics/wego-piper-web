@@ -319,14 +319,38 @@ export default function RecordingPage() {
       setTaskMsg(`변경 실패: ${(e as Error).message}`)
     }
   }
+  // ⚠ 조용히 실패하지 않는다. 실기(2026-09-14): 탭에 요청이 수백 개 쌓여 세 버튼의 요청이 브라우저
+  //   밖으로 나가지도 못했는데(ERR_INSUFFICIENT_RESOURCES) 화면은 아무 말이 없었다 — 사용자는
+  //   "정지가 안 된다"만 봤다. 실패 이유를 알림으로 띄운다(같은 id 라 쌓이지 않는다).
+  const control = async (path: string, label: string) => {
+    try { await api.post(path, undefined, { timeoutMs: 10_000 }) }
+    catch (e) {
+      notify({ id: 'record-control', level: 'error', source: '수집',
+               text: `${label} 요청 실패: ${(e as Error).message} — 페이지를 새로 고친 뒤 다시 시도하세요` })
+    }
+  }
   const handleStop = async () => {
     setStopping(true)
-    try { await api.post('/recording/stop') }
-    catch { /* 상태는 WS 로 온다 */ }
+    try { await control('/recording/stop', '정지') }
     finally { setStopping(false) }
   }
-  const handleSkip = () => api.post('/recording/skip')
-  const handleRerecord = () => api.post('/recording/rerecord')
+  const handleSkip = () => control('/recording/skip', '저장하고 다음')
+  const handleRerecord = () => control('/recording/rerecord', '재녹화')
+
+  // ESC = 정지. 버튼 라벨은 오래전부터 "(ESC)" 라고 말했는데 처리기가 없었다(실기 2026-09-14).
+  // 수집 중에만, 입력 칸에 타이핑 중이 아닐 때만.
+  useEffect(() => {
+    if (!isRunning) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      e.preventDefault(); void handleStop()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRunning])
 
   return (
     <div className="space-y-6">
