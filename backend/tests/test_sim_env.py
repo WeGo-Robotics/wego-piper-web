@@ -375,6 +375,42 @@ def test_the_top_camera_matches_the_ee_mouse_plane(model):
     assert -R[2, 2] < -0.95, "탑뷰가 아래를 안 본다"
 
 
+def test_the_top_camera_is_low_enough_to_see_the_cube_but_keeps_the_bin_and_the_base():
+    """사용자 보고(2026-09-14): 탑뷰에서 큐브가 너무 작아 인식이 안 될 것 같다 → 카메라를
+    0.9 에서 0.6 으로 내리고 중심을 x 0.25 로. 640×480 기준 큐브 21px→33px. 대신 통과 팔
+    베이스는 화면 안에 남아야 한다 — 0.55 까지 내리면 통 오른쪽이 잘린다(렌더 대조)."""
+    import math
+    import mujoco
+    model = mujoco.MjModel.from_xml_path(str(REPO / "sim" / "piper_sim" / "assets" / "piper_scene.xml"))
+    cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "top")
+    cx, cy, h = (float(v) for v in model.cam_pos[cam])
+    tan_v = math.tan(math.radians(float(model.cam_fovy[cam])) / 2)
+    half_x, half_y = h * tan_v, h * tan_v * 640 / 480          # 이미지 위=+x 라 세로 시야가 x
+    cube_px = 0.04 / (2 * (h - 0.04) * tan_v) * 480              # 큐브 윗면(z=0.04)의 한 변
+    assert cube_px >= 30, f"탑뷰에서 큐브가 {cube_px:.0f}px — 너무 작다"
+    for name, (x, y) in (("통 바깥 모서리", (0.43, -0.33)), ("팔 베이스", (0.0, 0.0)), ("큐브 시작 자리", (0.35, 0.0))):
+        assert abs(x - cx) <= half_x and abs(y - cy) <= half_y, f"{name}가 탑뷰 밖이다"
+
+
+def test_sim_cameras_publish_phase_locked_so_15fps_is_15fps():
+    """⚠ 실측(2026-09-14): 15fps 카메라가 평균 간격 67.4ms(14.8fps)였다 — 다음 발행 시각을
+    `now + 1/fps` 로 잡아 루프의 2ms 폴링 지연이 매 프레임 누적됐다. 새 프레임을 기다리는
+    LeRobot 기록 루프가 그 속도에 묶여 매 틱 "14.7 Hz" 경고를 냈다. 예정 시각 기준으로
+    잡으면 평균이 정확히 fps 이고, 한 주기 넘게 밀리면 지금부터 다시 센다."""
+    from piper_sim.cameras import _next_due
+    period = 1 / 15
+    due = None; now = 100.0
+    for _ in range(150):                        # 10초치 — 매번 2ms 늦게 깨어난다
+        now = (due if due is not None else now) + 0.002
+        due = _next_due(due, now, period)
+    assert abs((due - 100.0) - 150 * period) < 0.005, "폴링 지연이 누적된다 — 14.8fps 로 돈다"
+    # 렌더가 한 주기 넘게 밀리면(스톨) 밀린 프레임을 몰아 찍지 않고 지금부터
+    assert _next_due(100.0, 100.0 + 3 * period, period) == pytest.approx(100.0 + 4 * period)
+    src = (REPO / "sim" / "piper_sim" / "cameras.py").read_text()
+    assert "_next_due(next_t.get(cam.id), now," in src, "루프가 위상 고정 헬퍼를 안 쓴다"
+    assert "next_t[cam.id] = now + 1.0" not in src
+
+
 def test_a_sim_arm_released_by_a_simd_restart_is_shown_disconnected_on_the_ports_poll(monkeypatch):
     """⚠ **실측 결함**: simd 재시작으로 브리지가 풀려도 시뮬 팔은 lost 를 안 내
     (robotd 는 device_watch 가 lost 로 내린다) 게이트웨이가 connected=True 로 남았다 —
@@ -479,8 +515,10 @@ def test_a_top_view_click_maps_to_a_table_position_for_the_cube(model):
     w.model = model; w.data = mujoco.MjData(model)
     import threading; w._lock = threading.Lock()
     mujoco.mj_forward(model, w.data)
-    cx, cy, _ = w.cube_from_ray("top", 0.5, 0.5, 640 / 480)          # 가운데
-    assert abs(cx - 0.35) < 0.02 and abs(cy) < 0.02, (cx, cy)
+    cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "top")
+    cam_x, cam_y = float(model.cam_pos[cam][0]), float(model.cam_pos[cam][1])
+    cx, cy, _ = w.cube_from_ray("top", 0.5, 0.5, 640 / 480)          # 가운데 = 카메라 바로 아래
+    assert abs(cx - cam_x) < 0.02 and abs(cy - cam_y) < 0.02, (cx, cy, cam_x, cam_y)
     fx, fy, _ = w.cube_from_ray("top", 0.5, 0.15, 640 / 480)         # 위쪽 → 앞(+x)
     assert fx > cx + 0.1, "위쪽 클릭이 앞(+x)으로 안 간다"
     rx, ry, _ = w.cube_from_ray("top", 0.85, 0.5, 640 / 480)         # 오른쪽 → −y

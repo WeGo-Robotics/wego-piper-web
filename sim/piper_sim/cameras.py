@@ -28,6 +28,19 @@ logger = logging.getLogger(__name__)
 CAMERAS = ("top", "front", "wrist")
 DEFAULT_WHT = (640, 480, 15)
 
+
+def _next_due(prev_due: float | None, now: float, period: float) -> float:
+    """다음 발행 시각 — **직전 예정 시각 기준**으로 잡는다.
+
+    ⚠ `now + period` 로 잡으면 루프의 폴링 지연(2ms)이 매 프레임 누적된다 — 15fps 가
+    실측 14.8fps(간격 67.4ms)였고, 새 프레임을 기다리는 LeRobot 기록 루프가 그 속도에
+    묶여 매 틱 "14.7 Hz" 경고를 냈다(2026-09-14). 예정 시각에 주기를 더하면 평균이
+    정확히 fps 다. 렌더가 한 주기 넘게 밀렸으면 지금부터 다시 센다 — 밀린 프레임을
+    몰아 찍지 않는다."""
+    if prev_due is None or now - prev_due > period:
+        return now + period
+    return prev_due + period
+
 #: v4l2 이름의 컨트롤 — 기본값은 "에뮬레이션 배율 1.0" 이 되는 값들.
 #: exposure_time_absolute 는 ×100µs (CONTROL_UNITS) — 156 = 15.6ms, 게인 0..255.
 _CONTROL_SPECS: dict[str, dict] = {
@@ -273,7 +286,7 @@ class SimCameraHub:
                     if fails in (1, 10, 100):       # 매번 뱉으면 저널이 묻힌다
                         logger.warning("렌더 실패 (%s, %d회째): %s", cam.id, fails, exc)
                     time.sleep(0.1)
-                next_t[cam.id] = now + 1.0 / max(1, cam.want[2])
+                next_t[cam.id] = _next_due(next_t.get(cam.id), now, 1.0 / max(1, cam.want[2]))
 
     def stop(self) -> None:
         self._running = False

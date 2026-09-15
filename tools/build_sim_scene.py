@@ -43,8 +43,12 @@ SCENE_TEMPLATE = """<mujoco model="piper_scene">
   <compiler angle="radian" meshdir="{meshdir}" balanceinertia="true"/>
   <!-- ⚠ impratio: 기본 1 이면 잡은 물체가 슬슬 미끄러진다(실측 3.7mm/s, 6초에 20mm →
        빠짐, 사용자 보고 2026). MuJoCo 는 잡기에서 impratio 를 올리라고 권한다 — 마찰
-       제약을 법선력 대비 단단히 푼다. 50 에서 0.1mm/s(사실상 정지), 흔들어도 견딘다. -->
-  <option timestep="0.002" gravity="0 0 -9.81" impratio="50"/>
+       제약을 법선력 대비 단단히 푼다. 50 에서 0.1mm/s(사실상 정지), 흔들어도 견딘다.
+       ⚠ **impratio 는 cone="elliptic" 일 때만 뜻이 있다** (기본 pyramidal 에선 무시된다 —
+       MuJoCo 문서). 비스듬한 파지 실험(2026-09-14, test_sim_grasp.py 의 떠 있는 그리퍼):
+       현재 설정은 손이 10° 만 기울어도 나르다 놓쳤고, elliptic 으로 바꾸자 10° 를 잡았다.
+       noslip 은 잡은 뒤의 크리프를 마지막에 한 번 더 걷는다(적은 접촉 수라 비용 무시). -->
+  <option timestep="0.002" gravity="0 0 -9.81" impratio="50" cone="elliptic" noslip_iterations="10"/>
   <visual>
     <global offwidth="1280" offheight="960"/>
     <headlight ambient="0.4 0.4 0.4" diffuse="0.6 0.6 0.6"/>
@@ -67,8 +71,13 @@ SCENE_TEMPLATE = """<mujoco model="piper_scene">
     <geom name="table" type="box" size="0.6 0.5 0.02" pos="0.35 0 -0.02" material="tablemat"/>
     <!-- 탑뷰 — 광학축(−z) 기준 반시계 90°: 이미지 위 = +x(앞, 팔이 뻗는 쪽),
          오른쪽 = −y. EE 마우스 면(위=앞, 오른쪽=−y)과 정확히 맞아 조종이 직관적이다
-         (사용자 보고 2026: 마우스 면과 탑뷰가 90° 어긋나 조종이 힘들다). -->
-    <camera name="top" pos="0.35 0 0.9" xyaxes="0 -1 0 1 0 0" fovy="55"/>
+         (사용자 보고 2026: 마우스 면과 탑뷰가 90° 어긋나 조종이 힘들다).
+         ⚠ 높이 0.9→0.6, 중심 x 0.35→0.25 (사용자 보고 2026-09-14: 큐브가 너무 작아 인식이
+         안 될 것 같다). 640×480 에서 큐브가 21px→33px. 시야는 x −0.06..0.56, y ±0.42 —
+         통(0.43, −0.33)과 팔 베이스(0,0)가 안에 남는다. 0.55 로 더 내리면 통 오른쪽이 잘린다
+         (렌더 대조). 비율은 렌더 기본 640×480(4:3) 그대로 — 데이터셋 프레임 크기를 안 바꾼다.
+         ⚠ 이 전의 시뮬 데이터셋·체크포인트와는 관측이 다르다. -->
+    <camera name="top" pos="0.25 0 0.6" xyaxes="0 -1 0 1 0 0" fovy="55"/>
     <camera name="front" pos="1.1 0 0.45" xyaxes="0 1 0 -0.4 0 1" fovy="50"/>
     <body name="piper_base" pos="0 0 0">
     </body>
@@ -77,7 +86,7 @@ SCENE_TEMPLATE = """<mujoco model="piper_scene">
       <!-- 잡히는 물체 — condim6 은 비틀림·구름 마찰(핀치에서 돌아 빠지는 것 방지),
            solref 단단하게(접촉 크리프 감소). 손가락과 같은 마찰. -->
       <geom name="cube_geom" type="box" size="0.02 0.02 0.02" mass="0.05" material="cubemat"
-            condim="6" friction="1.5 0.05 0.001" solref="0.005 1"/>
+            condim="6" friction="2.0 0.1 0.001" solref="0.005 1"/>
     </body>
     <body name="bin" pos="0.35 -0.25 0">
       <geom type="box" size="0.08 0.08 0.003" pos="0 0 0.003" material="binmat"/>
@@ -117,13 +126,20 @@ GRIPPER_XML = """<body name="gripper_base" pos="0 0 0.035">
          (사용자 보고 2026): 이미지 위 = 그리퍼 x-z 평면(위·뒤), 오른쪽 = 그리퍼 −y.
          탑뷰는 마우스 면에 맞춰 두고 손목만 이 방향이 손 느낌과 맞았다. -->
   <camera name="wrist" pos="-0.08 0 -0.02" xyaxes="0 -1 0 -0.906 0 0.423" fovy="70"/>
+  <!-- 손가락 — 비스듬한 파지 실험(2026-09-14, test_sim_grasp.py) 결과:
+       · 쥐는 힘(kp 200→600)이 손 기울기 20°·얕은 파지·기울기+큐브 회전을 나르며 붙잡는 유일한
+         손잡이였다. 800 은 오히려 튕겨 나갔다(30° 에서 놓침).
+       · 댐핑은 kp 에 맞춰 올린다(2→5, 감쇠비 0.3→0.7) — 빈손으로 닫을 때 손가락이 튀지 않게.
+         "탄성"은 접촉(solref 임계감쇠)이 아니라 여기서 온다.
+       · 마찰 1.5→2.0(비틀림 0.05→0.1)은 측정상 차이가 없었다 — 사용자 요청으로 올려 두되
+         진짜 손잡이가 아니다. 접촉을 부드럽게(solref 0.01)·더 단단하게(solimp) 하면 둘 다 나빠졌다. -->
   <body name="finger_l" pos="0 0.008 0.03">
-    <joint name="gripper_l" type="slide" axis="0 1 0" range="0 {s}" damping="2"/>
-    <geom type="box" size="0.008 0.004 0.025" pos="0 0.004 0" material="fingermat" mass="0.02" friction="1.5 0.05 0.001" condim="6" solref="0.005 1"/>
+    <joint name="gripper_l" type="slide" axis="0 1 0" range="0 {s}" damping="5"/>
+    <geom type="box" size="0.008 0.004 0.025" pos="0 0.004 0" material="fingermat" mass="0.02" friction="2.0 0.1 0.001" condim="6" solref="0.005 1"/>
   </body>
   <body name="finger_r" pos="0 -0.008 0.03">
-    <joint name="gripper_r" type="slide" axis="0 -1 0" range="0 {s}" damping="2"/>
-    <geom type="box" size="0.008 0.004 0.025" pos="0 -0.004 0" material="fingermat" mass="0.02" friction="1.5 0.05 0.001" condim="6" solref="0.005 1"/>
+    <joint name="gripper_r" type="slide" axis="0 -1 0" range="0 {s}" damping="5"/>
+    <geom type="box" size="0.008 0.004 0.025" pos="0 -0.004 0" material="fingermat" mass="0.02" friction="2.0 0.1 0.001" condim="6" solref="0.005 1"/>
   </body>
 </body>
 """
@@ -212,8 +228,9 @@ def compose(arm: ET.Element, meshdir_rel: str) -> ET.Element:
     for name, kp in ACTUATORS:
         ET.SubElement(act, "position", name=name, joint=name, kp=str(kp),
                       ctrlrange=" ".join(scene.find(f".//joint[@name='{name}']").get("range").split()))
+    # 그리퍼 kp 600 — 비스듬한 파지 실험(GRIPPER_XML 주석)이 정한 값. 200 은 10° 기울면 놓친다
     for f in ("gripper_l", "gripper_r"):
-        ET.SubElement(act, "position", name=f, joint=f, kp="200",
+        ET.SubElement(act, "position", name=f, joint=f, kp="600",
                       ctrlrange=f"0 {FINGER_STROKE_M}")
     return scene
 
