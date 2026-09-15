@@ -154,6 +154,32 @@ def test_a_fresh_host_installs_everything_the_bundle_carries():
     assert "continue   # 안 바뀌었고 있다" in APPLY.read_text()
 
 
+def test_a_host_that_skipped_a_release_still_catches_up_on_the_daemon_source():
+    """⚠ 실기(NUC, 2026-09-15): 회색 카드 보정이 "camerad 가 응답하지 않습니다" 로 끝나
+    데몬을 몇 번을 재시작해도 안 변했다. camerad 는 멀쩡히 떠 있었다 — `daemons/camerad.py`
+    가 **9월 1일자**라 그 동사를 몰랐고, camerad 가 "알 수 없는 메서드"로 거절했을 뿐이다.
+    wheel 은 `piper-cam 0.5.1`(허브에 함수 있음)인데 소스만 옛것이었다.
+
+    왜 안 따라잡았나: `daemons=` 는 *이번* 릴리스에서 바뀐 것만 말한다. 그 호스트는 데몬을
+    실은 v0.4.19·v0.5.2 를 건너뛰고 v0.5.1(daemons="")을 적용했다. 그리고 `$SRC`(=current)는
+    **적용된 트리**라 첫 설치 뒤 늘 존재하므로 "없으면 푼다" 도 다시는 안 걸린다 — 영원히 멈춘다.
+
+    wheel 이 `wheels_missing()` 으로 푸는 것과 같은 규율로 잠근다: 번들이 실은 것과 깔린 것을
+    견주고, 표시가 없는 옛 호스트는 **낡은 것으로 본다**."""
+    from conftest import code_only
+
+    src = code_only(APPLY.read_text())
+    assert "daemons_stale()" in src, "깔린 데몬 소스와 번들을 견주지 않는다"
+    assert '[ -f "$SRC/daemons/.version" ] || return 0' in src, \
+        "표시가 없는 옛 호스트(= 이 사고의 그 기계)를 최신으로 본다"
+    assert '!= "${version:-}"' in src, "번들 버전과 대조하지 않는다"
+    assert "|| daemons_stale" in src, "3절 조건이 따라잡기를 안 본다"
+    stamp = 'echo "${version:-}" > "$SRC/daemons/.version"'
+    assert stamp in src, "푼 뒤 출처를 안 적는다 — 다음 적용이 판단할 근거가 없다"
+    assert src.index("tar xzf") < src.index(stamp), "풀기 전에 표시를 적는다"
+    assert "daemons_stale && bad" in src, "점검(--check)이 낡은 데몬 소스를 말하지 않는다"
+
+
 def test_the_unpack_dir_is_emptied_first_and_only_stamped_wheels_install():
     """⚠ 실기(NUC, 2026-09-11): 두 번째 `./piper-install.sh` 에서 pip 가 `Cannot install
     piper-bus 0.4.13 and piper-bus 0.4.15 … conflicting dependencies` 로 죽었다. `docker cp`

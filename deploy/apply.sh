@@ -425,10 +425,29 @@ fi
 SRC="$HOME/piper-web-deploy/current"
 # ⚠ `daemons=` 도 이번에 바뀐 것일 뿐 — 소스가 없거나(처음 설치) estopd 유닛이 안 깔려
 #   있으면 번들의 것을 푼다(이미지 경로엔 daemons.tar.gz 가 항상 있다).
-if [ -n "${daemons:-}" ] || [ ! -d "$SRC/daemons" ] || ! systemctl --user cat piper-estopd.service >/dev/null 2>&1; then
-  say "3. 데몬 소스·유닛$([ -n "${daemons:-}" ] || echo ' (처음 설치)')"
+# ⚠ **건너뛴 릴리스를 따라잡는다.** `daemons=` 는 *이번* 릴리스에서 바뀐 것만 말한다 —
+#   그 사이 릴리스를 건너뛴 호스트는 영영 못 따라잡는다. `$SRC`(=current)는 **적용된
+#   트리**라 첫 설치 뒤 늘 존재하므로 위의 "없으면 푼다"도 다시는 걸리지 않는다.
+#   실기(NUC, 2026-09-15): v0.4.19·v0.5.2(데몬을 실은 릴리스)를 건너뛰고 v0.5.1 을 적용해
+#   `daemons/camerad.py` 가 9월 1일자로 남았다 — wheel 은 0.5.1 인데 소스는 회색 카드
+#   동사를 몰라 camerad 가 "알 수 없는 메서드"로 거절했고, 화면엔 "camerad 가 응답하지
+#   않습니다" 로 떴다. 데몬을 재시작해도 영영 안 변한다.
+#   wheel 이 `wheels_missing()` 으로 푸는 것과 **같은 규율**이다: 번들이 실은 것과 깔린 것을
+#   견준다. 스탬프는 푼 직후 적는다(아래) — `$SRC/VERSION` 은 "마지막으로 적용한 릴리스"라
+#   데몬 소스의 출처를 말해 주지 못한다.
+daemons_stale() {
+  [ -f "$SRC/daemons/.version" ] || return 0
+  [ "$(cat "$SRC/daemons/.version" 2>/dev/null)" != "${version:-}" ]
+}
+if [ -n "${daemons:-}" ] || [ ! -d "$SRC/daemons" ] || daemons_stale \
+   || ! systemctl --user cat piper-estopd.service >/dev/null 2>&1; then
+  say "3. 데몬 소스·유닛$([ -n "${daemons:-}" ] || echo ' (깔린 것이 번들과 다르다)')"
   if [ $CHECK = 1 ]; then
     [ -d "$SRC/daemons" ] && ok "$SRC" || bad "$SRC 없음"
+    # ⚠ 점검에서도 말한다 — 안 그러면 "다 됐다"는데 데몬만 옛 코드로 돌고, 증상은
+    #   엉뚱한 자리(회색 카드가 "camerad 가 응답하지 않습니다")에서 나온다
+    daemons_stale && bad "데몬 소스가 번들과 다르다 ($(cat "$SRC/daemons/.version" 2>/dev/null || echo 표시없음) ≠ ${version:-?}) — 적용하면 푼다" \
+                  || ok "데몬 소스 ${version:-?}"
     systemctl --user cat piper-estopd.service >/dev/null 2>&1 && ok "유닛 설치됨" || bad "유닛 없음 — 적용하면 깐다"
   else
     # ⚠ **`&&` 로 이으면 조용히 넘어간다.** tar 가 실패해도 `set -e` 는 `&&` 리스트의
@@ -444,7 +463,10 @@ if [ -n "${daemons:-}" ] || [ ! -d "$SRC/daemons" ] || ! systemctl --user cat pi
       bad "데몬 소스를 못 풀었습니다: $HERE/daemons.tar.gz"
       exit 1
     fi
-    ok "풀었다: $SRC"
+    # ⚠ **스탬프는 푼 직후.** 이게 없으면 다음 적용이 "깔린 것이 번들과 다른가"를 판단할
+    #   근거가 없어, 위의 따라잡기 규칙이 매번 다시 푼다(해롭진 않지만 뜻이 사라진다).
+    echo "${version:-}" > "$SRC/daemons/.version"
+    ok "풀었다: $SRC (${version:-?})"
     # ⚠ 설치 스크립트는 **지금 셸의 python3** 를 유닛에 박는다. venv 를 켜고 불러야
     #   데몬이 wheel 을 볼 수 있다 (deploy/install-daemons.sh 참고).
     # simd·so101d 는 **깔되 켜지 않는다** — 사람이 웹 [설정 → 서비스] 에서 켜고
