@@ -907,6 +907,17 @@ async def list_ports():
 
     from piper_robot.can import bus_stats
 
+    # ⚠ **통계는 robotd 에게 묻는다.** 게이트웨이는 컨테이너라 `ip` 도 `/sys/class/net` 도
+    #   안 보인다 — 여기서 `bus_stats` 를 직접 부르면 bitrate·can_state·Rx/Tx 가 전부 null 로
+    #   나오고, 카드는 링크만 "UP" 으로 보여 **초기화가 안 된 것처럼 읽힌다.**
+    #   실기(NUC, 2026-09-15): sudoers 를 고쳐 CAN 이 실제로 올라왔는데도(robotd 는
+    #   `bitrate 1000000 · ERROR-ACTIVE · healthy` 로 보고) 화면만 비어 있어 "UP 을 눌러도
+    #   초기화가 안 된다"로 읽혔다. `/robots/bus` 는 처음부터 robotd 를 거쳤다 — 같은 규칙을
+    #   여기에도 적용한다. 저장소에서 직접 띄운 게이트웨이(호스트)는 robotd 가 없어도 돌아야
+    #   하므로 지역 `bus_stats` 폴백을 남긴다.
+    rows = await asyncio.to_thread(robot_manager_mod._call, "bus_status", 1)
+    by_iface = {r.get("iface"): r for r in rows} if isinstance(rows, list) else {}
+
     out = []
     sim_ports = []
     # 시뮬 팔은 lost 를 안 낸다 — simd 재시작으로 풀린 연결은 여기서 데몬 사실로
@@ -918,7 +929,7 @@ async def list_ports():
             sim_ports.append({"iface": iface, "scene": "piper_scene",
                               "connected": bool(arm.connected), "ready": bool(arm.ready)})
             continue
-        stats = await asyncio.to_thread(bus_stats, iface)
+        stats = by_iface.get(iface) or await asyncio.to_thread(bus_stats, iface)
         out.append({
             "iface": iface,
             "bus_info": arm.bus_info,

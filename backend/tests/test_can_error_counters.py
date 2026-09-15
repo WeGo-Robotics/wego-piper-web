@@ -27,6 +27,25 @@ def test_the_counter_names_match_the_kernel_line():
                               "error_warning", "error_passive", "bus_off")
 
 
+def test_the_ports_card_reads_bus_stats_from_robotd_not_from_the_container():
+    """⚠ 실기(NUC, 2026-09-15): sudoers 를 고쳐 CAN 이 **실제로** 올라왔는데도 포트 카드의
+    bitrate·can_state·Rx/Tx 가 전부 비어 "UP 을 눌러도 초기화가 안 된다"로 읽혔다.
+
+    게이트웨이는 컨테이너라 `ip` 도 `/sys/class/net` 도 못 본다 — 그 자리에서 `bus_stats` 를
+    직접 부르면 언제나 null 이고, 카드는 링크만 `arm.state` 폴백으로 "UP" 을 보여 준다.
+    같은 순간 robotd 는 `bitrate 1000000 · ERROR-ACTIVE · healthy` 로 보고했다
+    (`/robots/bus` 는 처음부터 robotd 를 거친다). 같은 규칙을 포트 카드에도 적용한다."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "app" / "routers" / "robots.py").read_text()
+    body = src.split("async def list_ports", 1)[1].split("\n@router", 1)[0]
+    assert '_call, "bus_status"' in body, "포트 카드가 robotd 에 안 묻는다 — 컨테이너에선 늘 빈칸이다"
+    assert "by_iface.get(iface) or await asyncio.to_thread(bus_stats, iface)" in body, \
+        "robotd 가 없을 때의 지역 폴백이 없다 (저장소에서 직접 띄운 게이트웨이)"
+    assert body.index('_call, "bus_status"') < body.index("for iface, arm in"), \
+        "인터페이스마다 RPC 를 친다 — 폴링되는 자리라 한 번만 물어야 한다"
+
+
 def test_an_unknown_interface_returns_empty_not_zero():
     """⚠ 0 을 돌려주면 **못 읽은 것과 깨끗한 것이 구별되지 않는다.**"""
     assert error_counters("can_does_not_exist") == {}
