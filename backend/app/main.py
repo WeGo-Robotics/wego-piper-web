@@ -116,6 +116,25 @@ async def lifespan(app: FastAPI):
         robot_manager.migrate_legacy_presets()
     except Exception as e:
         logger.warning("Preset migration failed: %s", e)
+
+    # ⚠ **깔린 데몬이 이번 릴리스와 맞는지 기동 때 한 번 본다** (릴리스 규칙 R4).
+    #   판정이 버전 카드에만 있으면 화면을 연 사람만 안다 — 2026-09-15 NUC 은 wheel 이
+    #   최신인데 데몬 소스가 9월 1일자라 회색 카드가 죽었고, 아무 데서도 그 말을 안 했다.
+    #   여기서 못 고치지만(고칠 곳은 호스트의 `./piper-install.sh` 다) **말은 한다.**
+    try:
+        from app.services import version as _version
+
+        _stale = _version.staleness()
+        if _stale["wheels"]:
+            logger.warning("데몬 wheel 이 이번 릴리스와 다릅니다: %s — 설정 → 서비스에서 재시작하세요",
+                           ", ".join(_stale["wheels"]))
+        if _stale["daemons"]:
+            logger.warning("데몬 소스가 적용된 릴리스와 다릅니다 (%s) — 받아 둔 번들에서 "
+                           "./piper-install.sh 를 한 번 돌리면 따라잡습니다", _stale["daemons"])
+        if _stale["ok"]:
+            logger.info("데몬 버전 확인: 이번 릴리스와 맞습니다")
+    except Exception as e:
+        logger.debug("데몬 버전 확인 실패: %s", e)
     # 이전 세션 복원 (로봇 + 카메라)
     try:
         robot_manager.restore_session()

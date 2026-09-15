@@ -129,7 +129,43 @@ def collect() -> dict:
             info["daemons"][d] = rep.get("versions", {})
     except Exception as exc:
         logger.debug("데몬 버전 수집 실패: %s", exc)
+    info["staleness"] = staleness(info)
     return info
+
+
+def staleness(info: dict | None = None) -> dict:
+    """깔린 것이 적용된 릴리스와 맞나 — **판정은 여기 한 곳**이다.
+
+    ⚠ 예전에는 이 규칙이 브라우저에만 있었다(VersionCard 의 `wheelMismatch`). 그러면
+    버전 카드를 연 사람만 알고, 기동 로그에도 안 남고, API 로도 안 나온다. 그리고 그
+    규칙은 **wheel 만** 봤다 — 2026-09-15 NUC 은 wheel 이 0.5.1 로 최신인데
+    `daemons/camerad.py` 가 9월 1일자라 회색 카드가 죽었고, 화면은 아무 말도 안 했다.
+
+    둘을 따로 본다:
+
+    - `wheels` — **이번 릴리스가 다시 구운 것만** 견준다. 안 건드린 wheel 이 옛 버전인 건
+      정상이다(`running_version` 주석: 그걸 오탐하던 시절이 있었다). `0.1.0` 은 도장 전 빌드.
+    - `daemons` — 적용된 **데몬 소스**의 스탬프(`$SRC/daemons/.version`, apply.sh 가 풀 때마다
+      적는다) 대 적용 릴리스(`VERSION`). 표시가 없으면 낡은 것으로 본다 — 스탬프가 생기기
+      전에 깔린 호스트가 정확히 그 경우이고, 그게 이 사고의 그 기계다.
+
+    저장소에서 띄운 게이트웨이는 `deploy` 가 비어 있어 소스 판정을 건너뛴다(배포본이 아니다).
+    """
+    info = info if info is not None else collect()
+    gw = info.get("gateway") or {}
+    tag = str(gw.get("version") or "").lstrip("v").split("-")[0]
+    touched = {f"piper-{p}" for p in str(gw.get("wheels") or "").split() if p}
+    wheels: list[str] = []
+    if tag and touched:
+        for d, vs in (info.get("daemons") or {}).items():
+            for pkg, v in (vs or {}).items():
+                if pkg in touched and v not in ("0.1.0", tag):
+                    wheels.append(f"{d} {pkg} {v}")
+    deploy = info.get("deploy") or {}
+    applied, stamp = deploy.get("current"), deploy.get("daemons_version")
+    source = f"{stamp or '표시 없음'} ≠ {applied}" if applied and stamp != applied else None
+    return {"wheels": sorted(wheels), "daemons": source,
+            "ok": not wheels and source is None}
 
 
 # ── 새 버전 확인 (feature/version-update.md §3) ─────────────────────────────

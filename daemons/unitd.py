@@ -191,10 +191,16 @@ class UnitHub:
                 continue
             versions.append({"version": ver, **_manifest(mf)})
         current = work / "current" / "VERSION"
+        # ⚠ **데몬 소스의 출처는 따로 말한다.** `VERSION` 은 "마지막으로 적용한 릴리스" 라
+        #   데몬 소스가 그때 같이 풀렸는지는 말해 주지 못한다 — 2026-09-15 NUC 이 그
+        #   틈에 빠졌다(wheel 은 0.5.1, `daemons/camerad.py` 는 9월 1일자). `apply.sh` 가
+        #   풀 때마다 적는 스탬프를 그대로 올린다. 없으면 스탬프 이전에 깔린 호스트다.
+        stamp = work / "current" / "daemons" / ".version"
         info["deploy"] = {
             "work": str(work), "versions": versions,
             "current": current.read_text().strip() if current.exists() else None,
             "applied_at": current.stat().st_mtime if current.exists() else None,
+            "daemons_version": stamp.read_text().strip() if stamp.exists() else None,
         }
         self._host_cache.update(at=now, info=info)
         return info

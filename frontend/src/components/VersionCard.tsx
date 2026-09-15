@@ -32,8 +32,12 @@ type VersionInfo = {
   container: Record<string, string>
   host: Record<string, string>
   deploy: { work?: string; current?: string | null; applied_at?: number | null
+    /** 적용된 **데몬 소스**의 스탬프. `current`(적용 릴리스)와 다르면 소스만 낡은 것이다. */
+    daemons_version?: string | null
     versions?: { version: string; built_at?: string }[] }
   daemons: Record<string, Record<string, string>>
+  /** 판정은 백엔드 한 곳에서 한다(`version.staleness`). 옛 게이트웨이는 안 보낸다 — 그때만 아래 폴백. */
+  staleness?: { wheels: string[]; daemons: string | null; ok: boolean }
 }
 type Check = { current: string; latest: string | null; available: boolean; mode: 'image' | 'source'
   checked_at: number; error: string | null }
@@ -162,7 +166,12 @@ export default function VersionCard() {
   if (!info) return <p className="text-xs text-neutral-500">버전을 읽는 중…</p>
 
   const gw = info.gateway
-  const mismatch = wheelMismatch(gw.version, gw.wheels, info.daemons)
+  // ⚠ 판정은 **백엔드 한 곳**에서 한다(`version.staleness`) — 규칙이 여기에만 있으면 카드를
+  //   연 사람만 알고 기동 로그에도 안 남는다. 게다가 예전 규칙은 wheel 만 봐서, wheel 은
+  //   최신인데 **데몬 소스**가 낡은 경우(2026-09-15 NUC)에 아무 말도 안 했다.
+  //   아래 폴백은 그 필드를 안 보내는 옛 게이트웨이용이다.
+  const mismatch = info.staleness?.wheels ?? wheelMismatch(gw.version, gw.wheels, info.daemons)
+  const sourceStale = info.staleness?.daemons ?? null
   const pick = (src: Record<string, string>, order: string[]) =>
     order.filter((k) => src[k]).map((k) => [k, src[k]] as const)
   const daemonRows = Object.entries(info.daemons)
@@ -222,6 +231,16 @@ export default function VersionCard() {
         <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
           ⚠ 게이트웨이는 {gw.version} 인데 데몬 wheel 이 다릅니다: {mismatch.join(', ')} —
           업데이트 뒤 데몬이 재시작을 못 받았습니다. 아래 서비스에서 재시작하세요.
+        </p>
+      )}
+
+      {/* ⚠ wheel 과 **다른 층**이다. wheel 이 최신이어도 데몬 소스가 낡을 수 있고(데몬을 실은
+          릴리스를 건너뛴 기계), 그러면 새 동사를 모르는 데몬이 "응답하지 않습니다" 로 보인다.
+          재시작으로는 안 고쳐진다 — 번들에서 설치 스크립트를 한 번 돌려야 한다. */}
+      {sourceStale && (
+        <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+          ⚠ 데몬 소스가 적용된 릴리스와 다릅니다 ({sourceStale}) — 데몬을 재시작해도 안 바뀝니다.
+          받아 둔 번들에서 <code className="font-mono">./piper-install.sh</code> 를 한 번 돌리면 따라잡습니다.
         </p>
       )}
 

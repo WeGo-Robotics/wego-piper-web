@@ -263,6 +263,37 @@ def test_the_bundle_carries_what_the_web_update_needs():
     assert "piper-estopd.service) continue" in src, "estopd 를 마지막에 재시작해야 한다"
 
 
+def test_a_restart_checks_that_the_daemons_match_the_release_and_says_so():
+    """⚠ 실기(NUC, 2026-09-15): wheel 은 0.5.1 로 최신인데 `daemons/camerad.py` 가 9월 1일자였다.
+    회색 카드 보정이 "camerad 가 응답하지 않습니다" 로 죽었고 데몬을 재시작해도 안 변했다.
+    그 불일치를 **아무도 말하지 않았다** — 판정이 버전 카드(브라우저)에만 있었고, 그것도
+    wheel 만 봤다. 화면을 안 연 사람은 알 길이 없었다.
+
+    넷을 잠근다: ① unitd 가 데몬 **소스**의 스탬프를 보고하고 ② 백엔드가 한 곳에서 판정하고
+    ③ 게이트웨이가 **기동할 때** 그걸 보고 무엇을 해야 하는지까지 로그로 남기고 ④ 카드는
+    자기 규칙 대신 그 결과를 읽는다. 표시가 없는 옛 호스트는 낡은 것으로 본다 — 이 사고의
+    그 기계가 정확히 그 경우다."""
+    unitd_src = (REPO / "daemons" / "unitd.py").read_text()
+    assert '"current" / "daemons" / ".version"' in unitd_src, "apply.sh 가 적는 자리에서 스탬프를 안 읽는다"
+    assert '"daemons_version"' in unitd_src, "데몬 소스의 출처를 보고하지 않는다"
+
+    ver = (REPO / "backend" / "app" / "services" / "version.py").read_text()
+    assert "def staleness(" in ver and 'info["staleness"] = staleness(info)' in ver, \
+        "판정이 collect() 로 안 나온다 — API 도 기동 검사도 같은 사실을 못 본다"
+    assert "stamp != applied" in ver, "데몬 소스 스탬프를 적용 릴리스와 대조하지 않는다"
+    assert "표시 없음" in ver, "스탬프가 없는 옛 호스트를 최신으로 본다"
+    assert "if tag and touched" in ver, \
+        "이번에 다시 굽지 않은 wheel 까지 낡았다고 한다 — 패치마다 오탐하던 그 버그다"
+
+    main = (REPO / "backend" / "app" / "main.py").read_text()
+    assert "_version.staleness()" in main, "기동할 때 확인하지 않는다"
+    assert "piper-install.sh" in main, "소스가 낡았을 때 무엇을 해야 하는지 말하지 않는다"
+
+    card = (REPO / "frontend" / "src" / "components" / "VersionCard.tsx").read_text()
+    assert "info.staleness?.wheels ??" in card, "카드가 여전히 자기 규칙으로만 판정한다"
+    assert "sourceStale" in card, "데몬 소스 불일치를 화면에 안 그린다"
+
+
 def test_the_card_expects_to_lose_the_gateway_and_never_automates_sudo():
     src = (REPO / "frontend" / "src" / "components" / "VersionCard.tsx").read_text()
     for needle in ("/system/update/check", "/system/update/pull", "/system/update/apply",
