@@ -882,7 +882,10 @@ class PortDownRequest(BaseModel):
 @router.post("/can/down")
 async def can_down(body: PortDownRequest):
     """CAN 인터페이스 DOWN. 연결된 팔이 있으면 거절 — 발밑을 파는 조작이다."""
-    from piper_robot.can import down_can_interface
+    # ⚠ **robotd 를 거친다.** 컨테이너에는 `can0` 이 없다 — 여기서 직접 부르면 실기(NUC,
+    #   2026-09-15)처럼 `bring-down failed: Cannot find device "can0"` 로 끝난다. UP 은
+    #   처음부터 `init_interface` RPC 였고, DOWN 만 빠져 있었다.
+    from app.services.robot_manager import down_can_interface
 
     arm = robot_manager.arms.get(body.iface)
     if arm and arm.connected:

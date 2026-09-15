@@ -92,7 +92,10 @@ def require_healthy_bus(iface: str) -> None:
     SDK 가 전송 실패를 조용히 삼키기 때문이다 — 사용자는 소프트웨어를 의심하게
     된다. 시작하는 순간이 그걸 말해줄 가장 좋은 때다.
     """
-    from piper_robot.can import can_unhealthy_reason
+    # ⚠ **robotd 에게 묻는다.** 컨테이너에서 직접 부르면 `can_state` 가 아무것도 못 읽어
+    #   언제나 None(=정상)이 되고, 이 가드가 조용히 통과한다 — 위 주석이 막으려던 바로 그
+    #   상황("팔만 안 움직인다")이 배포판에서만 되살아난다 (실기 NUC 2026-09-15).
+    from app.services.robot_manager import can_unhealthy_reason
 
     bad = can_unhealthy_reason(iface)
     if bad:

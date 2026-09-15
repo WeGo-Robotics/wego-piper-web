@@ -46,6 +46,53 @@ def test_the_ports_card_reads_bus_stats_from_robotd_not_from_the_container():
         "인터페이스마다 RPC 를 친다 — 폴링되는 자리라 한 번만 물어야 한다"
 
 
+def test_bringing_a_can_interface_down_goes_through_robotd_like_bringing_it_up():
+    """⚠ 실기(NUC, 2026-09-15): 포트 카드의 [DOWN] 이 `bring-down failed: Cannot find device
+    "can0"` 로 끝났다. 그 순간 호스트의 can0 은 `UP · bitrate 1000000 · ERROR-ACTIVE` 로
+    멀쩡했고, **컨테이너 안에만** 없었다(브리지 네트워크라 `ip link show can0` 이
+    `Device "can0" does not exist.`).
+
+    UP 은 처음부터 `init_interface` RPC 로 robotd 를 거쳤는데 DOWN 만 빠져 있었다 —
+    같은 버튼 줄의 두 동작이 서로 다른 기계에서 돌고 있었다."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    body = (root / "backend" / "app" / "routers" / "robots.py").read_text() \
+        .split("async def can_down", 1)[1].split("\n@router", 1)[0]
+    assert "from piper_robot.can import down_can_interface" not in body, \
+        "DOWN 이 컨테이너 안에서 ip 를 부른다 — 거기엔 can0 이 없다"
+    assert "from app.services.robot_manager import down_can_interface" in body
+    assert '_call("down_interface"' in (root / "backend" / "app" / "services" / "robot_manager.py").read_text(), \
+        "게이트웨이 래퍼가 robotd 를 안 거친다"
+    assert '"down_interface"' in (root / "daemons" / "robotd.py").read_text(), \
+        "robotd 화이트리스트에 없다 — RPC 가 '알 수 없는 메서드' 로 거절된다"
+    assert "def down_interface" in (root / "robot" / "piper_robot" / "hub.py").read_text(), \
+        "robotd 허브에 동사가 없다"
+
+
+def test_the_teleop_bus_guard_asks_robotd_instead_of_failing_open():
+    """⚠ 배포판(컨테이너)에서는 `can_state` 가 아무것도 못 읽어 `can_unhealthy_reason` 이
+    **늘 None(=정상)** 을 돌려준다 — 조작 시작 가드가 조용히 통과한다. 그러면 BUS-OFF 인데도
+    조그가 열리고 슬라이더는 움직이는데 팔만 안 움직인다. 그 가드를 둔 이유가 바로 그
+    상황인데, 배포판에서만 되살아나 있었다 (NUC 점검 2026-09-15).
+
+    robotd 에게 묻는다. robotd 가 없으면 예전처럼 통과다 — 가드가 없다고 조작을 막지는 않는다."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    guard = (root / "backend" / "app" / "services" / "teleop.py").read_text() \
+        .split("def require_healthy_bus", 1)[1].split("\ndef ", 1)[0]
+    assert "from piper_robot.can import can_unhealthy_reason" not in guard, \
+        "가드가 컨테이너에서 CAN 상태를 읽는다 — 늘 '정상' 이 된다"
+    assert "from app.services.robot_manager import can_unhealthy_reason" in guard
+    mgr = (root / "backend" / "app" / "services" / "robot_manager.py").read_text()
+    assert '_call("unhealthy_reason"' in mgr and "default=None" in mgr, \
+        "래퍼가 robotd 를 안 거치거나, 데몬이 없을 때 통과하지 않는다"
+    assert '"unhealthy_reason"' in (root / "daemons" / "robotd.py").read_text(), \
+        "robotd 화이트리스트에 없다 — RPC 가 '알 수 없는 메서드' 로 거절된다"
+    assert "def unhealthy_reason" in (root / "robot" / "piper_robot" / "hub.py").read_text()
+
+
 def test_an_unknown_interface_returns_empty_not_zero():
     """⚠ 0 을 돌려주면 **못 읽은 것과 깨끗한 것이 구별되지 않는다.**"""
     assert error_counters("can_does_not_exist") == {}

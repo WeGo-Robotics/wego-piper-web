@@ -561,6 +561,25 @@ class RobotHub:
 
         return init_can_interface(iface, bitrate)
 
+    def down_interface(self, iface: str) -> tuple[bool, str]:
+        """⚠ **UP 과 짝이다 — 여기(호스트)에 있어야 한다.** 게이트웨이 컨테이너는 브리지
+        네트워크라 `can0` 자체가 없다. 실기(NUC, 2026-09-15): [DOWN] 이 컨테이너 안에서
+        `ip link set can0 down` 을 불러 `bring-down failed: Cannot find device "can0"` 로
+        끝났다 — 같은 순간 호스트의 can0 은 UP·1Mbit/s 로 멀쩡했다."""
+        from piper_robot.can import down_can_interface
+
+        return down_can_interface(iface)
+
+    def unhealthy_reason(self, iface: str) -> str | None:
+        """버스가 나쁘면 사람이 읽을 사유. **여기(호스트)에서만 답이 나온다.**
+
+        ⚠ 컨테이너에서 부르면 `can_state` 가 아무것도 못 읽어 `None`(=정상)이 되고,
+        조작 시작 가드가 **조용히 통과**한다 — 버스가 BUS-OFF 여도 조그가 열리고
+        슬라이더는 움직이는데 팔만 안 움직인다. 그 가드를 둔 이유가 바로 그것이다."""
+        from piper_robot.can import can_unhealthy_reason
+
+        return can_unhealthy_reason(iface)
+
     def check_active(self, iface: str, interval: float = 0.3) -> bool:
         """게이트웨이 컨테이너는 브리지 네트워크라 `can0`/`can1` 자체가 안 보인다
         (network_mode: host 를 뺐다) — sysfs rx 카운터를 읽으려면 여기(호스트)를 거쳐야 한다."""

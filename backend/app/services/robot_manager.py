@@ -205,6 +205,22 @@ def init_can_interface(iface: str, bitrate: int = 1_000_000) -> tuple[bool, str]
     return _pair(_call("init_interface", iface, bitrate, timeout=30), "CAN 인터페이스 초기화 실패")
 
 
+def down_can_interface(iface: str) -> tuple[bool, str]:
+    """⚠ **UP 과 같은 길로 간다 — robotd 다.** 게이트웨이 컨테이너에는 `can0` 이 아예 없어
+    직접 부르면 `bring-down failed: Cannot find device "can0"` 로 끝난다 (실기 NUC 2026-09-15:
+    그 순간 호스트의 can0 은 UP·1Mbit/s 로 멀쩡했다)."""
+    return _pair(_call("down_interface", iface, timeout=30), "CAN 인터페이스 내리기 실패")
+
+
+def can_unhealthy_reason(iface: str) -> str | None:
+    """버스가 나쁘면 사유, 괜찮으면 None. **robotd 가 답한다.**
+
+    ⚠ 컨테이너에서 `piper_robot.can` 을 직접 부르면 `can_state` 가 아무것도 못 읽어 늘
+    None 이 된다 — 조작 시작 가드가 **조용히 통과**해 BUS-OFF 인데도 조그가 열린다.
+    robotd 가 없으면 예전처럼 None(통과)이다: 가드가 없다고 조작을 막지는 않는다."""
+    return _call("unhealthy_reason", iface, default=None, timeout=10)
+
+
 def check_can_active(iface: str, interval: float = 0.3) -> bool:
     return bool(_call("check_active", iface, interval, default=False, timeout=int(interval) + 5))
 

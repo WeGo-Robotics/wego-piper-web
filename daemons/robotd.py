@@ -72,7 +72,8 @@ _METHODS = {
     "set_hardware_zero", "read_raw_all", "stream_end_pose", "read_motion_status",
     "load_status", "load_status_all", "load_history",
     "get_load_limits", "set_load_limits",
-    "init_interface", "check_active", "sniff_ids", "rename_interface", "recover_usb", "usb_info",
+    "init_interface", "down_interface", "check_active", "unhealthy_reason", "sniff_ids",
+    "rename_interface", "recover_usb", "usb_info",
     "lost",
 }
 
