@@ -4,9 +4,12 @@
 
 - **설정 → 클라우드** — 게이트웨이 SSH 키 (`/ssh-key*`). "빌리기 전까지".
 - **LeRobot → 클라우드 GPU 의 RENT 탭** — 오퍼·템플릿·준비도. "무엇을 빌릴지 고른다".
+- **같은 페이지의 인스턴스 탭** — 지금 도는 것·고아·파기 (`/instances`).
 
-⚠ **인스턴스를 띄우는 엔드포인트는 아직 없다.** 빌리는 일은 파기·예산 가드와 한
-몸이라(§6) W3 과 같이 간다. 지금 넣으면 "빌릴 수는 있는데 끌 수는 없는" 상태가 된다.
+⚠ **아직 여기서 인스턴스를 띄우지는 않는다.** 끄는 쪽(`DELETE /instances/{id}`)이
+먼저 온 것은 순서가 뒤바뀐 게 아니다 — 사람이 유일한 가드인 동안에는 **볼 수 있고
+끌 수 있는 것**이 먼저다. 띄우는 엔드포인트는 조달 상태기계를 `TrainManager` 에
+엮은 뒤에 붙는다.
 """
 
 import asyncio
@@ -21,9 +24,14 @@ from fastapi import APIRouter, HTTPException, Query
 from app.services.cloud import sshkey
 from app.services.cloud.providers import vast
 from app.services.cloud.providers.base import MIN_CUDA, OfferFilter
+from app.services.training.jobs import job_registry
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/cloud", tags=["cloud"])
+
+#: 우리가 만든 인스턴스의 라벨 접두사. ⚠ **레지스트리를 잃어도 남는 유일한
+#: 단서**라 고아 판정이 이것에 달려 있다 — 바꾸면 옛 인스턴스를 못 알아본다.
+ORPHAN_PREFIX = "piper-"
 
 #: CLI 가 없을 때의 문구. ⚠ **사용자 탓이 아니다** — 배포판은 컨테이너라 사람이
 #: 깔 방법이 없다. 고쳐야 할 것은 이미지이지 사용자가 아니라고 말해야 한다.
@@ -172,6 +180,60 @@ async def cloud_gpus(
         return {"gpus": [], "disk_gb": disk_gb,
                 "detail": f"기종 목록을 불러오지 못했습니다: {str(exc)[:200]}"}
     return {"gpus": [asdict(g) for g in rows], "disk_gb": disk_gb, "detail": None}
+
+
+@router.get("/instances")
+async def cloud_instances():
+    """지금 살아 있는 인스턴스 — **돈이 나가고 있는 것들**.
+
+    ⚠ **고아를 같이 표시한다.** 우리 라벨(`piper-`)이 붙었는데 레지스트리가 모르는
+    것이 고아다 — 게이트웨이가 죽었다 살아났거나 레코드를 잃었을 때 생긴다(§6-3).
+    라벨이 레지스트리를 잃고도 남는 유일한 단서다.
+
+    ⚠ **자동으로 파기하지 않는다.** 다른 기계의 게이트웨이가 돌리는 학습일 수 있다
+    (§10 결정 5) — 남의 것을 끄는 쪽이 더 나쁜 실수다. 보여 주고 버튼을 주는
+    데까지가 우리 몫이다.
+    """
+    try:
+        rows = await asyncio.to_thread(_provider().list_instances)
+    except Exception as exc:                                        # noqa: BLE001
+        raise _to_http(exc) from exc
+
+    known = {int(r.instance_id) for r in job_registry.list()
+             if str(r.instance_id or "").isdigit()}
+    out = []
+    for i in rows:
+        d = asdict(i)
+        d["orphan"] = i.label.startswith(ORPHAN_PREFIX) and i.id not in known
+        out.append(d)
+    # 고아를 먼저 — 사람이 봐야 할 것이 위로 온다
+    out.sort(key=lambda d: (not d["orphan"], d["id"]))
+    return {"instances": out,
+            "orphans": sum(1 for d in out if d["orphan"]),
+            "known": sorted(known)}
+
+
+@router.delete("/instances/{instance_id}")
+async def destroy_instance(instance_id: int):
+    """인스턴스를 파기한다. **확인될 때만 성공이라고 말한다.**
+
+    ⚠ 실측 함정 둘이 프로바이더 안에 박혀 있다 — `-y` 가 없으면 프롬프트에서 멈춰
+    `Aborted.` 를 찍고 **종료코드 0** 으로 끝나고(살아 있는데 성공으로 읽힌다),
+    `destroy -y --raw` 는 **빈 출력**이라 응답으로는 판정할 수 없다. 그래서 판정은
+    목록으로 한다.
+
+    ⚠ 확인이 안 되면 **200 으로 넘어가지 않는다.** 조용한 성공이 이 경로에서 가장
+    비싼 거짓말이다 — 사람이 껐다고 믿고 자리를 뜬다.
+    """
+    try:
+        gone = await asyncio.to_thread(_provider().destroy, int(instance_id))
+    except Exception as exc:                                        # noqa: BLE001
+        raise _to_http(exc) from exc
+    if not gone:
+        raise HTTPException(
+            502, f"인스턴스 {instance_id} 가 사라진 것을 확인하지 못했습니다 — "
+                 f"과금이 계속될 수 있습니다. `vastai show instances` 로 확인하세요.")
+    return {"destroyed": True, "instance_id": int(instance_id)}
 
 
 @router.get("/templates")

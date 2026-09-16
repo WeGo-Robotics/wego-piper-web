@@ -213,3 +213,103 @@ def test_the_timeout_exit_code_still_reaches_the_marker():
         TrainJobSpec(cmd=["python", "t.py"], max_hours=1)).splitlines() if l.strip()]
     i = next(n for n, l in enumerate(lines) if l.startswith("timeout "))
     assert lines[i + 1] == f'echo "{_EXIT_MARK} $?"', "마커가 명령 바로 뒤가 아니다"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 화면이 읽는 창구 — **사람이 유일한 가드인 동안 볼 수 있어야 한다**
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def client(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.routers import cloud as router
+
+    state = {"rows": [], "destroyed": []}
+
+    class _P:
+        def list_instances(self):
+            return [router.vast.parse_instance(r) if hasattr(router.vast, "parse_instance")
+                    else vast.VastProvider()._parse_instance(r) for r in state["rows"]]
+
+        def destroy(self, iid):
+            state["destroyed"].append(iid)
+            state["rows"] = [r for r in state["rows"] if r["id"] != iid]
+            return True
+
+    monkeypatch.setattr(router, "_provider", lambda: _P())
+    return TestClient(app), state
+
+
+def test_instances_are_listed_with_what_they_cost(client):
+    c, st = client
+    st["rows"] = [_inst(5, label="piper-j1")]
+    r = c.get("/api/cloud/instances")
+    assert r.status_code == 200
+    got = r.json()["instances"][0]
+    assert got["id"] == 5 and got["rate_usd_h"] == 0.1 and got["status"] == "running"
+
+
+def test_an_instance_the_registry_does_not_know_is_flagged_as_an_orphan(client, monkeypatch):
+    """⚠ 게이트웨이가 죽었다 살아나거나 레코드를 잃으면 생긴다. 라벨이 **레지스트리를
+    잃고도 남는 유일한 단서**다(§6-3)."""
+    from app.routers import cloud as router
+
+    c, st = client
+    st["rows"] = [_inst(5, label="piper-j1")]
+    monkeypatch.setattr(router.job_registry, "list", lambda: [])
+    d = c.get("/api/cloud/instances").json()
+    assert d["orphans"] == 1 and d["instances"][0]["orphan"] is True
+
+
+def test_someone_elses_instance_is_never_called_ours(client, monkeypatch):
+    """⚠ 남의 것을 고아라 하면 사람이 **남의 학습을 끈다** — 더 나쁜 실수다."""
+    from app.routers import cloud as router
+
+    c, st = client
+    st["rows"] = [_inst(5, label="someone-else")]
+    monkeypatch.setattr(router.job_registry, "list", lambda: [])
+    d = c.get("/api/cloud/instances").json()
+    assert d["orphans"] == 0 and d["instances"][0]["orphan"] is False
+
+
+def test_orphans_are_listed_first_because_they_are_what_needs_looking_at(client, monkeypatch):
+    from app.routers import cloud as router
+
+    c, st = client
+    st["rows"] = [_inst(1, label="piper-known"), _inst(9, label="piper-lost")]
+
+    class _Rec:
+        instance_id = "1"
+    monkeypatch.setattr(router.job_registry, "list", lambda: [_Rec()])
+    ids = [i["id"] for i in c.get("/api/cloud/instances").json()["instances"]]
+    assert ids == [9, 1], "고아가 맨 위가 아니다"
+
+
+def test_destroying_reports_success_only_when_it_is_confirmed(client):
+    c, st = client
+    st["rows"] = [_inst(5)]
+    r = c.delete("/api/cloud/instances/5")
+    assert r.status_code == 200 and r.json()["destroyed"] is True
+    assert st["destroyed"] == [5]
+
+
+def test_an_unconfirmed_destroy_is_not_a_200(client, monkeypatch):
+    """⚠ **조용한 성공이 이 경로에서 가장 비싼 거짓말이다** — 사람이 껐다고 믿고
+    자리를 뜬다. 그리고 요금은 계속 나간다."""
+    from app.routers import cloud as router
+
+    class _Stubborn:
+        def list_instances(self):
+            return []
+
+        def destroy(self, iid):
+            return False
+
+    monkeypatch.setattr(router, "_provider", lambda: _Stubborn())
+    c, _ = client
+    r = c.delete("/api/cloud/instances/5")
+    assert r.status_code == 502
+    assert "과금이 계속될 수 있습니다" in r.json()["detail"]
+    assert "vastai show instances" in r.json()["detail"], "사람이 할 일을 안 적었다"
