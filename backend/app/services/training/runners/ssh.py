@@ -205,7 +205,17 @@ class SSHRunner:
         # 진행률 복원용. 로그에는 안 나오는 사실이라 여기 적어둔다.
         lines.append(f"# piper-total-steps: {spec.total_steps}")
         lines.append(f"# piper-output-dir: {spec.output_dir}")
-        lines.append(shlex.join(spec.cmd))
+        # ⚠ **가장 안쪽 가드다** (feature/vast-training.md §6-1). 사람·게이트웨이·인터넷이
+        #   전부 사라져도 학습 프로세스는 반드시 끝난다 — 임대 GPU 는 우리가 안 보는
+        #   동안에도 시간당으로 과금되고, 지금은 이것 말고 자동으로 멈추는 것이 없다.
+        #   `timeout` 은 coreutils 라 이미지에 있다(실측: 학습 이미지에서 확인).
+        #
+        #   ⚠ 종료 코드를 **삼키지 않는다.** `timeout` 이 죽이면 124 가 그대로 아래
+        #   마커로 흘러, 화면이 "끝났다" 가 아니라 "시간 초과로 끊겼다" 를 말할 수 있다.
+        cmd = shlex.join(spec.cmd)
+        if spec.max_hours and spec.max_hours > 0:
+            cmd = f"timeout {int(spec.max_hours * 3600)} {cmd}"
+        lines.append(cmd)
         # ⚠ 종료 코드를 **로그로** 흘린다. 이게 상태 채널이다 — 이 줄이 없으면
         #   학습이 끝나도 화면이 계속 "실행 중" 이고, 다음 학습이 막힌다.
         lines.append(f'echo "{_EXIT_MARK} $?"')

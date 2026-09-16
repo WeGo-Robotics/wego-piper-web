@@ -236,6 +236,39 @@ class GpuModel:
 
 
 @dataclass(frozen=True)
+class SSHTarget:
+    """빌린 기계에 들어가는 주소. `SSHRunner` 가 이걸로 붙는다."""
+
+    host: str
+    port: int = 22
+    user: str = "root"
+    key_path: str = ""
+
+
+@dataclass(frozen=True)
+class Instance:
+    """빌린 기계 하나. **돈이 걸린 유일한 객체다.**
+
+    ⚠ `label` 은 장식이 아니라 **고아를 찾는 유일한 단서**다. 레지스트리를 잃어도
+    라벨이 붙어 있으면 "이건 우리 것" 을 알 수 있다(§6-3).
+    """
+
+    id: int
+    label: str
+    status: str
+    gpu_name: str
+    rate_usd_h: float
+    ssh: SSHTarget | None
+    image: str = ""
+    #: 사람이 읽을 진행 메시지 (pull 중이면 그 줄이 온다)
+    message: str = ""
+
+    @property
+    def running(self) -> bool:
+        return self.status == "running"
+
+
+@dataclass(frozen=True)
 class Template:
     """미리 올려 둔 학습 템플릿 한 벌."""
 
@@ -251,15 +284,22 @@ class Template:
 
 @runtime_checkable
 class CloudProvider(Protocol):
-    """§8 W2 의 계약 중 **지금 구현된 만큼**.
+    """§8 W2 의 계약.
 
-    ⚠ `create` / `wait_ssh` / `status` / `destroy` / `list_instances` 는 일부러 아직
-    없다. 인스턴스를 띄우는 일은 파기·예산 가드와 한 몸이라(§6) W3 과 같이 간다.
-    없는 메서드를 Protocol 에 미리 적어 두면 `isinstance` 가 거짓말을 한다.
+    ⚠ **띄우는 동사와 끄는 동사는 같이 온다.** 하나만 있으면 "빌릴 수는 있는데 끌 수는
+    없는" 상태가 되고, 그건 돈이 새는 구조다(§6).
     """
 
     name: str
 
+    # ── 조회 ──
     def search(self, f: OfferFilter) -> list[Offer]: ...
     def templates(self) -> list[Template]: ...
     def whoami(self) -> dict: ...
+
+    # ── 수명 ──
+    def create(self, offer_id: int, *, template_hash: str, disk_gb: float,
+               label: str) -> Instance: ...
+    def list_instances(self) -> list[Instance]: ...
+    def status(self, instance_id: int) -> Instance | None: ...
+    def destroy(self, instance_id: int) -> bool: ...

@@ -28,7 +28,8 @@ import time
 from collections import Counter
 
 from .base import (
-    GpuModel, Offer, OfferFilter, Template, gpu_support, hourly_total, warnings_for,
+    GpuModel, Instance, Offer, OfferFilter, SSHTarget, Template,
+    gpu_support, hourly_total, warnings_for,
 )
 
 logger = logging.getLogger(__name__)
@@ -341,6 +342,91 @@ class VastProvider:
             return out
 
         return self._cached(key, _go, ttl=CATALOG_TTL)
+
+    # ── 수명 ─────────────────────────────────────────────────────────────
+    def _parse_instance(self, raw: dict) -> Instance:
+        # ⚠ CLI 1.7 이 실제로 읽는 상태 필드는 `actual_status` 다. `cur_state`·
+        #   `intended_status` 로 판단하면 "곧 그렇게 될 것" 을 "그렇다" 로 읽는다.
+        host, port = raw.get("ssh_host"), raw.get("ssh_port")
+        return Instance(
+            id=int(raw.get("id") or 0),
+            label=str(raw.get("label") or ""),
+            status=str(raw.get("actual_status") or "unknown"),
+            gpu_name=str(raw.get("gpu_name") or "?"),
+            rate_usd_h=float(raw.get("dph_total") or 0.0),
+            ssh=SSHTarget(host=str(host), port=int(port)) if host and port else None,
+            image=str(raw.get("image_uuid") or ""),
+            message=str(raw.get("status_msg") or "").strip()[:200],
+        )
+
+    def create(self, offer_id: int, *, template_hash: str, disk_gb: float,
+               label: str) -> Instance:
+        """오퍼 하나를 빌린다. **여기서부터 돈이 나간다.**
+
+        ⚠ `--cancel-unavail` 이 없으면 스케줄에 실패했을 때 **정지된 인스턴스가 조용히
+        만들어지고 스토리지 과금이 계속된다.** 실패는 실패로 끝나야 한다.
+
+        ⚠ `--disk` 를 명시한다. 템플릿의 `recommended_disk_space` 가 적용되지 않아
+        기본값으로 뜨면 이미지 전개가 안 들어가 pull 이 실패한다.
+
+        ⚠ `--label` 은 장식이 아니다. 레지스트리를 잃었을 때 **우리 것을 알아보는 유일한
+        단서**이고, 그게 고아 스캐너가 서는 자리다(§6-3).
+        """
+        out = self._raw(["create", "instance", str(int(offer_id)),
+                         "--template_hash", template_hash,
+                         "--disk", f"{float(disk_gb):g}",
+                         "--ssh", "--direct",
+                         "--label", label,
+                         "--cancel-unavail"])
+        if not isinstance(out, dict) or not out.get("success"):
+            raise RuntimeError(f"인스턴스를 만들지 못했습니다: {str(out)[:200]}")
+        cid = out.get("new_contract")
+        if not isinstance(cid, int):
+            raise RuntimeError(f"인스턴스 id 를 받지 못했습니다: {str(out)[:200]}")
+        got = self.status(cid)
+        return got or Instance(id=cid, label=label, status="created", gpu_name="?",
+                               rate_usd_h=0.0, ssh=None)
+
+    def list_instances(self) -> list[Instance]:
+        """지금 살아 있는 인스턴스 전부.
+
+        ⚠ **타입을 검사한다.** CLI 는 오류도 종료코드 0 으로 내고 본문에
+        `{"error": true, ...}` 를 싣는다 — 그걸 그대로 받으면 **오류가 빈 목록으로
+        둔갑하고**, 빈 목록은 "아무것도 안 돌고 있다" 로 읽힌다. 돈이 걸린 판단에서
+        가장 위험한 착각이다.
+        """
+        rows = self._raw(["show", "instances"])
+        if not isinstance(rows, list):
+            raise RuntimeError(f"인스턴스 목록이 배열이 아닙니다: {str(rows)[:200]}")
+        return [self._parse_instance(r) for r in rows if isinstance(r, dict)]
+
+    def status(self, instance_id: int) -> Instance | None:
+        """하나만. 없으면 `None` — 파기됐다는 뜻이다."""
+        for i in self.list_instances():
+            if i.id == int(instance_id):
+                return i
+        return None
+
+    def destroy(self, instance_id: int) -> bool:
+        """파기하고 **목록으로 확인한다.** 확인될 때만 True.
+
+        ⚠ **`-y` 가 없으면 파기되지 않는다.** 실측: 프롬프트(`[y/N]`)에서 멈췄다가
+        `Aborted.` 를 찍고 **종료코드 0** 으로 끝난다 — `&& echo 완료` 가 완료를 찍고,
+        인스턴스는 멀쩡히 살아서 과금된다.
+
+        ⚠ **응답으로 판정하지 않는다.** `destroy -y --raw` 는 실측에서 **빈 출력**을
+        낸다. 파싱할 것이 없다. 그래서 진실은 목록에서만 온다.
+        """
+        try:
+            self._raw(["destroy", "instance", str(int(instance_id)), "-y"])
+        except Exception as exc:                                    # noqa: BLE001
+            # 응답이 비어 파싱에 실패하는 것은 **정상 경로다.** 여기서 멈추지 않고
+            # 목록으로 확인하러 간다 — 진짜 실패였다면 아래에서 걸린다.
+            logger.info("destroy 응답을 못 읽었다(정상일 수 있다): %s", str(exc)[:120])
+        gone = self.status(instance_id) is None
+        if not gone:
+            logger.error("인스턴스 %s 가 파기되지 않았다 — 과금이 계속된다", instance_id)
+        return gone
 
     def whoami(self) -> dict:
         """계정과 **쓸 수 있는 돈**.
