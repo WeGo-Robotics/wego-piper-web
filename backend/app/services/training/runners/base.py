@@ -25,6 +25,14 @@ class TrainRunner(Protocol):
     #: (feature/cloud-training.md 첫 표: "학습은 원격, 로컬 GPU 는 수집/추론 전용").
     occupies_local_gpu: bool
 
+    #: 이 러너가 **다른 기계**에서 도나.
+    #:
+    #: 원격이면 로컬 절대경로(인터프리터)도 로컬 자격증명도 안 통한다 — 호출부가
+    #: 그걸 알아야 원격용 인자를 채운다.
+    #: ⚠ `occupies_local_gpu` 로 유추하지 않는다. 그건 "이 기계 GPU 를 먹나" 라는
+    #: 다른 질문이고, 둘이 갈리는 러너가 생기면 조용히 틀린다.
+    is_remote: bool
+
     @property
     def state(self) -> ProcessState: ...
 

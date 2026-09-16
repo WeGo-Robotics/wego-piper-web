@@ -19,6 +19,8 @@ class SystemdRunner:
     """`TrainRunner` 구현. 인터페이스는 `LocalRunner` 와 같다."""
     # 이 기계의 GPU 를 쓴다.
     occupies_local_gpu = True
+    #: 이 기계에서 돈다 — 로컬 인터프리터·로컬 자격증명이 그대로 통한다.
+    is_remote = False
 
 
     def __init__(self, job_id: str = "local") -> None:

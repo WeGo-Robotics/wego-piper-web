@@ -120,6 +120,8 @@ export default function TrainingPage() {
   const [trainState, setTrainState] = useState<ProcessState>('idle')
   // 학습 job 목록 — 로컬도 job 이다(`local`). 원격이 붙으면 여기 함께 뜬다.
   const [jobs, setJobs] = useState<JobRecord[]>([])
+  /** 이번 학습이 **다른 기계**에서 도나. 서버가 러너를 실시간으로 답한다. */
+  const [remoteRun, setRemoteRun] = useState(false)
   // 지금 화면이 보고 있는 job. WS 메시지를 이걸로 걸러야 job 끼리 안 섞인다.
   const [viewJobId, setViewJobId] = useState<string>(LOCAL_JOB_ID)
   const [metrics, setMetrics] = useState<MetricsData | null>(null)
@@ -191,7 +193,13 @@ export default function TrainingPage() {
   useEffect(() => {
     api.get<Dataset[]>('/datasets').then(setDatasets).catch(() => {})
     api.get<Model[]>('/models').then(setModels).catch(() => {})
-    api.get<{ state: string }>('/training/status').then((s) => setTrainState(s.state as ProcessState)).catch(() => {})
+    // ⚠ `remote` 도 같이 받는다 — 이 학습이 **어느 기계에서 도는지**는 화면 어디에도
+    //   안 나와 있었다. 원격이냐에 인터프리터·HF 토큰·회수 가드가 전부 달려 있는데,
+    //   러너가 조용히 로컬로 떨어지면(설정한 원격이 잠깐 안 닿으면 그렇게 된다) 화면은
+    //   똑같아 보이면서 이 기계의 GPU 를 먹는다. 그게 가장 비싼 실패다.
+    api.get<{ state: string; remote?: boolean; runner?: string }>('/training/status')
+      .then((s) => { setTrainState(s.state as ProcessState); setRemoteRun(!!s.remote) })
+      .catch(() => {})
     api.get<{ jobs: JobRecord[] }>('/training/jobs').then((r) => setJobs(r.jobs)).catch(() => {})
   }, [])
 
@@ -389,7 +397,17 @@ export default function TrainingPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">학습</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold">학습</h1>
+          {/* ⚠ 원격이면 **말해 준다.** 이게 없으면 임대 GPU 에서 도는 학습과 이 기계에서
+              도는 학습이 화면상 똑같다 — 러너가 조용히 로컬로 떨어졌을 때 알 길이 없다. */}
+          {remoteRun && (
+            <span className="rounded bg-blue-900/60 px-2 py-0.5 text-xs text-blue-200"
+              title="이 학습은 다른 기계(SSH)에서 돕니다 — 이 기계의 GPU 는 쓰지 않습니다">
+              원격
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-3">
           {/* job 선택 — 로컬도 job 이다. 원격이 붙으면 같은 자리에 함께 뜬다.
               2개 이상일 때만 보여준다 (지금은 항상 로컬 1개라 화면이 조용하다). */}

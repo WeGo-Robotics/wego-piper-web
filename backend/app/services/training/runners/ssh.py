@@ -106,6 +106,7 @@ class SSHRunner:
     """`TrainRunner` 구현. 인터페이스는 `LocalRunner` 와 같다."""
     # ⚠ **원격 GPU 다.** 배타 가드가 이걸 보고 추론·녹화를 안 막는다.
     occupies_local_gpu = False
+    is_remote = True
 
 
     def __init__(self, job_id: str = "local", host: str = "", workdir: str = "") -> None:
@@ -208,6 +209,13 @@ class SSHRunner:
         # ⚠ 종료 코드를 **로그로** 흘린다. 이게 상태 채널이다 — 이 줄이 없으면
         #   학습이 끝나도 화면이 계속 "실행 중" 이고, 다음 학습이 막힌다.
         lines.append(f'echo "{_EXIT_MARK} $?"')
+        # ⚠ **스크립트가 자기를 지운다.** 여기에 자격증명(HF 토큰)이 `export` 로 들어
+        #   있는데, 남겨 두면 남의 기계에 계속 남는다 — 인스턴스를 파기하지 못하면
+        #   무기한이다. 게이트웨이 쪽에서 지우면 그 순간 게이트웨이가 죽어 있을 때
+        #   못 지운다. **스스로 지우면 그 경우까지 덮는다.**
+        #   종료 마커를 찍은 **뒤**라 상태 채널은 이미 흘렀고, 세션도 곧 끝나므로
+        #   `restore()` 가 이 파일을 찾을 이유가 없다(살아있을 때만 읽는다).
+        lines.append('rm -f "$0"')
         return "\n".join(lines) + "\n"
 
     async def start(self, spec: TrainJobSpec) -> None:
@@ -218,7 +226,18 @@ class SSHRunner:
             raise RuntimeError(f"원격 세션이 이미 실행 중입니다: {self.session}")
 
         script, log = shlex.quote(self._script), shlex.quote(self._log)
-        r = _run(self.host, f"cat > {script} && : > {log}",
+        # ⚠ **이 스크립트는 자격증명을 담는다** — 원격 학습이면 `spec.env` 에 HF 토큰이
+        #   실리고 `_build_script` 가 그걸 `export` 로 적는다.
+        #
+        #   ⚠ `cat >` 뒤에 `chmod` 를 붙이면 **늦다.** 파일은 먼저 umask 대로(보통 644)
+        #   만들어지고 토큰이 다 써진 뒤에야 조여진다. 게다가 이전 실행이 남긴 파일 위에
+        #   덮어쓰면 그 파일의 모드를 승계한다. 그래서 **지우고 umask 로** 만든다.
+        #
+        #   ⚠ 이걸로 막는 것은 **같은 기계의 다른 사용자**다. 임대 서버의 호스트 운영자는
+        #   `/proc/<pid>/environ` 으로 어차피 읽는다 — 거기에 대한 답은 권한이 아니라
+        #   **권한을 좁힌 토큰**이다 (§10 결정 3).
+        r = _run(self.host,
+                 f"rm -f {script} && (umask 077 && cat > {script}) && : > {log}",
                  stdin=self._build_script(spec))
         if r.returncode != 0:
             raise RuntimeError(f"원격 스크립트 전송 실패: {(r.stderr or '').strip()}")
@@ -239,14 +258,32 @@ class SSHRunner:
 
         self._set_state(ProcessState.RUNNING)
         self._checked_at = time.time()
-        self._start_log_stream()
+        # ⚠ **처음부터 읽는다.** `tail -n 0` 이면 1초 안에 죽는 실패(exit 127 ·
+        #   draccus 인자 오류 · unknown policy type)가 파일에 다 쓰여 있는데도 **새 줄이
+        #   없어** `_EXIT_MARK` 분기를 못 타고 `_finish(IDLE)` 로 끝난다. IDLE 은
+        #   **정상 완주와 같은 값**이라 화면에서 구별이 안 된다.
+        #   바로 위에서 `: > {log}` 로 파일을 비웠으므로 이전 실행분이 섞이지 않는다.
+        self._start_log_stream(from_start=True)
         logger.info("원격 학습 시작: %s @ %s", self.session, self.host)
+
+    def _wipe_script(self) -> None:
+        """자격증명이 든 스크립트를 원격에서 지운다.
+
+        ⚠ 학습이 끝나면 이 파일이 할 일은 끝났는데, 남겨 두면 토큰이 **남의 기계에
+        계속 있는다** — 인스턴스를 파기하지 못한 경우(고아)에는 무기한이다.
+        실패는 삼킨다: 지우기 실패가 학습 종료를 막을 이유는 없다.
+        """
+        try:
+            _run(self.host, f"rm -f {shlex.quote(self._script)}")
+        except Exception as exc:                                    # noqa: BLE001
+            logger.warning("원격 스크립트를 지우지 못했습니다 (%s): %s", self.session, exc)
 
     async def stop(self) -> None:
         try:
             _run(self.host, f"tmux kill-session -t {shlex.quote(self.session)}")
         except Exception as exc:
             logger.warning("원격 세션 종료 실패 (%s): %s", self.session, exc)
+        self._wipe_script()
         self._finish(ProcessState.IDLE)
 
     # ── 로그 ──

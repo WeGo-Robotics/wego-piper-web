@@ -274,7 +274,12 @@ def test_ssh_script_reports_its_exit_code(monkeypatch):
     from app.services.training.spec import TrainJobSpec
 
     script = r._build_script(TrainJobSpec(cmd=["python", "train.py"]))
-    assert script.rstrip().endswith(f'echo "{_EXIT_MARK} $?"')
+    lines = [ln for ln in script.splitlines() if ln.strip()]
+    # ⚠ 마커가 **명령 바로 다음**이어야 `$?` 가 그 명령의 종료 코드다. 사이에 무엇이
+    #   끼면 그 무엇의 코드가 실려 나간다. (마커 **뒤**에 오는 뒷정리는 무해하다 —
+    #   상태 채널은 이미 흘렀다.)
+    i = lines.index("python train.py")
+    assert lines[i + 1] == f'echo "{_EXIT_MARK} $?"', f"마커가 명령 바로 뒤가 아니다: {lines}"
 
 
 def test_ssh_restore_reads_the_script_not_a_pid_file(monkeypatch):

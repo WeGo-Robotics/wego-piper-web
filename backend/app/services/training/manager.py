@@ -225,6 +225,20 @@ class TrainManager:
         if spec is None:
             stale = self.registry.get(self.job_id)
             if stale and stale.is_active:
+                # ⚠ **"못 물어봤다" 와 "끝났다" 는 다르다.** 레코드가 원격(ssh)이었는데
+                #   지금 러너가 로컬이면, 그건 학습이 끝난 게 아니라 **우리가 물어볼
+                #   수단을 잃은 것**이다. `_default_runner()` 는 임포트 시점에 SSH 프로브를
+                #   딱 한 번 하고, 그때 네트워크가 흔들리면 프로세스 수명 내내 로컬로
+                #   떨어진다. 그 상태로 레코드를 IDLE 로 덮으면 **원격 tmux 는 멀쩡히
+                #   학습을 계속하는데 화면에서는 사라지고, 임대 GPU 는 계속 과금된다.**
+                #   지금은 파기할 코드도 예산 상한도 없으므로(§11-0) 사람이 눈치채는
+                #   것이 유일한 가드다 — 그 단서를 지우지 않는다.
+                if stale.runner == "ssh" and not getattr(self.runner, "is_remote", False):
+                    logger.warning(
+                        "원격 학습 레코드(%s)가 있는데 지금 러너는 로컬이다 — "
+                        "끝났다고 단정하지 않고 그대로 둔다. 인스턴스가 살아 있을 수 "
+                        "있으니 `vastai show instances` 로 확인하라.", self.job_id)
+                    return False
                 logger.info("죽은 학습 job 레코드를 정리한다: %s", self.job_id)
                 self._sync_record(state=ProcessState.IDLE.value)
             return False
@@ -249,6 +263,13 @@ class TrainManager:
             "update_s": m.update_time,  # GPU 갱신 시간 (병목 힌트)
             "data_s": m.data_time,      # 데이터 로딩 시간 (병목 힌트)
             "output_dir": self.output_dir,
+            # ⚠ **지금 러너를 실시간으로 싣는다.** `JobRecord.runner` 는 `_sync_record()`
+            #   가 마지막으로 쓴 **과거 스냅샷**이라 재기동을 안 따라온다(실측: 어제
+            #   학습의 "systemd" 가 그대로 남아 있었다). 그런데 원격이냐 아니냐에
+            #   인터프리터·HF 토큰·회수 가드가 전부 매달려 있으므로, 사람이 그 값을
+            #   지금 볼 수 있어야 한다 — 조용한 로컬 폴백이 가장 비싼 실패다.
+            "runner": type(self.runner).__name__.replace("Runner", "").lower(),
+            "remote": bool(getattr(self.runner, "is_remote", False)),
         }
 
 

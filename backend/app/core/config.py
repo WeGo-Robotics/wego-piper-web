@@ -185,6 +185,13 @@ class Settings(BaseSettings):
     # 상대경로면 같은 자리를 가리킨다.
     train_ssh_workdir: str = ".piper/train"
 
+    #: 원격 학습이 부를 파이썬. **로컬 절대경로가 아니다.**
+    #:
+    #: ⚠ 학습 이미지의 venv 는 `/opt/venv` 이고, 그 경로는 **SSH 로그인 셸의 PATH 에
+    #: 없다**(실측: `bash -lc 'echo $PATH'` 에 `/opt/venv/bin` 이 안 나온다). 그래서
+    #: 기본값을 `python` 으로 두면 `lerobot` 을 못 찾는다 — 절대경로여야 한다.
+    train_remote_python: str = "/opt/venv/bin/python"
+
     # 버스 (Redis) — ZMQ 소켓 3개(5555 파라미터 / 5556 프리뷰 / 5557 녹화제어)를
     # 대체한다 (refactor/daemon-split.md 3단계). 주소가 3개에서 1개로 줄었다.
     # 비워두면 `piper_bus` 기본값(`PIPER_REDIS_URL` 또는 localhost:6379/0)을 쓴다.

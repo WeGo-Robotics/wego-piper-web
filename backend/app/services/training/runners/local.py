@@ -22,6 +22,8 @@ _PID_FILE = "/tmp/piper_train_pid"  # nosec B108
 class LocalRunner:
     # 이 기계의 GPU 를 쓴다.
     occupies_local_gpu = True
+    #: 이 기계에서 돈다 — 로컬 인터프리터·로컬 자격증명이 그대로 통한다.
+    is_remote = False
 
     def __init__(self) -> None:
         self.pm = ProcessManager()

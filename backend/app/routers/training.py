@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.cli_mapping import apply_dim_overrides, build_train_args, resolve_rename_map
+from app.core.config import settings
 from app.routers.presets import register_domain
 from app.services.exclusivity import Activity, require_idle
 from app.services.training import train_manager
@@ -119,13 +120,36 @@ class TrainCustomRequest(BaseModel):
     amp: str = "bf16"
 
 
-def _amp_env(amp: str) -> dict[str, str] | None:
-    """AMP 선택값 → ACCELERATE_MIXED_PRECISION 환경변수 (off면 None).
+def _train_env(amp: str, *, remote: bool = False) -> dict[str, str] | None:
+    """학습 프로세스에 넣을 환경변수.
 
-    lerobot_train.py는 accelerator.autocast()로 학습하며, 혼합정밀도는
+    AMP: lerobot_train.py는 accelerator.autocast()로 학습하며, 혼합정밀도는
     --policy.use_amp(학습 루프 미사용)가 아니라 이 환경변수로만 켜진다.
+
+    ⚠ **원격이면 HF 토큰을 같이 보낸다.** 데이터셋을 받고 가중치를 올리는 데 둘 다
+    필요한데 임대 서버에는 우리 토큰이 없다. `SSHRunner._build_script` 가 이걸
+    스크립트 안에서 `export` 하고 그 스크립트가 tmux 안에서 실행되므로 학습
+    프로세스까지 닿는다 (ssh 세션 env 로는 못 넘는다 — tmux 서버가 환경을 얼린다).
+
+    ⚠ 토큰이 **남의 기계**로 간다. 원격 학습을 쓴다는 것이 곧 그 선택이다 —
+    fine-grained 전용 토큰을 쓰는 것이 다음 단계다 (§10 결정 3).
     """
-    return {"ACCELERATE_MIXED_PRECISION": amp} if amp and amp != "off" else None
+    env: dict[str, str] = {}
+    if amp and amp != "off":
+        env["ACCELERATE_MIXED_PRECISION"] = amp
+    if remote:
+        # ⚠ **토큰 파일만 보면 안 된다.** `HF_TOKEN` 환경변수로 로그인한 게이트웨이는
+        #   파일이 없어서 조용히 빈손으로 원격에 보내게 된다 — 그러면 비공개 데이터셋
+        #   다운로드와 종료 시 푸시가 **둘 다** 실패하고, 그 사실은 임대 GPU 가 이미
+        #   돌기 시작한 뒤에야 드러난다. `get_token()` 이 env→파일 순서를 대신 푼다.
+        from huggingface_hub import get_token
+
+        tok = (get_token() or "").strip()
+        if tok:
+            env["HF_TOKEN"] = tok
+        if settings.hf_endpoint:
+            env["HF_ENDPOINT"] = settings.hf_endpoint
+    return env or None
 
 
 async def _require_push_permission(repo_id: str) -> None:
@@ -192,6 +216,14 @@ async def start_training(body: TrainStartRequest):
     # 파일시스템 접근은 인자 조립과 분리돼 있다 (원격 학습 대비).
     # config.json 수정은 **파괴적**이라 시작 경로에서만 한다.
     # ⚠ 몇 시간 뒤가 아니라 **지금** 막는다
+    # ⚠ **원격이면 `policy_repo_id` 가 없으면 안 된다.** 없으면 `cli_mapping` 이
+    #   `--policy.push_to_hub=false` 를 강제하는데, 로컬에선 맞고 임대 서버에서는
+    #   **회수 경로를 지우는 설정**이다 — 학습은 멀쩡히 끝나고 가중치만 사라진다.
+    #   그리고 §12-4 실측: 푸시는 **종료 시점 한 번뿐**이라 이 한 번이 유일한 기회다.
+    if not params.get("policy_repo_id") and getattr(train_manager.runner, "is_remote", False):
+        raise HTTPException(
+            400, "원격 학습에는 가중치를 올릴 저장소(policy_repo_id)가 필요합니다 — "
+                 "없으면 학습이 끝나도 결과를 가져올 수 없습니다.")
     if params.get("policy_repo_id"):
         await _require_push_permission(params["policy_repo_id"])
 
@@ -201,11 +233,22 @@ async def start_training(body: TrainStartRequest):
         apply_dim_overrides(
             params["pretrained_path"], body.state_dim, body.action_dim
         )
-    args = build_train_args(params, rename_map=rename_map)
+
+    # ⚠ **원격 학습은 로컬의 사실 세 가지가 안 통한다** (2026-09-16 실기, §11~§12).
+    #   손으로 우회하던 것을 여기서 채운다.
+    remote = getattr(train_manager.runner, "is_remote", False)
+    args = build_train_args(
+        params, rename_map=rename_map,
+        # ⚠ 로컬 인터프리터의 절대경로는 임대 서버에 **없다.** 이미지의 venv 는
+        #   `/opt/venv` 이고 그 경로는 SSH 로그인 셸 PATH 에도 없어서, 여기를 안 채우면
+        #   원격에서 `No such file or directory` 로 즉사한다.
+        python=settings.train_remote_python if remote else None,
+    )
 
     try:
         await train_manager.start(
-            args, total_steps=body.steps, output_dir=body.output_dir, env_extra=_amp_env(amp)
+            args, total_steps=body.steps, output_dir=body.output_dir,
+            env_extra=_train_env(amp, remote=remote),
         )
     except Exception as e:
         raise HTTPException(500, f"학습 시작 실패: {e}")
@@ -249,13 +292,33 @@ async def start_training_custom(body: TrainCustomRequest):
         for a in body.args)
     if pushes:
         await _require_push_permission(repo)
+
+    # ⚠ **원격 배선은 여기에도 건다.** 위 주석과 같은 이유다 — 손으로 고친 쪽이
+    #   오히려 잊기 쉽다. 화면에서 만든 경로만 고치고 여기를 빼 두면, 같은 실패를
+    #   "직접 편집" 으로 들어온 사람만 겪는다.
+    remote = getattr(train_manager.runner, "is_remote", False)
+    args = list(body.args)
+    note = None
+    if remote:
+        if not repo:
+            raise HTTPException(
+                400, "원격 학습에는 --policy.repo_id 가 필요합니다 — "
+                     "없으면 학습이 끝나도 결과를 가져올 수 없습니다.")
+        # ⚠ 로컬 절대경로는 임대 서버에 없다. 다만 **사람이 일부러 쓴 경로는 건드리지
+        #   않는다** — preview 가 넣어 준 로컬 인터프리터일 때만 바꾸고, 바꿨다는 사실을
+        #   응답에 적는다. 조용히 덮어쓰면 "내가 쓴 것과 다른 게 돌았다" 가 된다.
+        if args and args[0] == settings.grpc_python:
+            args[0] = settings.train_remote_python
+            note = f"원격 실행이라 인터프리터를 {settings.train_remote_python} 로 바꿨습니다"
+
     try:
         await train_manager.start(
-            body.args, total_steps=body.total_steps, output_dir=body.output_dir, env_extra=_amp_env(body.amp)
+            args, total_steps=body.total_steps, output_dir=body.output_dir,
+            env_extra=_train_env(body.amp, remote=remote),
         )
     except Exception as e:
         raise HTTPException(500, f"학습 시작 실패: {e}")
-    return {"status": "started", "pid": train_manager.runner.pid, "args": body.args}
+    return {"status": "started", "pid": train_manager.runner.pid, "args": args, "note": note}
 
 
 @router.post("/stop")

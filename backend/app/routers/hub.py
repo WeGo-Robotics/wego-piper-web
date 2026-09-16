@@ -101,7 +101,22 @@ async def list_hub_datasets(q: str = "", author: str = "lerobot", limit: int = 3
 
 @router.get("/datasets/{repo_id:path}")
 async def hub_dataset_detail(repo_id: str):
-    return await hub_client.get_dataset_info(repo_id)
+    """Hub 의 데이터셋 정보. **없으면 404 다.**
+
+    ⚠ 예전에는 `HfHubHTTPError` 를 안 잡아 "없음" 이 **500** 으로 나갔다. 그러면
+    호출부가 "아직 안 올라감" 과 "Hub 장애" 를 구별할 수 없다 — 원격 학습은 시작
+    전에 그 둘을 갈라야 한다(§5: 업로드 검증 전에는 provision 하지 않는다).
+    """
+    try:
+        return await hub_client.get_dataset_info(repo_id)
+    except Exception as exc:                                        # noqa: BLE001
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status == 404:
+            raise HTTPException(404, f"Hub 에 없는 데이터셋입니다: {repo_id}") from exc
+        if status in (401, 403):
+            raise HTTPException(
+                status, f"접근 권한이 없습니다(로그인 상태를 확인하세요): {repo_id}") from exc
+        raise HTTPException(502, f"Hub 조회에 실패했습니다: {str(exc)[:200]}") from exc
 
 
 class DownloadRequest(BaseModel):
