@@ -272,7 +272,13 @@ def test_a_restart_checks_that_the_daemons_match_the_release_and_says_so():
     넷을 잠근다: ① unitd 가 데몬 **소스**의 스탬프를 보고하고 ② 백엔드가 한 곳에서 판정하고
     ③ 게이트웨이가 **기동할 때** 그걸 보고 무엇을 해야 하는지까지 로그로 남기고 ④ 카드는
     자기 규칙 대신 그 결과를 읽는다. 표시가 없는 옛 호스트는 낡은 것으로 본다 — 이 사고의
-    그 기계가 정확히 그 경우다."""
+    그 기계가 정확히 그 경우다.
+
+    ⚠ 실기(.120, 2026-09-16): wheel 판정은 처음엔 **이번 릴리스가 다시 구운 것**(매니페스트
+    `wheels=`)만 견줬다. 그 호스트는 게이트웨이가 v0.5.4 인데 wheel 이 전부 0.4.7 이었고
+    (시뮬 장면이 옛 바닥·옛 탑뷰였다) `wheels=` 가 비어 있어 아무 말도 안 나왔다. 번들은
+    릴리스마다 일곱 wheel 전부에 그 버전을 박아 실으니(stage-hostside.sh) 제대로 적용된
+    호스트는 전부 같다 — **적용 릴리스와** 견줘야 건너뛴 릴리스가 잡힌다."""
     unitd_src = (REPO / "daemons" / "unitd.py").read_text()
     assert '"current" / "daemons" / ".version"' in unitd_src, "apply.sh 가 적는 자리에서 스탬프를 안 읽는다"
     assert '"daemons_version"' in unitd_src, "데몬 소스의 출처를 보고하지 않는다"
@@ -282,8 +288,11 @@ def test_a_restart_checks_that_the_daemons_match_the_release_and_says_so():
         "판정이 collect() 로 안 나온다 — API 도 기동 검사도 같은 사실을 못 본다"
     assert "stamp != applied" in ver, "데몬 소스 스탬프를 적용 릴리스와 대조하지 않는다"
     assert "표시 없음" in ver, "스탬프가 없는 옛 호스트를 최신으로 본다"
-    assert "if tag and touched" in ver, \
-        "이번에 다시 굽지 않은 wheel 까지 낡았다고 한다 — 패치마다 오탐하던 그 버그다"
+    from conftest import code_only
+    assert 'ver not in ("0.1.0", want)' in code_only(ver), \
+        "wheel 을 적용 릴리스와 안 견준다 — 건너뛴 릴리스를 영영 못 잡는다"
+    assert "touched" not in code_only(ver), \
+        "매니페스트가 이번에 다시 구운 것만 견주는 옛 규칙이 남아 있다"
 
     main = (REPO / "backend" / "app" / "main.py").read_text()
     assert "_version.staleness()" in main, "기동할 때 확인하지 않는다"
