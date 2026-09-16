@@ -1040,6 +1040,53 @@ Phase 1 은 `--onstart-cmd` **우회로** 통과했다. 그래서 이미지에 �
 2. **`push_to_hub` 가 정말 끝에 한 번뿐인가** — 체크포인트가 5개 생기므로 §12-4 의 관찰이
    확정된다. 그러면 `scp` 보험은 선택이 아니라 **필수 경로**다.
 
+### 12-8. Phase 2 — 이미지 수정이 증명됐고, 푸시 시점이 확정됐다 (2026-09-16)
+
+Phase 1 은 `--onstart-cmd` **우회로** 통과했다. 그래서 §12-1 의 두 줄이 실제로 일하는지는
+증명되지 않은 상태였다. Phase 2 는 **우회 없이 템플릿만으로** 같은 길을 갔다.
+
+| | Phase 1 (사람이 손으로) | Phase 2 (코드·이미지가) |
+|---|---|---|
+| SSH | `--onstart-cmd` 우회 · `Permission denied` 5회 · 진단 20분 | **running 직후 첫 시도 `SSH_OK`** |
+| 인터프리터 | 래퍼를 손으로 심음 | `args[0] = /opt/venv/bin/python` (코드가 채움) |
+| HF 토큰 | `scp` 로 파일 심음 | `export HF_TOKEN` 1줄 · 스크립트 권한 **600** |
+| 화면 | 로컬과 구별 불가 | `runner=ssh · remote=True` |
+| 스크립트 뒷정리 | 없음 | **끝나고 스스로 지워짐** (토큰이 안 남는다) |
+
+인스턴스에서 확인한 bootstrap 의 결과: `/root/.ssh` **700** · `authorized_keys` **600** ·
+`.no_auto_tmux` 생성 · 배경 루프 동작. `.ready` 는 빌드 시각(full 의 조기탈출 경로)이라
+교정이 **그 위**에 있어야 한다는 §12-1 의 배치가 맞았다.
+
+#### ⚠ `push_to_hub` 는 끝에 한 번뿐이다 — 확정
+
+`save_freq=1000` · 5000스텝이라 체크포인트가 **5개**(`001000`~`005000`) 생겼다. 그런데
+Hub 커밋은:
+
+```
+08:11:06  initial commit
+08:11:09  Upload policy weights, train config and readme
+08:11:11  Upload DataProcessorPipeline
+08:11:12  Upload DataProcessorPipeline
+```
+
+**전부 종료 시점 한 묶음이다.** 중간 체크포인트는 한 번도 안 올라갔다.
+
+→ **인스턴스가 중간에 죽으면 Hub 에는 아무것도 없다.** §5 의 `scp` 보험은 선택이 아니라
+**필수 경로**다. 그리고 §10 결정 4(interruptible 금지)가 옳았다 — 뺏기면 전부 잃는다.
+회수할 것은 `last/pretrained_model` **198MB** 뿐이다(`training_state` 394MB 는 추론에 안 쓴다).
+
+#### 숫자
+
+| | |
+|---|---|
+| 기계 | RTX 3060 · New Jersey ↓2001Mbps · **$0.102/h** |
+| 5000스텝 | 07:57:14 → 08:11:06 = **약 14분** · `updt_s 0.145` (Phase 1 과 동일) |
+| loss | 9.33(step 100) → **1.93** 부근 |
+| GPU 메모리 | **1600 MiB** (12GB 중) |
+| 체크포인트 | 5개 + `last` = **2.9GB** |
+| 회수 검증 | 파일 9개 · 커밋 4개 · `device=cuda steps=5000` · 정규화 `action.count=10403` (sim_data2 프레임 수와 일치) |
+| 비용 | Phase 2 **$0.028** · 누적 **$0.082** (credit 25.0 → 24.917) |
+
 ## 검증
 
 - **W0**: 짧은 학습(steps=500)으로 한 바퀴 전부 — 업로드 → 원격 학습(웹 그래프 확인) →
