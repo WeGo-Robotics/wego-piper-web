@@ -6,10 +6,12 @@
 - **LeRobot → 클라우드 GPU 의 RENT 탭** — 오퍼·템플릿·준비도. "무엇을 빌릴지 고른다".
 - **같은 페이지의 인스턴스 탭** — 지금 도는 것·고아·파기 (`/instances`).
 
-⚠ **아직 여기서 인스턴스를 띄우지는 않는다.** 끄는 쪽(`DELETE /instances/{id}`)이
-먼저 온 것은 순서가 뒤바뀐 게 아니다 — 사람이 유일한 가드인 동안에는 **볼 수 있고
-끌 수 있는 것**이 먼저다. 띄우는 엔드포인트는 조달 상태기계를 `TrainManager` 에
-엮은 뒤에 붙는다.
+⚠ **끄는 쪽이 먼저 왔다.** `DELETE /instances/{id}` 가 `POST /rent` 보다 먼저 생긴 것은
+순서가 뒤바뀐 게 아니다 — 띄울 수만 있고 끌 수 없으면 그게 돈이 새는 구조다(§6).
+
+이제 `POST /rent` 로 빌릴 수 있다. 켤 수 있게 된 것은 버튼을 고쳐서가 아니라 **상한이
+셋 다 생겼기 때문**이다: 학습 스크립트의 `timeout`(가장 안쪽) · 예산/시간 틱(바깥) ·
+`finally` 로 보장된 파기. 그전까지 [빌리기]가 비활성이던 것은 디자인이 아니라 사실이었다.
 """
 
 import asyncio
@@ -20,7 +22,9 @@ import subprocess
 from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
+from app.core.config import settings
 from app.services.cloud import sshkey
 from app.services.cloud.providers import vast
 from app.services.cloud.providers.base import MIN_CUDA, OfferFilter
@@ -180,6 +184,93 @@ async def cloud_gpus(
         return {"gpus": [], "disk_gb": disk_gb,
                 "detail": f"기종 목록을 불러오지 못했습니다: {str(exc)[:200]}"}
     return {"gpus": [asdict(g) for g in rows], "disk_gb": disk_gb, "detail": None}
+
+
+class RentRequest(BaseModel):
+    """[빌리기] 한 번. **상한이 요청의 일부다** — 기본값으로 빠져나갈 수 없게."""
+
+    offer_id: int
+    template_hash: str
+    disk_gb: float = Field(40.0, ge=10, le=2000)
+    budget_usd: float = Field(10.0, gt=0, le=1000)
+    max_hours: float = Field(6.0, gt=0, le=72)
+    # 학습 쪽 — `/api/training/start` 와 같은 뜻이다
+    dataset_repo_id: str
+    policy_repo_id: str
+    policy_type: str = "act"
+    batch_size: int = 8
+    steps: int = Field(5000, ge=1)
+    log_freq: int = 100
+    save_freq: int = 1000
+    num_workers: int = 4
+    amp: str = "bf16"
+
+
+@router.post("/rent")
+async def rent_and_train(body: RentRequest):
+    """빌려서 학습을 걸고, **끝나면 반드시 파기한다**.
+
+    ⚠ **`policy_repo_id` 가 없으면 받지 않는다.** 없으면 `cli_mapping` 이
+    `--policy.push_to_hub=false` 를 강제하고, 학습은 멀쩡히 끝나고 **가중치만 사라진다.**
+    그리고 실측(§12-4)으로 푸시는 종료 시점 한 번뿐이라 그 한 번이 유일한 기회다.
+
+    ⚠ **동시에 하나만.** 두 번째를 받아 주면 첫 인스턴스의 핸들을 잃는다 = 고아다.
+    """
+    from app.core.cli_mapping import build_train_args
+    from app.routers.training import _require_push_permission, _train_env
+    from app.services.cloud import rent
+    from app.services.cloud.lifecycle import Budget
+    from app.services.exclusivity import Activity, require_idle
+
+    require_idle(Activity.TRAINING)
+    if rent.busy():
+        raise HTTPException(409, "이미 임대 학습이 돌고 있습니다 — 하나씩만 돌립니다")
+    if not body.policy_repo_id.strip():
+        raise HTTPException(
+            400, "가중치를 올릴 저장소(policy_repo_id)가 필요합니다 — 없으면 학습이 "
+                 "끝나도 결과를 가져올 수 없습니다.")
+    await _require_push_permission(body.policy_repo_id)
+
+    params = {
+        "dataset_repo_id": body.dataset_repo_id,
+        "policy_type": body.policy_type,
+        "policy_repo_id": body.policy_repo_id,
+        "batch_size": body.batch_size, "steps": body.steps,
+        "log_freq": body.log_freq, "save_freq": body.save_freq,
+        "num_workers": body.num_workers, "device": "cuda",
+    }
+    args = build_train_args(params, python=settings.train_remote_python)
+
+    try:
+        job = await rent.start(
+            provider=_provider(), offer_id=body.offer_id,
+            template_hash=body.template_hash, disk_gb=body.disk_gb,
+            budget=Budget(usd=body.budget_usd, max_hours=body.max_hours),
+            args=args, total_steps=body.steps,
+            env=_train_env(body.amp, remote=True) or {})
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"started": True, **job.to_dict()}
+
+
+@router.get("/rent")
+async def rent_status():
+    """지금 도는 임대 학습의 단계와 비용. 없으면 `null`."""
+    from app.services.cloud import rent
+
+    job = rent.current()
+    return {"busy": rent.busy(), "job": job.to_dict() if job else None}
+
+
+@router.post("/rent/stop")
+async def rent_stop():
+    """사람이 멈춘다. ⚠ **학습만 세우지 않는다** — 기계까지 파기해야 과금이 멈춘다."""
+    from app.services.cloud import rent
+
+    job = await rent.stop_now(_provider())
+    if job is None:
+        raise HTTPException(404, "도는 임대 학습이 없습니다")
+    return job.to_dict()
 
 
 @router.get("/instances")

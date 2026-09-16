@@ -227,3 +227,107 @@ def test_a_vanished_instance_is_reported_not_waited_on():
 
     with pytest.raises(ProcureError, match="사라졌습니다"):
         asyncio.run(wait_for_ssh(_Gone(), 5, _target_for, timeout=1, poll=0.01))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [빌리기] 엔드포인트 — **앱이 돈을 쓰기 시작하는 자리**
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def rent_client(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.routers import cloud as router
+    from app.services.cloud import rent as rent_mod
+
+    monkeypatch.setattr(router, "_provider", lambda: _Provider())
+    monkeypatch.setattr("app.routers.training._require_push_permission",
+                        lambda *a, **k: _ok())
+    monkeypatch.setattr("app.routers.cloud.require_idle", lambda *a, **k: None,
+                        raising=False)
+    monkeypatch.setattr("app.services.exclusivity.require_idle", lambda *a, **k: None)
+    monkeypatch.setattr(rent_mod, "busy", lambda: False)
+    started = {}
+
+    async def _fake_start(**kw):
+        started.update(kw)
+        from app.services.cloud.lifecycle import CloudJob
+        return CloudJob(job_id="local", label="piper-local", budget=kw["budget"])
+
+    monkeypatch.setattr(rent_mod, "start", _fake_start)
+    return TestClient(app), started
+
+
+async def _ok():
+    return None
+
+
+_RENT = {"offer_id": 1, "template_hash": "h", "dataset_repo_id": "a/b",
+         "policy_repo_id": "me/m", "steps": 100}
+
+
+def test_renting_without_a_push_target_is_refused(rent_client):
+    """⚠ 없으면 `cli_mapping` 이 `push_to_hub=false` 를 강제한다 — 학습은 멀쩡히
+    끝나고 **가중치만 사라진다.** 그리고 푸시 기회는 종료 시점 한 번뿐이다."""
+    c, _ = rent_client
+    r = c.post("/api/cloud/rent", json={**_RENT, "policy_repo_id": "  "})
+    assert r.status_code == 400 and "결과를 가져올 수 없습니다" in r.json()["detail"]
+
+
+def test_renting_passes_the_remote_interpreter_and_the_caps(rent_client):
+    """⚠ 로컬 절대경로를 넘기면 임대 서버에서 즉사한다. 상한은 **요청의 일부**여야
+    기본값으로 빠져나갈 수 없다."""
+    c, started = rent_client
+    r = c.post("/api/cloud/rent", json={**_RENT, "budget_usd": 3, "max_hours": 2})
+    assert r.status_code == 200, r.text
+    assert started["args"][0] == "/opt/venv/bin/python"
+    assert started["budget"].usd == 3 and started["budget"].max_hours == 2
+
+
+def test_renting_sends_the_token_because_the_rented_box_has_none(rent_client, monkeypatch):
+    monkeypatch.setattr("huggingface_hub.get_token", lambda: "hf_X")
+    c, started = rent_client
+    c.post("/api/cloud/rent", json=_RENT)
+    assert started["env"]["HF_TOKEN"] == "hf_X"
+
+
+def test_a_second_rent_is_refused_while_one_is_running(rent_client, monkeypatch):
+    """⚠ 둘째를 받아 주면 **첫 인스턴스의 핸들을 잃는다** — 그게 고아의 정의다."""
+    from app.services.cloud import rent as rent_mod
+
+    monkeypatch.setattr(rent_mod, "busy", lambda: True)
+    c, _ = rent_client
+    assert c.post("/api/cloud/rent", json=_RENT).status_code == 409
+
+
+def test_stopping_with_nothing_running_is_a_404(rent_client, monkeypatch):
+    from app.services.cloud import rent as rent_mod
+
+    async def _none(_p):
+        return None
+
+    monkeypatch.setattr(rent_mod, "stop_now", _none)
+    c, _ = rent_client
+    assert c.post("/api/cloud/rent/stop").status_code == 404
+
+
+def test_stopping_destroys_rather_than_only_halting_training():
+    """⚠ 학습만 세우고 끝내면 **기계가 남아 과금된다** — 중지는 파기까지다."""
+    import inspect
+
+    from app.services.cloud import rent as rent_mod
+
+    src = inspect.getsource(rent_mod.stop_now)
+    assert "job.finish" in src, "중지가 파기를 안 지난다"
+
+
+def test_the_runner_is_put_back_after_a_rental():
+    """⚠ 안 되돌리면 다음 로컬 학습이 **죽은 호스트**로 붙으려 한다. 러너 선택은
+    프로세스 수명 동안 다시 평가되지 않는다."""
+    import inspect
+
+    from app.services.cloud import rent as rent_mod
+
+    src = inspect.getsource(rent_mod.start)
+    assert "finally:" in src and "train_manager.runner = original" in src

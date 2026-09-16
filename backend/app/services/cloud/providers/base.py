@@ -276,6 +276,9 @@ class Template:
     name: str
     image: str
     tag: str | None
+    #: ⚠ `create instance --template_hash` 가 쓰는 값. **고칠 때마다 바뀐다**(`id` 는
+    #: 그대로) — 그래서 어디에도 박아 두지 않고 **쓰기 직전에 조회한다**(§12-7).
+    hash_id: str
     disk_gb: float
     description: str
     #: 'full' | 'slim' | '' — 이름에서 읽는다. 기본값 고르기와 설명에 쓴다

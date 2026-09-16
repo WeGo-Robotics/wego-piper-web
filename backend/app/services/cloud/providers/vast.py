@@ -167,6 +167,7 @@ def parse_template(raw: dict) -> Template:
         name=name,
         image=str(raw.get("image") or ""),
         tag=str(tag) or None,
+        hash_id=str(raw.get("hash_id") or ""),
         disk_gb=float(raw.get("recommended_disk_space") or 0.0),
         description=str(raw.get("desc") or ""),
         variant=variant,

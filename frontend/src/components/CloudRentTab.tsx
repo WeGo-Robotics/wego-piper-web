@@ -16,10 +16,11 @@ import { api } from '../services/api'
  * 세팅하기 전에 가격부터 보고 싶은 게 사람이다. 막는 것은 [빌리기] 하나뿐이고,
  * 무엇이 모자란지와 설정으로 가는 길을 같이 보여 준다.
  *
- * ## ⚠ 여기서 인스턴스를 띄우지 않는다
+ * ## ⚠ [빌리기]가 켜진 이유
  *
- * 빌리는 일은 파기·예산 가드와 한 몸이라(§6) W3 과 같이 간다. 지금 버튼을 살려 두면
- * "빌릴 수는 있는데 끌 수는 없는" 상태가 된다.
+ * 버튼을 고쳐서가 아니라 **상한이 셋 다 생겼기 때문**이다: 학습 스크립트의
+ * `timeout`(가장 안쪽) · 예산/시간 틱(바깥) · `finally` 로 보장된 파기. 그전까지
+ * 비활성이던 것은 디자인이 아니라 사실이었다 — 끄는 코드가 없었다.
  */
 
 type Offer = {
@@ -36,6 +37,8 @@ type Offer = {
 type Template = {
   id: number; name: string; image: string; tag: string | null
   disk_gb: number; description: string; variant: string
+  /** ⚠ create 가 쓰는 값. 템플릿을 고칠 때마다 바뀌므로 화면에 박지 않는다(§12-7). */
+  hash_id: string
 }
 type Check = { ok: boolean; detail: string | null }
 type Readiness = {
@@ -103,6 +106,10 @@ export default function CloudRentTab() {
   const [picked, setPicked] = useState<number | null>(null)
   const [templateId, setTemplateId] = useState<number | null>(null)
   const [budget, setBudget] = useState(10)
+  // ⚠ 회수 경로다. 비면 서버가 400 으로 거절한다 — 학습은 멀쩡히 끝나고
+  //   가중치만 사라지는 것을 막기 위해서다.
+  const [dataset, setDataset] = useState('')
+  const [repo, setRepo] = useState('')
   const [confirming, setConfirming] = useState(false)
 
   const templates = ready?.templates ?? []
@@ -455,6 +462,22 @@ export default function CloudRentTab() {
               </div>
             </div>
 
+            {/* ⚠ **회수 경로다.** 저장소가 비면 서버가 거절한다 — 없으면 학습은
+                멀쩡히 끝나고 가중치만 사라진다. 그리고 푸시는 종료 시점 한 번뿐이라
+                그 한 번이 유일한 기회다(§12-4). */}
+            <label className="flex items-center gap-2">
+              <span className="text-xs text-neutral-400">데이터셋</span>
+              <input value={dataset} onChange={(e) => setDataset(e.target.value)}
+                placeholder="wego-hansu/sim_data2"
+                className="w-52 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm" />
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="text-xs text-neutral-400">가중치 저장소</span>
+              <input value={repo} onChange={(e) => setRepo(e.target.value)}
+                placeholder="wego-hansu/my-act"
+                className="w-52 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm" />
+            </label>
+
             <label className="flex items-center gap-2">
               <span className="text-xs text-neutral-400">예산 상한 $</span>
               <input type="number" min={1} value={budget}
@@ -472,8 +495,12 @@ export default function CloudRentTab() {
                 className="rounded border border-neutral-600 px-3 py-1.5 text-sm text-neutral-300 hover:border-neutral-400">
                 해제
               </button>
-              <button onClick={() => setConfirming(true)} disabled={!ready?.ready}
-                title={ready?.ready ? '' : '설정 → 클라우드 에서 준비를 마쳐 주세요'}
+              <button onClick={() => setConfirming(true)}
+                disabled={!ready?.ready || !dataset.trim() || !repo.trim()}
+                title={!ready?.ready ? '설정 → 클라우드 에서 준비를 마쳐 주세요'
+                  : (!dataset.trim() || !repo.trim())
+                    ? '데이터셋과 가중치 저장소를 채워 주세요 — 없으면 결과를 가져올 수 없습니다'
+                    : ''}
                 className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-40">
                 빌리기
               </button>
@@ -484,6 +511,7 @@ export default function CloudRentTab() {
 
       {confirming && offer && (
         <RentConfirm offer={offer} template={template} budget={budget} credit={credit}
+          dataset={dataset} repo={repo} onStarted={() => { setConfirming(false); setPicked(null) }}
           onClose={() => setConfirming(false)} />
       )}
     </div>
@@ -496,11 +524,38 @@ export default function CloudRentTab() {
  * ⚠ `window.confirm` 을 쓰면 안 된다. 브라우저 모달이 heartbeat 를 막아 로컬 추론이
  * E-stop 으로 죽는다 (실제 사고 전례, §6).
  */
-function RentConfirm({ offer, template, budget, credit, onClose }: {
+function RentConfirm({ offer, template, budget, credit, dataset, repo, onClose, onStarted }: {
   offer: Offer; template: Template | null; budget: number; credit: number | null
-  onClose: () => void
+  dataset: string; repo: string
+  onClose: () => void; onStarted: () => void
 }) {
   const hours = budget / offer.hourly
+  const [sending, setSending] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const rent = async () => {
+    setSending(true)
+    setErr(null)
+    try {
+      await api.post('/cloud/rent', {
+        offer_id: offer.id,
+        template_hash: template?.hash_id ?? '',
+        disk_gb: offer.disk_gb,
+        // ⚠ 상한을 **항상 보낸다.** 서버가 기본값을 갖고 있어도, 화면이 보여 준 숫자와
+        //   실제로 걸리는 숫자가 다르면 그 화면은 거짓말이다.
+        budget_usd: budget,
+        max_hours: Math.max(0.1, budget / offer.hourly),
+        dataset_repo_id: dataset,
+        policy_repo_id: repo,
+      }, { timeoutMs: 120_000 })
+      onStarted()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : '빌리지 못했습니다')
+    } finally {
+      setSending(false)
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div className="max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-lg border border-neutral-600 bg-neutral-900 p-5"
@@ -530,22 +585,29 @@ function RentConfirm({ offer, template, budget, credit, onClose }: {
           </ul>
         )}
 
-        {/* ⚠ 여기서 멈춘다. 띄우는 일은 파기·예산 가드와 한 몸이라 W3 과 같이 간다 —
-            지금 살려 두면 "빌릴 수는 있는데 끌 수는 없는" 상태가 된다. */}
+        {/* ⚠ 이 버튼이 켜진 것은 버튼을 고쳐서가 아니라 **상한이 셋 다 생겼기**
+            때문이다: 학습 스크립트의 timeout(가장 안쪽) · 예산/시간 틱(바깥) ·
+            finally 로 보장된 파기. 그전까지 비활성이던 것은 디자인이 아니라 사실이었다. */}
         <p className="rounded border border-neutral-700 bg-neutral-800/60 p-2 text-xs text-neutral-400">
-          인스턴스를 띄우는 것은 <strong className="text-neutral-300">다음 단계</strong>입니다.
-          자동 파기·예산 상한·고아 스캐너가 함께 들어가야 켤 수 있습니다 — 끌 수 없는 채로
-          켜면 크레딧이 조용히 마릅니다.
+          끝나면 <strong className="text-neutral-300">자동으로 파기</strong>됩니다 —
+          완주든 실패든 예산 초과든 같은 길입니다. 파기를 확인하지 못하면 인스턴스 탭에
+          빨간 배너로 남습니다. 학습 자체에도 상한이 걸려, 이 게이트웨이가 죽어도
+          기계가 영원히 도는 일은 없습니다.
         </p>
 
+        {err && (
+          <p className="rounded border border-red-700/50 bg-red-950/30 p-2 text-xs text-red-300">{err}</p>
+        )}
+
         <div className="flex justify-end gap-2">
-          <button onClick={onClose}
-            className="rounded border border-neutral-600 px-4 py-1.5 text-sm text-neutral-300 hover:border-neutral-400">
+          <button onClick={onClose} disabled={sending}
+            className="rounded border border-neutral-600 px-4 py-1.5 text-sm text-neutral-300 hover:border-neutral-400 disabled:opacity-50">
             닫기
           </button>
-          <button disabled title="다음 단계 — 파기·예산 가드와 함께 들어옵니다"
-            className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-40">
-            빌리기 (다음 단계)
+          <button onClick={() => void rent()} disabled={sending || !template}
+            title={template ? '' : '학습 템플릿이 필요합니다'}
+            className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-40">
+            {sending ? '빌리는 중…' : '빌리기'}
           </button>
         </div>
       </div>
