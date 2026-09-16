@@ -143,8 +143,12 @@ def staleness(info: dict | None = None) -> dict:
 
     둘을 따로 본다:
 
-    - `wheels` — **이번 릴리스가 다시 구운 것만** 견준다. 안 건드린 wheel 이 옛 버전인 건
-      정상이다(`running_version` 주석: 그걸 오탐하던 시절이 있었다). `0.1.0` 은 도장 전 빌드.
+    - `wheels` — **적용 릴리스와** 견준다. 번들은 릴리스마다 일곱 wheel 전부에 그 버전을 박아
+      싣고 설치는 번들과 다른 것을 깐다 — 그러니 제대로 적용된 호스트는 전부 같다.
+      ⚠ 예전에는 "이번 릴리스가 다시 구운 것"(매니페스트 `wheels=`)만 견줬다. 그 규칙은
+      **건너뛴 릴리스를 영영 못 잡는다**: .120 은 게이트웨이가 v0.5.4 인데 wheel 이 전부
+      0.4.7 이었고(시뮬 장면이 옛 바닥·옛 탑뷰였다) `wheels=` 가 비어 있어 아무 말도
+      안 나왔다. `0.1.0` 은 도장 전 빌드라 뺀다.
     - `daemons` — 적용된 **데몬 소스**의 스탬프(`$SRC/daemons/.version`, apply.sh 가 풀 때마다
       적는다) 대 적용 릴리스(`VERSION`). 표시가 없으면 낡은 것으로 본다 — 스탬프가 생기기
       전에 깔린 호스트가 정확히 그 경우이고, 그게 이 사고의 그 기계다.
@@ -153,16 +157,20 @@ def staleness(info: dict | None = None) -> dict:
     """
     info = info if info is not None else collect()
     gw = info.get("gateway") or {}
-    tag = str(gw.get("version") or "").lstrip("v").split("-")[0]
-    touched = {f"piper-{p}" for p in str(gw.get("wheels") or "").split() if p}
-    wheels: list[str] = []
-    if tag and touched:
-        for d, vs in (info.get("daemons") or {}).items():
-            for pkg, v in (vs or {}).items():
-                if pkg in touched and v not in ("0.1.0", tag):
-                    wheels.append(f"{d} {pkg} {v}")
     deploy = info.get("deploy") or {}
     applied, stamp = deploy.get("current"), deploy.get("daemons_version")
+    # ⚠ **적용 릴리스와 견준다.** 번들은 릴리스마다 일곱 wheel 전부에 그 버전을 박아 싣고,
+    #   설치는 번들과 다른 것을 깐다 — 그러니 제대로 적용된 호스트는 전부 같아야 한다.
+    #   예전에는 "이번 릴리스가 다시 구운 것"(매니페스트 `wheels=`)만 견줬는데, 그러면
+    #   그 릴리스를 건너뛴 호스트를 영영 못 잡는다: .120 은 게이트웨이 v0.5.4 에 wheel 이
+    #   전부 0.4.7 이었고(시뮬 장면이 옛 모습), `wheels=` 가 비어 있어 아무 말도 안 나왔다.
+    want = str(applied or gw.get("version") or "").lstrip("v").split("-")[0]
+    wheels: list[str] = []
+    if want:
+        for d, vs in (info.get("daemons") or {}).items():
+            for pkg, ver in (vs or {}).items():
+                if pkg.startswith("piper-") and ver not in ("0.1.0", want):
+                    wheels.append(f"{d} {pkg} {ver}")
     source = f"{stamp or '표시 없음'} ≠ {applied}" if applied and stamp != applied else None
     return {"wheels": sorted(wheels), "daemons": source,
             "ok": not wheels and source is None}

@@ -352,12 +352,21 @@ bundle_wheels() {
   for w in "$HERE"/wheels/*.whl; do [ -f "$w" ] && echo "$w"; done
   return 0
 }
-wheels_missing() {   # 번들의 wheel 중 venv 에 없는 배포가 있으면 0
-  local w n found=1
+# ⚠ **버전까지 견준다 — 있는지만 보면 영영 안 따라잡는다.**
+#   `stage-hostside` 는 릴리스마다 **일곱 wheel 전부**에 그 버전을 박아 번들에 싣는다.
+#   그러니 제대로 적용된 호스트는 모든 wheel 이 적용 릴리스와 같아야 한다.
+#   실기(.120, 2026-09-16): 게이트웨이는 v0.5.4 인데 데몬 wheel 이 전부 **0.4.7** 이었다 —
+#   시뮬 장면(`piper_scene.xml`)이 `piper_sim` wheel 에 실려 나가므로 바닥 텍스처도 탑뷰도
+#   옛 모습 그대로였다. 이름만 보던 이 검사가 "다 있다"고 답했고, v0.5.4 의 `wheels=` 는
+#   비어 있어 2절이 통째로 건너뛰어졌다. 데몬 소스가 겪은 것과 **같은 함정**이다.
+wheels_missing() {   # 번들의 wheel 과 이름이든 버전이든 다른 것이 있으면 0
+  local w n v cur found=1
   while read -r w; do
     [ -n "$w" ] || continue
     n="$(basename "$w" | cut -d- -f1 | tr _ -)"
-    "$VENV/bin/pip" show "$n" >/dev/null 2>&1 || found=0
+    v="$(basename "$w" | cut -d- -f2)"
+    cur="$("$VENV/bin/pip" show "$n" 2>/dev/null | sed -n 's/^Version: //p')"
+    [ "$cur" = "$v" ] || found=0
   done < <(bundle_wheels)
   [ $found = 0 ]
 }

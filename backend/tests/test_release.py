@@ -840,3 +840,32 @@ def test_apply_checks_the_device_groups_like_the_source_installer():
     assert "for g in video dialout" in src
     assert 'NEED_SUDO+=("usermod -aG $g $USER")' in src
     assert "for g in video dialout" in (REPO / "deploy" / "install.sh").read_text()
+
+
+def test_a_host_that_skipped_a_release_still_catches_up_on_the_wheels():
+    """⚠ 실기(.120, 2026-09-16): 배포판을 깔았는데 시뮬 화면의 바닥·밝기가 옛 모습이었다.
+    게이트웨이는 v0.5.4 인데 데몬 wheel 이 **전부 0.4.7** 이었다. 시뮬 장면
+    (`piper_scene.xml`)은 `piper_sim` wheel 에 package-data 로 실려 나가고 simd 가 그것을
+    읽으므로, wheel 이 낡으면 화면이 통째로 옛 버전이다.
+
+    왜 안 따라잡았나: `stage-hostside` 는 릴리스마다 일곱 wheel 전부에 그 버전을 박아 싣는데,
+    설치의 검사는 **이름이 있는지만** 봤다(`pip show piper-sim`). 다 있으니 "안 빠졌다"고
+    답했고, v0.5.4 의 `wheels=` 는 비어 있어 2절이 통째로 건너뛰어졌다. 데몬 소스가 겪은
+    것과 같은 함정이 한 층 위에 또 있었다(v0.4.15 의 처방은 **없는 것**만 고쳤다).
+
+    이제 버전까지 견준다. 그리고 그 사실을 기동 검사도 본다 — 적용 릴리스와 다른 wheel 은
+    말한다(`version.staleness`)."""
+    from conftest import code_only
+
+    src = code_only(APPLY.read_text())
+    fn = src.split("wheels_missing()", 1)[1].split("\n}", 1)[0]
+    assert "pip\" show \"$n\"" in fn or "pip show" in fn or 'show "$n"' in fn, "설치 여부를 안 본다"
+    assert "Version: " in fn, "버전을 안 읽는다 — 이름만 보면 영영 안 따라잡는다"
+    assert '[ "$cur" = "$v" ] || found=0' in fn, "번들 wheel 의 버전과 대조하지 않는다"
+    assert 'cut -d- -f2' in fn, "wheel 파일 이름에서 버전을 안 꺼낸다"
+
+    ver = (REPO / "backend" / "app" / "services" / "version.py").read_text()
+    rule = ver.split("def staleness", 1)[1]
+    assert 'pkg.startswith("piper-")' in rule and "want" in rule, \
+        "기동 검사가 여전히 '이번에 구운 것'만 본다 — 건너뛴 호스트를 못 잡는다"
+    assert "touched" not in rule, "옛 매니페스트 게이트가 남아 있다"
