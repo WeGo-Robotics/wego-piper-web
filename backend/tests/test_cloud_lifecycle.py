@@ -313,3 +313,57 @@ def test_an_unconfirmed_destroy_is_not_a_200(client, monkeypatch):
     assert r.status_code == 502
     assert "과금이 계속될 수 있습니다" in r.json()["detail"]
     assert "vastai show instances" in r.json()["detail"], "사람이 할 일을 안 적었다"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 접속 대상 — **손으로 쓰던 `~/.ssh/config` 를 없애는 자리**
+#
+# ⚠ 두 번의 렌트에서 사람이 `~/.ssh/config` 를 손으로 썼다. 임대 인스턴스는 주소·포트가
+# 매번 다르고 게이트웨이 전용 키를 써야 해서 별칭으로는 자동화가 안 된다. 조달을
+# 자동으로 하려면 이 한 줄이 먼저 없어져야 한다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_a_bare_host_still_produces_exactly_the_old_command():
+    """⚠ 사내 박스는 `~/.ssh/config` 별칭으로 돌고 있다 — **그 경로를 바꾸지 않는다.**
+
+    임대용 배선이 기존 사용자를 건드리면, 고치려던 것보다 큰 것을 깬다.
+    """
+    from app.services.training.runners.ssh import _SSH_OPTS, _ssh_argv
+
+    assert _ssh_argv("vast", "echo x") == ["ssh", *_SSH_OPTS, "vast", "echo x"]
+
+
+def test_a_rented_target_carries_port_key_and_known_hosts():
+    """임대 인스턴스는 매번 주소가 다르다 — 코드가 알고 있어야 한다."""
+    from app.services.training.runners.ssh import SSHTarget, _ssh_argv
+
+    argv = _ssh_argv(SSHTarget(host="ssh5.vast.ai", port=32214, user="root",
+                               key_path="/k/id", known_hosts="/k/kh"), "echo x")
+    assert "root@ssh5.vast.ai" in argv
+    assert argv[argv.index("-p") + 1] == "32214"
+    assert argv[argv.index("-i") + 1] == "/k/id"
+    assert "UserKnownHostsFile=/k/kh" in argv
+
+
+def test_identities_only_rides_with_the_key():
+    """⚠ 없으면 에이전트의 다른 키를 먼저 내민다. 실측: 계정에 등록 안 된 기본 키를
+    내밀어 `Permission denied (publickey)` 로 끝났다 — 키는 맞는데 순서 때문에 실패한다."""
+    from app.services.training.runners.ssh import SSHTarget, _ssh_argv
+
+    argv = _ssh_argv(SSHTarget(host="h", key_path="/k/id"), "x")
+    assert "IdentitiesOnly=yes" in argv
+
+
+def test_no_key_means_no_identity_flags_at_all():
+    """키를 안 주면 ssh 기본 동작 그대로 — 개발 머신이 지금처럼 돈다."""
+    from app.services.training.runners.ssh import SSHTarget, _ssh_argv
+
+    argv = _ssh_argv(SSHTarget(host="h"), "x")
+    assert "-i" not in argv and "IdentitiesOnly=yes" not in argv
+
+
+def test_error_messages_never_carry_the_key_path():
+    """⚠ 오류 문구는 화면과 로그로 간다 — 자격증명 경로를 흘리지 않는다."""
+    from app.services.training.runners.ssh import SSHTarget, _label
+
+    assert _label(SSHTarget(host="h", user="root", key_path="/secret/key")) == "root@h"

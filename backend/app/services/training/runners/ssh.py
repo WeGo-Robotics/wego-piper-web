@@ -38,6 +38,7 @@ PYTHONPATH·HF 엔드포인트)은 **이 기계의 사실이다.** 원격에 그
 import logging
 import shlex
 import subprocess
+from dataclasses import dataclass
 import threading
 import time
 from collections.abc import Callable
@@ -47,7 +48,7 @@ from app.services.training.spec import TrainJobSpec
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["SSHRunner", "available"]
+__all__ = ["SSHRunner", "SSHTarget", "available"]
 
 # 원격 스크립트가 끝나면서 찍는 줄. 로그 스트림이 곧 상태 채널이 된다.
 _EXIT_MARK = "__PIPER_EXIT__"
@@ -62,21 +63,62 @@ _SSH_OPTS = [
 ]
 
 
-def _ssh_argv(host: str, remote: str, keepalive: bool = False) -> list[str]:
-    opts = list(_SSH_OPTS)
+@dataclass(frozen=True)
+class SSHTarget:
+    """어디로 어떤 키로 붙나.
+
+    ⚠ **`host` 만 채우면 지금까지와 똑같다** — 사내 박스는 `~/.ssh/config` 의 별칭
+    하나로 돌았고 그 경로를 바꾸지 않는다. 나머지는 임대 인스턴스용이다: 주소·포트가
+    매번 다르고 게이트웨이 전용 키를 써야 해서, 별칭으로는 **사람이 파일을 손으로
+    써야 한다.** 실제로 두 번의 렌트에서 `~/.ssh/config` 를 손으로 썼다 — 조달을
+    자동으로 하려면 그 한 줄이 먼저 없어져야 한다.
+    """
+
+    host: str
+    port: int = 0
+    user: str = ""
+    key_path: str = ""
+    known_hosts: str = ""
+
+    @property
+    def dest(self) -> str:
+        return f"{self.user}@{self.host}" if self.user else self.host
+
+    def opts(self) -> list[str]:
+        out: list[str] = []
+        if self.port:
+            out += ["-p", str(int(self.port))]
+        if self.key_path:
+            # ⚠ `IdentitiesOnly` 가 없으면 에이전트의 다른 키를 먼저 내밀고, 서버가
+            #   너무 많은 실패로 끊는다. 실측: 계정에 없는 기본 키를 내밀어
+            #   `Permission denied (publickey)` 로 끝났다.
+            out += ["-i", self.key_path, "-o", "IdentitiesOnly=yes"]
+        if self.known_hosts:
+            out += ["-o", f"UserKnownHostsFile={self.known_hosts}"]
+        return out
+
+
+def _ssh_argv(host: "str | SSHTarget", remote: str, keepalive: bool = False) -> list[str]:
+    t = host if isinstance(host, SSHTarget) else SSHTarget(host=host)
+    opts = list(_SSH_OPTS) + t.opts()
     if keepalive:
         # 로그를 따라 읽는 긴 연결이 조용히 끊기면 학습이 끝난 줄 안다
         opts += ["-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"]
-    return ["ssh", *opts, host, remote]
+    return ["ssh", *opts, t.dest, remote]
 
 
-def _run(host: str, remote: str, timeout: float = 15.0,
+def _label(host: "str | SSHTarget") -> str:
+    """사람이 읽을 이름. ⚠ 키 경로는 안 넣는다 — 오류 메시지가 화면·로그로 간다."""
+    return host.dest if isinstance(host, SSHTarget) else str(host)
+
+
+def _run(host: "str | SSHTarget", remote: str, timeout: float = 15.0,
          stdin: str | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(_ssh_argv(host, remote), input=stdin,
                           capture_output=True, text=True, timeout=timeout)
 
 
-def available(host: str = "", workdir: str = "") -> tuple[bool, str]:
+def available(host: "str | SSHTarget" = "", workdir: str = "") -> tuple[bool, str]:
     """이 러너를 쓸 수 있는가. **못 쓰면 사유를 말한다.**
 
     조용히 `LocalRunner` 로 떨어지면 "원격 GPU 에서 돈다"고 믿는데 실제로는 이
@@ -86,19 +128,19 @@ def available(host: str = "", workdir: str = "") -> tuple[bool, str]:
 
     host = host or settings.train_ssh_host
     workdir = workdir or settings.train_ssh_workdir
-    if not host:
+    if not (host.host if isinstance(host, SSHTarget) else host):
         return False, "원격 학습 호스트가 설정되지 않았습니다 (PIPER_TRAIN_SSH_HOST)"
     try:
         # 접속·tmux·작업 디렉토리를 **한 번에** 확인한다. 왕복이 비싸다.
         r = _run(host, f"command -v tmux >/dev/null && mkdir -p {shlex.quote(workdir)}")
     except subprocess.TimeoutExpired:
-        return False, f"{host} 에 접속할 수 없습니다 (시간 초과)"
+        return False, f"{_label(host)} 에 접속할 수 없습니다 (시간 초과)"
     except FileNotFoundError:
         return False, "ssh 가 없습니다"
     if r.returncode != 0:
         err = (r.stderr or "").strip().splitlines()
         why = err[-1] if err else f"종료 코드 {r.returncode}"
-        return False, f"{host}: {why}"
+        return False, f"{_label(host)}: {why}"
     return True, "OK"
 
 
@@ -109,9 +151,12 @@ class SSHRunner:
     is_remote = True
 
 
-    def __init__(self, job_id: str = "local", host: str = "", workdir: str = "") -> None:
+    def __init__(self, job_id: str = "local", host: "str | SSHTarget" = "",
+                 workdir: str = "") -> None:
         from app.core.config import settings
 
+        # ⚠ 문자열이면 `~/.ssh/config` 별칭(사내 박스). `SSHTarget` 이면 주소·포트·키를
+        #   우리가 안다(임대 인스턴스) — 그 경우 사람이 config 파일을 쓸 필요가 없다.
         self.host = host or settings.train_ssh_host
         self.workdir = workdir or settings.train_ssh_workdir
         self.session = f"piper-train-{job_id}"
