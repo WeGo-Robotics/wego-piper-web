@@ -23,18 +23,36 @@ from app.services.exclusivity import Activity, require_idle
 logger = logging.getLogger(__name__)
 
 
+#: HuggingFace CLI 이름 — **`hf` 가 먼저다.**
+#
+# ⚠ 실기(2026-09-16): 데이터셋 업로드가 매번 실패했다. `piper-xfer-upload` 유닛이
+#   `huggingface-cli upload …` 를 부르는데, huggingface_hub 1.x 에서 그 명령은
+#   **안내문만 찍고 종료 코드 1 로 죽는 껍데기**가 됐다("deprecated and no longer works").
+#   업로드 코드가 옛 이름을 먼저 찾고 있었으니, 같은 환경에 멀쩡한 `hf` 가 있어도
+#   죽은 쪽을 골랐다. 하위 명령(`upload`·`upload-large-folder`)은 이름이 같다.
+#   폴백을 남기는 것은 `hf` 가 아직 없는 옛 환경 때문이다.
+_HF_CLI_NAMES = ("hf", "huggingface-cli")
+
+
 def _find_hf_cli() -> str:
-    """huggingface-cli 경로 탐색. 설정 → grpc_python env → conda envs → PATH."""
+    """HuggingFace CLI 경로. 설정 → grpc_python env → conda envs → PATH.
+
+    이름은 `hf` 를 먼저 본다(위 주석). 설정으로 지정한 경로는 사람이 고른 것이라 그대로 쓴다.
+    """
     from app.core.config import settings
     import glob
     import shutil
     if settings.hf_cli and Path(settings.hf_cli).exists():
         return settings.hf_cli
-    candidates = [
-        str(Path(settings.grpc_python).parent / "huggingface-cli"),
-        *glob.glob(str(Path(settings.grpc_python).parents[1] / "envs" / "*/bin/huggingface-cli")),
-    ]
-    return next((c for c in candidates if Path(c).exists()), shutil.which("huggingface-cli") or "")
+    for name in _HF_CLI_NAMES:
+        candidates = [
+            str(Path(settings.grpc_python).parent / name),
+            *glob.glob(str(Path(settings.grpc_python).parents[1] / "envs" / f"*/bin/{name}")),
+        ]
+        found = next((c for c in candidates if Path(c).exists()), shutil.which(name) or "")
+        if found:
+            return found
+    return ""
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
@@ -95,7 +113,7 @@ async def edit_status():
 
 @router.get("/hf-cli")
 async def get_hf_cli():
-    """huggingface-cli 경로 조회."""
+    """HuggingFace CLI(`hf`) 경로 조회."""
     from app.core.config import settings
     resolved = _find_hf_cli()
     return {"configured": settings.hf_cli, "resolved": resolved}
@@ -107,7 +125,7 @@ class HfCliRequest(BaseModel):
 
 @router.post("/hf-cli")
 async def set_hf_cli(body: HfCliRequest):
-    """huggingface-cli 경로 설정 (.env에 저장)."""
+    """HuggingFace CLI(`hf`) 경로 설정 (.env에 저장)."""
     if body.path and not Path(body.path).exists():
         raise HTTPException(400, f"경로가 존재하지 않습니다: {body.path}")
     # .env 파일에 PIPER_HF_CLI 추가/수정
@@ -409,7 +427,7 @@ async def upload_to_hub(dataset_id: str, body: UploadRequest):
 
     hf_cli = _find_hf_cli()
     if not hf_cli:
-        raise HTTPException(500, "huggingface-cli를 찾을 수 없습니다. 설정에서 경로를 지정하세요.")
+        raise HTTPException(500, "HuggingFace CLI(hf)를 찾을 수 없습니다. 설정에서 경로를 지정하세요.")
 
     # 이름·설명 사이드카가 있으면 허브 카드(README.md)로 만든다 — 업로드가 폴더
     # 전체를 올리므로 여기서 만들어 두면 카드가 된다. 이미 있으면 안 건드린다.

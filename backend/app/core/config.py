@@ -217,7 +217,7 @@ class Settings(BaseSettings):
     # 호스트면 conda, 컨테이너면 `/opt/venv/bin/python` 으로 저절로 맞는다.
     # 다른 것을 쓰려면 `PIPER_GRPC_PYTHON` 으로 덮어쓴다.
     grpc_python: str = sys.executable
-    hf_cli: str = ""  # huggingface-cli 경로 (빈 문자열이면 자동 탐색)
+    hf_cli: str = ""  # HuggingFace CLI(`hf`) 경로 (빈 문자열이면 자동 탐색 — `hf` 가 먼저다)
 
     # ── 외부 LLM 판단 클라이언트 (feature/llm-integration.md) ──
     # 전부 기기별 설정이다 — 온프레미스 여부가 기기 속성이라서.

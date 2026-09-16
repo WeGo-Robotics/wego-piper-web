@@ -223,3 +223,25 @@ def test_the_upload_warning_is_silent_when_nothing_is_uploaded():
 
     rec = (_SRC / "pages" / "RecordingPage.tsx").read_text()
     assert "uploads={pushToHub}" in rec, "수집의 Hub 업로드 체크박스가 안 전달된다"
+
+
+def test_the_uploader_prefers_hf_because_huggingface_cli_is_a_dead_stub():
+    """⚠ 실기(2026-09-16): 데이터셋 업로드가 매번 실패했다. `piper-xfer-upload` 유닛이
+    `huggingface-cli upload …` 를 불렀는데, huggingface_hub 1.x 에서 그 명령은 안내문만
+    찍고 **종료 코드 1 로 죽는 껍데기**다 ("deprecated and no longer works").
+
+    같은 환경에 멀쩡한 `hf` 가 있었는데도 탐색이 옛 이름을 먼저 봤다 — 고를 이름의
+    순서가 전부였다. 하위 명령은 이름이 같다(`upload`·`upload-large-folder`).
+    폴백을 남기는 건 `hf` 가 아직 없는 옛 환경 때문이다."""
+    from pathlib import Path as _P
+
+    from app.routers import datasets as D
+
+    assert D._HF_CLI_NAMES[0] == "hf", "죽은 껍데기(huggingface-cli)를 먼저 고른다"
+    assert "huggingface-cli" in D._HF_CLI_NAMES, "hf 가 없는 옛 환경의 폴백이 사라졌다"
+
+    src = (_P(__file__).resolve().parents[1] / "app" / "routers" / "datasets.py").read_text()
+    find = src.split("def _find_hf_cli", 1)[1].split("\nrouter =", 1)[0]
+    assert "for name in _HF_CLI_NAMES" in find, "이름 하나만 찾는다 — 순서가 뜻을 잃는다"
+    assert '"upload-large-folder"' in src and '"upload"' in src, "업로드 하위 명령이 사라졌다"
+    assert "huggingface-cli를 찾을 수 없습니다" not in src, "오류 문구가 죽은 이름을 말한다"
