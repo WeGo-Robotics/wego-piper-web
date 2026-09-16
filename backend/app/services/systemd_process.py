@@ -81,6 +81,13 @@ class SystemdProcess:
         self._on_log: Callable[[str], None] | None = None
         self._on_state: Callable[[ProcessState], None] | None = None
         self._log_thread: threading.Thread | None = None
+        # ⚠ **끝남을 알아챌 사람이 필요하다.** `state` 는 누가 **읽을 때만** `is-active` 를
+        #   물어본다(아래 주석). 그런데 업로드 모달처럼 WS 푸시만 보고 있는 화면은 아무도
+        #   안 읽으므로, 유닛이 성공으로 끝나도 영원히 `running` 이고 [중지] 버튼이 남는다
+        #   (실기 2026-09-16: hf 업로드가 `✓ Uploaded` 로 끝났는데 화면이 안 바뀌었다).
+        #   이 스레드가 주기적으로 `state` 를 **읽어 주기만** 한다 — 판정도 콜백도 그대로다.
+        self._watch_thread: threading.Thread | None = None
+        self._watch_stop = threading.Event()
         self._log_proc: subprocess.Popen | None = None
         self._log_stop = threading.Event()
         # 이 게이트웨이가 이 유닛을 띄운 적이 있는가. 없으면 저널의 옛 줄은
@@ -191,6 +198,7 @@ class SystemdProcess:
         self._started_once = True
         self._set_state(ProcessState.RUNNING)
         self._start_log_stream()
+        self._start_watch()
         logger.info("유닛 시작: %s", self.unit)
 
     async def stop(self) -> None:
@@ -258,7 +266,34 @@ class SystemdProcess:
                                             name=f"journal-{self.unit}")
         self._log_thread.start()
 
+    def _start_watch(self, every: float = 2.0) -> None:
+        """유닛이 끝났는지 지켜본다. 판정은 `state` 가 한다 — 여기선 읽어 줄 뿐이다."""
+        if self._watch_thread and self._watch_thread.is_alive():
+            return
+        self._watch_stop.clear()
+
+        def _watch() -> None:
+            while not self._watch_stop.wait(every):
+                try:
+                    if not self.is_running:      # 다른 경로가 이미 내렸다
+                        break
+                    self.state                    # 여기서 전이·콜백·로그중단이 일어난다
+                    if not self.is_running:
+                        break
+                except Exception as exc:          # 감시가 게이트웨이를 죽이지 않는다
+                    logger.debug("유닛 감시 실패 (%s): %s", self.unit, exc)
+                    break
+
+        self._watch_thread = threading.Thread(target=_watch, daemon=True,
+                                              name=f"unit-watch-{self.unit}")
+        self._watch_thread.start()
+
+    def _stop_watch(self) -> None:
+        self._watch_stop.set()
+        self._watch_thread = None
+
     def _stop_log_stream(self) -> None:
+        self._stop_watch()
         self._log_stop.set()
         with contextlib.suppress(Exception):
             if self._log_proc:
@@ -291,6 +326,7 @@ class SystemdProcess:
             return False
         self._set_state(ProcessState.RUNNING)
         self._start_log_stream(follow_from_start=True)
+        self._start_watch()
         logger.info("유닛 재부착: %s", self.unit)
         return True
 
