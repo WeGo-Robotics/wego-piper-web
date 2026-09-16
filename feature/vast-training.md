@@ -350,8 +350,9 @@ backend/app/services/cloud/
 - 학습 페이지: **실행 위치** 세그먼트(로컬 GPU / 사내 서버 / Vast.ai) → Vast 면 서브폼(GPU·오퍼
   목록·예산·최대 시간·이미지 태그) · 인스턴스 스텝바(searching→…→destroyed) · 비용 배지.
   [TrainingPage.tsx](../frontend/src/pages/TrainingPage.tsx) 가 936줄이라 `TrainWhereForm`·`CloudJobStatus` 로 분리.
-- `/cloud` 페이지 (LeRobot 그룹, 라벨 "클라우드", 탭은 제목 옆): **인스턴스만** — 목록·비용·
-  고아 배너·파기. **자격증명과 설정 도우미는 여기가 아니라 설정 → 클라우드 탭**이다(§9-1).
+- `/cloud` 페이지 (LeRobot 그룹, 라벨 "클라우드 GPU", 탭은 제목 옆) — 탭 **둘**:
+  **RENT**(오퍼 목록 → 고르기, 기획 §9-2) · **인스턴스**(목록·비용·고아 배너·파기).
+  **자격증명과 설정 도우미는 여기가 아니라 설정 → 클라우드 탭**이다(§9-1).
 - **도우미 = 체크리스트로 동작하는 가이드** (cloud-training §9 방식). 항목마다 백엔드
   `readiness` 가 ✓/✗ 를 채운다 — 죽은 문서가 아니라 지금 상태:
   1. Vast 계정 · 결제수단 (콘솔 딥링크)
@@ -453,6 +454,233 @@ TSX 에 박으면 정의가 둘로 갈라진다, cloud-training §9) · `GET /ap
 0·1·2·4·5 만으로도 탭은 쓸모가 있으므로 W1 앞에 먼저 낼 수 있다. W4 의 도우미 9항목 중
 **첫 조각(0~5)**이 여기고, 나머지(첫 학습 따라하기·문제 해결)는 `/cloud` 에 남는다.
 
+### 9-2. `/cloud` → RENT 탭 — "무엇을 빌릴지 고른다"
+
+설정 탭이 *빌리기 전까지*라면 여기는 **고르는 화면**이다. 자격증명은 §9-1 에 그대로 두고
+이 페이지는 **쓰는 쪽**만 맡는다.
+
+#### 자리
+
+[pages.ts](../frontend/src/config/pages.ts) 에 엔트리 하나. `/training` **바로 뒤** —
+메뉴 순서가 곧 작업 순서다 (수집 → 데이터셋 → 학습 → **클라우드 GPU** → 모델).
+
+```ts
+{ path: '/cloud', label: '클라우드 GPU', component: CloudPage, nav: true, group: 'LeRobot', icon: '☁️' }
+```
+
+탭은 [RobotsPage](../frontend/src/pages/RobotsPage.tsx#L798) 관용구 그대로 h1 과 **같은 줄**.
+`RENT` 와 `인스턴스` **둘을 처음부터** 만든다 — 인스턴스 탭이 이번엔 빈 껍데기여도, 나중에
+탭을 끼워 넣으며 레이아웃을 다시 흔드는 것보다 낫다.
+
+#### 준비도는 목록을 막지 않는다
+
+`GET /api/cloud/readiness` → `{cli, api_key, ssh_key:{exists,registered}, balance, templates}`.
+
+빨간불이어도 **표는 그린다.** 세팅하기 전에 가격부터 보고 싶은 게 사람이다. 막는 건
+[빌리기] 버튼 하나뿐이고, 옆에 무엇이 모자란지와 설정 탭 링크를 붙인다. 지금 이 계정에서
+빨간 건 **SSH 키 계정 등록 0개** 하나다.
+
+#### 백엔드 — W2 계약을 그대로 앞당긴다
+
+```
+services/cloud/providers/base.py   Offer(dataclass) · CloudProvider(Protocol)   ← §8 W2 그대로
+services/cloud/providers/vast.py   VastProvider.search(f) → [Offer]
+                                   = vastai search offers '<q>' --raw  (VAST_API_KEY 는 env 로)
+routers/cloud.py  += GET /api/cloud/vast/offers   ?gpu=&max_price=&min_cuda=&disk_gb=&refresh=1
+                  += GET /api/cloud/templates     (private=true — 위 ⚠ 참조)
+                  += GET /api/cloud/readiness
+```
+
+두 가지가 중요하다:
+
+- **쿼리 빌더는 화이트리스트.** UI 값이 vast 질의 **문자열로 연결**되므로 필드명·연산자는
+  고정 표에서만 고르고 값은 타입 검사 후 포맷한다. 사용자 문자열이 그대로 붙는 경로를
+  만들지 않는다.
+- **60초 TTL 캐시 + `?refresh=1`.** `search offers` 는 실측 2~4초다. [api.ts](../frontend/src/services/api.ts)
+  의 GET 단일비행은 *동시* 요청만 접지 탭을 오갈 때마다 부르는 건 못 막는다. 가격은 초
+  단위로 변하지 않으니 **자동 폴링은 넣지 않고** 새로고침 버튼을 준다.
+
+#### ★ 가격 — `dph_total` 은 우리 가격이 아니다
+
+오퍼 하나(2026-09-16 실측)로 검산하면:
+
+```
+dph_base            0.3467     ← GPU 만
+storage_total_cost  0.0060     ← 디스크, 그런데 약 5GB 기준
+dph_total           0.3527     = 0.3467 + 0.0060  ✓
+storage_cost        0.8667     $/GB/월
+```
+
+`dph_total` 에 들어간 디스크는 **검색 기본값(~5GB)** 이다. 우리 템플릿은
+`recommended_disk_space: 40` 이다. 화면에 쓸 값은:
+
+```
+시간당 = dph_base + storage_cost × disk_gb / 730
+       = 0.3467  + 0.8667 × 40 / 730
+       = 0.3467  + 0.0475  = $0.394/h      ← 표시된 0.3527 보다 12% 비싸다
+```
+
+**전송비는 따로**, 시간이 아니라 GB 로 붙는다 — `inet_down_cost` $0.0156/GB(인스턴스로
+올릴 때) · `inet_up_cost` $0.0169/GB(체크포인트 내릴 때). 시간당에 섞지 말고 "+ 전송 ~$0.1"
+처럼 **별도 줄**로 둔다.
+
+→ 그래서 디스크 슬라이더(기본 40GB)는 필터가 아니라 **가격 입력**이다. 바꾸면 표 전체의
+$/h 가 다시 계산돼야 한다.
+
+#### 표 — 열과 그 근거
+
+오퍼 하나에 필드가 **100개**다. 판단에 쓰이는 것만 열로 올린다:
+
+| 열 | 필드 | 왜 |
+|---|---|---|
+| GPU | `num_gpus`×`gpu_name`, `gpu_ram` | 정체 |
+| **$/h** | 위 계산식 | 유일한 비용 축 |
+| 가성비 | `dlperf_per_dphtotal` | **기본 정렬** |
+| CUDA | `cuda_max_good` | 이미지 호환 |
+| 신뢰도 | `reliability2` | 중간에 죽는가 |
+| 네트워크 | `inet_down` / `inet_up` | 데이터셋 업로드가 이걸로 갈린다 |
+| CPU | `cpu_cores_effective` | 데이터로더 |
+| 디스크 | `disk_space`, `disk_bw` | 40GB 필요 |
+| 위치 | `geolocation` | 업로드 RTT |
+| 잔여 | `duration` | 학습 중 회수 |
+
+#### GPU 고르기 — 고정 목록을 두지 않는다
+
+⚠ **처음 구현이 GPU 7개를 화면에 박아 뒀고, 그게 틀렸다.** 사용자가 쓰려는 **3060 이
+없었고**, 대신 **RTX 5090 이 들어 있었다** — Vast 에서 가장 흔한 GPU(오퍼 237개)지만
+`sm_120` 이라 우리 cu126 이미지로는 **애초에 못 돈다**. 박아 둔 목록은 이렇게 조용히
+썩는다. 그래서 목록은 서버가 만든다 (`GET /api/cloud/gpus`).
+
+**질의 둘로 만든다.** 둘 다 표가 쓰는 필터 그대로에서 항만 뺀 것이라, 선택지와 표가
+같은 세계를 본다:
+
+| | 질의 | 실측 |
+|---|---|---|
+| **A** | 표의 필터에서 GPU 이름만 뺀 것 | 234행 · **55종** — 지금 진짜 고를 수 있는 것 |
+| **B** | 거기서 `cuda_vers` 까지 뺀 것 | 412행 · 70종 |
+| **B − A** | | **정확히 Blackwell 15종** (RTX 50 전 계열 · RTX PRO · B200/B300) |
+
+⚠ **넓게 훑는 방법은 버렸다.** 처음엔 `rentable=true` 를 정렬 각도 3번으로 훑어 80종을
+모았다. 그런데 한 질의는 서버에서 **512개로 잘리고**, 같은 질의를 두 번 돌리면 결과가
+갈린다(같은 기종 18행 중 id 가 10개만 겹침). "각도를 13개 더 돌려도 0종 추가" 는
+수렴의 증거가 아니라 **그날 뽑기**였다. 반대로 필터를 건 질의는 512 아래로 내려와
+잘리지 않고, 이름 집합이 3회 연속 **완전히 동일**했다. 표본을 넓히는 것보다 **범위를
+좁히는 쪽**이 정확하다. 8.5초 → 4.8초는 덤이다.
+
+⚠ **첫 행을 믿지 않는다.** 같은 기종 안에서 호스트마다 값이 갈린다 — 실측 RTX 4080S
+4대 중 `gpu_ram` 이 16376(2대·실물)과 **32760(1대·거짓)** 으로 섞여 나온다. 최빈값으로
+집계하고 동률이면 작은 쪽을 쓴다(거짓 보고는 대개 크게 부풀린다).
+
+⚠ **오퍼 수는 확정값이 아니다.** 같은 질의 3회에 총 행수가 234~238 로 흔들린다. 필드
+이름을 `offers_seen` 으로 짓고 화면도 "18대쯤" 이라고 적는다.
+
+#### 세대 — `cuda_vers` 로는 못 보고, 로컬 torch 로 확인하면 틀린다
+
+우리 이미지가 돌릴 수 있는 GPU 세대는 **이미지 자신에게 물어야 한다.** 이 머신의
+RTX 5090 에 실제 이미지를 물려 받은 출력(2026-09-16):
+
+```
+$ docker run --rm --gpus all ghcr.io/wego-robotics/piper-train:full-cu126 \
+      python -c "import torch; torch.cuda.get_arch_list()"
+NVIDIA GeForce RTX 5090 with CUDA capability sm_120 is not compatible ...
+The current PyTorch install supports CUDA capabilities
+    sm_50 sm_60 sm_70 sm_75 sm_80 sm_86 sm_90
+```
+
+⚠ **로컬 파이썬의 torch 로 확인하면 틀린다.** 이 머신 torch 는 2.10+**cu128** 이라 arch
+list 가 `sm_70~sm_120` 이다 — 맥스웰·파스칼이 빠지고 Blackwell 이 들어 있는 **다른
+집합**이다. 처음에 그 값을 근거로 하한을 `CC_MIN=700` 으로 잡았다가 구형 10종(GTX
+10xx · Tesla P100 · Titan Xp …)을 **없는 죄로 막을 뻔했다**. 실제 하한은 **500** 이다.
+
+⚠ **`cuda_max_good` 으로는 세대를 못 본다.** Blackwell 호스트는 12.8~13.3 을 보고해
+`MIN_CUDA` 검사를 여유롭게 통과한다 — 즉 못 도는 기계에 경고가 **하나도 안 붙는다**.
+`compute_cap` 을 따로 봐야 한다.
+
+⚠ **`compute_cap` 에는 실재하지 않는 값이 섞여 있다** — Quadro P2000=140, P4000=243
+(실물은 둘 다 파스칼 cc 6.1). 구간만 보고 "너무 구형" 이라 하면 **틀린 답으로 사용자를
+막는다**. 알려진 값 집합(`KNOWN_CC`) 밖이면 `unknown` 으로 두고 아무 말도 안 한다.
+
+⚠ **`cuda_vers` 가 Blackwell 을 조용히 걸러내고 있었다.** Vast 의 `cuda_vers` 는 드라이버
+최대치가 아니라 *그 기계가 실제로 돌릴 수 있는 CUDA* 다 — 실측 `gpu_name=RTX_5090` 은
+`>=12.7` 까지 0개, `>=12.8` 에서 46개다. 그래서 우리 필터가 이미 전부 거르고 있었고,
+**그게 문제였다**: 목록을 넓히면 사용자가 RTX 5090 을 고르는 순간 시장에 46대가 있는데도
+0행이 뜨고 이유를 아무 데도 안 적어 준다. 그래서 카탈로그가 행마다 `available` 과
+`reason` 을 싣고, 빈 표도 그 사유를 그대로 말한다.
+
+⚠ **cu128 은 상위집합이 아니다.** Blackwell 을 얻는 대신 맥스웰·파스칼을 잃는다
+(PyTorch 가 2.8~2.9 에서 그 세대를 뺐다). 어느 한 이미지로 70종을 다 덮을 수 없고,
+지금 판정은 **기본 템플릿(cu126) 기준**이다.
+
+#### VRAM — 3060(12GB)은 넉넉하다
+
+ACT 기본값(batch 8 · chunk 100 · dim 512 · ResNet18 · 480×640)으로 실측한 학습 스텝
+피크(forward+backward+AdamW):
+
+| 구성 | bs4 | bs8 | bs16 |
+|---|---|---|---|
+| 2캠 · state 7 | 2.45 | **3.91** | 7.73 |
+| 3캠 · state 14 | 3.49 | **6.22** | 11.62 |
+
+(GiB 예약. CUDA 컨텍스트 0.4~0.6 GiB 별도.) 즉 **3캠 기본 배치가 약 6.8 GiB** 라
+12GB 인 3060 은 여유가 있다. 추론은 1 GiB 미만이라 더 여유다. 4GB(GTX 1650)는 기본
+배치로 바로 OOM 이다. bf16 오토캐스트는 메모리를 5% 도 못 줄인다 — **속도 대책이지
+메모리 대책이 아니다**.
+
+#### 필터와 경고 — 실측 빈도로 순위를 매긴다
+
+기본값은 **템플릿의 `extra_filters` 를 그대로** 쓴다 (이미 검증된 문자열, 두 템플릿 동일).
+프리셋 셋: `[템플릿 기본]` `[최저가]` `[가성비]`. 기본 정렬은 **최저가가 아니라
+`dlperf_per_dphtotal`** — 최저가 정렬은 CUDA 12.2 짜리를 맨 위로 올린다.
+
+행 배지는 60개 표본에서 **실제로 걸리는 것만**:
+
+| 경고 | 빈도 | 판정 |
+|---|---|---|
+| `cpu_cores_effective` < 4 | **3/60** | ⚠ 넣는다 — 데이터로더가 굶는다 |
+| `cuda_max_good` < 12.4 | 2/60 | ⚠ 넣는다 (최저가 정렬 시 맨 위로 온다) |
+| `duration` 짧음 | 최소 5일 · 중앙 65일 | 열로만. 배지는 안 만든다 |
+| `verification` | **60/60 verified** | ✗ **안 만든다** — 4090 에선 무의미 |
+
+마지막 줄이 요점이다. 짐작으로 배지를 넣으면 아무도 안 보는 열이 하나 는다.
+
+#### 고르기 → 확인
+
+행의 버튼은 [빌리기]가 아니라 **[선택]**. 고르면 하단 고정 요약 바:
+
+```
+RTX 4090 · Iceland  |  템플릿 full ▾  |  디스크 40GB  |  $0.394/h + 전송
+잔액 $25 → 최대 63시간        예산 상한 [$10]        [빌리기]
+```
+
+확인은 **논블로킹 React 모달** — `window.confirm` 은 heartbeat 를 막아 로컬 추론을 E-stop
+시킨다 (§6 · 실제 사고 전례).
+
+⚠ **이번 범위는 여기까지다** — 목록·필터·선택·확인 모달. 실제 `create` 는 W3 과 함께 간다.
+인스턴스를 띄우면 **반드시 파기까지** 있어야 하고(§6 의 고아 스캐너·예산 상한), 그건 이
+페이지보다 큰 작업이다. 모달의 [빌리기]는 그때까지 비활성 + "다음 단계" 표기.
+
+#### 템플릿 선택
+
+셀렉트에 한 줄 설명을 붙인다 — **full** 4.70GB pull, 받으면 바로 시작 / **slim** 0.34GB
+pull, 부팅 때 스택 설치. 네트워크 600Mbps 급이면 full 이 유리하다 (4.7GB ≈ 1분). 기본
+**full**.
+
+#### 테스트로 못 박을 것
+
+- **오퍼 파서 fixture** — 실 JSON 을 `tests/fixtures/vast_offers.json` 으로 저장한다. W0 이
+  남긴 숙제이기도 하고, 필드 100개짜리를 손으로 흉내 내면 틀린다
+- 가격 계산식 — 위 검산(`0.3467 + 0.0475 = 0.394`)을 그대로 단위 테스트로
+- 쿼리 빌더 — 알 수 없는 필드는 거부하는가
+- 페이지 등록은 `test_page_registry` 가 이미 잡는다 (추가 작업 없음)
+- 프론트 검증은 `cd frontend && npm run build`
+
+#### 안 하는 것
+
+- **자동 가격 폴링** — 가격은 안 변하고 호출은 4초다
+- **입찰(`min_bid`·interruptible)** — 뺏기면 체크포인트를 잃는다. on-demand 만 (결정 4)
+- **무한 스크롤** — 상위 50개. 60개짜리 결과에 페이징은 군더더기
+- **자격증명 UI 중복** — 설정 → 클라우드 하나뿐 (결정 9)
+
 ## 10. 먼저 정해야 할 것 — 제안 답을 달았다
 
 | # | 결정 | 제안 |
@@ -466,6 +694,296 @@ TSX 에 박으면 정의가 둘로 갈라진다, cloud-training §9) · `GET /ap
 | 7 | HF repo 소속(개인/조직) | hf-account 의 네임스페이스 피커를 따른다 — 데이터 집계 경로와 같은 곳 |
 | 8 | 학습 이미지의 torch — 추론 기계와 같은 2.11 vs lerobot 핀대로 2.10 | 지금은 **2.11(같은 버전)**. slim 부팅이 3.5GB 를 더 받는 대가. 체크포인트는 state dict 라 2.10 이어도 열리므로, V0 에서 "2.10 학습 → 2.11 추론"이 되면 2.10 으로 바꿔 4.7GB 로 줄인다 |
 | 9 | 자격증명·도우미를 어디에 두나 | **설정 → 클라우드 탭**(§9-1). `/cloud` 페이지는 인스턴스·비용·고아만 — 한 번 맞추는 것과 매일 보는 것을 가른다 |
+| 10 | RENT 탭의 범위 | **고르는 데까지**(§9-2) — 목록·필터·선택·확인 모달. `create` 는 파기·예산 가드와 한 몸이라 W3 과 같이 간다 |
+
+## 11. W0 완주 절차서 — 실제로 빌려서 한 바퀴 (2026-09-16 기획)
+
+목표는 좋은 모델이 아니라 **배관이 통하는지**다: 렌트 → 이미지 → 데이터셋 → 학습 시작 →
+정상 종료 → 가중치 회수 → 로컬 추론.
+
+### 11-0. 먼저 알아야 할 것 — 자동 가드가 **0개**다
+
+| 있어야 할 것 | 지금 | 근거 |
+|---|---|---|
+| 학습 프로세스 상한 | ✗ | `_build_script` 에 `timeout` 없음 |
+| E-stop 이 원격을 끊음 | ✗ | `SSHRunner.occupies_local_gpu = False`, `pid` 는 항상 None |
+| 브라우저 닫으면 정지 | ✗ | 녹화와 반대다 — 원격 학습은 안 죽는다 |
+| 예산 상한 | ✗ | RENT 탭 입력칸은 **화면에 찍히기만 한다** ([빌리기]는 disabled) |
+| 인스턴스 자동 파기 | ✗ | 백엔드에 `destroy` 코드가 한 줄도 없다 (§9-2 가 일부러 미뤘다) |
+
+→ **사람이 유일한 가드다.** 감시 지점 셋과 벽시계 타이머를 먼저 정하고 시작한다.
+
+### 11-1. 실물로 확인된 함정 다섯
+
+전부 이미지·코드에서 직접 돌려 본 것이다 (추정 아님).
+
+1. ⚠ **SSH 세션에는 `/opt/venv/bin` 이 없다.** 이미지 `ENV PATH` 는 `/opt/venv/bin:…` 인데
+   로그인 셸은 `/usr/local/sbin:/usr/local/bin:…` 으로 리셋된다 — `lerobot-train` 도
+   `import lerobot` 도 실패한다. 손으로 치는 모든 명령은 **절대경로**를 쓴다.
+   `env-check.sh` 도 `command -v python` 에 의존하므로 `PATH=/opt/venv/bin:$PATH` 를 앞에
+   붙여야 한다. 안 그러면 torch 없는 python 으로 재서 **멀쩡한 기계를 `arch_ok=false` 로
+   파기시킨다.**
+2. ⚠ **인터프리터 우회는 심볼릭 링크가 아니라 래퍼 스크립트다.** 실측:
+   `ln -sf /opt/venv/bin/python <어딘가>` → `ModuleNotFoundError: No module named 'lerobot'`
+   (venv 가 *해석된* 경로 옆에서 `pyvenv.cfg` 를 찾는다). `#!/bin/sh` + `exec /opt/venv/bin/python "$@"`
+   래퍼는 통과. **가장 자연스러운 우회가 조용히 실패하는 자리다.**
+   ⚠ 그리고 링크를 만든 **뒤** 그 경로에 `>` 로 쓰면 링크를 따라가 실제 CPython 을 덮어쓴다 —
+   래퍼가 자기 자신을 exec 하는 무한 루프가 되고 `python -V` 조차 안 돈다. **쓰기 전에 `rm -f`.**
+3. ⚠ **tmux 서버가 환경을 얼린다.** 실측: 서버 기동 *전* 설정한 변수는 새 세션에 보이고(1),
+   *후* 설정한 것은 **안 보인다**(0). 그래서 HF 토큰은 env 가 아니라 **파일**로 심는다
+   (`/root/.cache/huggingface/token`). 덤으로 토큰이 `ps`/argv 에 안 남는다.
+4. ⚠ **즉사가 정상 완주와 구별되지 않는다.** [`ssh.py:242`](../backend/app/services/training/runners/ssh.py#L242)
+   의 `_start_log_stream()` 은 기본이 `tail -n 0 -f` 다(`restore()` 만 `from_start=True`).
+   1초 안에 죽는 실패(exit 127 · draccus 인자 오류 · unknown policy type)는 파일에 에러가
+   다 쓰여 있어도 **새 줄이 없어** `_EXIT_MARK` 를 못 타고 `_finish(IDLE)` 로 끝난다.
+   `IDLE` 은 **정상 완주와 같은 값**이다.
+   → 시작 직후 **원격 로그 파일을 직접 읽는다.** 화면 상태를 성공으로 읽지 않는다.
+5. ⚠ **`/api/training/jobs` 의 `runner` 필드는 화석이다.** 지금 실측: `runner:"systemd"` ·
+   `state:"idle"` 인데 `metrics.state:"running", step:20000` 로 얼어 있다(어제 값).
+   `_sync_record()` 가 재기동 때 안 돌기 때문이다. **이 필드로 러너를 판정하지 마라** —
+   시작 전에 `DELETE /api/training/jobs/local` 로 치우고, 판정은 시작 **후** 교차 확인으로.
+
+### 11-2. 돈 안 드는 관문 — 여기가 초록이어야 인스턴스를 만든다
+
+§5 의 규율("업로드 검증 전에는 provision 하지 않는다")을 앞으로 더 당긴다.
+
+| # | 관문 | 통과 조건 |
+|---|---|---|
+| 0 | 출발선 기록 | `show instances` 가 **빈 배열**(타입 검사 포함) · `credit` · 청구 건수 셋을 적는다 |
+| 1 | SSH 키 지문 | 계정 등록 키 = 게이트웨이 키 `SHA256:uPtx…` (✅ 확인됨) |
+| 2 | 데이터셋 업로드 | ☑ **통과(2026-09-16)** — `sim_data2` 토큰 조회 200 · `private=false` · 실질 7개 파일이 **바이트까지 일치**(영상 4.91MB·7.17MB 실물, LFS 포인터 아님) |
+| 3 | ⭐ **로컬 CPU 드라이런** | ☑ **통과(2026-09-16)** — 아래 11-2-a |
+
+⭐ **3번이 가성비의 핵심이다.** 인자 조립 · act_aux 로드 · HF 다운로드 · **torchcodec 영상
+디코드** · 푸시 경로가 전부 지상에서 검증된다. 통과하면 임대 인스턴스가 새로 증명할 것은
+**GPU 커널과 SSH 배관 둘뿐**이다.
+
+⚠ **데이터셋 존재 확인은 반드시 토큰을 붙인다.** 비인증 조회는 "없음"·"private"·"실패" 를
+전부 뭉갠다. 그리고 지금 `GET /api/hub/datasets/{repo}` 는 **404 를 500 으로 바꾼다**
+(`hub_dataset_detail` 이 `HfHubHTTPError` 를 안 잡는다) — 이 경로로는 "안 올라감" 과
+"Hub 장애" 를 구별할 수 없다. 작은 수정거리다.
+
+#### 11-2-a. CPU 드라이런 결과 — §5 의 숙제가 풀렸다
+
+`sim_data2` · ACT · **2스텝** · batch 2 · `device=cpu` · `amp=off` 로, **앱 자신의
+`POST /api/training/preview` 가 만든 인자** 그대로 로컬 full 이미지에서 돌렸다.
+`argv[0]` 만 `/opt/venv/bin/python` 으로 바꿨다(그게 곧 W1 이 고칠 한 자리다).
+HF 캐시는 **비운 채**로 줘서 다운로드 경로도 함께 지나갔다.
+
+```
+데이터셋 Hub 다운로드 ✓ (4초)   영상 코덱 libsvtav1 ✓   ACT 52M 파라미터 ✓
+step:1 loss:91.383 / step:2 loss:72.037 ✓   End of training ✓
+Model pushed to https://huggingface.co/wego-hansu/w0-dryrun-throwaway ✓   (푸시 ~32초)
+```
+
+**⚠ `push_to_hub` 는 커밋을 여러 번 낸다 — 파일 9개 · 커밋 4개.**
+
+| 커밋 | 올라가는 것 |
+|---|---|
+| `initial commit` | repo 생성 |
+| `Upload policy weights, train config and readme` | `config.json` · `model.safetensors` · `train_config.json` · `README.md` |
+| `Upload DataProcessorPipeline` | `policy_preprocessor.json` + `..._step_3_normalizer_processor.safetensors` |
+| `Upload DataProcessorPipeline` | `policy_postprocessor.json` + `..._step_0_unnormalizer_processor.safetensors` |
+
+→ **합격 조건은 "파일이 생겼다" 가 아니라 파일 9개 · 커밋 4개다.** 프로세서 커밋 둘이
+빠지면 가중치는 멀쩡히 받아지고 **추론도 정상적으로 뜨는데 정규화 없이 돈다** — 이
+경로에서 가장 큰 거짓 통과다.
+
+⚠ **가중치가 `private=false` 로 나갔다.** 드라이런은 무해하지만 실전에서는
+`--policy.private=true` 에 해당하는 설정을 확인하고 돌려야 한다.
+
+⚠ **아직 안 풀린 조각**: 중간 체크포인트도 매번 푸시되는지는 여전히 모른다. 2스텝에
+`save_freq=2` 라 체크포인트와 종료가 같은 순간이었다. **Phase 2(5000스텝 ·
+`save_freq=1000`)가 그걸 가른다.**
+
+### 11-3. 무엇으로 도나
+
+| | 고른 것 | 왜 |
+|---|---|---|
+| 데이터셋 | **`wego-hansu/sim_data2`** (25ep · 10403프레임 · 2캠 · **13M**) | 사용자 지정(2026-09-16). 영상 2스트림(cam0·cam1)이라 torchcodec/NPP 경로를 지난다. ⚠ 이름이 비슷한 `sim_data` 는 **영상이 없어**(state 전용) 그 경로를 건너뛴다 — 헷갈리면 안 된다 |
+| 이미지 | **full** | 전송 4.70GB → 후보 기계에서 pull **0.5~2.6분 · $0.0005**. 부팅 설치 실패 경로가 통째로 사라진다. ⚠ §8 W0 의 "slim 먼저" 는 회선을 모르던 때의 판단이다 |
+| GPU | **RTX 3060** `$0.064/h` (`compute_cap 860` = sm_86) | 이미지 arch list 에 문자 그대로 있다 — 변수가 하나 준다. 한국 소재도 $0.071/h |
+| 스텝 | 500 (`save_freq=100` · `log_freq=25`) | ⚠ 폼 기본값은 `steps=100000` · `save_freq=20000` 이고 **localStorage 에서 복원된다**. 500스텝 · batch 8 = 약 **0.38 에포크**(10403프레임) — 배관 확인에 충분하다 |
+
+⚠ **중국 본토(CN) 오퍼는 고르지 않는다** — `huggingface.co` 가 막혀 다운로드도 푸시도 실패한다.
+최저가 정렬 맨 위가 그 함정일 때가 있다.
+
+### 11-4. 절차 요약
+
+```
+[돈 0]  0 출발선 · 1 키지문 · 2 업로드 대조 · 3 ⭐CPU 드라이런
+        ↓  (전부 초록일 때만)
+[과금]  4 오퍼 3개 선정 → 5 create (--template_hash · --disk 40 · --ssh --direct
+          --label · --cancel-unavail)          ⏰ 타이머 시작
+        6 running 대기                          ⏰ 감시① 8분
+        7 ssh alias (⚠ IdentityFile 필수)
+        8 ⭐원격 준비: 래퍼(rm -f 먼저) + 토큰 파일 + tmux 비우기 → 한 줄로 동시 증명
+        9 게이트웨이를 원격 러너로 (SSH 확인이 재기동 **전**에 끝나 있어야 한다)
+       10 학습 시작 — preview 로 인자 눈으로 확인
+       11 ⭐교차 확인                            ⏰ 감시② 3분
+       12 완주 판정 (로그 3줄 + Hub **파일 9개 · 커밋 4개**)
+       13 (조건부) scp 보험
+       14 ⭐파기 — 세 겹 확인
+       15 회수 → 로컬 추론   ← **여기까지가 종료선**
+       16 뒷정리 (⚠ 반드시 파기 **뒤에**)
+```
+
+**11번 교차 확인이 이 테스트의 심장이다.** 넷을 다 봐야 "클라우드에서 GPU 로 돈다" 가 증명된다:
+① 원격 로그에 `step=` 메트릭이 흐른다 ② `ssh vast 'tmux ls'` 에 세션이 있다
+③ **로컬 `nvidia-smi` 가 비어 있고** 원격에 python+VRAM 이 보인다 ④ 로그에 `Switching to` 가 없다.
+각각 조용한 로컬 폴백 / 원격 미기동 / CPU 폴백을 잡는다 — **셋 다 화면은 초록이고 loss 도 내려간다.**
+
+⚠ **`policy_repo_id` 를 비우면 [`cli_mapping.py:401`](../backend/app/core/cli_mapping.py#L401) 이
+`--policy.push_to_hub=false` 를 강제한다** — 학습은 멀쩡히 끝나고 **회수 경로만 사라진다.**
+
+### 11-5. 중단 규칙 — 감시 지점 셋과 벽시계
+
+- ⏰ **감시① create 후 8분** — `running` 이 아니거나 `exited`/`offline` 이면 파기하고 2순위로.
+  순수 pull 은 계산상 1분 안쪽이다. 남의 느린 호스트를 시계 켜 둔 채 디버깅하지 않는다.
+- ⏰ **감시② 시작 후 3분** — 원격 로그 첫 줄이 없으면 즉사다(화면은 IDLE). 로그를 읽고
+  15분 안에 원인이 안 잡히면 파기하고 **지상에서 고친다**.
+- ⏰ **벽시계 45분** — 결과와 무관하게 파기. 휴대폰 타이머를 create 와 동시에 맞춘다.
+- **자리를 비우기 전에 반드시 파기한다.** "잠깐 두고 보자" 가 없는 구조다 — 점심·퇴근·잠은
+  전부 파기 사유다.
+- ⚠ **[중지] 를 눌렀다고 멈춘 게 아니다.** `SSHRunner.stop()` 은 `tmux kill-session` 의
+  returncode 를 **한 번도 안 보고** 예외를 warning 으로 삼킨 뒤 무조건 `_finish(IDLE)` 한다.
+  중지 직후 `tmux ls` 로 세션 부재를 눈으로 확인한다.
+- **파기 확인은 세 겹**: ① `.success == true` 를 **파싱**(종료코드 금지 — CLI 는 오류도 0 으로
+  내고 본문에 `{"error": true}` 를 싣는다) ② 목록이 **빈 배열**인지 타입까지 검사
+  ③ 청구 건수 마감 — 이게 Vast 서버의 정산이라 CLI 파싱 사고와 무관한 최종 심판이다.
+
+### 11-6. 코드 수정 — 필수 0줄, 권장 1줄
+
+우회가 전부 원격 셸과 입력칸에서 끝나므로 **W0 한 바퀴는 코드 변경 없이 돈다.**
+
+권장 1줄은 절약이 아니라 **진단**을 위한 것이다:
+`ssh.py:242` `self._start_log_stream()` → `self._start_log_stream(from_start=True)`.
+`start()` 가 `: > {log}` 로 로그를 비우므로 이전 실행분이 섞이지 않는다(부작용 없음).
+
+⚠ **`settings.grpc_python` 을 `.env` 로 덮는 우회는 쓰지 마라** — 정책서버·yolod·래퍼·녹화·
+편집 등 **7곳이 같은 값을 쓴다**. 대신 원격에 래퍼를 심는다(11-1 ②).
+
+W1 으로 넘길 진짜 수정 넷:
+1. `routers/training.py:204` — 원격이면 `build_train_args(params, python=…)`.
+   ⚠ 배선은 **이미 있다** (`build_train_args` 가 `python=` 를 받는다). 기본값은 `python` 이
+   아니라 **`/opt/venv/bin/python`** 이어야 한다 — 로그인 셸 PATH 에 없다.
+2. HF 토큰 전달 — ⚠ **env 로는 tmux 를 못 넘는다.** 러너가 토큰 **파일**을 심어야 한다.
+3. `cli_mapping.py:401` — 원격이면 `policy_repo_id` 필수 + 자동 생성.
+4. `manager.get_status()` — 현재 러너를 **실시간으로** 싣는다(레코드 필드는 화석이다).
+   조용한 로컬 폴백이 이 테스트에서 가장 비싼 실패다.
+
+### 11-7. 기록할 숫자 (다음 단계 기본값의 근거)
+
+create→running 시간 · pull 실측 시간 · `ssh-url` 이 직결인지 프록시인지 · 데이터셋 다운로드
+시간 · 500스텝 소요와 `updt_s` · `push_to_hub` 가 최종본만인지 `save_freq` 마다인지 ·
+Hub 에 올라간 파일 목록 · 총 청구액.
+
+### 11-8. 2단계로 나눈다 — 같은 데이터셋, 길이만 다르게
+
+데이터셋이 `sim_data2` 하나로 정해졌으므로(사용자 지정) 단계를 **데이터셋 크기가 아니라
+학습 길이**로 가른다. 13MB 라 다운로드는 어느 쪽이든 1초 안쪽이고, 더 작은 것을 쓸
+비용상의 이유가 없다.
+
+| | 스텝 | 목적 | 예상 |
+|---|---|---|---|
+| **Phase 1** | 500 (`save_freq=100`) | **배관만** — 한 바퀴가 도는가 | **$0.03~0.05** |
+| **Phase 2** | 5000 (`save_freq=1000`) | **숫자를 잰다** — it/s · loss 추세 · 체크포인트 반복 푸시 | **$0.10~0.20** |
+
+Phase 1 에 회색이 하나라도 있으면 Phase 2 로 가지 않는다 — 같은 실수를 몇 배 비싸게 배운다.
+
+⚠ Phase 2 가 따로 필요한 이유는 **`push_to_hub` 의 시점**이다. 500스텝·`save_freq=100`
+이면 체크포인트가 5번 생기지만 그게 매번 Hub 로 가는지 최종본만 가는지는 아직 모른다
+(§5 가 남긴 숙제). 5000스텝이면 그 차이가 분명히 드러난다.
+
+## 12. W0 완주 — 실행 결과 (2026-09-16)
+
+**한 바퀴 돌았다.** 렌트 → 템플릿 → 데이터셋 → 학습 → 정상 종료 → 가중치 회수 →
+로컬 로드까지. 총 **$0.054** (크레딧 25.0 → 24.946), 인스턴스 3개 전부 파기 확인.
+
+### 12-1. ⚠ 템플릿으로는 SSH 가 아예 안 됐다 — 함정 둘
+
+1차 시도가 7단계에서 죽었다. 인스턴스 sshd 로그가 원인을 정확히 말해 줬다:
+
+```
+Authentication refused: bad ownership or modes for file /root/.ssh/authorized_keys
+Failed publickey for root ... SHA256:uPtxSECJTpjsfo/423Vxo2MZU8sMjdCy67MXH7jJUnw
+```
+
+**키는 맞았다** — sshd 가 우리 지문을 그대로 찍었다. 막은 것은 **파일 권한**이다.
+그리고 그걸 넘기니 두 번째 벽이 나왔다. 둘 다 이미지가 고쳐야 한다:
+
+| # | 증상 | 원인 | 고침 |
+|---|---|---|---|
+| ① | `Permission denied (publickey)` | Vast 가 심은 `authorized_keys` 의 권한이 우리 이미지의 sshd(`StrictModes yes` 기본)를 통과 못 한다 | `chmod 700 /root/.ssh` · `chmod 600 …/authorized_keys` |
+| ② | `open terminal failed: not a terminal` / `duplicate session: ssh_tmux` | Vast 가 `/root/.bashrc` 에서 **모든 SSH 세션을 tmux 로 감싼다**. bash 는 sshd 로 불릴 때 비대화식이어도 `.bashrc` 를 읽으므로 `ssh host 'cmd'` 가 통째로 막힌다 | `touch /root/.no_auto_tmux` (Vast 가 문서화한 공식 스위치) |
+
+`/root/.bashrc:20` 실물:
+```bash
+if [ ! -e "$HOME/.no_auto_tmux" ] && [[ -z "$TMUX" ]] && [ "$SSH_CONNECTION" != "" ] …; then
+    tmux attach-session -t ssh_tmux || tmux new-session -s ssh_tmux; exit;
+```
+
+⚠ **`SSHRunner` 는 `ssh host 'cmd'` 로만 동작한다.** ②를 안 끄면 원격 학습이 **한 줄도**
+못 돈다. 둘 다 `bootstrap.sh` 에 넣어야 할 두 줄이다 — 이번엔 `--onstart-cmd` 로 우회했다.
+
+⚠ 진단 중에 알아낸 것: `vastai execute` 는 **정지된 인스턴스에만** 되고 `chmod` 는
+화이트리스트 밖이다 — **살아 있는 인스턴스는 못 고친다.** 파기하고 다시 띄우는 수밖에 없다.
+
+### 12-2. 절차서가 예고한 함정이 그대로 터졌다
+
+- **A12 적중** — `vastai destroy instance <id>` 를 `-y` 없이 치면 `[y/N]` 에서 막혀
+  `Aborted.` 로 끝나고 **인스턴스는 살아 있다.** 미리 안 적어 뒀으면 "파기했다" 로
+  넘어갈 뻔했다. 추가 실측: `destroy -y --raw` 는 **빈 출력**을 낸다 — 응답 파싱으로는
+  판정할 수 없고, 목록·라벨·청구 세 겹이 필요하다.
+- **감시① 적중** — 2차 인스턴스가 12분째 `Pulling fs layer` 에 멈췄다(1차는 같은
+  이미지를 1분에 받았다). 규율대로 파기하고 다음 오퍼로 갔다. $0.003 에 끝났다.
+- **인터프리터 래퍼 적중** — 심볼릭 링크는 쓰지 않았다(실측으로 실패를 확인해 뒀다).
+
+### 12-3. 실측 숫자 (다음 단계 기본값의 근거)
+
+| | |
+|---|---|
+| 기계 | RTX 3060 · `compute_cap 8.6` · 12GB · **$0.0644/h** · New Jersey ↓2028Mbps |
+| slim pull + bootstrap | pull 수십 초 + **bootstrap 182초** → 총 ~5분 만에 학습 가능 |
+| 설치된 스택 | `lerobot 0.5.0 · torch 2.11.0+cu126 · torchcodec 0.11.0+cu126` |
+| 학습 속도 | **6.3 step/s** (`updt_s 0.147` · `data_s 0.013`, batch 8, 2캠 480×640) |
+| 500스텝 | **94초** (05:18:06 → 05:19:40) · loss 21.5 → **2.435** · `epch 0.38` |
+| GPU 메모리 | **2790 MiB** — 12GB 카드에 한참 여유 |
+| 체크포인트 | 5개(`000100`~`000500`) + `last` = **2.9GB**. `last/pretrained_model` 198MB vs `training_state` **394MB** |
+| 회수 | Hub 파일 9개 · 커밋 4개 · `model.safetensors` 207MB |
+| 총 비용 | **$0.054** (3회 시도 합계) |
+
+### 12-4. ⚠ `push_to_hub` 는 **끝에 한 번만** 올린다
+
+§5 가 남긴 숙제의 답이다. `save_freq=100` 으로 체크포인트가 **5개** 생겼는데 Hub 커밋은
+전부 `05:19:40~46` — **종료 시점 한 묶음뿐**이다.
+
+→ **인스턴스가 중간에 죽으면 Hub 에는 아무것도 없다.** §5 의 `scp` 보험은 선택이 아니라
+필수 경로다. interruptible 을 열 수 없는 이유이기도 하다(결정 4가 옳았다).
+
+### 12-5. 거짓 통과를 막은 확인들
+
+- **4중 교차 확인**(11단계)이 전부 초록: 원격 로그 메트릭 · `tmux ls` 세션 ·
+  **로컬 `nvidia-smi` 비어 있음** + 원격에 `/opt/venv/bin/python 2790MiB` · `Switching to` 0건.
+- **`train_config.json` 이 영수증**: `device: cuda` · `steps: 500` · `batch_size: 8` ·
+  `dataset: wego-hansu/sim_data2`.
+- **정규화 통계가 실물**: 로컬에서 `make_pre_post_processors` 로 열어 보니
+  `NormalizerProcessorStep.action.count = 10403` — **`sim_data2` 의 프레임 수와 정확히 일치**.
+  프로세서가 빈 값으로 온 게 아니라는 가장 강한 증거다(가장 큰 거짓 통과 구멍이 막혔다).
+- 정책 로드: **51.6M 파라미터** — 원격의 `num_learnable_params=51599239` 와 일치.
+
+### 12-6. 다음 (W1 로 넘길 것)
+
+1. **이미지에 두 줄** — `bootstrap.sh` 에 권한 교정 + `no_auto_tmux`. 이게 없으면
+   템플릿으로 뜬 인스턴스에 아무도 접속할 수 없다. **최우선.**
+2. `routers/training.py:204` — 원격이면 `build_train_args(python="/opt/venv/bin/python")`.
+   이번엔 원격에 래퍼를 심어 우회했다.
+3. HF 토큰 전달 — 러너가 **토큰 파일**을 심는다(env 는 tmux 를 못 넘는다).
+4. `cli_mapping.py:401` — 원격이면 `policy_repo_id` 필수 + 자동 생성.
+5. `ssh.py:242` → `from_start=True` (즉사와 정상 완주가 화면에서 같은 값이다).
+6. `hub_dataset_detail` 이 404 를 500 으로 바꾼다 — 사전 검증이 "안 올라감" 과 "Hub 장애" 를
+   구별 못 한다.
+7. **Phase 2 는 아직이다** — 5000스텝으로 loss 추세와 it/s 를 재는 회차.
 
 ## 검증
 
@@ -491,7 +1009,7 @@ TSX 에 박으면 정의가 둘로 갈라진다, cloud-training §9) · `GET /ap
 | 이미지 공개 | ☑ **공개 전환 완료** — 네 태그 모두 **익명 pull 확인** |
 | Vast 계정 | ☑ API 키 설정(`vastai` 1.7.0) · 크레딧 **$25** |
 | 오퍼 필터 | ☑ §2 문자열 그대로 **52개** · 최저 $0.376/h RTX 4090 — 필드명까지 확인 |
-| 게이트웨이 SSH 키 | ☑ **Piper Studio 가 만든다** — 설정 → 클라우드 탭(`1cdbca4`). ☐ 계정 등록 버튼은 사람이 누른다 |
+| 게이트웨이 SSH 키 | ☑ **Piper Studio 가 만든다** — 설정 → 클라우드 탭(`1cdbca4`). ☑ 계정 등록됨 — 지문 확인(2026-09-16) |
 | 설정 도우미 | ◐ 기획 §9-1 · **키 부분 구현** — `GET/POST /api/cloud/ssh-key` + 등록(지문 확인) |
 | 템플릿 | ☑ **둘 생성** — `piper-train full cu126`(id 728456) · `slim cu126`(id 728457). `runtype=ssh` + `ssh_direct`, onstart `/opt/piper/bootstrap.sh`, disk 40GB |
 
@@ -504,5 +1022,70 @@ TSX 에 박으면 정의가 둘로 갈라진다, cloud-training §9) · `GET /ap
 `{"cuda_max_good": {"gte": "12.4"}}` 로 들어갔다. 오퍼 응답의 필드명(`reliability2`)과 또
 다르므로, 파서를 쓸 때 셋을 헷갈리면 안 된다.
 
-다음: SSH 키 등록(사람) → 첫 인스턴스에서 `env-check.sh` → W0 의 나머지(데이터셋 업로드 →
-원격 학습 → 회수 → 로컬 추론).
+**2026-09-16 — RENT 탭 기획(§9-2) · 오퍼 응답 실측.**
+
+`gpu_name=RTX_4090 rentable=true`(§2 보다 느슨한 질의)로 **60개**를 받아 필드를 뜯었다.
+오퍼 하나에 **필드 100개**. 여기서 나온 사실 셋이 §9-2 를 바꿨다:
+
+- ⚠ **`dph_total` 을 그대로 쓰면 값이 틀린다.** `dph_total = dph_base + storage_total_cost`
+  인데 그 디스크가 **검색 기본값(~5GB)** 이다. 우리 템플릿은 40GB — 다시 계산하면
+  `0.3467 + 0.8667×40/730 = $0.394/h`, 표시값보다 **12% 비싸다**. 전송비는 별도로 GB 당
+  (`inet_down_cost` $0.0156/GB · `inet_up_cost` $0.0169/GB).
+- **`cpu_cores_effective` 가 0 인 오퍼가 3/60.** 중앙값은 32. GPU 만 보고 고르면 데이터로더가
+  굶는 기계를 집는다 → 경고 배지.
+- **`verification` 은 60/60 전부 `verified`.** 4090 급에선 배지가 무의미하다 — **안 만든다.**
+  `duration` 도 최소 5일·중앙 65일이라 가드가 아니라 열로만 둔다.
+
+짐작으로 배지를 만들었다면 아무도 안 보는 열이 둘 늘 뻔했다. 필드 표본을 먼저 뜬 값이다.
+
+**같은 날 — §9-2 구현 완료(고르는 데까지).** 게이트웨이 재기동 후 실물 확인.
+
+| | |
+|---|---|
+| 프로바이더 | ☑ `providers/base.py`(Offer·OfferFilter·경고) · `providers/vast.py`(질의·파서·60초 캐시) |
+| 엔드포인트 | ☑ `GET /api/cloud/vast/offers` · `/templates` · `/readiness` — 살아있는 게이트웨이에서 200 |
+| 화면 | ☑ `/cloud` — LeRobot 그룹, 탭 `RENT`·`인스턴스`(빈 껍데기) |
+| fixture | ☑ `backend/tests/fixtures/vast_offers.json` — 실물 13개(경고 걸리는 표본 포함) |
+| 테스트 | ☑ `test_cloud_offers.py` 21개 · 탭 위치 테스트를 `CloudPage` 까지 확장 · 전체 1885 통과 |
+| 준비도 | ☑ **전부 초록** — SSH 키 지문이 계정에서 확인됨 · 크레딧 $25 |
+| 빌리기 | ☐ **일부러 비활성** — 파기·예산 가드(W3)와 같이 켠다 |
+
+구현하면서 실물이 알려 준 것 다섯:
+
+- ⚠ **`balance` 가 아니라 `credit`.** 실측 계정이 `balance: 0, credit: 25.0` 이다.
+  `balance` 를 읽었으면 멀쩡한 계정이 "$0 · 최대 0시간" 으로 화면 전체가 막혔다.
+- ⚠ **보정률은 오퍼마다 다르다.** `storage_cost` 가 호스트마다 벌어져 같은 40GB 라도
+  어떤 오퍼는 +3%, 어떤 오퍼는 +11% 다. **일률적인 곱셈으로는 못 맞춘다** — 오퍼마다
+  계산해야 한다. 표에 `GPU 몫 + 디스크 몫` 을 쪼개 보이는 이유다.
+- ⚠ **CLI 는 오류를 반환코드 0 으로 낸다.** 키가 틀리면 종료코드는 0 인데 본문이
+  `{"error": true, "msg": "Invalid user key"}` 다. 반환코드만 보면 그 오류가 **빈 목록**으로
+  둔갑해 "오퍼가 없습니다" 가 된다. 파서가 본문의 `error` 를 본다.
+- ☑ **`VAST_API_KEY` 가 저장된 키를 이긴다**(가짜 키로 확인). 그래서 키는 argv 가 아니라
+  env 로 간다 — argv 는 같은 호스트의 다른 프로세스가 `ps` 로 읽는다.
+- ⚠ **속도와 비용은 다른 필드다.** `inet_down`(Mbps)과 `inet_down_cost`($/GB) — 업로드에
+  걸리는 *시간*은 앞이 정하고 *청구서*는 뒤가 정한다. 표에 둘 다 있어야 한다.
+
+**같은 날 — GPU 선택지를 전부 열었다(사용자 요청).** "GPU 에 3060 도 있어야지. 싹 다
+보여줘." 고정 7개를 걷어내고 서버 카탈로그(`GET /api/cloud/gpus`)로 바꿨다. 자세한 것은
+§9-2 의 「GPU 고르기」·「세대」·「VRAM」 절. 요약:
+
+| | |
+|---|---|
+| 선택지 | ☑ **70종** — 고를 수 있음 55 · 없음 15(사유 표기) · `전체(제한 없음)` 옵션 |
+| 3060 | ☑ cc 860 · 12GB · 오퍼 18대쯤 · **$0.061/h** — 한국 소재 기계도 있다 |
+| 다중 선택 | ☑ 백엔드 지원(`gpu_name in [A,B]`) · 화면은 아직 단일 + 전체 |
+| 세대 판정 | ☑ `CC_MIN=500`~`CC_MAX=1000` — **이미지가 찍은 arch list** 근거 |
+| 못 도는 기종 | ☑ 숨기지 않고 사유를 적는다 — 빈 표도 이유를 말한다 |
+| 테스트 | ☑ `test_cloud_offers.py` 55개(라우터 포함) · 전체 1920 통과 |
+
+⚠ **아직 안 한 것 둘** — 둘 다 실측으로 확인됐지만 이번 범위 밖이다:
+
+1. **bf16 이 cc 800 미만에서 조용히 에뮬레이션으로 내려간다.** 학습 기본 AMP 가 bf16
+   인데(`routers/training.py`) 하드웨어 bf16 은 암페어(cc 8.0) 이상에만 있다. torch 의
+   `is_bf16_supported(including_emulation=True)` 가 기본이라 **죽지 않고 느려진다** —
+   V100·RTX 20xx·GTX 16xx·파스칼 전부 해당. 경고를 붙일 자리는 `warnings_for()` 다.
+2. **판정이 템플릿에 따라 달라져야 한다.** 지금은 cu126 고정으로 본다. 사용자가 slim/full
+   말고 cu128 이미지를 고르면 Blackwell 이 풀리고 대신 구형이 막힌다.
+
+다음: 첫 인스턴스에서 `env-check.sh` → W0 의 나머지(데이터셋 업로드 → 원격 학습 → 회수 →
+로컬 추론). 그다음이 W3(파기·예산 가드)이고, 그게 들어와야 [빌리기]를 켠다.
