@@ -8,6 +8,7 @@ import InferencePage from '../pages/InferencePage'
 import ModelsPage from '../pages/ModelsPage'
 import DatasetsPage from '../pages/DatasetsPage'
 import TrainingPage from '../pages/TrainingPage'
+import CloudPage from '../pages/CloudPage'
 import HubPage from '../pages/HubPage'
 import PolicyServerPage from '../pages/PolicyServerPage'
 import VisionPage from '../pages/VisionPage'
@@ -113,6 +114,9 @@ export const pages: PageEntry[] = [
     card: true,
   },
   { path: '/training', label: '학습', component: TrainingPage, nav: true, group: 'LeRobot', icon: '📈' },
+  // 학습 바로 뒤가 자리다 — 로컬 GPU 로 모자랄 때 그 다음에 보는 화면이다.
+  // ⚠ 자격증명은 여기가 아니라 설정 → 클라우드 다 (feature/vast-training.md §9-1).
+  { path: '/cloud', label: '클라우드 GPU', component: CloudPage, nav: true, group: 'LeRobot', icon: '☁️' },
   // ⚠ `모델` 항목을 없앴다. `저장소` 의 `모델` 탭이 **같은 컴포넌트**를 그리고
   //   있어서 메뉴에 같은 화면이 두 번 있었다. 경로는 남겨 둔다 — 다른 화면이
   //   `/models` 로 링크하거나 북마크가 있을 수 있고, 열면 그대로 동작한다.

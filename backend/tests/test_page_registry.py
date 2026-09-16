@@ -113,23 +113,27 @@ def test_inference_analysis_lives_next_to_inference_inside_the_shell():
     assert '"추론 분석"에서 확인' in (_SRC / "pages" / "InferencePage.tsx").read_text()
 
 
-def test_in_page_tabs_sit_right_beside_the_title():
+@pytest.mark.parametrize("page", ["LogsPage.tsx", "CloudPage.tsx"])
+def test_in_page_tabs_sit_right_beside_the_title(page):
     """⚠ **규칙(사용자, 2026-09-11): 페이지 안의 탭은 항상 페이지 제목 옆에 둔다.**
 
     로그 페이지가 탭을 같은 줄에 두고도 `justify-between` 으로 **오른쪽 끝**에 밀어
     놓았다 — "옆"이 아니다. 카메라·로봇처럼 제목 바로 옆(`flex items-center gap-4`)
     이어야 하고, 제목 아래 별도 줄로 쌓아도 안 된다 — 머리가 두 줄이면 정작 봐야 할
     내용이 그만큼 밀린다.
+
+    ⚠ **탭을 새로 다는 페이지는 여기 목록에 더한다.** 한 페이지만 잠가 두면 규칙이
+    아니라 그 페이지의 사연이 되고, 다음 페이지가 같은 실수를 되풀이한다.
     """
     from conftest import code_only
 
     # 코드만 본다 — 머리줄 위 주석이 "justify-between 은 안 된다"고 적어 두느라 그 단어를 쓴다
-    src = code_only((_SRC / "pages" / "LogsPage.tsx").read_text())
+    src = code_only((_SRC / "pages" / page).read_text())
     head = src.split("<h1", 1)[0][-200:]            # h1 을 감싼 여는 태그
-    assert "flex items-center gap-4" in head, "탭이 제목 바로 옆 머리줄에 없다"
-    assert "justify-between" not in head, "탭을 오른쪽 끝으로 밀었다"
+    assert "flex items-center gap-4" in head, f"{page}: 탭이 제목 바로 옆 머리줄에 없다"
+    assert "justify-between" not in head, f"{page}: 탭을 오른쪽 끝으로 밀었다"
     after = src.split("</h1>", 1)[1]
-    assert after.index("TABS.map") < after.index("</div>"), "탭이 제목과 같은 상자 안이 아니다"
+    assert after.index(".map(") < after.index("</div>"), f"{page}: 탭이 제목과 같은 상자 안이 아니다"
 
 
 def test_the_estop_button_is_not_moved_into_the_bars():
