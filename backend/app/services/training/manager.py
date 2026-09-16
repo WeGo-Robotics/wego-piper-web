@@ -184,6 +184,7 @@ class TrainManager:
         total_steps: int = 0,
         output_dir: str = "",
         env_extra: dict[str, str] | None = None,
+        max_hours: float = 0.0,
     ) -> None:
         self.tracker.reset(total_steps=total_steps)
         self.output_dir = output_dir
@@ -197,6 +198,9 @@ class TrainManager:
                 total_steps=total_steps,
                 output_dir=output_dir,
                 env=env_extra or {},
+                # ⚠ **가장 안쪽 가드**(§6-1). 임대 GPU 는 우리가 안 보는 동안에도
+                #   시간당으로 과금된다 — 로컬은 0 이라 지금과 똑같이 돈다.
+                max_hours=max_hours,
             )
         )
 
