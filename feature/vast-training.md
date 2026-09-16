@@ -188,7 +188,7 @@ pull 량이다. 태그는 `full-0.5.0-cu126-20260914`(digest `sha256:a48cd991…
 - 레지스트리: **GHCR 공개 패키지 `ghcr.io/wego-robotics/piper-train`** 으로 제안. Vast 가 인증 없이
   pull 한다. 회사 코드는 act_aux(순수 파이썬, 정책 정의)뿐이라 공개해도 잃는 게 없다 — 이게
   싫으면 Vast 에 레지스트리 자격증명을 등록해야 한다(§10 결정 2).
-- 태그는 `<변종>-<lerobot>-<cuda>-<날짜>` 로 고정(예 `full-0.5.0-cu126-20260914`), 손으로 쓸 때는
+- 태그는 `<변종>-<lerobot>-<cuda>-<날짜>` 로 고정(지금은 `full-0.5.0-cu126-20260916` — §12-7), 손으로 쓸 때는
   움직이는 `full-cu126`/`slim-cu126`. 오퍼 필터의 `inet_down` 이 pull 시간을 정한다(V0 실측).
 - ⚠ 베이스는 `python:3.13-slim` 이라 lerobot 의존성 evdev(sdist)에 gcc 와 `linux/input.h` 가
   필요하다 — `build-essential linux-libc-dev` 를 넣었다. 첫 빌드에서 이걸로 죽었다.
@@ -984,6 +984,61 @@ if [ ! -e "$HOME/.no_auto_tmux" ] && [[ -z "$TMUX" ]] && [ "$SSH_CONNECTION" != 
 6. `hub_dataset_detail` 이 404 를 500 으로 바꾼다 — 사전 검증이 "안 올라감" 과 "Hub 장애" 를
    구별 못 한다.
 7. **Phase 2 는 아직이다** — 5000스텝으로 loss 추세와 it/s 를 재는 회차.
+
+### 12-7. 이미지에 고침을 실었다 (2026-09-16) — 그리고 템플릿을 한 번 날렸다
+
+§12-1 의 두 줄이 이미지 안으로 들어갔다. 그게 없으면 이 템플릿으로 띄운 인스턴스에
+**아무도 접속할 수 없다.**
+
+| | |
+|---|---|
+| 새 태그 | `full-0.5.0-cu126-20260916` · `slim-0.5.0-cu126-20260916` (+ 이동 태그 `full-cu126`·`slim-cu126`) |
+| 익명 pull | ☑ 네 태그 모두 200 — Vast 가 받을 수 있다 |
+| 드리프트 | ☑ **없음** — 스택 레이어가 캐시돼 `lerobot 0.5.0 · torch 2.11.0+cu126 · torchvision 0.26.0+cu126 · torchcodec 0.11.0+cu126`, arch `sm_50 … sm_90` 이 §12-3 실측과 **문자 그대로 같다** |
+| 교정 동작 | ☑ 새 이미지에서 `777/666 → 700/600` · `no_auto_tmux` 생성 · 2회차 정지 없음 |
+
+⚠ **재빌드가 무해한 것은 이번이 운이 좋았기 때문이다.** `install-stack.sh` 는 lerobot 만
+핀하고 transitive 의존성은 떠 있다. 이번엔 pip 레이어가 캐시에서 재사용돼 같은 이미지가
+나왔지만, 캐시가 없는 기계에서 구우면 **다른 것이 나올 수 있다.** 그래서 구운 뒤에는
+항상 스택 버전과 `get_arch_list()` 를 위 표와 대조한다 — 그게 이 표가 여기 있는 이유다.
+
+#### ⚠ `vastai update template` 은 patch 가 아니라 **전체 교체**다
+
+`--image_tag` 하나만 주고 태그를 바꾸려다 **템플릿 두 개를 망가뜨렸다.** 안 넘긴 필드가
+전부 지워진다:
+
+| 필드 | 이전 | `--image_tag` 만 준 뒤 |
+|---|---|---|
+| `image` | `ghcr.io/wego-robotics/piper-train` | **None** |
+| `onstart` | `/opt/piper/bootstrap.sh` | **None** |
+| `runtype` | `ssh` (+`ssh_direct`) | **`args`** |
+| `recommended_disk_space` | 40 | **None** |
+| `extra_filters` | RTX 4090 · CUDA · 신뢰도 · 회선 | **기본값으로 초기화** |
+
+그 상태로는 렌트가 아예 안 된다(이미지가 없다). 기록해 둔 값으로 전부 다시 넘겨
+복구했고, **응답이 아니라 `search templates` 목록으로** 확인했다.
+
+→ **템플릿을 고칠 때는 언제나 전체 필드를 다시 넘긴다.** 그리고 고친 뒤 목록을 다시 읽어
+`image`·`onstart`·`runtype`·`disk_space`·필터가 살아 있는지 본다.
+
+⚠ **`hash_id` 는 고칠 때마다 바뀐다.** `id` 는 그대로다(728456/728457). `create instance
+--template_hash` 에 쓰는 것은 **해시**이므로, 어딘가에 적어 둔 해시는 템플릿을 한 번
+고치는 순간 낡는다 — 그래서 아래를 문서에 박지 말고 **쓰기 직전에 조회**하는 편이 낫다.
+
+```
+vastai search templates 'private=true' --raw | jq -r '.[] | "\(.id) \(.name) \(.hash_id) \(.tag)"'
+```
+
+2026-09-16 현재: full `a24b94acfacb286811fecb5a1b68aeb3` · slim `6cb80da3a4b63e37f9f0f6636aff2654`.
+
+#### 다음 — Phase 2 가 증명할 것
+
+Phase 1 은 `--onstart-cmd` **우회로** 통과했다. 그래서 이미지에 넣은 두 줄이 실제로 일하는지는
+아직 증명되지 않았다. Phase 2(5000스텝 · `save_freq=1000`)가 확인할 것은 둘이다:
+
+1. **우회 없이, 템플릿만으로 SSH 가 되는가** — 오늘 고친 것의 유일한 증명이다.
+2. **`push_to_hub` 가 정말 끝에 한 번뿐인가** — 체크포인트가 5개 생기므로 §12-4 의 관찰이
+   확정된다. 그러면 `scp` 보험은 선택이 아니라 **필수 경로**다.
 
 ## 검증
 
