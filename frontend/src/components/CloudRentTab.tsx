@@ -116,6 +116,15 @@ export default function CloudRentTab() {
   //   가중치만 사라지는 것을 막기 위해서다.
   const [dataset, setDataset] = useState('')
   const [repo, setRepo] = useState('')
+  // ⚠ **화면에 없던 값들이다.** 여태 [빌리기]는 `steps=5000 · batch=8 · amp=bf16` 으로
+  //   돌면서 그 숫자를 어디에도 보여 주지 않았다 — 예산 상한에는 "화면이 보여 준 숫자와
+  //   실제로 걸리는 숫자가 다르면 그 화면은 거짓말이다" 라는 규칙을 적어 두고, 정작
+  //   학습 설정에는 안 지키고 있었다.
+  const [policyType, setPolicyType] = useState('act')
+  const [steps, setSteps] = useState(5000)
+  const [batchSize, setBatchSize] = useState(8)
+  const [saveFreq, setSaveFreq] = useState(1000)
+  const [amp, setAmp] = useState('bf16')
   const [confirming, setConfirming] = useState(false)
 
   const templates = ready?.templates ?? []
@@ -505,6 +514,46 @@ export default function CloudRentTab() {
                 className="w-52 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm" />
             </label>
 
+            {/* ⚠ 학습 설정 — **보여 주고 고칠 수 있게.** 전에는 서버 기본값이
+                조용히 들어갔다. 학습 페이지의 폼을 통째로 옮기지는 않는다(폼이 둘이
+                되면 반드시 어긋난다) — 비용과 결과를 가르는 것만 낸다. */}
+            <label className="flex items-center gap-2">
+              <span className="text-xs text-neutral-400">정책</span>
+              <select value={policyType} onChange={(e) => setPolicyType(e.target.value)}
+                className="rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm">
+                {['act', 'smolvla', 'diffusion', 'pi0'].map((t) => <option key={t}>{t}</option>)}
+              </select>
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="text-xs text-neutral-400">스텝</span>
+              <input type="number" min={1} step={100} value={steps}
+                onChange={(e) => setSteps(Math.max(1, Number(e.target.value) || 1))}
+                className="w-24 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm" />
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="text-xs text-neutral-400">배치</span>
+              <input type="number" min={1} value={batchSize}
+                onChange={(e) => setBatchSize(Math.max(1, Number(e.target.value) || 1))}
+                className="w-16 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm" />
+            </label>
+            {/* ⚠ 체크포인트 주기는 **회수 보험과 직결된다** — 중간에 죽었을 때
+                `scp` 로 가져올 것이 있으려면 이 주기 안에 한 번은 저장돼 있어야 한다(§5). */}
+            <label className="flex items-center gap-2">
+              <span className="text-xs text-neutral-400">저장 주기</span>
+              <input type="number" min={1} step={100} value={saveFreq}
+                onChange={(e) => setSaveFreq(Math.max(1, Number(e.target.value) || 1))}
+                className="w-20 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm" />
+            </label>
+            {/* ⚠ 고른 기계가 cc 8.0 미만이면 bf16 은 **에뮬레이션으로 느려진다**(§12-15).
+                경고만 띄우고 바꿀 방법을 안 주면 그 경고는 반쪽이다. */}
+            <label className="flex items-center gap-2">
+              <span className="text-xs text-neutral-400">AMP</span>
+              <select value={amp} onChange={(e) => setAmp(e.target.value)}
+                className="rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm">
+                {['bf16', 'fp16', 'off'].map((t) => <option key={t}>{t}</option>)}
+              </select>
+            </label>
+
             <label className="flex items-center gap-2">
               <span className="text-xs text-neutral-400">예산 상한 $</span>
               <input type="number" min={1} value={budget}
@@ -538,7 +587,9 @@ export default function CloudRentTab() {
 
       {confirming && offer && (
         <RentConfirm offer={offer} template={template} budget={budget} credit={credit}
-          dataset={dataset} repo={repo} onStarted={() => { setConfirming(false); setPicked(null) }}
+          dataset={dataset} repo={repo}
+          train={{ policyType, steps, batchSize, saveFreq, amp }}
+          onStarted={() => { setConfirming(false); setPicked(null) }}
           onClose={() => setConfirming(false)} />
       )}
     </div>
@@ -551,30 +602,51 @@ export default function CloudRentTab() {
  * ⚠ `window.confirm` 을 쓰면 안 된다. 브라우저 모달이 heartbeat 를 막아 로컬 추론이
  * E-stop 으로 죽는다 (실제 사고 전례, §6).
  */
-function RentConfirm({ offer, template, budget, credit, dataset, repo, onClose, onStarted }: {
+type TrainOpts = {
+  policyType: string; steps: number; batchSize: number; saveFreq: number; amp: string
+}
+
+function RentConfirm({ offer, template, budget, credit, dataset, repo, train, onClose, onStarted }: {
   offer: Offer; template: Template | null; budget: number; credit: number | null
-  dataset: string; repo: string
+  dataset: string; repo: string; train: TrainOpts
   onClose: () => void; onStarted: () => void
 }) {
   const hours = budget / offer.hourly
   const [sending, setSending] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [command, setCommand] = useState('')
+
+  // ⚠ **무엇이 돌지 그대로 보여 준다.** 서버가 [빌리기]와 **같은 함수**로 만든 명령이라
+  //   화면과 실제가 갈릴 수 없다. 숫자를 여기서 베껴 적으면 언젠가 어긋난다.
+  const body = {
+    offer_id: offer.id,
+    template_hash: template?.hash_id ?? '',
+    disk_gb: offer.disk_gb,
+    budget_usd: budget,
+    max_hours: Math.max(0.1, budget / offer.hourly),
+    dataset_repo_id: dataset,
+    policy_repo_id: repo,
+    policy_type: train.policyType,
+    steps: train.steps,
+    batch_size: train.batchSize,
+    save_freq: train.saveFreq,
+    amp: train.amp,
+  }
+
+  useEffect(() => {
+    api.post<{ command: string }>('/cloud/rent/preview', body)
+      .then((r) => setCommand(r.command))
+      .catch(() => setCommand(''))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset, repo, train.policyType, train.steps, train.batchSize, train.saveFreq])
 
   const rent = async () => {
     setSending(true)
     setErr(null)
     try {
-      await api.post('/cloud/rent', {
-        offer_id: offer.id,
-        template_hash: template?.hash_id ?? '',
-        disk_gb: offer.disk_gb,
-        // ⚠ 상한을 **항상 보낸다.** 서버가 기본값을 갖고 있어도, 화면이 보여 준 숫자와
-        //   실제로 걸리는 숫자가 다르면 그 화면은 거짓말이다.
-        budget_usd: budget,
-        max_hours: Math.max(0.1, budget / offer.hourly),
-        dataset_repo_id: dataset,
-        policy_repo_id: repo,
-      }, { timeoutMs: 120_000 })
+      // ⚠ **미리보기와 같은 본문을 보낸다.** 다른 것을 보내면 위에 보여 준 명령이
+      //   그 순간 거짓말이 된다.
+      await api.post('/cloud/rent', body, { timeoutMs: 120_000 })
       onStarted()
     } catch (e) {
       setErr(e instanceof Error ? e.message : '빌리지 못했습니다')
@@ -596,6 +668,10 @@ function RentConfirm({ offer, template, budget, credit, dataset, repo, onClose, 
             ['디스크', `${offer.disk_gb}GB`],
             ['시간당', `${money(offer.hourly)} (GPU ${money(offer.dph_base)} + 디스크 ${money(offer.storage_hourly)})`],
             ['전송비', `올림 $${offer.inet_down_cost_per_gb.toFixed(4)}/GB · 내림 $${offer.inet_up_cost_per_gb.toFixed(4)}/GB`],
+            ['학습', `${train.policyType} · ${train.steps.toLocaleString()}스텝 · 배치 ${train.batchSize} · `
+                     + `저장 ${train.saveFreq.toLocaleString()}스텝마다 · AMP ${train.amp}`],
+            ['데이터셋', dataset || '(비었습니다)'],
+            ['가중치 저장소', repo || '(비었습니다)'],
             ['예산 상한', `$${budget} → 약 ${hours.toFixed(1)}시간`],
             ['크레딧', credit !== null ? `$${credit.toFixed(2)}` : '모름'],
           ].map(([k, v]) => (
@@ -605,6 +681,15 @@ function RentConfirm({ offer, template, budget, credit, dataset, repo, onClose, 
             </div>
           ))}
         </dl>
+
+        {command && (
+          <div>
+            <p className="mb-1 text-xs text-neutral-500">실제로 도는 명령</p>
+            {/* ⚠ 가로 스크롤을 자기 안에서 먹는다 — 창 전체가 밀리면 버튼이 사라진다 */}
+            <pre className="overflow-x-auto rounded border border-neutral-700 bg-neutral-950 p-2
+                            text-[11px] leading-relaxed text-neutral-300">{command}</pre>
+          </div>
+        )}
 
         {offer.warnings.length > 0 && (
           <ul className="space-y-1 rounded border border-amber-700/40 bg-amber-950/30 p-2 text-xs text-amber-200">

@@ -527,3 +527,70 @@ def test_the_picker_shows_what_the_two_variants_cost_you():
                      / "components" / "CloudRentTab.tsx").read_text())
     opts = src.split("templates.map(")[1][:400]
     assert "t.description" in opts, "설명을 화면이 버리고 있다"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 화면이 보여 준 값으로 돈다 — **숨은 기본값 없이** (2026-09-17)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_the_preview_and_the_rental_build_the_same_command():
+    """⚠ 인자를 두 벌로 만들면 반드시 갈린다. 실제로 갈릴 뻔한 자리가 있었다 —
+    `TrainPreviewRequest` 와 `RentRequest` 의 기본값이 다르다(steps 100000 대 5000,
+    save_freq 20000 대 1000). 그래서 **같은 함수**를 쓴다.
+    """
+    import inspect
+
+    from app.routers import cloud as router
+
+    assert "_rent_train_args(body)" in inspect.getsource(router.rent_and_train)
+    assert "_rent_train_args(body)" in inspect.getsource(router.rent_preview)
+
+
+def test_the_preview_shows_the_remote_interpreter():
+    """⚠ 원격은 `/opt/venv/bin/python` 이고 이 기계는 conda 경로다. 첫 단어가 다르면
+    그 미리보기는 다른 명령을 보여 주는 것이다."""
+    from fastapi.testclient import TestClient
+
+    from app.core.config import settings
+    from app.main import app
+
+    r = TestClient(app).post("/api/cloud/rent/preview", json={
+        "offer_id": 1, "template_hash": "h",
+        "dataset_repo_id": "me/d", "policy_repo_id": "me/p", "steps": 250})
+    assert r.status_code == 200
+    assert r.json()["args"][0] == settings.train_remote_python
+    assert "--steps=250" in r.json()["command"]
+
+
+def test_the_preview_never_hands_back_the_token():
+    """⚠ `_train_env()` 에는 HF 토큰이 들어 있다. 미리보기 한 번에 키가 화면으로 새면
+    학습 설정을 감춘 것보다 큰 사고다."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    r = TestClient(app).post("/api/cloud/rent/preview", json={
+        "offer_id": 1, "template_hash": "h",
+        "dataset_repo_id": "me/d", "policy_repo_id": "me/p"})
+    assert set(r.json()) == {"args", "command"}
+    assert "HF_TOKEN" not in r.text and "hf_" not in r.text
+
+
+def test_the_rent_tab_sends_every_training_value_it_shows():
+    """⚠ 여태 [빌리기]는 `steps=5000 · batch=8 · amp=bf16` 으로 돌면서 그 숫자를 어디에도
+    보여 주지 않았다. 예산 상한에는 "화면이 보여 준 숫자와 실제가 다르면 거짓말" 이라고
+    적어 두고 학습 설정에는 안 지키고 있었다.
+
+    ⚠ 그리고 **미리보기와 같은 본문**을 보내야 한다 — 다른 것을 보내면 보여 준 명령이
+    그 순간 거짓말이 된다.
+    """
+    from pathlib import Path
+
+    from conftest import code_only
+
+    src = code_only((Path(__file__).resolve().parents[2] / "frontend" / "src"
+                     / "components" / "CloudRentTab.tsx").read_text())
+    for field in ("policy_type:", "steps:", "batch_size:", "save_freq:", "amp:"):
+        assert field in src, f"{field} 를 안 보낸다 — 서버 기본값이 조용히 들어간다"
+    assert "api.post('/cloud/rent', body," in src, "미리보기와 다른 본문을 보낸다"
+    assert "'/cloud/rent/preview'" in src, "무엇이 돌지 안 보여 준다"

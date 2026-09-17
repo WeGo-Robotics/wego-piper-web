@@ -218,6 +218,36 @@ class RentRequest(BaseModel):
     amp: str = "bf16"
 
 
+def _rent_train_args(body: "RentRequest") -> list[str]:
+    """[빌리기]가 **실제로 돌릴** 학습 인자.
+
+    ⚠ 미리보기(`/rent/preview`)와 **같은 함수**를 쓴다. 두 벌로 두면 반드시 갈리고,
+    그러면 화면이 보여 준 명령과 도는 명령이 달라진다 — 이 화면이 고치려는 것이
+    바로 그 부류의 거짓말이다.
+    """
+    from app.core.cli_mapping import build_train_args
+
+    return build_train_args({
+        "dataset_repo_id": body.dataset_repo_id,
+        "policy_type": body.policy_type,
+        "policy_repo_id": body.policy_repo_id,
+        "batch_size": body.batch_size, "steps": body.steps,
+        "log_freq": body.log_freq, "save_freq": body.save_freq,
+        "num_workers": body.num_workers, "device": "cuda",
+    }, python=settings.train_remote_python)
+
+
+@router.post("/rent/preview")
+async def rent_preview(body: RentRequest):
+    """빌리기 전에 **무엇이 돌지** 보여 준다. 부작용이 없다.
+
+    ⚠ **환경변수는 안 돌려준다.** `_train_env()` 에는 HF 토큰이 들어 있다 — 미리보기
+    한 번에 화면으로 키가 새면 그게 더 큰 사고다. AMP 는 화면이 이미 알고 있다.
+    """
+    args = _rent_train_args(body)
+    return {"args": args, "command": " ".join(args)}
+
+
 @router.post("/rent")
 async def rent_and_train(body: RentRequest):
     """빌려서 학습을 걸고, **끝나면 반드시 파기한다**.
@@ -228,7 +258,6 @@ async def rent_and_train(body: RentRequest):
 
     ⚠ **동시에 하나만.** 두 번째를 받아 주면 첫 인스턴스의 핸들을 잃는다 = 고아다.
     """
-    from app.core.cli_mapping import build_train_args
     from app.routers.training import _require_push_permission, _train_env
     from app.services.cloud import rent
     from app.services.cloud.lifecycle import Budget
@@ -243,15 +272,7 @@ async def rent_and_train(body: RentRequest):
                  "끝나도 결과를 가져올 수 없습니다.")
     await _require_push_permission(body.policy_repo_id)
 
-    params = {
-        "dataset_repo_id": body.dataset_repo_id,
-        "policy_type": body.policy_type,
-        "policy_repo_id": body.policy_repo_id,
-        "batch_size": body.batch_size, "steps": body.steps,
-        "log_freq": body.log_freq, "save_freq": body.save_freq,
-        "num_workers": body.num_workers, "device": "cuda",
-    }
-    args = build_train_args(params, python=settings.train_remote_python)
+    args = _rent_train_args(body)
 
     try:
         job = await rent.start(
