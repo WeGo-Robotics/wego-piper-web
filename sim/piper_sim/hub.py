@@ -1,6 +1,7 @@
 """SimHub — simd 의 RPC 표면. 로봇 데몬 계약 동사 + 시뮬 전용 진단.
 
-한 세계에 팔 하나(`sim_follower1`). 리더(`sim_leader1`, 스크립트 시연)는 4단계.
+한 세계에 팔 하나(`sim_follower1`). 스크립트 시연은 게이트웨이가 조종 창과 **같은 리더
+세그먼트**로 발행한다 (4단계, backend/app/services/sim_demo.py) — 여기 리더는 없다.
 """
 
 import logging

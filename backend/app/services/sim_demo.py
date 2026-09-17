@@ -33,9 +33,16 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-#: 시연 리더의 세그먼트 이름. 웹 리더(`web_leader1`)와 **다른 이름**이다 — 둘이 같은
-#: 세그먼트를 쓰면 누가 쓴 자세인지 알 수 없다. 수집의 `teleop_port` 가 이 값이다.
-LEADER_NAME = "sim_leader1"
+#: 리더 세그먼트 — **웹 리더와 같은 것을 쓴다.**
+#:
+#: ⚠ 처음엔 `sim_leader1` 로 따로 뒀다가 되돌렸다. 녹화 프로세스는 `piper_leader_shm` 으로
+#:   이 세그먼트를 읽을 뿐 **누가 쓰는지는 안 본다** — 조종 창이든 시연이든 게이트웨이가
+#:   리더 노릇을 하는 것은 같다. 따로 두면 수집 화면에 리더 종류가 하나 더 생기고, 사람은
+#:   "웹 리더"와 "시뮬 리더" 중 무엇을 고를지 매번 판단해야 한다. 이름을 나눈 근거였던
+#:   "둘이 같이 쓰면 누가 민 자세인지 모른다"는 애초에 **동시에 못 돌게** 해서 사라진다
+#:   (아래 `start`, 그리고 `web_leader.start` 의 반대쪽 가드).
+from app.services.web_leader import LEADER_NAME  # noqa: E402  (재수출 — 정본은 웹 리더다)
+
 FOLLOWER = "sim_follower1"
 
 #: 위에서 잡는 자세 (도) — 무작위 표본에서 찾은 **실제 해**다. 손으로 적은 회전은 IK 가 못 푼다.

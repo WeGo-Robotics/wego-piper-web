@@ -123,12 +123,23 @@ def test_the_demo_actually_puts_the_cube_in_the_bin(demo):
     assert final[2] < 0.08, f"큐브를 통에 안 떨어뜨렸다: z={final[2]:.3f}"
 
 
-def test_the_demo_publishes_a_leader_the_recorder_can_read(demo):
-    """수집은 `piper_leader_shm` 으로 리더 세그먼트를 읽는다 — 시연은 거기에 쓴다.
-    ⚠ 웹 리더와 **다른 이름**이어야 한다: 같은 세그먼트를 둘이 쓰면 누가 민 자세인지 모른다."""
+def test_the_demo_writes_the_same_leader_the_teleop_window_does(demo):
+    """수집은 `piper_leader_shm` 으로 리더 세그먼트를 읽을 뿐 **누가 쓰는지는 안 본다** —
+    조종 창이든 시연이든 게이트웨이가 리더 노릇을 하는 것은 같다.
+
+    ⚠ 처음엔 `sim_leader1` 로 따로 뒀다가 되돌렸다. 따로 두면 수집 화면에 리더 종류가 하나
+    더 생기고 사람이 매번 둘 중 무엇인지 판단해야 한다. 이름을 나눈 근거("둘이 같이 쓰면
+    누가 민 자세인지 모른다")는 **동시에 못 돌게** 하면 사라지고, 그 가드는 양쪽에 있어야
+    한다 — 한쪽만 막으면 시연 중에 조종 창을 열어 세그먼트를 뺏을 수 있다."""
     from app.services.web_leader import LEADER_NAME as WEB
 
-    assert demo.LEADER_NAME != WEB and demo.LEADER_NAME.startswith("sim_")
+    assert demo.LEADER_NAME == WEB, "리더 종류가 둘로 갈렸다 — 수집 화면이 하나 더 묻게 된다"
+    wl = (__import__("pathlib").Path(__file__).resolve().parents[2]
+          / "backend" / "app" / "services" / "web_leader.py").read_text()
+    assert "sim_demo.is_running" in wl, "시연이 도는데 조종 창이 같은 세그먼트를 뺏는다"
+    demo_src = (__import__("pathlib").Path(__file__).resolve().parents[2]
+                / "backend" / "app" / "services" / "sim_demo.py").read_text()
+    assert "web_leader.is_running" in demo_src, "조종 창이 잡고 있는데 시연이 끼어든다"
     src = (__import__("pathlib").Path(__file__).resolve().parents[2]
            / "backend" / "app" / "services" / "sim_demo.py").read_text()
     assert "StateWriter(LEADER_NAME)" in src, "리더 세그먼트를 발행하지 않는다"

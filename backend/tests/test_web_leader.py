@@ -197,7 +197,10 @@ def test_recording_takes_the_follower_from_the_relay_and_the_leader_keeps_publis
         "릴레이가 수동 조작 잠금을 쥔 채면 require_idle 이 먼저 막는다 — 놓는 게 먼저다"
     assert 'web_leader.start, body.robot_port, "joint", False' in src
     page = (REPO / "frontend" / "src" / "pages" / "RecordingPage.tsx").read_text()
-    assert '<option value="web_leader1">웹 리더 (키보드·마우스)</option>' in page and "'piper-teleop'" in page
+    # 리더 **종류** 하나 — 조종 창(사람)과 스크립트 시연(시뮬)이 같은 세그먼트를 쓴다
+    # (feature/sim-env.md 4단계). 둘로 나누면 수집 화면이 매번 하나 더 묻는다.
+    assert '<option value="web_leader1">게이트웨이 리더 (조종 창 · 시뮬 시연)</option>' in page \
+        and "'piper-teleop'" in page
     wl_router = (REPO / "backend" / "app" / "routers" / "web_leader.py").read_text()
     assert "ex.is_running(ex.Activity.RECORDING)" in wl_router and "not recording" in wl_router
 

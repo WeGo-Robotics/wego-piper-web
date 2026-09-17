@@ -384,9 +384,15 @@ class WebLeader:
         from app.services.relay import RelayError, relay_session
         from app.services.robot_manager import _call
 
+        from app.services.sim_demo import sim_demo
+
         with self._lock:
             if self.is_running:
                 raise RuntimeError(f"이미 {self.follower} 를 조종 중입니다 — 먼저 끝내세요")
+            # ⚠ 시연과 **같은 리더 세그먼트**를 쓴다 — 둘이 동시에 쓰면 누가 민 자세인지
+            #   알 수 없고, 수집 중이면 그 데이터가 뒤섞인다. 양쪽에서 막는다.
+            if sim_demo.is_running:
+                raise RuntimeError("스크립트 시연이 돌고 있습니다 — 먼저 정지하세요")
             # 앵커 = 팔로워의 지금 자세 (SO-101 정합과 같다 — 점프 0)
             try:
                 reader = shm_arm.StateReader(follower)
