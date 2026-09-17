@@ -225,13 +225,32 @@ def default() -> dict:
     return load(DEFAULT_SCENE)
 
 
+def rest_z(obj: dict) -> float:
+    """이 물체를 테이블(윗면 z=0)에 **앉혔을 때** body 원점이 있어야 할 높이.
+
+    배치(클릭·드래그)는 x·y 만 받는다 — z 를 사람에게 묻는 UI 는 쓸 수 없다. 모양마다
+    반높이가 달라서 상수 하나로는 안 되고(예전 코드는 큐브 반변 0.02 가 박혀 있었다),
+    구를 그 높이에 놓으면 파묻히거나 뜬다.
+    """
+    if obj["shape"].startswith("preset:"):
+        return 0.0                      # 프리셋은 바닥이 원점이다(_bin_geoms 가 그렇게 짓는다)
+    size, shape = obj["size"], obj["shape"]
+    if shape == "sphere":
+        return size[0]
+    if shape == "cylinder":
+        return size[1]                  # 반높이
+    if shape == "capsule":
+        return size[1] + size[0]        # 반높이 + 반구
+    return size[2]                      # box·ellipsoid 는 z 반변
+
+
 def _geoms_of(obj: dict) -> list[dict]:
     if obj["shape"].startswith("preset:"):
         return PRESETS[obj["shape"].split(":", 1)[1]][1](obj["params"])
     return [{"type": obj["shape"], "size": obj["size"], "pos": [0, 0, 0]}]
 
 
-def _quat(euler_deg: list[float]) -> list[float]:
+def euler_quat(euler_deg: list[float]) -> list[float]:
     """오일러(도) → 쿼터니언. MuJoCo 의 기본 `eulerseq="xyz"`(내재)와 같은 뜻이 되게
     `mju_euler2Quat` 에 맡긴다 — 손으로 곱하면 순서를 틀리기 쉽다."""
     import math
@@ -254,7 +273,7 @@ def compose(spec: dict, base: Path | str | None = None):
 
     s = mujoco.MjSpec.from_file(str(base or SCENE_XML))
     for obj in validate(spec)["objects"]:
-        body = s.worldbody.add_body(name=obj["id"], pos=obj["pos"], quat=_quat(obj["euler_deg"]))
+        body = s.worldbody.add_body(name=obj["id"], pos=obj["pos"], quat=euler_quat(obj["euler_deg"]))
         if obj["movable"]:
             # ⚠ 이름은 `<id>_free` 로 고정이다 — world.reset 이 이 이름으로 qpos 를 찾는다.
             body.add_freejoint(name=f"{obj['id']}_free")
@@ -291,4 +310,4 @@ def describe(spec: dict) -> dict:
 
 __all__ = ["SceneError", "SPEC_VERSION", "MAX_OBJECTS", "PRIMITIVES", "PRESETS",
            "RESERVED_IDS", "SCENE_XML", "DEFAULT_SCENE", "validate", "load", "default",
-           "compose", "build", "describe"]
+           "compose", "build", "describe", "rest_z", "euler_quat"]

@@ -94,6 +94,7 @@ class SimCameraHub:
         self.cams = {n: _SimCamera(n) for n in CAMERAS}
         self._last_apply: dict[str, dict] = {}
         self._renderers: dict[tuple[int, int], object] = {}   # 렌더 스레드 전용
+        self._stale = threading.Event()   # 모델이 바뀌었다 — 렌더 스레드가 렌더러를 버린다
         self._jobs: "queue.Queue[tuple]" = queue.Queue()
         self._thread: threading.Thread | None = None
         self._running = False
@@ -198,6 +199,29 @@ class SimCameraHub:
 
     # ── 렌더 ──
 
+    def invalidate_model(self) -> None:
+        """장면이 갈렸다 — 다음 렌더 전에 렌더러를 다시 만든다 (`World.on_model_change`).
+
+        ⚠ **여기서 버리지 않는다.** `mujoco.Renderer` 는 만든 스레드의 EGL 컨텍스트에
+        묶여 있다. 다른 스레드에서 `close()` 하면 그 컨텍스트를 건드리게 되고, sim-env
+        2단계에서 그걸 어겨 5분에 EGLError 139회가 났다(probe 가 RPC 스레드에서 렌더러를
+        만든 건). 플래그만 세우고 **버리는 일은 렌더 스레드가** 한다.
+
+        ⚠ 조명 기준값(`_light_base`)도 옛 모델에서 뜬 사본이라 같이 버린다 — 안 그러면
+        새 장면의 조명이 옛 배열로 스케일돼 조명 감시가 엉뚱한 값을 잰다.
+        """
+        self._stale.set()
+
+    def _drop_renderers(self) -> None:
+        """렌더 스레드 전용 — 옛 모델을 쥔 렌더러를 닫는다."""
+        for r in self._renderers.values():
+            try:
+                r.close()
+            except Exception as exc:
+                logger.warning("렌더러 닫기 실패: %s", exc)
+        self._renderers.clear()
+        self._light_base = None
+
     def _renderer(self, w: int, h: int):
         import mujoco
 
@@ -217,7 +241,7 @@ class SimCameraHub:
             # 실측: 한쪽만 0.3배면 top 이 244→~225 (포화라 거의 안 변함),
             # 둘 다면 244→122. 헤드라이트(카메라 부착 조명+앰비언트)가 씬 밝기의
             # 절반을 낸다 — 그걸 빼면 조명 감시 시험이 성립하지 않는다.
-            base = getattr(self, "_light_base", None)
+            base = getattr(self, "_light_base", None)   # 장면이 갈리면 None 으로 버려진다
             if base is None:
                 base = self._light_base = (m.light_diffuse.copy(),
                                            m.vis.headlight.diffuse.copy(),
@@ -252,6 +276,10 @@ class SimCameraHub:
         next_t: dict[str, float] = {}
         fails = 0
         while self._running:
+            # 0) 모델이 갈렸으면 렌더러부터 버린다 — 옛 모델을 쥔 채 그리면 **옛 세계**가 나온다
+            if self._stale.is_set():
+                self._stale.clear()
+                self._drop_renderers()
             # 1) 요청 큐 (probe 등) — 연결 여부와 무관하게 먼저
             try:
                 cam, box, done = self._jobs.get_nowait()

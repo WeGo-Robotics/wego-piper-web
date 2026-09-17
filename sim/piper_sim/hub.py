@@ -66,6 +66,9 @@ class SimHub:
     def _world(self) -> World:
         if self.world is None:
             self.world = World()
+            # ⚠ 장면이 갈리면 카메라 렌더러가 옛 모델을 쥔 채 남는다 — 그러면 팔은 새
+            #   세계에서 도는데 화면엔 옛 세계가 나온다. 세계가 직접 알린다.
+            self.world.on_model_change.append(self.cameras.invalidate_model)
             self.world.start()
             logger.info("MuJoCo 세계 시작 (nq=%d)", self.world.model.nq)
         return self.world
@@ -188,13 +191,43 @@ class SimHub:
         t.start()
         return True
 
-    def cube_pos(self) -> list[float]:
-        return self._world().cube_pos()
+    # ── 장면 (feature/sim-scene-editor.md) ─────────────────────────────────
+
+    def scene(self) -> dict:
+        """지금 올라간 장면 — 명세 + 물체의 지금 위치.
+
+        게이트웨이가 이걸 보고 "내가 적용한 장면이 맞나"를 판단한다. simd 가 재시작하면
+        기본 장면으로 돌아오므로, 그 불일치를 **게이트웨이가 보고 다시 올린다** — 데몬이
+        파일을 읽게 하지 않는 이유는 §6 에 적었다(컨테이너는 `/data`, 호스트는
+        `/srv/piper-data` 라 같은 id 가 서로 다른 경로가 된다).
+        """
+        w = self._world()
+        return {"spec": w.spec, "objects": w.objects()}
+
+    def load_scene(self, spec: dict) -> dict:
+        """장면을 갈아끼운다. 명세는 **여기서도 검증한다** — 데몬은 자기 입력을 안 믿는다."""
+        return self._world().load_scene(spec)
+
+    def objects(self) -> list[dict]:
+        return self._world().objects()
+
+    def place_object(self, oid: str, x: float, y: float) -> list[float]:
+        return self._world().place(str(oid), float(x), float(y))
+
+    def object_from_view(self, cam: str = "top", u: float = 0.5, v: float = 0.5,
+                         aspect: float = 4.0 / 3.0, oid: str = "cube") -> dict:
+        """클릭한 카메라 픽셀로 물체를 옮긴다. cam 은 `sim:top`/`top` 둘 다 받는다."""
+        name = str(cam).split(":", 1)[-1]
+        hit = self._world().object_from_ray(name, float(u), float(v), float(aspect), str(oid))
+        return {"object": oid, "cube": hit, "ok": hit is not None}
+
+    # ── 옛 이름 (게이트웨이가 아직 이 어휘를 쓴다) ──────────────────────────
+
+    def cube_pos(self) -> list[float] | None:
+        return self._world().object_pos("cube")
 
     def reset_cube(self, x: float = 0.35, y: float = 0.0) -> list[float]:
-        w = self._world()
-        w.reset_cube(float(x), float(y))
-        return w.cube_pos()
+        return self._world().place("cube", float(x), float(y))
 
     #: 씬의 큐브 시작 위치·파킹 자세 (build_sim_scene.py 와 같은 값)
     CUBE_START = (0.35, 0.0)
@@ -203,19 +236,16 @@ class SimHub:
 
     def cube_from_view(self, cam: str = "top", u: float = 0.5, v: float = 0.5,
                        aspect: float = 4.0 / 3.0) -> dict:
-        """클릭한 카메라 픽셀로 큐브를 옮긴다. cam 은 `sim:top`/`top` 둘 다 받는다."""
-        name = str(cam).split(":", 1)[-1]
-        hit = self._world().cube_from_ray(name, float(u), float(v), float(aspect))
-        return {"cube": hit, "ok": hit is not None}
+        return self.object_from_view(cam, u, v, aspect, "cube")
 
     def reset(self, arm_only: bool = False, cube_x: float | None = None, cube_y: float | None = None) -> dict:
         """환경 리셋 — 팔 파킹·속도 0. arm_only 면 큐브·조명은 그대로(T: 로봇 위치만
         초기화), 아니면 큐브도 시작 위치로 (feature/web-leader.md §5)."""
         w = self._world()
-        if arm_only:
-            w.reset(self.PARKING, None, None)
-        else:
-            cx = self.CUBE_START[0] if cube_x is None else float(cube_x)
-            cy = self.CUBE_START[1] if cube_y is None else float(cube_y)
-            w.reset(self.PARKING, cx, cy)
-        return {"cube": w.cube_pos(), "parking": self.PARKING, "arm_only": arm_only}
+        # 시작 자리는 **장면 JSON** 이 쥔다 — 움직이는 물체 전부가 제자리로 간다.
+        # `cube_x/y` 는 그 중 큐브만 다른 자리에 놓는 옛 인자다(시연 무작위화).
+        over = {"cube": (float(cube_x), float(cube_y))} if not arm_only and cube_x is not None \
+            and cube_y is not None else None
+        w.reset(self.PARKING, objects=not arm_only, overrides=over)
+        return {"cube": w.object_pos("cube"), "objects": w.objects(),
+                "parking": self.PARKING, "arm_only": arm_only}

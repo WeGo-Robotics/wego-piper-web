@@ -509,20 +509,27 @@ def test_a_top_view_click_maps_to_a_table_position_for_the_cube(model):
     """블럭 옮기기(사용자 요청 2026): 탑뷰 클릭 픽셀(정규화 u,v)을 카메라 광선으로 쏴
     테이블 평면 교점으로 큐브를 옮긴다. 가운데=카메라 바로 아래(0.35,0), 위쪽=+x(앞),
     오른쪽=−y(탑뷰가 반시계 90°라). 테이블 밖은 가장자리로 클램프."""
-    from piper_sim.world import World
     import mujoco
-    w = World.__new__(World)
-    w.model = model; w.data = mujoco.MjData(model)
-    import threading; w._lock = threading.Lock()
-    mujoco.mj_forward(model, w.data)
-    cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "top")
-    cam_x, cam_y = float(model.cam_pos[cam][0]), float(model.cam_pos[cam][1])
+
+    from piper_sim.world import World
+
+    # ⚠ 예전엔 `World.__new__` 로 뼈대만 만들어 썼다. 장면이 JSON 으로 옮겨 가면서 물체를
+    #   아는 일이 `spec`·`jm.objects` 로 갔고, 뼈대에는 그게 없어 테스트가 죽었다 —
+    #   진짜 World 를 쓴다(물리 스레드는 안 띄운다). 덤으로 **물체가 실제로 거기 가는지**도 본다.
+    w = World()
+    cam = mujoco.mj_name2id(w.model, mujoco.mjtObj.mjOBJ_CAMERA, "top")
+    cam_x, cam_y = float(w.model.cam_pos[cam][0]), float(w.model.cam_pos[cam][1])
     cx, cy, _ = w.cube_from_ray("top", 0.5, 0.5, 640 / 480)          # 가운데 = 카메라 바로 아래
     assert abs(cx - cam_x) < 0.02 and abs(cy - cam_y) < 0.02, (cx, cy, cam_x, cam_y)
+    assert w.object_pos("cube")[:2] == pytest.approx([cx, cy], abs=1e-6), "큐브가 클릭한 자리로 안 갔다"
     fx, fy, _ = w.cube_from_ray("top", 0.5, 0.15, 640 / 480)         # 위쪽 → 앞(+x)
     assert fx > cx + 0.1, "위쪽 클릭이 앞(+x)으로 안 간다"
     rx, ry, _ = w.cube_from_ray("top", 0.85, 0.5, 640 / 480)         # 오른쪽 → −y
     assert ry < cy - 0.1, "오른쪽 클릭이 −y 로 안 간다"
     ex, ey, _ = w.cube_from_ray("top", 0.02, 0.5, 640 / 480)         # 위 끝 → 테이블 밖 클램프
     assert ex <= 0.35 + 0.55 + 1e-6, "테이블 밖으로 안 클램프됐다"
-    assert '"cube_from_view"' in (REPO / "daemons" / "simd.py").read_text()
+    # 광선 계산 자체는 물체를 안 건드린다 — 편집기의 "끌어 배치"가 이걸 쓴다
+    assert w.ray_to_table("top", 0.5, 0.5, 640 / 480, 0.02)[:2] == pytest.approx([cx, cy], abs=1e-6)
+    assert w.ray_to_table("없는카메라", 0.5, 0.5, 640 / 480) is None
+    src = (REPO / "daemons" / "simd.py").read_text()
+    assert '"cube_from_view"' in src and '"object_from_view"' in src

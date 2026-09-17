@@ -167,15 +167,28 @@ with 3 objects: nbody=16 nq=36   1초 물리 0.015s
 ## 6. 어디에 두나 — **wheel 이 아니라 데이터 루트**
 
 ```
-${PIPER_DATA_ROOT:-/srv/piper-data}/sim/
-  scenes/<id>.json          # 장면
-  assets/<asset-id>/        # 원본 메시·텍스처 + 볼록 분해 산출물
-  current                   # 지금 올라간 장면 id
+<config_dir>/sim_scenes/            # 컨테이너: /data/config/sim_scenes
+  <id>.json                         # 장면 하나 = 파일 하나
+  .current                          # 지금 올라간 장면 id
+<config_dir>/sim_assets/<asset-id>/ # (3단계) 원본 메시·텍스처 + 볼록 분해 산출물
 ```
 
-§1 의 이유 그대로다. 컨테이너는 이 루트를 `/data` 로 본다(README 표) — 게이트웨이가
-편집·검증하고, simd 는 같은 경로를 **호스트 쪽에서** 읽는다. 데몬과 게이트웨이가
-같은 파일을 보므로 "누가 정본인가"가 안 생긴다.
+§1 의 이유 그대로다. `config_dir` 아래인 것은 장면이 카메라 프로파일·프리셋과 같은
+성격(사람이 쓴 작은 JSON)이고, 그 경로가 **이미 데이터 루트로 마운트돼 있어** 새 마운트가
+필요 없어서다.
+
+### ⚠ 데몬에는 **id 가 아니라 명세를 보낸다** (2026-09-17 설계 변경)
+
+이 절은 원래 "simd 가 같은 경로를 호스트 쪽에서 읽는다"였다. **틀렸다.** 컨테이너는 이
+디렉토리를 `/data/config/sim_scenes` 로, 호스트의 simd 는
+`/srv/piper-data/config/sim_scenes` 로 본다 — 같은 id 가 서로 다른 경로다. 데몬에게 id 를
+말하면 그 차이가 언젠가 조용히 문다(컨테이너 안에서 `ip` 를 부르던 것과 같은 종류의 실수다).
+
+그래서 **게이트웨이가 파일을 읽어 명세 dict 를 통째로 넘긴다.** 데몬은 파일 시스템을 안 본다.
+대가는 하나: simd 가 재시작하면 명세가 메모리에서 사라져 기본 장면으로 돌아온다. 그 불일치는
+게이트웨이가 본다(`sim_scenes.ensure_applied()`, 기동할 때 + 시뮬 팔을 붙일 때) — 카메라
+프로파일을 연결 때 다시 적용하는 것과 같은 규율이다. 안 보면 사람은 자기 세계가 올라가
+있다고 믿은 채 **엉뚱한 장면에서 수집한다.**
 
 ## 7. 런타임 — 장면 갈아끼우기
 
@@ -238,8 +251,21 @@ ${PIPER_DATA_ROOT:-/srv/piper-data}/sim/
      앉는 것으로 프리셋의 오목함이 물리에 사는 것도 확인(볼록껍질이면 0.06).
      잡은 것 하나: `test_sim_grasp.py` 가 큐브 geom 을 **XML 문자열에서 정규식으로** 떼어
      쓰고 있어, 이사하자 실험이 통째로 죽었다 — 이제 `scene_spec` 에서 읽는다.
-   - ☐ 1b — `World.load_scene` (팔 자세 보존·렌더러 재생성), `hub`/`simd` 의 `cube_*` →
-     `object_*`(id 인자), 게이트웨이 `/api/sim/scenes` + 데이터 루트 스토어.
+   - ☑ **1b (2026-09-17) — 갈아끼우기와 API.** `World.load_scene`(**컴파일 먼저** → 실패해도
+     옛 세계 그대로, 팔 qpos 이식 + `hold` 로 튐 방지, `on_model_change` 로 렌더러 무효화),
+     `World.objects/place/ray_to_table/object_from_ray`, `reset` 이 **움직이는 물체 전부**를
+     장면이 적은 자리로(시작 자리가 상수 → 장면 JSON), `scene_spec.rest_z`(모양별 안착
+     높이 — 상수 0.02 는 큐브에만 맞았다), hub 의 `scene/load_scene/objects/place_object/
+     object_from_view` + simd `_METHODS`, 게이트웨이 `sim_scenes` 스토어와 `/api/sim/scenes`
+     (목록·저장·지우기·적용·**불러오기/내보내기**·`defaults`·`live/objects`·`live/place`),
+     기동 시 `ensure_applied()`, 이미지에 `piper_sim`(`--no-deps` — mujoco 는 안 딸려 온다).
+     잡은 것 셋: ① 렌더러는 **만들 때의 모델**을 쥔다 — 안 버리면 장면을 갈아도 옛 세계를
+     계속 그린다(버리는 일은 렌더 스레드가 한다, EGL 스레드 귀속). 조명 기준값
+     `_light_base` 도 같이 버린다. ② `sim_robot_client.call()` 은 무엇이 잘못돼도 `default`
+     를 돌려줘 "왜 거절당했는지"를 삼킨다 → 사람이 고칠 수 있는 실패용 `call_strict` 를 나눴다.
+     ③ 탑뷰 클릭 테스트가 `World.__new__` 로 뼈대만 만들어 써서 물체 정보가 생기자 죽었다 —
+     진짜 `World` 로 바꾸고 "큐브가 실제로 거기 간다"까지 잰다.
+   - ☐ 1c — 시뮬 팔을 붙일 때도 `ensure_applied()`, 작업 중 교체 금지(배타).
 2. **편집기 페이지(`/scene`, 프리미티브·프리셋)** — 툴 없이 사물을 올린다. 여기까지가
    "다양한 사물"의 90%. 독립 페이지라 1단계(백엔드·데몬)와 **병렬로** 만들 수 있다.
 3. **자산 라이브러리(OBJ/STL 업로드 + 단위·원점·볼록 분해)** — 스캔한 실물이 들어온다.

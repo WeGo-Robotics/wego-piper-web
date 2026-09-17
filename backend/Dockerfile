@@ -38,8 +38,13 @@ COPY so101/ /tmp/pkg/so101/
 #   `ModuleNotFoundError: No module named 'piper_cam'` (실기 NUC, 2026-09-15). 개발 머신은
 #   저장소에서 돌아 우연히 보였을 뿐이다. 장치는 여전히 안 연다(그건 camerad 의 일이다).
 COPY cam/ /tmp/pkg/cam/
+# sim: 세계를 도는 것은 simd(호스트)뿐이지만, **장면 명세는 게이트웨이도 읽는다** —
+# 사람이 만든 장면 JSON 을 저장 전에 검증하고(`scene_spec.validate`) 목록을 그린다.
+# ⚠ `--no-deps` 라 mujoco 는 안 딸려 온다. `scene_spec` 은 mujoco 없이 import 된다
+#   (굽는 함수 안에서만 늦게 import). 게이트웨이는 세계를 굽지 않는다 — 그건 simd 의 일이다.
+COPY sim/ /tmp/pkg/sim/
 RUN pip install --no-deps /tmp/pkg/bus /tmp/pkg/shm /tmp/pkg/robot /tmp/pkg/phase /tmp/pkg/act_aux \
-        /tmp/pkg/so101 /tmp/pkg/cam \
+        /tmp/pkg/so101 /tmp/pkg/cam /tmp/pkg/sim \
     && pip install redis \
     && rm -rf /tmp/pkg
 

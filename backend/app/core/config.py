@@ -89,6 +89,15 @@ class Settings(BaseSettings):
     # (datasets_dir)과 완전히 다른 물건이라 섞지 않는다.
     yolo_datasets_dir: Path = _BACKEND_DIR / "data" / "yolo_datasets"
 
+    # 사람이 만든 시뮬 장면 (feature/sim-scene-editor.md). config_dir 아래인 이유:
+    # 카메라 프로파일·프리셋과 같은 성격(사람이 쓴 작은 JSON)이고, 컨테이너에서 그 경로가
+    # 이미 데이터 루트(/data/config)로 마운트돼 있어 **새 마운트가 필요 없다**.
+    # ⚠ wheel 안(`piper_sim/assets/`)에 두면 안 된다 — 고칠 때마다 릴리스가 필요하고,
+    #   릴리스를 건너뛴 호스트는 옛 세계에 갇힌다(.120, 2026-09-16).
+    @property
+    def sim_scenes_dir(self) -> Path:
+        return self.config_dir / "sim_scenes"
+
     # 모델 스캔 루트. ':' 로 구분 (PATH 형식). 비우면 models_dir 하나만 스캔.
     # 필드명이 model_ 로 시작하면 pydantic 보호 네임스페이스와 충돌하므로 alias 로 매핑.
     scan_paths: str = Field(default="", validation_alias="PIPER_MODEL_PATHS")

@@ -1,0 +1,119 @@
+"""시뮬 장면 — 테이블 위 사물을 사람이 편집한다 (feature/sim-scene-editor.md §8).
+
+편집기는 **독립 페이지**(`/scene`)다. 여기는 그 페이지가 쓰는 API 뿐이다:
+목록·읽기·저장·지우기·적용, 그리고 **환경 불러오기/내보내기**(파일 하나).
+
+⚠ 사람이 고칠 수 있는 실패는 **400 과 그 문장**으로 돌려준다. "저장 실패" 같은 말로
+바꾸면 "id 'link3' 는 팔·테이블·카메라가 쓰는 이름입니다" 가 사라져서, 사람은 무엇을
+고쳐야 할지 모른 채 같은 걸 다시 누른다. 이 저장소가 같은 실수를 여러 번 했다.
+"""
+
+import asyncio
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
+
+from app.services import sim_scenes
+
+router = APIRouter(prefix="/api/sim/scenes", tags=["sim-scenes"])
+
+
+class SceneBody(BaseModel):
+    spec: dict
+
+
+class ImportBody(BaseModel):
+    text: str
+    name: str = ""
+
+
+class PlaceBody(BaseModel):
+    id: str
+    x: float
+    y: float
+
+
+def _guard(fn, *a, **kw):
+    try:
+        return fn(*a, **kw)
+    except sim_scenes.SceneStoreError as exc:
+        raise HTTPException(400, str(exc))
+    except RuntimeError as exc:          # simd 가 거절했다 — 그 말을 그대로 전한다
+        raise HTTPException(400, str(exc))
+
+
+@router.get("")
+async def list_scenes():
+    """장면 목록. 깨진 파일도 `error` 를 달아 같이 낸다 — 숨기면 아무도 못 고친다."""
+    return {"scenes": await asyncio.to_thread(sim_scenes.listing),
+            "current": await asyncio.to_thread(sim_scenes.current_id)}
+
+
+@router.get("/defaults")
+async def defaults():
+    """편집기가 폼을 그릴 재료 — 쓸 수 있는 모양·프리셋과 그 기본값.
+
+    화면이 목록을 **따로 적지 않게** 한다. 따로 적으면 프리셋을 늘릴 때마다 두 곳을
+    고쳐야 하고, 한 곳을 잊으면 화면에만 없거나 화면에만 있는 모양이 생긴다.
+    """
+    from piper_sim import scene_spec as S
+
+    return {
+        "primitives": {k: {"size_len": n} for k, (_, n) in S.PRIMITIVES.items()},
+        "presets": {k: {"params": d} for k, (d, _) in S.PRESETS.items()},
+        "reserved": sorted(S.RESERVED_IDS),
+        "max_objects": S.MAX_OBJECTS,
+        "movable_physics": S.MOVABLE_PHYSICS,
+        "static_physics": S.STATIC_PHYSICS,
+    }
+
+
+@router.get("/{sid}")
+async def get_scene(sid: str):
+    return await asyncio.to_thread(_guard, sim_scenes.read, sid)
+
+
+@router.get("/{sid}/export", response_class=PlainTextResponse)
+async def export_scene(sid: str):
+    """환경 내보내기 — 파일로 저장할 내용 그대로."""
+    return await asyncio.to_thread(_guard, sim_scenes.export_text, sid)
+
+
+@router.put("/{sid}")
+async def save_scene(sid: str, body: SceneBody):
+    return await asyncio.to_thread(_guard, sim_scenes.save, sid, body.spec)
+
+
+@router.delete("/{sid}")
+async def delete_scene(sid: str):
+    return {"deleted": await asyncio.to_thread(_guard, sim_scenes.delete, sid)}
+
+
+@router.post("/import")
+async def import_scene(body: ImportBody):
+    """환경 불러오기 — 파일 내용을 받아 새 장면으로. 겹치면 덮지 않고 이름을 늘린다."""
+    return await asyncio.to_thread(_guard, sim_scenes.import_text, body.text, body.name)
+
+
+@router.post("/{sid}/apply")
+async def apply_scene(sid: str):
+    """장면을 시뮬에 올린다 — 실패하면 적용 표시를 안 바꾼다."""
+    return await asyncio.to_thread(_guard, sim_scenes.apply, sid)
+
+
+@router.get("/live/objects")
+async def live_objects():
+    """지금 세계에 있는 물체와 **그 위치** — 배치 화면이 폴링한다."""
+    from app.services import sim_robot_client as sim
+
+    return {"objects": await asyncio.to_thread(sim.call, "objects", default=[]) or []}
+
+
+@router.post("/live/place")
+async def place_object(body: PlaceBody):
+    """물체를 테이블 위 (x, y) 로. 고정물이면 데몬이 거절하고 그 이유가 그대로 온다."""
+    from app.services import sim_robot_client as sim
+
+    pos = await asyncio.to_thread(_guard, sim.call_strict, "place_object", body.id, body.x, body.y)
+    return {"id": body.id, "pos": pos}
