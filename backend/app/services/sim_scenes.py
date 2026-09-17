@@ -153,6 +153,26 @@ def import_text(text: str, name: str = "") -> dict:
     return save(sid, raw)
 
 
+def busy_reason() -> str | None:
+    """지금 장면을 갈아끼우면 안 되는 이유 — 있으면 그 말, 없으면 None.
+
+    ⚠ 교체는 **모델 재컴파일 + MjData 신규**다. 에피소드 한가운데 하면 앞뒤가 다른 세계에서
+    모인 데이터가 되고, 관측이 바뀐 것을 라벨은 모른다 — 나중에 걸러낼 방법이 없다.
+
+    ⚠ 조종 창(웹 리더)은 `Activity.TELEOP` 에 안 잡힌다. 그 활동의 상태 제공자는 CLI
+    텔레옵 세션(`teleop_session`)이고 웹 리더는 자기 서비스라서다. 시뮬을 모는 사람은
+    십중팔구 조종 창을 쓰므로 **여기서 따로 본다** — 안 보면 팔을 몰고 있는 사람 밑에서
+    세계가 사라진다.
+    """
+    from app.services import exclusivity as X
+    from app.services.web_leader import web_leader
+
+    why = X.blocked_reason(X.Activity.SCENE_SWAP)
+    if why:
+        return why
+    return "조종 창" if web_leader.is_running else None
+
+
 def apply(sid: str) -> dict:
     """장면을 simd 에 올린다 — 실패하면 **`current` 를 안 바꾼다**.
 
@@ -161,6 +181,8 @@ def apply(sid: str) -> dict:
     """
     from app.services import sim_robot_client as sim
 
+    if (why := busy_reason()):
+        raise SceneStoreError(f"{why} 중에는 장면을 바꿀 수 없습니다 — 먼저 끝내세요")
     spec = read(sid)
     result = sim.call_strict("load_scene", spec, timeout=30)
     (_dir() / CURRENT).write_text(sid, encoding="utf-8")

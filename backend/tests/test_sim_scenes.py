@@ -278,3 +278,73 @@ def test_the_editor_hands_files_in_and_out_whole():
     export = code_only(page).split("const exportFile", 1)[1].split("}), [", 1)[0]
     assert "fetch(" in export and "res.text()" in export and "api.get" not in export
     assert "a.download" in export, "내려받기가 아니라 화면에 띄우기만 한다"
+
+
+# ── 작업 중에는 세계를 안 바꾼다 (1c) ───────────────────────────────────────
+
+def test_the_world_is_not_swapped_out_from_under_a_recording(store, monkeypatch):
+    """⚠ 교체는 **모델 재컴파일 + MjData 신규**다. 에피소드 한가운데 하면 앞 절반은 A 세계,
+    뒤 절반은 B 세계에서 모인 데이터가 되고 **관측이 바뀐 것을 라벨은 모른다** — 나중에
+    걸러낼 방법이 없다. 추론·에피소드 루프도 같다."""
+    from app.services import exclusivity as X
+    from app.services import sim_robot_client as sim
+
+    pushed = []
+    monkeypatch.setattr(sim, "call_strict", lambda m, *a, **k: pushed.append(a) or {})
+    store.save("mine", {"objects": [CUBE]})
+
+    for act in (X.Activity.RECORDING, X.Activity.INFERENCE, X.Activity.ORCHESTRATOR,
+                X.Activity.TELEOP):
+        monkeypatch.setitem(X.STATE_PROVIDERS, act, lambda: True)
+        with pytest.raises(store.SceneStoreError, match="장면을 바꿀 수 없습니다"):
+            store.apply("mine")
+        monkeypatch.setitem(X.STATE_PROVIDERS, act, lambda: False)
+    assert not pushed, "막아 놓고도 데몬에 올렸다"
+    assert store.current_id() is None
+
+    store.apply("mine")                      # 아무것도 안 돌면 된다
+    assert pushed and store.current_id() == "mine"
+
+
+def test_the_teleop_window_also_stops_a_swap_even_though_it_is_not_Activity_TELEOP(store, monkeypatch):
+    """⚠ 조종 창(웹 리더)은 `Activity.TELEOP` 에 **안 잡힌다** — 그 활동의 상태 제공자는
+    CLI 텔레옵 세션(`teleop_session`)이고 웹 리더는 자기 서비스다. 시뮬을 모는 사람은
+    십중팔구 조종 창을 쓰므로, 그 구멍을 안 막으면 **팔을 몰고 있는 사람 밑에서 세계가
+    사라진다.**"""
+    from app.services import sim_robot_client as sim
+    from app.services.web_leader import web_leader
+
+    monkeypatch.setattr(sim, "call_strict", lambda *a, **k: {})
+    monkeypatch.setattr(type(web_leader), "is_running", property(lambda self: True))
+    store.save("mine", {"objects": [CUBE]})
+    with pytest.raises(store.SceneStoreError, match="조종 창"):
+        store.apply("mine")
+
+
+def test_a_restart_check_does_not_shove_a_scene_in_mid_episode(store, monkeypatch):
+    """`ensure_applied()` 는 기동·연결에서 부른다 — 그때 수집이 돌고 있을 수 있다.
+    고치는 것보다 **가만히 두고 말하는 것**이 낫다: 여기서 바꾸면 그 에피소드가 깨진다."""
+    from app.services import exclusivity as X
+    from app.services import sim_robot_client as sim
+
+    pushed = []
+    monkeypatch.setattr(sim, "sim_available", lambda: True)
+    monkeypatch.setattr(sim, "call", lambda m, *a, **k: {"spec": {"objects": []}})
+    monkeypatch.setattr(sim, "call_strict", lambda m, *a, **k: pushed.append(a) or {})
+    store.save("mine", {"objects": [CUBE]})
+    store.apply("mine")
+    pushed.clear()
+
+    monkeypatch.setitem(X.STATE_PROVIDERS, X.Activity.RECORDING, lambda: True)
+    assert store.ensure_applied() is None and not pushed, "수집 중에 세계를 갈아끼웠다"
+
+
+def test_attaching_the_sim_arm_is_when_the_world_first_spins_up():
+    """시뮬 팔을 붙이는 순간이 simd 가 World 를 만드는 순간이다 — 저장해 둔 장면이 그때
+    올라가야 한다. 안 그러면 사람은 자기 세계라고 믿은 채 기본 장면에서 수집한다."""
+    src = (REPO / "backend" / "app" / "routers" / "robots.py").read_text()
+    attach = src.split("async def attach_arm", 1)[1].split("class SerialAttachRequest", 1)[0]
+    assert 'body.iface.startswith("sim_")' in attach, "실기 팔에도 시뮬 장면을 올린다"
+    assert "sim_scenes.ensure_applied" in attach
+    assert "warnings.append" in attach.split("ensure_applied", 1)[1][:400], \
+        "다시 올렸다는 사실을 화면에 말 안 한다"

@@ -40,9 +40,12 @@ class Activity(str, enum.Enum):
     ORCHESTRATOR = "orchestrator"
     # YOLO 커스텀 학습 (feature/yolo-training.md 3단계) — GPU 를 크게 쓴다.
     YOLO_TRAIN = "yolo_train"
-    # 아래 둘은 "시작하는 활동"이 아니라 자원 접근이다. 남을 막지 않고 조회만 한다.
+    # 아래 셋은 "시작하는 활동"이 아니라 자원 접근이다. 남을 막지 않고 조회만 한다.
     ENCODER_PROBE = "encoder_probe"
     CAMERA_ACCESS = "camera_access"
+    # 시뮬 세계를 통째로 갈아끼운다 (feature/sim-scene-editor.md). 순간 동작이라
+    # 남을 막을 것은 없지만, **남이 돌고 있으면 해서는 안 된다.**
+    SCENE_SWAP = "scene_swap"
 
 
 LABELS: dict[Activity, str] = {
@@ -61,6 +64,7 @@ LABELS: dict[Activity, str] = {
     Activity.YOLO_TRAIN: "검출 학습",
     Activity.ENCODER_PROBE: "인코더 프로브",
     Activity.CAMERA_ACCESS: "카메라 접근",
+    Activity.SCENE_SWAP: "시뮬 장면 교체",
 }
 
 # 이 활동을 시작하려면 아래 활동들이 멈춰 있어야 한다.
@@ -99,6 +103,11 @@ BLOCKED_BY: dict[Activity, list[Activity]] = {
     # 디바이스를 열거나 UVC 컨트롤을 질의하면 (특히 D405) 커널 uvcvideo 가 D-state 로
     # 물려 librealsense 가 SIGABRT 로 죽고 카메라까지 먹통이 된다.
     Activity.CAMERA_ACCESS: [Activity.INFERENCE, Activity.RECORDING],
+    # ⚠ 장면 교체는 **모델을 다시 컴파일하고 MjData 를 새로 만든다** — 물체가 사라지고
+    #   생기고 팔이 잠깐 멈춘다. 에피소드 한가운데 그러면 그 에피소드는 절반이 A 세계,
+    #   절반이 B 세계라 **못 쓴다**(관측이 바뀐 것을 라벨은 모른다). 추론·루프도 같다.
+    Activity.SCENE_SWAP: [Activity.RECORDING, Activity.INFERENCE, Activity.ORCHESTRATOR,
+                          Activity.TELEOP],
 }
 
 
