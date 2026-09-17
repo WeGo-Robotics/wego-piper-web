@@ -486,3 +486,44 @@ def test_the_budget_stops_the_waiting_too_not_only_the_training(monkeypatch):
     with pytest.raises(ProcureError):
         asyncio.run(_go())
     assert provider.destroyed, "대기에서 실패했는데 기계가 남았다"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 화면이 고르는 기본 템플릿 — **실측이 정한다**
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_the_rent_tab_defaults_to_the_small_image():
+    """⚠ **실측(2026-09-17)**: 같은 4090 호스트(5.9Gbps)에서 full(14GB)은 8분 상한에
+    걸릴 때까지 pull 을 못 끝냈고, slim(1.3GB)은 pull 16초 · SSH 62초 · 스택 준비
+    4분 23초로 완주했다. full 의 가장 좋았던 기록(6분 20초)과 비교해도 slim 이 빠르다.
+
+    예전 기본값은 full 이었고 주석은 "네트워크가 빠르면 full 이 낫다" 였다 — 정작
+    네트워크가 빠른 호스트에서 14GB 가 안 끝났다. 회선이 아니라 크기가 문제였다.
+
+    ⚠ 그리고 slim 이 되는 것은 **스택 준비 게이트가 생긴 뒤부터다.** 기본값만 바꾸고
+    게이트가 없으면, 처음 쓰는 사람이 기본값 그대로 눌러서 3초 만에 죽는다.
+    """
+    from pathlib import Path
+
+    from conftest import code_only
+
+    src = code_only((Path(__file__).resolve().parents[2] / "frontend" / "src"
+                     / "components" / "CloudRentTab.tsx").read_text())
+    picked = src.split("setTemplateId((cur)")[1].split("\n")[0]
+    assert "'slim'" in picked, f"기본 템플릿이 slim 이 아니다: {picked.strip()}"
+    # 게이트가 같이 있어야 이 기본값이 안전하다
+    assert callable(procure.wait_for_stack)
+
+
+def test_the_picker_shows_what_the_two_variants_cost_you():
+    """⚠ 백엔드가 "스택 포함, 부팅 즉시 학습" / "부팅 때 bootstrap.sh 가 스택 설치" 를
+    이미 주는데 화면은 `full`·`slim` 네 글자만 보여 주고 있었다 — 그 차이가 임대 시간과
+    요금을 가르는데 고르는 사람은 알 길이 없었다."""
+    from pathlib import Path
+
+    from conftest import code_only
+
+    src = code_only((Path(__file__).resolve().parents[2] / "frontend" / "src"
+                     / "components" / "CloudRentTab.tsx").read_text())
+    opts = src.split("templates.map(")[1][:400]
+    assert "t.description" in opts, "설명을 화면이 버리고 있다"

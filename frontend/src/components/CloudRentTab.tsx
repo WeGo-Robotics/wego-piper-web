@@ -120,8 +120,19 @@ export default function CloudRentTab() {
     api.get<Readiness>('/cloud/readiness', { timeoutMs: 60_000 })
       .then((r) => {
         setReady(r)
-        // 기본은 full — 네트워크가 빠르면 4.7GB pull 이 부팅 설치보다 낫다
-        setTemplateId((cur) => cur ?? r.templates.find((t) => t.variant === 'full')?.id ?? r.templates[0]?.id ?? null)
+        // ⚠ **기본은 slim 이다 — 실측으로 바꿨다**(§12-13, 2026-09-17).
+        //
+        //   같은 4090 호스트(5.9Gbps)에서:
+        //     full 14GB  → 8분 상한에 걸릴 때까지 pull 을 못 끝냈다 (실패)
+        //     slim 1.3GB → pull 16초 · SSH 62초 · 스택 준비 4분 23초 → 완주
+        //
+        //   full 의 **가장 좋았던 기록**(6분 20초)과 비교해도 slim 이 빠르다. 예전
+        //   주석은 "네트워크가 빠르면 full 이 낫다" 였는데, 정작 네트워크가 빠른
+        //   호스트에서 14GB 가 안 끝났다 — 회선이 아니라 크기가 문제였다.
+        //
+        // ⚠ slim 이 되는 것은 **스택 준비 게이트가 생긴 뒤부터다**(`wait_for_stack`).
+        //   그전에는 접속되자마자 학습을 걸어 `No module named 'lerobot'` 로 죽었다.
+        setTemplateId((cur) => cur ?? r.templates.find((t) => t.variant === 'slim')?.id ?? r.templates[0]?.id ?? null)
       })
       .catch(() => setReady(null))
   }, [])
@@ -448,8 +459,14 @@ export default function CloudRentTab() {
               <span className="text-xs text-neutral-400">템플릿</span>
               <select value={template?.id ?? ''} onChange={(e) => setTemplateId(Number(e.target.value))}
                 className="min-w-0 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm">
+                {/* ⚠ 설명을 버리지 않는다. 백엔드가 "스택 포함, 부팅 즉시 학습" /
+                    "부팅 때 bootstrap.sh 가 스택 설치" 를 이미 주고 있는데 화면은
+                    `full`·`slim` 네 글자만 보여 주고 있었다 — 그 둘의 차이가 임대
+                    시간과 요금을 가르는데 고르는 사람은 알 길이 없었다. */}
                 {templates.map((t) => (
-                  <option key={t.id} value={t.id}>{t.variant || t.name}</option>
+                  <option key={t.id} value={t.id} title={t.description}>
+                    {t.variant || t.name}{t.description ? ` — ${t.description}` : ''}
+                  </option>
                 ))}
               </select>
             </label>
