@@ -902,7 +902,7 @@ export default function TrainingPage() {
                 모른 채 누르게 된다 — 임대는 그 한 번이 곧 돈이다. */}
             <TrainWhereForm
               where={where} onWhere={setWhere} onPick={setRentPick}
-              localLabel={runner === 'ssh' ? '사내 서버 (SSH)' : '이 기계'}
+              runner={runner}
               // ⚠ CLI 를 직접 고친 경우는 임대로 못 보낸다 — `/cloud/rent` 는 인자를
               //   스스로 조립한다. 막고 **왜인지 말한다.**
               disabledReason={cliEdited ? 'CLI 를 직접 고친 학습은 아직 빌려서 못 돌립니다' : undefined}
@@ -911,7 +911,7 @@ export default function TrainingPage() {
             <button onClick={cliEdited ? handleStart : handlePreConfirm}
               disabled={!canStart || (where === 'rent' && !rentPick)}
               className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium">
-              {where === 'rent' ? 'GPU 빌려서 학습 시작'
+              {where === 'rent' ? '클라우드 GPU 로 학습 시작'
                 : cliEdited ? '학습 시작 (CLI 직접)' : '설정 확인 후 시작'}
             </button>
           </div>

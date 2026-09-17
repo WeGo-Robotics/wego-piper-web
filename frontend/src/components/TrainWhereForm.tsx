@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../services/api'
 
 /**
- * **어디서 돌릴 것인가** — 이 기계냐, 빌린 GPU 냐 (feature/vast-training.md §8 W4).
+ * **어디서 돌릴 것인가** — 로컬이냐, 클라우드냐 (feature/vast-training.md §8 W4).
  *
  * ## ⚠ 학습 설정은 여기 없다
  *
@@ -10,11 +10,12 @@ import { api } from '../services/api'
  * 어긋나고, 실제로 그랬다 — RENT 탭이 자기 입력 둘만 들고 나머지는 서버 기본값으로
  * 돌렸다(§12-17). 여기가 정하는 것은 **기계와 상한**뿐이다.
  *
- * ## ⚠ "이 기계" 가 로컬이라는 뜻은 아니다
+ * ## ⚠ 칸은 둘인데 "로컬" 이 늘 로컬은 아니다
  *
- * 러너는 서버 설정(`PIPER_TRAIN_SSH_HOST`)이 정한다 — 사내 SSH 박스일 수도 있다. 그래서
- * 라벨을 `/training/status` 의 `runner` 에서 읽어 쓴다. 화면이 "로컬" 이라 적어 두고
- * 실제로는 사내 서버에서 도는 것이 제일 나쁘다.
+ * 러너는 서버 설정(`PIPER_TRAIN_SSH_HOST`)이 정하므로, 그게 채워진 기계에서는 [로컬]이
+ * 사실 **사내 SSH 박스**로 간다. 선택지를 셋으로 늘리지는 않되(회차마다 러너를 고르는
+ * 것은 서버가 아직 못 한다) **그 사실은 말한다** — 화면이 "로컬" 이라 적어 두고 실제로는
+ * 다른 기계에서 도는 것이 제일 나쁘다.
  */
 
 export type Offer = {
@@ -30,11 +31,12 @@ export type RentPick = {
   budget_usd: number; max_hours: number
 }
 
-export default function TrainWhereForm({ where, onWhere, onPick, localLabel, disabledReason }: {
+export default function TrainWhereForm({ where, onWhere, onPick, runner, disabledReason }: {
   where: 'here' | 'rent'
   onWhere: (w: 'here' | 'rent') => void
   onPick: (p: RentPick | null) => void
-  localLabel: string
+  /** 서버가 실제로 쓰는 러너(`/training/status`). `ssh` 면 [로컬]이 사내 박스로 간다. */
+  runner: string
   disabledReason?: string
 }) {
   const [templates, setTemplates] = useState<Template[]>([])
@@ -99,7 +101,7 @@ export default function TrainWhereForm({ where, onWhere, onPick, localLabel, dis
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-xs text-neutral-400">실행 위치</span>
         <div className="flex overflow-hidden rounded-lg border border-neutral-700 text-sm">
-          {([['here', localLabel], ['rent', 'GPU 빌려서']] as const).map(([k, label]) => (
+          {([['here', '로컬'], ['rent', '클라우드']] as const).map(([k, label]) => (
             <button key={k} onClick={() => onWhere(k)}
               disabled={k === 'rent' && !!disabledReason}
               title={k === 'rent' ? disabledReason ?? '' : ''}
@@ -113,6 +115,13 @@ export default function TrainWhereForm({ where, onWhere, onPick, localLabel, dis
         {where === 'rent' && (
           <span className="text-xs text-neutral-500">
             끝나면 자동으로 파기됩니다 · 가중치는 저장소에서 자동으로 받아옵니다
+          </span>
+        )}
+        {/* ⚠ 이 기계에 사내 SSH 박스가 설정돼 있으면 [로컬]은 거기로 간다 — 라벨만
+            믿게 두지 않는다. 설정이 없으면(대부분) 이 줄은 안 뜬다. */}
+        {where === 'here' && runner === 'ssh' && (
+          <span className="text-xs text-amber-300/80">
+            ⚠ 이 게이트웨이는 사내 서버(SSH)로 보냅니다 — 이 기계의 GPU 가 아닙니다
           </span>
         )}
       </div>

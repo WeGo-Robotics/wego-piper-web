@@ -707,16 +707,25 @@ def test_the_training_page_can_send_its_own_settings_to_a_rented_gpu():
 def test_where_to_run_sits_next_to_the_start_button():
     """⚠ 위쪽 어딘가에 두면 "어디서 도는지" 를 모른 채 누른다 — 임대는 그 한 번이 돈이다."""
     src = _page("TrainingPage.tsx")
-    assert src.index("TrainWhereForm") < src.index("GPU 빌려서 학습 시작")
-    gap = src[src.index("<TrainWhereForm"):src.index("GPU 빌려서 학습 시작")]
+    assert src.index("TrainWhereForm") < src.index("클라우드 GPU 로 학습 시작")
+    gap = src[src.index("<TrainWhereForm"):src.index("클라우드 GPU 로 학습 시작")]
     assert gap.count("<button") <= 1, "실행 위치와 시작 버튼 사이에 다른 것이 끼어 있다"
 
 
-def test_the_local_label_comes_from_the_server_not_from_a_guess():
-    """⚠ 러너는 서버 설정이 정한다(`PIPER_TRAIN_SSH_HOST`) — 화면이 "이 기계" 라고
-    적어 두고 실제로는 사내 서버에서 도는 것이 제일 나쁘다."""
-    src = _page("TrainingPage.tsx")
-    assert "runner === 'ssh'" in src and "localLabel=" in src
+def test_the_two_choices_are_local_and_cloud():
+    """실행 위치는 **둘**이다 — 로컬 / 클라우드."""
+    src = _page("TrainWhereForm.tsx")
+    assert "'로컬'" in src and "'클라우드'" in src
+
+
+def test_local_still_says_so_when_it_is_really_the_in_house_box():
+    """⚠ 러너는 서버 설정이 정한다(`PIPER_TRAIN_SSH_HOST`). 그게 채워진 기계에서는
+    [로컬]이 사실 **사내 SSH 박스**로 간다 — 칸을 셋으로 늘리지는 않되(회차마다 러너를
+    고르는 것은 서버가 아직 못 한다) 그 사실은 말한다. 화면이 "로컬" 이라 적어 두고
+    실제로는 다른 기계에서 도는 것이 제일 나쁘다."""
+    src = _page("TrainWhereForm.tsx")
+    assert "runner === 'ssh'" in src, "사내 박스로 가는데 아무 말도 안 한다"
+    assert "사내 서버(SSH)로 보냅니다" in src
 
 
 def test_a_hand_edited_cli_cannot_be_rented_and_says_why():
