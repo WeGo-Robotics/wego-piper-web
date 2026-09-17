@@ -14,14 +14,23 @@ import { api } from '../services/api'
  * 안 올라갔으면 클릭해도 엉뚱한 세계를 건드리게 되므로 그때는 배치를 막고 그렇게 말한다.
  */
 
-type SceneRow = { id: string; name: string; count: number; applied: boolean; updated_at: number; error: string | null }
+type SceneRow = {
+  id: string; name: string; count: number; applied: boolean; updated_at: number
+  error: string | null; missing_assets?: string[]
+}
 type Obj = {
   id: string; label: string; shape: string; movable: boolean
   pos: number[]; euler_deg: number[]; rgba: number[]
   size?: number[]; params?: Record<string, number | number[]>
+  asset?: string; scale?: number          // shape === 'mesh' 일 때
   mass?: number; friction: number[]; condim: number; solref: number[]
 }
 type Spec = { version: number; id: string; name: string; objects: Obj[] }
+type Asset = {
+  id: string; name: string; format: string; unit_scale: number; bbox_m: number[]; bytes: number
+  error?: string | null
+  raw: { vertices: number; faces: number; bbox: number[]; volume: number; concavity: number; closed: boolean }
+}
 type Defaults = {
   primitives: Record<string, { size_len: number }>
   presets: Record<string, { params: Record<string, number | number[]> }>
@@ -33,8 +42,11 @@ type Defaults = {
 
 const SHAPE_KO: Record<string, string> = {
   box: '상자', sphere: '구', cylinder: '원기둥', capsule: '캡슐', ellipsoid: '타원체',
-  'preset:bin': '통 (조립)',
+  'preset:bin': '통 (조립)', mesh: '메시',
 }
+//: 단위 — OBJ·STL 에는 단위가 없다. 사람이 고르는 값이다.
+const UNITS: [number, string][] = [[1, 'm (미터)'], [0.01, 'cm (센티)'], [0.001, 'mm (밀리)']]
+const mm = (v: number) => (v * 1000).toFixed(v * 1000 < 10 ? 1 : 0)
 //: 모양별 size 라벨 — MuJoCo 의 size 는 **반지름·반변**이다. 그 말을 화면에 적어야
 //  사람이 2cm 블럭을 만들 때 0.02 를 넣는다(0.04 가 아니라).
 const SIZE_LABELS: Record<string, string[]> = {
@@ -73,7 +85,9 @@ export default function ScenePage() {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState('')
   const [tick, setTick] = useState(0)          // 탑뷰 스냅샷 폴링
+  const [assets, setAssets] = useState<Asset[]>([])
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const meshRef = useRef<HTMLInputElement | null>(null)
 
   const applied = !!spec && current === sid && !dirty
 
@@ -83,13 +97,17 @@ export default function ScenePage() {
     return r
   }, [])
 
+  const loadAssets = useCallback(() => api.get<{ assets: Asset[] }>('/sim/assets')
+    .then((r) => setAssets(r.assets)).catch(() => {}), [])
+
   useEffect(() => {
     api.get<Defaults>('/sim/scenes/defaults').then(setDefs).catch(() => {})
+    void loadAssets()
     reload().then((r) => {
       const first = r.current ?? r.scenes.find((s) => !s.error)?.id ?? ''
       if (first) setSid(first)
     }).catch((e) => setErr(e instanceof Error ? e.message : '목록 실패'))
-  }, [reload])
+  }, [reload, loadAssets])
 
   // 장면 선택 → 명세를 읽어 폼으로
   useEffect(() => {
@@ -136,6 +154,39 @@ export default function ScenePage() {
     setSpec({ ...spec, objects: [...spec.objects, o] })
     setSel(o.id); setDirty(true)
   }, [spec, defs])
+
+  const addMesh = useCallback((a: Asset) => {
+    if (!spec) return
+    let n = 1
+    while (spec.objects.some((o) => o.id === `mesh${n}`)) n += 1
+    const phys = defs?.movable_physics ?? { friction: [2, 0.1, 0.001], condim: 6, solref: [0.005, 1] }
+    // 메시는 올릴 때 AABB 아래면 가운데를 원점으로 옮겨 뒀다 — pos.z 0 이면 테이블에 앉는다
+    const o: Obj = {
+      id: `mesh${n}`, label: a.name, shape: 'mesh', asset: a.id, scale: 1,
+      movable: true, pos: [0.3, 0, 0], euler_deg: [0, 0, 0], rgba: [0.75, 0.72, 0.68, 1],
+      mass: 0.1, friction: phys.friction, condim: phys.condim, solref: phys.solref,
+    }
+    setSpec({ ...spec, objects: [...spec.objects, o] })
+    setSel(o.id); setDirty(true)
+  }, [spec, defs])
+
+  const uploadMesh = useCallback((f: File) => run('자산 올리기', async () => {
+    // ⚠ raw 바디다 — multipart 를 쓰면 `python-multipart` 의존성이 붙는다(저장소 관례).
+    const res = await fetch(`/api/sim/assets?filename=${encodeURIComponent(f.name)}`
+      + `&name=${encodeURIComponent(f.name.replace(/\.[^.]+$/, ''))}`, { method: 'POST', body: f })
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? `올리기 실패 (${res.status})`)
+    await loadAssets()
+  }), [run, loadAssets])
+
+  const setUnit = useCallback((a: Asset, scale: number) => run('단위', async () => {
+    await api.put(`/sim/assets/${a.id}/scale`, { unit_scale: scale })
+    await loadAssets()
+  }), [run, loadAssets])
+
+  const dropAsset = useCallback((a: Asset) => run('자산 지우기', async () => {
+    await api.delete(`/sim/assets/${a.id}`)
+    await loadAssets()
+  }), [run, loadAssets])
 
   const save = useCallback(() => run('저장', async () => {
     if (!spec) return
@@ -218,6 +269,7 @@ export default function ScenePage() {
           {rows.map((r) => (
             <option key={r.id} value={r.id}>
               {r.name} ({r.count}){r.applied ? ' · 적용 중' : ''}{r.error ? ' · 깨짐' : ''}
+              {r.missing_assets?.length ? ` · 자산 ${r.missing_assets.length}개 없음` : ''}
             </option>
           ))}
         </select>
@@ -281,6 +333,59 @@ export default function ScenePage() {
             )}
           </ul>
 
+          {/* 자산(메시) — 사람이 만들거나 스캔한 물건 */}
+          <div className="rounded border border-neutral-700 p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <h2 className="flex-1 text-sm font-semibold">자산 (메시)</h2>
+              <button onClick={() => meshRef.current?.click()}
+                className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700">
+                {busy === '자산 올리기' ? '올리는 중…' : '＋ 메시 올리기'}
+              </button>
+              <input ref={meshRef} type="file" accept=".obj,.stl" className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadMesh(f); e.target.value = '' }} />
+            </div>
+            <p className="text-[11px] text-neutral-500">
+              OBJ 또는 <b>바이너리</b> STL. 폰 스캔(Polycam·Scaniverse)·Blender·CAD 에서 내보낸 것.
+              GLB·ASCII STL 은 MuJoCo 가 못 읽습니다.
+            </p>
+            {assets.length === 0 && <p className="text-xs text-neutral-600">아직 없습니다.</p>}
+            <ul className="space-y-1.5">
+              {assets.map((a) => (
+                <li key={a.id} className="rounded border border-neutral-800 p-2 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="flex-1 truncate text-sm">{a.name}</span>
+                    <span className="text-[10px] uppercase text-neutral-500">{a.format}</span>
+                    <button onClick={() => addMesh(a)} disabled={!spec}
+                      className="px-2 py-0.5 text-xs rounded bg-blue-800 hover:bg-blue-700 text-white disabled:opacity-40">
+                      장면에 추가
+                    </button>
+                    <button onClick={() => dropAsset(a)}
+                      className="px-2 py-0.5 text-xs rounded bg-neutral-800 hover:bg-neutral-700">지우기</button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-neutral-400">
+                    <span className="font-mono">
+                      {a.bbox_m.map((v) => mm(v)).join(' × ')} mm
+                    </span>
+                    <label className="flex items-center gap-1">
+                      단위
+                      <select value={a.unit_scale} onChange={(e) => setUnit(a, Number(e.target.value))}
+                        className="rounded bg-neutral-900 border border-neutral-700 px-1 py-0.5">
+                        {UNITS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      </select>
+                    </label>
+                    <span>면 {a.raw.faces.toLocaleString()}</span>
+                    {a.raw.concavity > 0.002 && (
+                      <span className="text-amber-300" title="MuJoCo 는 메시를 볼록껍질로 충돌시킵니다">
+                        ⚠ 오목 {mm(a.raw.concavity)}mm — 충돌은 볼록껍질입니다
+                      </span>
+                    )}
+                    {!a.raw.closed && <span className="text-amber-300" title="스캔은 바닥이 뚫린 채 오기 일쑤입니다">⚠ 열린 메시</span>}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+
           {selected && (
             <div className="rounded border border-neutral-700 p-3 space-y-3">
               <div className="flex items-center gap-2">
@@ -308,6 +413,21 @@ export default function ScenePage() {
                     <Num key={i} label={`${SIZE_LABELS[selected.shape]?.[i] ?? `크기 ${i}`} (m)`} value={s} step={0.005}
                       onChange={(v) => patch(selected.id, { size: selected.size!.map((x, j) => (j === i ? v : x)) })} />
                   ))}
+                </div>
+              )}
+              {selected.shape === 'mesh' && (
+                <div className="flex items-end gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] text-neutral-500">자산</p>
+                    <p className="truncate text-xs">
+                      {assets.find((a) => a.id === selected.asset)?.name
+                        ?? <span className="text-amber-300">이 기계에 없습니다 ({selected.asset?.slice(0, 8)}…)</span>}
+                    </p>
+                  </div>
+                  <div className="w-24">
+                    <Num label="배율" value={selected.scale ?? 1} step={0.1}
+                      onChange={(v) => patch(selected.id, { scale: v })} />
+                  </div>
                 </div>
               )}
               {selected.params && (
@@ -393,3 +513,5 @@ function restZ(shape: string, size: number[]): number {
   if (shape === 'capsule') return size[1] + size[0]
   return size[2] ?? 0
 }
+// 메시는 0 이다 — 올릴 때 AABB 아래면 가운데를 원점으로 옮겨 두므로(백엔드 assets.add)
+// pos.z 0 이면 테이블에 앉는다. 실측: body z 가 -0.0002 로 안착한다.

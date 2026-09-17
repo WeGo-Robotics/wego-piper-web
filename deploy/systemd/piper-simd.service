@@ -15,6 +15,11 @@ Type=simple
 WorkingDirectory=@REPO@
 ExecStart=@PY@ @REPO@/daemons/simd.py
 Environment=PIPER_REDIS_URL=redis://127.0.0.1:6379/0
+# 사람이 올린 메시 자산이 있는 자리 (feature/sim-scene-editor.md 3단계).
+# ⚠ 게이트웨이(컨테이너)는 같은 디렉토리를 `/data/config` 로 본다 — 장면 명세는 dict 로
+#   넘기지만 메시는 파일이라 **양쪽이 각자 자기 루트에서** 같은 자산 id 를 푼다.
+#   이 줄이 없으면 데몬이 `/srv/piper-data/config` 추정으로 떨어진다(piper_sim/assets.py).
+Environment=PIPER_CONFIG_DIR=@CONF@
 # 헤드리스 GPU 렌더 (2단계 카메라). 유닛에는 DISPLAY 가 없다.
 Environment=MUJOCO_GL=egl
 

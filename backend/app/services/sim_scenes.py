@@ -91,7 +91,11 @@ def listing() -> list[dict]:
         row = {"id": sid, "applied": sid == cur, "updated_at": p.stat().st_mtime}
         try:
             spec = scene_spec.load(p)
-            row |= {"name": spec["name"], "count": len(spec["objects"]), "error": None}
+            # 장면 파일은 기계 사이를 오가는데 **메시는 따라오지 않는다**(§4). 적용을
+            # 눌러 보고서야 아는 대신 목록에서 미리 말한다.
+            from app.services import sim_assets
+            row |= {"name": spec["name"], "count": len(spec["objects"]), "error": None,
+                    "missing_assets": sim_assets.missing(spec)}
         except scene_spec.SceneError as exc:
             row |= {"name": sid, "count": 0, "error": str(exc)}
         out.append(row)

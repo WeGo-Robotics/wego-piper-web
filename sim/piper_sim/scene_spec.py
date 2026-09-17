@@ -165,9 +165,21 @@ def _validate_object(raw: dict, seen: set[str]) -> dict:
     elif shape in PRIMITIVES:
         n = PRIMITIVES[shape][1]
         obj["size"] = _vec(raw.get("size"), n, f"{oid}.size", 1e-4, 1.0)
+    elif shape == "mesh":
+        # 크기는 자산의 `unit_scale`(사람이 확인한 단위)이 쥔다 — 여기 `scale` 은 그 위에
+        # 얹는 배율이다. ⚠ 자산 **파일 자체는 명세에 안 실린다**: 몇 MB 를 버스로 못 보낸다.
+        #   id 만 싣고 양쪽이 자기 루트에서 푼다 (piper_sim/assets.py 의 표).
+        asset = raw.get("asset")
+        if not isinstance(asset, str) or not re.fullmatch(r"[0-9a-f]{16}", asset):
+            raise SceneError(f"{oid}: mesh 는 asset(자산 id)이 필요합니다 ({asset!r})")
+        obj["asset"] = asset
+        obj["scale"] = _num(raw.get("scale", 1.0), f"{oid}.scale")
+        if not 1e-3 <= obj["scale"] <= 1e3:
+            raise SceneError(f"{oid}.scale: 0.001 ~ 1000 이어야 합니다 ({obj['scale']})")
     else:
         raise SceneError(f"{oid}: 모르는 shape '{shape}' — 있는 것: "
-                         + ", ".join(sorted(PRIMITIVES) + [f"preset:{p}" for p in sorted(PRESETS)]))
+                         + ", ".join(sorted(PRIMITIVES) + ["mesh"]
+                                     + [f"preset:{p}" for p in sorted(PRESETS)]))
 
     base = MOVABLE_PHYSICS if movable else STATIC_PHYSICS
     obj["friction"] = _vec(raw.get("friction", base["friction"]), 3, f"{oid}.friction", 0.0, 100.0)
@@ -234,6 +246,10 @@ def rest_z(obj: dict) -> float:
     """
     if obj["shape"].startswith("preset:"):
         return 0.0                      # 프리셋은 바닥이 원점이다(_bin_geoms 가 그렇게 짓는다)
+    if obj["shape"] == "mesh":
+        # 메시도 0 이다 — 올릴 때 AABB 아래면 가운데를 원점으로 옮겨 뒀다(assets.add).
+        # 실측: geom pos = origin_offset×scale 로 두면 body 가 테이블 z=0 에 앉는다.
+        return 0.0
     size, shape = obj["size"], obj["shape"]
     if shape == "sphere":
         return size[0]
@@ -277,6 +293,9 @@ def compose(spec: dict, base: Path | str | None = None):
         if obj["movable"]:
             # ⚠ 이름은 `<id>_free` 로 고정이다 — world.reset 이 이 이름으로 qpos 를 찾는다.
             body.add_freejoint(name=f"{obj['id']}_free")
+        if obj["shape"] == "mesh":
+            _add_mesh_geom(s, body, obj)
+            continue
         geoms = _geoms_of(obj)
         for i, g in enumerate(geoms):
             kw = {}
@@ -290,6 +309,35 @@ def compose(spec: dict, base: Path | str | None = None):
                 pos=list(g["pos"]), rgba=obj["rgba"],
                 condim=obj["condim"], friction=obj["friction"], solref=obj["solref"], **kw)
     return s
+
+
+def _add_mesh_geom(s, body, obj: dict) -> None:
+    """메시 물체 하나 — 자산을 읽어 `<mesh>` 를 달고 geom 을 얹는다.
+
+    ⚠ **MuJoCo 는 메시를 자기 무게중심으로 옮겨 놓고** geom 위치로 그걸 되돌린다. 그래서
+    파일의 원점이 그대로 geom 프레임이 된다(실측). 우리는 그 위에 `origin_offset`(AABB
+    아래면 가운데 → 원점)을 얹어, 놓으면 테이블에 앉게 한다 — 실측: body z 가 -0.0002 로
+    안착하고 geom 중심이 (0, 0, 반높이)에 온다.
+
+    ⚠ 충돌은 **볼록껍질**이다. 오목한 물건은 겉만 오목하고 물리는 덩어리다 — 올릴 때 재서
+    (`mesh.concavity`) 화면이 경고한다. 그릇·통은 `preset:bin` 으로 짓는 편이 낫다.
+    """
+    import mujoco
+
+    from piper_sim import assets
+
+    try:
+        m = assets.meta(obj["asset"])
+        path = assets.mesh_path(obj["asset"])
+    except assets.AssetError as exc:
+        raise SceneError(f"{obj['id']}: {exc}")
+    total = float(m.get("unit_scale") or 1.0) * float(obj["scale"])
+    name = f"{obj['id']}_mesh"
+    s.add_mesh(name=name, file=str(path), scale=[total] * 3)
+    off = [v * total for v in (m["raw"]["origin_offset"])]
+    body.add_geom(name=f"{obj['id']}_geom", type=mujoco.mjtGeom.mjGEOM_MESH, meshname=name,
+                  pos=off, rgba=obj["rgba"], condim=obj["condim"], friction=obj["friction"],
+                  solref=obj["solref"], **({"mass": obj["mass"]} if obj["movable"] else {}))
 
 
 def build(spec: dict | None = None, base: Path | str | None = None):

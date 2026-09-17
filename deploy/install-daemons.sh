@@ -43,11 +43,20 @@ if [ ${#DAEMONS[@]} -eq 0 ] && [ ${#OPTIONAL[@]} -eq 0 ]; then
   DAEMONS=(estopd robotd camerad rsd unitd)
 fi
 
+# 사람이 올린 자산·장면이 있는 자리. **게이트웨이가 쓰는 곳과 같아야 한다** —
+# 컨테이너는 그 디렉토리를 `/data/config` 로 보고, 데몬은 호스트 경로로 본다
+# (feature/sim-scene-editor.md 3단계, piper_sim/assets.py 의 표).
+# 배포본은 PIPER_DATA_ROOT(또는 /srv/piper-data), 개발 체크아웃은 게이트웨이 기본값과 같은 자리.
+if [ -n "${PIPER_CONFIG_DIR:-}" ]; then CONF="$PIPER_CONFIG_DIR"
+elif [ -n "${PIPER_DATA_ROOT:-}" ]; then CONF="$PIPER_DATA_ROOT/config"
+elif [ -d /srv/piper-data ]; then CONF=/srv/piper-data/config
+else CONF="$HOME/.config/piper-web"; fi
+
 mkdir -p "$UNIT_DIR"
 for d in "${DAEMONS[@]}" ${OPTIONAL[@]+"${OPTIONAL[@]}"}; do
   src="$REPO/deploy/systemd/piper-$d.service"
   [ -f "$src" ] || { echo "✗ 유닛 파일이 없습니다: $src" >&2; exit 1; }
-  sed "s|@REPO@|$REPO|g; s|@PY@|$PY|g; s|@NPM@|$NPM|g; s|@NODE_BIN@|$NODE_BIN|g" \
+  sed "s|@REPO@|$REPO|g; s|@PY@|$PY|g; s|@NPM@|$NPM|g; s|@NODE_BIN@|$NODE_BIN|g; s|@CONF@|$CONF|g" \
     "$src" > "$UNIT_DIR/piper-$d.service"
   echo "· piper-$d.service → $UNIT_DIR"
 done
