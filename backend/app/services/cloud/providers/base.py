@@ -184,6 +184,20 @@ def hourly_total(raw: dict, disk_gb: float) -> tuple[float, float]:
     return base + storage, storage
 
 
+#: 하드웨어 bf16 이 있는 최소 세대 — **암페어(8.0)** 부터다.
+#:
+#: ⚠ 이게 경고인 이유는 **안 죽기 때문이다.** torch 의
+#: `is_bf16_supported(including_emulation=True)` 가 기본값이라(실측: torch 2.10/2.11 소스
+#: 에서 확인), cc 8.0 미만에서도 bf16 텐서를 만들 수 있으면 True 를 돌려준다. 그래서
+#: 학습은 멀쩡히 시작하고 **조용히 느려진다** — 죽었으면 사람이 바로 알았을 텐데.
+#:
+#: 해당 기종: V100(7.0) · RTX 20xx·T4(7.5) · GTX 16xx(7.5) · 파스칼(6.x) · 맥스웰(5.x).
+#: 전부 `CC_MIN=500` 을 통과하므로 지금은 **아무 표시 없이 팔리고 있다.**
+#:
+#: ⚠ 그 세대에서 맞는 선택은 fp16 이다. 튜링은 fp16 텐서코어는 있고 bf16 만 없다.
+BF16_MIN_CC = 800.0
+
+
 def warnings_for(*, cpu_cores: float, cuda_max_good: float,
                  disk_space_gb: float, disk_gb: float,
                  compute_cap: float | None = None) -> tuple[str, ...]:
@@ -202,6 +216,13 @@ def warnings_for(*, cpu_cores: float, cuda_max_good: float,
         out.append("우리 이미지(cu126)에 이 GPU 커널이 없습니다 — cu128 로 다시 구워야 합니다")
     elif support == "too_old":
         out.append("너무 구형이라 이미지에 이 GPU 커널이 없습니다")
+    # ⚠ **학습 기본 AMP 가 bf16 이다**(`routers/training.py`, `RentRequest.amp`).
+    #   `too_old`/`too_new` 와 달리 이건 **돌긴 도는데 느린** 경우라, 안 적으면 아무도
+    #   모른 채 몇 시간을 더 낸다. 판정은 `support` 와 겹치지 않는다 — cc 500~790 은
+    #   이미지로는 멀쩡히 돌아간다.
+    if compute_cap is not None and CC_MIN <= compute_cap < BF16_MIN_CC:
+        out.append("bf16 하드웨어가 없습니다 (cc 8.0 미만) — 죽지 않고 "
+                   "에뮬레이션으로 느려집니다. 이 세대는 fp16 이 맞습니다")
     if cpu_cores < MIN_CPU_CORES:
         out.append(f"CPU {cpu_cores:g}코어 — 데이터로더가 굶습니다")
     if cuda_max_good < MIN_CUDA:

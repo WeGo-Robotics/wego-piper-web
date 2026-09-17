@@ -496,3 +496,75 @@ def test_gpus_endpoint_degrades_to_an_empty_list_instead_of_failing(client, monk
     r = client.get("/api/cloud/gpus")
     assert r.status_code == 200 and r.json()["gpus"] == []
     assert r.json()["detail"], "왜 비었는지 말해야 한다"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# bf16 — **죽지 않아서** 위험한 경우 (2026-09-17)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_pre_ampere_cards_are_flagged_for_bf16():
+    """⚠ 학습 기본 AMP 가 bf16 인데(`routers/training.py`·`RentRequest.amp`) 하드웨어
+    bf16 은 암페어(cc 8.0)부터다.
+
+    ⚠ **이게 경고인 이유는 안 죽기 때문이다.** torch 의
+    `is_bf16_supported(including_emulation=True)` 가 기본값이라(실측: torch 소스에서
+    `major >= 8` 이 아니면 에뮬레이션 경로로 떨어져 True 를 돌려준다) 학습은 멀쩡히
+    시작하고 **조용히 느려진다.** 죽었으면 사람이 바로 알았을 텐데, 그냥 몇 시간을
+    더 낸다.
+    """
+    def warn(cc):
+        return warnings_for(cpu_cores=8, cuda_max_good=12.6, disk_space_gb=100,
+                            disk_gb=40, compute_cap=cc)
+
+    for cc in (700, 750, 610):        # V100 · 튜링(RTX 20xx·T4·GTX 16xx) · 파스칼
+        assert any("bf16" in w for w in warn(cc)), f"cc {cc} 에 bf16 경고가 없다"
+    for cc in (800, 860, 890, 900):   # 암페어 이상 — 하드웨어 bf16 이 있다
+        assert not any("bf16" in w for w in warn(cc)), f"cc {cc} 에 쓸데없는 bf16 경고"
+
+
+def test_the_bf16_warning_says_what_to_do_instead():
+    """⚠ 튜링은 fp16 텐서코어는 있고 bf16 만 없다 — "느립니다" 로 끝내면 사람이
+    할 수 있는 것이 없다."""
+    (w,) = [w for w in warnings_for(cpu_cores=8, cuda_max_good=12.6, disk_space_gb=100,
+                                    disk_gb=40, compute_cap=750) if "bf16" in w]
+    assert "fp16" in w and ("느려" in w or "느립" in w)
+
+
+def test_an_unknown_generation_is_not_accused_of_anything():
+    """⚠ 모르는 것을 경고로 만들면 표가 시끄러워지고, 시끄러운 표는 아무도 안 읽는다."""
+    assert not any("bf16" in w for w in warnings_for(
+        cpu_cores=8, cuda_max_good=12.6, disk_space_gb=100, disk_gb=40, compute_cap=None))
+
+
+def test_bf16_and_generation_warnings_do_not_overlap():
+    """⚠ 판정이 겹치면 한 행에 같은 말이 두 줄로 뜬다.
+
+    cc 500~790 은 **이미지로는 멀쩡히 도는데** bf16 만 없는 구간이다 — 세대 경고와는
+    다른 이야기다. 반대로 커널이 아예 없는 세대(`too_new`)는 bf16 을 따질 일이 없다.
+    """
+    def warn(cc):
+        return warnings_for(cpu_cores=8, cuda_max_good=12.6, disk_space_gb=100,
+                            disk_gb=40, compute_cap=cc)
+
+    turing = warn(750)
+    assert any("bf16" in w for w in turing)
+    assert not any("커널" in w for w in turing), "돌아가는 기계에 세대 경고를 붙였다"
+
+    blackwell = warn(1200)                   # too_new — 이미지에 커널이 없다
+    assert any("커널" in w for w in blackwell)
+    assert not any("bf16" in w for w in blackwell), "못 도는 기계에 bf16 까지 얹었다"
+
+
+def test_an_unknown_compute_cap_is_left_alone_even_though_it_may_be_old():
+    """⚠ 실측의 `140`·`243` 은 실물이 파스칼이라 bf16 이 **없다.** 그런데도 경고를 안
+    붙인다 — 이 파일의 규칙이 "알 수 없는 값을 단정하지 않는다" 이고(`gpu_support`),
+    한쪽만 예외로 두면 두 판정이 서로 다른 말을 하게 된다. 세대를 모른다는 사실 자체는
+    `support='unknown'` 으로 이미 화면에 간다.
+    """
+    from app.services.cloud.providers.base import gpu_support
+
+    for cc in (140, 243):
+        assert gpu_support(cc) == "unknown"
+        assert not any("bf16" in w for w in warnings_for(
+            cpu_cores=8, cuda_max_good=12.6, disk_space_gb=100, disk_gb=40,
+            compute_cap=cc))
