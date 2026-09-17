@@ -185,6 +185,20 @@ async def lifespan(app: FastAPI):
     #   안 보는 상황이다(게이트웨이가 죽었다 살아난 직후). 그때 요금은 계속 나간다.
     # ⚠ **자동으로 파기하지 않는다** — 다른 기계의 게이트웨이가 돌리는 학습일 수 있다.
     from app.services.cloud import sweeper
+
+    # ⚠ **재기동했다면 관리 중인 임대는 하나도 없다.** 임대 태스크는 asyncio 태스크라
+    #   프로세스와 함께 죽는다 — 학습과 달리 재부착 경로가 없다. 그런데 레코드의
+    #   `instance_id` 는 Redis 에 남아서, 안 비우면 스캐너가 "관리 중" 으로 읽고
+    #   **조용해진다**. 스캐너가 있어야 할 바로 그 경우에 그렇다.
+    try:
+        _freed = sweeper.release_claims()
+        if _freed:
+            logger.warning(
+                "재기동 전에 빌려 둔 기계가 있습니다 — **지금 아무도 관리하지 않습니다**: "
+                "%s. 클라우드 GPU → 인스턴스에서 확인하고 파기하세요",
+                ", ".join(str(i) for i in _freed))
+    except Exception as e:
+        logger.warning("임대 주장 정리 실패: %s", e)
     orphan_task = asyncio.create_task(sweeper.run_sweeper())
     yield
     orphan_task.cancel()

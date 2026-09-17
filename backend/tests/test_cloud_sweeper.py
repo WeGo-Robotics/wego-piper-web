@@ -373,3 +373,104 @@ def test_the_snapshot_endpoint_does_not_call_vast(monkeypatch):
     d = c.get("/api/cloud/orphans").json()
     assert d["scanned"] is True and d["count"] == 1
     assert d["orphans"][0]["id"] == 3 and "3" in d["orphans"][0]["text"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 크래시 뒤 — **스캐너가 있어야 할 바로 그 경우**
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_a_machine_left_by_a_crash_is_found_after_restart(monkeypatch):
+    """⚠ **실측(2026-09-17)**: 게이트웨이가 임대 도중 죽으면 그 기계는 아무도 관리하지
+    않는데, 레코드의 `instance_id` 가 Redis 에 남아 `known` 이 "관리 중" 으로 읽었다.
+    그래서 고아 스캐너가 **조용했다** — 조용히 과금되는 그 경우에.
+
+    임대 태스크는 asyncio 태스크라 프로세스와 함께 죽는다. 학습처럼 tmux 에 남아
+    재부착되지 않는다 — 그러니 **재기동했다면 관리 중인 임대는 하나도 없다.**
+    """
+    from app.services.training.jobs import JobRecord, job_registry
+
+    job_registry.put(JobRecord(job_id="crashed", instance_id="4242", provider="vast"))
+    assert 4242 in sweeper.known_instances(), "전제가 틀렸다"
+    assert sweeper.scan(_Fake([_inst(4242, "piper-crashed")])) == [], "전제가 틀렸다"
+
+    freed = sweeper.release_claims()
+
+    assert 4242 in freed
+    assert 4242 not in sweeper.known_instances()
+    assert [o["id"] for o in sweeper.scan(_Fake([_inst(4242, "piper-crashed")]))] == [4242]
+    job_registry.delete("crashed")
+
+
+def test_releasing_claims_does_not_destroy_anything():
+    """⚠ 비우는 것은 "아는 척을 그만두는 것" 일 뿐이다. 끄는 것은 사람이 한다 —
+    비웠다고 남의 것일 가능성이 사라지지는 않는다(§10 결정 5)."""
+    from app.services.training.jobs import JobRecord, job_registry
+
+    job_registry.put(JobRecord(job_id="crashed2", instance_id="7", provider="vast"))
+    sweeper.release_claims()
+    # _Fake.destroy 는 불리면 터진다
+    sweeper.scan(_Fake([_inst(7, "piper-crashed2")]))
+    job_registry.delete("crashed2")
+
+
+def test_a_local_training_record_is_left_alone():
+    """로컬 학습 레코드는 `instance_id` 가 비어 있다 — 건드릴 것이 없다."""
+    from app.services.training.jobs import JobRecord, job_registry
+
+    job_registry.put(JobRecord(job_id="localjob", instance_id="", total_steps=500))
+    assert sweeper.release_claims() == []
+    assert job_registry.get("localjob").total_steps == 500, "멀쩡한 레코드를 건드렸다"
+    job_registry.delete("localjob")
+
+
+def test_the_gateway_releases_claims_before_it_starts_scanning():
+    """⚠ 순서가 전부다. 스캔이 먼저 돌면 그 회차는 여전히 "관리 중" 으로 보고 넘어간다."""
+    import inspect
+
+    from app import main
+
+    src = inspect.getsource(main.lifespan)
+    assert src.index("release_claims()") < src.index("run_sweeper()"), \
+        "주장을 비우기 전에 스캐너가 뜬다"
+
+
+def test_the_record_still_says_which_machine_ran_the_job(monkeypatch):
+    """⚠ **실측(2026-09-17)**: 학습이 시작된 뒤 레코드의 `instance_id` 가 빈
+    문자열이었다. `train_manager.start()` 가 옛 로그를 치우려고 레코드를 통째로
+    지우는데(`registry.delete`), 임대 번호가 같은 레코드에 실려 있어서다.
+
+    같은 프로세스에서는 `known_instances()` 가 메모리의 `rent.current()` 로 보완하므로
+    화면이 당장 거짓말을 하지는 않는다. 그래도 남겨야 하는 이유는, 레코드가 **"이
+    학습이 어느 기계에서 돌았나"** 를 남기는 유일한 자리이기 때문이다 — 비어 있으면
+    끝난 뒤에 아무도 답할 수 없다.
+    """
+    import asyncio
+
+    from app.services.cloud import rent
+    from app.services.training import train_manager
+    from app.services.training.jobs import job_registry
+
+    job = CloudJob(job_id=train_manager.job_id, label="piper-x", budget=Budget())
+    job.note_started(31337, 0.5)
+    rent._remember(job)
+    assert job_registry.get(train_manager.job_id).instance_id == "31337"
+
+    # 학습 시작이 레코드를 지우는 그 동작을 그대로 흉내 낸다
+    job_registry.delete(train_manager.job_id)
+    assert (job_registry.get(train_manager.job_id) or
+            type("R", (), {"instance_id": ""})).instance_id == ""
+
+    rent._remember(job)          # ← 다시 심는 자리
+    assert job_registry.get(train_manager.job_id).instance_id == "31337"
+    job_registry.delete(train_manager.job_id)
+
+
+def test_the_reclaim_happens_after_the_start_not_before():
+    """⚠ 순서가 전부다. `start()` 앞에서 심으면 그 `start()` 가 다시 지운다."""
+    import inspect
+
+    from app.services.cloud import rent
+
+    src = inspect.getsource(rent.start)
+    assert src.index("train_manager.start(") < src.index("_remember(_job)"), \
+        "재기재가 학습 시작보다 앞이다 — 그러면 지워진다"

@@ -87,6 +87,17 @@ async def start(*, provider, offer_id: int, template_hash: str, disk_gb: float,
         await train_manager.start(args, total_steps=total_steps,
                                   output_dir=output_dir, env_extra=env or {},
                                   max_hours=cap_h)
+        # ⚠ **여기서 임대 번호를 다시 심는다.** `train_manager.start()` 는 옛 로그를
+        #   치우려고 레코드를 통째로 지우는데(`registry.delete`), 임대 번호가 같은
+        #   레코드에 실려 있어서 **함께 사라진다** — 실측(2026-09-17)으로 학습이
+        #   시작된 뒤 `instance_id` 가 빈 문자열이었다.
+        #
+        # ⚠ 지워진 채로 둬도 화면이 당장 거짓말을 하지는 않는다. 같은 프로세스에서는
+        #   `known_instances()` 가 메모리의 `rent.current()` 로 보완하기 때문이다.
+        #   그래도 다시 심는 이유는 레코드가 **"이 학습이 어느 기계에서 돌았나"** 를
+        #   남기는 유일한 자리라서다. 비어 있으면 끝난 뒤에 아무도 답할 수 없다.
+        if _job is not None:
+            _remember(_job)
 
     async def _retrieve(target) -> None:
         """**기계가 살아 있는 동안** 해야 할 회수 (§5·§12-4).

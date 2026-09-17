@@ -97,6 +97,46 @@ def known_instances() -> set[int]:
     return out
 
 
+def release_claims() -> list[int]:
+    """기동 시 **임대 주장을 비운다.** 비운 인스턴스 번호를 돌려준다.
+
+    ## ⚠ 재기동했다면 관리 중인 임대는 **하나도 없다**
+
+    임대 태스크(`rent._task`)는 asyncio 태스크라 **프로세스와 함께 죽는다.** 학습은
+    tmux 에 남아 재부착되지만(`restore_running_process`) 임대에는 그런 경로가 없다 —
+    게이트웨이가 죽는 순간 그 기계는 아무도 관리하지 않는다.
+
+    ## ⚠ 그런데 번호는 Redis 에 남는다
+
+    그대로 두면 `known_instances()` 가 "관리 중" 으로 읽고, 고아 스캐너가 **조용해진다** —
+    스캐너가 있어야 할 바로 그 경우에. 실측(2026-09-17)으로 크래시를 재현해 확인했다:
+
+    ```
+    임대 태스크 살아있나: False   ← 아무도 관리 안 함
+    스캐너가 아는 인스턴스: {99999} ← 그런데 "관리 중" 으로 봄
+    고아로 잡히나: []             ← 경고 안 뜸 → 조용히 과금
+    ```
+
+    ## ⚠ 파기는 여기서 하지 않는다
+
+    비우는 것은 "아는 척을 그만두는 것" 일 뿐이다. 끄는 것은 사람이 인스턴스 탭에서
+    한다(§10 결정 5) — 비웠다고 남의 것일 가능성이 사라지지는 않는다.
+    """
+    freed: list[int] = []
+    try:
+        from app.services.training.jobs import job_registry
+
+        for r in job_registry.list():
+            if not str(r.instance_id or "").isdigit():
+                continue
+            freed.append(int(r.instance_id))
+            r.instance_id = ""
+            job_registry.put(r)
+    except Exception as exc:                                        # noqa: BLE001
+        logger.warning("임대 주장을 비우지 못했습니다: %s", exc)
+    return freed
+
+
 def _describe(inst) -> dict:
     """사람이 읽을 한 줄까지 **백엔드가 만든다.**
 
