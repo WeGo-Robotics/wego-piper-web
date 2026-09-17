@@ -216,7 +216,9 @@ def test_environment_reset_ramps_the_arm_home_and_only_teleports_the_cube(monkey
     # 조종 중이 아닐 때: 큐브 텔레포트 + 데몬 go_to 램프
     svc.web_leader.integ = None; svc.web_leader._writer = None; svc.web_leader.follower = None
     r = svc.reset_sim_world("sim_follower1")
-    assert r["homing"] is True and ("reset_cube", ()) in calls
+    # ⚠ **움직이는 물체 전부**다 — 이름을 박은 `reset_cube` 는 사람이 만든 가상환경에서
+    #   아무것도 안 옮겼다(실기 2026-09-17: "R키가 안 먹혀").
+    assert r["homing"] is True and ("reset_objects", ()) in calls
     assert any(c[0] == "go_to" and c[1][0] == "sim_follower1" and c[1][1] == svc.PARKING for c in calls), "리더 없으면 데몬이 램프"
     with pytest.raises(RuntimeError, match="실기"):
         svc.reset_sim_world("can0")
@@ -379,10 +381,11 @@ def test_t_key_resets_only_the_arm_not_the_cube(monkeypatch):
     monkeypatch.setattr(sim, "call", lambda m, *a, default=None, **k: seen.append((m, a)) or default)
     svc.web_leader.integ = None; svc.web_leader._writer = None; svc.web_leader.follower = None
     r = svc.reset_sim_world("sim_follower1", arm_only=True)
-    assert r["arm_only"] is True and not any(c[0] == "reset_cube" for c in seen), "T(팔만)인데 큐브를 건드렸다"
+    assert r["arm_only"] is True and not any(c[0] == "reset_objects" for c in seen), \
+        "T(팔만)인데 물체를 건드렸다"
     seen.clear()
     svc.reset_sim_world("sim_follower1", arm_only=False)
-    assert any(c[0] == "reset_cube" for c in seen), "환경 리셋은 큐브를 시작 위치로"
+    assert any(c[0] == "reset_objects" for c in seen), "환경 리셋은 물체를 시작 위치로"
     # 창: T 는 KEY_OF 로 안 가고 팔 리셋, EE 도움말은 QWEASD 회전
     win = (REPO / "frontend" / "src" / "pages" / "TeleopWindowPage.tsx").read_text()
     assert "e.code === 'KeyT'" in win and "resetWorld(true)" in win

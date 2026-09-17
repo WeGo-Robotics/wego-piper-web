@@ -543,7 +543,10 @@ def reset_sim_world(follower: str, arm_only: bool = False) -> dict:
     # ⚠ 팔은 **순간이동하지 않는다** — 리더 자세를 파킹으로 램프해 팔로워가 따라오게 한다
     #   (복귀도 학습, 사용자 요청 2026). 큐브만(환경 리셋) 시작 위치로 텔레포트한다.
     if not arm_only:
-        sim.call("reset_cube", default=None, timeout=15)
+        # ⚠ **움직이는 물체 전부**를 제자리로. 예전엔 `reset_cube` 로 하나만 옮겼는데,
+        #   그건 기본 가상환경에만 맞았다 — 사람이 만든 환경은 물체 이름이 `cube` 가 아니라
+        #   아무것도 안 움직였다(실기 보고 2026-09-17: "R키가 안 먹혀").
+        sim.call("reset_objects", default=None, timeout=15)
     if web_leader.is_running and web_leader.follower == follower:
         web_leader.ramp_home()                       # 리더 램프 → 팔로워 따라옴(기록됨)
     else:

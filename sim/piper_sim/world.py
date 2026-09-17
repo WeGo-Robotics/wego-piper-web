@@ -127,6 +127,29 @@ class World:
             mujoco.mj_forward(self.model, self.data)
         return [float(x), float(y), zz]
 
+    def reset_objects(self, overrides: dict[str, tuple[float, float]] | None = None) -> list[dict]:
+        """움직이는 물체 **전부**를 가상환경이 적은 자리로. 팔은 안 건드린다.
+
+        조종 창의 [환경 리셋](R)이 쓴다 — 거기선 팔을 순간이동시키면 안 되고(리더를 파킹으로
+        램프해 팔로워가 따라오게 한다) 물체만 제자리로 가면 된다.
+        """
+        import mujoco
+        from piper_sim import scene_spec
+
+        overrides = overrides or {}
+        with self._lock:
+            for o in self.spec["objects"]:
+                if not o["movable"] or o["id"] not in self.jm.objects:
+                    continue
+                x, y = overrides.get(o["id"], (o["pos"][0], o["pos"][1]))
+                adr = self.model.jnt_qposadr[mujoco.mj_name2id(
+                    self.model, mujoco.mjtObj.mjOBJ_JOINT, f"{o['id']}_free")]
+                self.data.qpos[adr:adr + 7] = [float(x), float(y), scene_spec.rest_z(o),
+                                               *scene_spec.euler_quat(o["euler_deg"])]
+            self.data.qvel[:] = 0
+            mujoco.mj_forward(self.model, self.data)
+        return self.objects()
+
     def load_scene(self, spec: dict) -> dict:
         """가상환경을 갈아끼운다 — **모델 재컴파일 + MjData 신규**. 공짜가 아니다.
 

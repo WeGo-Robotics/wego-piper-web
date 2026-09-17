@@ -533,3 +533,45 @@ def test_a_top_view_click_maps_to_a_table_position_for_the_cube(model):
     assert w.ray_to_table("없는카메라", 0.5, 0.5, 640 / 480) is None
     src = (REPO / "daemons" / "simd.py").read_text()
     assert '"cube_from_view"' in src and '"object_from_view"' in src
+
+
+def test_the_teleop_keys_still_work_in_an_environment_someone_made():
+    """⚠ 실기 보고(2026-09-17): "R키나 B키가 안 먹혀."
+
+    월드는 물체를 id 로 다루게 일반화했는데 **조종 창 경로만 `cube` 를 박아 두고 있었다.**
+    기본 가상환경에서는 맞지만 편집기로 만든 환경은 물체가 `box1` 이라 R(환경 리셋)도
+    B(블럭 옮기기)도 죽었다. 게다가 `sim.call` 이 예외를 삼켜 화면에는 "simd 가 응답하지
+    않습니다" 라고 떴다 — 사람은 멀쩡한 데몬을 재시작하러 간다.
+
+    이제 이름을 안 준 자리는 **첫 번째 움직이는 물체**다(시연이 쓰는 규칙과 같다).
+    """
+    from piper_sim.hub import SimHub
+
+    h = SimHub()
+    try:
+        h.load_scene({"name": "내 환경", "objects": [
+            {"id": "box1", "shape": "box", "size": [.02, .02, .02], "pos": [0.33, 0.05, 0.02]},
+            {"id": "bin1", "shape": "preset:bin", "movable": False, "pos": [0.35, -0.25, 0]}]})
+        hit = h.cube_from_view("sim:top", 0.5, 0.5)      # B 키
+        assert hit["ok"] and hit["object"] == "box1", f"B 키가 이름을 박고 있다: {hit}"
+        h.place_object("box1", 0.40, 0.10)
+        back = {o["id"]: o["pos"] for o in h.reset_objects()}   # R 키(물체만)
+        assert back["box1"][:2] == pytest.approx([0.33, 0.05], abs=1e-6), "R 키가 물체를 안 돌려놨다"
+        assert h.default_object() == "box1"
+    finally:
+        h.release_all()
+        if h.world:
+            h.world.stop()
+
+    hub_src = (REPO / "sim" / "piper_sim" / "hub.py").read_text()
+    compat = hub_src.split("# ── 옛 이름", 1)[1]
+    # 응답의 `cube` **키**는 옛 부르는 쪽 자리라 둔다 — 막아야 할 것은 물체를 그 **이름으로
+    # 찾는** 일이다. 둘을 문법으로는 못 가르므로 "기본 물체로 푸는가"를 함께 본다.
+    assert '("cube"' not in compat and "'cube'" not in compat, "옛 이름 껍질이 물체를 이름으로 찾는다"
+    assert compat.count("default_object()") >= 3, "첫 움직이는 물체로 안 푼다"
+    wl = (REPO / "backend" / "app" / "services" / "web_leader.py").read_text()
+    assert '"reset_objects"' in wl and '"reset_cube"' not in wl, \
+        "환경 리셋이 물체 하나만 옮긴다"
+    router = (REPO / "backend" / "app" / "routers" / "web_leader.py").read_text()
+    assert "sim.call_strict" in router, \
+        "예외를 삼켜 '물체가 없습니다' 가 'simd 가 응답하지 않습니다' 로 바뀐다"

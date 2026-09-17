@@ -212,6 +212,22 @@ class SimHub:
     def objects(self) -> list[dict]:
         return self._world().objects()
 
+    def default_object(self) -> str:
+        """이름을 안 주면 **첫 번째 움직이는 물체**. 시연이 쓰는 규칙과 같다.
+
+        ⚠ 조종 창의 R·B 는 `cube` 를 박아 두고 있었다. 기본 가상환경에서는 맞지만 사람이
+        만든 환경은 물체 이름이 `box1` 이라 **둘 다 죽었다**(실기 보고 2026-09-17).
+        이름을 박으면 자기 환경에서 안 되는 것은 이 저장소가 여러 번 겪은 실수다.
+        """
+        for o in self._world().objects():
+            if o.get("movable"):
+                return o["id"]
+        raise SimError("움직이는 물체가 없습니다 — 가상환경에 하나 두세요")
+
+    def reset_objects(self, **_) -> list[dict]:
+        """움직이는 물체 전부를 제자리로 (팔은 그대로). 조종 창의 [환경 리셋]."""
+        return self._world().reset_objects()
+
     def place_object(self, oid: str, x: float, y: float) -> list[float]:
         return self._world().place(str(oid), float(x), float(y))
 
@@ -227,19 +243,23 @@ class SimHub:
         return {"point": hit, "ok": hit is not None}
 
     def object_from_view(self, cam: str = "top", u: float = 0.5, v: float = 0.5,
-                         aspect: float = 4.0 / 3.0, oid: str = "cube") -> dict:
-        """클릭한 카메라 픽셀로 물체를 옮긴다. cam 은 `sim:top`/`top` 둘 다 받는다."""
+                         aspect: float = 4.0 / 3.0, oid: str = "") -> dict:
+        """클릭한 카메라 픽셀로 물체를 옮긴다. cam 은 `sim:top`/`top` 둘 다 받는다.
+
+        `oid` 를 안 주면 첫 번째 움직이는 물체다(`default_object`) — 사람이 만든 환경에서도 돈다.
+        """
         name = str(cam).split(":", 1)[-1]
-        hit = self._world().object_from_ray(name, float(u), float(v), float(aspect), str(oid))
-        return {"object": oid, "cube": hit, "ok": hit is not None}
+        target = str(oid) or self.default_object()
+        hit = self._world().object_from_ray(name, float(u), float(v), float(aspect), target)
+        return {"object": target, "cube": hit, "ok": hit is not None}
 
     # ── 옛 이름 (게이트웨이가 아직 이 어휘를 쓴다) ──────────────────────────
 
     def cube_pos(self) -> list[float] | None:
-        return self._world().object_pos("cube")
+        return self._world().object_pos(self.default_object())
 
     def reset_cube(self, x: float = 0.35, y: float = 0.0) -> list[float]:
-        return self._world().place("cube", float(x), float(y))
+        return self._world().place(self.default_object(), float(x), float(y))
 
     #: 씬의 큐브 시작 위치·파킹 자세 (build_sim_scene.py 와 같은 값)
     CUBE_START = (0.35, 0.0)
@@ -248,7 +268,8 @@ class SimHub:
 
     def cube_from_view(self, cam: str = "top", u: float = 0.5, v: float = 0.5,
                        aspect: float = 4.0 / 3.0) -> dict:
-        return self.object_from_view(cam, u, v, aspect, "cube")
+        # ⚠ 이름을 안 넘긴다 — 넘기면 사람이 만든 환경(물체가 `box1`)에서 죽는다.
+        return self.object_from_view(cam, u, v, aspect, "")
 
     def reset(self, arm_only: bool = False, cube_x: float | None = None, cube_y: float | None = None) -> dict:
         """환경 리셋 — 팔 파킹·속도 0. arm_only 면 큐브·조명은 그대로(T: 로봇 위치만
@@ -256,8 +277,10 @@ class SimHub:
         w = self._world()
         # 시작 자리는 **가상환경 JSON** 이 쥔다 — 움직이는 물체 전부가 제자리로 간다.
         # `cube_x/y` 는 그 중 큐브만 다른 자리에 놓는 옛 인자다(시연 무작위화).
-        over = {"cube": (float(cube_x), float(cube_y))} if not arm_only and cube_x is not None \
-            and cube_y is not None else None
+        # 덮어쓰기 키도 **이름이 아니라** 첫 움직이는 물체다 — 사람이 만든 환경에서도 먹게
+        over = ({self.default_object(): (float(cube_x), float(cube_y))}
+                if not arm_only and cube_x is not None and cube_y is not None else None)
         w.reset(self.PARKING, objects=not arm_only, overrides=over)
-        return {"cube": w.object_pos("cube"), "objects": w.objects(),
+        # `cube` 키는 옛 부르는 쪽을 위한 자리다 — 값은 **첫 움직이는 물체**다(이름을 안 박는다)
+        return {"cube": self.cube_pos(), "objects": w.objects(),
                 "parking": self.PARKING, "arm_only": arm_only}

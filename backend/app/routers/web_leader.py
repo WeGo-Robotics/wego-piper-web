@@ -88,7 +88,14 @@ async def move_cube(body: CubeRequest):
 
     if not body.cam.startswith("sim:"):
         raise HTTPException(400, "시뮬 카메라에서만 블럭을 옮길 수 있습니다")
-    r = await asyncio.to_thread(sim.call, "cube_from_view", body.cam, body.u, body.v, body.aspect)
+    # ⚠ `call` 은 무엇이 잘못돼도 default 를 돌려준다 — 그러면 "물체가 없습니다" 가
+    #   "simd 가 응답하지 않습니다" 로 **바뀌어** 나가고, 사람은 데몬을 재시작하러 간다.
+    #   실제로 그랬다(2026-09-17: 사람이 만든 환경에서 B 키가 죽었는데 이유가 안 보였다).
+    try:
+        r = await asyncio.to_thread(sim.call_strict, "cube_from_view",
+                                    body.cam, body.u, body.v, body.aspect)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
     if not isinstance(r, dict):
         raise HTTPException(400, "simd 가 응답하지 않습니다")
     return r
