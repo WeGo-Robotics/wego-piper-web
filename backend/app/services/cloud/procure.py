@@ -46,6 +46,25 @@ logger = logging.getLogger(__name__)
 #: 코드가 쓰는 기준이 다르면, 둘 중 하나는 반드시 틀린 기대를 만든다. 12분이었을 때
 #: 느린 호스트에 4분을 더 태웠다($0.013 vs $0.008).
 SSH_WAIT_S = 480.0
+#: 학습 스택이 깔릴 때까지 기다리는 상한. **SSH 가 열린 뒤부터 잰다.**
+#:
+#: ⚠ SSH 가 되는 것과 학습을 걸 수 있는 것은 다르다. `slim` 이미지는 lerobot 을 담고
+#: 있지 않고 **첫 부팅 때** `install-stack.sh` 로 깐다(`bootstrap.sh`). 그래서 접속은
+#: 되는데 `python -m lerobot.scripts.lerobot_train` 은 아직 없는 구간이 있다.
+#:
+#: ⚠ **실측(2026-09-17)**: 그 구간에 학습을 걸어 3초 만에 죽었다 —
+#: `No module named 'lerobot'`. 기계를 빌리고 이미지를 받고 접속까지 한 뒤였다
+#: ($0.0145). `bootstrap.sh` 머리말은 "SSHRunner 는 `.ready` 를 보고 시작한다" 고
+#: 적고 있었지만, **그걸 보는 코드가 어디에도 없었다.**
+#:
+#: full 이미지는 `.ready` 가 구울 때 박히므로 여기서 한 번에 통과한다.
+STACK_WAIT_S = 900.0
+
+#: 스택이 깔렸다는 표시. `bootstrap.sh` 가 마지막에 쓴다.
+READY_FILE = "/opt/piper/.ready"
+#: 설치가 실패했을 때 사유가 있는 곳 — 사람에게 이 경로를 그대로 준다.
+BOOTSTRAP_LOG = "/opt/piper/bootstrap.log"
+
 #: 예산·시간 상한을 몇 초마다 보나. 요금이 시간당이라 30초면 최악 오차가 `rate/120`
 #: 달러다($0.1/h 기준 $0.0008) — 더 자주 볼 이유가 없다.
 TICK_S = 30.0
@@ -59,9 +78,22 @@ class ProcureError(RuntimeError):
     """조달 실패. ⚠ 이걸 던져도 `finally` 가 파기를 지난다."""
 
 
+def _check(guard) -> None:
+    """예산·시간 상한을 넘었으면 **기다림을 끊는다.**
+
+    ⚠ 대기 구간에도 요금은 똑같이 나간다. 예전에는 상한을 학습 중에만 봤는데, 그때는
+    학습 전 대기가 최대 8분이라 눈에 안 띄었다. 스택 설치 대기가 붙으면서 학습 한 줄도
+    안 돌고 **23분**까지 갈 수 있게 됐다 — 그 사이 예산을 넘기면 "$0.20 상한" 은 상한이
+    아니라 장식이다.
+    """
+    why = guard() if guard else None
+    if why:
+        raise ProcureError(why)
+
+
 async def wait_for_ssh(provider, instance_id: int, target_for,
                        *, timeout: float = SSH_WAIT_S,
-                       poll: float = 10.0) -> SSHTarget:
+                       poll: float = 10.0, guard=None) -> SSHTarget:
     """`running` 이 되고 **실제로 붙을 때까지** 기다린다.
 
     ⚠ 상태만 보면 안 된다(모듈 설명 참고). `available()` 은 접속·tmux·작업 디렉토리를
@@ -70,6 +102,7 @@ async def wait_for_ssh(provider, instance_id: int, target_for,
     end = time.monotonic() + timeout
     last = "아직 상태를 못 받았습니다"
     while time.monotonic() < end:
+        _check(guard)
         inst = await asyncio.to_thread(provider.status, instance_id)
         if inst is None:
             raise ProcureError(f"인스턴스 {instance_id} 가 사라졌습니다")
@@ -85,6 +118,56 @@ async def wait_for_ssh(provider, instance_id: int, target_for,
             last = f"{inst.status}: {inst.message}" if inst.message else inst.status
         await asyncio.sleep(poll)
     raise ProcureError(f"{timeout / 60:.0f}분 안에 접속하지 못했습니다 — {last}")
+
+
+def stack_ready(target, run=None) -> tuple[bool, str]:
+    """학습 스택이 깔렸나. **`.ready` 가 그 표시다**(`deploy/train/bootstrap.sh`).
+
+    ⚠ 이 검사를 `runners.ssh.available()` 에 넣지 않는다. 그건 사내 박스
+    (`PIPER_TRAIN_SSH_HOST`)에도 쓰이는데 거기엔 `/opt/piper` 가 없다 — 넣으면 임대와
+    상관없는 원격 학습이 통째로 막힌다. 이건 **임대 인스턴스의 조건**이다.
+    """
+    if run is None:
+        from app.services.training.runners.ssh import _run as run
+
+    # ⚠ 판정은 **종료 코드**로 한다. `.ready` 의 내용을 문자열로 뒤지면 `bootstrap.sh`
+    #   의 문구에 묶인다 — 거기 한 글자만 바뀌어도 여기가 조용히 틀린다.
+    # ⚠ 한 번의 왕복으로 "됐나" 와 "왜 안 됐나" 를 같이 가져온다. 안 됐을 때 다시
+    #   붙어서 로그를 읽으면, 그 왕복 동안에도 요금이 나간다.
+    r = run(target, f'if [ -f {READY_FILE} ]; then cat {READY_FILE}; '
+                    f'else tail -5 {BOOTSTRAP_LOG} 2>/dev/null; exit 3; fi')
+    # ⚠ **stdout 을 먼저 본다.** 둘을 이어 붙였더니 화면에 뜬 것이
+    #   `bash: warning: setlocale: LC_ALL: cannot change locale` 이었다 — 설치 로그는
+    #   stdout 이고 저 잡음은 stderr 인데, 이어 붙이면 잡음이 **마지막 줄**이 된다.
+    #   사람이 보는 한 줄이 진행 상황이 아니라 로케일 경고면 아무 소용이 없다.
+    detail = (r.stdout or "").strip() or (r.stderr or "").strip()
+    return r.returncode == 0, detail or "아직 설치 로그가 없습니다"
+
+
+async def wait_for_stack(target, *, timeout: float = STACK_WAIT_S,
+                         poll: float = 15.0, run=None, guard=None) -> str:
+    """스택이 깔릴 때까지 기다린다. **접속되는 것과 학습할 수 있는 것은 다르다.**
+
+    ⚠ 여기서 기다리는 시간은 낭비가 아니다 — slim 은 이 구간에 torch 를 받는다. 반면
+    이걸 **안** 기다리면 빌린 값을 다 치르고 3초 만에 죽는다(실측 $0.0145).
+    """
+    end = time.monotonic() + timeout
+    last = "아직 확인 못 했습니다"
+    while time.monotonic() < end:
+        _check(guard)
+        try:
+            ok, detail = await asyncio.to_thread(stack_ready, target, run)
+        except Exception as exc:                                    # noqa: BLE001
+            last = str(exc)[:200]
+        else:
+            if ok:
+                return detail
+            last = detail
+            logger.info("학습 스택 설치 중: %s", detail.splitlines()[-1][:120] if detail else "")
+        await asyncio.sleep(poll)
+    raise ProcureError(
+        f"{timeout / 60:.0f}분 안에 학습 스택이 준비되지 않았습니다 — "
+        f"인스턴스에서 {BOOTSTRAP_LOG} 를 보세요. 마지막 줄: {last[:200]}")
 
 
 async def run_until_done(job: CloudJob, is_running, stop, *,
@@ -123,6 +206,7 @@ async def procure_and_train(
     *, provider, job_id: str, offer_id: int, template_hash: str, disk_gb: float,
     budget: Budget, start_training, is_running, stop, target_for,
     on_phase=None, tick: float = TICK_S, ssh_timeout: float = SSH_WAIT_S,
+    stack_timeout: float = STACK_WAIT_S, stack_poll: float = 15.0,
     rescue_if_needed=None,
 ) -> CloudJob:
     """한 바퀴. **`finally` 가 이 함수의 요점이다.**
@@ -147,8 +231,16 @@ async def procure_and_train(
         job.note_started(inst.id, inst.rate_usd_h)
         phase(Phase.SSH_WAIT)
 
+        # ⚠ 대기 구간에도 상한을 본다. 안 보면 학습 한 줄 못 돌고 예산을 넘긴 채로
+        #   계속 기다리게 된다 — 상한이 상한이 아니게 된다.
         target = await wait_for_ssh(provider, inst.id, target_for,
-                                    timeout=ssh_timeout)
+                                    timeout=ssh_timeout, guard=job.over_budget)
+        # ⚠ **접속된 것과 학습할 수 있는 것은 다르다.** slim 이미지는 여기서 아직
+        #   torch·lerobot 을 받는 중이다. 안 기다리면 빌린 값을 다 치르고 3초 만에
+        #   `No module named 'lerobot'` 로 죽는다 (실측 2026-09-17, $0.0145).
+        ready = await wait_for_stack(target, timeout=stack_timeout,
+                                     poll=stack_poll, guard=job.over_budget)
+        logger.info("[%s] 학습 스택 준비됨: %s", job_id, ready.splitlines()[-1][:120])
         phase(Phase.TRAINING)
         # 남은 예산·시간 중 **짧은 쪽**을 학습 자체의 상한으로 준다. 게이트웨이가
         # 죽어도 학습은 그 안에 끝난다(§6-1).

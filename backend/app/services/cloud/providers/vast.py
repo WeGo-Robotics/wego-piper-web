@@ -28,7 +28,6 @@ import time
 from collections import Counter
 
 from .base import (
-    NO_TRAIN_VARIANTS,
     GpuModel, Instance, Offer, OfferFilter, SSHTarget, Template,
     gpu_support, hourly_total, warnings_for,
 )
@@ -172,7 +171,6 @@ def parse_template(raw: dict) -> Template:
         disk_gb=float(raw.get("recommended_disk_space") or 0.0),
         description=str(raw.get("desc") or ""),
         variant=variant,
-        can_train=variant not in NO_TRAIN_VARIANTS,
     )
 
 

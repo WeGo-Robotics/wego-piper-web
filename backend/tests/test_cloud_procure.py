@@ -12,6 +12,7 @@ import asyncio
 
 import pytest
 
+from app.services.cloud import procure
 from app.services.cloud.lifecycle import Budget, Phase
 from app.services.cloud.procure import (
     ProcureError, procure_and_train, run_until_done, wait_for_ssh,
@@ -65,6 +66,17 @@ def _no_real_ssh(monkeypatch):
     접속 가능 여부를 다루는 테스트는 이 스텁을 각자 덮어쓴다.
     """
     monkeypatch.setattr("app.services.cloud.procure.available", lambda t: (True, "OK"))
+    # ⚠ 스택 준비 확인도 **원격 명령**이다 — 같은 이유로 막는다. 이걸 빠뜨렸더니
+    #   스위트가 `h` 로 ssh 를 시도하며 통째로 멈췄다.
+    #
+    # ⚠ `stack_ready` 자체가 아니라 그 **아래의 `_run`** 을 막는다. 위를 막으면
+    #   `stack_ready` 를 직접 시험하는 테스트까지 스텁을 보게 되고, 그러면 정작
+    #   판정 로직은 아무도 안 본 채 초록불이 된다.
+    class _Ready:
+        returncode, stdout, stderr = 0, "2026-09-17 full (build)", ""
+
+    monkeypatch.setattr("app.services.training.runners.ssh._run",
+                        lambda target, cmd, **kw: _Ready())
 
 
 async def _run(provider, *, start=None, running=None, stop=None,
@@ -96,7 +108,7 @@ async def _run(provider, *, start=None, running=None, stop=None,
         target_for=_target_for,
         # ⚠ 실제 틱은 30초다. 테스트가 그걸 기다리면 스위트가 멈춘다 — 실제로
         #   한 번 멈췄다. 상한을 **보는 주기**는 동작이 아니라 설정이므로 줄여도 된다.
-        tick=0.01, ssh_timeout=2.0)
+        tick=0.01, ssh_timeout=2.0, stack_timeout=2.0, stack_poll=0.01)
     return job, calls
 
 
@@ -343,3 +355,134 @@ def test_the_ssh_wait_matches_the_runbook_watchpoint():
     from app.services.cloud import procure
 
     assert procure.SSH_WAIT_S == 480.0, "감시① 8분과 어긋난다"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 접속된 것 ≠ 학습할 수 있는 것 — **$0.0145 짜리 교훈** (2026-09-17)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _Rc:
+    def __init__(self, rc, out="", err=""):
+        self.returncode, self.stdout, self.stderr = rc, out, err
+
+
+def test_readiness_is_decided_by_exit_code_not_by_wording():
+    """⚠ `.ready` 의 내용을 문자열로 뒤지면 `bootstrap.sh` 의 문구에 묶인다 — 거기
+    한 글자만 바뀌어도 여기가 **조용히** 틀린다."""
+    ok, detail = procure.stack_ready("t", lambda t, c: _Rc(0, "아무 문구나"))
+    assert ok is True and detail == "아무 문구나"
+    ok, _ = procure.stack_ready("t", lambda t, c: _Rc(3, "== 설치 시작"))
+    assert ok is False
+
+
+def test_the_check_asks_for_the_log_in_the_same_round_trip():
+    """⚠ 안 됐을 때 다시 붙어서 로그를 읽으면, 그 왕복 동안에도 요금이 나간다."""
+    seen = []
+    procure.stack_ready("t", lambda t, cmd: (seen.append(cmd), _Rc(3))[1])
+    assert procure.READY_FILE in seen[0] and procure.BOOTSTRAP_LOG in seen[0]
+    assert len(seen) == 1, "왕복이 두 번이다"
+
+
+def test_training_does_not_start_before_the_stack_is_installed(monkeypatch):
+    """⚠ **실측(2026-09-17)**: slim 이미지는 접속이 된 뒤에도 torch·lerobot 을 받는
+    중이다. 그 구간에 학습을 걸어 3초 만에 `No module named 'lerobot'` 로 죽었다 —
+    기계를 빌리고 이미지를 받고 접속까지 한 뒤였다($0.0145).
+
+    `bootstrap.sh` 머리말은 "SSHRunner 는 `.ready` 를 보고 시작한다" 고 적고 있었는데
+    **그걸 보는 코드가 어디에도 없었다.** 이 테스트가 그 자리다.
+    """
+    order = []
+    tries = {"n": 0}
+
+    def _ready(target, run=None):
+        tries["n"] += 1
+        order.append("check")
+        return (tries["n"] >= 3), "설치 중"
+
+    monkeypatch.setattr(procure, "stack_ready", _ready)
+
+    async def _start(target, cap_h):
+        order.append("train")
+
+    provider = _Provider()
+    asyncio.run(_run(provider, start=_start))
+    assert "train" in order, "학습이 아예 안 걸렸다"
+    assert order.index("train") > 0 and order[0] == "check"
+    assert tries["n"] >= 3, "준비되기 전에 학습을 걸었다"
+
+
+def test_giving_up_on_the_stack_says_where_the_log_is(monkeypatch):
+    """⚠ 설치가 실패했으면 **사유가 있는 자리**를 그대로 알려 준다 — 사람이 찾아
+    헤매는 동안에도 다음 시도의 요금이 나간다."""
+    monkeypatch.setattr(procure, "stack_ready",
+                        lambda t, run=None: (False, "ERROR: no space left on device"))
+    with pytest.raises(procure.ProcureError) as e:
+        asyncio.run(procure.wait_for_stack("t", timeout=0.05, poll=0.01))
+    assert procure.BOOTSTRAP_LOG in str(e.value) and "no space left" in str(e.value)
+
+
+def test_a_blip_while_waiting_does_not_abort_the_whole_rental(monkeypatch):
+    """⚠ 설치 중에 ssh 가 한 번 튕겼다고 빌린 기계를 버리면 안 된다 — 다시 본다."""
+    n = {"i": 0}
+
+    def _flaky(target, run=None):
+        n["i"] += 1
+        if n["i"] == 1:
+            raise RuntimeError("ssh 일시 실패")
+        return True, "됐다"
+
+    monkeypatch.setattr(procure, "stack_ready", _flaky)
+    assert asyncio.run(procure.wait_for_stack("t", timeout=5, poll=0.01)) == "됐다"
+
+
+def test_the_in_house_box_is_not_gated_on_a_rental_only_path():
+    """⚠ 이 검사를 `runners.ssh.available()` 에 넣으면 안 된다. 그건 사내 박스
+    (`PIPER_TRAIN_SSH_HOST`)에도 쓰이는데 거기엔 `/opt/piper` 가 없다 — 넣으면 임대와
+    상관없는 원격 학습이 통째로 막힌다."""
+    import inspect
+
+    from app.services.training.runners import ssh
+
+    assert "/opt/piper" not in inspect.getsource(ssh.available)
+
+
+def test_the_progress_line_is_the_install_log_not_shell_noise():
+    """⚠ **실측**: stdout 과 stderr 를 이어 붙였더니 사람이 본 한 줄이
+    `bash: warning: setlocale: …` 이었다. 설치 로그는 stdout 이고 저건 stderr 인데,
+    이어 붙이면 잡음이 마지막 줄이 된다 — 진행 상황 대신 로케일 경고를 보게 된다."""
+    _, detail = procure.stack_ready(
+        "t", lambda t, c: _Rc(3, "== torch 2.11.0 (cu126)", "bash: warning: setlocale"))
+    assert detail == "== torch 2.11.0 (cu126)"
+    # stdout 이 비면 그때는 stderr 라도 보여 준다 — 빈칸보다 낫다
+    _, only_err = procure.stack_ready("t", lambda t, c: _Rc(255, "", "ssh: connect refused"))
+    assert only_err == "ssh: connect refused"
+
+
+def test_the_budget_stops_the_waiting_too_not_only_the_training(monkeypatch):
+    """⚠ **대기 구간에도 요금은 똑같이 나간다.** 예전에는 상한을 학습 중에만 봤는데,
+    그때는 학습 전 대기가 최대 8분이라 눈에 안 띄었다. 스택 설치 대기(15분)가 붙으면서
+    학습 한 줄도 안 돌고 23분까지 갈 수 있게 됐다 — 그 사이 예산을 넘기면
+    "$0.20 상한" 은 상한이 아니라 장식이다.
+
+    ⚠ 그리고 이 예외로 나가도 `finally` 가 파기를 지난다 — 그게 이 파일의 요점이다.
+    """
+    monkeypatch.setattr(procure, "stack_ready", lambda t, run=None: (False, "설치 중"))
+    provider = _Provider()
+    with pytest.raises(ProcureError, match="예산"):
+        asyncio.run(procure.wait_for_stack(
+            "t", timeout=5, poll=0.01,
+            guard=lambda: "예산 $0.2 를 넘겼습니다 (약 $0.21)"))
+
+    # 대기에서 터져도 기계는 파기된다
+    async def _go():
+        return await procure_and_train(
+            provider=provider, job_id="j", offer_id=1, template_hash="h", disk_gb=40,
+            budget=Budget(usd=10, max_hours=6),
+            start_training=lambda t, c: asyncio.sleep(0),
+            is_running=lambda: False, stop=lambda: asyncio.sleep(0),
+            target_for=_target_for, tick=0.01, ssh_timeout=1.0,
+            stack_timeout=0.05, stack_poll=0.01)
+
+    with pytest.raises(ProcureError):
+        asyncio.run(_go())
+    assert provider.destroyed, "대기에서 실패했는데 기계가 남았다"

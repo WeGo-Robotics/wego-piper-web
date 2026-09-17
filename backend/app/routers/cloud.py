@@ -186,24 +186,6 @@ async def cloud_gpus(
     return {"gpus": [asdict(g) for g in rows], "disk_gb": disk_gb, "detail": None}
 
 
-async def _reject_untrainable(template_hash: str) -> None:
-    """학습을 걸 수 없는 템플릿이면 **빌리기 전에** 거절한다.
-
-    ⚠ 조회가 실패하면 **통과시킨다.** Vast 가 안 닿는다고 빌리기를 막으면, 정작
-    쓸 수 있는 템플릿까지 못 쓰게 된다 — 막는 것은 "안 되는 것을 확인했을 때" 뿐이다.
-    """
-    try:
-        known = await asyncio.to_thread(_provider().templates)
-    except Exception as exc:                                        # noqa: BLE001
-        logger.warning("템플릿 확인 실패(빌리기는 계속): %s", exc)
-        return
-    for t in known:
-        if t.hash_id == template_hash and not t.can_train:
-            raise HTTPException(
-                400, f"'{t.name}' 로는 학습을 걸 수 없습니다 — 이 이미지에는 lerobot 이 "
-                     f"없습니다. 학습용(full) 템플릿을 고르세요.")
-
-
 class RentRequest(BaseModel):
     """[빌리기] 한 번. **상한이 요청의 일부다** — 기본값으로 빠져나갈 수 없게."""
 
@@ -247,12 +229,6 @@ async def rent_and_train(body: RentRequest):
         raise HTTPException(
             400, "가중치를 올릴 저장소(policy_repo_id)가 필요합니다 — 없으면 학습이 "
                  "끝나도 결과를 가져올 수 없습니다.")
-    # ⚠ **학습이 안 되는 템플릿을 여기서 막는다.** 실측(2026-09-17): slim 이미지에는
-    #   lerobot 이 아예 없어서, 기계를 빌리고 14GB 를 받은 **뒤에** 3초 만에
-    #   `ModuleNotFoundError` 로 죽었다($0.0145). 돈이 나가기 전에 아는 것과 나간 뒤에
-    #   아는 것의 차이다.
-    # ⚠ 모르는 변종은 막지 않는다 — 사용자가 만든 템플릿까지 못 쓰게 된다.
-    await _reject_untrainable(body.template_hash)
     await _require_push_permission(body.policy_repo_id)
 
     params = {
