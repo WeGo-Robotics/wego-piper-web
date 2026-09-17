@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from app.core.config import settings
 from app.services.cloud.lifecycle import Budget, CloudJob, Phase
+from app.services.cloud import retrieve
 from app.services.cloud.procure import procure_and_train
 from app.services.training import train_manager
 from app.services.training.runners.ssh import SSHRunner, SSHTarget
@@ -55,23 +57,6 @@ def _target_for(inst) -> SSHTarget:
                      known_hosts=str(sshkey.key_dir() / "known_hosts"))
 
 
-def _pushed(repo_id: str) -> bool:
-    """가중치가 Hub 에 **실제로** 있나.
-
-    ⚠ 파일 목록을 본다 — repo 가 존재하는 것과 가중치가 올라간 것은 다르다. lerobot 이
-    `initial commit` 으로 repo 만 만들고 죽을 수 있다(실측: 푸시는 커밋 넷으로 나뉜다).
-    """
-    try:
-        from huggingface_hub import HfApi
-
-        files = {s.rfilename for s in (HfApi().model_info(repo_id).siblings or [])}
-    except Exception as exc:                                        # noqa: BLE001
-        # ⚠ 모르면 **받는 쪽**으로 기운다. 전송비는 몇 센트지만 잃은 학습은 몇 시간이다.
-        logger.warning("Hub 확인 실패(회수 쪽으로 진행): %s", exc)
-        return False
-    return "model.safetensors" in files
-
-
 async def start(*, provider, offer_id: int, template_hash: str, disk_gb: float,
                 budget: Budget, args: list[str], total_steps: int,
                 output_dir: str = "", env: dict | None = None,
@@ -86,6 +71,12 @@ async def start(*, provider, offer_id: int, template_hash: str, disk_gb: float,
 
     original = train_manager.runner
     job_id = train_manager.job_id
+    # ⚠ **벽시계**다(`Budget.started_at` 은 `monotonic` 이라 Hub 시각과 못 비교한다).
+    #   이번 회차의 푸시와 지난 회차의 푸시를 가르는 기준이 된다.
+    started_at = time.time()
+    # ⚠ 지난 회차의 회수 상태를 지운다. 안 지우면 새 임대를 걸었는데 화면이 **지난번
+    #   가중치**를 "받았음" 으로 계속 보여 준다 — 이번 것이 온 줄 안다.
+    retrieve.reset()
 
     async def _start_training(target: SSHTarget, cap_h: float) -> None:
         # ⚠ 러너를 바꿔 끼운다. 위쪽(메트릭·WS·재부착)은 로그가 어디서 왔는지 모른다.
@@ -97,22 +88,20 @@ async def start(*, provider, offer_id: int, template_hash: str, disk_gb: float,
                                   output_dir=output_dir, env_extra=env or {},
                                   max_hours=cap_h)
 
-    async def _rescue_if_needed(target) -> None:
-        """Hub 에 갔는지 **확인하고**, 안 갔으면 직접 끌어온다.
+    async def _retrieve(target) -> None:
+        """**기계가 살아 있는 동안** 해야 할 회수 (§5·§12-4).
 
-        ⚠ 확인 없이 항상 받으면 200MB 전송비를 매번 낸다. 확인 없이 **안** 받으면
-        푸시가 실패한 회차의 결과를 통째로 잃는다 — 실측으로 푸시는 종료 시점 한
+        ⚠ 확인 없이 항상 `scp` 로 받으면 200MB 전송비를 매번 낸다. 확인 없이 **안**
+        받으면 푸시가 실패한 회차의 결과를 통째로 잃는다 — 푸시는 종료 시점 한
         번뿐이라 다시 올라올 기회가 없다(§12-4).
-        """
-        from app.services.cloud.rescue import rescue
 
-        if not repo_id:
-            return
-        if await asyncio.to_thread(_pushed, repo_id):
-            logger.info("Hub 에 가중치가 있습니다 — 회수 보험은 건너뜁니다: %s", repo_id)
-            return
-        logger.warning("Hub 에 가중치가 없습니다 — 파기 전에 직접 끌어옵니다: %s", repo_id)
-        await asyncio.to_thread(rescue, target, repo_id, settings.models_dir)
+        Hub 에 있으면 여기서는 **안 받는다.** 받는 것은 파기 뒤다(`retrieve` 머리말).
+
+        ⚠ `since` 를 넘기는 이유: 같은 저장소로 두 번째를 돌렸는데 이번 회차가 죽으면
+        거기 있는 것은 **지난번 가중치**다. 시각을 안 보면 그걸 성공으로 읽는다.
+        """
+        await retrieve.before_destroy(target, repo_id, settings.models_dir,
+                                      since=started_at)
 
     async def _go() -> None:
         global _job
@@ -123,7 +112,7 @@ async def start(*, provider, offer_id: int, template_hash: str, disk_gb: float,
                 start_training=_start_training,
                 is_running=lambda: train_manager.is_running,
                 stop=train_manager.stop, target_for=_target_for,
-                rescue_if_needed=_rescue_if_needed,
+                rescue_if_needed=_retrieve,
                 on_phase=lambda j: _remember(j))
         except Exception as exc:                                    # noqa: BLE001
             logger.error("임대 학습 실패: %s", exc)
@@ -132,6 +121,12 @@ async def start(*, provider, offer_id: int, template_hash: str, disk_gb: float,
             #   붙으려 하고, 러너 선택은 프로세스 수명 동안 다시 평가되지 않는다.
             train_manager.runner = original
             original.set_log_callback(train_manager._intercept_log)
+        # ⚠ **기계가 없어진 뒤에** 받는다 — Hub 는 기계를 안 탄다. 파기 전에 받으면
+        #   200MB 를 내려받는 동안 빌린 GPU 요금을 그대로 내고, 무엇보다 파기가
+        #   그만큼 늦어진다. 이 기능의 가장 중요한 불변식을 회선 속도에 묶을 수 없다.
+        # ⚠ 러너를 되돌린 **뒤**다. 다운로드가 오래 걸려도 원격 러너가 꽂힌 채로
+        #   남지 않게 한다.
+        await retrieve.after_destroy(repo_id, settings.models_dir)
 
     _job = CloudJob(job_id=job_id, label=f"piper-{job_id}", budget=budget)
     _task = asyncio.create_task(_go())
@@ -200,6 +195,13 @@ async def stop_now(provider) -> CloudJob | None:
             logger.info("조달 흐름이 스스로 마무리했습니다 (회수 포함)")
             return _job or job
         except asyncio.TimeoutError:
+            # ⚠ **기계가 이미 없으면 파기할 것도 없다.** 흐름에는 파기 뒤 Hub
+            #   다운로드가 붙어 있어서(§12-12), 200MB 를 받는 중이면 90초를 넘기는
+            #   것이 정상이다. 그때 "직접 파기합니다" 를 찍으면 로그가 거짓말을 한다 —
+            #   읽는 사람은 파기가 늦어진 줄 안다.
+            if job.phase in (Phase.DESTROYED, Phase.ORPHAN):
+                logger.info("기계는 이미 파기됐습니다 — 가중치 회수는 배경에서 계속됩니다")
+                return _job or job
             logger.warning("조달 흐름이 %.0f초 안에 안 끝났습니다 — 직접 파기합니다",
                            STOP_GRACE_S)
         except Exception as exc:                                    # noqa: BLE001

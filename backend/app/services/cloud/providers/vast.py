@@ -28,6 +28,7 @@ import time
 from collections import Counter
 
 from .base import (
+    NO_TRAIN_VARIANTS,
     GpuModel, Instance, Offer, OfferFilter, SSHTarget, Template,
     gpu_support, hourly_total, warnings_for,
 )
@@ -171,6 +172,7 @@ def parse_template(raw: dict) -> Template:
         disk_gb=float(raw.get("recommended_disk_space") or 0.0),
         description=str(raw.get("desc") or ""),
         variant=variant,
+        can_train=variant not in NO_TRAIN_VARIANTS,
     )
 
 
@@ -204,7 +206,15 @@ class VastProvider:
         try:
             data = json.loads(out.stdout)
         except json.JSONDecodeError as exc:
-            raise RuntimeError(f"vastai 응답을 읽지 못했습니다: {out.stdout[:200]}") from exc
+            # ⚠ **stderr 를 버리지 않는다.** 실측(2026-09-17): `create instance` 가
+            #   종료코드 **0 · 빈 stdout** 으로 끝났고, 그때 사람이 받은 문장은
+            #   "vastai 응답을 읽지 못했습니다: " — **콜론 뒤가 빈칸**이었다. 그 상태로는
+            #   왜 안 빌려졌는지 알 길이 없어 그냥 다시 누르게 되고, 그게 돈 드는
+            #   재시도다. stderr 에 뭐가 있었는지는 그때 안 봤다 — 없을 수도 있다.
+            #   그래서 마지막에 "출력이 비었습니다" 까지 둔다: 빈칸보다는 낫다.
+            detail = (out.stdout or "").strip() or (out.stderr or "").strip()
+            raise RuntimeError(
+                f"vastai 응답을 읽지 못했습니다: {detail[:200] or '출력이 비었습니다'}") from exc
         # ⚠ CLI 는 오류도 0 으로 끝내고 본문에 실어 보낸다 (실측: `{"error": true, ...}`)
         if isinstance(data, dict) and data.get("error"):
             raise RuntimeError(str(data.get("msg") or "vastai 오류"))

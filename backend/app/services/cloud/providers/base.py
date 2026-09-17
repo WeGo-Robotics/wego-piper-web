@@ -268,6 +268,15 @@ class Instance:
         return self.status == "running"
 
 
+#: 학습에 **쓸 수 없다고 실측된** 변종. (2026-09-17)
+#:
+#: ⚠ `slim` 이미지(1.32GB)에는 lerobot 자체가 없다 — `lerobot_policy_act_aux` 뿐이다.
+#: 그걸로 학습을 걸면 기계를 빌리고 이미지를 받은 **뒤에** `ModuleNotFoundError` 로
+#: 3초 만에 죽는다. 실제로 그렇게 한 번 태웠다($0.0145 · 94초). 추론용으로는 쓸 것이라
+#: 템플릿 자체는 남겨 두고 **학습 경로에서만** 막는다.
+NO_TRAIN_VARIANTS = frozenset({"slim"})
+
+
 @dataclass(frozen=True)
 class Template:
     """미리 올려 둔 학습 템플릿 한 벌."""
@@ -283,6 +292,9 @@ class Template:
     description: str
     #: 'full' | 'slim' | '' — 이름에서 읽는다. 기본값 고르기와 설명에 쓴다
     variant: str
+    #: 이 템플릿으로 **학습을 걸 수 있나.** ⚠ 판정은 "안 되는 것을 안다" 쪽만 한다 —
+    #: 모르는 변종(사용자가 만든 것)까지 막으면 쓸 수 있는 템플릿을 못 쓰게 된다.
+    can_train: bool = True
 
 
 @runtime_checkable

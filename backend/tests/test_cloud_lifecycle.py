@@ -370,3 +370,26 @@ def test_error_messages_never_carry_the_key_path():
     from app.services.training.runners.ssh import SSHTarget, _label
 
     assert _label(SSHTarget(host="h", user="root", key_path="/secret/key")) == "root@h"
+
+
+def test_an_empty_answer_still_says_what_the_cli_complained_about(monkeypatch):
+    """⚠ **실측(2026-09-17)**: `create instance` 가 종료코드 0 · 빈 stdout 으로 끝났고,
+    사람이 받은 문장은 "vastai 응답을 읽지 못했습니다: " — 콜론 뒤가 빈칸이었다. 왜
+    안 빌려졌는지 알 길이 없으면 그냥 다시 누르게 되고, 그게 돈 드는 재시도다.
+
+    (그때 stderr 에 뭐가 있었는지는 안 봤다. 있으면 쓰고, 없으면 "비었습니다" 라고
+    말하는 편이 빈칸보다 낫다.)
+    """
+    import subprocess
+
+    from app.services.cloud.providers import vast
+
+    class _Done:
+        returncode = 0
+        stdout = ""
+        stderr = "failed to create instance: no such offer"
+
+    monkeypatch.setattr(vast, "cli_available", lambda: True)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _Done())
+    with pytest.raises(RuntimeError, match="no such offer"):
+        vast.VastProvider()._raw(["create", "instance", "1"])

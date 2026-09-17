@@ -113,41 +113,8 @@ def test_files_without_a_config_are_not_called_a_rescue(monkeypatch, tmp_path):
     assert R.rescue(TARGET, "me/m", tmp_path, run=_run_ok) is None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 언제 쓰나 — Hub 확인이 먼저다
-# ─────────────────────────────────────────────────────────────────────────────
-
-def test_an_existing_repo_without_weights_is_not_a_successful_push(monkeypatch):
-    """⚠ repo 가 있는 것과 가중치가 올라간 것은 다르다. 실측으로 푸시는 커밋 **넷**으로
-    나뉘고, `initial commit` 만 남기고 죽을 수 있다."""
-    from app.services.cloud import rent
-
-    class _Info:
-        siblings = [type("S", (), {"rfilename": "README.md"})()]
-
-    monkeypatch.setattr("huggingface_hub.HfApi.model_info", lambda self, r: _Info())
-    assert rent._pushed("me/m") is False
-
-
-def test_weights_present_means_no_rescue_needed(monkeypatch):
-    from app.services.cloud import rent
-
-    class _Info:
-        siblings = [type("S", (), {"rfilename": "model.safetensors"})()]
-
-    monkeypatch.setattr("huggingface_hub.HfApi.model_info", lambda self, r: _Info())
-    assert rent._pushed("me/m") is True
-
-
-def test_when_the_hub_cannot_be_asked_we_lean_towards_pulling(monkeypatch):
-    """⚠ 모르면 **받는 쪽**으로 기운다. 전송비는 몇 센트지만 잃은 학습은 몇 시간이다."""
-    from app.services.cloud import rent
-
-    def _boom(self, r):
-        raise RuntimeError("HF 안 닿음")
-
-    monkeypatch.setattr("huggingface_hub.HfApi.model_info", _boom)
-    assert rent._pushed("me/m") is False
+# ⚠ Hub 확인(`pushed`)과 파기 전후 순서는 `test_cloud_retrieve.py` 로 옮겼다 —
+#   보험(`scp`)과 회수 정책은 다른 파일이다.
 
 
 def test_rescue_runs_before_the_teardown_not_after():

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import CloudRentTab from '../components/CloudRentTab'
 import CloudInstancesTab from '../components/CloudInstancesTab'
+import CloudRentProgress from '../components/CloudRentProgress'
 
 /**
  * 클라우드 GPU — 남의 GPU 를 빌려 학습한다 (feature/vast-training.md §9-2).
@@ -30,6 +31,10 @@ export default function CloudPage() {
           ))}
         </div>
       </div>
+
+      {/* ⚠ 탭 **바깥**이다. 빌린 기계의 단계는 어느 탭을 보고 있든 같은 자리에 있어야
+          한다 — 고르던 중에 시작해 놓고 인스턴스 탭으로 넘어가면 사라지면 안 된다. */}
+      <CloudRentProgress />
 
       {tab === 'rent' && <CloudRentTab />}
       {tab === 'instances' && <CloudInstancesTab />}

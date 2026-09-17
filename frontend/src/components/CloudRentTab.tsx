@@ -37,6 +37,12 @@ type Offer = {
 type Template = {
   id: number; name: string; image: string; tag: string | null
   disk_gb: number; description: string; variant: string
+  /**
+   * 이 템플릿으로 학습을 걸 수 있나. ⚠ **실측(2026-09-17)**: slim 이미지에는 lerobot
+   * 이 아예 없어서, 기계를 빌리고 14GB 를 받은 **뒤에** 3초 만에 죽는다. 판정은
+   * 백엔드가 한다 — 화면이 이름으로 짐작하면 둘이 어긋난다.
+   */
+  can_train: boolean
   /** ⚠ create 가 쓰는 값. 템플릿을 고칠 때마다 바뀌므로 화면에 박지 않는다(§12-7). */
   hash_id: string
 }
@@ -448,8 +454,13 @@ export default function CloudRentTab() {
               <span className="text-xs text-neutral-400">템플릿</span>
               <select value={template?.id ?? ''} onChange={(e) => setTemplateId(Number(e.target.value))}
                 className="min-w-0 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm">
+                {/* ⚠ 못 쓰는 것을 **숨기지 않는다.** 추론용으로는 쓸 것이고, 없는
+                    셈 치면 "왜 하나뿐이지" 가 된다 — 대신 왜 못 쓰는지 적는다.
+                    서버도 같은 판정으로 거절하므로 화면만 뚫려도 돈은 안 나간다. */}
                 {templates.map((t) => (
-                  <option key={t.id} value={t.id}>{t.variant || t.name}</option>
+                  <option key={t.id} value={t.id} disabled={t.can_train === false}>
+                    {t.variant || t.name}{t.can_train === false ? ' — 학습 불가(lerobot 없음)' : ''}
+                  </option>
                 ))}
               </select>
             </label>
