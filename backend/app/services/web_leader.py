@@ -70,6 +70,18 @@ EE_KEYS = {"q": ("roll", 1), "a": ("roll", -1), "w": ("pitch", 1), "s": ("pitch"
 GRIPPER_KEYS = {"[": -1, "]": 1}
 
 
+def ee_only(follower: str) -> bool:
+    """시뮬은 **EE 전용** — 관절 모드가 없다 (사용자 결정 2026-09-17).
+
+    ⚠ 실팔에는 둘 다 남긴다. 관절이 슬립하면 피드백이 거짓말을 하고(project 메모: 원점
+    틀어짐의 실체는 클러치 슬립) IK 가 그 거짓 자세를 풀어 버리므로, 관절 모드가 팔을
+    움직일 마지막 수단이 된다. 시뮬엔 슬립이 없고 EE 로만 쓴다.
+
+    **판정은 여기 한 곳**이다 — 창이 무엇을 보내든 세션이 관절로 안 간다.
+    """
+    return str(follower or "").startswith("sim_")
+
+
 def _clamp(v: float, lo: float, hi: float) -> float:
     return lo if v < lo else hi if v > hi else v
 
@@ -366,6 +378,8 @@ class WebLeader:
         """`relay=False` 는 **발행만** 한다 — 수집이 녹화 프로세스(piper_leader_shm →
         piper_follower_shm)로 팔을 움직일 때다. 릴레이와 녹화가 같은 팔로워 명령 세그먼트를
         쥘 수 없다(텔레옵은 수집과 배타)."""
+        if ee_only(follower):
+            mode = "ee"          # 시뮬엔 관절 모드가 없다 — 창이 무엇을 보내든
         from piper_shm import arm as shm_arm
         from app.services.relay import RelayError, relay_session
         from app.services.robot_manager import _call
@@ -412,6 +426,8 @@ class WebLeader:
             raise RuntimeError("조종 중이 아닙니다 — 창을 클릭해 시작하세요")
         with self._lock:
             mode = kw.pop("mode", None)
+            if mode and ee_only(self.follower or ""):
+                mode = None      # 옛 창이 Tab 을 보내도 시뮬은 EE 로 남는다
             integ.feed(time.monotonic(), **kw)
             if mode:
                 integ.set_mode(mode)

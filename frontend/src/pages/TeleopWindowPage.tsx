@@ -47,7 +47,6 @@ const JOINT_ROWS: HelpRow[] = [
   ['우클릭 드래그', '관절1(좌우)·관절2(상하) — Shift 시 관절4·관절3'],
   ['가운데 드래그', '관절6(좌우)·관절5(상하)'],
   ['1 ~ 7', '관절·그리퍼 선택 → 휠로 조절'],
-  ['[  ]', '그리퍼 열기·닫기'],
 ]
 const EE_ROWS: HelpRow[] = [
   ['마우스 이동', '앞뒤(세로)·좌우(가로) 이동'],
@@ -62,11 +61,15 @@ const EE_ROWS: HelpRow[] = [
   ['오른쪽 버튼', '그리퍼 열기'],
   ['가운데 버튼', '자세 고정 토글'],
 ]
-const COMMON_ROWS: HelpRow[] = [
+// 모드가 둘일 때만 뜻이 있는 줄 — 시뮬(EE 전용)에선 빼고 그린다
+const MODE_ROWS: HelpRow[] = [
   ['Tab', '관절 ↔ EE 모드 전환'],
   ['Shift', '빠르게 (관절 이동·우드래그 축 전환)'],
+]
+const COMMON_ROWS: HelpRow[] = [
   ['Ctrl', '미세 조작'],
   ['Space', '정지 — 모든 입력 초기화'],
+  ['[  ]', '그리퍼 열기·닫기'],
   ['Esc', '조종(포인터 락) 해제'],
   ['X', '자세 고정 토글'],
   ['0 (키패드 0)', '그리퍼 토글 — 한 번 누르면 2초에 걸쳐 닫히거나 열린다'],
@@ -99,13 +102,17 @@ export default function TeleopWindowPage() {
   const [cams, setCams] = useState<Cam[]>([])
   const [big, setBig] = useState<string>('')
   const [locked, setLocked] = useState(false)
-  const [mode, setMode] = useState<'joint' | 'ee'>('joint')
+  // 시뮬은 **EE 전용** — 관절 모드가 없다 (사용자 요청 2026-09-17). 판정은 백엔드
+  // (web_leader.ee_only)가 쥐고 있고 창은 그걸 그린다: Tab 도, 관절 표도 안 띄운다.
+  // 실팔은 그대로 둘 다다 — 관절이 슬립하면 IK 가 거짓 자세를 풀어 EE 가 못 미덥다.
+  const eeOnly = follower.startsWith('sim_')
+  const [mode, setMode] = useState<'joint' | 'ee'>(eeOnly ? 'ee' : 'joint')
   const [help, setHelp] = useState(false)
   // EE 모드에서 마우스 끄기 — 키패드로만 움직일 때 손이 스친 마우스가 팔을 밀지 않게(사용자 요청 2026-09-14).
   // 이동·휠·버튼 전부 무시한다. 관절 모드에선 효과 없다(거긴 드래그가 관절이다). 브라우저에 기억.
   const [mouseOff, setMouseOff] = useState(() => { try { return localStorage.getItem('piper_teleop_ee_mouse_off') === '1' } catch { return false } })
   const mouseOffRef = useRef(mouseOff)
-  const modeRef = useRef<'joint' | 'ee'>('joint')
+  const modeRef = useRef<'joint' | 'ee'>(eeOnly ? 'ee' : 'joint')
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)   // 카메라 준비 전엔 화면을 덮어 오조작 막는다
   const [videoFps, setVideoFps] = useState<number | null>(null)   // 큰 스트림 실측 fps (null=아직/멈춤)
@@ -155,13 +162,13 @@ export default function TeleopWindowPage() {
   // 상태 5Hz
   useEffect(() => {
     const iv = window.setInterval(() => api.get<Status>('/leader/web/status').then((s) => {
-      setSt(s); running.current = !!s.running; if (s.mode) setMode(s.mode)
+      setSt(s); running.current = !!s.running; if (s.mode && !eeOnly) setMode(s.mode)
       const sent = s.relay?.sent ?? 0; const now = performance.now()
       if (sent !== lastSent.current.n) { lastSent.current = { n: sent, at: now } }
       setInputLive(!!s.running && now - lastSent.current.at < 700)   // 최근 전송이 늘었나
     }).catch(() => {}), 200)
     return () => window.clearInterval(iv)
-  }, [])
+  }, [eeOnly])
 
   // ⚠ **모든 카메라가 스냅샷 폴링(짧은 요청)** — 영구 MJPEG 스트림이 아니다. 스트림은
   //   브라우저 HTTP/1.1 연결(6개)을 영구 점유해 30Hz 입력 POST 를 굶겼고(사용자 보고 2026:
@@ -272,7 +279,8 @@ export default function TeleopWindowPage() {
   // 키
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
-      if (e.code === 'Tab') { e.preventDefault(); const next = mode === 'joint' ? 'ee' : 'joint'; setMode(next); pending.current.mode = next; return }
+      // Tab 은 모드 전환 — 시뮬은 EE 전용이라 먹지 않는다(포커스 이동만 막는다)
+      if (e.code === 'Tab') { e.preventDefault(); if (eeOnly) return; const next = mode === 'joint' ? 'ee' : 'joint'; setMode(next); pending.current.mode = next; return }
       if (e.code === 'Space') { e.preventDefault(); keys.current.clear(); mouse.current.buttons.clear(); sendState(true); return }
       if (e.code === 'Slash' && e.shiftKey) { setHelp((h) => !h); return }
       if (e.code === 'KeyX') { pending.current.toggle_lock = true; return }
@@ -293,7 +301,7 @@ export default function TeleopWindowPage() {
     const up = (e: KeyboardEvent) => { const k = KEY_OF[e.code]; if (k) keys.current.delete(k); mods.current = { shift: e.shiftKey, ctrl: e.ctrlKey } }
     window.addEventListener('keydown', down); window.addEventListener('keyup', up)
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
-  }, [mode, sendState, resetWorld, start, loading])
+  }, [mode, eeOnly, sendState, resetWorld, start, loading])
 
   // 마우스 끄기 상태를 핸들러(의존성 없는 effect)가 읽을 수 있게 ref 로 — 켜는 순간 쌓인 델타·버튼도 버린다
   useEffect(() => {
@@ -333,9 +341,11 @@ export default function TeleopWindowPage() {
         <div className="flex items-center gap-3">
           <span className="font-semibold">조종 — {follower || '(팔로워 없음)'}</span>
           {real && <span className="rounded bg-red-700/60 px-1.5 py-0.5 text-red-100">실기</span>}
-          <span className={`px-1.5 py-0.5 rounded ${mode === 'joint' ? 'bg-blue-600/40' : 'bg-neutral-700'}`}>관절</span>
+          {!eeOnly && <span className={`px-1.5 py-0.5 rounded ${mode === 'joint' ? 'bg-blue-600/40' : 'bg-neutral-700'}`}>관절</span>}
           <span className={`px-1.5 py-0.5 rounded ${mode === 'ee' ? 'bg-blue-600/40' : 'bg-neutral-700'}`}>EE</span>
-          <span className="text-neutral-500">Tab 전환 · Ctrl 미세{mode === 'ee' ? ' · QWEASD 회전' : ' · Shift 빠르게'}</span>
+          <span className="text-neutral-500">
+            {eeOnly ? 'Ctrl 미세 · QWEASD 회전' : `Tab 전환 · Ctrl 미세${mode === 'ee' ? ' · QWEASD 회전' : ' · Shift 빠르게'}`}
+          </span>
           {mode === 'ee' && (
             // 헤더는 arena 밖이라 이 클릭은 조종을 시작하지 않는다. 포인터 락 중엔 Esc 로 풀고 누른다.
             <label className={`flex items-center gap-1 cursor-pointer ${mouseOff ? 'text-amber-300' : 'text-neutral-400'}`}
@@ -429,10 +439,11 @@ export default function TeleopWindowPage() {
                 <button onClick={() => setHelp(false)}
                         className="rounded px-2 py-0.5 text-neutral-400 hover:bg-neutral-700 hover:text-white">닫기</button>
               </div>
-              <div className="grid gap-5 sm:grid-cols-3">
-                <HelpSection title="관절 모드" rows={JOINT_ROWS} />
-                <HelpSection title="EE 모드 · 이동(마우스·키패드) + 키 회전(동시)" rows={EE_ROWS} />
-                <HelpSection title="공통 · 단축키" rows={COMMON_ROWS} />
+              <div className={`grid gap-5 ${eeOnly ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
+                {!eeOnly && <HelpSection title="관절 모드" rows={JOINT_ROWS} />}
+                <HelpSection title={eeOnly ? '이동(마우스·키패드) + 키 회전(동시)'
+                                    : 'EE 모드 · 이동(마우스·키패드) + 키 회전(동시)'} rows={EE_ROWS} />
+                <HelpSection title="공통 · 단축키" rows={eeOnly ? COMMON_ROWS : [...MODE_ROWS, ...COMMON_ROWS]} />
               </div>
             </div>
           </div>

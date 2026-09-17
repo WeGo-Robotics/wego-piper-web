@@ -526,3 +526,69 @@ def test_the_help_button_opens_a_structured_panel_matching_the_backend_mappings(
     joint = win.split("JOINT_ROWS", 1)[1].split("const EE_ROWS", 1)[0]
     assert "'T " not in joint and "T/G" not in joint, "관절5 를 다시 T 로 적었다(T 는 팔 리셋)"
     assert "'관절5'" in joint and "가운데 버튼 상하 드래그" in joint
+
+
+def test_the_simulator_is_ee_only_and_the_backend_is_the_one_that_decides(monkeypatch):
+    """시뮬은 **EE 전용** — 관절 모드를 없앤다 (사용자 요청 2026-09-17).
+
+    ⚠ **실팔은 둘 다 남긴다.** 관절이 슬립하면 피드백이 거짓말을 하고(원점 틀어짐의 실체는
+    클러치 슬립이다) IK 가 그 거짓 자세를 풀어 EE 가 못 미덥다 — 그때 팔을 움직일 마지막
+    수단이 관절 모드다. 시뮬엔 슬립이 없고 EE 로만 쓴다.
+
+    판정은 **백엔드 한 곳**(`ee_only`)이다. 창에만 두면 옛 창·다른 탭·직접 친 요청이
+    `mode: 'joint'` 를 보내 세션이 관절로 넘어간다 — 그러면 화면은 EE 라고 적어 두고 팔은
+    관절로 도는, 고치기 제일 어려운 종류의 불일치가 된다. 창은 그 사실을 그릴 뿐이다:
+    Tab 도, 관절 표도, 관절 칩도 안 띄운다."""
+    from app.services import web_leader as svc
+    assert svc.ee_only("sim_follower1") and not svc.ee_only("can0") and not svc.ee_only("")
+
+    class FakeReader:
+        def __init__(self, iface): self.iface = iface
+        def read(self): return {"values": dict(HOME)}
+        def close(self): pass
+    class FakeWriter:
+        def __init__(self, name): pass
+        def publish(self, values): return 1
+        def close(self): pass
+    from piper_shm import arm as shm_arm
+    monkeypatch.setattr(shm_arm, "StateReader", FakeReader)
+    monkeypatch.setattr(shm_arm, "StateWriter", FakeWriter)
+    monkeypatch.setattr("app.services.robot_manager._call", lambda *a, **k: {})
+    from app.services import relay
+    class FakeRelay:
+        is_running = False
+        def start(self, *a): self.is_running = True
+        def stop(self): self.is_running = False
+        def status(self): return {"leader": svc.LEADER_NAME, "running": self.is_running,
+                                  "holding": True, "sent": 0, "stale": False, "blocked": ""}
+    monkeypatch.setattr(relay, "relay_session", FakeRelay())
+
+    wl = svc.WebLeader()
+    wl.start("sim_follower1")            # 창이 mode 를 안 보내도 (서명 기본값은 "joint")
+    try:
+        assert wl.integ.mode == "ee", "시뮬이 관절 모드로 시작한다"
+        wl.input(keys=[], mouse={}, shift=False, ctrl=False, mode="joint")
+        assert wl.integ.mode == "ee", "옛 창의 Tab 이 시뮬을 관절로 되돌린다"
+    finally:
+        wl.stop()
+
+    wl2 = svc.WebLeader()
+    wl2.start("can0")                    # 실팔은 그대로 관절로 시작하고 Tab 으로 EE 에 간다
+    try:
+        assert wl2.integ.mode == "joint", "실팔에서 관절 모드가 사라졌다"
+        wl2.input(keys=[], mouse={}, shift=False, ctrl=False, mode="ee")
+        assert wl2.integ.mode == "ee"
+    finally:
+        wl2.stop()
+
+    win = (REPO / "frontend" / "src" / "pages" / "TeleopWindowPage.tsx").read_text()
+    assert "const eeOnly = follower.startsWith('sim_')" in win
+    assert "useState<'joint' | 'ee'>(eeOnly ? 'ee' : 'joint')" in win, "시뮬 창이 관절로 시작한다"
+    tab = win.split("if (e.code === 'Tab')", 1)[1].split("\n", 1)[0]
+    assert "if (eeOnly) return" in tab, "시뮬에서 Tab 이 관절로 넘어간다"
+    assert "if (s.mode && !eeOnly) setMode(s.mode)" in win, "상태 폴링이 시뮬을 관절로 되돌린다"
+    assert '{!eeOnly && <span' in win, "시뮬 헤더에 관절 칩이 남는다"
+    assert '{!eeOnly && <HelpSection title="관절 모드"' in win, "시뮬 도움말에 관절 표가 남는다"
+    # [ ] 는 두 모드 공통이라(web_leader._step 의 그리퍼 절) 관절 표에 있으면 시뮬에서 사라진다
+    common = win.split("const COMMON_ROWS", 1)[1].split("function HelpSection", 1)[0]
+    assert "'그리퍼 열기·닫기'" in common, "[ ] 가 관절 표에 갇혀 시뮬 도움말에서 사라진다"
