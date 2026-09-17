@@ -108,6 +108,7 @@ async def procure_and_train(
     *, provider, job_id: str, offer_id: int, template_hash: str, disk_gb: float,
     budget: Budget, start_training, is_running, stop, target_for,
     on_phase=None, tick: float = TICK_S, ssh_timeout: float = SSH_WAIT_S,
+    rescue_if_needed=None,
 ) -> CloudJob:
     """한 바퀴. **`finally` 가 이 함수의 요점이다.**
 
@@ -141,7 +142,17 @@ async def procure_and_train(
         await start_training(target, cap_h if cap_h < 1e9 else 0.0)
 
         reason = await run_until_done(job, is_running, stop, tick=tick)
+
+        # ⚠ **회수는 파기보다 먼저다.** 실측(§12-4): 푸시는 학습이 끝날 때 한 번뿐이라,
+        #   중간에 죽었거나 푸시가 실패했으면 Hub 에는 아무것도 없다. 여기서 안 끌어오면
+        #   몇 시간짜리 결과가 기계와 함께 사라진다.
         phase(Phase.RETRIEVING, reason)
+        if rescue_if_needed is not None:
+            try:
+                await rescue_if_needed(target)
+            except Exception as exc:                                # noqa: BLE001
+                # ⚠ 보험 실패가 파기를 막으면 본전도 못 찾는다 — 기계가 계속 돈다.
+                logger.error("[%s] 가중치 회수 실패(파기는 계속): %s", job_id, exc)
         return job
     except Exception as exc:                                        # noqa: BLE001
         logger.error("[%s] 조달/학습 실패: %s", job_id, exc)

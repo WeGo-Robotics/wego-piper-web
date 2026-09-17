@@ -55,9 +55,27 @@ def _target_for(inst) -> SSHTarget:
                      known_hosts=str(sshkey.key_dir() / "known_hosts"))
 
 
+def _pushed(repo_id: str) -> bool:
+    """가중치가 Hub 에 **실제로** 있나.
+
+    ⚠ 파일 목록을 본다 — repo 가 존재하는 것과 가중치가 올라간 것은 다르다. lerobot 이
+    `initial commit` 으로 repo 만 만들고 죽을 수 있다(실측: 푸시는 커밋 넷으로 나뉜다).
+    """
+    try:
+        from huggingface_hub import HfApi
+
+        files = {s.rfilename for s in (HfApi().model_info(repo_id).siblings or [])}
+    except Exception as exc:                                        # noqa: BLE001
+        # ⚠ 모르면 **받는 쪽**으로 기운다. 전송비는 몇 센트지만 잃은 학습은 몇 시간이다.
+        logger.warning("Hub 확인 실패(회수 쪽으로 진행): %s", exc)
+        return False
+    return "model.safetensors" in files
+
+
 async def start(*, provider, offer_id: int, template_hash: str, disk_gb: float,
                 budget: Budget, args: list[str], total_steps: int,
-                output_dir: str = "", env: dict | None = None) -> CloudJob:
+                output_dir: str = "", env: dict | None = None,
+                repo_id: str = "") -> CloudJob:
     """빌려서 학습을 건다. **배경으로 돌고 즉시 돌아온다.**
 
     돌아온 `CloudJob` 은 살아 있는 객체다 — 단계·비용이 그 위에서 갱신된다.
@@ -79,6 +97,23 @@ async def start(*, provider, offer_id: int, template_hash: str, disk_gb: float,
                                   output_dir=output_dir, env_extra=env or {},
                                   max_hours=cap_h)
 
+    async def _rescue_if_needed(target) -> None:
+        """Hub 에 갔는지 **확인하고**, 안 갔으면 직접 끌어온다.
+
+        ⚠ 확인 없이 항상 받으면 200MB 전송비를 매번 낸다. 확인 없이 **안** 받으면
+        푸시가 실패한 회차의 결과를 통째로 잃는다 — 실측으로 푸시는 종료 시점 한
+        번뿐이라 다시 올라올 기회가 없다(§12-4).
+        """
+        from app.services.cloud.rescue import rescue
+
+        if not repo_id:
+            return
+        if await asyncio.to_thread(_pushed, repo_id):
+            logger.info("Hub 에 가중치가 있습니다 — 회수 보험은 건너뜁니다: %s", repo_id)
+            return
+        logger.warning("Hub 에 가중치가 없습니다 — 파기 전에 직접 끌어옵니다: %s", repo_id)
+        await asyncio.to_thread(rescue, target, repo_id, settings.models_dir)
+
     async def _go() -> None:
         global _job
         try:
@@ -88,6 +123,7 @@ async def start(*, provider, offer_id: int, template_hash: str, disk_gb: float,
                 start_training=_start_training,
                 is_running=lambda: train_manager.is_running,
                 stop=train_manager.stop, target_for=_target_for,
+                rescue_if_needed=_rescue_if_needed,
                 on_phase=lambda j: _remember(j))
         except Exception as exc:                                    # noqa: BLE001
             logger.error("임대 학습 실패: %s", exc)

@@ -247,7 +247,9 @@ async def rent_and_train(body: RentRequest):
             template_hash=body.template_hash, disk_gb=body.disk_gb,
             budget=Budget(usd=body.budget_usd, max_hours=body.max_hours),
             args=args, total_steps=body.steps,
-            env=_train_env(body.amp, remote=True) or {})
+            env=_train_env(body.amp, remote=True) or {},
+            # ⚠ 회수 보험이 "Hub 에 갔나" 를 물어볼 대상이다 (§12-4).
+            repo_id=body.policy_repo_id)
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"started": True, **job.to_dict()}
