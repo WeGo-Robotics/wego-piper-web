@@ -28,7 +28,7 @@ from app.core.config import settings
 from app.services.cloud import sshkey
 from app.services.cloud.providers import vast
 from app.services.cloud.providers.base import MIN_CUDA, OfferFilter
-from app.services.training.jobs import job_registry
+from app.services.cloud import sweeper
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/cloud", tags=["cloud"])
@@ -292,8 +292,9 @@ async def cloud_instances():
     except Exception as exc:                                        # noqa: BLE001
         raise _to_http(exc) from exc
 
-    known = {int(r.instance_id) for r in job_registry.list()
-             if str(r.instance_id or "").isdigit()}
+    # ⚠ 판정은 **스캐너와 같은 함수**로 한다. 정의가 둘이면 탭과 배너가 다른 말을
+    #   한다 — 하나는 고아라 하고 하나는 아니라 하면 사람은 둘 다 안 믿는다.
+    known = sweeper.known_instances()
     out = []
     for i in rows:
         d = asdict(i)
@@ -304,6 +305,20 @@ async def cloud_instances():
     return {"instances": out,
             "orphans": sum(1 for d in out if d["orphan"]),
             "known": sorted(known)}
+
+
+@router.get("/orphans")
+async def orphans():
+    """마지막 고아 스캔 결과. **여기서 Vast 를 부르지 않는다.**
+
+    ⚠ 배너 하나 때문에 페이지마다 20초짜리 조회를 걸면 안 된다. 실제 조회는 배경
+    스캐너가 10분마다 하고(§6-3), 화면은 그 결과를 받아 간다. 지금 이 순간의
+    목록이 필요하면 `/instances` 가 직접 조회한다.
+
+    `scanned=false` 는 **"고아가 없다"가 아니라 "아직 안 봤다"** 이다 — 기동
+    직후이거나 `vastai` 가 없는 설치다. 화면은 그 둘을 구분해야 한다.
+    """
+    return sweeper.snapshot()
 
 
 @router.delete("/instances/{instance_id}")

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Outlet } from 'react-router-dom'
+import CloudOrphanAlerts from './CloudOrphanAlerts'
 import DeviceAlerts from './DeviceAlerts'
 import LoadAlerts from './LoadAlerts'
 import EStopButton from './EStopButton'
@@ -44,6 +45,9 @@ export default function Layout() {
           수집 페이지에서 안 보인다는 지적이 그거였다. 호스트는 `fixed` 다. */}
       <DeviceAlerts />
       <LoadAlerts />
+      {/* 빌린 GPU 가 관리 밖에서 돌고 있다 — **돈이 나가는 상태**라 클라우드 페이지를
+          열어야 보이면 늦는다. 여기에 두면 어느 페이지에 있든 알림함에 쌓인다. */}
+      <CloudOrphanAlerts />
       <SystemMessageHost />
       {/* ⚠ E-stop 은 자리를 안 옮긴다. 사이드바가 접히든 펴지든, 어느 페이지든
           **같은 자리**여야 한다 — 그게 안전 장치의 요건이다. */}

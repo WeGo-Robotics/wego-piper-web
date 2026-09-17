@@ -180,7 +180,14 @@ async def lifespan(app: FastAPI):
     # 아무도 안 보는 동안에도 서버가 쌓고 있어야 한다.
     from app.services import trends
     trend_task = asyncio.create_task(trends.run_sampler())
+    # 고아 GPU 스캐너 — **빌린 기계가 관리 밖에서 도는지** 주기적으로 본다(§6-3).
+    # ⚠ 화면을 열면 인스턴스 탭이 보여 주지만, 고아가 생기는 상황이 곧 아무도 화면을
+    #   안 보는 상황이다(게이트웨이가 죽었다 살아난 직후). 그때 요금은 계속 나간다.
+    # ⚠ **자동으로 파기하지 않는다** — 다른 기계의 게이트웨이가 돌리는 학습일 수 있다.
+    from app.services.cloud import sweeper
+    orphan_task = asyncio.create_task(sweeper.run_sweeper())
     yield
+    orphan_task.cancel()
     trend_task.cancel()
     watch_task.cancel()
     await param_bridge.close()

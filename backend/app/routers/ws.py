@@ -65,6 +65,15 @@ async def broadcast_device_alert(added: list, cleared: list) -> None:
     })
 
 
+async def broadcast_cloud_orphans(orphans: list[dict]) -> None:
+    """빌린 GPU 가 관리 밖에서 살아 있다 — **전이에서만** 부른다 (§6-3).
+
+    ⚠ 화면은 이걸로 파기하지 않는다. 자동 파기는 남의 학습을 끌 수 있어서 안 한다
+    (§10 결정 5) — 알리는 데까지가 서버 몫이고, 누르는 것은 사람이다.
+    """
+    await broadcast({"type": M.CLOUD_ORPHAN_ALERT, "data": {"orphans": orphans}})
+
+
 async def broadcast_load_alert(alerts: list[dict]) -> None:
     """관절 과부하 — **사건마다 한 번.** 상태가 아니라 지난 일을 알린다.
 

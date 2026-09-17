@@ -139,8 +139,32 @@ async def start(*, provider, offer_id: int, template_hash: str, disk_gb: float,
 
 
 def _remember(job: CloudJob) -> None:
+    """살아 있는 job 을 기억하고, **인스턴스 번호를 레지스트리에 남긴다.**
+
+    ⚠ 이 두 줄이 없으면 고아 스캐너가 **지금 도는 임대를 고아로 본다.** `known` 은
+    레지스트리의 `instance_id` 로 만들어지는데 그 칸을 채우는 코드가 없었다 —
+    필드만 있고 쓰는 사람이 없어서 `known` 이 늘 비었고, `piper-` 가 붙은 것은
+    전부 고아였다. 10분마다 울리는 알람에게 그건 치명적이다(늘 울리는 알람은 꺼진
+    알람이다).
+
+    ⚠ **끝난 뒤에는 번호를 비운다.** 특히 `ORPHAN` 에서 — 파기를 확인 못 한 기계는
+    "우리가 관리 중" 이 아니라 **사람이 봐야 할 것**이다. 번호를 남겨두면 스캐너가
+    그걸 아는 척하고 조용해진다. 돈이 나가는 쪽에서 그건 최악의 침묵이다.
+    """
     global _job
     _job = job
+    try:
+        from app.services.training.jobs import JobRecord, job_registry
+
+        rec = job_registry.get(job.job_id) or JobRecord(job_id=job.job_id)
+        rec.provider = "vast"
+        rec.instance_id = ("" if job.phase in (Phase.DESTROYED, Phase.ORPHAN)
+                           else str(job.instance_id or ""))
+        job_registry.put(rec)
+    except Exception as exc:                                        # noqa: BLE001
+        # 레코드를 못 써도 학습은 계속된다. 다만 스캐너가 거짓 경보를 낼 수 있어서
+        # 조용히 넘기지 않는다 — `known_instances()` 가 메모리의 job 으로 보완한다.
+        logger.warning("임대 레코드 갱신 실패(학습은 계속): %s", exc)
 
 
 #: 중지한 뒤 조달 흐름이 스스로 마무리하기를 기다리는 시간.

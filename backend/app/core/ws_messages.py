@@ -58,6 +58,12 @@ DEVICE_ALERT: Final = "device_alert"
 # 아무 일도 없던 것이 된다. 알아야 할 것은 "눌렸었다" 라서 지우는 것은 사람이 한다.
 ROBOT_LOAD_ALERT: Final = "robot_load_alert"
 
+# ── 빌린 GPU 가 남아 있다 (고아) ──
+#
+# ⚠ `DEVICE_ALERT` 와 같은 **상태**다 — 전이에서만 온다. 다만 이건 **돈이 나가는**
+# 상태라, 화면을 안 보고 있어도 서버 로그에는 스캔마다 남는다(§6-3).
+CLOUD_ORPHAN_ALERT: Final = "cloud_orphan_alert"
+
 # ── 연결 유지 ──
 PONG: Final = "pong"
 
@@ -78,6 +84,7 @@ ALL: Final[frozenset[str]] = frozenset({
     UPLOAD_LOG, UPLOAD_STATE,
     DEVICE_ALERT,
     ROBOT_LOAD_ALERT,
+    CLOUD_ORPHAN_ALERT,
     PONG,
     HEARTBEAT,
 })

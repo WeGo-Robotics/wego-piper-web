@@ -84,6 +84,19 @@ export type LoadAlert = {
   at?: number
 }
 
+/**
+ * 관리 밖에서 도는 임대 GPU 한 대. ⚠ `text` 는 **백엔드가 만든다** — 요금·GPU 가
+ * 섞인 문장을 화면이 조립하면 판정과 문구가 따로 고쳐져 어긋난다.
+ */
+export type CloudOrphan = {
+  id: number
+  label: string
+  status: string
+  gpu_name: string
+  rate_usd_h: number
+  text: string
+}
+
 export type WsMessage =
   // 추론
   | { type: 'log'; data: string }
@@ -113,6 +126,9 @@ export type WsMessage =
   // 풀려도 지워지지 않는다. 과부하는 몇 초 만에 끝나므로 상태로 다루면
   // 자리를 비웠던 사람에게는 아무 일도 없던 것이 된다.
   | { type: 'robot_load_alert'; data: { alerts: LoadAlert[] } }
+  // 빌린 GPU 가 관리 밖에서 살아 있다 (§6-3). 장치 경보와 같은 **상태**라
+  // 전이에서만 오고, 지금 목록은 /api/cloud/orphans 가 준다.
+  | { type: 'cloud_orphan_alert'; data: { orphans: CloudOrphan[] } }
   // 연결 유지
   | { type: 'pong'; data?: undefined }
   // ⚠ **클라이언트가 보내는** 유일한 메시지 (나머지는 전부 서버 → 화면).

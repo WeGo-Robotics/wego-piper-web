@@ -254,36 +254,39 @@ def test_instances_are_listed_with_what_they_cost(client):
 def test_an_instance_the_registry_does_not_know_is_flagged_as_an_orphan(client, monkeypatch):
     """⚠ 게이트웨이가 죽었다 살아나거나 레코드를 잃으면 생긴다. 라벨이 **레지스트리를
     잃고도 남는 유일한 단서**다(§6-3)."""
-    from app.routers import cloud as router
+    from app.services.cloud import sweeper
 
     c, st = client
     st["rows"] = [_inst(5, label="piper-j1")]
-    monkeypatch.setattr(router.job_registry, "list", lambda: [])
+    monkeypatch.setattr(sweeper, "known_instances", lambda: set())
     d = c.get("/api/cloud/instances").json()
     assert d["orphans"] == 1 and d["instances"][0]["orphan"] is True
 
 
 def test_someone_elses_instance_is_never_called_ours(client, monkeypatch):
     """⚠ 남의 것을 고아라 하면 사람이 **남의 학습을 끈다** — 더 나쁜 실수다."""
-    from app.routers import cloud as router
+    from app.services.cloud import sweeper
 
     c, st = client
     st["rows"] = [_inst(5, label="someone-else")]
-    monkeypatch.setattr(router.job_registry, "list", lambda: [])
+    monkeypatch.setattr(sweeper, "known_instances", lambda: set())
     d = c.get("/api/cloud/instances").json()
     assert d["orphans"] == 0 and d["instances"][0]["orphan"] is False
 
 
 def test_orphans_are_listed_first_because_they_are_what_needs_looking_at(client, monkeypatch):
-    from app.routers import cloud as router
+    from app.services.training.jobs import JobRecord, job_registry
 
     c, st = client
     st["rows"] = [_inst(1, label="piper-known"), _inst(9, label="piper-lost")]
 
-    class _Rec:
-        instance_id = "1"
-    monkeypatch.setattr(router.job_registry, "list", lambda: [_Rec()])
-    ids = [i["id"] for i in c.get("/api/cloud/instances").json()["instances"]]
+    # ⚠ 레지스트리를 **진짜로** 통과시킨다. 라우터와 배경 스캐너가 `known` 의 정의를
+    #   공유하는지까지 여기서 걸린다 — 정의가 둘이면 탭과 배너가 다른 말을 한다.
+    job_registry.put(JobRecord(job_id="known-one", instance_id="1"))
+    try:
+        ids = [i["id"] for i in c.get("/api/cloud/instances").json()["instances"]]
+    finally:
+        job_registry.delete("known-one")
     assert ids == [9, 1], "고아가 맨 위가 아니다"
 
 
