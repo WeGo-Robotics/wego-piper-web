@@ -55,10 +55,26 @@ FIRST_SCAN_S = 30.0
 #: 우리 라벨. 이게 레지스트리를 잃고도 남는 유일한 단서다.
 PREFIX = "piper-"
 
+#: **사람이 일부러 빌린 기계.** 학습이 끝나도 안 끈다 — 끄는 것은 인스턴스 탭에서 사람이 한다.
+#:
+#: ⚠ 왜 라벨로 표시하나: 레지스트리에 적어 두면 게이트웨이가 죽는 순간 그 사실을 잃는다
+#: (§12-14 에서 임대 주장을 기동 때 비우는 이유가 그거다). 그런데 이건 **사람의 결정**이라
+#: 프로세스보다 오래 산다 — Redis 가 통째로 날아가도 살아남아야 한다. 라벨은 Vast 가 들고
+#: 있으므로 우리 쪽이 무엇을 잊든 남는다.
+#:
+#: ⚠ 이게 붙은 기계는 **고아가 아니다.** 관리하는 태스크가 없는 것이 정상이다 —
+#: 대신 학습을 안 하고 떠 있으면 "유휴" 로 경고한다(빈 기계도 요금은 똑같이 나간다).
+BOX_PREFIX = "piper-box-"
+
+#: 학습 없이 이만큼 떠 있으면 유휴라고 말한다. 4090 기준 20분이면 $0.13 이다 —
+#: 다음 학습을 준비하는 몇 분을 잔소리로 덮지 않으면서, 잊고 자리를 뜬 것은 잡는 길이.
+IDLE_WARN_S = 1200.0
+
 #: 마지막 스캔 결과. 화면은 이걸 받아 간다 — 배너를 그리려고 20초짜리 Vast 조회를
 #: 다시 하지 않는다.
 _last: dict = {
     "orphans": [],
+    "idle": [],
     "scanned_at": 0.0,
     "error": "",
     "scanned": False,
@@ -156,9 +172,69 @@ def _describe(inst) -> dict:
     }
 
 
+#: 유휴 기계를 언제부터 봤나 — `{instance_id: 처음 본 monotonic}`.
+#:
+#: ⚠ 게이트웨이가 재기동하면 비워진다. 그래서 "언제부터 놀았나" 가 아니라 **"우리가
+#: 언제부터 놀고 있는 걸 봤나"** 다 — 재기동 뒤에는 시계가 다시 시작한다. 그 편이 안전한
+#: 방향으로 틀린다(경고가 늦게 뜨지, 없는 유휴를 지어내지 않는다).
+_idle_since: dict[int, float] = {}
+
+
+def idle_boxes(rows, *, training: bool, now: float | None = None) -> list[dict]:
+    """**사람이 빌려 둔 기계 중 지금 아무것도 안 하는 것.**
+
+    ⚠ 고아와 다르다. 고아는 "우리가 잃어버린 기계" 고 이건 "일부러 둔 기계" 다 — 그래서
+    빨간 경보가 아니라 "돈이 나가고 있다" 는 사실 통지다. 파기는 여전히 사람이 한다.
+
+    ⚠ 학습이 도는 동안에는 유휴 시계를 **지운다.** 안 지우면 6시간짜리 학습이 끝난 직후
+    "6시간째 유휴" 라고 말한다.
+    """
+    t = now if now is not None else time.monotonic()
+    out: list[dict] = []
+    alive = set()
+    for i in rows:
+        if not i.label.startswith(BOX_PREFIX) or not i.running:
+            continue
+        alive.add(i.id)
+        if training:
+            _idle_since.pop(i.id, None)
+            continue
+        since = _idle_since.setdefault(i.id, t)
+        idle_s = t - since
+        if idle_s < IDLE_WARN_S:
+            continue
+        cost = i.rate_usd_h * idle_s / 3600.0
+        out.append({
+            "id": i.id, "label": i.label, "idle_s": round(idle_s),
+            "rate_usd_h": i.rate_usd_h,
+            "text": (f"빌려 둔 기계 {i.id} 가 {idle_s / 60:.0f}분째 학습 없이 떠 있습니다 — "
+                     f"지금까지 약 ${cost:.2f}. 안 쓸 거면 인스턴스 탭에서 파기하세요"),
+        })
+    # 사라진 기계의 시계는 버린다 — 안 그러면 번호를 재사용할 때 엉뚱한 시각이 남는다
+    for gone in [k for k in _idle_since if k not in alive]:
+        _idle_since.pop(gone, None)
+    return out
+
+
+class _Rows:
+    """이미 받아 둔 목록을 `find_orphans` 에 그대로 먹인다 — 조회를 두 번 하지 않는다."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def list_instances(self):
+        return self._rows
+
+
+def _idle_now(rows) -> list[dict]:
+    from app.services.training import train_manager
+
+    return idle_boxes(rows, training=bool(train_manager.is_running))
+
+
 def scan(provider) -> list[dict]:
     """한 번 훑는다. **파기는 안 한다** — 이 함수는 `provider.destroy` 를 부르지 않는다."""
-    orphans = find_orphans(provider, known_instances(), PREFIX)
+    orphans = find_orphans(provider, known_instances(), PREFIX, BOX_PREFIX)
     return [_describe(i) for i in orphans]
 
 
@@ -178,7 +254,11 @@ async def scan_once(provider_factory=None) -> list[dict]:
 
     before = {o["id"] for o in _last["orphans"]}
     try:
-        found = await asyncio.to_thread(scan, provider_factory())
+        provider = provider_factory()
+        rows = await asyncio.to_thread(provider.list_instances)
+        found = [_describe(i) for i in find_orphans(
+            _Rows(rows), known_instances(), PREFIX, BOX_PREFIX)]
+        idle = await asyncio.to_thread(_idle_now, rows)
     except Exception as exc:                                        # noqa: BLE001
         msg = str(exc)[:200]
         # 같은 오류를 10분마다 경고로 찍으면 로그가 그 문장으로 덮인다.
@@ -194,6 +274,11 @@ async def scan_once(provider_factory=None) -> list[dict]:
 
     _last_error = ""
     _last["error"] = ""
+    _last["idle"] = idle
+    # ⚠ 유휴는 **있는 동안 매번** 말한다. 전이에서만 찍으면 "지금도 돈이 나가는 중" 을
+    #   로그에서 못 읽는다 — 고아와 같은 규율이다.
+    for o in idle:
+        logger.warning("%s", o["text"])
     _last["orphans"] = found
     _last["scanned_at"] = time.time()
     _last["scanned"] = True
@@ -228,6 +313,7 @@ def snapshot() -> dict:
     return {
         "orphans": list(_last["orphans"]),
         "count": len(_last["orphans"]),
+        "idle": list(_last["idle"]),
         "scanned_at": _last["scanned_at"],
         "scanned": _last["scanned"],
         "error": _last["error"],

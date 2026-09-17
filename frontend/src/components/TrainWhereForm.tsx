@@ -4,6 +4,12 @@ import { api } from '../services/api'
 /**
  * **어디서 돌릴 것인가** — 로컬이냐, 클라우드냐 (feature/vast-training.md §8 W4).
  *
+ * ## ⚠ 여기서는 **빌리지 않는다**
+ *
+ * 기계를 만드는 것은 클라우드 페이지의 일이고, 여기서는 **이미 있는 것 중에 고르기만**
+ * 한다. 빌리기가 두 곳에 있으면 "끄는 책임" 도 두 곳으로 갈라진다 — 한쪽은 끝나면
+ * 끄고 한쪽은 안 끄는 식이 되면 아무도 규칙을 못 외운다.
+ *
  * ## ⚠ 학습 설정은 여기 없다
  *
  * 데이터셋·정책·스텝·배치는 **학습 페이지의 폼 그대로** 쓴다. 폼을 두 벌 만들면 반드시
@@ -18,18 +24,15 @@ import { api } from '../services/api'
  * 다른 기계에서 도는 것이 제일 나쁘다.
  */
 
-export type Offer = {
-  id: number; gpu_name: string; num_gpus: number; hourly: number; disk_gb: number
-  compute_cap: number | null; support: string; warnings: string[]
-  geolocation: string; reliability: number; dlperf_per_dph: number
+type Instance = {
+  id: number; label: string; status: string; gpu_name: string
+  rate_usd_h: number; orphan: boolean
 }
-type Template = { id: number; name: string; hash_id: string; variant: string; cuda: string; description: string }
-type Gpu = { name: string; support: string; offers_seen: number; cheapest_hourly: number | null }
 
-export type RentPick = {
-  offer_id: number; template_hash: string; disk_gb: number
-  budget_usd: number; max_hours: number
-}
+export type RentPick = { instance_id: number }
+
+/** 사람이 일부러 빌린 기계의 라벨 — 클라우드 페이지가 이 접두어로 만든다. */
+const BOX = 'piper-box-'
 
 export default function TrainWhereForm({ where, onWhere, onPick, runner, disabledReason }: {
   where: 'here' | 'rent'
@@ -39,60 +42,31 @@ export default function TrainWhereForm({ where, onWhere, onPick, runner, disable
   runner: string
   disabledReason?: string
 }) {
-  const [templates, setTemplates] = useState<Template[]>([])
-  const [templateId, setTemplateId] = useState<number | null>(null)
-  const [gpus, setGpus] = useState<Gpu[]>([])
-  const [gpu, setGpu] = useState('RTX 4090')
-  const [offers, setOffers] = useState<Offer[]>([])
-  const [offerId, setOfferId] = useState<number | null>(null)
-  const [budget, setBudget] = useState(10)
+  const [rows, setRows] = useState<Instance[]>([])
+  const [picked, setPicked] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
 
-  const template = templates.find((t) => t.id === templateId) ?? templates[0] ?? null
-  const offer = offers.find((o) => o.id === offerId) ?? offers[0] ?? null
-
-  useEffect(() => {
-    if (where !== 'rent') return
-    api.get<{ templates: Template[] }>('/cloud/readiness', { timeoutMs: 60_000 })
-      // ⚠ 기본은 slim — 실측으로 full(14GB)은 같은 호스트에서 pull 도 못 끝냈다(§12-13)
-      .then((r) => { setTemplates(r.templates); setTemplateId((c) => c ?? r.templates.find((t) => t.variant === 'slim')?.id ?? r.templates[0]?.id ?? null) })
-      .catch(() => {})
-  }, [where])
-
-  useEffect(() => {
-    if (where !== 'rent') return
-    const p = new URLSearchParams({ disk_gb: '40' })
-    if (template?.cuda) p.set('cuda', template.cuda)
-    api.get<{ gpus: Gpu[] }>(`/cloud/gpus?${p}`, { timeoutMs: 60_000 })
-      .then((r) => setGpus(r.gpus)).catch(() => {})
-  }, [where, template?.cuda])
+  // ⚠ **학습을 걸 수 있는 것만** 고르게 한다. 한 묶음으로 도는 기계(`piper-<job>`)는
+  //   자기 학습이 끝나면 스스로 파기되므로 여기에 끼면 안 된다.
+  const usable = rows.filter((i) => i.label.startsWith(BOX) && i.status === 'running')
+  const instance = usable.find((i) => i.id === picked) ?? usable[0] ?? null
 
   const load = useCallback(() => {
     if (where !== 'rent') return
-    const p = new URLSearchParams({ gpu, disk_gb: '40', limit: '8' })
-    if (template?.cuda) p.set('cuda', template.cuda)
     setLoading(true); setErr('')
-    api.get<{ offers: Offer[] }>(`/cloud/vast/offers?${p}`, { timeoutMs: 90_000 })
-      .then((r) => { setOffers(r.offers); setOfferId((c) => r.offers.some((o) => o.id === c) ? c : r.offers[0]?.id ?? null) })
-      .catch((e) => setErr(e instanceof Error ? e.message : '오퍼를 불러오지 못했습니다'))
+    api.get<{ instances: Instance[] }>('/cloud/instances', { timeoutMs: 90_000 })
+      .then((r) => setRows(r.instances))
+      .catch((e) => setErr(e instanceof Error ? e.message : '인스턴스를 불러오지 못했습니다'))
       .finally(() => setLoading(false))
-  }, [where, gpu, template?.cuda])
+  }, [where])
 
-  useEffect(() => { const t = setTimeout(load, 300); return () => clearTimeout(t) }, [load])
+  useEffect(load, [load])
 
-  // ⚠ 고른 것을 **위로 올린다.** 여기서 직접 시작하지 않는다 — 시작 버튼은 하나여야 하고,
-  //   그 버튼이 학습 설정을 들고 있다.
   useEffect(() => {
-    if (where !== 'rent' || !offer || !template) { onPick(null); return }
-    onPick({
-      offer_id: offer.id, template_hash: template.hash_id, disk_gb: offer.disk_gb,
-      budget_usd: budget,
-      // ⚠ 상한 둘을 **항상 같이 보낸다** — 예산만 있으면 느린 기계에서 시간이 무한이다
-      max_hours: Math.max(0.1, budget / offer.hourly),
-    })
+    onPick(where === 'rent' && instance ? { instance_id: instance.id } : null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [where, offer?.id, template?.hash_id, budget])
+  }, [where, instance?.id])
 
   const money = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`
 
@@ -112,11 +86,6 @@ export default function TrainWhereForm({ where, onWhere, onPick, runner, disable
             </button>
           ))}
         </div>
-        {where === 'rent' && (
-          <span className="text-xs text-neutral-500">
-            끝나면 자동으로 파기됩니다 · 가중치는 저장소에서 자동으로 받아옵니다
-          </span>
-        )}
         {/* ⚠ 이 기계에 사내 SSH 박스가 설정돼 있으면 [로컬]은 거기로 간다 — 라벨만
             믿게 두지 않는다. 설정이 없으면(대부분) 이 줄은 안 뜬다. */}
         {where === 'here' && runner === 'ssh' && (
@@ -127,69 +96,49 @@ export default function TrainWhereForm({ where, onWhere, onPick, runner, disable
       </div>
 
       {where === 'rent' && (
-        <div className="space-y-3 rounded-lg border border-blue-800/40 bg-blue-950/10 p-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="flex items-center gap-2">
-              <span className="text-xs text-neutral-400">템플릿</span>
-              <select value={template?.id ?? ''} onChange={(e) => setTemplateId(Number(e.target.value))}
-                className="rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm">
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id} title={t.description}>
-                    {t.variant || t.name}{t.cuda ? ` · ${t.cuda}` : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex items-center gap-2">
-              <span className="text-xs text-neutral-400">GPU</span>
-              <select value={gpu} onChange={(e) => setGpu(e.target.value)}
-                className="max-w-[16rem] rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm">
-                {/* ⚠ 못 도는 기종을 **숨기지 않는다** — 없는 셈 치면 "왜 안 보이지" 가 된다 */}
-                {gpus.map((g) => (
-                  <option key={g.name} value={g.name} disabled={g.support !== 'ok'}>
-                    {g.name}{g.cheapest_hourly ? ` · ${money(g.cheapest_hourly)}/h` : ''}
-                    {g.support === 'too_new' ? ' (이 이미지에 커널 없음)'
-                      : g.support === 'too_old' ? ' (너무 구형)' : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex items-center gap-2">
-              <span className="text-xs text-neutral-400">예산 상한 $</span>
-              <input type="number" min={1} value={budget}
-                onChange={(e) => setBudget(Math.max(1, Number(e.target.value) || 10))}
-                className="w-20 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm" />
-            </label>
-            {offer && (
-              <span className="text-xs text-neutral-400">
-                {money(offer.hourly)}/h → 약 {(budget / offer.hourly).toFixed(1)}시간
-              </span>
-            )}
+        <div className="space-y-2 rounded-lg border border-blue-800/40 bg-blue-950/10 p-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-xs text-neutral-400">
+              빌려 둔 기계 {usable.length > 0 && <span className="text-neutral-600">· {usable.length}대</span>}
+            </span>
+            <button onClick={load} className="text-xs text-blue-400 hover:underline">새로고침</button>
+            <a href="/cloud" className="ml-auto text-xs text-blue-400 hover:underline">
+              클라우드 GPU 에서 빌리기 →
+            </a>
           </div>
 
           {err && <p className="text-xs text-red-300">{err}</p>}
-          {loading && <p className="text-xs text-neutral-500">기계를 찾는 중…</p>}
+          {loading && <p className="text-xs text-neutral-500">불러오는 중…</p>}
 
-          <div className="space-y-1">
-            {offers.map((o) => (
-              <label key={o.id}
-                className={`flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 rounded border px-2 py-1.5 text-sm
-                  ${o.id === offer?.id ? 'border-blue-600 bg-blue-950/30' : 'border-neutral-700 hover:border-neutral-500'}`}>
-                <input type="radio" name="offer" checked={o.id === offer?.id}
-                  onChange={() => setOfferId(o.id)} className="accent-blue-500" />
-                <span className="font-medium text-neutral-200">{o.num_gpus}× {o.gpu_name}</span>
-                <span className="text-neutral-300">{money(o.hourly)}/h</span>
-                <span className="text-xs text-neutral-500">{o.geolocation} · 신뢰 {(o.reliability * 100).toFixed(1)}%</span>
-                {/* ⚠ 경고를 **고르는 자리에** 띄운다. 확인 창에만 있으면 이미 마음을 정한 뒤다 */}
-                {o.warnings.map((w) => (
-                  <span key={w} className="w-full text-xs text-amber-300">⚠ {w}</span>
-                ))}
-              </label>
-            ))}
-            {!loading && offers.length === 0 && (
-              <p className="text-xs text-neutral-500">조건에 맞는 기계가 없습니다 — GPU 나 템플릿을 바꿔 보세요.</p>
-            )}
-          </div>
+          {!loading && usable.length === 0 && (
+            /* ⚠ 여기서 빌리게 하지 않는다 — 빌리는 곳은 한 군데여야 한다. 대신 어디로
+               가야 하는지 말한다. */
+            <p className="text-xs text-neutral-400">
+              빌려 둔 기계가 없습니다 — <a href="/cloud" className="text-blue-400 hover:underline">
+              클라우드 GPU</a> 에서 먼저 빌리세요.
+            </p>
+          )}
+
+          {usable.map((i) => (
+            <label key={i.id}
+              className={`flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 rounded border px-2 py-1.5 text-sm
+                ${i.id === instance?.id ? 'border-blue-600 bg-blue-950/30' : 'border-neutral-700 hover:border-neutral-500'}`}>
+              <input type="radio" name="instance" checked={i.id === instance?.id}
+                onChange={() => setPicked(i.id)} className="accent-blue-500" />
+              <span className="font-medium text-neutral-200">{i.gpu_name}</span>
+              <span className="text-neutral-300">{money(i.rate_usd_h)}/h</span>
+              <span className="text-xs text-neutral-500">{i.label} · id {i.id}</span>
+            </label>
+          ))}
+
+          {instance && (
+            /* ⚠ **끝나도 안 끈다**는 것을 여기서 말한다. 한 묶음([빌리기])과 반대라서,
+               모르고 있으면 빈 기계가 밤새 돈다. */
+            <p className="text-xs text-neutral-500">
+              학습이 끝나도 이 기계는 <strong className="text-neutral-400">꺼지지 않습니다</strong> —
+              {' '}{money(instance.rate_usd_h)}/h 가 계속 나갑니다. 다 쓰면 인스턴스 탭에서 파기하세요.
+            </p>
+          )}
         </div>
       )}
     </div>

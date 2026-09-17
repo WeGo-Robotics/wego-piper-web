@@ -46,6 +46,11 @@ class Phase(str, Enum):
     RETRIEVING = "retrieving"
     DESTROYING = "destroying"
     DESTROYED = "destroyed"
+    #: 학습은 끝났고 **기계는 그대로 있다.** 사람이 클라우드 페이지에서 일부러 빌린
+    #: 기계에서 학습한 경우다 — 끄는 것은 인스턴스 탭에서 사람이 한다.
+    #: ⚠ `DESTROYED` 로 적으면 안 된다. 살아서 과금 중인 기계를 "파기됨" 이라고 말하는
+    #: 것이 이 화면에서 제일 비싼 거짓말이다.
+    FINISHED = "finished"
     #: 파기를 시도했는데 **사라진 것을 확인하지 못했다.** 살아 있을 수 있다 = 과금 중일
     #: 수 있다. 자동으로 다시 시도하지 않는다(다른 게이트웨이의 것일 수 있다 — §10 결정 5).
     ORPHAN = "orphan"
@@ -95,6 +100,13 @@ class CloudJob:
     instance_id: int | None = None
     #: 사람이 읽을 마지막 사유 — 왜 끝났는지. 비면 아직 안 끝났다는 뜻이다.
     reason: str = ""
+    #: 이 기계를 **우리가 만들었나.** 한 묶음(`rent.start`)이면 참이고, 사람이 빌려 둔
+    #: 기계에 학습만 얹은 경우(`rent.train_on`)면 거짓이다.
+    #:
+    #: ⚠ 이게 거짓이면 `finish()` 는 **파기하지 않는다.** 남의 기계를 우리 job 이
+    #: 끝났다는 이유로 끄면 안 된다 — 다음 학습을 준비하던 사람의 기계가 사라진다.
+    #: 사람이 [중지]를 눌러도 마찬가지다.
+    owns_instance: bool = True
 
     def set_phase(self, phase: Phase, reason: str = "") -> None:
         if phase != self.phase:
@@ -122,7 +134,12 @@ class CloudJob:
 
         ⚠ 이미 끝난 job 에 다시 불려도 안전하다(멱등) — `finally` 는 중첩되기 쉽다.
         """
-        if self.phase in (Phase.DESTROYED, Phase.ORPHAN):
+        if self.phase in (Phase.DESTROYED, Phase.ORPHAN, Phase.FINISHED):
+            return self.phase
+        if not self.owns_instance:
+            # ⚠ 우리가 만든 기계가 아니다 — 끄지 않는다. 유휴로 떠 있는 것은
+            #   `sweeper.idle_boxes()` 가 말해 준다.
+            self.set_phase(Phase.FINISHED, reason or "학습이 끝났습니다 (기계는 그대로)")
             return self.phase
         if self.instance_id is None:
             self.set_phase(Phase.DESTROYED, reason or "빌린 기계가 없습니다")
@@ -164,12 +181,20 @@ class CloudJob:
         }
 
 
-def find_orphans(provider, known: set[int], prefix: str = "piper-") -> list:
-    """우리 라벨이 붙었는데 **레지스트리에 없는** 인스턴스.
+def find_orphans(provider, known: set[int], prefix: str = "piper-",
+                 owned_prefix: str = "piper-box-") -> list:
+    """우리 라벨이 붙었는데 **아무도 관리하지 않는** 인스턴스.
 
     ⚠ 이게 §6-3 의 고아 스캐너다. 레지스트리를 잃어도 라벨이 남으므로 알아볼 수 있다.
     ⚠ **자동 파기는 안 한다.** 다른 기계의 게이트웨이가 돌리는 학습일 수 있다
     (§10 결정 5) — 경고와 버튼까지가 우리 몫이다.
+
+    ⚠ **사람이 일부러 빌린 기계(`owned_prefix`)는 고아가 아니다.** 관리하는 태스크가
+    없는 것이 그쪽의 정상이다 — 클라우드 페이지에서 기계를 만들고 학습 페이지에서 골라
+    쓰는 흐름이라, 학습 사이사이에는 아무 job 도 안 붙어 있다. 그걸 고아라고 부르면
+    10분마다 빨간 경보가 울리고, 늘 울리는 알람은 꺼진 알람이다.
     """
     return [i for i in provider.list_instances()
-            if i.label.startswith(prefix) and i.id not in known]
+            if i.label.startswith(prefix)
+            and not i.label.startswith(owned_prefix)
+            and i.id not in known]

@@ -221,3 +221,93 @@ async def stop_now(provider) -> CloudJob | None:
     # 흐름이 없거나 못 끝냈다 — 여기서 끝낸다. `finish()` 는 멱등이라 겹쳐도 안전하다.
     await asyncio.to_thread(job.finish, provider, "사람이 중지했습니다")
     return job
+
+
+async def train_on(*, provider, instance_id: int, args: list[str], total_steps: int,
+                   output_dir: str = "", env: dict | None = None,
+                   repo_id: str = "", max_hours: float = 6.0) -> CloudJob:
+    """**이미 있는 기계**에 학습을 건다. 배경으로 돌고 즉시 돌아온다.
+
+    ## ⚠ 파기하지 않는다
+
+    한 묶음(`start()`)과 결정적으로 다른 점이다. 그쪽은 `finally` 가 반드시 파기하지만,
+    여기서 쓰는 기계는 **사람이 클라우드 페이지에서 일부러 빌린 것**이다 — 학습 한 번
+    끝났다고 끄면 다음 학습을 준비하던 사람의 기계가 사라진다. 끄는 것은 인스턴스
+    탭에서 사람이 한다.
+
+    ## ⚠ 대신 두 가지는 그대로다
+
+    - **학습 자체의 상한**(`max_hours` → 스크립트의 `timeout`, §6-1). 게이트웨이가 죽어도
+      학습은 그 안에 끝난다.
+    - **회수.** 끝나면 Hub 든 `scp` 든 가중치를 집으로 가져온다 — 기계가 남아 있다고
+      가중치가 저절로 오지는 않는다.
+
+    ## ⚠ 빈 기계는 스캐너가 말해 준다
+
+    학습이 끝나면 그 기계는 유휴다. 요금은 똑같이 나가므로 `sweeper.idle_boxes()` 가
+    일정 시간 뒤부터 "몇 분째 학습 없이 떠 있습니다" 를 로그와 화면에 남긴다.
+    """
+    global _task, _job
+    if busy():
+        raise RuntimeError("이미 임대 학습이 돌고 있습니다 — 하나씩만 돌립니다")
+
+    original = train_manager.runner
+    job_id = train_manager.job_id
+    started_at = time.time()
+    retrieve.reset()
+
+    inst = await asyncio.to_thread(provider.status, instance_id)
+    if inst is None:
+        raise RuntimeError(f"인스턴스 {instance_id} 를 찾을 수 없습니다")
+    if not inst.running or not inst.ssh:
+        raise RuntimeError(f"인스턴스 {instance_id} 가 아직 준비되지 않았습니다: {inst.status}")
+    target = _target_for(inst)
+
+    # ⚠ `owns_instance=False` 가 핵심이다 — `finish()` 가 파기를 건너뛴다. 사람이
+    #   [중지]를 눌러도 그 기계는 안 꺼진다.
+    job = CloudJob(job_id=job_id, label=inst.label, owns_instance=False,
+                   budget=Budget(usd=0.0, max_hours=max_hours))
+    job.note_started(inst.id, inst.rate_usd_h)
+
+    async def _go() -> None:
+        from app.services.cloud.procure import wait_for_stack
+
+        try:
+            # ⚠ **접속된 것과 학습할 수 있는 것은 다르다**(§12-13). slim 이면 여기서
+            #   아직 스택을 깔고 있을 수 있다 — 안 기다리면 3초 만에 죽는다.
+            job.set_phase(Phase.SSH_WAIT)
+            _remember(job)
+            await wait_for_stack(target)
+
+            job.set_phase(Phase.TRAINING)
+            _remember(job)
+            runner = SSHRunner(job_id=job_id, host=target)
+            runner.set_log_callback(train_manager._intercept_log)
+            runner.set_state_callback(train_manager._intercept_state)
+            train_manager.runner = runner
+            await train_manager.start(args, total_steps=total_steps,
+                                      output_dir=output_dir, env_extra=env or {},
+                                      max_hours=max_hours)
+            _remember(job)          # ⚠ start() 가 레코드를 지운다 — 다시 심는다
+
+            while train_manager.is_running:
+                await asyncio.sleep(3.0)
+
+            job.set_phase(Phase.RETRIEVING)
+            _remember(job)
+            if repo_id:
+                await retrieve.retrieve_now(target, repo_id, settings.models_dir,
+                                            since=started_at)
+        except Exception as exc:                                    # noqa: BLE001
+            logger.error("빌린 기계에서의 학습 실패: %s", exc)
+            job.reason = str(exc)
+        finally:
+            # ⚠ 러너를 되돌린다. **파기는 안 한다** — 이 기계는 사람 것이다.
+            train_manager.runner = original
+            original.set_log_callback(train_manager._intercept_log)
+            job.finish(None, job.reason)     # owns_instance=False → 파기 없이 FINISHED
+            _remember(job)
+
+    _job = job
+    _task = asyncio.create_task(_go())
+    return job

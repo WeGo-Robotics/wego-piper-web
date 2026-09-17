@@ -151,6 +151,18 @@ def pull(repo_id: str, models_dir: Path) -> Path:
                                   cache_dir=str(models_dir)))
 
 
+async def retrieve_now(target, repo_id: str, models_dir: Path, *, since: float = 0.0,
+                       rescue_fn=None) -> None:
+    """**기계를 안 끄는 경우**의 회수 — 두 단계를 잇달아 한다.
+
+    ⚠ 한 묶음(`/rent`)에서는 두 단계 사이에 파기가 낀다(`scp` 는 기계가 있어야 하고 Hub
+    는 기계를 안 타므로). 사람이 빌려 둔 기계에서는 끼어들 파기가 없으니 그냥 이어서
+    한다 — 판정과 순서는 같은 함수를 쓴다.
+    """
+    await before_destroy(target, repo_id, models_dir, since=since, rescue_fn=rescue_fn)
+    await after_destroy(repo_id, models_dir)
+
+
 async def before_destroy(target, repo_id: str, models_dir: Path, *,
                          since: float = 0.0, rescue_fn=None) -> None:
     """**기계가 살아 있는 동안** 해야 할 몫. 여기서 판정도 한다.

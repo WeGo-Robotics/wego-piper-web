@@ -20,11 +20,12 @@ import json
 import logging
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.services.cloud import sshkey
@@ -209,8 +210,10 @@ class RentRequest(TrainStartRequest):
     됐고, 그걸 아는 시점은 몇 시간 뒤 결과를 열어 봤을 때다.
     """
 
-    offer_id: int
-    template_hash: str
+    # ⚠ 기본값이 있는 이유는 **미리보기** 때문이다. `/rent/preview` 는 무엇이 돌지만
+    #   보여 주므로 기계가 필요 없다 — 실제로 빌릴 때는 아래 `/rent` 가 막는다.
+    offer_id: int = 0
+    template_hash: str = ""
     disk_gb: float = Field(40.0, ge=10, le=2000)
     budget_usd: float = Field(10.0, gt=0, le=1000)
     max_hours: float = Field(6.0, gt=0, le=72)
@@ -224,6 +227,44 @@ class RentRequest(TrainStartRequest):
     # ⚠ **회수 경로라 필수다.** 없으면 `cli_mapping` 이 `--policy.push_to_hub=false` 를
     #   강제하고, 학습은 멀쩡히 끝나고 가중치만 사라진다(§12-4: 푸시는 한 번뿐).
     policy_repo_id: str
+
+
+class NewInstanceRequest(BaseModel):
+    """기계 **하나만** 만든다 — 학습은 안 건다.
+
+    ⚠ 학습 설정이 여기 없는 것이 요점이다. 클라우드 페이지는 "기계", 학습 페이지는
+    "학습" 으로 가른다 — 학습 폼이 두 곳에 있으면 반드시 어긋난다(§12-17 이 그 병이었다).
+    """
+
+    offer_id: int
+    template_hash: str
+    disk_gb: float = Field(40.0, ge=10, le=2000)
+
+
+@router.post("/instances")
+async def create_instance(body: NewInstanceRequest):
+    """기계를 만든다. **끄는 것은 사람이 한다.**
+
+    ⚠ 라벨이 `piper-box-` 다. 이게 "사람이 일부러 빌린 것" 이라는 표시이고, 고아
+    스캐너가 이걸 보고 **고아 신고를 안 한다** — 관리하는 태스크가 없는 것이 이쪽의
+    정상이기 때문이다. 대신 학습 없이 오래 떠 있으면 유휴로 말해 준다.
+
+    ⚠ 라벨에 기록하는 이유: 레지스트리에 적으면 게이트웨이가 죽는 순간 잃는다(§12-14).
+    이건 **사람의 결정**이라 프로세스보다 오래 살아야 한다.
+
+    ⚠ **자동 상한이 없다.** 한 묶음(`/rent`)과 달리 예산·시간 가드가 붙지 않는다 —
+    빈 기계도 요금은 똑같이 나가므로 끄는 것을 잊으면 그대로 청구된다.
+    """
+    label = f"{sweeper.BOX_PREFIX}{int(time.time()) % 100000}"
+    try:
+        inst = await asyncio.to_thread(
+            partial(_provider().create, body.offer_id,
+                    template_hash=body.template_hash, disk_gb=body.disk_gb, label=label))
+    except Exception as exc:                                        # noqa: BLE001
+        raise _to_http(exc) from exc
+    logger.warning("기계를 빌렸습니다: %s (%s) — **끄는 것은 사람이 합니다**",
+                   inst.id, label)
+    return {"created": True, **asdict(inst)}
 
 
 def _rent_train_args(body: "RentRequest") -> list[str]:
@@ -312,6 +353,57 @@ async def rent_and_train(body: RentRequest):
             env=_train_env(body.amp, remote=True) or {},
             # ⚠ 회수 보험이 "Hub 에 갔나" 를 물어볼 대상이다 (§12-4).
             repo_id=body.policy_repo_id)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"started": True, **job.to_dict()}
+
+
+class TrainOnRequest(RentRequest):
+    """**이미 있는 기계**에 학습을 건다 — 빌리지도, 끄지도 않는다.
+
+    ⚠ `RentRequest` 를 물려받는 이유는 학습 필드를 하나도 안 흘리기 위해서다(§12-18).
+    다만 기계를 고르는 방식이 다르다 — 오퍼가 아니라 **인스턴스 번호**다.
+    """
+
+    instance_id: int
+    # 빌리는 요청이 아니므로 오퍼·템플릿은 필요 없다
+    offer_id: int = 0
+    template_hash: str = ""
+    # ⚠ 예산 상한은 여기 없다. 기계가 우리 것이 아니라 끌 수 없고, 못 끄는 상한은
+    #   상한이 아니라 장식이다. 남는 것은 **학습 자체의 시간 상한**뿐이다(§6-1).
+    budget_usd: float = 0.0
+
+
+@router.post("/train-on")
+async def train_on_instance(body: TrainOnRequest):
+    """빌려 둔 기계에 학습을 얹는다. **끝나도 기계는 그대로 둔다.**
+
+    ⚠ 파기가 없는 대신 두 가지는 그대로다 — 학습 스크립트의 `timeout`(게이트웨이가
+    죽어도 학습은 끝난다)과 **회수**(가중치는 집으로 온다).
+
+    ⚠ 학습이 끝난 기계는 유휴다. 요금은 똑같이 나가므로 스캐너가 일정 시간 뒤부터
+    "몇 분째 학습 없이 떠 있습니다" 를 말한다 — 끄는 것은 인스턴스 탭에서 사람이 한다.
+    """
+    from app.routers.training import _require_push_permission, _train_env
+    from app.services.cloud import rent
+    from app.services.exclusivity import Activity, require_idle
+
+    require_idle(Activity.TRAINING)
+    if rent.busy():
+        raise HTTPException(409, "이미 임대 학습이 돌고 있습니다 — 하나씩만 돌립니다")
+    if not body.policy_repo_id.strip():
+        raise HTTPException(
+            400, "가중치를 올릴 저장소(policy_repo_id)가 필요합니다 — 없으면 학습이 "
+                 "끝나도 결과를 가져올 수 없습니다.")
+    _reject_local_only_settings(body)
+    await _require_push_permission(body.policy_repo_id)
+
+    try:
+        job = await rent.train_on(
+            provider=_provider(), instance_id=body.instance_id,
+            args=_rent_train_args(body), total_steps=body.steps,
+            env=_train_env(body.amp, remote=True) or {},
+            repo_id=body.policy_repo_id, max_hours=body.max_hours)
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"started": True, **job.to_dict()}

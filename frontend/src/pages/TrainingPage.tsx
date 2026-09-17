@@ -358,7 +358,12 @@ export default function TrainingPage() {
   const handlePreConfirm = async () => {
     // CLI 미리보기를 config 확인용으로 표시
     try {
-      const r = await api.post<{ command: string; args: string[] }>('/training/preview', trainParams())
+      // ⚠ **클라우드면 다른 인터프리터다.** 임대 기계는 `/opt/venv/bin/python` 이고
+      //   이 기계는 conda 경로다 — 같은 미리보기를 쓰면 확인 창이 **안 도는 명령**을
+      //   보여 준다. 서버가 실제 경로로 만들어 주는 쪽을 쓴다.
+      const r = where === 'rent'
+        ? await api.post<{ command: string; args: string[] }>('/cloud/rent/preview', trainParams())
+        : await api.post<{ command: string; args: string[] }>('/training/preview', trainParams())
       const configLines = [
         '=== 학습 설정 확인 ===',
         '',
@@ -389,10 +394,11 @@ export default function TrainingPage() {
     setConfirmConfig(null)
     try {
       if (where === 'rent') {
-        if (!rentPick) throw new Error('빌릴 기계를 고르세요')
+        if (!rentPick) throw new Error('학습을 걸 기계를 고르세요 — 클라우드 GPU 페이지에서 먼저 빌려야 합니다')
         // ⚠ **학습 설정은 이 페이지의 것 그대로 보낸다.** 서버는 `RentRequest` 가
         //   `TrainStartRequest` 를 상속하므로 하나도 안 흘린다(§12-18).
-        await api.post('/cloud/rent', { ...trainParams(), ...rentPick }, { timeoutMs: 120_000 })
+        // ⚠ **빌리지 않는다** — 이미 있는 기계에 얹는다. 빌리기는 클라우드 페이지다.
+        await api.post('/cloud/train-on', { ...trainParams(), ...rentPick }, { timeoutMs: 120_000 })
         return
       }
       if (cliEdited) {
@@ -911,7 +917,7 @@ export default function TrainingPage() {
             <button onClick={cliEdited ? handleStart : handlePreConfirm}
               disabled={!canStart || (where === 'rent' && !rentPick)}
               className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium">
-              {where === 'rent' ? '클라우드 GPU 로 학습 시작'
+              {where === 'rent' ? '고른 기계에서 학습 시작'
                 : cliEdited ? '학습 시작 (CLI 직접)' : '설정 확인 후 시작'}
             </button>
           </div>

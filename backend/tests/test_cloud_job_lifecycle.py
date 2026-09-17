@@ -49,7 +49,9 @@ def test_every_phase_can_still_be_finished(phase):
     j = _job()
     j.phase = phase
     j.finish(p, "테스트")
-    if phase in (Phase.DESTROYED, Phase.ORPHAN):
+    # ⚠ `FINISHED` 도 끝난 칸이다 — 사람이 빌려 둔 기계에서 학습만 끝난 상태이고,
+    #   그 기계는 애초에 우리가 끌 대상이 아니다(§12-20).
+    if phase in (Phase.DESTROYED, Phase.ORPHAN, Phase.FINISHED):
         assert p.destroyed == [], "이미 끝난 것을 또 파기하려 들었다"
     else:
         assert p.destroyed == [77], f"{phase.value} 에서 파기를 안 했다"
@@ -169,3 +171,19 @@ def test_the_report_carries_the_numbers_a_person_needs():
     assert d["instance_id"] == 77
     assert set(d["cost"]) == {"rate_usd_h", "accrued_usd", "budget_usd",
                               "elapsed_h", "max_hours"}
+
+
+def test_a_job_on_a_machine_we_did_not_create_never_destroys_it():
+    """⚠ 불변식이 **뒤집히는 유일한 자리**다. 한 묶음(`rent.start`)은 반드시 파기하지만,
+    사람이 빌려 둔 기계에 학습만 얹은 경우(`rent.train_on`)는 **절대 안 끈다** — 학습
+    한 번 끝났다고 끄면 다음 학습을 준비하던 사람의 기계가 사라진다.
+
+    ⚠ 어느 칸에서 끝나든 그렇다. 예외를 한 칸이라도 두면 그 칸에서 남의 기계가 꺼진다.
+    """
+    for phase in Phase:
+        p = _Provider()
+        j = _job()
+        j.owns_instance = False
+        j.phase = phase
+        j.finish(p, "테스트")
+        assert p.destroyed == [], f"{phase.value} 에서 남의 기계를 껐다"

@@ -576,13 +576,10 @@ def test_the_preview_never_hands_back_the_token():
     assert "HF_TOKEN" not in r.text and "hf_" not in r.text
 
 
-def test_the_rent_tab_sends_every_training_value_it_shows():
-    """⚠ 여태 [빌리기]는 `steps=5000 · batch=8 · amp=bf16` 으로 돌면서 그 숫자를 어디에도
-    보여 주지 않았다. 예산 상한에는 "화면이 보여 준 숫자와 실제가 다르면 거짓말" 이라고
-    적어 두고 학습 설정에는 안 지키고 있었다.
-
-    ⚠ 그리고 **미리보기와 같은 본문**을 보내야 한다 — 다른 것을 보내면 보여 준 명령이
-    그 순간 거짓말이 된다.
+def test_the_rent_tab_only_makes_a_machine():
+    """⚠ **빌리는 곳과 학습하는 곳을 갈랐다.** 클라우드 페이지는 기계만 만들고, 학습은
+    학습 페이지 한 곳에서만 설정한다 — 학습 폼이 두 곳에 있으면 반드시 어긋난다
+    (한때 RENT 탭이 입력 둘만 들고 나머지를 서버 기본값으로 돌렸다).
     """
     from pathlib import Path
 
@@ -590,10 +587,18 @@ def test_the_rent_tab_sends_every_training_value_it_shows():
 
     src = code_only((Path(__file__).resolve().parents[2] / "frontend" / "src"
                      / "components" / "CloudRentTab.tsx").read_text())
-    for field in ("policy_type:", "steps:", "batch_size:", "save_freq:", "amp:"):
-        assert field in src, f"{field} 를 안 보낸다 — 서버 기본값이 조용히 들어간다"
-    assert "api.post('/cloud/rent', body," in src, "미리보기와 다른 본문을 보낸다"
-    assert "'/cloud/rent/preview'" in src, "무엇이 돌지 안 보여 준다"
+    assert "'/cloud/instances'" in src, "기계 만들기를 안 부른다"
+    for gone in ("dataset_repo_id", "batch_size", "save_freq", "policy_type"):
+        assert gone not in src, f"RENT 탭에 학습 설정({gone})이 남아 있다"
+
+
+def test_making_a_machine_says_it_will_not_turn_itself_off():
+    """⚠ 한 묶음([빌리기]→학습→파기)과 **반대**라서, 모르고 있으면 빈 기계가 밤새 돈다."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "frontend" / "src"
+           / "components" / "CloudRentTab.tsx").read_text()
+    assert "자동으로 꺼지지 않습니다" in src and "인스턴스 탭" in src
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -700,15 +705,15 @@ def test_the_training_page_can_send_its_own_settings_to_a_rented_gpu():
     """⚠ **폼은 한 벌이다.** 임대용 학습 폼을 따로 만들면 반드시 어긋난다 — RENT 탭이
     실제로 그랬다(입력 둘만 들고 나머지는 서버 기본값, §12-17)."""
     src = _page("TrainingPage.tsx")
-    assert "api.post('/cloud/rent', { ...trainParams(), ...rentPick }" in src, \
+    assert "api.post('/cloud/train-on', { ...trainParams(), ...rentPick }" in src, \
         "학습 페이지의 설정을 그대로 안 보낸다"
 
 
 def test_where_to_run_sits_next_to_the_start_button():
     """⚠ 위쪽 어딘가에 두면 "어디서 도는지" 를 모른 채 누른다 — 임대는 그 한 번이 돈이다."""
     src = _page("TrainingPage.tsx")
-    assert src.index("TrainWhereForm") < src.index("클라우드 GPU 로 학습 시작")
-    gap = src[src.index("<TrainWhereForm"):src.index("클라우드 GPU 로 학습 시작")]
+    assert src.index("TrainWhereForm") < src.index("고른 기계에서 학습 시작")
+    gap = src[src.index("<TrainWhereForm"):src.index("고른 기계에서 학습 시작")]
     assert gap.count("<button") <= 1, "실행 위치와 시작 버튼 사이에 다른 것이 끼어 있다"
 
 
@@ -735,14 +740,33 @@ def test_a_hand_edited_cli_cannot_be_rented_and_says_why():
     assert "disabledReason=" in src and "cliEdited" in src
 
 
-def test_the_picker_shows_warnings_where_you_choose():
-    """⚠ 확인 창에만 있으면 이미 마음을 정한 뒤다. bf16·커널 경고는 **고르는 줄**에."""
+def test_the_picker_offers_only_machines_you_rented_on_purpose():
+    """⚠ 한 묶음으로 도는 기계(`piper-<job>`)는 자기 학습이 끝나면 **스스로 파기된다** —
+    거기에 다른 학습을 걸면 도중에 기계가 사라진다. 고를 수 있는 것은 사람이 일부러
+    빌린 `piper-box-` 뿐이다."""
     src = _page("TrainWhereForm.tsx")
-    assert "o.warnings.map" in src, "오퍼 줄에 경고를 안 띄운다"
-    assert "g.support !== 'ok'" in src, "못 도는 기종을 고를 수 있게 뒀다"
+    assert "'piper-box-'" in src and "startsWith(BOX)" in src
+    assert "i.status === 'running'" in src, "아직 안 뜬 기계를 고르게 둔다"
 
 
-def test_the_picker_sends_both_caps():
-    """⚠ 예산만 있으면 느린 기계에서 시간이 사실상 무한이다 — 둘 다 보낸다."""
+def test_the_picker_does_not_rent():
+    """⚠ 빌리기가 두 곳에 있으면 "끄는 책임" 도 두 곳으로 갈라진다 — 한쪽은 끝나면 끄고
+    한쪽은 안 끄는 식이 되면 아무도 규칙을 못 외운다. 여기서는 **고르기만** 한다."""
     src = _page("TrainWhereForm.tsx")
-    assert "budget_usd:" in src and "max_hours:" in src
+    assert "/cloud/instances" in src, "목록을 안 읽는다"
+    assert "api.post" not in src, "고르는 화면이 무언가를 만들고 있다"
+    assert 'href="/cloud"' in src, "빌리러 갈 곳을 안 알려 준다"
+
+
+def test_the_picker_says_the_machine_stays_up():
+    """⚠ 학습이 끝나도 안 꺼진다는 것을 **고르는 자리에서** 말한다 — 확인 창에만 있으면
+    이미 시작한 뒤다."""
+    src = _page("TrainWhereForm.tsx")
+    assert "꺼지지 않습니다" in src and "/h 가 계속" in src
+
+
+def test_the_confirm_preview_follows_where_it_will_run():
+    """⚠ 임대 기계는 `/opt/venv/bin/python` 이고 이 기계는 conda 경로다 — 같은
+    미리보기를 쓰면 확인 창이 **안 도는 명령**을 보여 준다."""
+    src = _page("TrainingPage.tsx")
+    assert "'/cloud/rent/preview'" in src and "where === 'rent'" in src

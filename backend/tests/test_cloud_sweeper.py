@@ -474,3 +474,64 @@ def test_the_reclaim_happens_after_the_start_not_before():
     src = inspect.getsource(rent.start)
     assert src.index("train_manager.start(") < src.index("_remember(_job)"), \
         "재기재가 학습 시작보다 앞이다 — 그러면 지워진다"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 사람이 일부러 빌린 기계 — **고아가 아니다** (2026-09-17)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_a_deliberately_rented_box_is_not_an_orphan():
+    """⚠ 클라우드 페이지에서 기계를 만들고 학습 페이지에서 골라 쓰는 흐름이라, 학습
+    사이사이에는 아무 job 도 안 붙어 있다. 그걸 고아라고 부르면 10분마다 빨간 경보가
+    울리고 — 늘 울리는 알람은 꺼진 알람이다."""
+    rows = [_inst(1, "piper-abc"), _inst(2, "piper-box-42"), _inst(3, "someone-else")]
+    assert [o["id"] for o in sweeper.scan(_Fake(rows))] == [1]
+
+
+def test_the_label_is_where_ownership_is_recorded():
+    """⚠ 레지스트리에 적으면 게이트웨이가 죽는 순간 잃는다(§12-14 가 그래서 기동 때
+    임대 주장을 비운다). 그런데 "내가 이 기계를 빌렸다" 는 **사람의 결정**이라 프로세스
+    보다 오래 살아야 한다 — 라벨은 Vast 가 들고 있으므로 우리가 무엇을 잊든 남는다."""
+    from app.routers import cloud as router
+
+    import inspect
+    assert "sweeper.BOX_PREFIX" in inspect.getsource(router.create_instance)
+
+
+def test_an_idle_box_is_reported_with_what_it_has_cost():
+    """⚠ 고아와 다르다 — "잃어버린 기계" 가 아니라 "일부러 둔 기계" 다. 그래도 빈 기계에
+    요금은 똑같이 나가므로 **얼마나 나갔는지** 같이 말한다."""
+    rows = [_inst(7, "piper-box-7", rate=0.6)]
+    assert sweeper.idle_boxes(rows, training=False, now=1000.0) == []      # 이제 막 봤다
+    later = sweeper.idle_boxes(rows, training=False, now=1000.0 + sweeper.IDLE_WARN_S + 60)
+    assert later and later[0]["id"] == 7
+    assert "$" in later[0]["text"] and "분째" in later[0]["text"]
+
+
+def test_training_clears_the_idle_clock():
+    """⚠ 안 지우면 6시간짜리 학습이 끝난 직후 "6시간째 유휴" 라고 말한다."""
+    rows = [_inst(7, "piper-box-7")]
+    sweeper.idle_boxes(rows, training=False, now=0.0)
+    sweeper.idle_boxes(rows, training=True, now=100.0)          # 학습 중 — 시계를 지운다
+    assert sweeper.idle_boxes(rows, training=False, now=200.0) == []
+
+
+def test_a_one_shot_rental_is_not_called_idle():
+    """한 묶음(`piper-<job>`)은 스스로 파기한다 — 유휴라고 말할 대상이 아니다."""
+    rows = [_inst(9, "piper-oneshot")]
+    assert sweeper.idle_boxes(rows, training=False, now=1e9) == []
+
+
+def test_finishing_a_job_on_someone_elses_box_does_not_destroy_it():
+    """⚠ 사람이 [중지]를 눌러도 그 기계는 안 꺼진다. 학습 한 번 끝났다고 끄면 다음
+    학습을 준비하던 사람의 기계가 사라진다."""
+    from app.services.cloud.lifecycle import Phase as _P
+
+    class _Boom:
+        def destroy(self, iid):                                  # pragma: no cover
+            raise AssertionError("남의 기계를 껐다")
+
+    job = CloudJob(job_id="j", label="piper-box-1", owns_instance=False, budget=Budget())
+    job.note_started(42, 0.5)
+    assert job.finish(_Boom(), "사람이 중지했습니다") is _P.FINISHED
+    assert job.finish(_Boom()) is _P.FINISHED, "멱등이 아니다"
