@@ -331,3 +331,15 @@ def test_the_runner_is_put_back_after_a_rental():
 
     src = inspect.getsource(rent_mod.start)
     assert "finally:" in src and "train_manager.runner = original" in src
+
+
+def test_the_ssh_wait_matches_the_runbook_watchpoint():
+    """⚠ 사람이 손으로 돌릴 때의 기준(§11-5 감시① = 8분)과 코드의 기준이 다르면,
+    둘 중 하나는 **틀린 기대**를 만든다.
+
+    실측: 빠른 호스트는 6분 20초에 통과했고, 느린 호스트는 12분을 줘도 못 벗어났다 —
+    기다림을 늘려도 그런 호스트는 안 온다. 12분이었을 때 $0.013 vs $0.008 을 태웠다.
+    """
+    from app.services.cloud import procure
+
+    assert procure.SSH_WAIT_S == 480.0, "감시① 8분과 어긋난다"
