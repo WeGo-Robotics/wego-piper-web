@@ -143,10 +143,23 @@ def _remember(job: CloudJob) -> None:
     _job = job
 
 
+#: 중지한 뒤 조달 흐름이 스스로 마무리하기를 기다리는 시간.
+#: 틱(30초)에 회수·파기까지 여유를 둔 값이다.
+STOP_GRACE_S = 90.0
+
+
 async def stop_now(provider) -> CloudJob | None:
     """사람이 멈춘다. **학습을 세우고 기계를 파기한다.**
 
     ⚠ 학습만 세우고 끝내면 기계가 남아 과금된다 — 중지는 파기까지다.
+
+    ⚠ **여기서 곧바로 파기하면 가중치를 잃는다.** 조달 흐름은 학습이 멈춘 것을 보고
+    `retrieving` 에서 회수를 한 다음 파기한다. 중지가 그걸 앞질러 기계를 없애면
+    `scp` 가 사라진 호스트를 향하고, 푸시도 안 된 회차라면 **결과가 통째로 사라진다** —
+    보험을 넣은 이유가 바로 그 경우다. 그래서 흐름이 살아 있으면 **맡기고 기다린다.**
+
+    ⚠ 다만 무한정 믿지는 않는다. 흐름이 없거나 시간 안에 안 끝나면 여기서 직접
+    파기한다 — 기다리다 못 끄는 것이 제일 나쁘다.
     """
     job = _job
     if job is None:
@@ -155,5 +168,19 @@ async def stop_now(provider) -> CloudJob | None:
         await train_manager.stop()
     except Exception as exc:                                        # noqa: BLE001
         logger.warning("중지 실패(파기는 계속): %s", exc)
+
+    task = _task
+    if task is not None and not task.done():
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=STOP_GRACE_S)
+            logger.info("조달 흐름이 스스로 마무리했습니다 (회수 포함)")
+            return _job or job
+        except asyncio.TimeoutError:
+            logger.warning("조달 흐름이 %.0f초 안에 안 끝났습니다 — 직접 파기합니다",
+                           STOP_GRACE_S)
+        except Exception as exc:                                    # noqa: BLE001
+            logger.warning("조달 흐름이 예외로 끝났습니다(파기는 계속): %s", exc)
+
+    # 흐름이 없거나 못 끝냈다 — 여기서 끝낸다. `finish()` 는 멱등이라 겹쳐도 안전하다.
     await asyncio.to_thread(job.finish, provider, "사람이 중지했습니다")
     return job

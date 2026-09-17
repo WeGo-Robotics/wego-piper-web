@@ -159,3 +159,32 @@ def test_rescue_runs_before_the_teardown_not_after():
     src = inspect.getsource(procure.procure_and_train)
     assert src.index("rescue_if_needed(") < src.index("job.finish("), \
         "회수가 파기 뒤에 있다 — 그때는 기계가 없다"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 사람이 [중지] 를 눌렀을 때 — **여기서 회수를 앞지르면 결과를 잃는다**
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_manual_stop_lets_the_flow_retrieve_before_destroying():
+    """⚠ 중지가 곧바로 파기하면 `scp` 가 **사라진 호스트**를 향한다.
+
+    조달 흐름은 학습이 멈춘 것을 보고 `retrieving` 에서 회수한 다음 파기한다. 중지가
+    그걸 앞지르면, 푸시도 안 된 회차에서 결과가 통째로 사라진다 — 보험을 넣은 이유가
+    정확히 그 경우다.
+    """
+    import inspect
+
+    from app.services.cloud import rent
+
+    src = inspect.getsource(rent.stop_now)
+    assert "shield" in src and "STOP_GRACE_S" in src, "흐름에 맡기지 않고 바로 파기한다"
+    # 그렇다고 무한정 믿지도 않는다 — 기다리다 못 끄는 것이 제일 나쁘다
+    assert "job.finish" in src, "흐름이 없을 때의 파기 경로가 없다"
+
+
+def test_finishing_is_seen_quickly_even_though_budget_is_checked_slowly():
+    """⚠ 끝난 뒤의 시간은 **빈 기계에 내는 돈**이다. 상한(30초)과 같은 주기로 보면
+    중지 후 회수가 그만큼 늦어진다."""
+    from app.services.cloud import procure
+
+    assert procure._DONE_POLL_S <= 5.0 < procure.TICK_S

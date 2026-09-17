@@ -46,8 +46,13 @@ logger = logging.getLogger(__name__)
 #: 코드가 쓰는 기준이 다르면, 둘 중 하나는 반드시 틀린 기대를 만든다. 12분이었을 때
 #: 느린 호스트에 4분을 더 태웠다($0.013 vs $0.008).
 SSH_WAIT_S = 480.0
-#: 예산·시간 상한을 몇 초마다 보나.
+#: 예산·시간 상한을 몇 초마다 보나. 요금이 시간당이라 30초면 최악 오차가 `rate/120`
+#: 달러다($0.1/h 기준 $0.0008) — 더 자주 볼 이유가 없다.
 TICK_S = 30.0
+
+#: "학습이 끝났나" 를 보는 주기. 상한과 달리 **빨리 알아야 한다** — 끝난 뒤의 시간은
+#: 빈 기계에 내는 돈이고, 사람이 [중지]를 눌렀다면 회수가 그만큼 늦어진다.
+_DONE_POLL_S = 3.0
 
 
 class ProcureError(RuntimeError):
@@ -101,7 +106,17 @@ async def run_until_done(job: CloudJob, is_running, stop, *,
                 # ⚠ 중지 실패가 파기를 막으면 안 된다. 어차피 파기가 기계를 없앤다.
                 logger.error("[%s] 중지 실패(파기는 계속): %s", job.job_id, exc)
             return why
-        await asyncio.sleep(tick)
+        # ⚠ **상한을 보는 주기와 "끝났나" 를 보는 주기는 다르다.** 돈은 30초마다 봐도
+        #   되지만(요금이 시간당이라 오차가 rate/120 달러다), 학습이 끝난 것은 빨리
+        #   알아야 한다 — 그만큼 빈 기계가 켜져 있고, 사람이 [중지]를 눌렀다면 회수가
+        #   그만큼 늦어진다. 그래서 틱 하나를 잘게 쪼개서 본다.
+        waited = 0.0
+        while waited < tick:
+            step = min(_DONE_POLL_S, tick - waited)
+            await asyncio.sleep(step)
+            waited += step
+            if not is_running():
+                return ""
 
 
 async def procure_and_train(
