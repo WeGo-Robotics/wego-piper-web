@@ -866,6 +866,11 @@ def test_a_host_that_skipped_a_release_still_catches_up_on_the_wheels():
 
     ver = (REPO / "backend" / "app" / "services" / "version.py").read_text()
     rule = ver.split("def staleness", 1)[1]
-    assert 'pkg.startswith("piper-")' in rule and "want" in rule, \
+    # ⚠ **우리 wheel 만** 센다. `startswith("piper-")` 로 세던 때는 서드파티 `piper-sdk`
+    #   (AgileX CAN SDK, apply.sh 가 PyPI 에서 깐다)까지 걸려, 멀쩡한 호스트가 기동할 때마다
+    #   "robotd piper-sdk 0.6.1" 이라고 거짓 경고했다.
+    assert "OUR_WHEELS" in rule and "piper-sdk" not in rule.split("OUR_WHEELS")[0][-400:], \
+        "서드파티 piper-sdk 까지 우리 wheel 로 센다"
+    assert "pkg in OUR_WHEELS" in rule and "want" in rule, \
         "기동 검사가 여전히 '이번에 구운 것'만 본다 — 건너뛴 호스트를 못 잡는다"
     assert "touched" not in rule, "옛 매니페스트 게이트가 남아 있다"

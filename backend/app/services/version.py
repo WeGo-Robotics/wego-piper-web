@@ -133,6 +133,15 @@ def collect() -> dict:
     return info
 
 
+#: **우리가 굽는 wheel 일곱 개.** `deploy/stage-hostside.sh` 의 목록과 같아야 한다.
+#: ⚠ 예전엔 `pkg.startswith("piper-")` 로 셌다. 그러면 서드파티 `piper-sdk`(AgileX 의 CAN
+#:   SDK, apply.sh 가 PyPI 에서 0.6.1 로 깐다)까지 우리 wheel 로 세어, 제대로 설치된
+#:   호스트가 기동할 때마다 "데몬 wheel 이 이번 릴리스와 다릅니다: robotd piper-sdk 0.6.1"
+#:   이라고 **영영 거짓 경고**한다. 이름이 아니라 목록으로 센다.
+OUR_WHEELS = frozenset({"piper-bus", "piper-shm", "piper-robot", "piper-cam",
+                        "piper-rs", "piper-so101", "piper-sim"})
+
+
 def staleness(info: dict | None = None) -> dict:
     """깔린 것이 적용된 릴리스와 맞나 — **판정은 여기 한 곳**이다.
 
@@ -169,7 +178,7 @@ def staleness(info: dict | None = None) -> dict:
     if want:
         for d, vs in (info.get("daemons") or {}).items():
             for pkg, ver in (vs or {}).items():
-                if pkg.startswith("piper-") and ver not in ("0.1.0", want):
+                if pkg in OUR_WHEELS and ver not in ("0.1.0", want):
                     wheels.append(f"{d} {pkg} {ver}")
     source = f"{stamp or '표시 없음'} ≠ {applied}" if applied and stamp != applied else None
     return {"wheels": sorted(wheels), "daemons": source,

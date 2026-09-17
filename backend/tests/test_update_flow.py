@@ -310,3 +310,29 @@ def test_the_card_expects_to_lose_the_gateway_and_never_automates_sudo():
                    "need_sudo", "window.location.reload()", "이 버전으로"):
         assert needle in src, needle
     assert "window.confirm(" not in src
+
+
+def test_a_third_party_package_is_not_mistaken_for_one_of_our_wheels():
+    """⚠ 실기(2026-09-17): 멀쩡한 호스트가 기동할 때마다 "데몬 wheel 이 이번 릴리스와
+    다릅니다: robotd piper-sdk 0.6.1" 이라고 경고했다. `piper-` 로 시작하는 것을 전부
+    우리 wheel 로 셌기 때문인데, `piper_sdk` 는 AgileX 의 CAN SDK 다 — apply.sh 가 PyPI 에서
+    0.6.1 로 깔고 **릴리스 버전을 따라갈 이유가 없다.**
+
+    거짓 경고는 진짜 경고를 죽인다. 이름이 아니라 **우리가 굽는 일곱 개 목록**으로 센다."""
+    from app.services import version as V
+
+    assert V.OUR_WHEELS == {"piper-bus", "piper-shm", "piper-robot", "piper-cam",
+                            "piper-rs", "piper-so101", "piper-sim"}, \
+        "stage-hostside.sh 가 굽는 목록과 다르다"
+    info = {
+        "gateway": {"version": "v0.5.4"},
+        "deploy": {"current": "v0.5.4", "daemons_version": "v0.5.4"},
+        "daemons": {
+            "robotd": {"piper-robot": "0.5.4", "piper-shm": "0.5.4", "piper-sdk": "0.6.1",
+                       "python-can": "4.6.1"},
+            "simd": {"piper-sim": "0.5.4", "mujoco": "3.12.0"},
+        },
+    }
+    assert V.staleness(info)["ok"], "서드파티 패키지를 우리 wheel 로 세어 거짓 경고한다"
+    info["daemons"]["simd"]["piper-sim"] = "0.4.7"          # 진짜 낡은 것은 여전히 잡는다
+    assert V.staleness(info)["wheels"] == ["simd piper-sim 0.4.7"]
