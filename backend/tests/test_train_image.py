@@ -60,10 +60,24 @@ def test_the_stack_pins_match_the_inference_image():
     ):
         want = re.search(pat, base).group(1)
         assert _pin(stack, name) == want, f"{name}: 학습 {_pin(stack, name)} ≠ 추론 {want}"
-    # 절차도 같다 — lerobot 먼저, torch 셋과 nvidia 런타임을 걷고, 원하는 CUDA 빌드로 다시
-    assert stack.index("pip install \"lerobot[smolvla]") < stack.index("pip uninstall -y torch torchvision torchcodec") \
-        < stack.index("download.pytorch.org/whl/$TORCH_CUDA")
-    assert "nvidia-[a-z0-9_-]+-cu1" in stack, "옛 nvidia 런타임을 안 걷는다 — import torch 가 죽는다"
+    # ⚠ **절차가 2026-09-17 에 뒤집혔다.** 예전에는 lerobot 을 먼저 깔고(그때 PyPI 기본
+    #   빌드 torch 가 딸려 온다) 그걸 지운 뒤 원하는 CUDA 빌드로 다시 깔았다 —
+    #   **torch 를 두 번 받았다.** 설치본 기준 torch 1.7GB + nvidia 런타임 4.0GB 라,
+    #   slim 인스턴스는 부팅마다 그 값을 치렀다.
+    assert "pip uninstall -y torch" not in stack, \
+        "torch 를 깔았다 지운다 — 두 번 받는 그 절차로 되돌아갔다"
+    assert stack.index("download.pytorch.org/whl/$TORCH_CUDA") < stack.index('pip install --no-deps "lerobot'), \
+        "torch 를 lerobot 보다 먼저 깔아야 한 번만 받는다"
+    # ⚠ lerobot 0.5.0 의 핀은 `torch<2.11.0` 이다 — 의존성을 그대로 두면 방금 깐 2.11.0 을
+    #   pip 이 끌어내린다. 우리가 2.11.0 을 쓰는 이유는 추론 기계와 같아야 해서다.
+    assert 'pip install --no-deps "lerobot' in stack, \
+        "lerobot 을 의존성까지 깔면 torch<2.11 핀이 2.11.0 을 끌어내린다"
+    # ⚠ 이행 의존성 139개 중 누군가 torch 를 끌어도 안 내려가게 제약을 건다 —
+    #   조용히 downgrade 되면 추론 기계와 버전이 갈린다.
+    assert "PIP_CONSTRAINT" in stack, "제약이 없으면 이행 의존성이 torch 를 내릴 수 있다"
+    # ⚠ 의존성 목록을 손으로 적지 않는다 — 139줄이고 버전을 올릴 때마다 어긋난다
+    assert "importlib.metadata" in stack and "requires(" in stack, \
+        "의존성을 메타데이터에서 안 뽑는다 — 손으로 적은 목록은 반드시 낡는다"
     # ⚠ torchcodec 의 CUDA 빌드는 NPP 를 링크하는데 torch 의존성에 NPP 가 없다 — 없으면
     #   `import torchcodec` 이 libnppicc 로 죽어 데이터셋 영상을 못 읽는다 (첫 빌드에서 실제로)
     assert 'pip install "nvidia-npp-' in stack, "NPP 런타임을 안 깐다 — torchcodec 이 안 열린다"
@@ -170,3 +184,24 @@ def test_build_script_pushes_only_when_asked():
     assert "install-stack.sh" in src and "LEROBOT=" in src
     assert "--only" in src and "--cuda" in src
     assert "docker build -f deploy/train/Dockerfile" in src
+
+
+def test_the_check_opens_what_training_actually_uses():
+    """⚠ 네 개를 `import` 하는 것과 `lerobot-train` 이 도는 것은 다르다. 의존성 하나가
+    빠지면 `import lerobot` 은 멀쩡하고 **기계를 빌린 뒤에** 죽는다 — 실제로 그렇게
+    한 번 죽었다(slim 에 lerobot 이 없던 건, §12-13).
+    """
+    stack = STACK.read_text()
+    assert "import lerobot.scripts.lerobot_train" in stack, \
+        "학습 진입점을 안 열어 본다 — 빌린 뒤에야 안다"
+    assert "torch.__version__" in stack and "assert" in stack, \
+        "받은 torch 가 원하는 버전인지 단언하지 않는다"
+
+
+def test_the_scary_pip_line_is_explained_where_it_is_printed():
+    """⚠ pip 이 `ERROR: ... lerobot 0.5.0 requires torch<2.11.0 ...` 를 찍는다. 의도한
+    것이고 pip 은 0 으로 끝나지만, 로그를 읽는 사람은 거기서 멈춘다 — 설명을 **그 줄
+    바로 옆**에 둔다. 파일 머리말에만 적으면 로그만 보는 사람은 못 본다."""
+    stack = STACK.read_text()
+    i = stack.index("PIP_CONSTRAINT=")
+    assert "의도한 것이다" in stack[i:i + 900], "무서워 보이는 줄 옆에 설명이 없다"
