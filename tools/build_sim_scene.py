@@ -62,8 +62,6 @@ SCENE_TEMPLATE = """<mujoco model="piper_scene">
     <material name="tablemat" texture="tabletex" texrepeat="12 10" texuniform="true" reflectance="0" specular="0.05" shininess="0.1"/>
     <material name="armmat" rgba="0.85 0.85 0.87 1"/>
     <material name="fingermat" rgba="0.25 0.25 0.28 1"/>
-    <material name="cubemat" rgba="0.85 0.2 0.15 1"/>
-    <material name="binmat" rgba="0.2 0.35 0.7 1"/>
   </asset>
   <worldbody>
     <light name="sun" pos="0.5 -0.5 1.5" dir="-0.3 0.3 -1" directional="true" diffuse="0.8 0.8 0.8"/>
@@ -81,20 +79,12 @@ SCENE_TEMPLATE = """<mujoco model="piper_scene">
     <camera name="front" pos="1.1 0 0.45" xyaxes="0 1 0 -0.4 0 1" fovy="50"/>
     <body name="piper_base" pos="0 0 0">
     </body>
-    <body name="cube" pos="0.35 0.0 0.02">
-      <freejoint name="cube_free"/>
-      <!-- 잡히는 물체 — condim6 은 비틀림·구름 마찰(핀치에서 돌아 빠지는 것 방지),
-           solref 단단하게(접촉 크리프 감소). 손가락과 같은 마찰. -->
-      <geom name="cube_geom" type="box" size="0.02 0.02 0.02" mass="0.05" material="cubemat"
-            condim="6" friction="2.0 0.1 0.001" solref="0.005 1"/>
-    </body>
-    <body name="bin" pos="0.35 -0.25 0">
-      <geom type="box" size="0.08 0.08 0.003" pos="0 0 0.003" material="binmat"/>
-      <geom type="box" size="0.003 0.08 0.03" pos="0.08 0 0.03" material="binmat"/>
-      <geom type="box" size="0.003 0.08 0.03" pos="-0.08 0 0.03" material="binmat"/>
-      <geom type="box" size="0.08 0.003 0.03" pos="0 0.08 0.03" material="binmat"/>
-      <geom type="box" size="0.08 0.003 0.03" pos="0 -0.08 0.03" material="binmat"/>
-    </body>
+    <!-- ⚠ **테이블 위 사물은 여기 없다.** 큐브와 통은 `assets/default_scene.json` 으로
+         옮겼다 (feature/sim-scene-editor.md). 이 파일은 **바탕**이다 — 팔·테이블·카메라·
+         조명처럼 릴리스가 정하는 것만 담고, 사람이 올리고 지우는 물체는 장면 JSON 이
+         `piper_sim.scene_spec` 을 거쳐 MjSpec 으로 얹는다.
+         여기에 물체를 도로 적으면 사람이 그걸 못 지운다 — wheel 안이라 릴리스를 내야 하고,
+         릴리스를 건너뛴 호스트는 영영 옛 세계를 본다(.120, 2026-09-16). -->
   </worldbody>
   <contact>
     <!-- ⚠ base_link(정적 → MuJoCo 가 world 로 합친다)와 link1 메시가 6mm 겹친다

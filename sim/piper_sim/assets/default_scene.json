@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "id": "default",
+  "name": "기본 — 블럭과 통",
+  "objects": [
+    {
+      "id": "cube",
+      "label": "빨간 블럭",
+      "shape": "box",
+      "size": [0.02, 0.02, 0.02],
+      "pos": [0.35, 0.0, 0.02],
+      "rgba": [0.85, 0.2, 0.15, 1.0],
+      "mass": 0.05,
+      "movable": true
+    },
+    {
+      "id": "bin",
+      "label": "파란 통",
+      "shape": "preset:bin",
+      "pos": [0.35, -0.25, 0.0],
+      "rgba": [0.2, 0.35, 0.7, 1.0],
+      "movable": false,
+      "params": { "inner": [0.08, 0.08], "wall_t": 0.003, "wall_h": 0.03, "floor_t": 0.003 }
+    }
+  ]
+}

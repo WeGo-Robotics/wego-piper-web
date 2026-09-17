@@ -20,4 +20,6 @@ include = ["piper_sim*"]
 #   그 경로는 저장소 체크아웃에서만 맞다 — wheel 로 설치하면 안 닿아서 월드가 안
 #   뜨고 팔·카메라가 등록되지 않았다(실기 .120, v0.4.6). 씬이 쓰는 STL 일곱 개만
 #   `assets/meshes/` 에 있고, `tools/build_sim_scene.py` 가 거기 채운다.
-piper_sim = ["assets/*.xml", "assets/meshes/*.stl"]
+#   ⚠ **기본 장면 JSON 도 담는다.** 바탕 XML 에는 테이블 위 사물이 없다 — 큐브·통은
+#   `assets/default_scene.json` 에 있고, 그게 빠지면 시뮬이 빈 테이블로 뜬다.
+piper_sim = ["assets/*.xml", "assets/*.json", "assets/meshes/*.stl"]

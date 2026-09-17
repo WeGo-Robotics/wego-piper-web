@@ -12,8 +12,8 @@ import numpy as np
 
 from piper_robot.joints import JOINT_CALIBRATION, denormalize_all, normalize_all
 
-ASSETS = Path(__file__).resolve().parent / "assets"
-SCENE_XML = ASSETS / "piper_scene.xml"
+#: 경로는 `scene_spec` 이 쥔다 — 여기선 다시 내보내기만 한다(옛 import 를 안 깬다).
+from piper_sim.scene_spec import ASSETS, SCENE_XML  # noqa: F401
 
 ARM_JOINTS = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
 FINGERS = ("gripper_l", "gripper_r")
@@ -22,13 +22,17 @@ FINGER_STROKE_M = 0.034
 MILLIDEG_PER_RAD = 180000.0 / math.pi
 
 
-def load_model():
-    import mujoco
+def load_model(spec: dict | None = None):
+    """장면을 굽는다. `spec=None` 이면 기본 장면(`assets/default_scene.json`).
 
-    if not SCENE_XML.exists():
-        raise FileNotFoundError(
-            f"씬이 없습니다: {SCENE_XML} — python3 tools/build_sim_scene.py 로 구우세요")
-    return mujoco.MjModel.from_xml_path(str(SCENE_XML))
+    ⚠ 예전엔 `piper_scene.xml` 을 **그대로** 열었다. 지금 그 파일은 **바탕**이다 —
+    팔·테이블·카메라·조명처럼 릴리스가 정하는 것만 담고, 테이블 위 사물은 장면 JSON 이
+    `scene_spec.compose` 로 얹는다 (feature/sim-scene-editor.md). 기본 장면이 옛 XML 과
+    **수치까지 같다**는 것이 이 이사의 완료 조건이고, `test_sim_scene_spec.py` 가 그걸 잰다.
+    """
+    from piper_sim import scene_spec
+
+    return scene_spec.build(spec)
 
 
 class JointMap:
@@ -42,7 +46,16 @@ class JointMap:
         self.act = {n: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, n)
                     for n in ARM_JOINTS + FINGERS}
         self.link6 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "link6")
-        self.cube = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "cube")
+        #: 장면의 물체 — id → body id. **월드의 직계 자식에서 팔 뿌리만 뺀 것**이다.
+        #: 장면 JSON 이 물체를 월드 바로 밑에 얹으므로(`scene_spec.compose`) 이 규칙 하나로
+        #: 이름을 몰라도 전부 잡힌다 — 물체가 `cube` 하나라는 가정을 여기서 푼다.
+        self.objects = {
+            n: b for b in range(model.nbody)
+            if model.body_parentid[b] == 0 and b != 0
+            and (n := mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, b)) != "piper_base"
+        }
+        #: 옛 이름 — 기본 장면의 큐브. 없는 장면이면 `-1`(부르는 쪽이 확인한다).
+        self.cube = self.objects.get("cube", -1)
 
     def read_norm(self, data) -> dict[str, float]:
         """qpos → 정규화 dict (joint1..6 + gripper). 발행 레코드 그대로."""

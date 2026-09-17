@@ -12,8 +12,12 @@
 | 마찰 1.5→2.0 | **차이 없음** (사용자 요청으로 올려 둠) |
 | 접촉 부드럽게(solref 0.01) / 더 단단히(solimp) | 둘 다 **나빠짐** |
 
-여기서는 실제 장면 XML 의 <option>·손가락·큐브 문자열을 그대로 떼어 떠 있는 그리퍼에
-붙이고, 기울어진 손으로 내려가 닫고 들어 흔든다. 접촉 물리만 본다(팔 IK 는 무관).
+여기서는 실제 장면의 <option>·손가락(XML)과 큐브(**장면 JSON**)를 그대로 떼어 떠 있는
+그리퍼에 붙이고, 기울어진 손으로 내려가 닫고 들어 흔든다. 접촉 물리만 본다(팔 IK 는 무관).
+
+⚠ 큐브는 2026-09-17 에 `assets/default_scene.json` 으로 이사했다 — 바탕 XML 은 팔·테이블·
+카메라만 담는다(feature/sim-scene-editor.md). 실험이 실제 파지와 같은 숫자를 쓰는지가
+이 파일의 존재 이유이므로, 큐브는 이제 `scene_spec` 에서 읽는다.
 """
 
 import math
@@ -38,9 +42,16 @@ def test_the_friction_cone_is_elliptic_so_impratio_means_something():
     assert 'kp="600"' in BUILDER.read_text(), "빌더: 그리퍼 kp 가 600 이 아니다 (장면과 갈린다)"
     for path in (SCENE, BUILDER):
         src = path.read_text()
-        assert src.count('friction="2.0 0.1 0.001"') == 3 and 'friction="1.5 0.05 0.001"' not in src, \
-            f"{path.name}: 손가락 둘·큐브의 마찰이 같지 않다"
+        assert src.count('friction="2.0 0.1 0.001"') == 2 and 'friction="1.5 0.05 0.001"' not in src, \
+            f"{path.name}: 손가락 둘의 마찰이 같지 않다"
         assert src.count('damping="5"') == 2, f"{path.name}: 손가락 댐핑이 kp 에 안 맞는다"
+    # 큐브의 접촉은 이제 장면 JSON 에서 온다 — **손가락과 같아야** 파지가 이 실험과 같다
+    from piper_sim import scene_spec
+    assert scene_spec.MOVABLE_PHYSICS == {"friction": [2.0, 0.1, 0.001], "condim": 6,
+                                          "solref": [0.005, 1.0]}, "움직이는 물체의 기본 접촉이 바뀌었다"
+    cube = next(o for o in scene_spec.default()["objects"] if o["id"] == "cube")
+    assert cube["friction"] == [2.0, 0.1, 0.001] and cube["condim"] == 6, \
+        "기본 장면의 큐브가 손가락과 다른 마찰로 서 있다"
 
 
 def _build(pitch_deg: float):
@@ -53,7 +64,12 @@ def _build(pitch_deg: float):
     opt = re.search(r"<option[^>]*/>", scene).group(0)
     fl = re.search(r'<geom type="box" size="0.008 0.004 0.025" pos="0 0.004 0"[^>]*/>', scene).group(0)
     fr = re.search(r'<geom type="box" size="0.008 0.004 0.025" pos="0 -0.004 0"[^>]*/>', scene).group(0)
-    cube = re.search(r'<geom name="cube_geom"[^>]*/>', scene).group(0)
+    # 큐브는 장면 JSON 이 정본이다 — 거기 적힌 수치로 같은 geom 을 짓는다
+    from piper_sim import scene_spec
+    c = next(o for o in scene_spec.default()["objects"] if o["id"] == "cube")
+    cube = ('<geom name="cube_geom" type="box" size="{} {} {}" mass="{}" material="cubemat"'
+            ' condim="{}" friction="{} {} {}" solref="{} {}"/>').format(
+        *c["size"], c["mass"], c["condim"], *c["friction"], *c["solref"])
     kp = re.search(r'<position name="gripper_l"[^>]*kp="(\d+)"', scene).group(1)
     damp = re.search(r'<joint name="gripper_l"[^>]*damping="([\d.]+)"', scene).group(1)
 

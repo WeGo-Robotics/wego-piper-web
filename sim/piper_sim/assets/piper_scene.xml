@@ -11,8 +11,6 @@
     <material name="tablemat" texture="tabletex" texrepeat="12 10" texuniform="true" reflectance="0" specular="0.05" shininess="0.1" />
     <material name="armmat" rgba="0.85 0.85 0.87 1" />
     <material name="fingermat" rgba="0.25 0.25 0.28 1" />
-    <material name="cubemat" rgba="0.85 0.2 0.15 1" />
-    <material name="binmat" rgba="0.2 0.35 0.7 1" />
     <mesh name="base_link" content_type="model/stl" file="base_link.stl" />
     <mesh name="link1" content_type="model/stl" file="link1.stl" />
     <mesh name="link2" content_type="model/stl" file="link2.stl" />
@@ -71,17 +69,6 @@
           </body>
         </body>
       </body>
-    </body>
-    <body name="cube" pos="0.35 0.0 0.02">
-      <freejoint name="cube_free" />
-      <geom name="cube_geom" type="box" size="0.02 0.02 0.02" mass="0.05" material="cubemat" condim="6" friction="2.0 0.1 0.001" solref="0.005 1" />
-    </body>
-    <body name="bin" pos="0.35 -0.25 0">
-      <geom type="box" size="0.08 0.08 0.003" pos="0 0 0.003" material="binmat" />
-      <geom type="box" size="0.003 0.08 0.03" pos="0.08 0 0.03" material="binmat" />
-      <geom type="box" size="0.003 0.08 0.03" pos="-0.08 0 0.03" material="binmat" />
-      <geom type="box" size="0.08 0.003 0.03" pos="0 0.08 0.03" material="binmat" />
-      <geom type="box" size="0.08 0.003 0.03" pos="0 -0.08 0.03" material="binmat" />
     </body>
   </worldbody>
   <contact>
