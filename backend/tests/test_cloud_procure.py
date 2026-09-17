@@ -677,3 +677,63 @@ def test_renting_keeps_its_cheaper_step_default():
     from app.routers.cloud import RentRequest
 
     assert RentRequest.model_fields["steps"].default == 5000
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 학습 페이지에서 빌려 돌린다 — **설정은 한 곳** (W4, 2026-09-17)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _page(name: str) -> str:
+    from pathlib import Path
+
+    from conftest import code_only
+
+    root = Path(__file__).resolve().parents[2] / "frontend" / "src"
+    for sub in ("pages", "components"):
+        f = root / sub / name
+        if f.exists():
+            return code_only(f.read_text())
+    raise AssertionError(f"{name} 없음")
+
+
+def test_the_training_page_can_send_its_own_settings_to_a_rented_gpu():
+    """⚠ **폼은 한 벌이다.** 임대용 학습 폼을 따로 만들면 반드시 어긋난다 — RENT 탭이
+    실제로 그랬다(입력 둘만 들고 나머지는 서버 기본값, §12-17)."""
+    src = _page("TrainingPage.tsx")
+    assert "api.post('/cloud/rent', { ...trainParams(), ...rentPick }" in src, \
+        "학습 페이지의 설정을 그대로 안 보낸다"
+
+
+def test_where_to_run_sits_next_to_the_start_button():
+    """⚠ 위쪽 어딘가에 두면 "어디서 도는지" 를 모른 채 누른다 — 임대는 그 한 번이 돈이다."""
+    src = _page("TrainingPage.tsx")
+    assert src.index("TrainWhereForm") < src.index("GPU 빌려서 학습 시작")
+    gap = src[src.index("<TrainWhereForm"):src.index("GPU 빌려서 학습 시작")]
+    assert gap.count("<button") <= 1, "실행 위치와 시작 버튼 사이에 다른 것이 끼어 있다"
+
+
+def test_the_local_label_comes_from_the_server_not_from_a_guess():
+    """⚠ 러너는 서버 설정이 정한다(`PIPER_TRAIN_SSH_HOST`) — 화면이 "이 기계" 라고
+    적어 두고 실제로는 사내 서버에서 도는 것이 제일 나쁘다."""
+    src = _page("TrainingPage.tsx")
+    assert "runner === 'ssh'" in src and "localLabel=" in src
+
+
+def test_a_hand_edited_cli_cannot_be_rented_and_says_why():
+    """⚠ `/cloud/rent` 는 인자를 스스로 조립한다 — 직접 고친 CLI 는 반영될 자리가 없다.
+    조용히 무시하면 **사용자가 고친 것과 다른 명령**이 임대 GPU 에서 돈다."""
+    src = _page("TrainingPage.tsx")
+    assert "disabledReason=" in src and "cliEdited" in src
+
+
+def test_the_picker_shows_warnings_where_you_choose():
+    """⚠ 확인 창에만 있으면 이미 마음을 정한 뒤다. bf16·커널 경고는 **고르는 줄**에."""
+    src = _page("TrainWhereForm.tsx")
+    assert "o.warnings.map" in src, "오퍼 줄에 경고를 안 띄운다"
+    assert "g.support !== 'ok'" in src, "못 도는 기종을 고를 수 있게 뒀다"
+
+
+def test_the_picker_sends_both_caps():
+    """⚠ 예산만 있으면 느린 기계에서 시간이 사실상 무한이다 — 둘 다 보낸다."""
+    src = _page("TrainWhereForm.tsx")
+    assert "budget_usd:" in src and "max_hours:" in src

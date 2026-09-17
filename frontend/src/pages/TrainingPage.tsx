@@ -4,6 +4,8 @@ import SpecFields from '../components/SpecFields'
 import { usePolicyUi, specDefaults, activeWarnings } from '../hooks/usePolicyUi'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
+import TrainWhereForm, { type RentPick } from '../components/TrainWhereForm'
+import CloudRentProgress from '../components/CloudRentProgress'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import { LOCAL_JOB_ID, type JobRecord, type ProcessState } from '../types/ws'
 import { useActivity, isStateMessage } from '../hooks/useActivity'
@@ -122,6 +124,11 @@ export default function TrainingPage() {
   const [jobs, setJobs] = useState<JobRecord[]>([])
   /** 이번 학습이 **다른 기계**에서 도나. 서버가 러너를 실시간으로 답한다. */
   const [remoteRun, setRemoteRun] = useState(false)
+  // ⚠ **어디서 돌릴지.** 학습 설정은 아래 폼 그대로 쓰고, 여기서는 기계만 정한다 —
+  //   폼을 두 벌 만들면 반드시 어긋난다(RENT 탭이 그랬다, §12-17).
+  const [where, setWhere] = useState<'here' | 'rent'>('here')
+  const [rentPick, setRentPick] = useState<RentPick | null>(null)
+  const [runner, setRunner] = useState('')
   // 지금 화면이 보고 있는 job. WS 메시지를 이걸로 걸러야 job 끼리 안 섞인다.
   const [viewJobId, setViewJobId] = useState<string>(LOCAL_JOB_ID)
   const [metrics, setMetrics] = useState<MetricsData | null>(null)
@@ -198,7 +205,12 @@ export default function TrainingPage() {
     //   러너가 조용히 로컬로 떨어지면(설정한 원격이 잠깐 안 닿으면 그렇게 된다) 화면은
     //   똑같아 보이면서 이 기계의 GPU 를 먹는다. 그게 가장 비싼 실패다.
     api.get<{ state: string; remote?: boolean; runner?: string }>('/training/status')
-      .then((s) => { setTrainState(s.state as ProcessState); setRemoteRun(!!s.remote) })
+      .then((s) => {
+        setTrainState(s.state as ProcessState); setRemoteRun(!!s.remote)
+        // ⚠ 라벨을 화면이 지어내지 않는다 — "로컬" 이라 적어 두고 사내 서버에서
+        //   도는 것이 제일 나쁘다. 러너 이름은 서버가 안다.
+        setRunner(s.runner ?? '')
+      })
       .catch(() => {})
     api.get<{ jobs: JobRecord[] }>('/training/jobs').then((r) => setJobs(r.jobs)).catch(() => {})
   }, [])
@@ -376,6 +388,13 @@ export default function TrainingPage() {
   const handleStart = async () => {
     setConfirmConfig(null)
     try {
+      if (where === 'rent') {
+        if (!rentPick) throw new Error('빌릴 기계를 고르세요')
+        // ⚠ **학습 설정은 이 페이지의 것 그대로 보낸다.** 서버는 `RentRequest` 가
+        //   `TrainStartRequest` 를 상속하므로 하나도 안 흘린다(§12-18).
+        await api.post('/cloud/rent', { ...trainParams(), ...rentPick }, { timeoutMs: 120_000 })
+        return
+      }
       if (cliEdited) {
         await api.post('/training/start-custom', {
           args: cliArgs.split(/\s+/).filter(Boolean), total_steps: steps, output_dir: outputDir,
@@ -396,6 +415,9 @@ export default function TrainingPage() {
 
   return (
     <div className="space-y-6">
+      {/* ⚠ 빌린 기계의 단계·비용·회수. 임대가 아니면 스스로 아무것도 안 그린다 —
+          `/cloud/rent` 에 도는 job 이 없으면 `null` 을 돌려준다. */}
+      <CloudRentProgress />
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold">학습</h1>
@@ -876,9 +898,21 @@ export default function TrainingPage() {
                 <span className="ml-1 not-italic text-neutral-600">(CLI 직접 편집 시 미적용)</span>
               </p>
             )}
-            <button onClick={cliEdited ? handleStart : handlePreConfirm} disabled={!canStart}
+            {/* ⚠ **시작 버튼 바로 위다.** 위쪽 폼 어딘가에 두면 "어디서 도는지" 를
+                모른 채 누르게 된다 — 임대는 그 한 번이 곧 돈이다. */}
+            <TrainWhereForm
+              where={where} onWhere={setWhere} onPick={setRentPick}
+              localLabel={runner === 'ssh' ? '사내 서버 (SSH)' : '이 기계'}
+              // ⚠ CLI 를 직접 고친 경우는 임대로 못 보낸다 — `/cloud/rent` 는 인자를
+              //   스스로 조립한다. 막고 **왜인지 말한다.**
+              disabledReason={cliEdited ? 'CLI 를 직접 고친 학습은 아직 빌려서 못 돌립니다' : undefined}
+            />
+
+            <button onClick={cliEdited ? handleStart : handlePreConfirm}
+              disabled={!canStart || (where === 'rent' && !rentPick)}
               className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium">
-              {cliEdited ? '학습 시작 (CLI 직접)' : '설정 확인 후 시작'}
+              {where === 'rent' ? 'GPU 빌려서 학습 시작'
+                : cliEdited ? '학습 시작 (CLI 직접)' : '설정 확인 후 시작'}
             </button>
           </div>
 
