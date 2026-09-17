@@ -83,6 +83,32 @@ class TrainPreviewRequest(BaseModel):
     amp: str = "bf16"  # 혼합정밀도: "off" | "bf16" | "fp16" → ACCELERATE_MIXED_PRECISION env
 
 
+def train_cli_params(body: BaseModel) -> tuple[dict, str, str, str]:
+    """`TrainStartRequest` 계열 요청 → `(CLI params, amp, title, description)`.
+
+    ⚠ **`/training/start` 와 `/cloud/rent` 가 같은 함수를 쓴다.** 두 벌로 두면 한쪽에만
+    필드가 붙고 다른 쪽에서는 **조용히 사라진다** — 원격에서 그건 "몇 시간 뒤에 아는"
+    버그다. 실제로 `RentRequest` 는 학습 페이지가 보내는 22개 중 9개만 받고 있었고,
+    거기 `pretrained_path` 가 들어 있었다(파인튜닝이 말없이 처음부터 학습이 된다).
+
+    ⚠ `amp`·`title`·`description` 은 **CLI 인자가 아니다.** amp 는 환경변수로 가고
+    제목·설명은 사이드카로 남는다 — 그래서 여기서 빼서 따로 돌려준다.
+    """
+    params = body.model_dump(exclude_none=True)
+    amp = params.pop("amp", "bf16")
+    title = str(params.pop("title", "") or "").strip()
+    description = str(params.pop("description", "") or "").strip()
+    # 임대 전용 필드가 섞여 와도 CLI 로는 안 나간다 (같은 모델을 상속하기 때문에 온다)
+    for k in ("offer_id", "template_hash", "disk_gb", "budget_usd", "max_hours"):
+        params.pop(k, None)
+    if params.get("learning_rate", 0) <= 0:
+        params.pop("learning_rate", None)
+    for k in ("pretrained_path", "wandb_project", "output_dir", "policy_repo_id"):
+        if not params.get(k):
+            params.pop(k, None)
+    return params, amp, title, description
+
+
 def preset_keys() -> set[str]:
     """프리셋이 담는 키 — `TrainStartRequest` 에서 파생한다 (사본을 만들지 않는다)."""
     return set(TrainStartRequest.model_fields) - PRESET_EXCLUDED
@@ -194,24 +220,7 @@ async def start_training(body: TrainStartRequest):
     """학습 시작."""
     require_idle(Activity.TRAINING)
 
-    params = body.model_dump(exclude_none=True)
-    # amp는 CLI 인자가 아니라 환경변수로 주입 → params에서 분리
-    amp = params.pop("amp", "bf16")
-    # 제목·설명은 사이드카다 — 인자 빌더에 흘리지 않는다 (화이트리스트라 무시되긴
-    # 하지만, 뜻이 다른 것을 같은 dict 에 두지 않는다)
-    title = str(params.pop("title", "") or "").strip()
-    description = str(params.pop("description", "") or "").strip()
-    # lr=0이면 기본값 사용 (전달하지 않음)
-    if params.get("learning_rate", 0) <= 0:
-        params.pop("learning_rate", None)
-    if not params.get("pretrained_path"):
-        params.pop("pretrained_path", None)
-    if not params.get("wandb_project"):
-        params.pop("wandb_project", None)
-    if not params.get("output_dir"):
-        params.pop("output_dir", None)
-    if not params.get("policy_repo_id"):
-        params.pop("policy_repo_id", None)
+    params, amp, title, description = train_cli_params(body)
 
     # 파일시스템 접근은 인자 조립과 분리돼 있다 (원격 학습 대비).
     # config.json 수정은 **파괴적**이라 시작 경로에서만 한다.

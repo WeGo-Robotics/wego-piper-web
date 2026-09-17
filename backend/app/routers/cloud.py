@@ -20,15 +20,17 @@ import json
 import logging
 import shutil
 import subprocess
+from pathlib import Path
 from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.core.config import settings
 from app.services.cloud import sshkey
 from app.services.cloud.providers import vast
 from app.services.cloud.providers.base import MIN_CUDA, OfferFilter
+from app.routers.training import TrainStartRequest, train_cli_params
 from app.services.cloud import sweeper
 
 logger = logging.getLogger(__name__)
@@ -198,43 +200,69 @@ async def cloud_gpus(
     return {"gpus": [asdict(g) for g in rows], "disk_gb": disk_gb, "detail": None}
 
 
-class RentRequest(BaseModel):
-    """[빌리기] 한 번. **상한이 요청의 일부다** — 기본값으로 빠져나갈 수 없게."""
+class RentRequest(TrainStartRequest):
+    """[빌리기] 한 번. **상한이 요청의 일부다** — 기본값으로 빠져나갈 수 없게.
+
+    ⚠ **학습 쪽 필드는 `TrainStartRequest` 에서 물려받는다.** 따로 적어 두던 시절에는
+    학습 페이지가 보내는 22개 중 **9개만** 받았고 나머지는 Pydantic 이 조용히 버렸다 —
+    거기 `pretrained_path` 가 있었다. 즉 파인튜닝을 걸어도 **말없이 처음부터** 학습이
+    됐고, 그걸 아는 시점은 몇 시간 뒤 결과를 열어 봤을 때다.
+    """
 
     offer_id: int
     template_hash: str
     disk_gb: float = Field(40.0, ge=10, le=2000)
     budget_usd: float = Field(10.0, gt=0, le=1000)
     max_hours: float = Field(6.0, gt=0, le=72)
-    # 학습 쪽 — `/api/training/start` 와 같은 뜻이다
-    dataset_repo_id: str
-    policy_repo_id: str
-    policy_type: str = "act"
-    batch_size: int = 8
+
+    # ⚠ 임대는 **시간당 과금**이라 기본값을 낮춰 잡는다. 학습 페이지 기본값(10만 스텝)을
+    #   그대로 물려받으면, 값을 안 보낸 호출 하나가 큰 청구서가 된다.
     steps: int = Field(5000, ge=1)
     log_freq: int = 100
     save_freq: int = 1000
-    num_workers: int = 4
-    amp: str = "bf16"
+
+    # ⚠ **회수 경로라 필수다.** 없으면 `cli_mapping` 이 `--policy.push_to_hub=false` 를
+    #   강제하고, 학습은 멀쩡히 끝나고 가중치만 사라진다(§12-4: 푸시는 한 번뿐).
+    policy_repo_id: str
 
 
 def _rent_train_args(body: "RentRequest") -> list[str]:
     """[빌리기]가 **실제로 돌릴** 학습 인자.
 
     ⚠ 미리보기(`/rent/preview`)와 **같은 함수**를 쓴다. 두 벌로 두면 반드시 갈리고,
-    그러면 화면이 보여 준 명령과 도는 명령이 달라진다 — 이 화면이 고치려는 것이
-    바로 그 부류의 거짓말이다.
+    그러면 화면이 보여 준 명령과 도는 명령이 달라진다.
+
+    ⚠ 그리고 인자 조립 자체는 `/training/start` 와도 **같은 함수**(`train_cli_params`)를
+    쓴다 — 학습 페이지에 필드가 하나 늘었을 때 임대 경로에서만 조용히 빠지는 일을
+    구조로 막는다.
+
+    ⚠ **여기서는 파일시스템을 안 만진다.** `/training/start` 는 `pretrained_path` 로
+    `resolve_rename_map()`·`apply_dim_overrides()` 를 부르는데, 그건 **이 기계의**
+    체크포인트를 읽고 고치는 일이다. 빌린 기계에는 그 경로가 없다.
     """
     from app.core.cli_mapping import build_train_args
 
-    return build_train_args({
-        "dataset_repo_id": body.dataset_repo_id,
-        "policy_type": body.policy_type,
-        "policy_repo_id": body.policy_repo_id,
-        "batch_size": body.batch_size, "steps": body.steps,
-        "log_freq": body.log_freq, "save_freq": body.save_freq,
-        "num_workers": body.num_workers, "device": "cuda",
-    }, python=settings.train_remote_python)
+    params, _amp, _title, _desc = train_cli_params(body)
+    return build_train_args(params, python=settings.train_remote_python)
+
+
+def _reject_local_only_settings(body: "RentRequest") -> None:
+    """빌린 기계에서 **말이 안 되는 설정**을 미리 막는다.
+
+    ⚠ `pretrained_path` 가 이 기계의 경로면 임대 서버에는 그 파일이 없다. 그대로 걸면
+    학습이 몇 분 뒤 `No such file or directory` 로 죽거나, 더 나쁘게는 lerobot 이
+    그걸 Hub 저장소 이름으로 읽어 엉뚱한 것을 받는다. Hub 저장소 이름(`org/name`)이면
+    원격에서도 멀쩡하므로 그건 막지 않는다.
+    """
+    path = (body.pretrained_path or "").strip()
+    if not path:
+        return
+    looks_local = path.startswith(("/", "./", "~")) or Path(path).exists()
+    if looks_local:
+        raise HTTPException(
+            400, f"이어서 학습할 체크포인트가 이 기계의 경로입니다({path}) — 빌린 "
+                 f"기계에는 그 파일이 없습니다. Hub 저장소 이름(org/name)으로 주거나, "
+                 f"먼저 저장소에 올린 뒤 다시 거세요.")
 
 
 @router.post("/rent/preview")
@@ -270,6 +298,7 @@ async def rent_and_train(body: RentRequest):
         raise HTTPException(
             400, "가중치를 올릴 저장소(policy_repo_id)가 필요합니다 — 없으면 학습이 "
                  "끝나도 결과를 가져올 수 없습니다.")
+    _reject_local_only_settings(body)
     await _require_push_permission(body.policy_repo_id)
 
     args = _rent_train_args(body)

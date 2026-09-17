@@ -594,3 +594,86 @@ def test_the_rent_tab_sends_every_training_value_it_shows():
         assert field in src, f"{field} 를 안 보낸다 — 서버 기본값이 조용히 들어간다"
     assert "api.post('/cloud/rent', body," in src, "미리보기와 다른 본문을 보낸다"
     assert "'/cloud/rent/preview'" in src, "무엇이 돌지 안 보여 준다"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 임대가 학습 설정을 **하나도 안 흘린다** (2026-09-17)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_renting_accepts_every_field_the_training_page_sends():
+    """⚠ `RentRequest` 가 학습 필드를 따로 적어 두던 시절, 학습 페이지가 보내는 22개 중
+    **9개만** 받았고 나머지는 Pydantic 이 조용히 버렸다. 거기 `pretrained_path` 가
+    있었다 — 파인튜닝을 걸어도 **말없이 처음부터** 학습이 되고, 아는 시점은 몇 시간 뒤다.
+    """
+    from app.routers.cloud import RentRequest
+    from app.routers.training import TrainStartRequest
+
+    missing = set(TrainStartRequest.model_fields) - set(RentRequest.model_fields)
+    assert not missing, f"임대가 못 받는 학습 필드: {missing}"
+
+
+def test_a_fine_tune_from_the_hub_reaches_the_command():
+    """예전에는 이 인자가 통째로 사라졌다."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    r = TestClient(app).post("/api/cloud/rent/preview", json={
+        "offer_id": 1, "template_hash": "h", "dataset_repo_id": "me/d",
+        "policy_repo_id": "me/p", "pretrained_path": "lerobot/act_aloha"})
+    assert "--policy.path=lerobot/act_aloha" in r.json()["command"]
+
+
+def test_a_checkpoint_on_this_machine_is_refused_before_renting():
+    """⚠ 빌린 기계에는 이 기계의 경로가 없다. 그대로 걸면 몇 분 뒤 `No such file` 로
+    죽거나, 더 나쁘게는 lerobot 이 그걸 Hub 이름으로 읽어 엉뚱한 것을 받는다.
+
+    ⚠ **빌리기 전에** 막는다 — 돈이 나간 뒤에 아는 것과 다르다.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.routers import cloud as router
+
+    rented = []
+
+    class _P:
+        def create(self, *a, **kw):                                  # pragma: no cover
+            rented.append(a)
+            raise AssertionError("못 쓸 설정인데 기계를 빌렸다")
+
+    import pytest as _pytest
+    _pytest.MonkeyPatch().setattr(router, "_provider", lambda: _P())
+    r = TestClient(app).post("/api/cloud/rent", json={
+        "offer_id": 1, "template_hash": "h", "dataset_repo_id": "me/d",
+        "policy_repo_id": "me/p", "pretrained_path": "/home/me/checkpoints/last"})
+    assert r.status_code == 400 and "이 기계의 경로" in r.json()["detail"]
+    assert rented == []
+
+
+def test_a_hub_name_is_not_mistaken_for_a_local_path():
+    """⚠ `org/name` 은 원격에서도 멀쩡하다 — 막으면 쓸 수 있는 것을 못 쓰게 된다."""
+    from app.routers.cloud import RentRequest, _reject_local_only_settings
+
+    body = RentRequest(offer_id=1, template_hash="h", dataset_repo_id="me/d",
+                       policy_repo_id="me/p", pretrained_path="lerobot/act_aloha")
+    _reject_local_only_settings(body)          # 예외가 나면 실패한다
+
+
+def test_the_two_start_paths_build_params_with_one_function():
+    """⚠ 학습 페이지에 필드가 하나 늘었을 때 임대 경로에서만 빠지는 일을 **구조로** 막는다."""
+    import inspect
+
+    from app.routers import cloud as router
+    from app.routers import training as t
+
+    assert "train_cli_params(body)" in inspect.getsource(t.start_training)
+    assert "train_cli_params(body)" in inspect.getsource(router._rent_train_args)
+
+
+def test_renting_keeps_its_cheaper_step_default():
+    """⚠ 학습 페이지 기본값은 10만 스텝이다. 상속만 하고 두면 값을 안 보낸 호출 하나가
+    **시간당 과금되는 기계에서** 10만 스텝을 돈다."""
+    from app.routers.cloud import RentRequest
+
+    assert RentRequest.model_fields["steps"].default == 5000
