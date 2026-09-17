@@ -99,6 +99,24 @@ class World:
             bid = self.jm.objects.get(oid)
             return None if bid is None else [float(v) for v in self.data.xpos[bid]]
 
+    def object_at(self, x: float, y: float, radius: float = 0.07) -> dict | None:
+        """테이블 위 한 점에 **제일 가까운 움직이는 물체**. 반경 밖이면 None.
+
+        물체가 여럿이면 "어느 것을 옮길지"를 사람이 **화면에서 찍어야** 한다 — 첫 번째를
+        고르는 규칙은 물체가 하나일 때만 맞았다(실기 보고 2026-09-17).
+        고정물은 뺀다: 자유관절이 없어 어차피 못 옮긴다.
+        """
+        import math
+
+        best = None
+        for o in self.objects():            # 락은 여기서 잡고 푼다 — 중첩하지 않는다
+            if not o["movable"]:
+                continue
+            d = math.hypot(o["pos"][0] - x, o["pos"][1] - y)
+            if d <= radius and (best is None or d < best[1]):
+                best = (o, d)
+        return None if best is None else {**best[0], "distance": round(best[1], 4)}
+
     def place(self, oid: str, x: float, y: float, z: float | None = None) -> list[float]:
         """물체를 테이블 위 (x, y) 에 다시 놓는다 — 시연 무작위화·에피소드 리셋·클릭 배치.
 

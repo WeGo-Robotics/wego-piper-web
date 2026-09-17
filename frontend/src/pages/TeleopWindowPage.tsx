@@ -75,7 +75,7 @@ const COMMON_ROWS: HelpRow[] = [
   ['0 (키패드 0)', '그리퍼 토글 — 한 번 누르면 2초에 걸쳐 닫히거나 열린다'],
   ['R', '환경 리셋 — 큐브 + 팔 원위치'],
   ['T', '팔 초기화 — 팔만 원위치, 큐브·조명 유지'],
-  ['B', '블럭 옮기기 — 켠 뒤 탑뷰를 클릭한 자리로'],
+  ['B', '블럭 옮기기 — 켠 뒤 **옮길 물체**를 클릭하고, 놓을 자리를 클릭'],
   ['? / Shift + /', '이 도움말 열기·닫기'],
 ]
 
@@ -108,6 +108,8 @@ export default function TeleopWindowPage() {
   const eeOnly = follower.startsWith('sim_')
   const [mode, setMode] = useState<'joint' | 'ee'>(eeOnly ? 'ee' : 'joint')
   const [help, setHelp] = useState(false)
+  // 블럭 옮기기에서 **고른 물체**. null 이면 아직 고르는 중이다 (물체가 여럿일 수 있다).
+  const [blockTarget, setBlockTarget] = useState<{ id: string; label: string } | null>(null)
   // EE 모드에서 마우스 끄기 — 키패드로만 움직일 때 손이 스친 마우스가 팔을 밀지 않게(사용자 요청 2026-09-14).
   // 이동·휠·버튼 전부 무시한다. 관절 모드에선 효과 없다(거긴 드래그가 관절이다). 브라우저에 기억.
   const [mouseOff, setMouseOff] = useState(() => { try { return localStorage.getItem('piper_teleop_ee_mouse_off') === '1' } catch { return false } })
@@ -237,7 +239,12 @@ export default function TeleopWindowPage() {
   }, [])
 
   // 블럭 옮기기: 큰 화면(카메라 뷰)에서 클릭한 픽셀 → 정규화 u,v(object-contain 보정) →
-  // 백엔드가 그 카메라 광선으로 테이블 좌표를 풀어 큐브를 옮긴다.
+  // 백엔드가 그 카메라 광선으로 테이블 좌표를 푼다.
+  //
+  // ⚠ **두 번 클릭한다** — 옮길 물체를 찍고, 놓을 자리를 찍는다. 예전엔 한 번 클릭에
+  //   "첫 번째 움직이는 물체"를 그리로 보냈는데, 그건 물체가 하나일 때만 맞는 규칙이었다
+  //   (사용자 지적 2026-09-17: "물체가 여러개가 될 수 있는데"). 가상환경을 사람이 만들면
+  //   무엇이 첫 번째인지 화면에 안 보이고 고를 수도 없다.
   const placeBlock = useCallback(async (e: React.MouseEvent<HTMLImageElement>) => {
     const img = e.currentTarget
     const rect = img.getBoundingClientRect()
@@ -248,12 +255,21 @@ export default function TeleopWindowPage() {
     const ox = (rect.width - dw) / 2, oy = (rect.height - dh) / 2
     const u = (e.clientX - rect.left - ox) / dw, v = (e.clientY - rect.top - oy) / dh
     if (u < 0 || u > 1 || v < 0 || v > 1) return                    // 레터박스 밖
-    try { await api.post('/leader/web/cube', { cam: big, u, v, aspect: ar }) }
-    catch (err) { setErr(err instanceof Error ? err.message : '블럭 옮기기 실패') }
-  }, [big])
+    setErr('')
+    try {
+      if (!blockTarget) {          // 첫 클릭 = 옮길 물체 고르기
+        const r = await api.post<{ object: { id: string; label: string } }>(
+          '/leader/web/pick', { cam: big, u, v, aspect: ar })
+        setBlockTarget({ id: r.object.id, label: r.object.label || r.object.id })
+        return
+      }
+      await api.post('/leader/web/cube', { cam: big, u, v, aspect: ar, object: blockTarget.id })
+      setBlockTarget(null)         // 놓았으면 다음 물체를 고를 수 있게 비운다
+    } catch (err) { setErr(err instanceof Error ? err.message : '블럭 옮기기 실패') }
+  }, [big, blockTarget])
 
   const [resetting, setResetting] = useState(false)
-  const [moveBlock, setMoveBlock] = useState(false)   // 블럭 옮기기 모드 (B) — 큰 화면 클릭으로 큐브 순간이동
+  const [moveBlock, setMoveBlock] = useState(false)   // 블럭 옮기기 모드 (B) — 두 번 클릭(고르기 → 놓기)
   const resetWorld = useCallback(async (armOnly = false) => {
     // 리셋 — 큐브까지(환경 리셋) 또는 팔만(T). 조종 중이면 리더도 파킹으로(백엔드가 처리).
     setResetting(true)
@@ -288,7 +304,7 @@ export default function TeleopWindowPage() {
       if ((e.code === 'Digit0' || e.code === 'Numpad0') && !e.repeat) { e.preventDefault(); pending.current.click = 'toggle'; return }
       if (e.code === 'KeyR' && !e.repeat) { e.preventDefault(); resetWorld(false); return }
       if (e.code === 'KeyT' && !e.repeat) { e.preventDefault(); resetWorld(true); return }
-      if (e.code === 'KeyB' && !e.repeat) { e.preventDefault(); setMoveBlock((m) => { if (!m) document.exitPointerLock(); return !m }); return }
+      if (e.code === 'KeyB' && !e.repeat) { e.preventDefault(); setBlockTarget(null); setMoveBlock((m) => { if (!m) document.exitPointerLock(); return !m }); return }
       if (SELECT_OF[e.code]) { pending.current.select = SELECT_OF[e.code]; return }
       const k = KEY_OF[e.code]
       if (k) {
@@ -378,7 +394,8 @@ export default function TeleopWindowPage() {
             className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50">팔 초기화</button>
           <button onClick={() => resetWorld(false)} disabled={resetting} title="큐브를 시작 위치로, 팔을 파킹으로 (R)"
             className="px-2 py-0.5 rounded bg-amber-700 hover:bg-amber-600 disabled:opacity-50">{resetting ? '리셋 중…' : '환경 리셋'}</button>
-          <button onClick={() => setMoveBlock((m) => { if (!m) document.exitPointerLock(); return !m })} title="블럭 옮기기 (B) — 켠 뒤 화면을 클릭하면 그 자리로"
+          <button onClick={() => { setBlockTarget(null); setMoveBlock((m) => { if (!m) document.exitPointerLock(); return !m }) }}
+            title="블럭 옮기기 (B) — 옮길 물체를 클릭하고, 놓을 자리를 클릭"
             className={`px-2 py-0.5 rounded ${moveBlock ? 'bg-cyan-600 text-white' : 'bg-neutral-700 hover:bg-neutral-600'}`}>블럭 옮기기</button>
           {st.running && st.relaying === false && (
             <button onClick={stopRecording} title="수집을 세운다 — 이번 에피소드까지 저장하고 녹화 종료"
@@ -401,7 +418,9 @@ export default function TeleopWindowPage() {
         {moveBlock && (
           <div className="absolute inset-x-0 top-0 z-10 bg-cyan-600/90 py-1 text-center text-xs text-white"
                onClick={(e) => e.stopPropagation()}>
-            블럭 옮기기 — 화면에서 놓을 자리를 클릭하세요 (B 또는 Esc 로 끄기)
+            {blockTarget
+              ? `'${blockTarget.label}' 을 놓을 자리를 클릭하세요 (B 로 끄기)`
+              : '옮길 물체를 클릭하세요 — 그 다음 놓을 자리를 클릭합니다 (B 로 끄기)'}
           </div>
         )}
         <div className="relative bg-black rounded overflow-hidden">

@@ -242,6 +242,21 @@ class SimHub:
         hit = self._world().ray_to_table(name, float(u), float(v), float(aspect), float(z))
         return {"point": hit, "ok": hit is not None}
 
+    def pick_from_view(self, cam: str = "top", u: float = 0.5, v: float = 0.5,
+                       aspect: float = 4.0 / 3.0, radius: float = 0.07) -> dict:
+        """클릭한 픽셀 **위에 있는** 움직이는 물체를 찾는다 (옮기기 전의 "집기").
+
+        물체가 여럿이면 어느 것을 옮길지 사람이 찍어야 한다 — 첫 번째를 고르던 규칙은
+        물체가 하나일 때만 맞았다.
+        """
+        name = str(cam).split(":", 1)[-1]
+        hit = self._world().ray_to_table(name, float(u), float(v), float(aspect), 0.0)
+        if hit is None:
+            return {"ok": False, "object": None, "reason": "클릭한 자리가 테이블이 아닙니다"}
+        found = self._world().object_at(hit[0], hit[1], float(radius))
+        return ({"ok": True, "object": found} if found else
+                {"ok": False, "object": None, "reason": "그 자리에 옮길 수 있는 물체가 없습니다"})
+
     def object_from_view(self, cam: str = "top", u: float = 0.5, v: float = 0.5,
                          aspect: float = 4.0 / 3.0, oid: str = "") -> dict:
         """클릭한 카메라 픽셀로 물체를 옮긴다. cam 은 `sim:top`/`top` 둘 다 받는다.

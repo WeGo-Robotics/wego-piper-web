@@ -79,6 +79,31 @@ class CubeRequest(BaseModel):
     u: float
     v: float
     aspect: float = 4.0 / 3.0
+    #: 옮길 물체. 비우면 첫 번째 움직이는 물체 — 물체가 하나일 때의 옛 뜻이다.
+    object: str = ""
+
+
+@router.post("/pick")
+async def pick_object(body: CubeRequest):
+    """클릭한 자리 **위에 있는** 물체를 찾는다 — 옮기기 전의 "집기".
+
+    ⚠ 물체가 여럿이면 어느 것을 옮길지 사람이 찍어야 한다. 첫 번째를 고르던 규칙은 물체가
+    하나일 때만 맞았다 (사용자 지적 2026-09-17: "물체가 여러개가 될 수 있는데").
+    """
+    from app.services import sim_robot_client as sim
+
+    if not body.cam.startswith("sim:"):
+        raise HTTPException(400, "시뮬 카메라에서만 물체를 고를 수 있습니다")
+    try:
+        r = await asyncio.to_thread(sim.call_strict, "pick_from_view",
+                                    body.cam, body.u, body.v, body.aspect)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+    if not isinstance(r, dict):
+        raise HTTPException(400, "simd 가 응답하지 않습니다")
+    if not r.get("ok"):
+        raise HTTPException(400, r.get("reason") or "물체를 못 찾았습니다")
+    return r
 
 
 @router.post("/cube")
@@ -92,8 +117,8 @@ async def move_cube(body: CubeRequest):
     #   "simd 가 응답하지 않습니다" 로 **바뀌어** 나가고, 사람은 데몬을 재시작하러 간다.
     #   실제로 그랬다(2026-09-17: 사람이 만든 환경에서 B 키가 죽었는데 이유가 안 보였다).
     try:
-        r = await asyncio.to_thread(sim.call_strict, "cube_from_view",
-                                    body.cam, body.u, body.v, body.aspect)
+        r = await asyncio.to_thread(sim.call_strict, "object_from_view",
+                                    body.cam, body.u, body.v, body.aspect, body.object)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc))
     if not isinstance(r, dict):

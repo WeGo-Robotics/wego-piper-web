@@ -501,17 +501,32 @@ def test_the_window_streams_only_the_big_camera_and_shows_video_vs_input_livenes
     assert "relay?.sent" in src, "입력 흐름을 relay 전송 증가로 판정하지 않는다"
 
 
-def test_the_move_block_button_and_b_key_send_a_normalized_click():
-    """블럭 옮기기 — 버튼·B 키로 켜고 큰 화면 클릭 → 정규화 u,v 를 /cube 로. 라우트는
-    시뮬 카메라만 받는다. 클릭이 조종을 시작하지 않게 arena 전파를 막는다."""
+def test_the_move_block_button_picks_the_object_first_then_the_place():
+    """블럭 옮기기 — 버튼·B 키로 켜고 큰 화면을 **두 번** 클릭한다: 옮길 물체, 그다음 놓을 자리.
+
+    ⚠ 예전엔 한 번 클릭에 "첫 번째 움직이는 물체"를 그리로 보냈다. 그건 물체가 하나일 때만
+    맞는 규칙이었다 (사용자 지적 2026-09-17: "물체가 여러개가 될 수 있는데") — 가상환경을
+    사람이 만들면 무엇이 첫 번째인지 화면에 안 보이고 고를 수도 없다.
+
+    라우트는 시뮬 카메라만 받고, 클릭이 조종을 시작하지 않게 arena 전파를 막는다."""
     win = (REPO / "frontend" / "src" / "pages" / "TeleopWindowPage.tsx").read_text()
     assert "e.code === 'KeyB'" in win and "블럭 옮기기" in win
-    assert "/leader/web/cube" in win and "placeBlock" in win
+    assert "/leader/web/pick" in win and "/leader/web/cube" in win and "placeBlock" in win
+    assert "if (!blockTarget)" in win, "한 번 클릭에 바로 옮긴다 — 어느 물체인지 아무도 모른다"
+    assert "object: blockTarget.id" in win, "고른 물체를 안 넘긴다"
+    assert "옮길 물체를 클릭하세요" in win and "놓을 자리를 클릭하세요" in win, \
+        "지금 무엇을 클릭해야 하는지 화면이 말 안 한다"
+    assert "setBlockTarget(null); setMoveBlock" in win, "모드를 껐다 켜도 옛 선택이 남는다"
     assert "loading || moveBlock" in win, "블럭 모드에서 클릭이 조종을 시작하면 안 된다"
     assert "object-contain" in win and "naturalWidth" in win, "레터박스 보정 없이 픽셀→u,v 하면 어긋난다"
+
     router = (REPO / "backend" / "app" / "routers" / "web_leader.py").read_text()
     cube = router.split("async def move_cube", 1)[1].split("\n@router", 1)[0]
-    assert 'cam.startswith("sim:")' in cube and '"cube_from_view"' in cube
+    assert 'cam.startswith("sim:")' in cube and '"object_from_view"' in cube
+    assert "body.object" in cube, "고른 물체를 데몬에 안 넘긴다"
+    pick = router.split("async def pick_object", 1)[1].split("\n@router", 1)[0]
+    assert '"pick_from_view"' in pick and 'cam.startswith("sim:")' in pick
+    assert 'r.get("reason")' in pick, "왜 못 골랐는지(테이블 밖·빈 자리) 안 말한다"
 
 
 def test_the_help_button_opens_a_structured_panel_matching_the_backend_mappings():
