@@ -14,6 +14,10 @@ import { camOptionText, type ReadyCam } from '../types/camera'
 
 type ReadyArm = { iface: string; role: string; side?: string | null }
 type RecordStatusData = { state?: string; current_episode: number; total_episodes: number; phase: string; progress: number }
+type DemoStatus = {
+  running: boolean; state: string; phase: string; episode: number; episodes: number
+  cycle_s: number; cycle_plan_s: number; leader: string; error: string
+}
 
 const VCODECS = ['auto', 'libsvtav1', 'h264', 'hevc', 'h264_nvenc', 'libx264']
 
@@ -83,6 +87,9 @@ export default function RecordingPage() {
   const [title, setTitle] = useState(_saved.title || '')
   const [description, setDescription] = useState(_saved.description || '')
   const [numEpisodes, setNumEpisodes] = useState(_saved.numEpisodes ?? 50)
+  // 시뮬 스크립트 시연 — 사람 대신 프로그램이 리더를 민다 (feature/sim-env.md 4단계).
+  // 조종 창과 **같은 리더 세그먼트**를 쓰므로 수집 쪽은 아무것도 안 바뀐다.
+  const [demo, setDemo] = useState<DemoStatus | null>(null)
   const [fps, setFps] = useState(_saved.fps ?? 15)
   const [episodeTime, setEpisodeTime] = useState(_saved.episodeTime ?? 60)
   const [resetTime, setResetTime] = useState(_saved.resetTime ?? 60)
@@ -266,6 +273,28 @@ export default function RecordingPage() {
   const armsChosen = armMode === 'bimanual'
     ? !!leftFollower && !!rightFollower && !!leftLeader && !!rightLeader
     : !!followerPort && !!leaderPort
+  // 시연 상태 — 시뮬 팔을 리더 없이 모는 중일 때만 본다(그 외에는 물어볼 이유가 없다)
+  const simDemoable = leaderPort === 'web_leader1' && followerPort.startsWith('sim_')
+  useEffect(() => {
+    if (!simDemoable) { setDemo(null); return }
+    const tick = () => api.get<DemoStatus>('/sim/demo/status').then(setDemo).catch(() => {})
+    tick()
+    const iv = window.setInterval(tick, 1000)
+    return () => window.clearInterval(iv)
+  }, [simDemoable])
+
+  const toggleDemo = useCallback(async () => {
+    try {
+      if (demo?.running) { setDemo(await api.post<DemoStatus>('/sim/demo/stop')) ; return }
+      // ⚠ 수집 중이면 릴레이를 **안 켠다** — 녹화 프로세스가 팔로워 세그먼트를 쥐고 있어
+      //   둘이 같이 못 쥔다. 수집 전이면 켜서 눈으로 보고 시작할 수 있게 한다.
+      setDemo(await api.post<DemoStatus>('/sim/demo/start',
+        { episodes: numEpisodes, relay: !isRunning, randomize: true }))
+    } catch (e) {
+      setDemo((d) => ({ ...(d ?? {} as DemoStatus), error: e instanceof Error ? e.message : '시연 실패' }))
+    }
+  }, [demo, numEpisodes, isRunning])
+
   const canStart = armsChosen && !!repoId && !repoIdError && !!singleTask && !isRunning && !isBlocked('recording')
 
   const handleStart = async () => {
@@ -416,6 +445,33 @@ export default function RecordingPage() {
                     className="mt-1 w-full px-2 py-1 text-xs rounded bg-purple-800 hover:bg-purple-700 text-white disabled:opacity-40">
                     조종 창 열기
                   </button>
+                )}
+                {simDemoable && (
+                  // 스크립트 시연 — 사람 대신 프로그램이 같은 리더를 민다. 20 에피소드를
+                  // 사람이 앉아서 20번 집어 넣는 대신 4분에 모은다.
+                  <div className="mt-1 space-y-1">
+                    <button type="button" onClick={toggleDemo}
+                      className={`w-full px-2 py-1 text-xs rounded text-white ${
+                        demo?.running ? 'bg-amber-700 hover:bg-amber-600' : 'bg-teal-800 hover:bg-teal-700'}`}>
+                      {demo?.running
+                        ? `시연 정지 — ${demo.episode}/${demo.episodes} · ${demo.phase || '준비'}`
+                        : '시연 시작 (사람 대신 프로그램이 조종)'}
+                    </button>
+                    {demo?.error && <p className="text-[11px] text-red-400">{demo.error}</p>}
+                    {demo && !demo.running && episodeTime > demo.cycle_plan_s * 1.5 && (
+                      // ⚠ 에피소드 시간이 한 바퀴보다 훨씬 길면 한 에피소드에 여러 바퀴가
+                      //   담긴다 — 정책은 "집어 넣고 또 집어 넣는" 것을 한 동작으로 배운다
+                      <p className="text-[11px] text-amber-300">
+                        한 바퀴가 약 {demo.cycle_plan_s}초입니다 — 에피소드 시간({episodeTime}초)을
+                        그에 맞추지 않으면 한 에피소드에 여러 바퀴가 담깁니다.
+                      </p>
+                    )}
+                    <p className="text-[11px] text-neutral-500">
+                      {isRunning
+                        ? '수집 중이라 발행만 합니다 — 팔은 녹화 프로세스가 움직입니다.'
+                        : '큐브를 무작위로 놓고 집어 통에 넣기를 반복합니다. 수집을 시작하면 그대로 기록됩니다.'}
+                    </p>
+                  </div>
                 )}
               </div>
             </div>

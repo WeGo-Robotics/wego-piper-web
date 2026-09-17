@@ -78,6 +78,12 @@ PHASES = [
 ]
 
 
+#: 한 바퀴에 걸리는 시간(초) — 구간 합 + 파킹. ⚠ 수집의 `episode_time_s` 를 여기 맞춰야
+#: 에피소드 하나에 한 바퀴가 담긴다. 60초로 두면 한 에피소드에 다섯 바퀴가 들어가고,
+#: 정책은 "집어 넣고 또 집어 넣는" 것을 한 동작으로 배운다.
+CYCLE_PLAN_S = round(sum(p[4] for p in PHASES) + 1.5, 1)
+
+
 class DemoError(RuntimeError):
     """사람이 고칠 수 있는 실패 — 라우터가 400 으로 돌려준다."""
 
@@ -162,7 +168,8 @@ class SimDemo:
     def status(self) -> dict:
         return {"running": self.is_running, "state": self.state, "phase": self.phase,
                 "episode": self.episode, "episodes": self.episodes,
-                "cycle_s": round(self.cycle_s, 2), "leader": LEADER_NAME, "error": self.error}
+                "cycle_s": round(self.cycle_s, 2), "cycle_plan_s": CYCLE_PLAN_S,
+                "leader": LEADER_NAME, "error": self.error}
 
     def start(self, episodes: int = 1, relay: bool = True, randomize: bool = True) -> dict:
         """⚠ 웹 리더와 **동시에 못 돈다** — 둘이 같은 팔을 밀면 누가 민 자세인지 알 수 없다."""

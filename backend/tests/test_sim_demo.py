@@ -148,3 +148,37 @@ def test_the_demo_writes_the_same_leader_the_teleop_window_does(demo):
     router = (__import__("pathlib").Path(__file__).resolve().parents[2]
               / "backend" / "app" / "routers" / "sim_demo.py").read_text()
     assert "relay: bool = True" in router and "녹화 프로세스가 팔로워를 쥔다" in router
+
+
+def test_the_recording_screen_can_start_the_demo_without_a_second_leader_kind(demo):
+    """시연은 수집 화면에서 켠다 — 리더를 `게이트웨이 리더` 로 고르고 시뮬 팔을 팔로워로
+    잡았을 때만 묻는다. 그 외에는 물어볼 이유가 없다."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+            / "RecordingPage.tsx").read_text()
+    assert "const simDemoable = leaderPort === 'web_leader1' && followerPort.startsWith('sim_')" in page
+    assert "'/sim/demo/start'" in page and "'/sim/demo/stop'" in page
+    assert "시연 시작 (사람 대신 프로그램이 조종)" in page
+
+
+def test_the_demo_only_relays_when_the_recorder_is_not_holding_the_arm(demo):
+    """⚠ 수집 중에는 녹화 프로세스가 팔로워 명령 세그먼트를 쥔다 — 릴레이가 같이 못 쥔다
+    (웹 리더의 `relay=False` 와 같은 이유). 수집 전이면 켜서 눈으로 보고 시작할 수 있게 한다."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+            / "RecordingPage.tsx").read_text()
+    assert "relay: !isRunning" in page, "수집 중에도 릴레이를 켠다 — 팔로워를 둘이 쥔다"
+
+
+def test_the_screen_warns_when_one_episode_would_hold_several_cycles(demo):
+    """⚠ 한 바퀴는 약 12초인데 수집 기본값은 60초다. 그대로 두면 에피소드 하나에 다섯
+    바퀴가 담기고, 정책은 "집어 넣고 또 집어 넣는" 것을 **한 동작으로** 배운다."""
+    from pathlib import Path
+
+    assert demo.CYCLE_PLAN_S == pytest.approx(11.9, abs=0.6)
+    assert demo.sim_demo.status()["cycle_plan_s"] == demo.CYCLE_PLAN_S
+    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
+            / "RecordingPage.tsx").read_text()
+    assert "demo.cycle_plan_s" in page and "여러 바퀴가 담깁니다" in page
