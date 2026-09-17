@@ -17,6 +17,7 @@ import YoloTrainPage from '../pages/YoloTrainPage'
 import EncoderProbePage from '../pages/EncoderProbePage'
 import LogsPage from '../pages/LogsPage'
 import SettingsPage from '../pages/SettingsPage'
+import ScenePage from '../pages/ScenePage'
 
 // 추론 분석은 Plotly를 포함하므로 lazy 로드해 메인 번들에서 코드 분리
 const DebugLogsPage = lazy(() => import('../pages/DebugLogsPage'))
@@ -91,6 +92,16 @@ export const pages: PageEntry[] = [
     nav: true,
     group: '장치',
     icon: '📷',
+    card: true,
+  },
+  {
+    path: '/scene',
+    label: '시뮬 장면',
+    description: '테이블 위 사물 편집 — 만들고 올리고 불러온다',
+    component: ScenePage,
+    nav: true,
+    group: '장치',
+    icon: '🧱',
     card: true,
   },
 

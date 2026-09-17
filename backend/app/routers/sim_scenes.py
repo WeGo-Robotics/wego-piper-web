@@ -34,6 +34,14 @@ class PlaceBody(BaseModel):
     y: float
 
 
+class PlaceFromViewBody(BaseModel):
+    id: str
+    cam: str = "sim:top"
+    u: float
+    v: float
+    aspect: float = 4.0 / 3.0
+
+
 def _guard(fn, *a, **kw):
     try:
         return fn(*a, **kw)
@@ -117,3 +125,16 @@ async def place_object(body: PlaceBody):
 
     pos = await asyncio.to_thread(_guard, sim.call_strict, "place_object", body.id, body.x, body.y)
     return {"id": body.id, "pos": pos}
+
+
+@router.post("/live/place-from-view")
+async def place_from_view(body: PlaceFromViewBody):
+    """탑뷰에서 클릭한 픽셀로 물체를 옮긴다 — 광선→테이블 계산은 **카메라 자세를 아는**
+    데몬이 한다. 화면이 하면 fovy·카메라 회전을 다시 적어야 하고, 장면이 바뀌면 갈린다."""
+    from app.services import sim_robot_client as sim
+
+    r = await asyncio.to_thread(_guard, sim.call_strict, "object_from_view",
+                                body.cam, body.u, body.v, body.aspect, body.id)
+    if not r or not r.get("ok"):
+        raise HTTPException(400, "클릭한 자리가 테이블이 아닙니다")
+    return {"id": body.id, "pos": r.get("cube")}

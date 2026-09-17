@@ -195,3 +195,86 @@ def test_the_gateway_image_carries_the_scene_spec_it_validates_with():
     assert "COPY sim/ /tmp/pkg/sim/" in dockerfile and "/tmp/pkg/sim" in dockerfile
     install = next(ln for ln in dockerfile.splitlines() if "pip install --no-deps /tmp/pkg/bus" in ln)
     assert "--no-deps" in install, "mujoco 까지 딸려 와 이미지가 부푼다"
+
+
+# ── 편집기 페이지 (feature/sim-scene-editor.md §8) ──────────────────────────
+
+from pathlib import Path  # noqa: E402
+
+REPO = Path(__file__).resolve().parents[2]
+PAGE = REPO / "frontend" / "src" / "pages" / "ScenePage.tsx"
+
+
+def test_the_editor_is_its_own_page_not_a_tab_in_something_else():
+    """사용자 결정 2026-09-17: "환경 에디터는 따로 만들고". 설정 탭이나 로봇 카드에 끼워
+    넣으면 물체 목록·배치 화면·자산 라이브러리가 한 카드에 밀려 들어가고, 시뮬 팔이 안
+    붙어 있으면 편집도 못 하게 된다."""
+    pages = (REPO / "frontend" / "src" / "config" / "pages.ts").read_text()
+    row = next(ln for ln in pages.splitlines() if "'/scene'" in ln)
+    assert "path: '/scene'" in row
+    block = pages.split("path: '/scene'", 1)[1].split("},", 1)[0]
+    assert "component: ScenePage" in block and "nav: true" in block, "내비에 없으면 갈 길이 없다"
+    assert "group: '장치'" in block
+
+
+def test_the_editor_reads_the_shape_list_from_the_backend(store):
+    """화면이 모양·프리셋을 **따로 적으면** 늘릴 때마다 두 곳을 고쳐야 하고, 한 곳을 잊으면
+    화면에만 없는(또는 화면에만 있는) 모양이 생긴다."""
+    page = PAGE.read_text()
+    assert "'/sim/scenes/defaults'" in page
+    assert "Object.keys(defs.primitives)" in page and "Object.keys(defs.presets)" in page, \
+        "쓸 수 있는 모양을 화면이 자기 목록으로 그린다"
+    assert "defs.movable_physics" in page and "defs.static_physics" in page, \
+        "접촉 기본값을 화면이 따로 적는다 — 파지 튜닝이 두 곳으로 갈린다"
+    assert "max_objects" in page, "물체 수 상한을 화면이 모른다"
+
+
+def test_the_editor_does_not_reimplement_the_ray_math():
+    """탑뷰 클릭 → 테이블 좌표는 **카메라 자세·fovy 를 아는** 데몬이 한다. 화면이 하면
+    카메라를 옮길 때마다 두 곳이 갈리고, 그건 조용히 빗나간다."""
+    page = PAGE.read_text()
+    assert "/sim/scenes/live/place-from-view" in page
+    for leaked in ("fovy", "cam_xmat", "Math.tan("):
+        assert leaked not in page, f"화면이 광선 계산을 다시 짰다 ({leaked})"
+
+
+def test_the_editor_refuses_to_place_into_a_world_that_is_not_this_scene():
+    """⚠ 배치 화면은 **적용된 장면**의 세계다. 편집 중인 장면이 아직 안 올라갔는데 클릭을
+    받으면, 사람은 이 장면을 고치고 있다고 믿으면서 **다른 세계**를 건드린다."""
+    page = PAGE.read_text()
+    assert "const applied = !!spec && current === sid && !dirty" in page
+    assert "if (!o || !applied) return" in page, "안 올라간 장면에서도 클릭이 먹는다"
+    assert "적용해야 여기서 배치할 수 있습니다" in page, "왜 못 누르는지 말 안 한다"
+
+
+def test_the_editor_mirrors_the_backends_resting_height_rule():
+    """⚠ 새 물체를 어디에 앉힐지는 백엔드(`scene_spec.rest_z`)와 화면 둘 다 안다 — 물체를
+    추가하는 순간 서버에 묻지 않고 폼을 그려야 해서다. **같은 규칙이 두 곳에 있으므로**
+    여기서 묶어 둔다. 어긋나면 새 물체가 테이블에 파묻히거나 떠 있다가 떨어진다."""
+    from piper_sim import scene_spec as S
+
+    fn = PAGE.read_text().split("function restZ(", 1)[1]
+    assert "shape === 'sphere'" in fn and "return size[0]" in fn
+    assert "shape === 'cylinder'" in fn and "return size[1]" in fn
+    assert "shape === 'capsule'" in fn and "return size[1] + size[0]" in fn
+    assert "return size[2]" in fn
+    assert S.rest_z({"shape": "sphere", "size": [0.03]}) == 0.03
+    assert S.rest_z({"shape": "cylinder", "size": [0.02, 0.05]}) == 0.05
+    assert S.rest_z({"shape": "capsule", "size": [0.02, 0.05]}) == pytest.approx(0.07)
+    assert S.rest_z({"shape": "box", "size": [0.01, 0.02, 0.03]}) == 0.03
+    assert S.rest_z({"shape": "preset:bin", "params": {}}) == 0.0
+
+
+def test_the_editor_hands_files_in_and_out_whole():
+    """환경 불러오기/내보내기 — 파일 하나 (사용자 요청 2026-09-17).
+    ⚠ 내보내기는 `api.get` 을 못 쓴다. 그건 무조건 `res.json()` 해서 **파일 내용이 아니라
+    파싱된 객체**가 온다 — 들여쓰기도 순서도 사라진다."""
+    page = PAGE.read_text()
+    assert 'type="file"' in page and "환경 불러오기" in page and "f.text()" in page
+    assert "'/sim/scenes/import'" in page
+    # ⚠ 금지 검사는 **주석을 걷고** 한다 — "`api.get` 을 못 쓴다"고 적어 둔 바로 그 설명이
+    #   "api.get 이 있으면 실패" 검사에 걸린다. 이 저장소에서 세 번째다(conftest.code_only).
+    from conftest import code_only
+    export = code_only(page).split("const exportFile", 1)[1].split("}), [", 1)[0]
+    assert "fetch(" in export and "res.text()" in export and "api.get" not in export
+    assert "a.download" in export, "내려받기가 아니라 화면에 띄우기만 한다"
