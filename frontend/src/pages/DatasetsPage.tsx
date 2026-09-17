@@ -274,6 +274,12 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
                     ? <>{ds.notes.name} <span className="text-neutral-500 font-normal">({ds.id})</span></>
                     : ds.id}
                 </p>
+                {ds.scene && (
+                  // 어느 세계에서 모았나 — 장면이 늘수록 이게 없으면 데이터가 섞인다
+                  <p className="truncate text-[11px] text-purple-300/80" title={`시뮬 장면 · 물체 ${ds.scene.objects}개`}>
+                    🧱 {ds.scene.name || ds.scene.id}
+                  </p>
+                )}
                 {ds.notes?.description && (
                   <p className="truncate text-[11px] text-neutral-500">{ds.notes.description}</p>
                 )}

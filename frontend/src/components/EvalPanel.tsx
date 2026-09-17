@@ -13,6 +13,8 @@ type EvalStats = {
     preset?: string
   }[]
   by_preset: { preset: string; total: number; successes: number; rate: number }[]
+  /** 시뮬 장면별 — ⚠ 장면이 여럿이면 전체 성공률은 쉬운 세계와 어려운 세계의 평균이다 */
+  by_scene?: { scene: string; total: number; successes: number; rate: number }[]
 }
 
 type Props = {
@@ -90,6 +92,20 @@ export default function EvalPanel({ checkpoint, preset = '', params }: Props) {
           </div>
 
           {/* 프리셋별 성공률 — "어느 설정이 잘 됐나" */}
+
+          {stats && (stats.by_scene?.length ?? 0) > 0 && (
+            <div className="space-y-1">
+              <span className="text-xs text-neutral-400">시뮬 장면별</span>
+              {stats.by_scene!.map((p) => (
+                <div key={p.scene} className="flex justify-between text-[11px]">
+                  <span className="text-purple-300/90">🧱 {p.scene}</span>
+                  <span className={p.rate >= 0.7 ? 'text-green-400' : 'text-amber-400'}>
+                    {Math.round(p.rate * 100)}% ({p.successes}/{p.total})
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {stats && stats.by_preset?.length > 0 && (
 

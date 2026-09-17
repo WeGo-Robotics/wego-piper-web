@@ -348,3 +348,79 @@ def test_attaching_the_sim_arm_is_when_the_world_first_spins_up():
     assert "sim_scenes.ensure_applied" in attach
     assert "warnings.append" in attach.split("ensure_applied", 1)[1][:400], \
         "다시 올렸다는 사실을 화면에 말 안 한다"
+
+
+# ── 어느 세계에서 모았나 (4단계) ────────────────────────────────────────────
+
+def test_a_dataset_remembers_the_whole_world_it_was_recorded_in(store, tmp_path):
+    """⚠ **이름만 남기면 안 된다.** 장면은 사람이 계속 고친다 — 나중에 그 이름의 장면은
+    다른 세계다. 통째로 담아야 데이터셋이 자기 설명이 되고, 다른 기계에서 그 세계를 다시
+    지을 수 있다(메시는 자산 id 로 가리킬 뿐이라 함께 옮겨야 한다)."""
+    store.save("blocks", {"name": "블럭 두 개", "objects": [CUBE]})
+    spec = store.read("blocks")
+    root = tmp_path / "ds"
+    assert store.write_sidecar(root, spec)
+    assert (root / "meta" / "piper_scene.json").exists(), \
+        "meta/ 밖에 썼다 — 허브 업로드에 안 따라간다"
+    got = store.read_sidecar(root)
+    assert got["name"] == "블럭 두 개" and got["id"] == "blocks"
+    assert got["objects"][0]["size"] == [0.02, 0.02, 0.02], "명세를 안 담았다 — 이름만으로는 못 짓는다"
+    assert got["recorded_at"]
+    assert store.read_sidecar(tmp_path / "nope") is None, "실기 데이터셋에는 없는 것이 정상이다"
+
+
+def test_the_scene_is_grabbed_when_recording_starts_not_when_it_stops():
+    """사이드카는 데이터셋이 만들어진 **뒤**에야 쓸 수 있어서 정지 시점에 쓴다. 그런데 그때
+    읽으면 늦다 — 카메라 매핑이 같은 이유로 시작 때 붙잡아 두는 것과 같은 자리다."""
+    src = (REPO / "backend" / "app" / "routers" / "recording.py").read_text()
+    start = src.split('_last_recording["repo_id"]', 1)[1].split("await record_manager.start", 1)[0]
+    assert '_last_recording["sim_scene"]' in start and "applied_spec()" in start
+    assert 'startswith("sim_")' in start, "실기로 모은 데이터셋에도 장면을 붙인다"
+    assert "body.robot_ports" in start, "양팔 시뮬은 빠뜨린다"
+    stop = src.split("async def stop_recording", 1)[1]
+    assert "sim_scenes.write_sidecar" in stop
+
+
+def test_the_dataset_list_says_which_world_each_one_came_from():
+    """목록에서 안 보이면 사람은 데이터셋을 열어 보고서야 안다 — 장면이 늘수록 그 비용이 커진다."""
+    src = (REPO / "backend" / "app" / "services" / "dataset_scanner.py").read_text()
+    assert src.count('"scene": _scene(') == 2, "스냅샷·디렉토리 두 경로 중 하나가 빠졌다"
+    assert "read_sidecar" in src
+
+
+def test_a_success_rate_that_mixes_easy_and_hard_worlds_means_nothing(store, monkeypatch, tmp_path):
+    """⚠ 장면을 여러 개 쓰면 전체 성공률은 **쉬운 세계와 어려운 세계의 평균**이다. 그걸 보고
+    체크포인트를 고르면 잘못 고른다. 기록 시점에 장면을 박아 두지 않으면 나중에 못 가른다."""
+    from app.main import app
+    from app.routers import eval_log
+
+    monkeypatch.setattr(eval_log, "EVAL_DIR", tmp_path / "eval")
+    monkeypatch.setattr(eval_log, "EVAL_FILE", tmp_path / "eval" / "eval_log.jsonl")
+    from app.services import sim_robot_client as sim
+    monkeypatch.setattr(sim, "call_strict", lambda *a, **k: {})
+    store.save("easy", {"objects": [CUBE]})
+    store.apply("easy")
+
+    with TestClient(app) as c:
+        c.post("/api/eval/log", json={"success": True, "checkpoint": "ckpt"})
+        c.post("/api/eval/log", json={"success": True, "checkpoint": "ckpt"})
+        store.save("hard", {"objects": [CUBE]})
+        store.apply("hard")
+        c.post("/api/eval/log", json={"success": False, "checkpoint": "ckpt"})
+        stats = c.get("/api/eval/stats").json()
+
+    assert stats["rate"] == pytest.approx(0.667, abs=0.001)
+    by = {r["scene"]: r for r in stats["by_scene"]}   # _rate_by 는 그룹 키 이름을 그대로 쓴다
+    assert by["easy"]["rate"] == 1.0 and by["hard"]["rate"] == 0.0, \
+        "장면별로 안 갈린다 — 쉬운 세계의 성공률이 어려운 세계를 가린다"
+
+
+def test_the_screen_shows_which_world_too(store):
+    """백엔드만 알면 사람은 못 본다 — 목록과 평가 둘 다 장면을 그려야 한다."""
+    ds = (REPO / "frontend" / "src" / "pages" / "DatasetsPage.tsx").read_text()
+    assert "ds.scene" in ds, "데이터셋 목록이 장면을 안 보여 준다"
+    types = (REPO / "frontend" / "src" / "types" / "models.ts").read_text()
+    assert "scene?: { id: string; name: string; objects: number }" in types
+    ev = (REPO / "frontend" / "src" / "components" / "EvalPanel.tsx").read_text()
+    assert "by_scene" in ev and "시뮬 장면별" in ev, \
+        "평가 패널이 장면별 성공률을 안 그린다 — 쉬운 세계가 어려운 세계를 가린다"

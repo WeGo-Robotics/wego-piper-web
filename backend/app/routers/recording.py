@@ -338,6 +338,16 @@ async def start_recording(body: RecordStartRequest):
     _last_recording["camera_mapping"] = dict(body.camera_mapping or {})
     _last_recording["description"] = body.description
     _last_recording["title"] = body.title
+    # ⚠ 시뮬로 모으면 **어느 세계에서 모았는지**가 데이터의 일부다. 장면을 여러 개 만들기
+    #   시작하면 그 뒤에 모은 에피소드는 구분이 안 되고, **나중에 붙여도 소급이 안 된다**.
+    #   교체는 수집 중엔 막혀 있으므로(exclusivity.SCENE_SWAP) 시작 때의 장면이 곧 끝의 장면이다.
+    _last_recording["sim_scene"] = None
+    if any(str(pt or "").startswith("sim_") for pt in [body.robot_port, *body.robot_ports]):
+        try:
+            from app.services import sim_scenes
+            _last_recording["sim_scene"] = sim_scenes.applied_spec()
+        except Exception as exc:
+            logger.warning("시뮬 장면을 못 읽었다 (사이드카 생략): %s", exc)
 
     try:
         await record_manager.start(args, total_episodes=body.num_episodes, env_extra=env_extra)
@@ -406,6 +416,13 @@ async def stop_recording():
                         name=title, description=desc)
         except Exception as exc:
             logger.warning("제목·설명 사이드카 기록 실패 (%s): %s", repo_id, exc)
+
+    # 시뮬 장면도 같은 시점에. 실기로 모았으면 아무것도 안 쓴다 — 없는 것이 정상이다.
+    scene = _last_recording.get("sim_scene")
+    if repo_id and scene:
+        from app.services import sim_scenes
+
+        sim_scenes.write_sidecar(settings.lerobot_dir / repo_id, scene)
 
     return {"status": "stopped", "graceful": graceful}
 

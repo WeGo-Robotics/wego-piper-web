@@ -27,6 +27,7 @@ import json
 import logging
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 
 from piper_sim import scene_spec
@@ -212,6 +213,60 @@ def ensure_applied() -> dict | None:
         return out
     except Exception as exc:                     # 기동을 막지 않는다 — 말만 한다
         logger.warning("시뮬 장면 재적용 실패 (%s): %s", sid, exc)
+        return None
+
+
+# ── 데이터셋 사이드카 (feature/sim-scene-editor.md 4단계) ──────────────────
+
+_SIDECAR_REL = Path("meta") / "piper_scene.json"
+
+
+def applied_spec() -> dict | None:
+    """지금 적용된 장면의 명세. 없거나 못 읽으면 None."""
+    sid = current_id()
+    if not sid:
+        return None
+    try:
+        return read(sid)
+    except SceneStoreError:
+        return None
+
+
+def sidecar(spec: dict) -> dict:
+    """데이터셋 옆에 남길 장면 기록 — **명세를 통째로** 담는다.
+
+    이름만 남기면 나중에 그 이름의 장면이 바뀌어 있다(사람이 고친다). 그러면 "이 에피소드는
+    어떤 세계에서 모았나"에 답을 못 한다. 통째로 담으면 데이터셋이 **자기 설명**이 되고,
+    다른 기계에서도 그 세계를 다시 지을 수 있다(메시는 자산 id 로 가리킬 뿐이라 함께 옮겨야 한다).
+    """
+    return {"id": spec.get("id", ""), "name": spec.get("name", ""),
+            "objects": spec.get("objects") or [],
+            "recorded_at": datetime.now().astimezone().isoformat(timespec="seconds")}
+
+
+def write_sidecar(dataset_root: Path | str, spec: dict) -> bool:
+    """`meta/piper_scene.json` — 카메라 사이드카와 같은 자리·같은 이유.
+
+    `meta/` 에 두면 허브 업로드에 자동으로 동반된다. LeRobot 은 모르는 파일을 안 건드린다.
+    """
+    try:
+        p = Path(dataset_root) / _SIDECAR_REL
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(sidecar(spec), ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
+    except Exception as exc:
+        logger.warning("장면 사이드카 기록 실패 (%s): %s", dataset_root, exc)
+        return False
+
+
+def read_sidecar(dataset_root: Path | str) -> dict | None:
+    """없으면 None — 실기로 모은 데이터셋에는 없는 것이 정상이다(목록 스캔이 부른다)."""
+    try:
+        return json.loads((Path(dataset_root) / _SIDECAR_REL).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        logger.warning("장면 사이드카 파싱 실패 (%s): %s", dataset_root, exc)
         return None
 
 

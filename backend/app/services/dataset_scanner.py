@@ -34,6 +34,16 @@ def _notes(root: Path) -> dict:
     return read_notes(root, kind="dataset")
 
 
+def _scene(root: Path) -> dict | None:
+    """시뮬 장면 사이드카 (meta/piper_scene.json). 실기 데이터셋에는 없다 —
+    **어느 세계에서 모았는가**가 시뮬 데이터의 일부라서 남긴다 (sim_scenes.write_sidecar)."""
+    from app.services.sim_scenes import read_sidecar
+
+    sc = read_sidecar(root)
+    return {"id": sc.get("id", ""), "name": sc.get("name", ""),
+            "objects": len(sc.get("objects") or [])} if sc else None
+
+
 def _parse_meta(meta_path: Path) -> dict:
     if not meta_path.exists():
         return {}
@@ -101,6 +111,7 @@ def _scan_hub_datasets(datasets_dir: Path) -> list[dict]:
             "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
             "created": _created_at(snapshot, info_path),
             "notes": _notes(snapshot),
+            "scene": _scene(snapshot),
         })
     return results
 
@@ -135,6 +146,7 @@ def _scan_lerobot_datasets(lerobot_dir: Path) -> list[dict]:
                 "created": _created_at(ds_dir, info_path),
                 "baked": baked_info(ds_dir),
                 "notes": _notes(ds_dir),
+                "scene": _scene(ds_dir),
             })
     return results
 

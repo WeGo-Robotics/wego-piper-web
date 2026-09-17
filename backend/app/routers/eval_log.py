@@ -23,6 +23,9 @@ class EvalEntry(BaseModel):
     # 어느 속도·필터 설정에서 나온 것인지 알 수 없다 (feature/parameter-presets.md).
     preset: str = ""
     params: dict = {}
+    # 시뮬 평가라면 **어느 세계에서** 잰 성공률인가. 안 주면 백엔드가 지금 올라간 장면으로
+    # 채운다 — 화면이 알 필요가 없고, 빠뜨리면 장면이 늘수록 성공률이 뒤섞인다.
+    scene: str = ""
 
 
 @router.post("/log")
@@ -36,6 +39,7 @@ async def log_eval(entry: EvalEntry):
         # 프리셋 이름만으로는 부족하다 — 프리셋을 나중에 고치면 그 때의 값이 사라진다.
         # 실제로 쓴 값을 함께 남긴다 (재현성).
         "params": entry.params,
+        "scene": entry.scene or _current_scene(),
         "robot_id": settings.resolved_robot_id,
     }
     EVAL_DIR.mkdir(parents=True, exist_ok=True)
@@ -69,7 +73,20 @@ async def eval_stats(last_n: int = 0):
         "recent": records[-10:][::-1],
         "by_preset": _rate_by(subset, "preset"),
         "by_checkpoint": _rate_by(subset, "checkpoint"),
+        # ⚠ 장면을 여러 개 쓰면 이게 없는 성공률은 **아무 뜻이 없다** — 쉬운 세계와
+        #   어려운 세계의 평균이다 (feature/sim-scene-editor.md 4단계).
+        "by_scene": _rate_by(subset, "scene"),
     }
+
+
+def _current_scene() -> str:
+    """지금 시뮬에 올라간 장면 id. 실기 평가면 빈 문자열이다."""
+    try:
+        from app.services.sim_scenes import current_id
+
+        return current_id() or ""
+    except Exception:
+        return ""
 
 
 def _rate_by(records: list[dict], key: str) -> list[dict]:

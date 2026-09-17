@@ -56,6 +56,8 @@ export type Dataset = {
   created?: string
   /** ACT-Aux 용으로 구운 사본이면 그 정보 (backend dataset_scanner.baked_info). 원본이면 null/undefined. */
   baked?: BakedInfo | null
+  /** 시뮬로 모았으면 **어느 세계에서** 모았는지 (meta/piper_scene.json). 실기면 없다. */
+  scene?: { id: string; name: string; objects: number } | null
 }
 
 export type BakedInfo = {
