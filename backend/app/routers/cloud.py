@@ -15,6 +15,7 @@
 """
 
 import asyncio
+from functools import partial
 import json
 import logging
 import shutil
@@ -121,6 +122,7 @@ async def vast_offers(
     max_price: float | None = Query(None, gt=0, le=1000),
     disk_gb: float = Query(40.0, ge=5, le=2000),
     limit: int = Query(50, ge=1, le=200),
+    cuda: str = Query("", max_length=8, pattern=r"^(cu\d{3})?$"),
     refresh: bool = False,
 ):
     """빌릴 수 있는 기계 목록.
@@ -135,6 +137,11 @@ async def vast_offers(
     `gpu` 는 **여러 번 줄 수 있고**(`?gpu=RTX+4090&gpu=RTX+3060`), **빈 값이면 전체**다
     (`?gpu=`). 사용자가 "싹 다 보여줘" 라고 했다 — 한 기종만 고르게 하는 계약이면
     그 말을 못 들어준다.
+
+    ⚠ **`cuda` 는 고른 템플릿의 CUDA 빌드다**(`cu126`·`cu128`). 호환 판정이 이걸 따라
+    간다 — 두 빌드는 담고 있는 커널이 다르고 **한쪽이 다른 쪽의 상위집합이 아니다**
+    (cu128 은 Blackwell 을 얻는 대신 맥스웰·파스칼·V100 을 잃는다). 안 주면 기본값
+    기준으로 답한다.
     """
     f = OfferFilter(
         gpu_names=tuple(gpu), num_gpus=num_gpus, min_cuda=min_cuda,
@@ -142,7 +149,8 @@ async def vast_offers(
         min_cpu_cores=min_cpu, max_price=max_price, disk_gb=disk_gb, limit=limit,
     )
     try:
-        offers = await asyncio.to_thread(_provider().search, f, refresh=refresh)
+        offers = await asyncio.to_thread(
+            partial(_provider().search, f, refresh=refresh, cuda_build=cuda))
     except Exception as exc:                                        # noqa: BLE001
         raise _to_http(exc) from exc
     return {"query": vast.build_query(f), "disk_gb": disk_gb,
@@ -158,6 +166,9 @@ async def cloud_gpus(
     min_cpu: float | None = Query(None, ge=0, le=512),
     max_price: float | None = Query(None, gt=0, le=1000),
     disk_gb: float = Query(40.0, ge=5, le=2000),
+    # ⚠ 고른 템플릿의 CUDA 빌드. 선택지의 `support` 판정이 이걸 따라간다 — 표와
+    #   선택지가 **같은 기준**을 봐야 "고를 수 있는데 표는 0행" 이 안 생긴다.
+    cuda: str = Query("", max_length=8, pattern=r"^(cu\d{3})?$"),
     refresh: bool = False,
 ):
     """고를 수 있는 **GPU 기종** — 선택지를 채우는 목록.
@@ -178,7 +189,8 @@ async def cloud_gpus(
         min_cpu_cores=min_cpu, max_price=max_price, disk_gb=disk_gb,
     )
     try:
-        rows = await asyncio.to_thread(_provider().catalog, f, refresh=refresh)
+        rows = await asyncio.to_thread(
+            partial(_provider().catalog, f, refresh=refresh, cuda_build=cuda))
     except Exception as exc:                                        # noqa: BLE001
         logger.warning("GPU 카탈로그 조회 실패: %s", exc)
         return {"gpus": [], "disk_gb": disk_gb,

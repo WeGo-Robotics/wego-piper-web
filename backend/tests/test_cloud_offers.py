@@ -568,3 +568,105 @@ def test_an_unknown_compute_cap_is_left_alone_even_though_it_may_be_old():
         assert not any("bf16" in w for w in warnings_for(
             cpu_cores=8, cuda_max_good=12.6, disk_space_gb=100, disk_gb=40,
             compute_cap=cc))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 판정이 **고른 템플릿**을 따라간다 (2026-09-17)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_cu128_is_not_a_superset_of_cu126():
+    """⚠ **실측 2026-09-17** — 두 이미지를 띄워 arch list 를 직접 찍었다:
+
+        cu126: sm_50 sm_60 sm_70 sm_75 sm_80 sm_86 sm_90
+        cu128: sm_75 sm_80 sm_86 sm_90 sm_100 sm_120
+
+    cu128 은 Blackwell 을 얻는 대신 맥스웰·파스칼 **그리고 V100(sm_70)** 을 잃는다.
+    코드 주석이 한때 "cu128 은 sm_70~sm_120" 이라 적고 있었는데, 그건 이 머신의
+    torch **2.10** 기준이었다 — 2.11 의 cu128 은 튜링(7.5)부터다.
+    """
+    from app.services.cloud.providers.base import gpu_support
+
+    assert gpu_support(700, "cu126") == "ok", "V100 은 cu126 에서 돈다"
+    assert gpu_support(700, "cu128") == "too_old", "V100 은 cu128 에서 빠진다"
+    assert gpu_support(1200, "cu126") == "too_new", "5090 은 cu126 에 커널이 없다"
+    assert gpu_support(1200, "cu128") == "ok", "5090 은 cu128 에서 돈다"
+    # 어느 쪽도 전부를 덮지 못한다 — 그게 "상위집합이 아니다" 의 뜻이다
+    assert gpu_support(500, "cu126") == "ok" and gpu_support(500, "cu128") == "too_old"
+
+
+def test_an_unknown_build_is_never_guessed():
+    """⚠ 모르는 빌드에 cu126 범위를 빌려 쓰면 **그럴듯한 거짓말**이 되고, 그 대가는
+    빌린 뒤에 드러난다."""
+    from app.services.cloud.providers.base import gpu_support
+
+    for cc in (500, 750, 890, 1200):
+        assert gpu_support(cc, "cu999") == "unknown"
+
+
+def test_the_warning_names_the_build_you_picked():
+    """⚠ 판정이 고정이던 시절엔 문구도 고정이라, cu128 을 고른 사람에게 "cu128 로
+    구우세요" 라고 말했다."""
+    w126 = warnings_for(cpu_cores=8, cuda_max_good=12.8, disk_space_gb=100, disk_gb=40,
+                        compute_cap=1200, cuda="cu126")
+    assert any("cu126" in x and "cu128" in x for x in w126)
+    # cu128 에서는 5090 이 멀쩡하므로 커널 경고 자체가 없다
+    w128 = warnings_for(cpu_cores=8, cuda_max_good=12.8, disk_space_gb=100, disk_gb=40,
+                        compute_cap=1200, cuda="cu128")
+    assert not any("커널" in x for x in w128)
+
+
+def test_bf16_does_not_follow_the_build_because_it_is_hardware():
+    """⚠ cu128 로 다시 구워도 튜링에 bf16 텐서코어가 생기지는 않는다."""
+    for build in ("cu126", "cu128"):
+        w = warnings_for(cpu_cores=8, cuda_max_good=12.8, disk_space_gb=100, disk_gb=40,
+                         compute_cap=750, cuda=build)
+        assert any("bf16" in x for x in w), f"{build} 에서 bf16 경고가 사라졌다"
+
+
+def test_the_cache_is_keyed_by_build_or_switching_templates_lies(monkeypatch):
+    """⚠ 판정이 빌드를 타는데 캐시 키가 그대로면, 템플릿을 cu128 로 바꿔도 **cu126
+    판정이 그대로 나온다** — 화면은 바뀐 줄 아는데 내용은 안 바뀐다."""
+    import inspect
+
+    from app.services.cloud.providers import vast
+
+    for fn in (vast.VastProvider.search, vast.VastProvider.catalog):
+        src = inspect.getsource(fn)
+        i = src.index("key = ")
+        assert "cuda_build" in src[i:i + 200], f"{fn.__name__} 캐시 키에 빌드가 없다"
+
+
+def test_the_endpoints_take_the_build_and_pass_it_down():
+    """⚠ 파라미터만 받고 안 넘기면 아무 일도 안 일어난다 — 조용히."""
+    import inspect
+
+    from app.routers import cloud as router
+
+    for fn in (router.vast_offers, router.cloud_gpus):
+        sig = inspect.signature(fn)
+        assert "cuda" in sig.parameters, f"{fn.__name__} 이 빌드를 안 받는다"
+        assert "cuda_build=cuda" in inspect.getsource(fn), \
+            f"{fn.__name__} 이 받은 빌드를 프로바이더로 안 넘긴다"
+
+
+def test_the_build_parameter_is_a_whitelist():
+    """⚠ 이 값은 판정에 쓰이고 캐시 키에도 들어간다. 자유 문자열로 두면 키가 무한히
+    늘고, 형태 검사 없이 받는 습관이 이 파일의 규칙(주입 경계)과 어긋난다."""
+    import inspect
+
+    from app.routers import cloud as router
+
+    src = inspect.getsource(router.vast_offers)
+    assert r'pattern=r"^(cu\d{3})?$"' in src, "형태 검사가 없다"
+
+
+def test_the_rent_tab_sends_the_build_and_refetches_when_it_changes():
+    """⚠ 템플릿을 바꿨는데 다시 안 물어보면 표는 옛 판정을 그대로 보여 준다."""
+    from pathlib import Path
+
+    from conftest import code_only
+
+    src = code_only((Path(__file__).resolve().parents[2] / "frontend" / "src"
+                     / "components" / "CloudRentTab.tsx").read_text())
+    assert src.count("p.set('cuda', template.cuda)") == 2, "오퍼·기종 중 한쪽만 보낸다"
+    assert src.count("template?.cuda])") == 2, "템플릿이 바뀌어도 다시 안 부른다"

@@ -28,6 +28,7 @@ import time
 from collections import Counter
 
 from .base import (
+    DEFAULT_CUDA,
     GpuModel, Instance, Offer, OfferFilter, SSHTarget, Template,
     gpu_support, hourly_total, warnings_for,
 )
@@ -113,11 +114,16 @@ def build_query(f: OfferFilter, *, with_gpu: bool = True, with_cuda: bool = True
     return " ".join(parts)
 
 
-def parse_offer(raw: dict, disk_gb: float) -> Offer:
-    """오퍼 한 줄. 필드 100개 중 판단에 쓰이는 것만 꺼낸다."""
+def parse_offer(raw: dict, disk_gb: float, cuda_build: str = "") -> Offer:
+    """오퍼 한 줄. 필드 100개 중 판단에 쓰이는 것만 꺼낸다.
+
+    ⚠ **이름이 비슷한 두 가지가 나온다.** `cuda_build` 는 *우리 이미지*가 어떤 CUDA 로
+    구워졌나(`cu126`)이고, `cuda_good` 은 *호스트 드라이버*가 보고하는 최대 CUDA 버전이다.
+    전자가 GPU 커널 호환을, 후자가 드라이버 하한을 정한다 — 섞으면 판정이 뒤집힌다.
+    """
     hourly, storage = hourly_total(raw, disk_gb)
     cpu = float(raw.get("cpu_cores_effective") or 0.0)
-    cuda = float(raw.get("cuda_max_good") or 0.0)
+    cuda_good = float(raw.get("cuda_max_good") or 0.0)
     disk_space = float(raw.get("disk_space") or 0.0)
     cc = raw.get("compute_cap")
     return Offer(
@@ -135,7 +141,7 @@ def parse_offer(raw: dict, disk_gb: float) -> Offer:
         inet_up_cost_per_gb=float(raw.get("inet_up_cost") or 0.0),
         inet_down_mbps=float(raw.get("inet_down") or 0.0),
         inet_up_mbps=float(raw.get("inet_up") or 0.0),
-        cuda_max_good=cuda,
+        cuda_max_good=cuda_good,
         # ⚠ 응답 필드는 `reliability2` 다 (질의의 `reliability` 와 다른 이름)
         reliability=float(raw.get("reliability2") or 0.0),
         dlperf=float(raw.get("dlperf") or 0.0),
@@ -149,10 +155,10 @@ def parse_offer(raw: dict, disk_gb: float) -> Offer:
         verified=str(raw.get("verification") or "") == "verified",
         rentable=bool(raw.get("rentable")),
         compute_cap=cc,
-        support=gpu_support(cc),
-        warnings=warnings_for(cpu_cores=cpu, cuda_max_good=cuda,
+        support=gpu_support(cc, cuda_build),
+        warnings=warnings_for(cpu_cores=cpu, cuda_max_good=cuda_good,
                               disk_space_gb=disk_space, disk_gb=disk_gb,
-                              compute_cap=cc),
+                              compute_cap=cc, cuda=cuda_build),
     )
 
 
@@ -162,6 +168,12 @@ def parse_template(raw: dict) -> Template:
     name = str(raw.get("name") or "")
     hay = f"{tag} {name}".lower()
     variant = "full" if "full" in hay else "slim" if "slim" in hay else ""
+    # ⚠ **CUDA 빌드도 태그에서 읽는다.** 이게 GPU 호환 판정의 기준이다 — cu126 과
+    #   cu128 은 담고 있는 커널이 다르고, **한쪽이 다른 쪽의 상위집합이 아니다**
+    #   (Blackwell 을 얻는 대신 맥스웰·파스칼을 잃는다). 못 읽으면 빈 문자열로 두고,
+    #   판정하는 쪽이 "모른다" 고 말한다 — 기본값으로 때려 맞히면 조용히 틀린다.
+    m = re.search(r"\bcu(\d{3})\b", hay)
+    cuda = f"cu{m.group(1)}" if m else ""
     return Template(
         id=int(raw.get("id") or 0),
         name=name,
@@ -171,6 +183,7 @@ def parse_template(raw: dict) -> Template:
         disk_gb=float(raw.get("recommended_disk_space") or 0.0),
         description=str(raw.get("desc") or ""),
         variant=variant,
+        cuda=cuda,
     )
 
 
@@ -231,15 +244,19 @@ class VastProvider:
         return value
 
     # ── 조회 ─────────────────────────────────────────────────────────────
-    def search(self, f: OfferFilter, *, refresh: bool = False) -> list[Offer]:
+    def search(self, f: OfferFilter, *, refresh: bool = False,
+               cuda_build: str = "") -> list[Offer]:
         q = build_query(f)
-        key = f"offers:{q}:{f.disk_gb:g}"   # q 가 GPU 목록을 이미 담는다
+        # ⚠ **캐시 키에 CUDA 빌드가 들어가야 한다.** 판정(`support`·`warnings`)이 빌드를
+        #   따라 달라지므로, 같은 키를 쓰면 cu128 로 바꿔도 cu126 판정이 그대로 나온다.
+        key = f"offers:{q}:{f.disk_gb:g}:{cuda_build or 'default'}"   # q 가 GPU 목록을 담는다
         if refresh:
             _cache.pop(key, None)
 
         def _go() -> list[Offer]:
             rows = self._raw(["search", "offers", q]) or []
-            offers = [parse_offer(r, f.disk_gb) for r in rows if isinstance(r, dict)]
+            offers = [parse_offer(r, f.disk_gb, cuda_build)
+                      for r in rows if isinstance(r, dict)]
             # 기본 정렬은 **최저가가 아니라 가성비**다 — 최저가 정렬은 CUDA 가 모자란
             # 기계를 맨 위로 올린다(§9-2).
             offers.sort(key=lambda o: o.dlperf_per_dph, reverse=True)
@@ -261,7 +278,8 @@ class VastProvider:
 
         return self._cached("templates", _go)
 
-    def catalog(self, f: OfferFilter, *, refresh: bool = False) -> list[GpuModel]:
+    def catalog(self, f: OfferFilter, *, refresh: bool = False,
+                cuda_build: str = "") -> list[GpuModel]:
         """빌릴 수 있는 **GPU 기종** — 사용자가 "싹 다 보여줘" 라고 한 그 목록이다.
 
         질의 **둘**을 쓴다. 둘 다 표가 쓰는 필터 그대로에서 항만 뺀 것이라, 선택지와
@@ -287,7 +305,8 @@ class VastProvider:
         """
         qa = build_query(f, with_gpu=False)
         qb = build_query(f, with_gpu=False, with_cuda=False)
-        key = f"catalog:{qa}|{qb}|{f.disk_gb:g}"
+        # ⚠ 오퍼 캐시와 같은 이유로 CUDA 빌드가 키에 들어간다 — 판정이 빌드를 탄다
+        key = f"catalog:{qa}|{qb}|{f.disk_gb:g}|{cuda_build or 'default'}"
         if refresh:
             _cache.pop(key, None)
 
@@ -334,11 +353,15 @@ class VastProvider:
             for name in set(a) | set(b):
                 src = a.get(name) or b[name]
                 cc = _mode(src["cc_votes"])
-                support = gpu_support(cc)
+                support = gpu_support(cc, cuda_build)
                 available = name in a
                 reason = None
                 if not available:
-                    reason = ("우리 이미지(cu126)에 이 GPU 커널이 없습니다 — cu128 로 다시 구워야 합니다"
+                    # ⚠ 문구에 빌드를 박지 않는다 — 고른 템플릿이 기준이다
+                    build = cuda_build or DEFAULT_CUDA
+                    other = "cu128" if build == "cu126" else "더 최신 CUDA 빌드"
+                    reason = (f"이 이미지({build})에 이 GPU 커널이 없습니다 — {other} 로 "
+                              f"구운 템플릿이 필요합니다"
                               if support == "too_new" else
                               "지금 필터 조건을 만족하는 기계가 없습니다")
                 out.append(GpuModel(

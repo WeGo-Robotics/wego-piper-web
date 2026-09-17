@@ -37,6 +37,12 @@ type Offer = {
 type Template = {
   id: number; name: string; image: string; tag: string | null
   disk_gb: number; description: string; variant: string
+  /**
+   * 이 템플릿 이미지의 CUDA 빌드(`cu126`·`cu128`). ⚠ **GPU 호환 판정이 이걸 따라간다** —
+   * 두 빌드는 담고 있는 커널이 다르고 한쪽이 다른 쪽의 상위집합이 아니다
+   * (실측: cu128 은 Blackwell 을 얻는 대신 맥스웰·파스칼·**V100** 을 잃는다).
+   */
+  cuda: string
   /** ⚠ create 가 쓰는 값. 템플릿을 고칠 때마다 바뀌므로 화면에 박지 않는다(§12-7). */
   hash_id: string
 }
@@ -141,6 +147,7 @@ export default function CloudRentTab() {
     setLoading(true)
     setError(null)
     const p = new URLSearchParams({ gpu, disk_gb: String(diskGb), limit: '50' })
+    if (template?.cuda) p.set('cuda', template.cuda)
     if (maxPrice.trim()) p.set('max_price', maxPrice.trim())
     if (minCpu.trim()) p.set('min_cpu', minCpu.trim())
     if (refresh) p.set('refresh', 'true')
@@ -157,7 +164,9 @@ export default function CloudRentTab() {
     } finally {
       setLoading(false)
     }
-  }, [gpu, diskGb, maxPrice, minCpu])
+    // ⚠ **고른 템플릿의 CUDA 빌드를 같이 보낸다.** 안 보내면 서버가 기본값으로
+    //   판정해서, cu128 템플릿을 골라도 표는 cu126 기준으로 말한다 — 조용히 틀린다.
+  }, [gpu, diskGb, maxPrice, minCpu, template?.cuda])
 
   const loadGpus = useCallback(() => {
     // ⚠ **표와 같은 필터를 넘긴다.** 카탈로그가 자기 조건으로 만들어지면 "선택지엔
@@ -165,6 +174,7 @@ export default function CloudRentTab() {
     // ⚠ 서버 실측 4.8초(질의 둘, 서버가 10분 캐시). **오퍼 목록과 따로 간다** —
     //   이게 늦는다고 표가 안 떠서는 안 된다.
     const p = new URLSearchParams({ disk_gb: String(diskGb) })
+    if (template?.cuda) p.set('cuda', template.cuda)
     if (maxPrice.trim()) p.set('max_price', maxPrice.trim())
     if (minCpu.trim()) p.set('min_cpu', minCpu.trim())
     setGpusLoading(true)
@@ -172,7 +182,7 @@ export default function CloudRentTab() {
       .then((r) => { setGpus(r.gpus); setGpusDetail(r.detail) })
       .catch((e) => setGpusDetail(e instanceof Error ? e.message : '기종 목록을 불러오지 못했습니다'))
       .finally(() => setGpusLoading(false))
-  }, [diskGb, maxPrice, minCpu])
+  }, [diskGb, maxPrice, minCpu, template?.cuda])
 
   useEffect(loadReadiness, [loadReadiness])
   useEffect(() => {

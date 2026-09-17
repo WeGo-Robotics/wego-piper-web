@@ -63,6 +63,34 @@ MIN_CPU_CORES = 4.0
 CC_MIN = 500    # sm_50 (맥스웰) — 이미지가 담고 있는 가장 낮은 커널
 CC_MAX = 1000   # sm_100 (B200) 부터는 cu128 이상이 필요하다
 
+#: CUDA 빌드별 커널 범위 `(담고 있는 최저 cc, 이 값부터는 없음)`.
+#:
+#: ⚠ **판정은 템플릿을 따라가야 한다.** 예전에는 cu126 으로 못 박혀 있어서, cu128
+#: 템플릿을 만들면 표가 **조용히 거짓말**을 하게 돼 있었다 — Blackwell 을 "커널 없음"
+#: 이라 하고, 맥스웰·파스칼을 "ok" 라 한다. `build-train.sh --cuda cu128` 이 이미
+#: 있으니 명령 한 번이면 그 상황이다.
+#:
+#: ⚠ **값은 이미지가 스스로 찍은 것만 넣는다.** 로컬 파이썬의 torch 로 확인하면
+#: 틀린다(위 주석) — 모르는 빌드는 넣지 않고 `unknown` 으로 답한다. 때려 맞힌 범위는
+#: 조용히 틀리고, 그 대가는 "빌렸는데 안 도는 기계" 다.
+ARCH: dict[str, tuple[float, float]] = {
+    # 실측: 이미지 안에서 torch 2.11.0+cu126 이 거부 메시지로 직접 찍은 목록 —
+    #   "supports CUDA capabilities sm_50 sm_60 sm_70 sm_75 sm_80 sm_86 sm_90"
+    "cu126": (CC_MIN, CC_MAX),
+    # 실측 2026-09-17: torch 2.11.0+cu128 을 5090 이 달린 컨테이너에서 띄워 찍은 목록 —
+    #   ['sm_75', 'sm_80', 'sm_86', 'sm_90', 'sm_100', 'sm_120']
+    #
+    # ⚠ **sm_70 이 없다.** 위 주석이 "cu128 은 sm_70~sm_120" 이라고 적고 있었는데 그건
+    #   이 머신의 torch **2.10** 기준이었다. 2.11 의 cu128 은 튜링(7.5)부터라 V100(7.0)도
+    #   같이 잃는다 — cu128 로 옮기면 맥스웰·파스칼에 더해 V100 까지 빠진다.
+    # ⚠ 위쪽 1300 은 "sm_120 위로 알려진 것이 없다" 는 뜻이다. `KNOWN_CC` 의 최대가
+    #   1200 이라 지금은 cu128 에서 `too_new` 가 나올 수 없다.
+    "cu128": (750.0, 1300.0),
+}
+
+#: 템플릿에서 CUDA 빌드를 못 읽었을 때 기준. 지금 계정의 템플릿 둘이 다 cu126 이다.
+DEFAULT_CUDA = "cu126"
+
 #: Vast 가 주는 `compute_cap` 중 **실제로 존재하는 값들**. ⚠ 엉터리가 섞여 있다 —
 #: 실측에서 Quadro P2000=140, P4000=243 인데 둘 다 실물은 파스칼(cc 6.1)이다. 140·243 은
 #: 어떤 컴퓨트 능력에도 대응하지 않는다. 구간으로만 보면 이 둘이 "너무 구형" 으로
@@ -70,21 +98,28 @@ CC_MAX = 1000   # sm_100 (B200) 부터는 cu128 이상이 필요하다
 KNOWN_CC = frozenset({500, 520, 600, 610, 700, 750, 800, 860, 890, 900, 1000, 1030, 1200})
 
 
-def gpu_support(compute_cap: float | None) -> str:
-    """`'ok'` | `'too_old'` | `'too_new'` | `'unknown'` — 기본 템플릿(cu126) 기준.
+def gpu_support(compute_cap: float | None, cuda: str = "") -> str:
+    """`'ok'` | `'too_old'` | `'too_new'` | `'unknown'` — **고른 템플릿의 CUDA 빌드 기준.**
 
     ⚠ 판정이지 금지가 아니다. 화면은 막지 말고 **말해 주기만** 한다 — 왜 안 되는지
     모르는 것보다 알고 고르는 편이 낫다.
+
+    ⚠ 모르는 빌드에는 답하지 않는다(`unknown`). cu126 의 범위를 빌려 쓰면 그럴듯한
+    거짓말이 되고, 그 대가는 **빌린 뒤에** 드러난다.
     """
     if not compute_cap:
         return "unknown"
+    rng = ARCH.get(cuda or DEFAULT_CUDA)
+    if rng is None:
+        return "unknown"
+    lo, hi = rng
     # ⚠ 알 수 없는 값을 "구형" 으로 단정하지 않는다. 실측의 140·243 은 실물이 파스칼이라
     #   막으면 틀린 답이 된다 — 모른다고 말하는 편이 정직하고, 그 편이 덜 해롭다.
     if compute_cap not in KNOWN_CC:
         return "unknown"
-    if compute_cap < CC_MIN:
+    if compute_cap < lo:
         return "too_old"
-    if compute_cap >= CC_MAX:
+    if compute_cap >= hi:
         return "too_new"
     return "ok"
 
@@ -200,7 +235,8 @@ BF16_MIN_CC = 800.0
 
 def warnings_for(*, cpu_cores: float, cuda_max_good: float,
                  disk_space_gb: float, disk_gb: float,
-                 compute_cap: float | None = None) -> tuple[str, ...]:
+                 compute_cap: float | None = None,
+                 cuda: str = "") -> tuple[str, ...]:
     """행에 붙일 경고. **실측에서 실제로 걸리는 것만** 만든다.
 
     ⚠ `verification` 은 넣지 않는다 — 표본 60/60 이 전부 `verified` 라 4090 급에선
@@ -211,15 +247,22 @@ def warnings_for(*, cpu_cores: float, cuda_max_good: float,
     보고해 `MIN_CUDA` 검사를 통과한다 — 그래서 `compute_cap` 을 따로 본다.
     """
     out: list[str] = []
-    support = gpu_support(compute_cap)
+    build = cuda or DEFAULT_CUDA
+    support = gpu_support(compute_cap, build)
     if support == "too_new":
-        out.append("우리 이미지(cu126)에 이 GPU 커널이 없습니다 — cu128 로 다시 구워야 합니다")
+        # ⚠ 문구에 빌드를 **박지 않는다.** cu128 을 고른 사람에게 "cu128 로 구우세요"
+        #   라고 말하던 시절이 있었다 — 판정이 고정이라 문구도 고정이었다.
+        other = "cu128" if build == "cu126" else "더 최신 CUDA 빌드"
+        out.append(f"이 이미지({build})에 이 GPU 커널이 없습니다 — {other} 로 구운 "
+                   f"템플릿이 필요합니다")
     elif support == "too_old":
-        out.append("너무 구형이라 이미지에 이 GPU 커널이 없습니다")
+        out.append(f"너무 구형이라 이 이미지({build})에 이 GPU 커널이 없습니다")
     # ⚠ **학습 기본 AMP 가 bf16 이다**(`routers/training.py`, `RentRequest.amp`).
     #   `too_old`/`too_new` 와 달리 이건 **돌긴 도는데 느린** 경우라, 안 적으면 아무도
     #   모른 채 몇 시간을 더 낸다. 판정은 `support` 와 겹치지 않는다 — cc 500~790 은
     #   이미지로는 멀쩡히 돌아간다.
+    # ⚠ bf16 판정은 **하드웨어 사실**이라 CUDA 빌드와 무관하다 — cu128 로 다시 구워도
+    #   튜링에 bf16 텐서코어가 생기지는 않는다. 그래서 여기만 `build` 를 안 본다.
     if compute_cap is not None and CC_MIN <= compute_cap < BF16_MIN_CC:
         out.append("bf16 하드웨어가 없습니다 (cc 8.0 미만) — 죽지 않고 "
                    "에뮬레이션으로 느려집니다. 이 세대는 fp16 이 맞습니다")
@@ -308,6 +351,12 @@ class Template:
     #: 이미지 안에 lerobot 이 없는 것은 맞지만, `bootstrap.sh` 가 첫 부팅 때
     #: `install-stack.sh` 로 **full 과 같은 버전**을 깐다. 다른 것은 "언제" 뿐이다.
     variant: str
+    #: 이 템플릿 이미지의 CUDA 빌드 — `'cu126'` | `'cu128'` | `''`(모름).
+    #:
+    #: ⚠ **GPU 호환 판정의 기준이 이것이다.** 두 빌드는 담고 있는 커널이 다르고 한쪽이
+    #: 다른 쪽의 상위집합이 **아니다** — cu128 은 Blackwell 을 얻는 대신 맥스웰·파스칼을
+    #: 잃는다. 그래서 "어느 템플릿을 고르느냐" 가 "어떤 GPU 를 빌릴 수 있느냐" 를 바꾼다.
+    cuda: str = ""
 
 
 @runtime_checkable
