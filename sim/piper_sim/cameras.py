@@ -200,7 +200,7 @@ class SimCameraHub:
     # ── 렌더 ──
 
     def invalidate_model(self) -> None:
-        """장면이 갈렸다 — 다음 렌더 전에 렌더러를 다시 만든다 (`World.on_model_change`).
+        """가상환경이 갈렸다 — 다음 렌더 전에 렌더러를 다시 만든다 (`World.on_model_change`).
 
         ⚠ **여기서 버리지 않는다.** `mujoco.Renderer` 는 만든 스레드의 EGL 컨텍스트에
         묶여 있다. 다른 스레드에서 `close()` 하면 그 컨텍스트를 건드리게 되고, sim-env
@@ -208,7 +208,7 @@ class SimCameraHub:
         만든 건). 플래그만 세우고 **버리는 일은 렌더 스레드가** 한다.
 
         ⚠ 조명 기준값(`_light_base`)도 옛 모델에서 뜬 사본이라 같이 버린다 — 안 그러면
-        새 장면의 조명이 옛 배열로 스케일돼 조명 감시가 엉뚱한 값을 잰다.
+        새 가상환경의 조명이 옛 배열로 스케일돼 조명 감시가 엉뚱한 값을 잰다.
         """
         self._stale.set()
 
@@ -241,7 +241,7 @@ class SimCameraHub:
             # 실측: 한쪽만 0.3배면 top 이 244→~225 (포화라 거의 안 변함),
             # 둘 다면 244→122. 헤드라이트(카메라 부착 조명+앰비언트)가 씬 밝기의
             # 절반을 낸다 — 그걸 빼면 조명 감시 시험이 성립하지 않는다.
-            base = getattr(self, "_light_base", None)   # 장면이 갈리면 None 으로 버려진다
+            base = getattr(self, "_light_base", None)   # 가상환경이 갈리면 None 으로 버려진다
             if base is None:
                 base = self._light_base = (m.light_diffuse.copy(),
                                            m.vis.headlight.diffuse.copy(),

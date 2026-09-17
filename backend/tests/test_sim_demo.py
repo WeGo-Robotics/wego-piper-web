@@ -85,7 +85,7 @@ def test_the_grasp_pose_really_points_down_and_the_fingers_reach_the_table(demo)
 
 
 def test_the_demo_names_no_object_so_it_runs_in_a_scene_people_made(demo):
-    """장면은 사람이 만들고 id 도 사람이 짓는다 — `cube`·`bin` 을 박으면 자기 장면에서
+    """가상환경은 사람이 만들고 id 도 사람이 짓는다 — `cube`·`bin` 을 박으면 자기 가상환경에서
     시연이 안 돈다. **움직이는 것을 집어 고정물에 넣는다**로 고른다."""
     objs = [{"id": "통", "movable": False, "pos": [0.35, -0.25, 0]},
             {"id": "내블럭", "movable": True, "pos": [0.35, 0, 0.02]}]

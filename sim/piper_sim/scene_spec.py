@@ -1,12 +1,12 @@
-"""장면 명세 — 테이블 위 사물을 **JSON 으로 정의하고** MJCF 로 굽는다
+"""가상환경 명세 — 테이블 위 사물을 **JSON 으로 정의하고** MJCF 로 굽는다
 (feature/sim-scene-editor.md §4·§5).
 
 ## 왜 JSON 이 정본인가
 
 사람이 MuJoCo XML 을 쓰게 하지 않는다. 올린 XML 을 그대로 먹이면 그 문자열이
-`<option>`·`<contact>`·액추에이터까지 건드려 **팔의 물리를 바꾼다** — 장면 파일 하나가
+`<option>`·`<contact>`·액추에이터까지 건드려 **팔의 물리를 바꾼다** — 가상환경 파일 하나가
 로봇 모델을 조용히 망가뜨릴 수 있다는 뜻이다. JSON 은 스키마로 막히고, 폼으로 그릴 수
-있고, id 가 안정적이라 데이터셋·평가가 "그 장면의 그 물체"를 가리킬 수 있다.
+있고, id 가 안정적이라 데이터셋·평가가 "그 가상환경의 그 물체"를 가리킬 수 있다.
 
 ## 층이 둘이다 — 바탕은 릴리스가, 물체는 사람이
 
@@ -14,14 +14,14 @@
 열고 그 위에 JSON 의 물체를 얹어 `compile()` 한다.
 
 ⚠ **사람이 올린 사물은 wheel 에 안 들어간다.** .120 은 게이트웨이가 v0.5.4 인데 데몬
-wheel 이 0.4.7 이라 옛 장면을 렌더했다(2026-09-16). 장면이 패키지 데이터면 고칠 때마다
-릴리스가 필요하고, 릴리스를 건너뛴 호스트는 영영 옛 세계를 본다. 사람의 장면은 데이터
+wheel 이 0.4.7 이라 옛 가상환경을 렌더했다(2026-09-16). 가상환경이 패키지 데이터면 고칠 때마다
+릴리스가 필요하고, 릴리스를 건너뛴 호스트는 영영 옛 세계를 본다. 사람의 가상환경은 데이터
 루트에 두고 이 모듈은 **파일 경로를 모른다** — dict 를 받아 굽기만 한다.
 
-## 기본 장면
+## 기본 가상환경
 
 `assets/default_scene.json` 이 지금의 큐브+통이다. 바탕 XML 에서 그 둘을 빼고 이리로
-옮겼다 — 그래야 기본 장면의 물체도 사람이 고칠 수 있다. **완료 조건은 "지금과 똑같이
+옮겼다 — 그래야 기본 가상환경의 물체도 사람이 고칠 수 있다. **완료 조건은 "지금과 똑같이
 나온다"** 이고, 그 대조는 `backend/tests/test_sim_scene_spec.py` 가 수치로 한다.
 """
 
@@ -68,7 +68,7 @@ STATIC_PHYSICS = {"friction": [1.0, 0.005, 0.0001], "condim": 3, "solref": [0.02
 
 
 class SceneError(ValueError):
-    """장면 JSON 이 규칙을 어겼다 — 메시지는 **사람이 고칠 수 있게** 쓴다."""
+    """가상환경 JSON 이 규칙을 어겼다 — 메시지는 **사람이 고칠 수 있게** 쓴다."""
 
 
 def _num(v, where: str) -> float:
@@ -125,7 +125,7 @@ def _validate_object(raw: dict, seen: set[str]) -> dict:
     if oid in RESERVED_IDS:
         raise SceneError(f"id '{oid}' 는 팔·테이블·카메라가 쓰는 이름입니다 — 다른 이름을 쓰세요")
     if oid in seen:
-        raise SceneError(f"id '{oid}' 가 둘입니다 — 장면 안에서 id 는 유일해야 합니다")
+        raise SceneError(f"id '{oid}' 가 둘입니다 — 가상환경 안에서 id 는 유일해야 합니다")
     seen.add(oid)
 
     shape = raw.get("shape")
@@ -197,16 +197,16 @@ def _validate_object(raw: dict, seen: set[str]) -> dict:
 
 
 def validate(spec: dict) -> dict:
-    """장면 dict 를 검사하고 **기본값을 채운 사본**을 돌려준다.
+    """가상환경 dict 를 검사하고 **기본값을 채운 사본**을 돌려준다.
 
     화면도 데몬도 이 결과를 쓴다 — 기본값이 두 곳에서 갈리면 "화면엔 이렇게 보이는데
     시뮬은 저렇게 돈다"가 된다.
     """
     if not isinstance(spec, dict):
-        raise SceneError("장면이 JSON 객체가 아닙니다")
+        raise SceneError("가상환경이 JSON 객체가 아닙니다")
     version = spec.get("version", SPEC_VERSION)
     if version != SPEC_VERSION:
-        raise SceneError(f"모르는 장면 버전입니다: {version} (이 프로그램은 {SPEC_VERSION})")
+        raise SceneError(f"모르는 가상환경 버전입니다: {version} (이 프로그램은 {SPEC_VERSION})")
     objects = spec.get("objects", [])
     if not isinstance(objects, list):
         raise SceneError("objects 가 배열이 아닙니다")
@@ -216,20 +216,20 @@ def validate(spec: dict) -> dict:
     return {
         "version": SPEC_VERSION,
         "id": str(spec.get("id") or "scene"),
-        "name": str(spec.get("name") or "이름 없는 장면"),
+        "name": str(spec.get("name") or "이름 없는 가상환경"),
         "objects": [_validate_object(o, seen) for o in objects],
     }
 
 
 def load(path: Path | str) -> dict:
-    """파일에서 장면을 읽어 검사한다 — 웹의 "환경 불러오기"가 타는 길."""
+    """파일에서 가상환경을 읽어 검사한다 — 웹의 "환경 불러오기"가 타는 길."""
     p = Path(path)
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raise SceneError(f"장면 파일이 없습니다: {p}")
+        raise SceneError(f"가상환경 파일이 없습니다: {p}")
     except json.JSONDecodeError as exc:
-        raise SceneError(f"장면 JSON 을 읽을 수 없습니다 ({p.name} {exc.lineno}번째 줄): {exc.msg}")
+        raise SceneError(f"가상환경 JSON 을 읽을 수 없습니다 ({p.name} {exc.lineno}번째 줄): {exc.msg}")
     return validate(raw)
 
 
@@ -280,9 +280,9 @@ def euler_quat(euler_deg: list[float]) -> list[float]:
 
 
 def compose(spec: dict, base: Path | str | None = None):
-    """바탕 MJCF + 장면 물체 → `MjSpec`. 부르는 쪽이 `compile()` 한다.
+    """바탕 MJCF + 가상환경 물체 → `MjSpec`. 부르는 쪽이 `compile()` 한다.
 
-    ⚠ 바탕을 **파일에서 다시 연다**. 한 번 연 `MjSpec` 을 재사용하면 장면을 갈아끼울
+    ⚠ 바탕을 **파일에서 다시 연다**. 한 번 연 `MjSpec` 을 재사용하면 가상환경을 갈아끼울
     때마다 옛 물체가 남는다 — 지우는 API 를 쓰는 것보다 다시 읽는 편이 싸고 확실하다.
     """
     import mujoco
@@ -341,7 +341,7 @@ def _add_mesh_geom(s, body, obj: dict) -> None:
 
 
 def build(spec: dict | None = None, base: Path | str | None = None):
-    """장면 → 컴파일된 `MjModel`. `spec=None` 이면 기본 장면."""
+    """가상환경 → 컴파일된 `MjModel`. `spec=None` 이면 기본 가상환경."""
     if not Path(base or SCENE_XML).exists():
         raise SceneError(f"바탕 씬이 없습니다: {base or SCENE_XML}"
                          " — python3 tools/build_sim_scene.py 로 구우세요")

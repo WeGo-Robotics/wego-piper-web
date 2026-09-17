@@ -767,17 +767,17 @@ async def attach_arm(body: ConnectRequest):
         robot_manager.selected_type = "piper_follower"
     robot_manager.save_session()
     # 시뮬 팔을 붙이는 순간이 **세계가 처음 도는 순간**이다(simd 가 World 를 그때 만든다).
-    # ⚠ simd 는 장면 명세를 메모리에만 들고 있어 재시작하면 기본 장면으로 돌아온다
+    # ⚠ simd 는 가상환경 명세를 메모리에만 들고 있어 재시작하면 기본 가상환경으로 돌아온다
     #   (feature/sim-scene-editor.md §6). 여기서 안 보면 사람은 자기 세계가 올라가 있다고
-    #   믿은 채 엉뚱한 장면에서 수집한다 — 게이트웨이 기동 때와 같은 확인을 한 번 더 한다.
+    #   믿은 채 엉뚱한 가상환경에서 수집한다 — 게이트웨이 기동 때와 같은 확인을 한 번 더 한다.
     if body.iface.startswith("sim_"):
         try:
             from app.services import sim_scenes
 
             if await asyncio.to_thread(sim_scenes.ensure_applied):
-                warnings.append("저장해 둔 시뮬 장면을 다시 올렸습니다")
+                warnings.append("저장해 둔 가상환경을 다시 올렸습니다")
         except Exception as exc:                 # 연결을 막지 않는다 — 말만 한다
-            warnings.append(f"시뮬 장면 확인 실패: {exc}")
+            warnings.append(f"가상환경 확인 실패: {exc}")
     return {**(arm.to_dict() if arm else {}), "warnings": warnings}
 
 

@@ -24,7 +24,7 @@
 | 외부 LLM 연동 | 분리수거 판단·플래너용 구조화 출력 클라이언트 — 슬롯 JSON 만, 에피소드 경계에서만, 오케스트레이터 스텝으로. 규칙은 프리셋 스토어 합류, 온프레미스는 로컬 Qwen 어댑터 | 백엔드 서비스 + 외부 HTTP 뿐이라 **아예 안 겹침** — 클라이언트(1단계)는 지금 가능, 스텝 합류는 오케스트레이터 1단계 뒤 | [llm-integration.md](llm-integration.md) |
 | ACT-Aux | ◐ 1~2단계 ☑. ACT 를 **상속**해 행동 + 작업 단계(stage)를 함께 내는 `act_aux` 정책. 기존 ACT 무수정, `lerobot_policy_*` 플러그인 규약으로 꽂는다. 라벨은 phase-annotation 의 FSM 사이드카를 컬럼으로 굽는다 | 설치 패키지 하나 + wrapper 10줄이라 **거의 안 겹침**. 관측 차원을 안 바꿔 refactor #8 과 무관 | [act-aux.md](act-aux.md) |
 | 시뮬 환경 | 하드웨어 없이 등록→수집→학습→추론 왕복. `simd` 하나가 세계(팔+카메라)를 든다 | 계약(shm·RPC)을 그대로 재사용해 **데몬 하나가 늘 뿐** — ◐ 1~3단계 ☑, 4단계(E2E 한 바퀴)가 인수 기준 | [sim-env.md](sim-env.md) |
-| 시뮬 장면 편집 | 테이블 위 사물을 사람이 올린다. 정본은 **장면 JSON**, MJCF 는 `MjSpec` 으로 굽는다 | sim-env 5단계(물체 무작위화)를 앞당긴 것. 물체가 `cube` 하나로 박힌 자리 다섯을 id 로 일반화하는 일이 1단계 | [sim-scene-editor.md](sim-scene-editor.md) |
+| 가상환경 편집 | 테이블 위 사물을 사람이 올린다. 정본은 **가상환경 JSON**, MJCF 는 `MjSpec` 으로 굽는다 | sim-env 5단계(물체 무작위화)를 앞당긴 것. 물체가 `cube` 하나로 박힌 자리 다섯을 id 로 일반화하는 일이 1단계 | [sim-scene-editor.md](sim-scene-editor.md) |
 
 ## 왜 순서가 중요한가 (요약)
 

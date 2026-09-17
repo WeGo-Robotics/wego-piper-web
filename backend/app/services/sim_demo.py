@@ -21,7 +21,7 @@
 z≈0.095 에 둔다 — 그때 손가락 끝이 z≈0.005, 즉 4cm 큐브를 손가락 면이 감싼다.
 
 ⚠ 통 위 0.22m 는 **안 닿는다**(5.66mm/3.89° 로 실패). 0.20 이 한계 안쪽이다. 통이 y=−0.30
-이나 +0.25 여도 안 닿는다 — 장면마다 다르므로 **미리 풀어 보고 안 되면 말한다.**
+이나 +0.25 여도 안 닿는다 — 가상환경마다 다르므로 **미리 풀어 보고 안 되면 말한다.**
 """
 
 import logging
@@ -130,7 +130,7 @@ def plan(cube_xy, bin_xy) -> list[tuple[str, list[float], float, float]]:
 def check_reach(cube_xy, bin_xy, model=None) -> list[str]:
     """못 닿는 구간을 미리 찾는다 — **돌려 보고 알면 에피소드를 버린다.**
 
-    통이 y=−0.30 이면 안 닿는다(실측). 장면마다 다르므로 시작 전에 전부 풀어 본다.
+    통이 y=−0.30 이면 안 닿는다(실측). 가상환경마다 다르므로 시작 전에 전부 풀어 본다.
     """
     m = model or _model()
     R = grasp_rotation(m)
@@ -210,15 +210,15 @@ class SimDemo:
     def _pick_objects(objs: list[dict]) -> tuple[dict, dict]:
         """집을 것과 넣을 곳 — **움직이는 것을 집고 고정물에 넣는다.**
 
-        이름을 박지 않는다(`cube`·`bin`). 장면은 사람이 만들고 id 도 사람이 짓는다 —
-        이름을 박으면 자기 장면에서는 시연이 안 돈다.
+        이름을 박지 않는다(`cube`·`bin`). 가상환경은 사람이 만들고 id 도 사람이 짓는다 —
+        이름을 박으면 자기 가상환경에서는 시연이 안 돈다.
         """
         movable = [o for o in objs if o.get("movable")]
         fixed = [o for o in objs if not o.get("movable")]
         if not movable:
-            raise DemoError("집을 물체가 없습니다 — 장면에 움직이는 물체를 하나 두세요")
+            raise DemoError("집을 물체가 없습니다 — 가상환경에 움직이는 물체를 하나 두세요")
         if not fixed:
-            raise DemoError("넣을 곳이 없습니다 — 장면에 통(고정물)을 하나 두세요")
+            raise DemoError("넣을 곳이 없습니다 — 가상환경에 통(고정물)을 하나 두세요")
         return movable[0], fixed[0]
 
     def _run(self, relay: bool, randomize: bool) -> None:

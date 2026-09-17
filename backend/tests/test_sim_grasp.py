@@ -12,7 +12,7 @@
 | 마찰 1.5→2.0 | **차이 없음** (사용자 요청으로 올려 둠) |
 | 접촉 부드럽게(solref 0.01) / 더 단단히(solimp) | 둘 다 **나빠짐** |
 
-여기서는 실제 장면의 <option>·손가락(XML)과 큐브(**장면 JSON**)를 그대로 떼어 떠 있는
+여기서는 실제 가상환경의 <option>·손가락(XML)과 큐브(**가상환경 JSON**)를 그대로 떼어 떠 있는
 그리퍼에 붙이고, 기울어진 손으로 내려가 닫고 들어 흔든다. 접촉 물리만 본다(팔 IK 는 무관).
 
 ⚠ 큐브는 2026-09-17 에 `assets/default_scene.json` 으로 이사했다 — 바탕 XML 은 팔·테이블·
@@ -38,25 +38,25 @@ def test_the_friction_cone_is_elliptic_so_impratio_means_something():
         assert 'cone="elliptic"' in opt, f"{path.name}: pyramidal 콘 — impratio 가 무시된다"
         assert 'impratio="50"' in opt and 'noslip_iterations="10"' in opt
     xml = SCENE.read_text()
-    assert xml.count('kp="600"') == 2, "장면: 그리퍼 kp 가 600 이 아니다 — 10° 기울면 놓친다"
-    assert 'kp="600"' in BUILDER.read_text(), "빌더: 그리퍼 kp 가 600 이 아니다 (장면과 갈린다)"
+    assert xml.count('kp="600"') == 2, "가상환경: 그리퍼 kp 가 600 이 아니다 — 10° 기울면 놓친다"
+    assert 'kp="600"' in BUILDER.read_text(), "빌더: 그리퍼 kp 가 600 이 아니다 (가상환경과 갈린다)"
     for path in (SCENE, BUILDER):
         src = path.read_text()
         assert src.count('friction="2.0 0.1 0.001"') == 2 and 'friction="1.5 0.05 0.001"' not in src, \
             f"{path.name}: 손가락 둘의 마찰이 같지 않다"
         assert src.count('damping="5"') == 2, f"{path.name}: 손가락 댐핑이 kp 에 안 맞는다"
-    # 큐브의 접촉은 이제 장면 JSON 에서 온다 — **손가락과 같아야** 파지가 이 실험과 같다
+    # 큐브의 접촉은 이제 가상환경 JSON 에서 온다 — **손가락과 같아야** 파지가 이 실험과 같다
     from piper_sim import scene_spec
     assert scene_spec.MOVABLE_PHYSICS == {"friction": [2.0, 0.1, 0.001], "condim": 6,
                                           "solref": [0.005, 1.0]}, "움직이는 물체의 기본 접촉이 바뀌었다"
     cube = next(o for o in scene_spec.default()["objects"] if o["id"] == "cube")
     assert cube["friction"] == [2.0, 0.1, 0.001] and cube["condim"] == 6, \
-        "기본 장면의 큐브가 손가락과 다른 마찰로 서 있다"
+        "기본 가상환경의 큐브가 손가락과 다른 마찰로 서 있다"
 
 
 def _build(pitch_deg: float):
     """떠 있는 그리퍼 — 캐리어(세계 슬라이드 xyz + yaw) 아래에 피치만큼 기울어진 손.
-    손가락·큐브 geom 과 <option> 은 장면 XML 문자열 그대로."""
+    손가락·큐브 geom 과 <option> 은 가상환경 XML 문자열 그대로."""
     import numpy as np
     import mujoco
 
@@ -64,7 +64,7 @@ def _build(pitch_deg: float):
     opt = re.search(r"<option[^>]*/>", scene).group(0)
     fl = re.search(r'<geom type="box" size="0.008 0.004 0.025" pos="0 0.004 0"[^>]*/>', scene).group(0)
     fr = re.search(r'<geom type="box" size="0.008 0.004 0.025" pos="0 -0.004 0"[^>]*/>', scene).group(0)
-    # 큐브는 장면 JSON 이 정본이다 — 거기 적힌 수치로 같은 geom 을 짓는다
+    # 큐브는 가상환경 JSON 이 정본이다 — 거기 적힌 수치로 같은 geom 을 짓는다
     from piper_sim import scene_spec
     c = next(o for o in scene_spec.default()["objects"] if o["id"] == "cube")
     cube = ('<geom name="cube_geom" type="box" size="{} {} {}" mass="{}" material="cubemat"'

@@ -96,7 +96,7 @@ export const pages: PageEntry[] = [
   },
   {
     path: '/scene',
-    label: '시뮬 장면',
+    label: '가상환경',
     description: '테이블 위 사물 편집 — 만들고 올리고 불러온다',
     component: ScenePage,
     nav: true,

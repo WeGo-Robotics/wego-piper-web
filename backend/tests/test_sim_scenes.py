@@ -1,17 +1,17 @@
-"""시뮬 장면 스토어와 API — 사람이 만든 세계를 파일로 (feature/sim-scene-editor.md §6·§8).
+"""가상환경 스토어와 API — 사람이 만든 세계를 파일로 (feature/sim-scene-editor.md §6·§8).
 
-장면 하나가 **파일 하나**다. 그래서 "환경 불러오기/내보내기"가 파일을 주고받는 일이 되고,
+가상환경 하나가 **파일 하나**다. 그래서 "환경 불러오기/내보내기"가 파일을 주고받는 일이 되고,
 기계 사이 이사·공유·백업이 같은 한 가지 동작이 된다 (사용자 요청 2026-09-17:
 "그 파일을 환경 불러오기로 불러오는거지").
 
 이 파일이 지키는 것 셋:
 
-① **깨진 장면은 디스크에 안 남고**, 왜 깨졌는지가 화면까지 간다. "저장 실패" 로 바꿔
+① **깨진 가상환경은 디스크에 안 남고**, 왜 깨졌는지가 화면까지 간다. "저장 실패" 로 바꿔
    버리면 사람은 무엇을 고쳐야 할지 모른 채 같은 걸 다시 누른다.
 ② **데몬에는 id 가 아니라 명세를 보낸다.** 컨테이너는 `/data/config/sim_scenes`, 호스트는
    `/srv/piper-data/config/sim_scenes` — 같은 id 가 서로 다른 경로다.
-③ **simd 가 재시작하면 기본 장면으로 돌아온다.** 그 불일치를 게이트웨이가 보고 다시 올린다.
-   안 그러면 사람은 자기 세계가 올라가 있다고 믿은 채 엉뚱한 장면에서 수집한다.
+③ **simd 가 재시작하면 기본 가상환경으로 돌아온다.** 그 불일치를 게이트웨이가 보고 다시 올린다.
+   안 그러면 사람은 자기 세계가 올라가 있다고 믿은 채 엉뚱한 가상환경에서 수집한다.
 """
 
 import json
@@ -49,18 +49,18 @@ def test_a_scene_is_one_file_and_survives_the_round_trip(store):
 
 def test_a_broken_scene_never_reaches_the_disk_and_says_why(store):
     """id 가 예약어면 모델이 깨진다. 저장해 두고 적용할 때 터지면, 목록에는 있는데 못 올리는
-    장면이 쌓이고 사람은 그게 왜 안 되는지 모른다 — **저장 자체를 막는다.**"""
+    가상환경이 쌓이고 사람은 그게 왜 안 되는지 모른다 — **저장 자체를 막는다.**"""
     with pytest.raises(store.SceneStoreError, match="팔·테이블·카메라"):
         store.save("bad", {"objects": [{"id": "link3", "shape": "box", "size": [.02, .02, .02]}]})
-    assert store.listing() == [], "거절한 장면이 디스크에 남았다"
+    assert store.listing() == [], "거절한 가상환경이 디스크에 남았다"
 
 
 def test_importing_a_file_checks_it_first_and_never_overwrites(store):
     """환경 불러오기 — 다른 기계에서 온 파일이라 깨져 있을 수 있다. 그리고 가져오기는
-    **추가**다: 이름이 겹친다고 남의 장면을 덮으면 그건 복구 못 한다."""
-    first = store.import_text(json.dumps({"name": "손님 장면", "objects": [CUBE]}))
-    again = store.import_text(json.dumps({"name": "손님 장면", "objects": [CUBE]}))
-    assert first["id"] != again["id"], "같은 이름이 앞의 장면을 덮었다"
+    **추가**다: 이름이 겹친다고 남의 가상환경을 덮으면 그건 복구 못 한다."""
+    first = store.import_text(json.dumps({"name": "손님 가상환경", "objects": [CUBE]}))
+    again = store.import_text(json.dumps({"name": "손님 가상환경", "objects": [CUBE]}))
+    assert first["id"] != again["id"], "같은 이름이 앞의 가상환경을 덮었다"
     assert len(store.listing()) == 2
 
     with pytest.raises(store.SceneStoreError, match="3번째 줄"):
@@ -69,7 +69,7 @@ def test_importing_a_file_checks_it_first_and_never_overwrites(store):
         store.import_text(" " * (store.MAX_BYTES + 1))
     with pytest.raises(store.SceneStoreError, match="객체가 아닙니다"):
         store.import_text("[]")
-    assert len(store.listing()) == 2, "거절한 가져오기가 장면을 남겼다"
+    assert len(store.listing()) == 2, "거절한 가져오기가 가상환경을 남겼다"
 
 
 def test_a_scene_id_cannot_walk_out_of_the_data_root(store):
@@ -80,7 +80,7 @@ def test_a_scene_id_cannot_walk_out_of_the_data_root(store):
 
 
 def test_a_scene_that_will_not_parse_is_listed_with_its_error_not_hidden(store):
-    """⚠ 조용히 건너뛰면 사람이 만든 장면이 **사라진 것처럼** 보인다. 목록에서 사라진
+    """⚠ 조용히 건너뛰면 사람이 만든 가상환경이 **사라진 것처럼** 보인다. 목록에서 사라진
     파일은 아무도 못 고친다."""
     store.save("good", {"objects": [CUBE]})
     (store._dir() / "wrecked.json").write_text("{ nope", encoding="utf-8")
@@ -97,7 +97,7 @@ def test_applying_sends_the_spec_itself_because_the_two_sides_see_different_path
     sent = []
     monkeypatch.setattr(sim, "call_strict",
                         lambda m, *a, **k: sent.append((m, a)) or {"scene": "x", "objects": []})
-    store.save("mine", {"name": "내 장면", "objects": [CUBE]})
+    store.save("mine", {"name": "내 가상환경", "objects": [CUBE]})
     store.apply("mine")
     (method, args), = sent
     assert method == "load_scene"
@@ -107,7 +107,7 @@ def test_applying_sends_the_spec_itself_because_the_two_sides_see_different_path
 
 
 def test_a_failed_apply_leaves_the_applied_marker_alone(store, monkeypatch):
-    """먼저 올리고 나중에 기록한다. 반대면 못 올린 장면이 "적용됨"으로 남아
+    """먼저 올리고 나중에 기록한다. 반대면 못 올린 가상환경이 "적용됨"으로 남아
     `ensure_applied()` 가 매번 같은 실패를 되풀이한다."""
     from app.services import sim_robot_client as sim
 
@@ -123,15 +123,15 @@ def test_a_failed_apply_leaves_the_applied_marker_alone(store, monkeypatch):
 
 def test_the_applied_scene_goes_back_up_after_the_daemon_restarts(store, monkeypatch):
     """⚠ simd 는 명세를 **메모리에만** 들고 있다(§6 의 경로 문제를 피한 대가다). 재시작하면
-    기본 장면으로 돌아오는데, 그걸 아무도 안 보면 사람은 자기 세계가 올라가 있다고 믿은 채
-    엉뚱한 장면에서 수집한다. 게이트웨이 기동이 그걸 본다."""
+    기본 가상환경으로 돌아오는데, 그걸 아무도 안 보면 사람은 자기 세계가 올라가 있다고 믿은 채
+    엉뚱한 가상환경에서 수집한다. 게이트웨이 기동이 그걸 본다."""
     from app.services import sim_robot_client as sim
 
     pushed = []
     monkeypatch.setattr(sim, "sim_available", lambda: True)
     monkeypatch.setattr(sim, "call_strict", lambda m, *a, **k: pushed.append(a[0]) or {})
     store.save("mine", {"objects": [CUBE]})
-    monkeypatch.setattr(sim, "call", lambda m, *a, **k: {"spec": {"objects": []}})  # 기본 장면
+    monkeypatch.setattr(sim, "call", lambda m, *a, **k: {"spec": {"objects": []}})  # 기본 가상환경
     store.apply("mine")
     pushed.clear()
 
@@ -151,7 +151,7 @@ def test_the_applied_scene_cannot_be_deleted_out_from_under_the_simulator(store,
     monkeypatch.setattr(sim, "call_strict", lambda *a, **k: {})
     store.save("mine", {"objects": [CUBE]})
     store.apply("mine")
-    with pytest.raises(store.SceneStoreError, match="지금 올라간 장면"):
+    with pytest.raises(store.SceneStoreError, match="지금 올라간 가상환경"):
         store.delete("mine")
 
 
@@ -187,7 +187,7 @@ def test_the_screen_gets_the_shape_list_from_the_backend_not_its_own_copy(store)
 
 def test_the_gateway_image_carries_the_scene_spec_it_validates_with():
     """⚠ 게이트웨이가 `piper_sim.scene_spec` 을 import 한다 — 이미지에 없으면 배포판에서만
-    장면 저장이 500 이 된다. `piper_cam` 이 빠져 카메라 프로파일 저장이 죽은 것과 같은
+    가상환경 저장이 500 이 된다. `piper_cam` 이 빠져 카메라 프로파일 저장이 죽은 것과 같은
     사고다(NUC, 2026-09-15). `--no-deps` 라 mujoco 는 안 딸려 온다 — 굽는 것은 simd 의 일이다."""
     from pathlib import Path
 
@@ -238,12 +238,36 @@ def test_the_editor_does_not_reimplement_the_ray_math():
         assert leaked not in page, f"화면이 광선 계산을 다시 짰다 ({leaked})"
 
 
+def test_a_fixed_object_moves_by_the_mouse_too_even_though_it_has_no_joint():
+    """⚠ 고정물(통·트레이)은 **자유관절이 없다** — 자리가 컴파일에 박혀 있어 qpos 로 못
+    움직인다. 처음엔 클릭을 거절하고 "아래 위치 칸으로 옮기고 적용하세요"라고 했는데,
+    사람이 보기엔 그냥 **안 움직이는 것**이다 (사용자 요청 2026-09-17: "상자도 마우스로").
+
+    그래서 좌표만 받아 명세에 적고 가상환경을 다시 올린다 — 클릭 한 번에 둘 다 일어난다.
+    광선 계산은 여전히 데몬이 한다(카메라 자세를 아는 쪽이다) — 물체를 안 건드리는
+    `point_from_view` 가 그것이다."""
+    hub = (REPO / "sim" / "piper_sim" / "hub.py").read_text()
+    assert "def point_from_view" in hub and "ray_to_table" in hub
+    assert '"point_from_view"' in (REPO / "daemons" / "simd.py").read_text(), "RPC 화이트리스트에 없다"
+    api = (REPO / "backend" / "app" / "routers" / "sim_scenes.py").read_text()
+    assert "/live/point-from-view" in api
+
+    page = (REPO / "frontend" / "src" / "pages" / "ScenePage.tsx").read_text()
+    place = page.split("const placeAt", 1)[1].split("const selected", 1)[0]
+    assert "고정물입니다 — 아래 위치 칸으로" not in place, "아직 거절한다"
+    assert "if (o.movable)" in place and "'/sim/scenes/live/point-from-view'" in place
+    # 고정물은 저장 + 재적용까지 한 번에 — 안 그러면 눌러도 화면이 그대로다
+    fixed = place.split("point-from-view", 1)[1]
+    assert "api.put(`/sim/scenes/${sid}`" in fixed and "/apply`" in fixed,         "명세만 고치고 안 올린다 — 눌렀는데 안 움직이는 것으로 보인다"
+    assert "고정물이라 가상환경을 고쳐 다시 올립니다" in page, "왜 잠깐 멈추는지 말 안 한다"
+
+
 def test_the_editor_refuses_to_place_into_a_world_that_is_not_this_scene():
-    """⚠ 배치 화면은 **적용된 장면**의 세계다. 편집 중인 장면이 아직 안 올라갔는데 클릭을
-    받으면, 사람은 이 장면을 고치고 있다고 믿으면서 **다른 세계**를 건드린다."""
+    """⚠ 배치 화면은 **적용된 가상환경**의 세계다. 편집 중인 가상환경이 아직 안 올라갔는데 클릭을
+    받으면, 사람은 이 가상환경을 고치고 있다고 믿으면서 **다른 세계**를 건드린다."""
     page = PAGE.read_text()
     assert "const applied = !!spec && current === sid && !dirty" in page
-    assert "if (!o || !applied) return" in page, "안 올라간 장면에서도 클릭이 먹는다"
+    assert "if (!o || !applied) return" in page, "안 올라간 가상환경에서도 클릭이 먹는다"
     assert "적용해야 여기서 배치할 수 있습니다" in page, "왜 못 누르는지 말 안 한다"
 
 
@@ -296,7 +320,7 @@ def test_the_world_is_not_swapped_out_from_under_a_recording(store, monkeypatch)
     for act in (X.Activity.RECORDING, X.Activity.INFERENCE, X.Activity.ORCHESTRATOR,
                 X.Activity.TELEOP):
         monkeypatch.setitem(X.STATE_PROVIDERS, act, lambda: True)
-        with pytest.raises(store.SceneStoreError, match="장면을 바꿀 수 없습니다"):
+        with pytest.raises(store.SceneStoreError, match="가상환경을 바꿀 수 없습니다"):
             store.apply("mine")
         monkeypatch.setitem(X.STATE_PROVIDERS, act, lambda: False)
     assert not pushed, "막아 놓고도 데몬에 올렸다"
@@ -340,11 +364,11 @@ def test_a_restart_check_does_not_shove_a_scene_in_mid_episode(store, monkeypatc
 
 
 def test_attaching_the_sim_arm_is_when_the_world_first_spins_up():
-    """시뮬 팔을 붙이는 순간이 simd 가 World 를 만드는 순간이다 — 저장해 둔 장면이 그때
-    올라가야 한다. 안 그러면 사람은 자기 세계라고 믿은 채 기본 장면에서 수집한다."""
+    """시뮬 팔을 붙이는 순간이 simd 가 World 를 만드는 순간이다 — 저장해 둔 가상환경이 그때
+    올라가야 한다. 안 그러면 사람은 자기 세계라고 믿은 채 기본 가상환경에서 수집한다."""
     src = (REPO / "backend" / "app" / "routers" / "robots.py").read_text()
     attach = src.split("async def attach_arm", 1)[1].split("class SerialAttachRequest", 1)[0]
-    assert 'body.iface.startswith("sim_")' in attach, "실기 팔에도 시뮬 장면을 올린다"
+    assert 'body.iface.startswith("sim_")' in attach, "실기 팔에도 가상환경을 올린다"
     assert "sim_scenes.ensure_applied" in attach
     assert "warnings.append" in attach.split("ensure_applied", 1)[1][:400], \
         "다시 올렸다는 사실을 화면에 말 안 한다"
@@ -353,7 +377,7 @@ def test_attaching_the_sim_arm_is_when_the_world_first_spins_up():
 # ── 어느 세계에서 모았나 (4단계) ────────────────────────────────────────────
 
 def test_a_dataset_remembers_the_whole_world_it_was_recorded_in(store, tmp_path):
-    """⚠ **이름만 남기면 안 된다.** 장면은 사람이 계속 고친다 — 나중에 그 이름의 장면은
+    """⚠ **이름만 남기면 안 된다.** 가상환경은 사람이 계속 고친다 — 나중에 그 이름의 가상환경은
     다른 세계다. 통째로 담아야 데이터셋이 자기 설명이 되고, 다른 기계에서 그 세계를 다시
     지을 수 있다(메시는 자산 id 로 가리킬 뿐이라 함께 옮겨야 한다)."""
     store.save("blocks", {"name": "블럭 두 개", "objects": [CUBE]})
@@ -375,22 +399,22 @@ def test_the_scene_is_grabbed_when_recording_starts_not_when_it_stops():
     src = (REPO / "backend" / "app" / "routers" / "recording.py").read_text()
     start = src.split('_last_recording["repo_id"]', 1)[1].split("await record_manager.start", 1)[0]
     assert '_last_recording["sim_scene"]' in start and "applied_spec()" in start
-    assert 'startswith("sim_")' in start, "실기로 모은 데이터셋에도 장면을 붙인다"
+    assert 'startswith("sim_")' in start, "실기로 모은 데이터셋에도 가상환경을 붙인다"
     assert "body.robot_ports" in start, "양팔 시뮬은 빠뜨린다"
     stop = src.split("async def stop_recording", 1)[1]
     assert "sim_scenes.write_sidecar" in stop
 
 
 def test_the_dataset_list_says_which_world_each_one_came_from():
-    """목록에서 안 보이면 사람은 데이터셋을 열어 보고서야 안다 — 장면이 늘수록 그 비용이 커진다."""
+    """목록에서 안 보이면 사람은 데이터셋을 열어 보고서야 안다 — 가상환경이 늘수록 그 비용이 커진다."""
     src = (REPO / "backend" / "app" / "services" / "dataset_scanner.py").read_text()
     assert src.count('"scene": _scene(') == 2, "스냅샷·디렉토리 두 경로 중 하나가 빠졌다"
     assert "read_sidecar" in src
 
 
 def test_a_success_rate_that_mixes_easy_and_hard_worlds_means_nothing(store, monkeypatch, tmp_path):
-    """⚠ 장면을 여러 개 쓰면 전체 성공률은 **쉬운 세계와 어려운 세계의 평균**이다. 그걸 보고
-    체크포인트를 고르면 잘못 고른다. 기록 시점에 장면을 박아 두지 않으면 나중에 못 가른다."""
+    """⚠ 가상환경을 여러 개 쓰면 전체 성공률은 **쉬운 세계와 어려운 세계의 평균**이다. 그걸 보고
+    체크포인트를 고르면 잘못 고른다. 기록 시점에 가상환경을 박아 두지 않으면 나중에 못 가른다."""
     from app.main import app
     from app.routers import eval_log
 
@@ -412,15 +436,15 @@ def test_a_success_rate_that_mixes_easy_and_hard_worlds_means_nothing(store, mon
     assert stats["rate"] == pytest.approx(0.667, abs=0.001)
     by = {r["scene"]: r for r in stats["by_scene"]}   # _rate_by 는 그룹 키 이름을 그대로 쓴다
     assert by["easy"]["rate"] == 1.0 and by["hard"]["rate"] == 0.0, \
-        "장면별로 안 갈린다 — 쉬운 세계의 성공률이 어려운 세계를 가린다"
+        "가상환경별로 안 갈린다 — 쉬운 세계의 성공률이 어려운 세계를 가린다"
 
 
 def test_the_screen_shows_which_world_too(store):
-    """백엔드만 알면 사람은 못 본다 — 목록과 평가 둘 다 장면을 그려야 한다."""
+    """백엔드만 알면 사람은 못 본다 — 목록과 평가 둘 다 가상환경을 그려야 한다."""
     ds = (REPO / "frontend" / "src" / "pages" / "DatasetsPage.tsx").read_text()
-    assert "ds.scene" in ds, "데이터셋 목록이 장면을 안 보여 준다"
+    assert "ds.scene" in ds, "데이터셋 목록이 가상환경을 안 보여 준다"
     types = (REPO / "frontend" / "src" / "types" / "models.ts").read_text()
     assert "scene?: { id: string; name: string; objects: number }" in types
     ev = (REPO / "frontend" / "src" / "components" / "EvalPanel.tsx").read_text()
-    assert "by_scene" in ev and "시뮬 장면별" in ev, \
-        "평가 패널이 장면별 성공률을 안 그린다 — 쉬운 세계가 어려운 세계를 가린다"
+    assert "by_scene" in ev and "가상환경별" in ev, \
+        "평가 패널이 가상환경별 성공률을 안 그린다 — 쉬운 세계가 어려운 세계를 가린다"

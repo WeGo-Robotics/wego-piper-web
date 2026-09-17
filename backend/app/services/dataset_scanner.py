@@ -35,7 +35,7 @@ def _notes(root: Path) -> dict:
 
 
 def _scene(root: Path) -> dict | None:
-    """시뮬 장면 사이드카 (meta/piper_scene.json). 실기 데이터셋에는 없다 —
+    """가상환경 사이드카 (meta/piper_scene.json). 실기 데이터셋에는 없다 —
     **어느 세계에서 모았는가**가 시뮬 데이터의 일부라서 남긴다 (sim_scenes.write_sidecar)."""
     from app.services.sim_scenes import read_sidecar
 

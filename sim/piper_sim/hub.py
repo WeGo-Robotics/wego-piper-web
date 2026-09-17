@@ -67,7 +67,7 @@ class SimHub:
     def _world(self) -> World:
         if self.world is None:
             self.world = World()
-            # ⚠ 장면이 갈리면 카메라 렌더러가 옛 모델을 쥔 채 남는다 — 그러면 팔은 새
+            # ⚠ 가상환경이 갈리면 카메라 렌더러가 옛 모델을 쥔 채 남는다 — 그러면 팔은 새
             #   세계에서 도는데 화면엔 옛 세계가 나온다. 세계가 직접 알린다.
             self.world.on_model_change.append(self.cameras.invalidate_model)
             self.world.start()
@@ -192,13 +192,13 @@ class SimHub:
         t.start()
         return True
 
-    # ── 장면 (feature/sim-scene-editor.md) ─────────────────────────────────
+    # ── 가상환경 (feature/sim-scene-editor.md) ─────────────────────────────────
 
     def scene(self) -> dict:
-        """지금 올라간 장면 — 명세 + 물체의 지금 위치.
+        """지금 올라간 가상환경 — 명세 + 물체의 지금 위치.
 
-        게이트웨이가 이걸 보고 "내가 적용한 장면이 맞나"를 판단한다. simd 가 재시작하면
-        기본 장면으로 돌아오므로, 그 불일치를 **게이트웨이가 보고 다시 올린다** — 데몬이
+        게이트웨이가 이걸 보고 "내가 적용한 가상환경이 맞나"를 판단한다. simd 가 재시작하면
+        기본 가상환경으로 돌아오므로, 그 불일치를 **게이트웨이가 보고 다시 올린다** — 데몬이
         파일을 읽게 하지 않는 이유는 §6 에 적었다(컨테이너는 `/data`, 호스트는
         `/srv/piper-data` 라 같은 id 가 서로 다른 경로가 된다).
         """
@@ -206,7 +206,7 @@ class SimHub:
         return {"spec": w.spec, "objects": w.objects()}
 
     def load_scene(self, spec: dict) -> dict:
-        """장면을 갈아끼운다. 명세는 **여기서도 검증한다** — 데몬은 자기 입력을 안 믿는다."""
+        """가상환경을 갈아끼운다. 명세는 **여기서도 검증한다** — 데몬은 자기 입력을 안 믿는다."""
         return self._world().load_scene(spec)
 
     def objects(self) -> list[dict]:
@@ -214,6 +214,17 @@ class SimHub:
 
     def place_object(self, oid: str, x: float, y: float) -> list[float]:
         return self._world().place(str(oid), float(x), float(y))
+
+    def point_from_view(self, cam: str = "top", u: float = 0.5, v: float = 0.5,
+                        aspect: float = 4.0 / 3.0, z: float = 0.0) -> dict:
+        """클릭한 픽셀 → **테이블 위의 한 점**. 물체는 안 건드린다.
+
+        고정물(통)은 자유관절이 없어 qpos 로 못 옮긴다 — 자리를 바꾸려면 가상환경을 고쳐
+        다시 올려야 한다. 편집기가 그 좌표를 여기서 받아 명세에 적는다.
+        """
+        name = str(cam).split(":", 1)[-1]
+        hit = self._world().ray_to_table(name, float(u), float(v), float(aspect), float(z))
+        return {"point": hit, "ok": hit is not None}
 
     def object_from_view(self, cam: str = "top", u: float = 0.5, v: float = 0.5,
                          aspect: float = 4.0 / 3.0, oid: str = "cube") -> dict:
@@ -243,7 +254,7 @@ class SimHub:
         """환경 리셋 — 팔 파킹·속도 0. arm_only 면 큐브·조명은 그대로(T: 로봇 위치만
         초기화), 아니면 큐브도 시작 위치로 (feature/web-leader.md §5)."""
         w = self._world()
-        # 시작 자리는 **장면 JSON** 이 쥔다 — 움직이는 물체 전부가 제자리로 간다.
+        # 시작 자리는 **가상환경 JSON** 이 쥔다 — 움직이는 물체 전부가 제자리로 간다.
         # `cube_x/y` 는 그 중 큐브만 다른 자리에 놓는 옛 인자다(시연 무작위화).
         over = {"cube": (float(cube_x), float(cube_y))} if not arm_only and cube_x is not None \
             and cube_y is not None else None

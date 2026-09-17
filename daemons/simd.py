@@ -28,6 +28,7 @@ _METHODS = {"scan", "attach", "release", "release_all", "estop", "info", "lost",
             "cube_pos", "reset_cube", "reset", "cube_from_view", "set_light", "go_to",
             # 장면 — 테이블 위 사물 (feature/sim-scene-editor.md)
             "scene", "load_scene", "objects", "place_object", "object_from_view",
+            "point_from_view",
             # 카메라 — camerad 어휘에 cam_ 접두사
             "cam_scan", "cam_connect", "cam_disconnect", "cam_release_all", "cam_probe",
             "cam_list_controls", "cam_set_control", "cam_apply_controls",

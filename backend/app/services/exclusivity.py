@@ -64,7 +64,7 @@ LABELS: dict[Activity, str] = {
     Activity.YOLO_TRAIN: "검출 학습",
     Activity.ENCODER_PROBE: "인코더 프로브",
     Activity.CAMERA_ACCESS: "카메라 접근",
-    Activity.SCENE_SWAP: "시뮬 장면 교체",
+    Activity.SCENE_SWAP: "가상환경 교체",
 }
 
 # 이 활동을 시작하려면 아래 활동들이 멈춰 있어야 한다.
@@ -103,7 +103,7 @@ BLOCKED_BY: dict[Activity, list[Activity]] = {
     # 디바이스를 열거나 UVC 컨트롤을 질의하면 (특히 D405) 커널 uvcvideo 가 D-state 로
     # 물려 librealsense 가 SIGABRT 로 죽고 카메라까지 먹통이 된다.
     Activity.CAMERA_ACCESS: [Activity.INFERENCE, Activity.RECORDING],
-    # ⚠ 장면 교체는 **모델을 다시 컴파일하고 MjData 를 새로 만든다** — 물체가 사라지고
+    # ⚠ 가상환경 교체는 **모델을 다시 컴파일하고 MjData 를 새로 만든다** — 물체가 사라지고
     #   생기고 팔이 잠깐 멈춘다. 에피소드 한가운데 그러면 그 에피소드는 절반이 A 세계,
     #   절반이 B 세계라 **못 쓴다**(관측이 바뀐 것을 라벨은 모른다). 추론·루프도 같다.
     Activity.SCENE_SWAP: [Activity.RECORDING, Activity.INFERENCE, Activity.ORCHESTRATOR,

@@ -10,7 +10,7 @@
    잰 크기를 보여 주고 확인받는다.
 ③ **오목함을 잰다.** ⚠ MuJoCo 는 메시를 볼록껍질로 충돌시킨다 — 그릇·컵은 겉만 오목하고
    물리는 덩어리다. 얼마나 파였는지 말해 준다.
-④ **게이트웨이와 데몬이 같은 디렉토리를 본다.** 장면은 dict 로 넘기지만 메시는 파일이라
+④ **게이트웨이와 데몬이 같은 디렉토리를 본다.** 가상환경은 dict 로 넘기지만 메시는 파일이라
    양쪽이 각자 자기 루트에서 같은 id 를 푼다 — 그 둘이 갈리면 "올렸는데 시뮬에 없다"가 된다.
 """
 
@@ -210,7 +210,7 @@ def test_the_daemon_unit_is_told_where_the_store_is():
         assert rule in inst, f"게이트웨이와 같은 순서로 안 고른다 ({rule})"
 
 
-# ── 장면에 얹기 ────────────────────────────────────────────────────────────
+# ── 가상환경에 얹기 ────────────────────────────────────────────────────────────
 
 def test_a_mesh_object_lands_on_the_table_and_collides_as_its_hull(store, monkeypatch):
     """⚠ MuJoCo 는 메시를 **자기 무게중심으로** 옮겨 놓고 geom 위치로 그걸 되돌린다. 우리는
@@ -235,7 +235,7 @@ def test_a_mesh_object_lands_on_the_table_and_collides_as_its_hull(store, monkey
 
 
 def test_a_scene_that_wants_a_mesh_this_machine_lacks_says_so_plainly(store):
-    """장면 파일은 기계 사이를 오가는데 **메시는 따라오지 않는다.** 적용할 때 터지는 오류가
+    """가상환경 파일은 기계 사이를 오가는데 **메시는 따라오지 않는다.** 적용할 때 터지는 오류가
     사람 말이어야 하고, 목록에서는 누르기 **전에** 말해 줘야 한다."""
     from piper_sim import scene_spec as S
 
@@ -306,7 +306,7 @@ def test_the_editor_tells_people_which_formats_and_why(store):
 
 
 def test_the_json_a_person_writes_can_name_a_mesh(store, tmp_path):
-    """장면 JSON 은 사람이 손으로도 쓴다 — 메시 물체의 모양을 여기 한 번 적어 둔다."""
+    """가상환경 JSON 은 사람이 손으로도 쓴다 — 메시 물체의 모양을 여기 한 번 적어 둔다."""
     from piper_sim import scene_spec as S
 
     a = store.add(box_obj(), "mug.obj", name="머그")
@@ -317,3 +317,23 @@ def test_the_json_a_person_writes_can_name_a_mesh(store, tmp_path):
     o = v["objects"][0]
     assert o["asset"] == a["id"] and o["scale"] == 1.0 and o["condim"] == 6
     assert S.rest_z(o) == 0.0, "메시는 원점이 이미 바닥이다"
+
+
+def test_the_screen_says_where_to_get_objects(store):
+    """"어디서 구하지?" 가 나오는 자리는 **올리려다 막힌 자리**다 — 도움말을 거기 둔다
+    (사용자 요청 2026-09-17). 링크는 2026-09-17 에 전부 응답을 확인했다.
+    ⚠ 공식 YCB 사이트(ycbbenchmarks.com)는 그때 500 이라 내려받기 도구를 대신 건다."""
+    page = (REPO / "frontend" / "src" / "pages" / "ScenePage.tsx").read_text()
+    assert "도움말 — 물체는 어디서 구하나" in page
+    for url in ("https://github.com/kevinzakka/mujoco_scanned_objects",
+                "https://github.com/google-deepmind/mujoco_menagerie",
+                "https://github.com/sea-bass/ycb-tools",
+                "https://objaverse.allenai.org/",
+                "https://poly.cam/", "https://scaniverse.com/",
+                "https://www.blender.org/", "https://github.com/kevinzakka/obj2mjcf"):
+        assert url in page, f"{url} 가 도움말에 없다"
+    assert "ycbbenchmarks.com" not in page.split("SOURCES")[1].split("const hex")[0], \
+        "죽은 사이트를 링크한다"
+    assert 'rel="noreferrer"' in page, "바깥 링크에 rel 이 없다"
+    # 오목한 것은 메시로 받지 말라는 안내 — 이걸 모르면 그릇을 받아 놓고 왜 안 담기는지 모른다
+    assert "볼록껍질" in page and "프리셋으로 지으세요" in page

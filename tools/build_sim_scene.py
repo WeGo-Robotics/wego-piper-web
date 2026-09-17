@@ -81,7 +81,7 @@ SCENE_TEMPLATE = """<mujoco model="piper_scene">
     </body>
     <!-- ⚠ **테이블 위 사물은 여기 없다.** 큐브와 통은 `assets/default_scene.json` 으로
          옮겼다 (feature/sim-scene-editor.md). 이 파일은 **바탕**이다 — 팔·테이블·카메라·
-         조명처럼 릴리스가 정하는 것만 담고, 사람이 올리고 지우는 물체는 장면 JSON 이
+         조명처럼 릴리스가 정하는 것만 담고, 사람이 올리고 지우는 물체는 가상환경 JSON 이
          `piper_sim.scene_spec` 을 거쳐 MjSpec 으로 얹는다.
          여기에 물체를 도로 적으면 사람이 그걸 못 지운다 — wheel 안이라 릴리스를 내야 하고,
          릴리스를 건너뛴 호스트는 영영 옛 세계를 본다(.120, 2026-09-16). -->

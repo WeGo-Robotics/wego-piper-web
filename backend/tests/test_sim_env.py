@@ -513,7 +513,7 @@ def test_a_top_view_click_maps_to_a_table_position_for_the_cube(model):
 
     from piper_sim.world import World
 
-    # ⚠ 예전엔 `World.__new__` 로 뼈대만 만들어 썼다. 장면이 JSON 으로 옮겨 가면서 물체를
+    # ⚠ 예전엔 `World.__new__` 로 뼈대만 만들어 썼다. 가상환경이 JSON 으로 옮겨 가면서 물체를
     #   아는 일이 `spec`·`jm.objects` 로 갔고, 뼈대에는 그게 없어 테스트가 죽었다 —
     #   진짜 World 를 쓴다(물리 스레드는 안 띄운다). 덤으로 **물체가 실제로 거기 가는지**도 본다.
     w = World()

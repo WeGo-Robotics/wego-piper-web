@@ -23,14 +23,14 @@ class World:
         import mujoco
         from piper_sim import scene_spec
 
-        #: 지금 올라간 장면(검증된 사본). 테이블 위 사물의 **정본**이다 — 바탕 XML 에는
+        #: 지금 올라간 가상환경(검증된 사본). 테이블 위 사물의 **정본**이다 — 바탕 XML 에는
         #: 팔·테이블·카메라만 있다 (feature/sim-scene-editor.md).
         self.spec = scene_spec.validate(spec) if spec is not None else scene_spec.default()
         self.model = load_model(self.spec)
         self.data = mujoco.MjData(self.model)
         self.jm = JointMap(self.model)
         #: 모델이 바뀌면 부를 것들. ⚠ 렌더러는 **만들 때의 모델**을 쥔다 — 안 버리면
-        #: 장면을 갈아끼워도 옛 세계를 계속 그린다. 버리는 일은 렌더 스레드가 한다(EGL).
+        #: 가상환경을 갈아끼워도 옛 세계를 계속 그린다. 버리는 일은 렌더 스레드가 한다(EGL).
         self.on_model_change: list = []
         self._lock = threading.Lock()
         self._goal: dict[str, float] | None = None
@@ -74,13 +74,13 @@ class World:
         with self._lock:
             return self.jm.read_norm(self.data)
 
-    # ── 장면의 물체 (feature/sim-scene-editor.md §1) ─────────────────────────
+    # ── 가상환경의 물체 (feature/sim-scene-editor.md §1) ─────────────────────────
     # ⚠ 예전엔 이 절 전체가 `cube` 하나로 박혀 있었다 — 이름도, 안착 높이 0.02 도.
     #   물체를 늘리는 순간 전부 다시 써야 하는 형태였다. 지금은 **id 를 받는 쪽이 본체**이고
     #   `cube_*` 는 옛 부르는 쪽(게이트웨이 `/leader/web/cube`)을 위한 껍질이다.
 
     def objects(self) -> list[dict]:
-        """장면의 물체 — 명세 + **지금 위치**. 편집기 목록과 배치 화면이 이걸 읽는다."""
+        """가상환경의 물체 — 명세 + **지금 위치**. 편집기 목록과 배치 화면이 이걸 읽는다."""
         with self._lock:
             out = []
             for o in self.spec["objects"]:
@@ -103,10 +103,10 @@ class World:
         """물체를 테이블 위 (x, y) 에 다시 놓는다 — 시연 무작위화·에피소드 리셋·클릭 배치.
 
         높이는 모양에서 온다(`scene_spec.rest_z`) — 상수 0.02 는 큐브에만 맞았다. 자세는
-        장면이 적은 각도로 되돌린다(굴러간 물체가 반듯하게 선다).
+        가상환경이 적은 각도로 되돌린다(굴러간 물체가 반듯하게 선다).
 
         ⚠ **고정물은 못 옮긴다.** 자유관절이 없어 qpos 에 자리가 없고 body pos 는 컴파일에
-        박혀 있다 — 옮기려면 장면을 고쳐 다시 올려야 한다. 조용히 무시하면 "눌렀는데 안
+        박혀 있다 — 옮기려면 가상환경을 고쳐 다시 올려야 한다. 조용히 무시하면 "눌렀는데 안
         움직인다"가 되므로 말해 준다.
         """
         import mujoco
@@ -114,9 +114,9 @@ class World:
 
         obj = self._spec_of(oid)
         if obj is None:
-            raise ValueError(f"'{oid}' 라는 물체가 장면에 없습니다")
+            raise ValueError(f"'{oid}' 라는 물체가 가상환경에 없습니다")
         if not obj["movable"]:
-            raise ValueError(f"'{oid}' 는 고정물이라 못 옮깁니다 — 장면을 고쳐 다시 올리세요")
+            raise ValueError(f"'{oid}' 는 고정물이라 못 옮깁니다 — 가상환경을 고쳐 다시 올리세요")
         zz = scene_spec.rest_z(obj) if z is None else float(z)
         q = scene_spec.euler_quat(obj["euler_deg"])
         with self._lock:
@@ -128,12 +128,12 @@ class World:
         return [float(x), float(y), zz]
 
     def load_scene(self, spec: dict) -> dict:
-        """장면을 갈아끼운다 — **모델 재컴파일 + MjData 신규**. 공짜가 아니다.
+        """가상환경을 갈아끼운다 — **모델 재컴파일 + MjData 신규**. 공짜가 아니다.
 
         ⚠ **팔 자세를 옮겨 심는다.** 안 그러면 갈아끼울 때마다 팔이 원점으로 튄다 —
         조종 중이거나 수집 직전이면 그게 사고다. ctrl 도 그 자리로 래치한다(`hold`).
-        ⚠ **컴파일을 먼저 한다.** 깨진 장면이면 예외가 여기서 나고 **옛 세계는 그대로**다.
-        먼저 버리고 나중에 짓는 순서였다면 장면 하나 잘못 올려 시뮬이 통째로 죽는다.
+        ⚠ **컴파일을 먼저 한다.** 깨진 가상환경이면 예외가 여기서 나고 **옛 세계는 그대로**다.
+        먼저 버리고 나중에 짓는 순서였다면 가상환경 하나 잘못 올려 시뮬이 통째로 죽는다.
         ⚠ 렌더러는 옛 모델을 쥐고 있다 — `on_model_change` 로 알린다(버리는 것은 렌더
         스레드가 한다, EGL 컨텍스트는 스레드 귀속이라).
         """
@@ -156,7 +156,7 @@ class World:
                 cb()
             except Exception as exc:
                 logger.warning("모델 교체 알림 실패: %s", exc)
-        logger.info("장면 교체: %s (물체 %d)", v["name"], len(v["objects"]))
+        logger.info("가상환경 교체: %s (물체 %d)", v["name"], len(v["objects"]))
         return {"scene": v["name"], "objects": self.objects()}
 
     def ray_to_table(self, cam_name: str, u: float, v: float, aspect: float,
@@ -197,7 +197,7 @@ class World:
 
         obj = self._spec_of(oid)
         if obj is None:
-            raise ValueError(f"'{oid}' 라는 물체가 장면에 없습니다")
+            raise ValueError(f"'{oid}' 라는 물체가 가상환경에 없습니다")
         from piper_sim import scene_spec
 
         hit = self.ray_to_table(cam_name, u, v, aspect, scene_spec.rest_z(obj))
@@ -205,7 +205,7 @@ class World:
 
     def reset(self, arm_norm: dict[str, float], objects: bool = True,
               overrides: dict[str, tuple[float, float]] | None = None) -> None:
-        """환경 리셋 — 팔을 파킹으로, **움직이는 물체 전부**를 장면이 적은 자리로, 속도 0
+        """환경 리셋 — 팔을 파킹으로, **움직이는 물체 전부**를 가상환경이 적은 자리로, 속도 0
         (feature/web-leader.md §5).
 
         ⚠ 팔 qpos 를 파킹으로 **스냅**하고 목표·ctrl 도 파킹으로 래치한다. qpos 만 옮기고
@@ -214,7 +214,7 @@ class World:
         리셋해서 막는다(web_leader.reset_to_parking).
 
         `objects=False` 는 팔만(T 키). `overrides` 는 특정 물체를 다른 자리에 놓는다
-        (시연 무작위화). 시작 자리는 **장면 JSON** 이 쥔다 — 예전엔 상수 하나였다.
+        (시연 무작위화). 시작 자리는 **가상환경 JSON** 이 쥔다 — 예전엔 상수 하나였다.
         """
         import mujoco
         from piper_sim import scene_spec

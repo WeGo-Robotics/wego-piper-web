@@ -1,4 +1,4 @@
-"""장면 명세 — 테이블 위 사물을 JSON 으로 정의한다 (feature/sim-scene-editor.md).
+"""가상환경 명세 — 테이블 위 사물을 JSON 으로 정의한다 (feature/sim-scene-editor.md).
 
 큐브와 통은 `piper_scene.xml` 안에 **박혀** 있었다. 그래서 사람이 사물을 바꾸려면
 릴리스를 내야 했고, 릴리스를 건너뛴 호스트는 영영 옛 세계를 봤다 — .120 이 게이트웨이
@@ -51,7 +51,7 @@ def test_the_default_scene_reproduces_the_world_the_xml_used_to_carry():
     assert (m.nq, m.nbody, m.ncam) == (15, 13, 3), "관절·바디·카메라 수가 옛 씬과 다르다"
 
     cube = _body(m, "cube")
-    assert cube > 0, "기본 장면에 큐브가 없다"
+    assert cube > 0, "기본 가상환경에 큐브가 없다"
     assert list(m.body_pos[cube]) == [0.35, 0.0, 0.02]
     assert m.body_mass[cube] == pytest.approx(0.05)
     assert m.body_jntnum[cube] == 1, "큐브가 자유관절을 잃었다 — 못 움직인다"
@@ -87,7 +87,7 @@ def test_the_base_scene_no_longer_carries_the_objects_people_edit():
         assert '<body name="cube"' not in src and '<body name="bin"' not in src, \
             f"{path.name}: 편집 대상 물체가 바탕에 도로 들어왔다"
         assert "cubemat" not in src and "binmat" not in src, \
-            f"{path.name}: 물체 재질이 바탕에 남았다 — 색은 장면 JSON 이 쥔다"
+            f"{path.name}: 물체 재질이 바탕에 남았다 — 색은 가상환경 JSON 이 쥔다"
     # 바탕이 여전히 들고 있어야 하는 것 — 이게 빠지면 팔도 카메라도 없다
     src = SCENE_XML.read_text()
     for keep in ('name="table"', 'name="top"', 'name="front"', 'name="wrist"', 'name="piper_base"'):
@@ -95,14 +95,14 @@ def test_the_base_scene_no_longer_carries_the_objects_people_edit():
 
 
 def test_the_wheel_ships_the_default_scene_or_the_table_comes_up_empty():
-    """⚠ 기본 장면은 **패키지 데이터**다. `assets/*.json` 이 빠지면 설치본에서 파일이 없어
+    """⚠ 기본 가상환경은 **패키지 데이터**다. `assets/*.json` 이 빠지면 설치본에서 파일이 없어
     시뮬이 빈 테이블로 뜬다 — 메시를 안 담아 월드가 통째로 안 뜬 v0.4.6 사건과 같은 종류다."""
     import tomllib
 
     data = tomllib.loads((REPO / "sim" / "pyproject.toml").read_text())
     globs = data["tool"]["setuptools"]["package-data"]["piper_sim"]
-    assert "assets/*.json" in globs, "기본 장면 JSON 이 wheel 에 안 실린다"
-    assert json.loads(DEFAULT_JSON.read_text())["objects"], "기본 장면이 비어 있다"
+    assert "assets/*.json" in globs, "기본 가상환경 JSON 이 wheel 에 안 실린다"
+    assert json.loads(DEFAULT_JSON.read_text())["objects"], "기본 가상환경이 비어 있다"
 
 
 def test_a_scene_cannot_take_a_name_the_arm_or_the_cameras_already_use():
@@ -130,7 +130,7 @@ def test_a_scene_cannot_take_a_name_the_arm_or_the_cameras_already_use():
                   {"id": "x", "shape": "sphere", "size": [.02]}]}, "둘입니다"),
     ({"objects": [{"id": "x", "shape": "preset:bowl"}]}, "모르는 프리셋"),
     ({"objects": [{"id": "x", "shape": "preset:bin", "params": {"nope": 1}}]}, "없는 항목"),
-    ({"version": 99, "objects": []}, "모르는 장면 버전"),
+    ({"version": 99, "objects": []}, "모르는 가상환경 버전"),
     ({"objects": [{"id": "x", "shape": "box", "size": [.02, .02, .02], "condim": 5}]}, "condim"),
     ({"objects": [{"id": "x", "shape": "box", "size": [.02, .02, .02], "mass": 999}]}, "mass"),
 ])

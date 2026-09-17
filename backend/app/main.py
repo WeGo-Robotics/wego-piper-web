@@ -135,16 +135,16 @@ async def lifespan(app: FastAPI):
             logger.info("데몬 버전 확인: 이번 릴리스와 맞습니다")
     except Exception as e:
         logger.debug("데몬 버전 확인 실패: %s", e)
-    # 시뮬 장면 — 적용해 둔 장면이 simd 에 아직 올라 있나 (feature/sim-scene-editor.md §6).
-    # ⚠ simd 는 명세를 **메모리에만** 들고 있어 재시작하면 기본 장면으로 돌아온다. 그걸
-    #   아무도 안 보면 사람은 자기 세계가 올라가 있다고 믿은 채 엉뚱한 장면에서 수집한다.
+    # 가상환경 — 적용해 둔 가상환경이 simd 에 아직 올라 있나 (feature/sim-scene-editor.md §6).
+    # ⚠ simd 는 명세를 **메모리에만** 들고 있어 재시작하면 기본 가상환경으로 돌아온다. 그걸
+    #   아무도 안 보면 사람은 자기 세계가 올라가 있다고 믿은 채 엉뚱한 가상환경에서 수집한다.
     try:
         from app.services import sim_scenes as _scenes
 
         if _scenes.ensure_applied():
-            logger.info("시뮬 장면을 다시 올렸습니다")
+            logger.info("가상환경을 다시 올렸습니다")
     except Exception as e:
-        logger.debug("시뮬 장면 확인 실패: %s", e)
+        logger.debug("가상환경 확인 실패: %s", e)
     # 이전 세션 복원 (로봇 + 카메라)
     try:
         robot_manager.restore_session()

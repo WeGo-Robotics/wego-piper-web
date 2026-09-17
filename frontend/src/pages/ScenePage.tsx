@@ -2,15 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../services/api'
 
 /**
- * 시뮬 장면 편집기 — 테이블 위 사물을 사람이 올린다 (feature/sim-scene-editor.md §8).
+ * 가상환경 편집기 — 테이블 위 사물을 사람이 올린다 (feature/sim-scene-editor.md §8).
  *
  * **독립 페이지다** (사용자 결정 2026-09-17). 설정 탭이나 로봇 카드에 끼워 넣지 않는다:
- * 편집은 작업이지 설정이 아니고, 장면은 로봇에 딸린 속성이 아니라 여러 개를 만들고 고른다.
+ * 편집은 작업이지 설정이 아니고, 가상환경은 로봇에 딸린 속성이 아니라 여러 개를 만들고 고른다.
  *
- * 정본은 **장면 JSON** 이다. 이 화면은 그 파일을 고치는 폼일 뿐이고, 굽는 일은 simd 가
+ * 정본은 **가상환경 JSON** 이다. 이 화면은 그 파일을 고치는 폼일 뿐이고, 굽는 일은 simd 가
  * 한다. 그래서 "환경 불러오기/내보내기"가 파일 하나를 주고받는 일이 된다.
  *
- * ⚠ 배치 화면은 **적용된 장면**의 세계를 본다(시뮬 탑뷰 그대로). 편집 중인 장면이 아직
+ * ⚠ 배치 화면은 **적용된 가상환경**의 세계를 본다(시뮬 탑뷰 그대로). 편집 중인 가상환경이 아직
  * 안 올라갔으면 클릭해도 엉뚱한 세계를 건드리게 되므로 그때는 배치를 막고 그렇게 말한다.
  */
 
@@ -56,6 +56,46 @@ const SIZE_LABELS: Record<string, string[]> = {
   capsule: ['반지름', '반높이'],
   ellipsoid: ['반지름 X', '반지름 Y', '반지름 Z'],
 }
+
+/** 물체를 구하는 곳 — **링크는 전부 확인했다**(2026-09-17). 공식 YCB 사이트
+ *  (ycbbenchmarks.com)는 그때 500 이라 내려받기 도구를 대신 건다. */
+const SOURCES: { group: string; note: string; items: [string, string, string][] }[] = [
+  {
+    group: '가져오기 — 이미 만들어진 것',
+    note: 'MuJoCo 로 바로 쓸 수 있는 것부터 본다. 라이선스는 저마다 다르니 쓰기 전에 확인하세요.',
+    items: [
+      ['MuJoCo Scanned Objects', 'https://github.com/kevinzakka/mujoco_scanned_objects',
+       'Google 이 스캔한 생활용품 1000여 종을 MuJoCo 용으로 변환해 둔 것 — 변환이 필요 없다'],
+      ['MuJoCo Menagerie', 'https://github.com/google-deepmind/mujoco_menagerie',
+       'DeepMind 의 정식 MJCF 모음. 로봇 위주지만 소품도 있다'],
+      ['YCB 내려받기 도구', 'https://github.com/sea-bass/ycb-tools',
+       '조작 연구의 표준 물체 77종(머스터드·크래커 상자·바나나·머그…). 공식 사이트가 자주 죽어 이 도구가 편하다'],
+      ['Objaverse', 'https://objaverse.allenai.org/',
+       '수십만 종. GLB 라 변환이 필요하고 품질 편차가 크다'],
+      ['Sketchfab 무료 모델', 'https://sketchfab.com/features/free-3d-models',
+       '낱개로 구할 때. OBJ 로 내려받고 라이선스를 꼭 본다'],
+    ],
+  },
+  {
+    group: '실물을 뜨기 — 폰으로 스캔',
+    note: '진짜 쓸 물건을 그대로 뜬다. 시뮬과 실기 차이를 줄이는 데 제일 유리하다.',
+    items: [
+      ['Polycam', 'https://poly.cam/', 'iOS·Android. OBJ 로 내보내기'],
+      ['Scaniverse', 'https://scaniverse.com/', '무료. iPhone LiDAR 로 작은 물건도 잘 뜬다'],
+      ['KIRI Engine', 'https://www.kiriengine.app/', 'LiDAR 없는 폰도 사진으로 뜬다'],
+    ],
+  },
+  {
+    group: '직접 만들기 · 손보기',
+    note: '스캔은 단위·원점·면 수가 제각각이라 한 번은 손봐야 한다.',
+    items: [
+      ['Blender', 'https://www.blender.org/',
+       '무료. 데시메이트로 면 줄이기, 원점 옮기기, OBJ/바이너리 STL 내보내기'],
+      ['obj2mjcf', 'https://github.com/kevinzakka/obj2mjcf',
+       'OBJ → MuJoCo 조각. 오목한 것을 볼록 조각으로 쪼개 준다'],
+    ],
+  },
+]
 
 const hex = (rgba: number[]) =>
   '#' + rgba.slice(0, 3).map((v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0')).join('')
@@ -109,12 +149,12 @@ export default function ScenePage() {
     }).catch((e) => setErr(e instanceof Error ? e.message : '목록 실패'))
   }, [reload, loadAssets])
 
-  // 장면 선택 → 명세를 읽어 폼으로
+  // 가상환경 선택 → 명세를 읽어 폼으로
   useEffect(() => {
     if (!sid) { setSpec(null); return }
     api.get<Spec>(`/sim/scenes/${sid}`)
       .then((s) => { setSpec(s); setDirty(false); setSel(s.objects[0]?.id ?? '') })
-      .catch((e) => setErr(e instanceof Error ? e.message : '장면을 못 읽었습니다'))
+      .catch((e) => setErr(e instanceof Error ? e.message : '가상환경을 못 읽었습니다'))
   }, [sid])
 
   // 탑뷰 — 시뮬 카메라는 연결이 멱등·빠르다(실기 프로브 없음)
@@ -200,9 +240,9 @@ export default function ScenePage() {
     setDirty(false); await reload()
   }), [run, dirty, sid, spec, reload])
 
-  const newScene = useCallback(() => run('새 장면', async () => {
+  const newScene = useCallback(() => run('새 가상환경', async () => {
     const id = `scene-${Date.now().toString(36)}`
-    await api.put(`/sim/scenes/${id}`, { spec: { name: '새 장면', objects: [] } })
+    await api.put(`/sim/scenes/${id}`, { spec: { name: '새 가상환경', objects: [] } })
     await reload(); setSid(id)
   }), [run, reload])
 
@@ -241,7 +281,6 @@ export default function ScenePage() {
   const placeAt = useCallback(async (e: React.MouseEvent<HTMLImageElement>) => {
     const o = spec?.objects.find((x) => x.id === sel)
     if (!o || !applied) return
-    if (!o.movable) { setErr(`'${o.label}' 는 고정물입니다 — 아래 위치 칸으로 옮기고 적용하세요`); return }
     const img = e.currentTarget, r = img.getBoundingClientRect()
     const ar = (img.naturalWidth || 4) / (img.naturalHeight || 3)
     const er = r.width / r.height
@@ -251,21 +290,37 @@ export default function ScenePage() {
     const v = (e.clientY - r.top - (r.height - dh) / 2) / dh
     if (u < 0 || u > 1 || v < 0 || v > 1) return
     await run('배치', async () => {
-      const hit = await api.post<{ pos: number[] }>('/sim/scenes/live/place-from-view',
+      if (o.movable) {
+        // 움직이는 물체는 살아 있는 세계에서 바로 옮긴다(자유관절이 있다)
+        const hit = await api.post<{ pos: number[] }>('/sim/scenes/live/place-from-view',
+          { id: o.id, cam: 'sim:top', u, v, aspect: ar })
+        if (hit?.pos) patch(o.id, { pos: hit.pos })
+        return
+      }
+      // ⚠ 고정물(통·트레이)은 자유관절이 없어 **qpos 로 못 움직인다** — 자리가 컴파일에
+      //   박혀 있다. 그래서 좌표만 받아 명세에 적고 가상환경을 다시 올린다. 클릭 한 번에
+      //   그 두 가지가 다 일어나야 "눌렀는데 안 움직인다"가 안 된다 (사용자 요청 2026-09-17).
+      const hit = await api.post<{ point: number[] }>('/sim/scenes/live/point-from-view',
         { id: o.id, cam: 'sim:top', u, v, aspect: ar })
-      if (hit?.pos) patch(o.id, { pos: hit.pos })
+      if (!hit?.point) return
+      const moved = { ...spec!, objects: spec!.objects.map((x) =>
+        (x.id === o.id ? { ...x, pos: [hit.point[0], hit.point[1], x.pos[2]] } : x)) }
+      setSpec(moved)
+      await api.put(`/sim/scenes/${sid}`, { spec: moved })
+      await api.post(`/sim/scenes/${sid}/apply`, undefined, { timeoutMs: 30_000 })
+      setDirty(false)
     })
-  }, [spec, sel, applied, run, patch])
+  }, [spec, sel, applied, sid, run, patch])
 
   const selected = useMemo(() => spec?.objects.find((o) => o.id === sel) ?? null, [spec, sel])
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-xl font-bold tracking-tight">시뮬 장면</h1>
+        <h1 className="text-xl font-bold tracking-tight">가상환경</h1>
         <select value={sid} onChange={(e) => setSid(e.target.value)}
           className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1 text-sm">
-          {rows.length === 0 && <option value="">장면 없음</option>}
+          {rows.length === 0 && <option value="">가상환경 없음</option>}
           {rows.map((r) => (
             <option key={r.id} value={r.id}>
               {r.name} ({r.count}){r.applied ? ' · 적용 중' : ''}{r.error ? ' · 깨짐' : ''}
@@ -273,7 +328,7 @@ export default function ScenePage() {
             </option>
           ))}
         </select>
-        <button onClick={newScene} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700">＋ 새 장면</button>
+        <button onClick={newScene} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700">＋ 새 가상환경</button>
         <button onClick={duplicate} disabled={!spec} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40">복제</button>
         <button onClick={remove} disabled={!spec} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40">지우기</button>
         <span className="flex-1" />
@@ -348,6 +403,39 @@ export default function ScenePage() {
               OBJ 또는 <b>바이너리</b> STL. 폰 스캔(Polycam·Scaniverse)·Blender·CAD 에서 내보낸 것.
               GLB·ASCII STL 은 MuJoCo 가 못 읽습니다.
             </p>
+            {/* 도움말 — 물체를 어디서 구하나 (사용자 요청 2026-09-17). 화면 안에 둔다:
+                올리려다 막힌 자리가 곧 "어디서 구하지?" 가 나오는 자리다. */}
+            <details className="rounded border border-neutral-800 bg-neutral-900/40 p-2">
+              <summary className="cursor-pointer text-xs text-neutral-300">
+                도움말 — 물체는 어디서 구하나
+              </summary>
+              <div className="mt-2 space-y-3">
+                {SOURCES.map((sec) => (
+                  <div key={sec.group}>
+                    <h3 className="text-[11px] font-semibold text-blue-300">{sec.group}</h3>
+                    <p className="mb-1 text-[11px] text-neutral-500">{sec.note}</p>
+                    <ul className="space-y-0.5">
+                      {sec.items.map(([name, url, why]) => (
+                        <li key={url} className="text-[11px]">
+                          <a href={url} target="_blank" rel="noreferrer"
+                            className="text-blue-400 hover:underline">{name}</a>
+                          <span className="text-neutral-500"> — {why}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+                <div className="rounded border border-amber-700/40 bg-amber-900/10 p-2 text-[11px] text-amber-200/90">
+                  <p><b>그릇·컵·통은 받지 말고 프리셋으로 지으세요.</b> MuJoCo 는 메시를
+                    <b> 볼록껍질</b>로 충돌시켜서, 오목한 것을 메시로 올리면 겉만 오목하고
+                    물리는 덩어리가 됩니다 — 안에 아무것도 안 들어갑니다.
+                    위 [＋ 통 (조립)] 이 그 답입니다.</p>
+                  <p className="mt-1 text-amber-200/70">
+                    올린 메시가 오목하면 얼마나 파였는지 목록에 적어 드립니다.
+                  </p>
+                </div>
+              </div>
+            </details>
             {assets.length === 0 && <p className="text-xs text-neutral-600">아직 없습니다.</p>}
             <ul className="space-y-1.5">
               {assets.map((a) => (
@@ -357,7 +445,7 @@ export default function ScenePage() {
                     <span className="text-[10px] uppercase text-neutral-500">{a.format}</span>
                     <button onClick={() => addMesh(a)} disabled={!spec}
                       className="px-2 py-0.5 text-xs rounded bg-blue-800 hover:bg-blue-700 text-white disabled:opacity-40">
-                      장면에 추가
+                      가상환경에 추가
                     </button>
                     <button onClick={() => dropAsset(a)}
                       className="px-2 py-0.5 text-xs rounded bg-neutral-800 hover:bg-neutral-700">지우기</button>
@@ -485,19 +573,21 @@ export default function ScenePage() {
           <div className="relative overflow-hidden rounded border border-neutral-700 bg-black">
             <img src={`/api/cameras/sim%3Atop/preview?t=${tick}`} alt="시뮬 탑뷰"
               onClick={placeAt} draggable={false}
-              className={`w-full object-contain ${applied && selected?.movable ? 'cursor-crosshair' : ''}`} />
+              className={`w-full object-contain ${applied && selected ? 'cursor-crosshair' : ''}`} />
             {!applied && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/65 px-6 text-center text-sm text-neutral-200">
                 {dirty ? '고친 내용을 적용해야 여기서 배치할 수 있습니다'
-                  : '이 장면을 시뮬에 적용하면 여기서 클릭해 배치할 수 있습니다'}
+                  : '이 가상환경을 시뮬에 적용하면 여기서 클릭해 배치할 수 있습니다'}
               </div>
             )}
           </div>
           <p className="text-[11px] text-neutral-500">
             {applied
-              ? (selected?.movable
-                ? `탑뷰를 클릭하면 '${selected.label}' 가 그 자리로 갑니다 — 그 위치가 장면에도 적힙니다.`
-                : '움직이는 물체를 고르면 클릭으로 배치할 수 있습니다.')
+              ? (selected
+                ? `탑뷰를 클릭하면 '${selected.label}' 가 그 자리로 갑니다`
+                  + (selected.movable ? ' — 그 위치가 가상환경에도 적힙니다.'
+                    : ' — 고정물이라 가상환경을 고쳐 다시 올립니다(잠깐 멈춥니다).')
+                : '물체를 고르면 클릭으로 배치할 수 있습니다.')
               : '탑뷰는 지금 시뮬에 올라간 세계입니다.'}
           </p>
         </div>

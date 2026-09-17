@@ -9,7 +9,7 @@
 
 ## ⚠ 경로는 id 가 아니라 **각자의 루트 + 같은 상대경로**
 
-장면 명세는 데몬에 dict 로 통째로 간다(§6). 하지만 메시는 파일이라 그럴 수 없다 — 몇 MB 를
+가상환경 명세는 데몬에 dict 로 통째로 간다(§6). 하지만 메시는 파일이라 그럴 수 없다 — 몇 MB 를
 버스로 보낼 수는 없다. 그래서 **자산 id** 만 싣고 양쪽이 **자기 루트**에서 푼다:
 
 | | 루트 | 왜 |
@@ -85,7 +85,7 @@ def _dir(asset_id: str) -> Path:
 def meta(asset_id: str) -> dict:
     p = _dir(asset_id) / "meta.json"
     if not p.exists():
-        raise AssetError(f"자산 '{asset_id}' 이 이 기계에 없습니다 — 장면과 함께 옮겨 오세요")
+        raise AssetError(f"자산 '{asset_id}' 이 이 기계에 없습니다 — 가상환경과 함께 옮겨 오세요")
     return json.loads(p.read_text(encoding="utf-8"))
 
 
@@ -171,7 +171,7 @@ def guess_unit_scale(bbox: list[float]) -> float:
 
 
 def set_unit_scale(asset_id: str, scale: float) -> dict:
-    """사람이 확인한 단위. 크기가 바뀌면 이 자산을 쓰는 장면이 다 같이 바뀐다 — 맞다."""
+    """사람이 확인한 단위. 크기가 바뀌면 이 자산을 쓰는 가상환경이 다 같이 바뀐다 — 맞다."""
     if not 1e-6 <= float(scale) <= 1000.0:
         raise AssetError(f"배율이 이상합니다: {scale}")
     rec = meta(asset_id)
