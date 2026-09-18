@@ -72,8 +72,13 @@ async def register_ssh_key():
     state = await asyncio.to_thread(sshkey.ensure)
     pub, want = state["public_key"], state["fingerprint"]
 
+    # ⚠ **프로바이더의 환경으로 부른다.** 맨 환경으로 띄우면 화면으로 저장한 키가 안
+    #   가고 CLI 가 제 파일(낡은 키)을 본다 — 실측으로 등록 확인이 계속 401 이었다.
+    env = _provider().env()
+
     def _run(args: list[str]) -> subprocess.CompletedProcess:
-        return subprocess.run(["vastai", *args], capture_output=True, text=True, timeout=60)
+        return subprocess.run(["vastai", *args], capture_output=True, text=True,
+                              timeout=60, env=env)
 
     out = await asyncio.to_thread(_run, ["create", "ssh-key", pub])
     if out.returncode != 0:
@@ -613,8 +618,10 @@ async def _ssh_registered(want: str | None) -> tuple[bool | None, str]:
         return None, NO_CLI
 
     def _go() -> tuple[bool | None, str]:
+        # ⚠ 같은 이유로 프로바이더 환경이다 — 저장한 키가 이 호출로도 가야 한다.
         out = subprocess.run(["vastai", "show", "ssh-keys", "--raw"],
-                             capture_output=True, text=True, timeout=45)
+                             capture_output=True, text=True, timeout=45,
+                             env=_provider().env())
         body = (out.stdout or "").strip() or (out.stderr or "").strip()
         if out.returncode != 0:
             return None, f"목록을 못 읽었습니다: {body[:120]}"

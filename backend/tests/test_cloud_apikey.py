@@ -125,3 +125,31 @@ def test_the_key_goes_to_the_cli_as_env_not_argv():
     src = inspect.getsource(vast.VastProvider._env)
     assert 'env["VAST_API_KEY"]' in src
     assert "--api-key" not in inspect.getsource(vast.VastProvider._raw)
+
+
+def test_every_cli_call_carries_the_saved_key():
+    """⚠ **실측(2026-09-18)**: 화면으로 키를 넣었는데 SSH 등록 확인이 계속
+    `401 Invalid user key` 였다. 원인은 라우터가 `vastai` 를 **맨 환경으로** 띄운
+    자리가 둘 있었다는 것 — `create ssh-key`(등록 버튼)와 `show ssh-keys`(확인).
+    저장한 키는 프로바이더가 env 로 넘기므로, 그 두 곳엔 안 갔고 CLI 는 제 파일
+    (낡은 키)을 봤다.
+
+    ⚠ 등록 버튼까지 그랬다는 게 더 나쁘다 — 눌러도 그 계정에 안 갈 수 있었다.
+    """
+    import inspect
+
+    from app.routers import cloud as router
+
+    for fn in (router.register_ssh_key, router._ssh_registered):
+        src = inspect.getsource(fn)
+        assert "subprocess.run" in src, "이 검사가 낡았다 — 호출 방식이 바뀌었나"
+        assert "env=" in src, f"{fn.__name__} 이 맨 환경으로 CLI 를 띄운다"
+
+
+def test_the_provider_exposes_one_environment():
+    """⚠ 환경 조립이 두 벌이면 갈린다 — 한 곳만 키를 싣는 상태가 된다."""
+    from app.services.cloud.providers import vast
+
+    p = vast.VastProvider("k")
+    assert p.env()["VAST_API_KEY"] == "k"
+    assert vast.VastProvider().env().get("VAST_API_KEY") is None

@@ -200,6 +200,16 @@ class VastProvider:
         self._api_key = api_key
 
     # ── CLI ──────────────────────────────────────────────────────────────
+    def env(self) -> dict[str, str]:
+        """CLI 를 부를 때 쓸 환경. **저장한 키가 여기로 실린다.**
+
+        ⚠ 공개 메서드인 이유: 라우터가 `vastai` 를 직접 부르는 자리가 둘 있는데
+        (`create ssh-key`·`show ssh-keys`) 거기서 맨 환경으로 띄우면 **저장한 키가 안
+        간다.** 실측(2026-09-18): 화면으로 키를 넣었는데 SSH 등록 확인이 계속
+        `401 Invalid user key` 였다 — CLI 가 제 파일(낡은 키)을 보고 있었다.
+        """
+        return self._env()
+
     def _env(self) -> dict[str, str]:
         env = dict(os.environ)
         if self._api_key:
