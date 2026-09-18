@@ -155,7 +155,14 @@ class LightWatch:
                     judge.set_anchor()
             else:
                 judge.clear_anchor()
-            for p in judge.update(feats, now):
+            # ⚠ **`judge.update` 는 끈 카메라에서도 돌린다.** 경보만 버린다 — 그래야 다시
+            #   켰을 때 "지금 무엇이 이상한가"가 그 자리에서 나온다. 건너뛰면 상태 기계가
+            #   그동안의 변화를 못 본 채로 있다가 몇 샘플을 더 받아야 알아채고, 그동안
+            #   사람은 켜 놓고도 조용한 화면을 본다.
+            fired = judge.update(feats, now)
+            if not cam.light_alarm:
+                continue
+            for p in fired:
                 if p["type"] == "brightness":
                     alerts.append(_brightness_alert(cam.id, label, p["delta"]))
                 elif p["type"] == "color":

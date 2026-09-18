@@ -97,6 +97,13 @@ class CameraInfo:
     stream_type: str = ""
     connected: bool = False
     ready: bool = False       # 등록 완료 → 사용 가능 리스트에 올라감
+    # 조명 급변·표류 **경보**를 이 카메라에 대해 낼 것인가 (feature/lighting-watch.md).
+    # ⚠ 끄는 것은 **경보뿐**이다 — 측정·발행은 계속한다. 수집·추론 화면의 실시간 표시와
+    #   에피소드 뷰어가 같은 값을 읽는다. 판정도 계속 돌려서 다시 켜면 지금 이상한 것을
+    #   그 자리에서 말한다. 손목 카메라는 팔과 같이 움직여 조명이 늘 바뀐다 — 거기서 울리는 경보는
+    #   맞는 말이지만 쓸모가 없고, 쓸모없는 경보는 **옆의 진짜 경보까지 무시하게 만든다**
+    #   (사용자 보고 2026-09-18: "손목 카메라에서 너무 자주 뜸").
+    light_alarm: bool = True
     # 마지막 스캔에서 데몬이 이 장치를 **봤는가**. `connected` 와 다른 사실이다:
     # `present && !connected` = 꽂혀 있는데 안 열었다 (정상)
     # `!present`              = 아예 없다 (뽑혔다)
@@ -165,6 +172,7 @@ class CameraInfo:
             "connected": self.connected,
             "present": self.present,
             "ready": self.ready,
+            "light_alarm": self.light_alarm,
             "has_preview": self._hub.has_frame(self.id),
             # ⚠ **프레임이 지금도 오고 있는가.** `has_preview` 와 다른 사실이다:
             # 세그먼트에 마지막 프레임이 남아 있으면 그건 True 지만 스트림은
@@ -514,6 +522,9 @@ class CameraManager:
                     "name": cam.name,
                     "label": cam.label,
                     "cam_type": cam.cam_type,
+                    # 사람이 끈 경보는 재시작에도 꺼져 있어야 한다 — 다시 켜지면
+                    # "껐는데 또 뜬다"가 되고, 그건 안 끈 것보다 나쁘다.
+                    "light_alarm": cam.light_alarm,
                     "config": {
                         "width": cam.width, "height": cam.height, "fps": cam.fps,
                         "color_mode": cam.color_mode, "rotation": cam.rotation, "fourcc": cam.fourcc,
@@ -571,6 +582,8 @@ class CameraManager:
             cam_id = cam.id
             cam.cam_type = cam_data.get("cam_type", "opencv")
             cam.label = cam_data.get("label", "")
+            # 옛 세션 파일에는 이 키가 없다 — 없으면 켜 둔다(기본이 감시다)
+            cam.light_alarm = bool(cam_data.get("light_alarm", True))
             cam.update_config(cam_data.get("config", {}))
             cam.ready = True
             restored += 1

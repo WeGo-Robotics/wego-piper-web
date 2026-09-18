@@ -151,6 +151,31 @@ async def set_camera_label(body: CameraLabelRequest):
     return cam.to_dict() if cam else {"status": "ok"}
 
 
+class LightAlarmRequest(BaseModel):
+    id: str
+    enabled: bool
+
+
+@router.post("/light-alarm")
+async def set_light_alarm(body: LightAlarmRequest):
+    """이 카메라의 조명 경보를 켜고 끈다 (feature/lighting-watch.md).
+
+    ⚠ **끄는 것은 경보뿐이다.** 측정·발행은 계속하므로 수집·추론 화면의 실시간 표시와
+    에피소드 뷰어는 그대로 값을 본다. 판정도 계속 돌려서, 다시 켜면 **지금** 이상한 것을
+    그 자리에서 말한다.
+
+    손목 카메라는 팔과 같이 움직여 조명이 늘 바뀐다 — 거기서 울리는 경보는 맞는 말이지만
+    쓸모가 없고, **쓸모없는 경보는 옆의 진짜 경보까지 무시하게 만든다**
+    (사용자 보고 2026-09-18).
+    """
+    cam = camera_manager.cameras.get(body.id)
+    if cam is None:
+        raise HTTPException(404, "카메라를 찾을 수 없습니다")
+    cam.light_alarm = bool(body.enabled)
+    camera_manager.save_session()
+    return cam.to_dict()
+
+
 @router.post("/unregister")
 async def unregister_camera(body: CameraIdRequest):
     if not camera_manager.unregister_camera(body.id):

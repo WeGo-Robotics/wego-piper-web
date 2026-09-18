@@ -53,6 +53,8 @@ type CamInfo = {
   streaming?: boolean
   /** RealSense 스트림 종류. depth 일 때만 깊이 인코딩 설정이 뜬다. */
   stream_type?: string
+  /** 이 카메라의 조명 경보를 낼 것인가. ⚠ 끄는 것은 **경보뿐** — 측정·발행은 계속한다. */
+  light_alarm?: boolean
   /** rsd 가 소유하는 깊이 인코딩 파라미터 — 데이터셋 해석의 근거다. */
   depth_encoding?: { near_mm: number; far_mm: number; mode: string } | null
   /** raw 한 단위가 몇 미터인가. D435=0.001, **D405=0.0001**. */
@@ -436,6 +438,15 @@ export default function CamerasPage() {
       const updated = await api.post<CamInfo>('/cameras/label', { id, label })
       setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
     } catch { /* 표시 이름일 뿐이라 실패해도 조용히 둔다 */ }
+  }
+  // 조명 경보를 카메라별로 끈다 (사용자 요청 2026-09-18: 손목에서 너무 자주 뜬다).
+  // ⚠ 끄는 것은 **경보뿐**이다 — 측정·발행은 계속하므로 수집·추론 화면의 실시간 표시는
+  //   그대로고, 판정도 계속 돌려서 다시 켜면 지금 이상한 것을 바로 말한다.
+  const handleLightAlarm = async (id: string, enabled: boolean) => {
+    try {
+      const updated = await api.post<CamInfo>('/cameras/light-alarm', { id, enabled })
+      setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
+    } catch (e) { notifyError(e instanceof Error ? e.message : '조명 경보 설정 실패') }
   }
   // 스캔 결과까지 전부 비운다 — 별칭·등록은 사람이 정한 값이라 확인창이 그걸 말한다
   const handleClearAll = async () => {
@@ -950,6 +961,25 @@ export default function CamerasPage() {
                 화면에서 알아보기 위한 이름입니다. 데이터셋 피처 이름은 바뀌지 않습니다.
               </p>
             </div>
+
+            {/* 조명 경보 — 컬러 스트림에만. 깊이에는 밝기 감시가 무의미하다(문서 §4) */}
+            {settingsCamera.stream_type !== 'depth' && (
+              <div className="space-y-1 rounded border border-neutral-700 p-2">
+                <label className="flex items-center gap-2 text-xs text-neutral-300">
+                  <input type="checkbox" className="accent-blue-500"
+                    checked={settingsCamera.light_alarm !== false}
+                    onChange={(e) => handleLightAlarm(settingsCamera.id, e.target.checked)} />
+                  조명이 바뀌면 알린다
+                </label>
+                <p className="text-[10px] text-neutral-500">
+                  끄면 <b>경보만</b> 안 뜹니다 — 밝기·색 측정은 계속하므로 수집·추론 화면의
+                  표시와 에피소드 뷰어는 그대로입니다.
+                  <br />
+                  손목처럼 <b>팔과 같이 움직이는</b> 카메라는 조명이 늘 바뀌어 경보가 맞는
+                  말이어도 쓸모가 없고, 그런 경보는 옆의 진짜 경보까지 묻습니다.
+                </p>
+              </div>
+            )}
 
             {/* 회색 카드 보정 — 컬러 스트림에만 뜬다.
                 기하 보정이 아니다. 색·밝기를 재현 가능하게 만드는 것이 전부다. */}

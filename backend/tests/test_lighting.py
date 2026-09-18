@@ -291,3 +291,129 @@ def test_knob_queries_pause_while_a_task_runs():
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "app" / "services" / "light_watch.py").read_text()
     assert "quiet=task" in src, "작업 상태가 knob 질의에 안 닿는다"
+
+
+# ── 카메라별 경보 끄기 (사용자 요청 2026-09-18) ─────────────────────────────
+
+class _Cam:
+    """감시가 보는 만큼만 흉내 낸 카메라."""
+
+    def __init__(self, cid, light_alarm=True):
+        self.id, self.name, self.label = cid, cid, cid
+        self.connected, self.light_alarm = True, light_alarm
+
+    def get_controls(self):
+        return []
+
+
+def _watch_over(monkeypatch, cams, frame_of):
+    """`sample()` 이 읽는 바깥 것을 갈아 끼운다 — 측정(`features`)은 **진짜**를 쓴다."""
+    import piper_shm
+
+    from app.services import light_watch as lw
+    from app.services.camera_manager import camera_manager
+
+    monkeypatch.setattr(piper_shm, "segment_for_camera", lambda cid: cid, raising=False)
+
+    class _Sub:
+        def __init__(self, seg):
+            self.seg = seg
+
+        def read(self):
+            return (frame_of[self.seg], 0)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(piper_shm, "Subscriber", _Sub, raising=False)
+    monkeypatch.setattr(camera_manager, "cameras", {c.id: c for c in cams})
+
+    # ⚠ **시계를 준다.** `Judge` 는 시간 기반이라(`dt = t - last_t`) 한 순간에 몰아 부르면
+    #   fast EWMA 가 안 움직여 **어떤 급변도 안 잡힌다** — 실제 루프는 2초마다 돈다.
+    tick = iter(range(0, 100_000, 2))
+    monkeypatch.setattr(lw.time, "monotonic", lambda: float(next(tick)))
+
+    w = lw.LightWatch(bus=None)
+    monkeypatch.setattr(w, "_connect", lambda: None)          # 버스 없이
+    monkeypatch.setattr(w, "_task_active", lambda: False)
+    return w
+
+
+def _flat(value):
+    return np.full((48, 64, 3), value, dtype=np.uint8)
+
+
+def test_a_camera_whose_alarm_is_off_stays_quiet_but_keeps_being_measured(monkeypatch):
+    """⚠ 손목 카메라는 팔과 같이 움직여 조명이 **늘** 바뀐다. 거기서 울리는 경보는 맞는
+    말이지만 쓸모가 없고, 쓸모없는 경보는 **옆의 진짜 경보까지 무시하게 만든다**
+    (사용자 보고 2026-09-18: "너무 자주 뜸").
+
+    끄는 것은 **경보뿐**이다 — 측정·발행은 계속해야 수집·추론 화면의 실시간 표시와
+    에피소드 뷰어가 같은 값을 본다."""
+    frames = {"wrist": _flat(60), "top": _flat(60)}
+    w = _watch_over(monkeypatch, [_Cam("wrist", light_alarm=False), _Cam("top")], frames)
+    for _ in range(12):                   # 워밍업 — 판정은 기준선이 선 뒤에 시작한다
+        w.sample()
+    frames["wrist"] = _flat(160)          # 둘 다 확 밝아진다
+    frames["top"] = _flat(160)
+    for _ in range(6):                    # 급변은 3샘플 연속이어야 경보다
+        w.sample()
+
+    who = {a.ident for a in w.alerts()}
+    assert not any("wrist" in k for k in who), "끈 카메라가 경보를 냈다"
+    assert any("top" in k for k in who), "켠 카메라까지 조용해졌다 — 스위치가 전역으로 먹었다"
+    assert {r["id"] for r in w.latest()} == {"wrist", "top"}, "끈 카메라의 측정이 사라졌다"
+
+
+def test_re_enabling_tells_you_what_is_wrong_now_without_waiting(monkeypatch):
+    """끈 동안에도 **판정은 돌린다** — 경보만 버린다.
+
+    그래서 다시 켜면 "지금 무엇이 이상한가"가 **그 자리에서** 나온다. 판정을 건너뛰면
+    상태 기계가 그 변화를 못 본 채로 있다가 몇 샘플을 더 받아야 알아채고, 그동안 사람은
+    켜 놓고도 조용한 화면을 본다.
+
+    ⚠ 처음엔 "다시 켤 때 몰아서 울지 않게" 라고 적었는데 **그건 근거가 없었다** — 오래 꺼
+    두면 dt 가 커서 어느 쪽이든 EWMA 가 한 번에 수렴한다(변형 검사로 확인). 실제로 값이
+    있는 성질은 이쪽이다."""
+    frames = {"wrist": _flat(60)}
+    cam = _Cam("wrist", light_alarm=False)
+    w = _watch_over(monkeypatch, [cam], frames)
+    for _ in range(12):
+        w.sample()
+    frames["wrist"] = _flat(170)          # 꺼 둔 사이에 밝아졌다
+    for _ in range(6):
+        w.sample()
+    assert w.alerts() == [], "꺼 뒀는데 울었다"
+
+    cam.light_alarm = True                # 켜는 순간 — 아직 새 밝기가 정상이 되기 전이다
+    w.sample()
+    assert [a.ident for a in w.alerts()] == ["light:wrist:brightness"], \
+        "켰는데 지금 이상한 것을 바로 말하지 않는다 — 판정을 건너뛰면 몇 샘플을 더 기다린다"
+
+
+def test_the_switch_is_per_camera_and_survives_a_restart():
+    """사람이 끈 경보는 재시작에도 꺼져 있어야 한다 — 다시 켜지면 "껐는데 또 뜬다" 가
+    되고, 그건 안 끈 것보다 나쁘다. 옛 세션 파일에는 이 키가 없으니 없으면 켠다."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "backend" / "app" / "services"
+           / "camera_manager.py").read_text()
+    assert "light_alarm: bool = True" in src, "기본이 감시가 아니다"
+    assert '"light_alarm": cam.light_alarm' in src, "세션에 안 남는다"
+    assert 'cam_data.get("light_alarm", True)' in src, "옛 세션 파일이 열리면 꺼진다"
+    assert '"light_alarm": self.light_alarm' in src, "화면이 지금 상태를 못 읽는다"
+
+
+def test_the_camera_screen_can_turn_it_off_and_says_what_stays_on():
+    """끄는 것이 **경보뿐**이라는 사실을 화면이 말해야 한다 — 안 그러면 사람은 측정까지
+    꺼진 줄 알고, 수집 화면의 조명 표시가 왜 그대로인지 이해하지 못한다."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    router = (root / "backend" / "app" / "routers" / "cameras.py").read_text()
+    assert '@router.post("/light-alarm")' in router and "camera_manager.save_session()" in \
+        router.split('@router.post("/light-alarm")', 1)[1][:800]
+    page = (root / "frontend" / "src" / "pages" / "CamerasPage.tsx").read_text()
+    assert "'/cameras/light-alarm'" in page and "조명이 바뀌면 알린다" in page
+    assert "경보만" in page, "무엇이 꺼지는지 말 안 한다"
+    assert "settingsCamera.light_alarm !== false" in page, "옛 카메라가 꺼진 것으로 보인다"
