@@ -906,3 +906,23 @@ def test_the_image_ships_the_npp_runtime_torchcodec_links_against():
         "깔기만 하고 로더 경로에 안 넣는다 — 그러면 그대로 못 찾는다"
     assert "from torchcodec.decoders import VideoDecoder" in npp, \
         "빌드가 스스로 확인하지 않는다 — 다음에 또 못 쓰는 torchcodec 이 실려 나간다"
+
+
+def test_the_release_warns_before_reusing_a_published_version():
+    """⚠ 호스트의 "새 버전 확인"은 버전 **문자열**을 견준다. 같은 번호로 다시 끊으면
+    `v0.5.5 == v0.5.5` 라 "최신입니다" 라고 답하고, 그 기계는 고친 것을 **스스로는 영영
+    못 받는다** — 사람이 그 호스트마다 손으로 다시 깔아야 한다.
+
+    v0.5.5 는 세 번 끊었다. 앞의 둘은 아무도 안 받은 상태라 괜찮았고, **세 번째는 .120 이
+    이미 받은 뒤**였다(2026-09-18). 그래서 막지는 않고 — 아무도 안 받았으면 다시 끊는 것이
+    맞다 — 굽기 **전에** 레지스트리에 물어보고 말한다. 나중에 알면 이미 늦다.
+    """
+    src = (REPO / "deploy" / "release.sh").read_text()
+    guard = src.split("이 번호가 이미 나갔나", 1)[1].split("무엇이 바뀌었나", 1)[0]
+    assert "docker manifest inspect" in guard, "레지스트리에 안 물어본다"
+    assert "piper-install.sh" in guard, "그 호스트에서 무엇을 해야 하는지 안 말한다"
+    assert "exit" not in guard, "막아 버린다 — 아무도 안 받았으면 다시 끊는 것이 맞다"
+    # 굽기 전이어야 한다: 다 굽고 나서 말하면 이미 늦다
+    assert src.index("이 번호가 이미 나갔나") < src.index("CHANGED="), "굽는 판정보다 뒤에 있다"
+    rules = (REPO / "deploy" / "RELEASE-CHECKLIST.md").read_text()
+    assert "| R10 |" in rules and "test_the_release_warns_before_reusing_a_published_version" in rules
