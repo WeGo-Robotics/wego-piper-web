@@ -258,11 +258,18 @@ export default function VersionCard() {
               : status.ok ? <span className="ml-2 text-emerald-400">완료</span>
               : <span className="ml-2 text-red-400">실패 (종료 코드 {status.exit ?? '?'})</span>}
           </p>
+          {/* ⚠ **끝난 방식에 따라 다른 말을 한다.** 예전에는 `need_sudo` 가 있으면
+              무조건 "멈췄습니다" 였는데, 멀쩡히 끝난 업데이트에도 그 배너가 떴다 —
+              파서가 apply.sh 의 *조언* 줄까지 처방으로 긁었기 때문이다(고쳤다).
+              그래도 화면이 결과를 보고 말하는 편이 맞다: 성공했으면 멈춘 게 아니다. */}
           {status.need_sudo.length > 0 && (
-            <div className="rounded border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-200">
-              <p className="mb-1">전제가 빠져 있어 멈췄습니다. 호스트에서 아래를 실행한 뒤 다시 누르세요
-                (그룹은 다시 로그인해야 반영됩니다):</p>
-              <pre className="whitespace-pre-wrap font-mono text-[11px] text-red-100">{status.need_sudo.join('\n')}</pre>
+            <div className={`rounded border p-2 text-xs ${status.ok
+              ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+              : 'border-red-500/40 bg-red-500/10 text-red-200'}`}>
+              <p className="mb-1">{status.ok
+                ? '적용은 끝났습니다. 다만 아래는 호스트에서 직접 해야 합니다 (그룹은 다시 로그인해야 반영됩니다):'
+                : '전제가 빠져 있어 멈췄습니다. 호스트에서 아래를 실행한 뒤 다시 누르세요 (그룹은 다시 로그인해야 반영됩니다):'}</p>
+              <pre className="whitespace-pre-wrap font-mono text-[11px]">{status.need_sudo.join('\n')}</pre>
               <button onClick={() => navigator.clipboard?.writeText(status.need_sudo.join('\n'))}
                 className="mt-1 px-2 py-0.5 text-[11px] rounded bg-neutral-700 hover:bg-neutral-600">복사</button>
             </div>

@@ -331,7 +331,10 @@ def test_a_public_registry_is_not_pushed_through_localhost():
     그 우회를 공개 레지스트리에도 적용하면 `localhost:ghcr.io/...` 라는 엉뚱한
     주소가 만들어진다. 포트 유무로 가른다."""
     src = RELEASE.read_text()
-    assert '"$PIPER_REGISTRY" == *:[0-9]*' in src, "공개/사설을 안 가른다"
+    # ⚠ 검사하는 것은 **변수 이름이 아니라 가르는 규칙**이다. 목록을 돌게 바뀌면서
+    #   변수가 `$reg` 이 됐다(2026-09-18) — 규칙은 그대로다.
+    assert '== *:[0-9]*' in src, "공개/사설을 안 가른다"
+    assert 'localhost:${reg##*:}' in src, "사설 평문을 localhost 로 안 민다"
 
 
 def test_the_image_carries_the_same_shape_as_the_bundle():
@@ -374,8 +377,12 @@ def test_the_offline_path_still_exists():
     src = RELEASE.read_text()
     assert "--offline" in src, "오프라인 강제 수단이 없다"
     assert "docker save" in src, "tar 경로가 사라졌다"
-    assert 'if [ -n "${PIPER_REGISTRY:-}" ] && [ $OFFLINE = 0 ]' in src, \
-        "레지스트리를 조건 없이 쓴다 — 망 없는 현장이 막힌다"
+    # ⚠ 예전에는 "`PIPER_REGISTRY` 가 비면 tar" 였다. 그 암묵 규칙을 없앴다 —
+    #   환경변수 하나에 결과가 갈리는 것이 v0.5.5 사고의 원인이었다(한쪽 레지스트리에만
+    #   올라가 다른 쪽 호스트가 옛 버전을 "최신" 이라 봤다). 지금은 **`--offline` 만**
+    #   tar 를 만든다. 명시적인 쪽이 낫다.
+    assert 'if [ $OFFLINE = 0 ]; then' in src, "오프라인 분기가 사라졌다"
+    assert 'DEFAULT_REGISTRIES=' in src, "올릴 곳을 스크립트가 모른다 — 다시 사람이 기억해야 한다"
 
 
 def test_the_push_address_and_the_pull_address_are_separate():

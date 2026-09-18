@@ -17,6 +17,28 @@ cd "$REPO"
 
 VERSION="${1:-}"
 DRY=0; OFFLINE=0; REGISTRY=""
+
+# ⚠ **어느 레지스트리에 올릴지는 스크립트가 안다** — 부르는 사람이 매번 기억할 일이 아니다.
+#
+#   v0.5.5 를 `PIPER_REGISTRY=piper-build:5000` 으로만 올렸더니 GHCR 에는 안 갔고,
+#   거기서 받는 호스트(.120·.44)의 "새 버전 확인" 이 계속 v0.5.4 를 최신이라 답했다.
+#   화면은 맞는 말을 하고 있었다 — 틀린 것은 릴리스였다. 환경변수 하나에 결과가 갈리는데
+#   그 선택이 스크립트 **밖에** 있었던 것이 원인이다.
+#
+#   그래서 기본은 **둘 다**다. 맨 앞이 주 레지스트리이고, 매니페스트의 `registry=` 로
+#   들어가 호스트가 업데이트를 물어볼 곳이 된다.
+#
+# ⚠ 하나만 올리고 싶으면 `PIPER_REGISTRY` 로 덮는다(예전 사용법 그대로). 다만 그러면
+#   나머지 레지스트리에서 받는 호스트는 이 버전을 **영영 못 본다.**
+# ⚠ 배열은 **여기서** 만든다. 뒤의 확인 블록이 `set -u` 아래에서 이걸 읽으므로,
+#   push 분기 안에서만 만들면 오프라인 경로에서 "unbound variable" 로 죽는다.
+PUSHED=(); SKIPPED=()
+DEFAULT_REGISTRIES="ghcr.io/wego-robotics piper-build:5000"
+if [ -n "${PIPER_REGISTRY:-}" ]; then
+  REGISTRIES="$PIPER_REGISTRY"
+else
+  REGISTRIES="${PIPER_REGISTRIES:-$DEFAULT_REGISTRIES}"
+fi
 for a in "${@:2}"; do
   case "$a" in
     --dry-run) DRY=1 ;;
@@ -119,7 +141,9 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 
 # ⚠ 매니페스트가 **이미지 안으로** 들어가므로, 어디서 받을지를 굽기 전에 정해야
 #   한다. 나중에 정하면 이미지 안의 매니페스트가 비어 나간다.
-if [ -n "${PIPER_REGISTRY:-}" ] && [ $OFFLINE = 0 ]; then REGISTRY="$PIPER_REGISTRY"; fi
+# 매니페스트에 적히는 것은 **주** 레지스트리(목록의 맨 앞) — 호스트가 업데이트를 묻는 곳이다
+PRIMARY="${REGISTRIES%% *}"
+if [ $OFFLINE = 0 ]; then REGISTRY="$PRIMARY"; fi
 
 # ── 이미지 ────────────────────────────────────────────────────────────────
 IMAGES=()
@@ -149,7 +173,7 @@ if [ ${#IMAGES[@]} -gt 0 ]; then
   #
   # ⚠ **오프라인 경로는 남긴다.** 현장에 USB 로 들고 가는 배포가 실재한다.
   #   `PIPER_REGISTRY` 가 비었거나 `--offline` 이면 예전처럼 tar 를 만든다.
-  if [ -n "${PIPER_REGISTRY:-}" ] && [ $OFFLINE = 0 ]; then
+  if [ $OFFLINE = 0 ]; then
     # ⚠ **주소가 둘인 데는 이유가 있다.** 도커는 `127.0.0.0/8` 만 기본으로 평문
     #   레지스트리로 인정한다. 빌드 머신이 자기 LAN IP 로 밀면
     #   "server gave HTTP response to HTTPS client" 로 거부당하므로, 미는 쪽은
@@ -160,29 +184,37 @@ if [ ${#IMAGES[@]} -gt 0 ]; then
     #   `ghcr.io/...` 처럼 포트가 없으면 HTTPS 공개 레지스트리다 — `localhost`
     #   우회도, 평문 점검도 하면 안 된다(`localhost:ghcr.io/...` 라는 엉뚱한
     #   주소가 만들어진다). 살아 있는지는 push 가 말해 준다.
-    if [[ "$PIPER_REGISTRY" == *:[0-9]* ]]; then
-      # 사설 평문: 도커가 `127.0.0.0/8` 만 기본으로 믿으므로 미는 쪽은 localhost
-      PUSH_TO="${PIPER_REGISTRY_PUSH:-localhost:${PIPER_REGISTRY##*:}}"
-      if ! curl -fsS --max-time 3 "http://$PUSH_TO/v2/" >/dev/null 2>&1; then
-        echo "✗ 레지스트리 $PUSH_TO 에 못 붙습니다 — ./deploy/registry.sh 로 띄우거나 --offline 을 쓰세요"
-        exit 1
+    for reg in $REGISTRIES; do
+      if [[ "$reg" == *:[0-9]* ]]; then
+        # 사설 평문: 도커가 `127.0.0.0/8` 만 기본으로 믿으므로 미는 쪽은 localhost
+        push_to="${PIPER_REGISTRY_PUSH:-localhost:${reg##*:}}"
+        if ! curl -fsS --max-time 3 "http://$push_to/v2/" >/dev/null 2>&1; then
+          # ⚠ **여기서 죽지 않는다.** 사설 레지스트리는 현장망용이라 빌드 머신에서
+          #   늘 떠 있지는 않다. 한쪽이 없다고 릴리스 전체를 멈추면, 그걸 피하려고
+          #   사람이 다시 `PIPER_REGISTRY` 하나만 주게 되고 — 그게 이 사고의 원인이었다.
+          #   대신 **건너뛴 것을 끝에서 크게 말한다.**
+          echo "  ⚠ $reg 은 지금 없습니다 (push_to=$push_to) — 건너뜁니다"
+          SKIPPED+=("$reg")
+          continue
+        fi
+      else
+        push_to="$reg"
       fi
-    else
-      PUSH_TO="${PIPER_REGISTRY_PUSH:-$PIPER_REGISTRY}"
-    fi
-    echo "· 레지스트리로 push: $PUSH_TO  (호스트가 받을 주소: $PIPER_REGISTRY)"
-    for s in "${IMAGES[@]}"; do
-      docker tag "piper-web-$s:$VERSION" "$PUSH_TO/piper-web-$s:$VERSION"
-      docker push -q "$PUSH_TO/piper-web-$s:$VERSION"
-      # ⚠ **`latest` 도 민다.** `piper-install.sh` 는 인자가 없으면 `latest` 를
-      #   받는다 — README 의 기본 명령이 그것이다. 버전 태그만 밀면 사용자가
-      #   `./piper-install.sh` 를 그냥 쳤을 때 **"not found" 로 끝난다.**
-      #   실기에서 그렇게 막혔다.
-      docker tag "piper-web-$s:$VERSION" "$PUSH_TO/piper-web-$s:latest"
-      docker push -q "$PUSH_TO/piper-web-$s:latest"
-      echo "  → piper-web-$s:$VERSION (+ latest)"
+      echo "· 레지스트리로 push: $push_to  (호스트가 받을 주소: $reg)"
+      for s_ in "${IMAGES[@]}"; do
+        docker tag "piper-web-$s_:$VERSION" "$push_to/piper-web-$s_:$VERSION"
+        docker push -q "$push_to/piper-web-$s_:$VERSION"
+        # ⚠ **`latest` 도 민다.** `piper-install.sh` 는 인자가 없으면 `latest` 를
+        #   받는다 — README 의 기본 명령이 그것이다. 버전 태그만 밀면 사용자가
+        #   `./piper-install.sh` 를 그냥 쳤을 때 **"not found" 로 끝난다.**
+        #   실기에서 그렇게 막혔다.
+        docker tag "piper-web-$s_:$VERSION" "$push_to/piper-web-$s_:latest"
+        docker push -q "$push_to/piper-web-$s_:latest"
+        echo "  → piper-web-$s_:$VERSION (+ latest)"
+      done
+      PUSHED+=("$reg")
     done
-    REGISTRY="$PIPER_REGISTRY"
+    [ ${#PUSHED[@]} -gt 0 ] || { echo "✗ 어느 레지스트리에도 못 올렸습니다"; exit 1; }
   else
     echo "· 이미지 저장 (몇 GB, 몇 분)"
     docker save "${TAGS[@]}" | gzip > "$OUT/images.tar.gz"
@@ -254,3 +286,37 @@ echo
 echo "호스트에서:"
 echo "  scp $BUNDLE <호스트>:~/"
 echo "  tar xzf piper-web-$VERSION.tar.gz && ./$VERSION/apply.sh"
+
+# ── 올라갔는지 **확인한다** ───────────────────────────────────────────────
+#
+# ⚠ push 가 조용히 끝났다고 거기 있는 것은 아니다. 그리고 한쪽 레지스트리만 올라가면
+#   그쪽에서 안 받는 호스트는 **"최신입니다" 를 계속 본다** — v0.5.5 에서 실제로
+#   그랬고, 화면은 맞는 말을 하고 있었다. 사람이 나중에 알아채는 대신 여기서 말한다.
+if [ $OFFLINE = 0 ] && [ ${#PUSHED[@]} -gt 0 ]; then
+  echo
+  echo "· 레지스트리 확인"
+  miss=0
+  for reg in "${PUSHED[@]}"; do
+    for s_ in "${IMAGES[@]}"; do
+      if [[ "$reg" == *:[0-9]* ]]; then
+        url="http://${PIPER_REGISTRY_PUSH:-localhost:${reg##*:}}/v2/piper-web-$s_/manifests/$VERSION"
+        code="$(curl -s -o /dev/null -w '%{http_code}' -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json' "$url" || echo 000)"
+      else
+        # 공개 레지스트리는 토큰이 필요할 수 있다 — `docker manifest inspect` 가 로그인을 쓴다
+        code="$(docker manifest inspect "$reg/piper-web-$s_:$VERSION" >/dev/null 2>&1 && echo 200 || echo 000)"
+      fi
+      if [ "$code" = 200 ]; then echo "  ☑ $reg/piper-web-$s_:$VERSION"
+      else echo "  ✗ $reg/piper-web-$s_:$VERSION 가 안 보입니다 ($code)"; miss=1; fi
+    done
+  done
+  [ $miss = 0 ] || { echo "✗ 올렸다고 했는데 없는 것이 있습니다"; exit 1; }
+fi
+
+# ⚠ 건너뛴 레지스트리는 **끝에서 크게 말한다.** 그 레지스트리에서 받는 호스트는 이
+#   버전을 못 본다 — 업데이트 확인이 옛 버전을 "최신" 이라 답하는 그 상태가 된다.
+if [ ${#SKIPPED[@]} -gt 0 ]; then
+  echo
+  echo "⚠ 안 올라간 레지스트리: ${SKIPPED[*]}"
+  echo "   거기서 받는 호스트는 $VERSION 을 못 봅니다 — 띄운 뒤 이 스크립트를 다시 돌리세요"
+  echo "   (사설 레지스트리면: PIPER_REGISTRY_BIND=0.0.0.0 ./deploy/registry.sh)"
+fi

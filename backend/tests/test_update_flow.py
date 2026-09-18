@@ -336,3 +336,47 @@ def test_a_third_party_package_is_not_mistaken_for_one_of_our_wheels():
     assert V.staleness(info)["ok"], "서드파티 패키지를 우리 wheel 로 세어 거짓 경고한다"
     info["daemons"]["simd"]["piper-sim"] = "0.4.7"          # 진짜 낡은 것은 여전히 잡는다
     assert V.staleness(info)["wheels"] == ["simd piper-sim 0.4.7"]
+
+
+def test_advice_is_not_mistaken_for_a_prescription():
+    """⚠ **실측(2026-09-18)**: .44 가 업데이트할 때마다 "전제가 빠져 있어 멈췄습니다" 를
+    띄웠다. 그런데 `apply.sh` 는 멀쩡히 끝나고 있었다(종료 코드 0).
+
+    원인은 파서였다. 로그 전체에서 `sudo ` 로 시작하는 줄을 전부 긁었는데, `apply.sh`
+    에는 **멈추는 것과 상관없는 조언**도 `sudo` 로 적혀 있다 — CAN 이름 규칙이 없을 때의
+    안내가 그렇다. 그 줄은 `NEED_SUDO` 에 안 들어가고 스크립트를 멈추지도 않는다.
+
+    ⚠ .120 에서는 안 났다. 거기엔 그 규칙 파일이 있어서 안내 자체가 안 찍혔다 — 같은
+    버전인데 한 대만 그런 이유가 그것이다. "한 대에서만 난다" 가 곧 "그 머신의 상태를
+    보는 줄이 어딘가 있다" 는 뜻이었다.
+    """
+    u = _unitd()
+    advice_only = (
+        "1. 전제\n"
+        "  ✗ CAN 이름 규칙이 없다 — 어댑터는 꽂혀 있다\n"
+        "       이 머신의 규칙을 만드세요:\n"
+        "         python3 /b/udev/list-can-adapters.py --write-rule \\\n"
+        "           | sudo tee /etc/udev/rules.d/99-piper-can.rules\n"
+        "         sudo udevadm control --reload-rules   # 그 뒤 어댑터를 다시 꽂는다\n"
+        "4. 끝났습니다\n")
+    assert u.parse_need_sudo(advice_only) == [], "조언을 처방으로 읽는다"
+
+    # 진짜 처방이 있으면 그건 잡는다 — 마커 뒤의 것만
+    with_block = advice_only + (
+        "  아래를 먼저 실행하세요 (이 스크립트는 sudo 를 직접 쓰지 않습니다):\n"
+        "    sudo cp /b/udev/99-realsense-libusb.rules /etc/udev/rules.d/\n")
+    assert u.parse_need_sudo(with_block) == [
+        "sudo cp /b/udev/99-realsense-libusb.rules /etc/udev/rules.d/"]
+
+
+def test_the_can_advice_does_not_stop_the_apply():
+    """⚠ 조언이 쓸모없다는 뜻은 아니다 — 규칙이 없으면 포트를 바꿔 꽂는 순간 두 팔의
+    이름이 뒤바뀐다. 다만 그건 **업데이트를 막는 전제가 아니다.** `apply.sh` 의 그 갈래가
+    `NEED_SUDO` 를 건드리지 않는다는 것이 그 선언이고, 파서가 그 선언을 존중해야 한다."""
+    # ⚠ 여기서는 `code_only` 를 **안 쓴다.** 그 헬퍼는 `/* */` 를 주석으로 지우는데,
+    #   셸의 glob(`udev/*.rules` … `devices/*/idVendor`)이 그 모양이라 그 사이가 통째로
+    #   사라진다 — 검사하려던 줄이 같이 지워졌다.
+    src = (REPO / "deploy" / "apply.sh").read_text()
+    can = src[src.index('CAN_RULE="'):src.index("if [ ${#NEED_APT[@]}")]
+    assert "NEED_SUDO" not in can, "CAN 갈래가 업데이트를 막고 있다"
+    assert "udevadm control --reload-rules" in can, "안내 자체는 있어야 한다"

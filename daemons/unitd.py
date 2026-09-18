@@ -395,11 +395,32 @@ def version_key(v: str) -> tuple:
     return tuple(int(x) for x in m.groups()) if m else (-1, -1, -1)
 
 
+#: `apply.sh` 가 "이것부터 하세요" 블록을 여는 줄. 이 뒤의 `sudo …` 만 **처방**이다.
+NEED_SUDO_MARK = "아래를 먼저 실행하세요"
+
+
 def parse_need_sudo(log: str) -> list[str]:
-    """apply.sh 가 "아래를 먼저 실행하세요" 뒤에 찍는 `sudo …` 줄들 — 스크립트는 sudo 를
-    직접 안 쓰므로 이 줄이 곧 사람이 할 일이다."""
+    """apply.sh 가 **"아래를 먼저 실행하세요" 뒤에** 찍는 `sudo …` 줄들.
+
+    ⚠ **마커 뒤만 본다.** 예전에는 로그 전체에서 `sudo ` 로 시작하는 줄을 전부 긁었는데,
+    apply.sh 에는 멈추는 것과 **상관없는 조언**도 `sudo` 로 적혀 있다 — 예를 들어 CAN
+    이름 규칙이 없을 때의 안내가 그렇다(그건 `NEED_SUDO` 에 안 들어가고 종료 코드도
+    0 이다).
+
+    그 결과 실제로는 **멀쩡히 끝난 업데이트**가 화면에 "전제가 빠져 있어 멈췄습니다" 로
+    떴다. 실측(2026-09-18): .44 는 USB-CAN 어댑터가 꽂혀 있고 규칙 파일이 없어서 그
+    안내가 매번 찍혔고, 그래서 **업데이트할 때마다** 빨간 배너가 나왔다. .120 은 규칙이
+    있어서 안 났다 — 같은 버전인데 한 대만 그런 이유가 그것이다.
+
+    ⚠ 조언이 쓸모없다는 뜻은 아니다. .44 는 정말로 그 규칙을 만들어야 한다(없으면 포트를
+    바꿔 꽂는 순간 두 팔의 이름이 뒤바뀐다). 다만 그건 **업데이트를 막는 전제가 아니다.**
+    """
     out: list[str] = []
-    for line in (log or "").splitlines():
+    body = log or ""
+    i = body.find(NEED_SUDO_MARK)
+    if i < 0:
+        return out                      # 처방 블록이 아예 없다 = 막힌 것이 없다
+    for line in body[i:].splitlines():
         s = line.strip()
         if s.startswith("sudo "):
             out.append(s)
