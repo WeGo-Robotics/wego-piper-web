@@ -770,3 +770,60 @@ def test_the_confirm_preview_follows_where_it_will_run():
     미리보기를 쓰면 확인 창이 **안 도는 명령**을 보여 준다."""
     src = _page("TrainingPage.tsx")
     assert "'/cloud/rent/preview'" in src and "where === 'rent'" in src
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 기다리는 동안 **무엇을 기다리는지** 말한다 (2026-09-18)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_the_install_note_skips_shell_noise():
+    """⚠ 설치 로그에는 로케일 경고와 pip 막대가 섞인다. 그걸 그대로 올리면 화면이
+    `bash: warning: setlocale…` 을 "진행 상황" 이라고 보여 준다 — 로그에서 한 번 겪은
+    실수를 화면에서 반복하는 셈이다(§12-13)."""
+    assert procure.install_note(
+        "bash: warning: setlocale: LC_ALL\n== torch 2.11.0 (cu126)") == "torch 2.11.0 (cu126)"
+    assert procure.install_note("Downloading nvidia_cudnn_cu12.whl (706.8 MB)\nbash: warning: x") \
+        == "Downloading nvidia_cudnn_cu12.whl (706.8 MB)"
+    assert procure.install_note("bash: warning: 전부 잡음") == ""
+
+
+def test_waiting_for_the_stack_reports_what_it_is_waiting_for(monkeypatch):
+    """⚠ 사람이 제일 오래 보는 구간이다(실측 3~4분). `ssh_wait` 을 "접속 기다리는 중"
+    이라고만 말하면, 실제로는 접속이 끝나고 **스택을 까는 중**인데 사람은 접속 문제를
+    의심한다."""
+    seen: list[str] = []
+    n = {"i": 0}
+
+    def _ready(target, run=None):
+        n["i"] += 1
+        return n["i"] >= 3, "bash: warning: x\n== torch 2.11.0 (cu126)"
+
+    monkeypatch.setattr(procure, "stack_ready", _ready)
+    asyncio.run(procure.wait_for_stack("t", timeout=5, poll=0.01, on_progress=seen.append))
+    assert seen and all("bash:" not in s for s in seen), "잡음이 화면으로 간다"
+    assert "torch" in seen[0]
+
+
+def test_the_note_is_cleared_when_the_phase_changes():
+    """⚠ 안 비우면 학습이 시작된 뒤에도 "torch 받는 중" 이 남아 거짓말이 된다."""
+    from app.services.cloud.lifecycle import CloudJob, Phase
+
+    j = CloudJob(job_id="x", label="y")
+    j.note = "torch 받는 중"
+    j.set_phase(Phase.TRAINING)
+    assert j.note == ""
+
+
+def test_the_note_reaches_the_screen():
+    """서버가 만든 문구가 응답과 화면까지 간다 — 어느 한 곳이 빠지면 안 보인다."""
+    import inspect
+
+    from app.services.cloud.lifecycle import CloudJob
+
+    assert "note" in CloudJob(job_id="x", label="y").to_dict()
+    assert "on_progress" in inspect.getsource(procure.procure_and_train), \
+        "한 묶음 경로가 진행을 안 싣는다"
+    from app.services.cloud import rent
+    assert "on_progress" in inspect.getsource(rent.train_on), \
+        "빌려 둔 기계 경로가 진행을 안 싣는다"
+    assert "job.note" in _page("CloudRentProgress.tsx")

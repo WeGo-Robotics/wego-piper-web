@@ -277,7 +277,14 @@ async def train_on(*, provider, instance_id: int, args: list[str], total_steps: 
             #   아직 스택을 깔고 있을 수 있다 — 안 기다리면 3초 만에 죽는다.
             job.set_phase(Phase.SSH_WAIT)
             _remember(job)
-            await wait_for_stack(target)
+
+            def _note(text: str) -> None:
+                # ⚠ 사람이 제일 오래 보는 구간이다(실측 3~4분). 무엇을 기다리는지 안
+                #   적으면 "왜 이렇게 오래 걸리지" 가 된다.
+                job.note = text
+                _remember(job)
+
+            await wait_for_stack(target, on_progress=_note)
 
             job.set_phase(Phase.TRAINING)
             _remember(job)

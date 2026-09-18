@@ -100,6 +100,13 @@ class CloudJob:
     instance_id: int | None = None
     #: 사람이 읽을 마지막 사유 — 왜 끝났는지. 비면 아직 안 끝났다는 뜻이다.
     reason: str = ""
+    #: **지금 무엇을 기다리는지** 한 줄. `reason`(왜 끝났나)과 다르다.
+    #:
+    #: ⚠ 이게 없을 때 화면은 `ssh_wait` 을 "접속 기다리는 중" 이라고만 말했다. 그런데
+    #: 실제로 3~4분 걸리는 구간은 접속이 아니라 **스택 설치**다 — 서버 로그에는
+    #: "학습 스택 설치 중: …" 이 찍히는데 화면엔 안 갔다. 사람이 "왜 이렇게 오래
+    #: 걸리지" 를 묻게 되는 자리가 정확히 거기다.
+    note: str = ""
     #: 이 기계를 **우리가 만들었나.** 한 묶음(`rent.start`)이면 참이고, 사람이 빌려 둔
     #: 기계에 학습만 얹은 경우(`rent.train_on`)면 거짓이다.
     #:
@@ -112,6 +119,9 @@ class CloudJob:
         if phase != self.phase:
             logger.info("[%s] %s → %s%s", self.job_id, self.phase.value,
                         phase.value, f" ({reason})" if reason else "")
+            # ⚠ 칸이 바뀌면 지난 칸의 진행 메모는 버린다 — 안 버리면 학습 중에
+            #   "torch 받는 중" 이 그대로 남아 거짓말이 된다.
+            self.note = ""
         self.phase = phase
         if reason:
             self.reason = reason
@@ -171,6 +181,7 @@ class CloudJob:
             "phase": self.phase.value,
             "instance_id": self.instance_id,
             "reason": self.reason,
+            "note": self.note,
             "cost": {
                 "rate_usd_h": self.budget.rate_usd_h,
                 "accrued_usd": round(self.budget.accrued_usd(), 4),

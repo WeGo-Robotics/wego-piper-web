@@ -23,6 +23,11 @@ type Retrieval = {
 }
 type Job = {
   job_id: string; label: string; phase: string; instance_id: number | null; reason: string
+  /**
+   * 지금 무엇을 기다리는지 한 줄. ⚠ `ssh_wait` 에서 3~4분 걸리는 것은 접속이 아니라
+   * **스택 설치**다 — 그걸 안 보여 주면 "왜 이렇게 오래 걸리지" 가 된다.
+   */
+  note?: string
   cost: { rate_usd_h: number; accrued_usd: number; budget_usd: number
     elapsed_h: number; max_hours: number }
 }
@@ -100,9 +105,11 @@ export default function CloudRentProgress() {
           </span>
         )}
       </div>
-      {(job.reason || retrieval.detail) && (
+      {/* ⚠ 진행 메모가 있으면 **그걸 먼저** 보여 준다 — 지금 일어나는 일이 지난
+          사유보다 급하다. 칸이 바뀌면 서버가 비우므로 낡은 줄이 남지 않는다. */}
+      {(job.note || job.reason || retrieval.detail) && (
         <p className="mt-1 text-xs text-neutral-400">
-          {[job.reason, retrieval.detail].filter(Boolean).join(' · ')}
+          {[job.note, job.reason, retrieval.detail].filter(Boolean).join(' · ')}
         </p>
       )}
     </section>

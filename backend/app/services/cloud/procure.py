@@ -144,8 +144,28 @@ def stack_ready(target, run=None) -> tuple[bool, str]:
     return r.returncode == 0, detail or "아직 설치 로그가 없습니다"
 
 
+#: 설치 로그에서 **사람에게 보일 만한 줄**만 고른다.
+#:
+#: ⚠ `bootstrap.sh` 의 출력에는 로케일 경고·pip 진행 막대 같은 잡음이 섞인다. 그걸
+#: 그대로 올리면 화면이 `bash: warning: setlocale…` 을 "진행 상황" 이라고 보여 준다 —
+#: §12-13 에서 로그가 그랬던 것과 같은 실수를 화면에서 반복하는 셈이다.
+def install_note(detail: str) -> str:
+    """설치 로그 꼬리 → 화면에 보일 한 줄. 볼 게 없으면 빈 문자열."""
+    for line in reversed((detail or "").splitlines()):
+        t = line.strip()
+        if not t or t.startswith("bash:") or t.startswith("WARNING"):
+            continue
+        # `install-stack.sh` 가 찍는 절 제목(`== …`)이 제일 쓸모 있다
+        if t.startswith("=="):
+            return t.lstrip("= ").strip()[:80]
+        if t.startswith(("Collecting", "Downloading", "Installing", "Successfully")):
+            return t[:80]
+    return ""
+
+
 async def wait_for_stack(target, *, timeout: float = STACK_WAIT_S,
-                         poll: float = 15.0, run=None, guard=None) -> str:
+                         poll: float = 15.0, run=None, guard=None,
+                         on_progress=None) -> str:
     """스택이 깔릴 때까지 기다린다. **접속되는 것과 학습할 수 있는 것은 다르다.**
 
     ⚠ 여기서 기다리는 시간은 낭비가 아니다 — slim 은 이 구간에 torch 를 받는다. 반면
@@ -163,7 +183,12 @@ async def wait_for_stack(target, *, timeout: float = STACK_WAIT_S,
             if ok:
                 return detail
             last = detail
-            logger.info("학습 스택 설치 중: %s", detail.splitlines()[-1][:120] if detail else "")
+            note = install_note(detail)
+            logger.info("학습 스택 설치 중: %s", note or "(설치 로그 없음)")
+            if on_progress:
+                # ⚠ 화면에 가는 문구는 **여기서 고른다.** 로그 꼬리를 그대로 올리면
+                #   로케일 경고가 "진행 상황" 으로 뜬다.
+                on_progress(note or "학습 스택 설치 중")
         await asyncio.sleep(poll)
     raise ProcureError(
         f"{timeout / 60:.0f}분 안에 학습 스택이 준비되지 않았습니다 — "
@@ -238,8 +263,14 @@ async def procure_and_train(
         # ⚠ **접속된 것과 학습할 수 있는 것은 다르다.** slim 이미지는 여기서 아직
         #   torch·lerobot 을 받는 중이다. 안 기다리면 빌린 값을 다 치르고 3초 만에
         #   `No module named 'lerobot'` 로 죽는다 (실측 2026-09-17, $0.0145).
+        def _note(text: str) -> None:
+            job.note = text
+            if on_phase:
+                on_phase(job)
+
         ready = await wait_for_stack(target, timeout=stack_timeout,
-                                     poll=stack_poll, guard=job.over_budget)
+                                     poll=stack_poll, guard=job.over_budget,
+                                     on_progress=_note)
         logger.info("[%s] 학습 스택 준비됨: %s", job_id, ready.splitlines()[-1][:120])
         phase(Phase.TRAINING)
         # 남은 예산·시간 중 **짧은 쪽**을 학습 자체의 상한으로 준다. 게이트웨이가
