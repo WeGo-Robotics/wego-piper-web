@@ -67,6 +67,25 @@ RUN pip install "lerobot[smolvla]==0.5.0" "transformers==5.3.0" \
     && pip install --index-url https://download.pytorch.org/whl/cu130 \
         torch==2.11.0 torchvision==0.26.0 torchcodec==0.11.0
 
+# ── torchcodec 이 쓰는 NPP 런타임 ──
+# ⚠ **torchcodec 은 NPP 에 링크돼 있는데 아무도 그걸 안 깐다.** torch 의 의존성에 없고
+#   (torch 는 NPP 를 안 쓴다) torchcodec wheel 도 선언하지 않는다. 그래서 이미지 안에
+#   `import torchcodec` 자체가 **되지 않는** torchcodec 이 실려 나갔다:
+#     OSError: libnppicc.so.13: cannot open shared object file
+#   실기(.120, 2026-09-18): 학습이 첫 배치에서 죽었다 — 데이터셋은 멀쩡했고 DataLoader 가
+#   영상을 열려는 순간이었다. LeRobot 의 기본 `video_backend` 가 torchcodec 이라 **영상을
+#   읽는 모든 경로**가 같은 자리에서 죽는다(학습·뷰어·데이터셋 도구).
+# ⚠ CPU 빌드로 피할 수 없다 — PyPI 의 `torchcodec==0.11.0` 도 같은 라이브러리를 찾는다(실측).
+# ⚠ **깔기만 해서는 안 된다.** 로더가 못 찾는다: torch 는 자기 nvidia 라이브러리를 절대경로로
+#   dlopen 하지만 torchcodec 의 `.so` 는 DT_NEEDED 로 보통의 검색 경로를 탄다.
+#   `ld.so.conf.d` 에 넣고 `ldconfig` 를 돌려야 `from torchcodec.decoders import VideoDecoder`
+#   가 통과한다(실측: 넣기 전 실패 → 넣은 뒤 OK).
+# 값: 516MB. 이 이미지의 5% 이고, 베이스는 릴리스마다 바뀌지 않으므로 한 번 받는다.
+RUN pip install nvidia-npp \
+    && echo /opt/venv/lib/python3.13/site-packages/nvidia/cu13/lib > /etc/ld.so.conf.d/nvidia-cu13.conf \
+    && ldconfig \
+    && python -c "from torchcodec.decoders import VideoDecoder"
+
 # ── Piper 하드웨어 스택 ──
 RUN pip install piper_sdk==0.6.1 python-can==4.6.1
 # gRPC — 원격 추론(정책 서버 ↔ 클라이언트). lerobot 의 async_inference 모듈은

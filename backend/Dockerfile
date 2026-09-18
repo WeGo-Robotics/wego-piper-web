@@ -7,7 +7,7 @@
 #   `release.sh` 는 알아서 확인한다.
 # ⚠ **아래 기본값은 `backend/BASE_VERSION` 과 같아야 한다.** 테스트가 강제한다
 #   (`test_release.py::test_the_base_tag_is_single_sourced`).
-ARG BASE_TAG=cu130-2
+ARG BASE_TAG=cu130-3
 FROM piper-web-base:${BASE_TAG}
 
 # ⚠ **레이어 순서가 곧 릴리스 크기다.** 릴리스마다 안 바뀌는 것(계약 패키지·vendor·

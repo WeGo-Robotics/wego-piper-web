@@ -881,3 +881,28 @@ def test_a_host_that_skipped_a_release_still_catches_up_on_the_wheels():
     assert "pkg in OUR_WHEELS" in rule and "want" in rule, \
         "기동 검사가 여전히 '이번에 구운 것'만 본다 — 건너뛴 호스트를 못 잡는다"
     assert "touched" not in rule, "옛 매니페스트 게이트가 남아 있다"
+
+
+def test_the_image_ships_the_npp_runtime_torchcodec_links_against():
+    """⚠ 실기(.120, 2026-09-18): 학습이 **첫 배치에서** 죽었다. 데이터셋은 멀쩡했고
+    DataLoader 가 영상을 열려는 순간이었다 —
+
+        OSError: libnppicc.so.13: cannot open shared object file
+
+    torchcodec 은 NVIDIA NPP 에 링크돼 있는데 **아무도 그걸 안 깐다**: torch 의 의존성에
+    없고(torch 는 NPP 를 안 쓴다) torchcodec wheel 도 선언하지 않는다. 그래서 이미지에
+    `import` 자체가 안 되는 torchcodec 이 실려 나갔다. LeRobot 의 기본 `video_backend` 가
+    torchcodec 이라 **영상을 읽는 모든 경로**가 같은 자리에서 죽는다 — 학습만의 문제가 아니다.
+
+    ⚠ CPU 빌드로 피할 수 없다 — PyPI 의 `torchcodec==0.11.0` 도 같은 라이브러리를 찾는다(실측).
+    ⚠ **깔기만 해서는 안 된다**: torch 는 자기 nvidia 라이브러리를 절대경로로 dlopen 하지만
+    torchcodec 의 `.so` 는 DT_NEEDED 로 보통의 검색 경로를 탄다. `ld.so.conf.d` + `ldconfig`
+    까지 해야 통과한다(실측: 넣기 전 실패 → 넣은 뒤 OK).
+    """
+    base = (REPO / "backend" / "Dockerfile.base").read_text()
+    assert "pip install nvidia-npp" in base, "torchcodec 이 쓰는 NPP 런타임이 없다"
+    npp = base.split("pip install nvidia-npp", 1)[1].split("\n\n", 1)[0]
+    assert "ld.so.conf.d" in npp and "ldconfig" in npp, \
+        "깔기만 하고 로더 경로에 안 넣는다 — 그러면 그대로 못 찾는다"
+    assert "from torchcodec.decoders import VideoDecoder" in npp, \
+        "빌드가 스스로 확인하지 않는다 — 다음에 또 못 쓰는 torchcodec 이 실려 나간다"
