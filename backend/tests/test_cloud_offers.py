@@ -670,3 +670,58 @@ def test_the_rent_tab_sends_the_build_and_refetches_when_it_changes():
                      / "components" / "CloudRentTab.tsx").read_text())
     assert src.count("p.set('cuda', template.cuda)") == 2, "오퍼·기종 중 한쪽만 보낸다"
     assert src.count("template?.cuda])") == 2, "템플릿이 바뀌어도 다시 안 부른다"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠ "확인 못 했다" 를 "안 돼 있다" 로 말하지 않는다 (2026-09-18)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _readiness(monkeypatch, registered, why=""):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.routers import cloud as router
+
+    async def _reg(want):
+        return registered, why
+
+    monkeypatch.setattr(router, "_ssh_registered", _reg)
+    monkeypatch.setattr(router.shutil, "which", lambda n: "/usr/bin/vastai")
+    monkeypatch.setattr(router.sshkey, "info",
+                        lambda: {"exists": True, "fingerprint": "SHA256:abc"})
+    monkeypatch.setattr(router, "_provider",
+                        lambda: type("P", (), {"whoami": lambda s: {"credit": 1.0},
+                                               "templates": lambda s: []})())
+    return TestClient(app).get("/api/cloud/readiness").json()["checks"]["ssh_key"]
+
+
+def test_a_key_we_could_not_check_is_not_called_unregistered(monkeypatch):
+    """⚠ **실측(2026-09-18)**: `vastai show ssh-keys` 가 401 로 죽어 판정이 `None` 이었는데
+    화면은 "설정 → 클라우드 에서 [Vast 계정에 등록] 을 눌러 주세요" 라고 말했다.
+
+    키는 **이미 등록돼 있었다.** 그 버튼을 눌러도 같은 자리로 돌아온다 — 사람이 빠져나갈
+    수 없는 안내였고, [빌리기]는 계속 막혀 있었다.
+    """
+    d = _readiness(monkeypatch, None, "목록을 못 읽었습니다: 401 Invalid user key")
+    assert "등록] 을 눌러" not in (d["detail"] or ""), "모르는 것을 안 돼 있다고 말한다"
+    assert "확인하지 못했습니다" in d["detail"]
+    assert "401" in d["detail"], "왜 확인 못 했는지를 안 말한다 — 어디를 볼지 모른다"
+
+
+def test_not_knowing_does_not_block_renting(monkeypatch):
+    """⚠ 막는 쪽이 더 나쁘다 — 제대로 해 둔 사람이 **영영** 못 빌리게 된다. 우리가 확인을
+    못 한 것은 그 사람 잘못이 아니다."""
+    assert _readiness(monkeypatch, None, "401")["ok"] is True
+
+
+def test_a_genuinely_missing_key_still_blocks_and_says_press_register(monkeypatch):
+    """⚠ 반대로 **정말 없을 때**는 막아야 한다. 안 그러면 빌린 뒤 접속이 안 돼서
+    돈만 나간다."""
+    d = _readiness(monkeypatch, False, "계정의 키 2개 중 같은 지문이 없습니다")
+    assert d["ok"] is False
+    assert "등록] 을 눌러" in d["detail"]
+
+
+def test_a_registered_key_says_nothing(monkeypatch):
+    d = _readiness(monkeypatch, True)
+    assert d["ok"] is True and d["detail"] is None

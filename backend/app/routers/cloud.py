@@ -584,37 +584,50 @@ async def cloud_templates(refresh: bool = False):
     return {"templates": [asdict(t) for t in rows]}
 
 
-async def _ssh_registered(want: str | None) -> bool | None:
-    """계정에 **같은 지문**이 있나. 모르면 `None` — 거짓 통과를 만들지 않는다."""
-    if not want or not shutil.which("vastai"):
-        return None
+async def _ssh_registered(want: str | None) -> tuple[bool | None, str]:
+    """계정에 **같은 지문**이 있나 — `(판정, 사유)`.
 
-    def _go() -> bool | None:
+    판정은 셋이다: `True` 등록됨 · `False` 없음 · **`None` 확인 못 했다.**
+
+    ⚠ **세 번째를 두 번째로 뭉개면 안 된다.** 실측(2026-09-18): `vastai show ssh-keys`
+    가 401 로 죽어 판정이 `None` 이었는데 화면은 "등록을 눌러 주세요" 라고 말했다. 키는
+    이미 등록돼 있었고, 그 버튼을 눌러도 같은 자리로 돌아온다 — **빠져나갈 수 없는
+    안내**다. 사유를 같이 돌려주는 이유가 그것이다.
+    """
+    if not want:
+        return None, "게이트웨이 키가 없습니다"
+    if not shutil.which("vastai"):
+        return None, NO_CLI
+
+    def _go() -> tuple[bool | None, str]:
         out = subprocess.run(["vastai", "show", "ssh-keys", "--raw"],
                              capture_output=True, text=True, timeout=45)
+        body = (out.stdout or "").strip() or (out.stderr or "").strip()
         if out.returncode != 0:
-            return None
+            return None, f"목록을 못 읽었습니다: {body[:120]}"
         try:
-            rows = json.loads(out.stdout)
+            rows = json.loads(body)
         except json.JSONDecodeError:
-            return None
+            # ⚠ CLI 는 오류도 종료코드 0 으로 내고 본문에 싣는다 — 그 본문을 그대로
+            #   보여 준다. "확인 못 했다" 로만 끝내면 사람이 어디를 볼지 모른다.
+            return None, f"목록을 못 읽었습니다: {body[:120]}"
         if not isinstance(rows, list):
-            return None
+            return None, f"목록이 배열이 아닙니다: {str(rows)[:120]}"
         for row in rows:
             k = (row.get("public_key") or row.get("ssh_key") or "").strip()
             if k:
                 try:
                     if sshkey.fingerprint(k) == want:
-                        return True
+                        return True, ""
                 except ValueError:
                     continue
-        return False
+        return False, f"계정의 키 {len(rows)}개 중 같은 지문이 없습니다"
 
     try:
         return await asyncio.to_thread(_go)
     except Exception as exc:                                        # noqa: BLE001
         logger.warning("SSH 키 등록 확인 실패: %s", exc)
-        return None
+        return None, f"확인 중 오류: {str(exc)[:120]}"
 
 
 @router.get("/readiness")
@@ -640,19 +653,32 @@ async def readiness():
         except Exception as exc:                                    # noqa: BLE001
             logger.warning("템플릿 조회 실패: %s", exc)
 
-    registered = await _ssh_registered(key.get("fingerprint")) if cli else None
+    registered, reg_why = (await _ssh_registered(key.get("fingerprint")) if cli
+                           else (None, NO_CLI))
 
     checks = {
         "cli": {"ok": cli, "detail": None if cli else NO_CLI},
         "api_key": {"ok": account is not None,
                     "detail": account_error or (None if account else "API 키가 설정되지 않았습니다")},
-        "ssh_key": {"ok": bool(key.get("exists")) and registered is True,
+        # ⚠ **"확인 못 했다" 를 "안 돼 있다" 로 말하지 않는다.** 실측(2026-09-18):
+        #   `show ssh-keys` 가 401 로 죽어 판정이 `None` 이었는데 화면은 "등록을 눌러
+        #   주세요" 라고 했다. 키는 이미 등록돼 있었고, 그 버튼을 눌러도 같은 자리로
+        #   돌아온다 — 사람이 빠져나갈 수 없는 안내였다.
+        #
+        # ⚠ 그래서 **모를 때는 막지 않는다.** 막는 쪽이 더 나쁘다: 제대로 해 둔 사람이
+        #   영영 못 빌린다. 대신 무엇을 못 했는지 말하고, 빌린 뒤 접속이 안 되면 여기를
+        #   의심하라고 적는다.
+        "ssh_key": {"ok": bool(key.get("exists")) and registered is not False,
                     "exists": bool(key.get("exists")),
                     "registered": registered,
                     "fingerprint": key.get("fingerprint"),
-                    "detail": None if registered else
-                              ("설정 → 클라우드 에서 키를 만들어 주세요" if not key.get("exists")
-                               else "설정 → 클라우드 에서 [Vast 계정에 등록] 을 눌러 주세요")},
+                    "detail": (
+                        None if registered is True else
+                        "설정 → 클라우드 에서 키를 만들어 주세요" if not key.get("exists") else
+                        "설정 → 클라우드 에서 [Vast 계정에 등록] 을 눌러 주세요"
+                        if registered is False else
+                        f"등록 여부를 확인하지 못했습니다 ({reg_why}) — 이미 등록했다면 "
+                        f"그대로 두세요. 빌린 뒤 접속이 안 되면 여기를 의심하세요")},
         "template": {"ok": bool(templates),
                      "detail": None if templates else "학습 템플릿을 찾지 못했습니다"},
     }
