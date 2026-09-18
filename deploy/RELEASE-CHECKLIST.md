@@ -60,6 +60,7 @@ so101 은 데몬이 호스트여도 관절 매핑 표를 게이트웨이 릴레�
 | R5 | **실패는 진짜 사유를 말한다** | 한 문구가 죽음·타임아웃·**동사를 모름**(옛 데몬)을 다 덮어, 사람이 데몬을 재시작하며 시간을 버렸다 — 고칠 곳은 데몬 갱신이었다 | `test_a_daemon_that_does_not_know_the_verb_does_not_look_like_a_dead_one` |
 | R6 | **스크립트는 sudo 를 직접 쓰지 않는다. 처방은 복사하면 끝나야 한다** | 줄 앞에만 `sudo` 가 붙어 `&&` 뒤가 일반 사용자로 돌았다 | `test_apply_never_runs_sudo_itself` · `test_every_chained_sudo_prescription_carries_sudo_on_each_part` · `test_every_sudo_prescription_apply_prints_is_in_the_doc` |
 | R7 | **태그가 빌드보다 먼저. 버전은 최하위 자리만. 병행 세션을 확인한다** | 태그 없이 구우면 판정이 뒤로 밀린다. 같은 날 다른 세션이 릴리스를 내므로 `git tag --sort=-v:refname`·원격 태그·CHANGELOG 첫 항목을 대조하고, `git log v<최신>..HEAD` 의 남의 커밋도 CHANGELOG 에 싣는다 | 아래 원터치 절 · [0단계](#0-버전-번호--최하위-자리만-올린다) |
+| R9 | **반복되는 절차는 스크립트가 한다 — 사람이 환경변수로 고르지 않는다** | v0.5.5 를 사설 레지스트리로만 올려 GHCR 에서 받는 호스트가 옛 버전을 "최신" 이라 봤다. 화면은 맞았고 틀린 것은 릴리스였다 — 선택이 스크립트 밖에 있었다 | `test_the_offline_path_still_exists`(`DEFAULT_REGISTRIES` 가 있는지) · `test_a_public_registry_is_not_pushed_through_localhost` · 스크립트가 push 뒤 레지스트리에 **다시 물어본다** |
 | R8 | **릴리스 뒤 이미지 안을 열어 확인한다** | 매니페스트·wheel·데몬 소스·apply.sh 는 **이미지 안으로** 나간다. 굽고 나서 보지 않으면 "고쳤다고 믿는 것"이 안 실려 나간다 | 아래 확인 명령 |
 
 ### R8 — 굽고 나서 이 한 번
@@ -89,17 +90,30 @@ docker run --rm piper-web-backend:<태그> sh -c '
 **5 파일**이 됐다.
 
 ```bash
-git push && git tag -a v0.3.10 -m "..." && git push origin v0.3.10
+git push && git tag -a v0.5.6 -m "..." && git push origin v0.5.6
+./deploy/release.sh v0.5.6 --dry-run     # 무엇이 올라갈지 먼저
+./deploy/release.sh v0.5.6               # 이게 전부다
 
-# 레지스트리로 (망이 있을 때 — 권장)
+# 망 없는 현장 (USB) — 이때만 tar
+./deploy/release.sh v0.5.6 --offline     # 3.46GB
+```
+
+⚠ **어느 레지스트리에 올릴지 사람이 고르지 않는다.** 스크립트가 `DEFAULT_REGISTRIES`
+(지금은 GHCR + 사설 `piper-build:5000`) 둘 다에 올리고, 올라간 것을 **다시 물어봐
+확인한다.** 사설 레지스트리가 안 떠 있으면 건너뛰되 끝에서 크게 말한다.
+
+> ⚠ v0.5.5 를 `PIPER_REGISTRY=piper-build:5000` 로만 올렸더니 GHCR 에는 안 갔고, 거기서
+> 받는 호스트(.120·.44)의 "새 버전 확인" 이 계속 v0.5.4 를 최신이라 답했다. 화면은 맞는
+> 말을 하고 있었다 — 틀린 것은 릴리스였다. 환경변수 하나에 결과가 갈리는데 그 선택이
+> 스크립트 **밖**에 있었던 것이 원인이라, 그 뒤로 선택을 스크립트 안으로 넣었다.
+> `PIPER_REGISTRY` 로 하나만 지정하는 것은 여전히 되지만, **나머지 레지스트리에서 받는
+> 호스트는 그 버전을 영영 못 본다.**
+
+사설 레지스트리를 쓰려면 먼저 띄운다 (배포할 때만 연다):
+
+```bash
 ./deploy/registry.sh --stop
-PIPER_REGISTRY_BIND=0.0.0.0 ./deploy/registry.sh    # 배포할 때만 연다
-export PIPER_REGISTRY=piper-build:5000
-./deploy/release.sh v0.3.10 --dry-run               # 무엇이 올라갈지 먼저
-./deploy/release.sh v0.3.10                         # 이미지 push
-
-# 망 없는 현장 (USB)
-./deploy/release.sh v0.3.10 --offline                # 3.46GB tar
+PIPER_REGISTRY_BIND=0.0.0.0 ./deploy/registry.sh
 ```
 
 호스트는 **스크립트 하나**로 받는다 — [README](../README.md#설치). 이미지 안에
