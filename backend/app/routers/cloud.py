@@ -32,7 +32,7 @@ from app.services.cloud import sshkey
 from app.services.cloud.providers import vast
 from app.services.cloud.providers.base import MIN_CUDA, OfferFilter
 from app.routers.training import TrainStartRequest, train_cli_params
-from app.services.cloud import sweeper
+from app.services.cloud import apikey, sweeper
 from app.services.cloud.lifecycle import is_orphan
 
 logger = logging.getLogger(__name__)
@@ -98,10 +98,73 @@ async def register_ssh_key():
 # RENT 탭 — 오퍼·템플릿·준비도 (§9-2)
 # ─────────────────────────────────────────────────────────────────────────────
 
-#: 프로바이더는 상태가 없다(캐시는 모듈 안). 자격증명 저장소가 생기면(§9-1 의
-#: `/credentials`) 여기서 키를 넘긴다 — 지금은 CLI 가 제 파일을 읽는다.
+#: 프로바이더는 상태가 없다(캐시는 모듈 안). 저장된 키가 있으면 **여기서 넘긴다** —
+#: 없으면 빈 문자열이라 CLI 가 제 파일을 본다(개발 머신은 그 경로로 돈다).
 def _provider() -> vast.VastProvider:
-    return vast.VastProvider()
+    return vast.VastProvider(apikey.load() or None)
+
+
+class ApiKeyRequest(BaseModel):
+    api_key: str
+
+
+@router.get("/credentials")
+async def get_credentials():
+    """키가 설정돼 있나. **키 자체는 안 준다** — 끝 네 자리까지다.
+
+    ⚠ 게이트웨이는 `/api/ext/v1` 말고는 인증이 없다. LAN 에서 이 포트에 닿는 누구나
+    이 응답을 읽으므로, 전체를 보여 주는 순간 그 화면이 곧 유출 경로가 된다.
+    """
+    return apikey.status()
+
+
+@router.put("/credentials")
+async def put_credentials(body: ApiKeyRequest):
+    """키를 저장한다. **먼저 써 보고, 되면 저장한다.**
+
+    ⚠ 검증 없이 저장하면 "설정됨" 이라 표시되는데 아무것도 안 되는 상태가 된다 —
+    제일 헷갈리는 실패다. 그래서 그 키로 계정을 조회해 보고, 통과할 때만 파일에 쓴다.
+
+    ⚠ 키는 **argv 가 아니라 env 로** 넘어간다(`VastProvider`). `ps` 로 남의 프로세스
+    인자를 읽을 수 있는 기계에서 argv 는 비밀을 두는 자리가 아니다.
+    """
+    key = (body.api_key or "").strip()
+    if not key:
+        raise HTTPException(400, "키가 비었습니다")
+    try:
+        account = await asyncio.to_thread(vast.VastProvider(key).whoami)
+    except FileNotFoundError as exc:
+        raise HTTPException(409, NO_CLI) from exc
+    except Exception as exc:                                        # noqa: BLE001
+        # ⚠ **틀린 키는 400 이다.** `_to_http` 는 이걸 502 로 올리는데, 그건 "게이트웨이
+        #   쪽이 고장" 이라는 뜻이라 사람이 엉뚱한 곳을 본다 — 실제로는 붙여넣기를 다시
+        #   해야 하는 상황이다. Vast 의 원문은 로그에만 남긴다(키가 섞일 수 있다).
+        logger.warning("Vast 키 검증 실패: %s", str(exc)[:200])
+        raise HTTPException(
+            400, "그 키로는 계정을 읽지 못했습니다 — 키를 다시 확인해 주세요 "
+                 "(vast.ai → Account → API Keys)") from exc
+    if not account:
+        raise HTTPException(400, "그 키로는 계정을 읽지 못했습니다 — 다시 확인해 주세요")
+    await asyncio.to_thread(apikey.save, key)
+    logger.info("Vast API 키를 저장했습니다 (끝 %s)", apikey.tail(key))
+    # ⚠ 응답에도 키는 없다. 사람이 "맞게 들어갔나" 를 확인할 근거는 크레딧과 끝 네 자리다.
+    return {**apikey.status(), "credit": account.get("credit")}
+
+
+@router.delete("/credentials")
+async def delete_credentials():
+    """저장한 키를 지운다.
+
+    ⚠ `.env` 로 심은 키는 못 지운다 — 그건 운영자가 배포 수단으로 넣은 값이고, 화면이
+    그걸 지우면 운영자는 자기 키가 왜 사라졌는지 알 길이 없다. 대신 그 사실을 말한다.
+    """
+    removed = await asyncio.to_thread(apikey.clear)
+    st = apikey.status()
+    if st["source"] == "env":
+        return {**st, "removed": removed,
+                "detail": "환경변수(VAST_API_KEY)의 키가 남아 있습니다 — 그건 배포 설정이라 "
+                          "여기서 못 지웁니다"}
+    return {**st, "removed": removed}
 
 
 def _to_http(exc: Exception) -> HTTPException:

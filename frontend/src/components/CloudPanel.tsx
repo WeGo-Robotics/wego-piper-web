@@ -3,7 +3,7 @@ import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
 
 /**
- * 임대 GPU(Vast.ai) 준비 — 게이트웨이 키 (feature/vast-training.md §9-1).
+ * 임대 GPU(Vast.ai) 준비 — **API 키와 게이트웨이 SSH 키** (feature/vast-training.md §9-1).
  *
  * ## 왜 Piper Studio 가 키를 직접 만드나
  *
@@ -19,6 +19,17 @@ import { api } from '../services/api'
  * 것을 가른다 — 저장소(HF) 탭과 같은 자리에 같은 이유로 둔다.
  */
 
+type Cred = {
+  configured: boolean
+  /** `env` = 배포가 심은 것(여기서 못 지운다) · `file` = 이 화면에서 저장한 것 */
+  source: 'env' | 'file' | null
+  /** ⚠ **끝 네 자리만.** 전체를 보여 주는 화면은 만들지 않는다 — 그 화면이 곧 유출 경로다 */
+  tail: string
+  env_wins: boolean
+  credit?: number | null
+  detail?: string
+}
+
 type Key = {
   exists: boolean
   public_key: string | null
@@ -30,10 +41,15 @@ type Key = {
 export default function CloudPanel() {
   const { notify } = useSystemMessage()
   const [key, setKey] = useState<Key | null>(null)
+  const [cred, setCred] = useState<Cred | null>(null)
+  // ⚠ 입력칸은 **비우고 시작한다.** 저장된 키를 여기에 채워 넣으면, 그 화면을 여는
+  //   누구나 읽게 된다 — 게이트웨이에는 인증이 없다.
+  const [apiKey, setApiKey] = useState('')
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(() => {
     api.get<Key>('/cloud/ssh-key').then(setKey).catch(() => setKey(null))
+    api.get<Cred>('/cloud/credentials').then(setCred).catch(() => setCred(null))
   }, [])
   useEffect(load, [load])
 
@@ -60,6 +76,23 @@ export default function CloudPanel() {
                                 : (r.detail || '등록을 확인하지 못했습니다') })
   })
 
+  const saveKey = () => act('API 키 저장', async () => {
+    // ⚠ 서버가 **먼저 써 보고** 저장한다 — 틀린 키를 "설정됨" 으로 두면 제일 헷갈린다
+    const r = await api.put<Cred>('/cloud/credentials', { api_key: apiKey.trim() })
+    setCred(r)
+    setApiKey('')          // ⚠ 저장했으면 입력칸에 남기지 않는다
+    notify({ level: 'info', source: 'Vast.ai',
+             text: `API 키를 저장했습니다 (끝 ${r.tail})`
+                   + (r.credit != null ? ` · 크레딧 $${r.credit.toFixed(2)}` : '') })
+  })
+
+  const clearKey = () => act('API 키 지우기', async () => {
+    const r = await api.delete<Cred>('/cloud/credentials')
+    setCred(r)
+    notify({ level: r.detail ? 'warn' : 'info', source: 'Vast.ai',
+             text: r.detail || 'API 키를 지웠습니다' })
+  })
+
   const copy = async () => {
     if (!key?.public_key) return
     try {
@@ -72,6 +105,48 @@ export default function CloudPanel() {
 
   return (
     <section className="space-y-3 rounded-lg border border-neutral-700 bg-neutral-800 p-4">
+      {/* ── API 키 — SSH 키보다 **먼저**다. 이게 없으면 나머지가 다 무의미하다 ── */}
+      <div className="space-y-2 rounded border border-neutral-700 bg-neutral-900/40 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-sm font-medium text-neutral-200">Vast.ai API 키</h3>
+          {cred?.configured ? (
+            <span className="rounded bg-emerald-900/50 px-2 py-0.5 text-xs text-emerald-200">
+              설정됨 · 끝 {cred.tail || '****'}
+              {cred.source === 'env' && ' · 배포 설정(.env)'}
+            </span>
+          ) : (
+            <span className="rounded bg-amber-900/50 px-2 py-0.5 text-xs text-amber-200">없음</span>
+          )}
+          <a href="https://cloud.vast.ai/account/" target="_blank" rel="noreferrer"
+            className="ml-auto text-xs text-blue-400 hover:underline">vast.ai → Account → API Keys</a>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* ⚠ `type=password` — 어깨너머로 읽히지 않게. 저장된 값을 되돌려 채우지도 않는다 */}
+          <input type="password" value={apiKey} autoComplete="off"
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={cred?.configured ? '새 키로 바꾸려면 붙여넣기' : '키를 붙여넣기'}
+            className="min-w-0 flex-1 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 font-mono text-sm" />
+          <button onClick={saveKey} disabled={busy || !apiKey.trim()}
+            className="rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-500 disabled:opacity-40">
+            저장
+          </button>
+          {cred?.source === 'file' && (
+            <button onClick={clearKey} disabled={busy}
+              className="rounded border border-neutral-600 px-3 py-1 text-sm text-neutral-300 hover:border-neutral-400 disabled:opacity-40">
+              지우기
+            </button>
+          )}
+        </div>
+
+        <p className="text-xs text-neutral-500">
+          {/* ⚠ 저장 전에 **써 보고** 저장한다는 사실을 말해 준다 — 그래야 실패가 이해된다 */}
+          저장하기 전에 그 키로 계정을 한 번 조회해 봅니다. 키는 화면으로 다시 나오지
+          않습니다(끝 네 자리만).
+          {cred?.env_wins && <span className="text-amber-300"> · 배포 설정(.env)의 키가 우선합니다</span>}
+        </p>
+      </div>
+
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">임대 GPU (Vast.ai)</h2>
         <a href="https://cloud.vast.ai/" target="_blank" rel="noreferrer"
