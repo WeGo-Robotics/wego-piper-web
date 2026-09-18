@@ -181,6 +181,19 @@ class CloudJob:
         }
 
 
+def is_orphan(inst, known: set[int], prefix: str = "piper-",
+              owned_prefix: str = "piper-box-") -> bool:
+    """이 인스턴스가 고아인가. **판정은 여기 하나뿐이다.**
+
+    ⚠ 라우터가 자기 사본을 들고 있다가 실제로 어긋났다(2026-09-18 실기): 스캐너는
+    `piper-box-` 를 고아에서 뺐는데 인스턴스 탭은 그대로 빨갛게 칠했다. 정의가 둘이면
+    탭과 배너가 다른 말을 하고, 그러면 사람은 둘 다 안 믿는다.
+    """
+    return (inst.label.startswith(prefix)
+            and not inst.label.startswith(owned_prefix)
+            and inst.id not in known)
+
+
 def find_orphans(provider, known: set[int], prefix: str = "piper-",
                  owned_prefix: str = "piper-box-") -> list:
     """우리 라벨이 붙었는데 **아무도 관리하지 않는** 인스턴스.
@@ -195,6 +208,4 @@ def find_orphans(provider, known: set[int], prefix: str = "piper-",
     10분마다 빨간 경보가 울리고, 늘 울리는 알람은 꺼진 알람이다.
     """
     return [i for i in provider.list_instances()
-            if i.label.startswith(prefix)
-            and not i.label.startswith(owned_prefix)
-            and i.id not in known]
+            if is_orphan(i, known, prefix, owned_prefix)]

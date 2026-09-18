@@ -33,6 +33,7 @@ from app.services.cloud.providers import vast
 from app.services.cloud.providers.base import MIN_CUDA, OfferFilter
 from app.routers.training import TrainStartRequest, train_cli_params
 from app.services.cloud import sweeper
+from app.services.cloud.lifecycle import is_orphan
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/cloud", tags=["cloud"])
@@ -458,7 +459,9 @@ async def cloud_instances():
     out = []
     for i in rows:
         d = asdict(i)
-        d["orphan"] = i.label.startswith(ORPHAN_PREFIX) and i.id not in known
+        # ⚠ 판정은 **스캐너와 같은 함수**다. 사본을 들고 있다가 실제로 어긋났다 —
+        #   사람이 일부러 빌린 기계(`piper-box-`)를 탭만 빨갛게 칠했다.
+        d["orphan"] = is_orphan(i, known, ORPHAN_PREFIX, sweeper.BOX_PREFIX)
         out.append(d)
     # 고아를 먼저 — 사람이 봐야 할 것이 위로 온다
     out.sort(key=lambda d: (not d["orphan"], d["id"]))

@@ -535,3 +535,28 @@ def test_finishing_a_job_on_someone_elses_box_does_not_destroy_it():
     job.note_started(42, 0.5)
     assert job.finish(_Boom(), "사람이 중지했습니다") is _P.FINISHED
     assert job.finish(_Boom()) is _P.FINISHED, "멱등이 아니다"
+
+
+def test_the_tab_and_the_scanner_use_one_orphan_rule():
+    """⚠ **실기에서 실제로 어긋났다**(2026-09-18): 스캐너는 `piper-box-` 를 고아에서
+    뺐는데 인스턴스 탭은 자기 사본으로 판정해 그대로 빨갛게 칠했다. 사람이 방금
+    일부러 빌린 기계가 만들어지자마자 고아로 뜬 것이다.
+
+    정의가 둘이면 탭과 배너가 다른 말을 하고, 그러면 사람은 둘 다 안 믿는다.
+    """
+    import inspect
+
+    from app.routers import cloud as router
+    from app.services.cloud.lifecycle import is_orphan
+
+    assert "is_orphan(" in inspect.getsource(router.cloud_instances), \
+        "라우터가 자기 판정을 들고 있다"
+
+    class _I:
+        def __init__(self, i, l):
+            self.id, self.label = i, l
+
+    assert is_orphan(_I(1, "piper-abc"), set()) is True
+    assert is_orphan(_I(2, "piper-box-9"), set()) is False, "일부러 빌린 기계를 고아라 한다"
+    assert is_orphan(_I(3, "someone-else"), set()) is False
+    assert is_orphan(_I(4, "piper-abc"), {4}) is False
