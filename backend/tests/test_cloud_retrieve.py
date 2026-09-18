@@ -353,3 +353,93 @@ def test_stopping_while_the_download_runs_does_not_claim_to_destroy_again():
     assert tail.index("Phase.DESTROYED") < tail.index("직접 파기합니다")
 
 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 중간 체크포인트 — **Hub 로는 못 받는다** (2026-09-18)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_checkpoints_land_where_the_scanner_already_looks(tmp_path):
+    """⚠ 새 자리를 만들지 않는다. 스캐너는 `**/checkpoints/{step}/pretrained_model/
+    config.json` 을 읽는다(`_scan_train_outputs`) — 다른 모양으로 두면 받아 놓고 화면에
+    안 뜬다."""
+    from app.services.cloud.rescue import checkpoint_dir
+
+    d = checkpoint_dir(tmp_path, "wego-hansu/cloud_test1", "5000")
+    assert d == tmp_path / "cloud_test1" / "checkpoints" / "5000" / "pretrained_model"
+
+
+def test_last_is_skipped_because_we_already_have_it():
+    """⚠ 최종본은 Hub 든 `scp` 든 이미 받는다. 또 받으면 같은 200MB 를 두 번 낸다."""
+    from app.services.cloud import rescue
+
+    seen = []
+
+    class _R:
+        stdout = ("/root/outputs/train/d/t/checkpoints/5000/pretrained_model\n"
+                  "/root/outputs/train/d/t/checkpoints/10000/pretrained_model\n"
+                  "/root/outputs/train/d/t/checkpoints/last/pretrained_model\n")
+
+    import subprocess as sp
+    orig = sp.run
+
+    def _spy(cmd, **kw):
+        seen.append(cmd)
+        return orig(["true"], **{k: v for k, v in kw.items() if k != "timeout"})
+
+    sp.run = _spy
+    try:
+        rescue.fetch_checkpoints("t", "me/m", __import__("pathlib").Path("/tmp/x"),
+                                 run=lambda *a: _R())
+    finally:
+        sp.run = orig
+    steps = [c[-1].rsplit("/", 2)[1] for c in seen]
+    assert "last" not in steps, "최종본을 또 받는다"
+    assert sorted(steps) == ["10000", "5000"]
+
+
+def test_checkpoints_are_fetched_while_the_machine_is_still_alive(monkeypatch, tmp_path):
+    """⚠ 순서가 전부다. Hub 냐 `scp` 냐를 가른 **뒤**에 하면, Hub 경로로 끝난 회차는
+    파기가 먼저 와서 기계가 없다 — 그런데 중간 체크포인트는 **기계에만** 있다."""
+    order = []
+    _hub_has(monkeypatch, "model.safetensors")
+    monkeypatch.setattr("app.services.cloud.rescue.fetch_checkpoints",
+                        lambda *a, **k: order.append("checkpoints") or [])
+    monkeypatch.setattr(retrieve, "pushed",
+                        lambda *a, **k: order.append("hub 확인") or True)
+
+    asyncio.run(retrieve.before_destroy("t", "me/m", tmp_path, checkpoints=True,
+                                        rescue_fn=lambda *a: None))
+    assert order == ["checkpoints", "hub 확인"], f"순서가 틀렸다: {order}"
+
+
+def test_not_asking_costs_nothing(monkeypatch, tmp_path):
+    """기본은 끈 상태 — 최종본만 오는 것이 싸다."""
+    called = []
+    _hub_has(monkeypatch, "model.safetensors")
+    monkeypatch.setattr("app.services.cloud.rescue.fetch_checkpoints",
+                        lambda *a, **k: called.append(1) or [])
+    asyncio.run(retrieve.before_destroy("t", "me/m", tmp_path, rescue_fn=lambda *a: None))
+    assert called == []
+
+
+def test_a_checkpoint_failure_does_not_block_the_real_retrieval(monkeypatch, tmp_path):
+    """⚠ 덤이 본체를 막으면 안 된다 — 최종본 회수와 파기는 계속돼야 한다."""
+    _hub_has(monkeypatch, "model.safetensors")
+    monkeypatch.setattr("app.services.cloud.rescue.fetch_checkpoints",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("회선 끊김")))
+    asyncio.run(retrieve.before_destroy("t", "me/m", tmp_path, checkpoints=True,
+                                        rescue_fn=lambda *a: None))
+    assert retrieve.status()["state"] == "waiting", "최종본 회수가 막혔다"
+
+
+def test_the_option_reaches_both_start_paths():
+    import inspect
+
+    from app.routers import cloud as router
+    from app.services.cloud import rent
+
+    for fn in (router.rent_and_train, router.train_on_instance):
+        assert "fetch_checkpoints=body.fetch_checkpoints" in inspect.getsource(fn)
+    for fn in (rent.start, rent.train_on):
+        assert "checkpoints=fetch_checkpoints" in inspect.getsource(fn)

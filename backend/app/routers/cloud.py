@@ -292,6 +292,17 @@ class RentRequest(TrainStartRequest):
     #   강제하고, 학습은 멀쩡히 끝나고 가중치만 사라진다(§12-4: 푸시는 한 번뿐).
     policy_repo_id: str
 
+    #: 중간 체크포인트도 받을까. 기본은 **안 받는다** — 최종본만 오는 것이 싸다.
+    #:
+    #: ⚠ Hub 로는 애초에 못 받는다. `push_to_hub` 는 학습이 끝날 때 **한 번만** 올려서
+    #: (§12-4), `save_freq` 를 아무리 잘게 줘도 Hub 에는 최종본뿐이다. 중간 것은 기계
+    #: 안에만 있고 파기하면 같이 사라진다 — 20K 학습에 5000마다 저장했는데 하나만
+    #: 돌아오는 것이 그 때문이다.
+    #:
+    #: ⚠ 켜면 기계가 살아 있는 동안 `scp` 로 끌어온다. 실측 기준 한 벌 200MB · 나가는
+    #: 트래픽 $0.017/GB 라 네 벌이면 약 $0.014 다.
+    fetch_checkpoints: bool = False
+
 
 class NewInstanceRequest(BaseModel):
     """기계 **하나만** 만든다 — 학습은 안 건다.
@@ -416,7 +427,8 @@ async def rent_and_train(body: RentRequest):
             args=args, total_steps=body.steps,
             env=_train_env(body.amp, remote=True) or {},
             # ⚠ 회수 보험이 "Hub 에 갔나" 를 물어볼 대상이다 (§12-4).
-            repo_id=body.policy_repo_id)
+            repo_id=body.policy_repo_id,
+            fetch_checkpoints=body.fetch_checkpoints)
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"started": True, **job.to_dict()}
@@ -467,7 +479,8 @@ async def train_on_instance(body: TrainOnRequest):
             provider=_provider(), instance_id=body.instance_id,
             args=_rent_train_args(body), total_steps=body.steps,
             env=_train_env(body.amp, remote=True) or {},
-            repo_id=body.policy_repo_id, max_hours=body.max_hours)
+            repo_id=body.policy_repo_id, max_hours=body.max_hours,
+            fetch_checkpoints=body.fetch_checkpoints)
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"started": True, **job.to_dict()}

@@ -29,7 +29,7 @@ type Instance = {
   rate_usd_h: number; orphan: boolean
 }
 
-export type RentPick = { instance_id: number }
+export type RentPick = { instance_id: number; fetch_checkpoints: boolean }
 
 /** 사람이 일부러 빌린 기계의 라벨 — 클라우드 페이지가 이 접두어로 만든다. */
 const BOX = 'piper-box-'
@@ -44,6 +44,8 @@ export default function TrainWhereForm({ where, onWhere, onPick, runner, disable
 }) {
   const [rows, setRows] = useState<Instance[]>([])
   const [picked, setPicked] = useState<number | null>(null)
+  // ⚠ 기본은 **끈 상태**다. 최종본만 오는 것이 싸고, 대부분은 그것이면 된다.
+  const [ckpts, setCkpts] = useState(false)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
 
@@ -64,9 +66,10 @@ export default function TrainWhereForm({ where, onWhere, onPick, runner, disable
   useEffect(load, [load])
 
   useEffect(() => {
-    onPick(where === 'rent' && instance ? { instance_id: instance.id } : null)
+    onPick(where === 'rent' && instance
+      ? { instance_id: instance.id, fetch_checkpoints: ckpts } : null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [where, instance?.id])
+  }, [where, instance?.id, ckpts])
 
   const money = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`
 
@@ -130,6 +133,25 @@ export default function TrainWhereForm({ where, onWhere, onPick, runner, disable
               <span className="text-xs text-neutral-500">{i.label} · id {i.id}</span>
             </label>
           ))}
+
+          {/* ⚠ **Hub 로는 중간 체크포인트를 못 받는다.** `push_to_hub` 가 학습이 끝날 때
+              한 번만 올려서, `save_freq` 를 아무리 잘게 줘도 Hub 에는 최종본뿐이다.
+              중간 것은 기계 안에만 있고 파기하면 같이 사라진다 — 20K 학습에 5000마다
+              저장했는데 하나만 돌아오는 것이 그 때문이다. */}
+          {instance && (
+            <label className="flex cursor-pointer items-start gap-2 text-xs text-neutral-300">
+              <input type="checkbox" checked={ckpts} onChange={(e) => setCkpts(e.target.checked)}
+                className="mt-0.5 accent-blue-500" />
+              <span>
+                중간 체크포인트도 받기
+                <span className="text-neutral-500">
+                  {' '}— 저장 주기마다 찍힌 것을 기계에서 직접 끌어옵니다. Hub 에는 최종본만
+                  올라가므로, 안 받으면 기계를 파기할 때 같이 사라집니다.
+                  한 벌 약 200MB · 전송비 $0.017/GB.
+                </span>
+              </span>
+            </label>
+          )}
 
           {instance && (
             /* ⚠ **끝나도 안 끈다**는 것을 여기서 말한다. 한 묶음([빌리기])과 반대라서,

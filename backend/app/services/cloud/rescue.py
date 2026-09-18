@@ -48,6 +48,19 @@ def snapshot_dir(models_dir: Path, repo_id: str) -> Path:
     return models_dir / f"models--{org}--{name}" / "snapshots" / "rescued"
 
 
+def _scp_opts(target) -> tuple[list[str], str]:
+    """`scp` 용 옵션과 대상. **`ssh` 와 같은 것을 쓴다.**
+
+    ⚠ `scp` 는 ssh 와 같은 옵션이 필요하다(포트·키·known_hosts). `_ssh_argv` 가 만든
+    것에서 옵션만 떼어 쓴다 — 여기서 따로 조립하면 둘이 갈린다. 포트만 `-p` → `-P` 다.
+    """
+    from app.services.training.runners.ssh import _ssh_argv
+
+    argv = _ssh_argv(target, "")
+    opts = ["-P" if o == "-p" else o for o in argv[1:-2]]
+    return opts, argv[-2]
+
+
 def _remote_checkpoint(target, run) -> str | None:
     """원격에서 `last/pretrained_model` 의 실제 경로를 찾는다.
 
@@ -66,7 +79,7 @@ def rescue(target, repo_id: str, models_dir: Path, *,
     ⚠ **예외를 올리지 않는다.** 보험이 실패했다고 파기가 막히면 본전도 못 찾는다 —
     기계가 계속 돌면서 요금이 나간다. 실패는 로그로 남기고 넘어간다.
     """
-    from app.services.training.runners.ssh import _run, _ssh_argv
+    from app.services.training.runners.ssh import _run
 
     run = run or _run
     try:
@@ -84,14 +97,8 @@ def rescue(target, repo_id: str, models_dir: Path, *,
     if dest.exists():
         shutil.rmtree(dest, ignore_errors=True)
 
-    # ⚠ `scp` 는 ssh 와 **같은 옵션**이 필요하다(포트·키·known_hosts). `_ssh_argv` 가
-    #   만든 것에서 옵션만 떼어 쓴다 — 여기서 따로 조립하면 둘이 갈린다.
-    argv = _ssh_argv(target, "")
-    opts = argv[1:-2]                       # 'ssh' 와 (대상, 원격명령) 사이
-    # scp 는 포트를 -P 로 받는다 (ssh 는 -p)
-    opts = ["-P" if o == "-p" else o for o in opts]
+    opts, host = _scp_opts(target)
     dest_str = str(dest)
-    host = argv[-2]
     cmd = ["scp", "-r", *opts, f"{host}:{src}", dest_str]
 
     logger.info("가중치 회수: %s → %s", src, dest_str)
@@ -114,3 +121,74 @@ def rescue(target, repo_id: str, models_dir: Path, *,
         return None
     logger.info("가중치 회수 완료: %s", dest_str)
     return dest
+
+
+#: 중간 체크포인트를 놓는 모양 — **스캐너가 이미 아는 자리**다
+#: (`**/checkpoints/{step}/pretrained_model/config.json`, `model_scanner._scan_train_outputs`).
+#: 새 형식을 만들지 않는다 — 만들면 받아 놓고 화면에 안 뜨는 일이 생긴다.
+def checkpoint_dir(models_dir: Path, repo_id: str, step: str) -> Path:
+    run = repo_id.split("/")[-1] or "cloud-run"
+    return Path(models_dir) / run / "checkpoints" / step / WANTED
+
+
+def fetch_checkpoints(target, repo_id: str, models_dir: Path, *,
+                      run=None, timeout: float = RESCUE_TIMEOUT_S) -> list[Path]:
+    """**중간 체크포인트**를 전부 끌어온다. 받은 자리들을 돌려준다.
+
+    ## ⚠ 왜 따로 필요한가
+
+    `push_to_hub` 는 학습이 끝날 때 **한 번만** 올린다(§12-4) — 그래서 `save_freq` 를
+    아무리 잘게 줘도 **Hub 에는 최종본뿐**이다. 중간 것은 기계 안에만 있고, 기계를
+    파기하면 같이 사라진다. 20K 학습에 5000마다 저장했는데 최종 하나만 돌아오는 것이
+    그 때문이다.
+
+    ## ⚠ `last` 는 건너뛴다
+
+    최종본은 Hub 든 `scp` 든 이미 받는다. 또 받으면 같은 200MB 를 두 번 내는 것이다.
+
+    ## ⚠ 실패해도 예외를 올리지 않는다
+
+    이건 덤이다. 이것 때문에 파기가 막히면 본전도 못 찾는다 — 기계가 계속 돈다.
+    """
+    from app.services.training.runners.ssh import _run
+
+    run = run or _run
+    try:
+        r = run(target, "ls -d /root/outputs/train/*/*/checkpoints/*/"
+                        f"{WANTED} 2>/dev/null")
+        paths = [p.strip() for p in (r.stdout or "").splitlines() if p.strip()]
+    except Exception as exc:                                        # noqa: BLE001
+        logger.warning("중간 체크포인트 목록을 못 읽었습니다: %s", exc)
+        return []
+
+    # `checkpoints/<step>/pretrained_model` → step 이 마지막에서 두 번째
+    wanted = [(p.rsplit("/", 2)[1], p) for p in paths]
+    wanted = [(step, p) for step, p in wanted if step != "last"]
+    if not wanted:
+        logger.info("중간 체크포인트가 없습니다 (save_freq 를 안 줬거나 아직 안 찍혔습니다)")
+        return []
+
+    opts, host = _scp_opts(target)
+    got: list[Path] = []
+    for step, src in sorted(wanted, key=lambda t: (len(t[0]), t[0])):
+        dest = checkpoint_dir(models_dir, repo_id, step)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            shutil.rmtree(dest, ignore_errors=True)
+        logger.info("중간 체크포인트 회수: step %s", step)
+        try:
+            out = subprocess.run(["scp", "-r", *opts, f"{host}:{src}", str(dest)],
+                                 capture_output=True, text=True, timeout=timeout)
+        except Exception as exc:                                    # noqa: BLE001
+            logger.error("step %s 회수 실패(계속): %s", step, exc)
+            continue
+        if out.returncode != 0:
+            logger.error("step %s 회수 실패(계속): %s", step, (out.stderr or "").strip()[:160])
+            continue
+        # ⚠ 스캐너는 `config.json` 을 보고 정책인지 판단한다 — 없으면 화면에 안 뜬다
+        if not (dest / "config.json").is_file():
+            logger.error("step %s: config.json 이 없습니다 — 건너뜁니다", step)
+            continue
+        got.append(dest)
+    logger.info("중간 체크포인트 %d개를 받았습니다", len(got))
+    return got

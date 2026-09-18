@@ -60,7 +60,7 @@ def _target_for(inst) -> SSHTarget:
 async def start(*, provider, offer_id: int, template_hash: str, disk_gb: float,
                 budget: Budget, args: list[str], total_steps: int,
                 output_dir: str = "", env: dict | None = None,
-                repo_id: str = "") -> CloudJob:
+                repo_id: str = "", fetch_checkpoints: bool = False) -> CloudJob:
     """빌려서 학습을 건다. **배경으로 돌고 즉시 돌아온다.**
 
     돌아온 `CloudJob` 은 살아 있는 객체다 — 단계·비용이 그 위에서 갱신된다.
@@ -112,7 +112,8 @@ async def start(*, provider, offer_id: int, template_hash: str, disk_gb: float,
         거기 있는 것은 **지난번 가중치**다. 시각을 안 보면 그걸 성공으로 읽는다.
         """
         await retrieve.before_destroy(target, repo_id, settings.models_dir,
-                                      since=started_at)
+                                      since=started_at,
+                                      checkpoints=fetch_checkpoints)
 
     async def _go() -> None:
         global _job
@@ -225,7 +226,8 @@ async def stop_now(provider) -> CloudJob | None:
 
 async def train_on(*, provider, instance_id: int, args: list[str], total_steps: int,
                    output_dir: str = "", env: dict | None = None,
-                   repo_id: str = "", max_hours: float = 6.0) -> CloudJob:
+                   repo_id: str = "", max_hours: float = 6.0,
+                   fetch_checkpoints: bool = False) -> CloudJob:
     """**이미 있는 기계**에 학습을 건다. 배경으로 돌고 즉시 돌아온다.
 
     ## ⚠ 파기하지 않는다
@@ -304,7 +306,8 @@ async def train_on(*, provider, instance_id: int, args: list[str], total_steps: 
             _remember(job)
             if repo_id:
                 await retrieve.retrieve_now(target, repo_id, settings.models_dir,
-                                            since=started_at)
+                                            since=started_at,
+                                            checkpoints=fetch_checkpoints)
         except Exception as exc:                                    # noqa: BLE001
             logger.error("빌린 기계에서의 학습 실패: %s", exc)
             job.reason = str(exc)

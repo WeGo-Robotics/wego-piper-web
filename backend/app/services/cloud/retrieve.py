@@ -51,6 +51,7 @@ WANTED_FILE = "model.safetensors"
 #: 지금 회수가 어디까지 왔나. 화면이 이걸 받아 간다.
 #:
 #: - `idle`     아직 할 일이 없다
+#: - `checkpoints` 중간 체크포인트를 받는 중 (요청했을 때만)
 #: - `checking` Hub 에 올라갔는지 보는 중
 #: - `rescuing` 기계에서 직접 끌어오는 중 (Hub 에 없다)
 #: - `waiting`  Hub 에 있다 — **기계를 파기한 뒤** 받는다
@@ -152,19 +153,21 @@ def pull(repo_id: str, models_dir: Path) -> Path:
 
 
 async def retrieve_now(target, repo_id: str, models_dir: Path, *, since: float = 0.0,
-                       rescue_fn=None) -> None:
+                       rescue_fn=None, checkpoints: bool = False) -> None:
     """**기계를 안 끄는 경우**의 회수 — 두 단계를 잇달아 한다.
 
     ⚠ 한 묶음(`/rent`)에서는 두 단계 사이에 파기가 낀다(`scp` 는 기계가 있어야 하고 Hub
     는 기계를 안 타므로). 사람이 빌려 둔 기계에서는 끼어들 파기가 없으니 그냥 이어서
     한다 — 판정과 순서는 같은 함수를 쓴다.
     """
-    await before_destroy(target, repo_id, models_dir, since=since, rescue_fn=rescue_fn)
+    await before_destroy(target, repo_id, models_dir, since=since, rescue_fn=rescue_fn,
+                         checkpoints=checkpoints)
     await after_destroy(repo_id, models_dir)
 
 
 async def before_destroy(target, repo_id: str, models_dir: Path, *,
-                         since: float = 0.0, rescue_fn=None) -> None:
+                         since: float = 0.0, rescue_fn=None,
+                         checkpoints: bool = False) -> None:
     """**기계가 살아 있는 동안** 해야 할 몫. 여기서 판정도 한다.
 
     ⚠ 예외를 올리지 않는다. 회수 실패가 파기를 막으면 본전도 못 찾는다 — 기계가 계속
@@ -174,6 +177,20 @@ async def before_destroy(target, repo_id: str, models_dir: Path, *,
     if not repo_id:
         _set("idle", detail="저장소를 안 정했습니다")
         return
+
+    # ⚠ **중간 체크포인트는 기계가 살아 있을 때만 가져올 수 있다.** Hub 에는 애초에
+    #   안 올라간다 — `push_to_hub` 는 학습 끝에 한 번뿐이다(§12-4). 그래서 Hub 냐
+    #   `scp` 냐를 가르기 **전에**, 요청했으면 먼저 받는다.
+    if checkpoints:
+        from app.services.cloud.rescue import fetch_checkpoints
+
+        _set("checkpoints", repo_id=repo_id, detail="중간 체크포인트를 받는 중입니다")
+        try:
+            got = await asyncio.to_thread(fetch_checkpoints, target, repo_id, models_dir)
+            logger.info("중간 체크포인트 %d개", len(got))
+        except Exception as exc:                                    # noqa: BLE001
+            # ⚠ 덤이 본체를 막으면 안 된다 — 최종본 회수와 파기는 계속돼야 한다.
+            logger.error("중간 체크포인트 회수 실패(계속): %s", exc)
 
     _set("checking", repo_id=repo_id)
     if await asyncio.to_thread(pushed, repo_id, since):
