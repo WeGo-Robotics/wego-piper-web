@@ -104,7 +104,7 @@ curl -fsSLO .../deploy/piper-install.sh && chmod +x piper-install.sh && ./piper-
 |---|---|---|
 | 대표 1장 | `sim.jpg`(조종 창) | 그대로 쓸 만하다 |
 | 한 바퀴 | robot·camera·collect·study·inference (5장) | 그대로 |
-| 클라우드 GPU | **없음** | 새로 (빌린 기계 목록 + 학습이 도는 화면) |
+| 클라우드 GPU | ☑ `cloud_gpu.png` (2026-09-21) | **받았다** — RENT 탭(매물 비교). 빌린 기계가 도는 화면은 있으면 더 좋지만 없어도 절이 선다 |
 | 가상환경 편집기 | **없음** | 새로 (물체 목록 + 탑뷰 배치) |
 | 에피소드 뷰어 | `graph.jpg` | 그대로 |
 
