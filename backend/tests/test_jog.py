@@ -61,10 +61,36 @@ def test_it_refuses_to_take_over_someone_elses_command_path(session, monkeypatch
     """
     from piper_shm import arm as shm_arm
 
+    from app.services import teleop
+
     monkeypatch.setattr(shm_arm, "list_segments",
                         lambda: [shm_arm.segment_name("can1", shm_arm.KIND_ACTION)])
+    # 방금 쓴 세그먼트 = 소유자가 살아 있다
+    monkeypatch.setattr(teleop, "_lease_age_s", lambda iface: 0.05)
     with pytest.raises(JogError, match="쥐고 있습니다"):
         session.start("can1", FULL)
+
+
+def test_it_takes_over_a_command_path_that_nobody_has_written_to(session, monkeypatch):
+    """⚠ **존재만으로 거절하면 팔이 영영 잠긴다.** SIGKILL 당한 프로세스는 close 를
+    못 해 세그먼트를 남기고, 호스트 데몬은 그걸 못 치운다 — 게이트웨이가 컨테이너
+    **root** 로 만들었고 `/dev/shm` 은 sticky 라 사용자의 unlink 가 EPERM 이다.
+    .120 의 시뮬 팔이 그렇게 잠겨 [해제]·[연결]도 안 먹었다 (2026-09-21).
+
+    판정 기준은 소유권이 아니라 **마지막 기록 시각**이다 — 살아 있는 소비자는
+    데드맨(300ms)보다 훨씬 자주 쓴다.
+    """
+    from piper_shm import arm as shm_arm
+
+    from app.services import teleop
+
+    name = shm_arm.segment_name("can1", shm_arm.KIND_ACTION)
+    removed: list[str] = []
+    monkeypatch.setattr(shm_arm, "list_segments", lambda: [name])
+    monkeypatch.setattr(teleop, "_lease_age_s", lambda iface: 30.0)
+    monkeypatch.setattr(shm_arm, "unlink", lambda n: removed.append(n) or True)
+    session.start("can1", FULL)
+    assert removed == [name], "죽은 lease 를 안 치우고 그 위에 덮어썼다"
 
 
 def test_the_first_goal_is_the_current_pose(session):

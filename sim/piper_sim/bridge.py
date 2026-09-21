@@ -20,6 +20,22 @@ ACTION_POLL_S = 0.001
 DEADMAN_CHECK_S = 0.05
 
 
+def _drop_action_segment(arm_name: str) -> None:
+    """남은 명령 세그먼트를 치운다. **못 치우면 말한다.**
+
+    ⚠ 예전엔 결과를 안 봤다. 게이트웨이(컨테이너 **root**)가 만든 세그먼트는
+    `/dev/shm` 이 sticky 라 사용자로 도는 이 데몬이 지울 수 없는데(EPERM),
+    `unlink()` 가 False 를 조용히 돌려줘서 [해제]·[연결]도 재기동도 안 먹는
+    팔을 아무 말 없이 남겼다 (.120 2026-09-21). 지금은 게이트웨이가 죽은
+    lease 를 이어받아 치운다 — 여기서는 **보이게만** 한다.
+    """
+    name = A.segment_name(arm_name, A.KIND_ACTION)
+    if not A.unlink(name) and A.segment_path(name).exists():
+        logger.warning("%s: 남은 명령 세그먼트를 못 지웠습니다 — 만든 쪽이 다른 "
+                       "사용자(컨테이너 root)입니다. 게이트웨이가 다음 시작 때 이어받습니다",
+                       arm_name)
+
+
 class SimArmBridge:
     def __init__(self, arm_name: str, world, safety: SafetyConfig | None = None) -> None:
         self.arm_name = arm_name
@@ -64,7 +80,7 @@ class SimArmBridge:
         if self._state is not None:
             self._state.close()
             self._state = None
-        A.unlink(A.segment_name(self.arm_name, A.KIND_ACTION))
+        _drop_action_segment(self.arm_name)
         logger.info("시뮬 팔 브리지 정지: %s (발행 %d, 송신 %d)", self.arm_name, self.published, self.sent)
 
     def estop(self) -> None:

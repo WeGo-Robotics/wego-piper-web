@@ -68,21 +68,60 @@ class ArmBusyError(RuntimeError):
     """명령 경로를 못 잡는 이유. 호출부가 그대로 사용자에게 보여준다."""
 
 
+#: 이만큼 아무도 안 쓴 명령 세그먼트는 **죽은 것**으로 본다. 살아 있는 소비자는
+#: 데드맨(300ms)보다 훨씬 자주 쓴다 — 릴레이·웹 리더가 30~100Hz, 녹화는 fps.
+#: 넉넉히 잡는다: 성급하면 잠깐 멈춘 살아 있는 소유자의 팔을 뺏는다.
+STALE_LEASE_S = 5.0
+
+
+def _lease_age_s(iface: str) -> float:
+    """명령 세그먼트에 마지막으로 쓴 지 몇 초인가. 못 읽으면 무한(=죽은 것)."""
+    from piper_shm import arm as shm_arm
+
+    try:
+        reader = shm_arm.ActionReader(iface)
+    except Exception:
+        # 열리지도 않는 세그먼트는 소유자가 살아 있다는 증거가 못 된다
+        return float("inf")
+    try:
+        return reader.age_s()
+    finally:
+        try:
+            reader.close()
+        except Exception:
+            pass
+
+
 def open_action_writer(iface: str, deadman_ms: int):
-    """팔의 명령 경로를 연다. 이미 누가 쥐고 있으면 **거절한다.**
+    """팔의 명령 경로를 연다. **살아 있는** 소유자가 있으면 거절한다.
 
     ⚠ `ActionWriter` 는 `O_CREAT` 라 기존 세그먼트를 **조용히 덮는다.** 추론
     프록시가 조종 중인데 그 위에 열면 팔의 명령 경로를 가로채는 셈이다.
     "세그먼트 존재 = 조종 중"은 관례지 강제가 아니므로 여기서 확인한다.
+
+    ⚠ **존재만으로 거절하면 안 된다.** SIGKILL 당한 프로세스(E-stop 이 녹화를
+    죽이는 경로가 그렇다)는 close 를 못 해 세그먼트를 남기고, 그러면 그 팔은
+    영영 잠긴다 — .120 에서 시뮬 팔이 그렇게 잠겼다(2026-09-21). 호스트 데몬은
+    그걸 못 치운다: 게이트웨이는 컨테이너 **root** 로 만들고 `/dev/shm` 은
+    sticky 라, 사용자로 도는 데몬의 unlink 는 EPERM 으로 조용히 실패한다.
+    치울 수 있는 것은 만든 쪽(여기)뿐이므로 **여기서 판정하고 이어받는다.**
+    판정 기준은 소유권이 아니라 **마지막 기록 시각**이다.
     """
     from piper_shm import arm as shm_arm
 
     name = shm_arm.segment_name(iface, shm_arm.KIND_ACTION)
     if name in set(shm_arm.list_segments()):
-        raise ArmBusyError(
-            f"{iface} 의 명령 세그먼트를 누가 이미 쥐고 있습니다 — "
-            "추론·녹화·조종이 도는 중인지 보세요. 아무것도 안 돌고 있다면 죽은 "
-            "프로세스가 남긴 것입니다: 그 팔을 [해제] 후 [연결] 하면 지워집니다")
+        age = _lease_age_s(iface)
+        if age < STALE_LEASE_S:
+            raise ArmBusyError(
+                f"{iface} 의 명령 세그먼트를 누가 이미 쥐고 있습니다 "
+                f"(마지막 명령 {age:.1f}초 전) — 추론·녹화·조종이 도는 중입니다")
+        logger.warning("%s 의 명령 세그먼트를 %.0f초째 아무도 안 씁니다 — 죽은 "
+                       "프로세스가 남긴 것으로 보고 지우고 이어받습니다", iface, age)
+        if not shm_arm.unlink(name) and shm_arm.segment_path(name).exists():
+            raise ArmBusyError(
+                f"{iface} 의 명령 세그먼트가 남아 있는데 지울 수 없습니다 — "
+                f"호스트에서 `sudo rm /dev/shm/piper.arm.{name}` 로 지우세요")
     return shm_arm.ActionWriter(iface, deadman_ms=deadman_ms)
 
 
