@@ -81,7 +81,8 @@ def open_action_writer(iface: str, deadman_ms: int):
     if name in set(shm_arm.list_segments()):
         raise ArmBusyError(
             f"{iface} 의 명령 세그먼트를 누가 이미 쥐고 있습니다 — "
-            "추론이나 녹화가 도는 중인지 보세요")
+            "추론·녹화·조종이 도는 중인지 보세요. 아무것도 안 돌고 있다면 죽은 "
+            "프로세스가 남긴 것입니다: 그 팔을 [해제] 후 [연결] 하면 지워집니다")
     return shm_arm.ActionWriter(iface, deadman_ms=deadman_ms)
 
 

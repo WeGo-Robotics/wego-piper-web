@@ -776,8 +776,26 @@ def test_every_daemon_startup_sweep_removes_only_its_own_segments():
     pat = re.search(r'r"([^"]+)"', helper).group(1)
     assert all(re.match(pat, i) for i in ("can0", "can3", "vcan1"))
     assert not any(re.match(pat, i) for i in ("so101_leader1", "sim_follower1", "rs_0"))
-    assert '".sim_" in n' in (REPO / "daemons" / "simd.py").read_text()
     assert "so101 세그먼트만" in (REPO / "daemons" / "so101d.py").read_text()
+    # ⚠ simd 는 **실제 이름으로** 판정한다. 예전엔 여기서 `'".sim_" in n'` 이라는
+    #   **문자열이 소스에 있는지**만 봤고, 그 필터는 접두사 없는 이름
+    #   (`sim_follower1.action`)과 한 번도 안 맞았다 — 테스트는 초록인데 정리는
+    #   한 번도 안 돌았고, 죽은 프로세스가 남긴 명령 세그먼트가 시뮬 팔을 영영
+    #   잠갔다 (.120 실측 2026-09-21). 규칙이 아니라 **동작**을 본다.
+    import importlib
+    import sys as _sys
+
+    from piper_shm import arm as A
+
+    if str(REPO) not in _sys.path:
+        _sys.path.insert(0, str(REPO))
+    simd = importlib.import_module("daemons.simd")
+    for iface in ("sim_follower1", "sim_leader2"):
+        for kind in (A.KIND_STATE, A.KIND_ACTION):
+            name = A.segment_name(iface, kind)
+            assert simd.owns_segment(name), f"simd 가 자기 세그먼트를 안 지운다: {name}"
+    for other in ("can0.action", "vcan1.state", "so101_leader1.state"):
+        assert not simd.owns_segment(other), f"simd 가 남의 세그먼트를 지운다: {other}"
 
 
 def test_the_leader_bridge_recreates_its_segment_when_someone_unlinks_it():

@@ -35,6 +35,18 @@ _METHODS = {"scan", "attach", "release", "release_all", "estop", "info", "lost",
             "cam_last_apply_report", "cam_info", "cam_lost"}
 
 
+def owns_segment(name: str) -> bool:
+    """이 팔 세그먼트가 simd 것인가 — `<iface>.state|.action` 의 iface 가 `sim_*` 일 때만.
+    다른 데몬(robotd `can*`, so101d `so101_*`)의 것은 **살아 있는 발행자의 것**일 수 있다.
+
+    ⚠ 이름은 `list_segments()` 가 주는 **접두사 없는** 형태다(`sim_follower1.action`).
+      예전 필터는 `".sim_" in n` 이라 한 번도 안 맞았고, 그래서 죽은 프로세스가 남긴
+      명령 세그먼트를 **아무도 안 치웠다** — 그 팔은 재기동을 해도 "누가 이미 쥐고
+      있습니다"로 영영 잠겼다 (.120 실측 2026-09-21).
+    """
+    return name.rsplit(".", 1)[0].startswith("sim_")
+
+
 def serve(bus: Bus, hub: SimHub) -> None:
     global _running
     logger.info("시뮬 데몬 시작")
@@ -84,7 +96,7 @@ def main() -> int:
     try:
         from piper_shm import arm as A
         from piper_shm import list_segments as cam_segments, unlink as cam_unlink
-        stale = [n for n in A.list_segments() if ".sim_" in n]
+        stale = [n for n in A.list_segments() if owns_segment(n)]
         for n in stale:
             A.unlink(n)
         stale_cam = [n for n in cam_segments() if n.startswith("sim_")]
