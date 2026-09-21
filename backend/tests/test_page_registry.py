@@ -136,16 +136,33 @@ def test_in_page_tabs_sit_right_beside_the_title(page):
     assert after.index(".map(") < after.index("</div>"), f"{page}: 탭이 제목과 같은 상자 안이 아니다"
 
 
-def test_the_estop_button_is_not_moved_into_the_bars():
-    """E-stop 은 어느 페이지든 **같은 자리**여야 한다 — 안전 장치의 요건이다.
+def test_the_estop_button_sits_at_the_end_of_the_status_bar_and_never_shrinks():
+    """E-stop 은 **상태바 맨 끝**이다 (사용자 요청 2026-09-21).
 
-    상태바(좁다)나 사이드바(접힌다)로 옮기면 급할 때 크기·위치가 달라진다.
+    ⚠ 예전 규칙은 "바로 옮기지 않는다" 였다. 이유는 **급할 때 크기·위치가 달라지면 안 된다**
+    였고 그 이유는 지금도 맞다 — 바뀐 것은 자리이지 이유가 아니다. 옮기면서 그 이유를
+    지키는 방법이 둘이고, 이 테스트가 그 둘을 잡는다:
+
+    1. **맨 끝.** 앞의 활동 칩·장치 수·디스크·알림은 내용에 따라 늘고 준다. 맨 끝에 두면
+       x 위치가 **창 너비에만** 달린다 — 무엇이 도는지와 무관하게 늘 같은 자리다.
+       뒤에 무엇을 하나라도 더 붙이면 그 성질이 깨지므로 여기서 막는다.
+    2. **`shrink-0`.** 창이 좁아져도 안 줄어든다. 면적도 옛 원(56×56)과 비슷하게 잡았다.
+
+    그리고 **한 곳에서만 그린다** — 두 군데면 눌러도 안 듣는 쪽이 생긴다(실제로 옮기는
+    중에 Layout 과 StatusBar 양쪽에 잠깐 있었다).
     """
-    layout = (_SRC / "components" / "Layout.tsx").read_text()
-    assert "EStopButton" in layout, "E-stop 이 Layout 밖으로 나갔다"
-    for f in ("StatusBar.tsx", "Sidebar.tsx"):
-        assert "EStop" not in (_SRC / "components" / f).read_text(), \
-            f"{f} 안에 E-stop 이 들어갔다"
+    bar = (_SRC / "components" / "StatusBar.tsx").read_text()
+    assert "<EStopButton />" in bar, "상태바에 E-stop 이 없다"
+    tail = bar.split("<EStopButton />", 1)[1].split("</header>", 1)[0]
+    assert "<" not in tail, f"E-stop 뒤에 무언가 더 있다 — 맨 끝이 아니다: {tail.strip()[:60]}"
+
+    estop = (_SRC / "components" / "EStopButton.tsx").read_text()
+    assert "shrink-0" in estop, "좁아지면 줄어든다 — 급할 때 작아지는 버튼이 된다"
+    assert "fixed" not in estop, "아직 떠 있는 자리 지정이 남았다"
+
+    sites = [f for f in _SRC.rglob("*.tsx") if "<EStopButton" in f.read_text()]
+    assert [f.name for f in sites] == ["StatusBar.tsx"], \
+        f"E-stop 을 그리는 곳이 하나가 아니다: {[f.name for f in sites]}"
 
 
 def test_the_status_bar_does_not_compose_its_own_activity_names():

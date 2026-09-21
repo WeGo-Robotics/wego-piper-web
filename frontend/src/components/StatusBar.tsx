@@ -6,6 +6,7 @@ import type { DeviceCount } from '../hooks/useDeviceSummary'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { api } from '../services/api'
 import type { DiskUsage } from '../types/models'
+import EStopButton from './EStopButton'
 import { NotificationBell } from './SystemMessages'
 
 /**
@@ -154,6 +155,10 @@ export default function StatusBar() {
           connected ? 'bg-emerald-500' : 'bg-red-500'}`} aria-hidden />
         {connected ? '연결됨' : '끊김'}
       </span>
+
+      {/* ⚠ **맨 끝**이다 — 앞의 것들이 내용에 따라 늘고 줄어도 E-stop 자리는 안 밀린다.
+          급할 때 망설이면 안 되는 버튼이라 그 조건이 먼저다. 근거는 그 컴포넌트 주석에. */}
+      <EStopButton />
     </header>
   )
 }

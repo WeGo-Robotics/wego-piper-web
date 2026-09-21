@@ -75,10 +75,21 @@ export default function EStopButton() {
     return () => clearInterval(interval)
   }, [])
 
+  // ⚠ **상태바의 맨 끝**에 선다 (사용자 요청 2026-09-21).
+  //
+  //   예전에는 화면 오른쪽 아래에 떠 있었고 거기에는 "어느 페이지든 같은 자리" 라는 이유가
+  //   있었다 — 급할 때 찾는 것을 망설이면 안 된다. 자리를 옮기면서 **그 이유는 안 버린다**:
+  //
+  //   1. **맨 끝**이다. 앞의 활동 칩·장치 수·디스크·알림은 내용에 따라 늘고 주는데, 맨 끝에
+  //      두면 x 위치가 **창 너비에만** 달린다 — 무엇이 도는지와 무관하게 늘 같은 자리다.
+  //   2. **`shrink-0`** 이라 창이 좁아져도 안 줄어든다. 면적도 옛 원과 비슷하게 잡았다
+  //      (56×56 = 3136px² → 36×86 ≈ 3100px²).
+  //
+  //   상태바는 `shrink-0` 인 `header` 라 어느 페이지에서도 스크롤과 무관하게 보인다.
   return (
     <button
       onClick={triggerEstop}
-      className="fixed bottom-4 right-4 z-50 w-14 h-14 rounded-full bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-[10px] shadow-lg shadow-red-900/50 transition-colors select-none pointer-events-auto"
+      className="shrink-0 h-9 px-4 rounded-md bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-xs tracking-wide shadow-md shadow-red-900/40 transition-colors select-none"
       title="긴급 정지 (Escape)"
     >
       E-STOP

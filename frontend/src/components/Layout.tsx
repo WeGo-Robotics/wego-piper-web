@@ -3,7 +3,6 @@ import { Outlet } from 'react-router-dom'
 import CloudOrphanAlerts from './CloudOrphanAlerts'
 import DeviceAlerts from './DeviceAlerts'
 import LoadAlerts from './LoadAlerts'
-import EStopButton from './EStopButton'
 import Sidebar from './Sidebar'
 import StatusBar from './StatusBar'
 import { SystemMessageHost } from './SystemMessages'
@@ -49,9 +48,9 @@ export default function Layout() {
           열어야 보이면 늦는다. 여기에 두면 어느 페이지에 있든 알림함에 쌓인다. */}
       <CloudOrphanAlerts />
       <SystemMessageHost />
-      {/* ⚠ E-stop 은 자리를 안 옮긴다. 사이드바가 접히든 펴지든, 어느 페이지든
-          **같은 자리**여야 한다 — 그게 안전 장치의 요건이다. */}
-      <EStopButton />
+      {/* E-stop 은 **상태바 맨 끝**으로 옮겼다 (사용자 요청 2026-09-21). "어느 페이지든
+          같은 자리" 라는 요건은 그대로다 — 상태바는 스크롤과 무관하게 늘 보이고, 맨 끝이라
+          앞의 내용이 변해도 자리가 안 밀린다. 근거는 그 컴포넌트 주석에 있다. */}
     </div>
   )
 }
