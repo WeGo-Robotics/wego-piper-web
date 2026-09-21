@@ -28,24 +28,28 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from app.services.cloud import layout
+
 logger = logging.getLogger(__name__)
 
 #: 회수에 쓸 최대 시간. 200MB 를 못 끄는 회선이면 그 기계는 애초에 느린 것이다.
 RESCUE_TIMEOUT_S = 600.0
 
 #: 이것만 받는다. `training_state` 는 두 배 크고 추론에 안 쓴다.
-WANTED = "pretrained_model"
+#: ⚠ 이름은 `layout` 것을 쓴다 — 여기서 따로 적으면 둘이 갈린다.
+WANTED = layout.WANTED
 
 
-def snapshot_dir(models_dir: Path, repo_id: str) -> Path:
-    """모델 스캐너가 읽는 자리를 만든다.
+def dest_for(remote_path: str, repo_id: str, step: str,
+             root: Path | None = None) -> Path:
+    """원격 경로가 알려 준 자리 — **로컬 학습과 같은 모양**으로 (layout.py).
 
-    ⚠ 스캐너는 HF 캐시 모양(`models--org--name/snapshots/<hash>/config.json`)만 읽는다.
-    아무 데나 떨어뜨리면 파일은 있는데 **화면에 안 뜬다** — 회수했다고 믿는데 못 쓰는
-    상태가 된다.
+    ⚠ 예전에는 여기서 HF 캐시 모양(`models--org--name/snapshots/rescued`)을 지어냈다.
+    파일은 화면에 떴지만 로컬 학습과 다른 덩어리로 읽혀서, 같은 학습의 중간 체크포인트와
+    최종본이 목록에서 갈라졌다. 이름은 **원격이 이미 지어 놨다** — 받아 쓰면 된다.
     """
-    org, _, name = repo_id.partition("/")
-    return models_dir / f"models--{org}--{name}" / "snapshots" / "rescued"
+    name = layout.run_name(remote_path) or layout.fallback_run(repo_id)
+    return layout.checkpoint_dir(name, step, root)
 
 
 def _scp_opts(target) -> tuple[list[str], str]:
@@ -72,7 +76,7 @@ def _remote_checkpoint(target, run) -> str | None:
     return path or None
 
 
-def rescue(target, repo_id: str, models_dir: Path, *,
+def rescue(target, repo_id: str, root: Path | None = None, *,
            run=None, timeout: float = RESCUE_TIMEOUT_S) -> Path | None:
     """`last/pretrained_model` 을 끌어온다. 받은 자리를 돌려준다. 못 받으면 `None`.
 
@@ -92,7 +96,7 @@ def rescue(target, repo_id: str, models_dir: Path, *,
                        WANTED)
         return None
 
-    dest = snapshot_dir(models_dir, repo_id)
+    dest = dest_for(src, repo_id, layout.LAST, layout.resolve_root(root, ensure=True))
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         shutil.rmtree(dest, ignore_errors=True)
@@ -123,15 +127,7 @@ def rescue(target, repo_id: str, models_dir: Path, *,
     return dest
 
 
-#: 중간 체크포인트를 놓는 모양 — **스캐너가 이미 아는 자리**다
-#: (`**/checkpoints/{step}/pretrained_model/config.json`, `model_scanner._scan_train_outputs`).
-#: 새 형식을 만들지 않는다 — 만들면 받아 놓고 화면에 안 뜨는 일이 생긴다.
-def checkpoint_dir(models_dir: Path, repo_id: str, step: str) -> Path:
-    run = repo_id.split("/")[-1] or "cloud-run"
-    return Path(models_dir) / run / "checkpoints" / step / WANTED
-
-
-def fetch_checkpoints(target, repo_id: str, models_dir: Path, *,
+def fetch_checkpoints(target, repo_id: str, root: Path | None = None, *,
                       run=None, timeout: float = RESCUE_TIMEOUT_S) -> list[Path]:
     """**중간 체크포인트**를 전부 끌어온다. 받은 자리들을 돌려준다.
 
@@ -161,17 +157,20 @@ def fetch_checkpoints(target, repo_id: str, models_dir: Path, *,
         logger.warning("중간 체크포인트 목록을 못 읽었습니다: %s", exc)
         return []
 
-    # `checkpoints/<step>/pretrained_model` → step 이 마지막에서 두 번째
+    # `checkpoints/<step>/pretrained_model` → step 이 마지막에서 두 번째.
+    # ⚠ **step 이름은 원격 것을 그대로 쓴다.** `020000` 의 제로패딩은 lerobot 이 붙인
+    #   것이고, 여기서 `20000` 으로 고쳐 쓰면 로컬 학습과 이름이 갈린다.
     wanted = [(p.rsplit("/", 2)[1], p) for p in paths]
-    wanted = [(step, p) for step, p in wanted if step != "last"]
+    wanted = [(step, p) for step, p in wanted if step != layout.LAST]
     if not wanted:
         logger.info("중간 체크포인트가 없습니다 (save_freq 를 안 줬거나 아직 안 찍혔습니다)")
         return []
 
+    base = layout.resolve_root(root, ensure=True)
     opts, host = _scp_opts(target)
     got: list[Path] = []
     for step, src in sorted(wanted, key=lambda t: (len(t[0]), t[0])):
-        dest = checkpoint_dir(models_dir, repo_id, step)
+        dest = dest_for(src, repo_id, step, base)
         dest.parent.mkdir(parents=True, exist_ok=True)
         if dest.exists():
             shutil.rmtree(dest, ignore_errors=True)

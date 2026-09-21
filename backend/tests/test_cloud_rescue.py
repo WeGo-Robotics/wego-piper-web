@@ -8,8 +8,6 @@
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from app.services.cloud import rescue as R
 from app.services.training.runners.ssh import SSHTarget
 
@@ -45,8 +43,6 @@ def test_it_pulls_only_the_weights_never_the_optimizer_state(monkeypatch, tmp_pa
     더 내고 안 쓸 것을 받을 이유가 없다.
     """
     calls = _capture(monkeypatch)
-    (tmp_path / "models--me--m" / "snapshots" / "rescued").mkdir(parents=True)
-    (tmp_path / "models--me--m" / "snapshots" / "rescued" / "config.json").write_text("{}")
     R.rescue(TARGET, "me/m", tmp_path, run=_run_ok)
     src = next(a for a in calls[0] if a.startswith("h:") or ":" in a and "/root/" in a)
     assert src.endswith("pretrained_model"), src
@@ -70,11 +66,49 @@ def test_scp_reuses_the_ssh_options_so_the_two_cannot_drift(monkeypatch, tmp_pat
     assert "UserKnownHostsFile=/k/kh" in cmd
 
 
-def test_it_lands_where_the_model_scanner_actually_looks(tmp_path):
-    """⚠ 스캐너는 HF 캐시 모양만 읽는다. 아무 데나 두면 파일은 있는데 **화면에 안 뜬다** —
-    회수했다고 믿는데 못 쓰는 상태가 된다."""
-    got = R.snapshot_dir(tmp_path, "wego-hansu/my-act")
-    assert got == tmp_path / "models--wego-hansu--my-act" / "snapshots" / "rescued"
+def test_it_lands_in_the_same_shape_as_a_local_run(tmp_path):
+    """⚠ 예전에는 HF 캐시 모양(`models--org--name/snapshots/rescued`)으로 떨어뜨렸다.
+    파일은 화면에 떴지만 **로컬 학습과 다른 덩어리**로 읽혀서, 같은 학습의 중간
+    체크포인트와 최종본이 목록에서 갈라졌다.
+
+    로컬 학습 실측: `~/outputs/train/2026-09-18/09-52-01_act/checkpoints/020000/
+    pretrained_model`. 클라우드 결과도 글자 하나까지 이 모양이어야 한다.
+    """
+    got = R.dest_for(FOUND, "wego-hansu/my-act", "last", tmp_path)
+    assert got == (tmp_path / "2026-09-17" / "00-30-00_act"
+                   / "checkpoints" / "last" / "pretrained_model")
+
+
+def test_the_run_name_comes_from_the_box_not_from_us(tmp_path):
+    """⚠ 이름을 우리가 지으면 로컬과 갈린다. 원격도 같은 lerobot 이라 `2026-09-17/
+    00-30-00_act` 를 **이미 지어 놨다** — 저장소 이름(`my-act`)은 거기 안 들어간다.
+
+    제로패딩도 마찬가지다: `020000` 은 lerobot 이 붙인 것이라 그대로 따라가야 한다.
+    """
+    src = "/root/outputs/train/2026-09-18/02-13-23_act/checkpoints/020000/pretrained_model"
+    got = R.dest_for(src, "wego-hansu/my-act", "020000", tmp_path)
+    assert "my-act" not in str(got)
+    assert got.parent.name == "020000", "제로패딩을 우리가 고쳐 쓰면 안 된다"
+
+
+def test_an_unreadable_remote_path_still_lands_somewhere(tmp_path):
+    """⚠ 이름을 못 읽었다고 받은 것을 버리면 안 된다 — 저장소 이름으로라도 놓는다."""
+    got = R.dest_for("", "wego-hansu/my-act", "last", tmp_path)
+    assert got == tmp_path / "my-act" / "checkpoints" / "last" / "pretrained_model"
+
+
+def test_a_rescue_reports_the_local_run_directory(monkeypatch, tmp_path):
+    """받은 자리를 그대로 돌려준다 — 화면이 이걸 "받은 자리" 로 보여 준다."""
+    def _fake(cmd, **kw):
+        dest = Path(cmd[-1])
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "config.json").write_text("{}")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(R.subprocess, "run", _fake)
+    got = R.rescue(TARGET, "me/m", tmp_path, run=_run_ok)
+    assert got == (tmp_path / "2026-09-17" / "00-30-00_act"
+                   / "checkpoints" / "last" / "pretrained_model")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

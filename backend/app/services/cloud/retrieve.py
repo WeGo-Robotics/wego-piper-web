@@ -23,19 +23,27 @@
 눌러야 로컬에 왔다. 학습을 걸어 두고 자리를 뜬 사람 입장에서는 **다 됐는데 아직 못 쓰는**
 상태이고, 그 클릭을 잊으면 다음 날 추론을 돌리려다 그제서야 안다.
 
-## ⚠ 받는 자리는 `models_dir` 다 — HF 기본 캐시가 아니라
+## ⚠ 받는 자리는 **로컬 학습과 같은 모양**이다 (layout.py)
 
-`snapshot_download` 는 기본값으로 `HF_HUB_CACHE` 에 넣는다. 우리 스캐너가 보는 곳은
-`settings.models_dir` 이고, 이 기계에서는 우연히 같지만 `PIPER_MODELS_DIR` 로 옮기면
-갈라진다 — 파일은 받았는데 **화면에 안 뜨는** 상태가 된다. 그래서 `cache_dir` 을
-명시한다.
+`snapshot_download` 를 그냥 부르면 `models--org--name/snapshots/<hash>/` 가 된다. 그
+모양으로 두면 스캐너가 "직접 받은 모델" 로 읽어서, 같은 학습의 중간 체크포인트
+(`checkpoints/<step>/`)와 최종본이 화면에서 **두 덩어리로 갈라진다.** 실제로 그렇게
+갈라져 있었다.
+
+그래서 임시 자리에 받은 뒤 `outputs/train/<날짜>/<시각>_<정책>/checkpoints/last/
+pretrained_model` 로 옮긴다. 옮길 주소는 **받은 것 안에** 있다 — `train_config.json` 의
+`output_dir`(실측). 기계에 물어볼 필요가 없으니 이미 파기한 뒤에도 된다.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import shutil
 from pathlib import Path
+
+from app.services.cloud import layout
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +55,10 @@ PULL_TIMEOUT_S = 900.0
 
 #: "가중치가 왔다" 의 판정 파일. `config.json` 만 보면 빈 껍데기를 성공이라 읽는다.
 WANTED_FILE = "model.safetensors"
+
+#: 받는 도중의 자리. **뿌리 안**이어야 옮길 때 같은 파일시스템이라 즉시 끝난다.
+#: 이름이 `checkpoints` 를 안 품으므로 받다 만 것이 스캐너에 잡히지 않는다.
+INCOMING = ".incoming"
 
 #: 지금 회수가 어디까지 왔나. 화면이 이걸 받아 간다.
 #:
@@ -82,16 +94,50 @@ def cache_name(repo_id: str) -> str:
     return f"models--{org}--{name}"
 
 
-def local_snapshot(repo_id: str, models_dir: Path) -> Path | None:
+def _repo_of(cfg: Path) -> str:
+    """`train_config.json` 이 말하는 저장소. 못 읽으면 빈 문자열."""
+    try:
+        d = json.loads(cfg.read_text())
+    except Exception:                                               # noqa: BLE001
+        return ""
+    return str((d.get("policy") or {}).get("repo_id") or "")
+
+
+def _in_train_outputs(repo_id: str, root: Path) -> Path | None:
+    """새 자리(로컬 학습 모양)에 이번 저장소의 **최종본**이 있나.
+
+    ⚠ `last` 만 본다. 중간 체크포인트도 같은 저장소를 가리키므로 아무거나 맞다고 하면,
+    `scp` 로 중간만 받아 둔 회차에서 **최종본을 안 받고 다 됐다고 말한다.**
+    """
+    base = Path(root)
+    if not base.is_dir():
+        return None
+    for ckpts in sorted(base.rglob(layout.CKPTS)):
+        model_dir = ckpts / layout.LAST / layout.WANTED
+        if not (model_dir / WANTED_FILE).exists():
+            continue
+        if _repo_of(model_dir / layout.CONFIG) == repo_id:
+            return model_dir
+    return None
+
+
+def local_snapshot(repo_id: str, models_dir: Path,
+                   root: Path | None = None) -> Path | None:
     """이미 집에 와 있나. **가중치 파일까지 본다.**
 
     ⚠ 디렉토리만 보고 판정하면 안 된다 — 받다 만 자리, `config.json` 만 있는 자리,
     `.incomplete` 만 남은 자리가 전부 "있음" 으로 읽힌다.
+
+    ⚠ **두 자리를 본다.** 새 자리(로컬 학습 모양)가 먼저고, 못 찾으면 예전 HF 캐시
+    모양도 본다 — 이 바뀜 전에 받아 둔 것을 다시 받게 하지 않기 위해서다.
     """
-    root = Path(models_dir) / cache_name(repo_id) / "snapshots"
-    if not root.is_dir():
+    here = _in_train_outputs(repo_id, layout.resolve_root(root))
+    if here is not None:
+        return here
+    cache = Path(models_dir) / cache_name(repo_id) / "snapshots"
+    if not cache.is_dir():
         return None
-    for snap in sorted(root.iterdir()):
+    for snap in sorted(cache.iterdir()):
         if (snap / WANTED_FILE).exists():
             return snap
     return None
@@ -140,20 +186,50 @@ def pushed(repo_id: str, since: float = 0.0) -> bool:
     return fresh
 
 
-def pull(repo_id: str, models_dir: Path) -> Path:
-    """Hub 에서 받는다. 받은 자리를 돌려준다. (스레드에서 부른다)
+def pull(repo_id: str, root: Path | None = None) -> Path:
+    """Hub 에서 받아 **로컬 학습과 같은 자리**에 놓는다. 그 자리를 돌려준다.
 
-    ⚠ `cache_dir` 을 넘기는 이유는 모듈 머리말에 있다 — 기본 캐시에 받으면 스캐너가
-    못 본다.
+    받는 자리를 미리 알 수 없다 — 학습 이름(`2026-09-18/02-13-23_act`)이 받은 것 안에
+    있기 때문이다. 그래서 임시 자리에 받고, `train_config.json` 을 읽어 옮긴다.
+
+    ⚠ `cache_dir` 이 아니라 `local_dir` 로 받는다. `cache_dir` 은 blob + 심볼릭 구조를
+    만들어서 옮기면 링크가 깨지고, 복사하면 같은 200MB 를 두 벌 갖게 된다.
+
+    ⚠ 이름을 못 읽어도 **받은 것을 버리지 않는다** — 저장소 이름으로라도 놓는다.
+    여기서 예외를 올리면 다 받아 놓고 잃는다.
     """
     from huggingface_hub import snapshot_download
 
-    return Path(snapshot_download(repo_id=repo_id, repo_type="model",
-                                  cache_dir=str(models_dir)))
+    base = layout.resolve_root(root, ensure=True)
+    tmp = base / INCOMING / cache_name(repo_id)
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_download(repo_id=repo_id, repo_type="model", local_dir=str(tmp))
+
+    run = layout.run_from_config(tmp / layout.CONFIG)
+    if not run:
+        run = layout.fallback_run(repo_id)
+        logger.warning("받은 가중치에 %s 가 없습니다 — 학습 이름을 저장소에서 짓습니다: %s",
+                       layout.CONFIG, run)
+    dest = layout.checkpoint_dir(run, layout.LAST, base)
+
+    # ⚠ `local_dir` 은 받은 파일 옆에 자기 메타(`.cache/huggingface/`)를 남긴다.
+    #   그대로 옮기면 체크포인트 안에 낯선 디렉토리가 따라 들어간다.
+    shutil.rmtree(tmp / ".cache", ignore_errors=True)
+    shutil.rmtree(dest, ignore_errors=True)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(tmp), str(dest))
+    try:
+        (base / INCOMING).rmdir()
+    except OSError:
+        pass
+    logger.info("가중치를 로컬 학습과 같은 자리에 놓았습니다: %s", dest)
+    return dest
 
 
 async def retrieve_now(target, repo_id: str, models_dir: Path, *, since: float = 0.0,
-                       rescue_fn=None, checkpoints: bool = False) -> None:
+                       rescue_fn=None, checkpoints: bool = False,
+                       root: Path | None = None) -> None:
     """**기계를 안 끄는 경우**의 회수 — 두 단계를 잇달아 한다.
 
     ⚠ 한 묶음(`/rent`)에서는 두 단계 사이에 파기가 낀다(`scp` 는 기계가 있어야 하고 Hub
@@ -161,13 +237,14 @@ async def retrieve_now(target, repo_id: str, models_dir: Path, *, since: float =
     한다 — 판정과 순서는 같은 함수를 쓴다.
     """
     await before_destroy(target, repo_id, models_dir, since=since, rescue_fn=rescue_fn,
-                         checkpoints=checkpoints)
-    await after_destroy(repo_id, models_dir)
+                         checkpoints=checkpoints, root=root)
+    await after_destroy(repo_id, models_dir, root=root)
 
 
 async def before_destroy(target, repo_id: str, models_dir: Path, *,
                          since: float = 0.0, rescue_fn=None,
-                         checkpoints: bool = False) -> None:
+                         checkpoints: bool = False,
+                         root: Path | None = None) -> None:
     """**기계가 살아 있는 동안** 해야 할 몫. 여기서 판정도 한다.
 
     ⚠ 예외를 올리지 않는다. 회수 실패가 파기를 막으면 본전도 못 찾는다 — 기계가 계속
@@ -186,7 +263,7 @@ async def before_destroy(target, repo_id: str, models_dir: Path, *,
 
         _set("checkpoints", repo_id=repo_id, detail="중간 체크포인트를 받는 중입니다")
         try:
-            got = await asyncio.to_thread(fetch_checkpoints, target, repo_id, models_dir)
+            got = await asyncio.to_thread(fetch_checkpoints, target, repo_id, root)
             logger.info("중간 체크포인트 %d개", len(got))
         except Exception as exc:                                    # noqa: BLE001
             # ⚠ 덤이 본체를 막으면 안 된다 — 최종본 회수와 파기는 계속돼야 한다.
@@ -208,7 +285,7 @@ async def before_destroy(target, repo_id: str, models_dir: Path, *,
         rescue_fn = rescue
 
     try:
-        path = await asyncio.to_thread(rescue_fn, target, repo_id, models_dir)
+        path = await asyncio.to_thread(rescue_fn, target, repo_id, root)
     except Exception as exc:                                        # noqa: BLE001
         logger.error("가중치 회수 실패(파기는 계속): %s", exc)
         _set("failed", detail=str(exc)[:200])
@@ -220,7 +297,8 @@ async def before_destroy(target, repo_id: str, models_dir: Path, *,
 
 
 async def after_destroy(repo_id: str, models_dir: Path, *,
-                        timeout: float = PULL_TIMEOUT_S) -> None:
+                        timeout: float = PULL_TIMEOUT_S,
+                        root: Path | None = None) -> None:
     """**기계를 끈 뒤** 해야 할 몫 — Hub 에서 받아 온다.
 
     ⚠ `before_destroy` 가 `waiting` 을 남겼을 때만 돈다. `scp` 로 이미 받았으면 또
@@ -229,7 +307,7 @@ async def after_destroy(repo_id: str, models_dir: Path, *,
     if _state["state"] != "waiting" or not repo_id:
         return
 
-    here = await asyncio.to_thread(local_snapshot, repo_id, models_dir)
+    here = await asyncio.to_thread(local_snapshot, repo_id, models_dir, root)
     if here is not None:
         # 같은 저장소로 다시 돌린 경우다. `snapshot_download` 도 캐시를 쓰지만,
         # 여기서 끊으면 네트워크를 아예 안 탄다.
@@ -238,10 +316,10 @@ async def after_destroy(repo_id: str, models_dir: Path, *,
         return
 
     _set("pulling", detail="Hub 에서 받는 중입니다")
-    logger.info("가중치를 받습니다: %s → %s", repo_id, models_dir)
+    logger.info("가중치를 받습니다: %s", repo_id)
     try:
         path = await asyncio.wait_for(
-            asyncio.to_thread(pull, repo_id, models_dir), timeout=timeout)
+            asyncio.to_thread(pull, repo_id, root), timeout=timeout)
     except asyncio.TimeoutError:
         # ⚠ 실패해도 잃은 것은 없다 — Hub 에 그대로 있다. 사람이 저장소 페이지에서
         #   받으면 된다. 그래서 여기서 예외를 올리지 않고 상태로 남긴다.

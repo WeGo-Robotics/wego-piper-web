@@ -10,6 +10,8 @@
 
 import asyncio
 import inspect
+import json
+from pathlib import Path
 
 import pytest
 
@@ -33,6 +35,29 @@ def _hub_has(monkeypatch, *files):
         last_modified = datetime.now(timezone.utc)
 
     monkeypatch.setattr("huggingface_hub.HfApi.model_info", lambda self, r: _Info())
+
+
+def _hub_serves(monkeypatch, files: dict):
+    """Hub 다운로드 대역. `local_dir` 에 **진짜로 파일을 쓴다** — 옮기는 코드를 봐야 한다."""
+    import huggingface_hub
+
+    def _dl(repo_id=None, repo_type=None, local_dir=None, **kw):
+        d = Path(local_dir)
+        for name, text in files.items():
+            (d / name).parent.mkdir(parents=True, exist_ok=True)
+            (d / name).write_text(text)
+        return str(d)
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", _dl)
+
+
+def _land(root: Path, run: str, step: str, repo: str) -> Path:
+    """로컬 학습과 같은 모양으로 체크포인트 하나를 만들어 둔다."""
+    d = Path(root) / run / "checkpoints" / step / "pretrained_model"
+    d.mkdir(parents=True)
+    (d / "train_config.json").write_text(json.dumps({"policy": {"repo_id": repo}}))
+    (d / "model.safetensors").write_bytes(b"x")
+    return d
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -70,13 +95,35 @@ def test_a_half_downloaded_snapshot_is_not_here_yet(tmp_path):
     snap = tmp_path / "models--me--m" / "snapshots" / "abc"
     snap.mkdir(parents=True)
     (snap / "config.json").write_text("{}")
-    assert retrieve.local_snapshot("me/m", tmp_path) is None
+    empty = tmp_path / "no-runs"
+    assert retrieve.local_snapshot("me/m", tmp_path, empty) is None
     (snap / "model.safetensors").write_bytes(b"x")
-    assert retrieve.local_snapshot("me/m", tmp_path) == snap
+    assert retrieve.local_snapshot("me/m", tmp_path, empty) == snap
 
 
 def test_nothing_downloaded_at_all(tmp_path):
-    assert retrieve.local_snapshot("me/m", tmp_path) is None
+    assert retrieve.local_snapshot("me/m", tmp_path, tmp_path / "no-runs") is None
+
+
+def test_a_run_already_in_the_local_layout_is_not_downloaded_again(tmp_path):
+    """새 자리에 있으면 Hub 를 다시 안 탄다."""
+    root = tmp_path / "out"
+    d = _land(root, "2026-09-18/02-13-23_act", "last", "me/m")
+    assert retrieve.local_snapshot("me/m", tmp_path / "cache", root) == d
+
+
+def test_intermediate_checkpoints_do_not_count_as_the_final_weights(tmp_path):
+    """⚠ 중간 체크포인트도 같은 저장소를 가리킨다. 아무거나 맞다고 하면, `scp` 로 중간만
+    받아 둔 회차에서 **최종본을 안 받고 다 됐다고 말한다.**"""
+    root = tmp_path / "out"
+    _land(root, "2026-09-18/02-13-23_act", "005000", "me/m")
+    assert retrieve.local_snapshot("me/m", tmp_path / "cache", root) is None
+
+
+def test_someone_elses_run_is_not_this_run(tmp_path):
+    root = tmp_path / "out"
+    _land(root, "2026-09-18/02-13-23_act", "last", "someone/else")
+    assert retrieve.local_snapshot("me/m", tmp_path / "cache", root) is None
 
 
 def test_the_cache_name_is_what_the_scanner_reads():
@@ -356,6 +403,59 @@ def test_stopping_while_the_download_runs_does_not_claim_to_destroy_again():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Hub 에서 받은 것도 **로컬 학습과 같은 자리**로 (2026-09-21)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CFG = json.dumps({"output_dir": "outputs/train/2026-09-18/02-13-23_act",
+                   "policy": {"repo_id": "me/m"}})
+
+
+def test_the_hub_download_lands_in_the_same_shape_as_a_local_run(monkeypatch, tmp_path):
+    """⚠ 그냥 받으면 `models--org--name/snapshots/<hash>/` 가 된다 — 스캐너가 "직접 받은
+    모델" 로 읽어서 같은 학습의 중간 체크포인트와 갈라진다.
+
+    옮길 주소는 **받은 것 안에** 있다 — `train_config.json` 의 `output_dir`(실측).
+    """
+    _hub_serves(monkeypatch, {"config.json": "{}", "model.safetensors": "x",
+                              "train_config.json": _CFG})
+    got = retrieve.pull("me/m", tmp_path)
+    assert got == (tmp_path / "2026-09-18" / "02-13-23_act"
+                   / "checkpoints" / "last" / "pretrained_model")
+    assert (got / "model.safetensors").exists(), "옮기다 잃었다"
+
+
+def test_the_download_leaves_no_scratch_behind(monkeypatch, tmp_path):
+    """⚠ `local_dir` 은 받은 파일 옆에 자기 메타(`.cache/huggingface/`)를 남긴다 —
+    그대로 옮기면 체크포인트 안에 낯선 디렉토리가 따라 들어간다."""
+    _hub_serves(monkeypatch, {"config.json": "{}", "model.safetensors": "x",
+                              "train_config.json": _CFG,
+                              ".cache/huggingface/download/x.lock": ""})
+    got = retrieve.pull("me/m", tmp_path)
+    assert not (got / ".cache").exists(), "hub 메타가 체크포인트에 따라 들어갔다"
+    assert not (tmp_path / retrieve.INCOMING).exists(), "임시 자리가 남았다"
+
+
+def test_a_download_without_its_address_is_still_kept(monkeypatch, tmp_path):
+    """⚠ 이름을 못 읽었다고 **받은 것을 버리면 안 된다** — 저장소 이름으로라도 놓는다."""
+    _hub_serves(monkeypatch, {"config.json": "{}", "model.safetensors": "x"})
+    got = retrieve.pull("wego-hansu/w5-split-act", tmp_path)
+    assert got == (tmp_path / "w5-split-act" / "checkpoints" / "last"
+                   / "pretrained_model")
+    assert (got / "model.safetensors").exists()
+
+
+def test_redownloading_replaces_rather_than_nests(monkeypatch, tmp_path):
+    """⚠ 두 번째로 받을 때 기존 자리가 남아 있으면, `move` 가 그 **안으로** 넣어서
+    `…/pretrained_model/pretrained_model` 이 된다."""
+    _hub_serves(monkeypatch, {"config.json": "{}", "model.safetensors": "x",
+                              "train_config.json": _CFG})
+    first = retrieve.pull("me/m", tmp_path)
+    second = retrieve.pull("me/m", tmp_path)
+    assert first == second
+    assert not (second / "pretrained_model").exists()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 중간 체크포인트 — **Hub 로는 못 받는다** (2026-09-18)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -363,10 +463,25 @@ def test_checkpoints_land_where_the_scanner_already_looks(tmp_path):
     """⚠ 새 자리를 만들지 않는다. 스캐너는 `**/checkpoints/{step}/pretrained_model/
     config.json` 을 읽는다(`_scan_train_outputs`) — 다른 모양으로 두면 받아 놓고 화면에
     안 뜬다."""
-    from app.services.cloud.rescue import checkpoint_dir
+    from app.services.cloud.rescue import dest_for
 
-    d = checkpoint_dir(tmp_path, "wego-hansu/cloud_test1", "5000")
-    assert d == tmp_path / "cloud_test1" / "checkpoints" / "5000" / "pretrained_model"
+    src = "/root/outputs/train/2026-09-18/02-13-23_act/checkpoints/005000/pretrained_model"
+    d = dest_for(src, "wego-hansu/cloud_test1", "005000", tmp_path)
+    assert d == (tmp_path / "2026-09-18" / "02-13-23_act"
+                 / "checkpoints" / "005000" / "pretrained_model")
+
+
+def test_the_final_and_the_intermediates_share_one_run_directory(tmp_path):
+    """⚠ **이게 요점이다.** 예전에는 중간은 `<models_dir>/<repo 이름>/checkpoints/…`,
+    최종본은 `models--org--name/snapshots/…` 로 갈라져서 한 학습이 화면에서 두 덩어리로
+    보였다. 같은 학습이면 같은 폴더 하나에 들어가야 한다."""
+    from app.services.cloud.rescue import dest_for
+
+    base = "/root/outputs/train/2026-09-18/02-13-23_act/checkpoints"
+    mid = dest_for(f"{base}/005000/pretrained_model", "me/m", "005000", tmp_path)
+    fin = dest_for(f"{base}/last/pretrained_model", "me/m", "last", tmp_path)
+    assert mid.parent.parent == fin.parent.parent == (
+        tmp_path / "2026-09-18" / "02-13-23_act" / "checkpoints")
 
 
 def test_last_is_skipped_because_we_already_have_it():
