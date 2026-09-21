@@ -214,7 +214,7 @@ def test_the_readme_says_the_daemons_run_on_the_host():
     # ⚠ `install-daemons.sh` 는 내부 도구라 README 에서 뺐다. 지켜야 할 사실은
     #   **"하드웨어 데몬은 컨테이너가 아니라 호스트에서 돈다"** 는 것뿐이다 —
     #   이걸 모르면 "왜 컨테이너만 재시작해도 팔이 안 붙나"에서 막힌다.
-    assert "호스트 systemd" in sec, "데몬이 어디서 도는지 안 적혀 있다"
+    assert "systemd 사용자 서비스" in sec, "데몬이 어디서 도는지 안 적혀 있다"
     assert "robotd" in sec and "rsd" in sec
 
 

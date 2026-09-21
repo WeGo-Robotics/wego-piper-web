@@ -47,7 +47,7 @@ def test_the_install_ends_by_saying_where_to_open_the_browser():
     override 로 옮겨졌을 수 있으니(트러블슈팅 "frontend 가 포트를 못 잡는다") compose 에
     묻는다."""
     readme = (REPO / "README.md").read_text()
-    assert "http://<이 기계의 IP>/" in readme and "hostname -I" in readme, "README 가 접속 주소를 안 적는다"
+    assert "http://<설치한 기계의 IP>/" in readme and "hostname -I" in readme, "README 가 접속 주소를 안 적는다"
     apply = (REPO / "deploy" / "apply.sh").read_text()
     assert "docker compose port frontend 80" in apply, \
         "포트를 compose 에 안 묻는다 — override 로 옮기면 틀린 주소를 찍는다"
@@ -76,7 +76,7 @@ def test_a_non_default_web_port_is_one_env_var_and_survives_updates():
     readme = (REPO / "README.md").read_text()
     assert "PIPER_WEB_PORT=8081 ./piper-install.sh" in readme, "README 가 방법을 안 적는다"
     # 포트를 바꾸면 주소가 달라진다 — 그걸 안 적으면 :80 으로 열고 "안 뜬다"고 한다(사용자 지적 2026-09-11)
-    assert "http://<이 기계의 IP>:8081/" in readme, "바뀐 포트의 주소를 안 적는다"
+    assert "http://<설치한 기계의 IP>:8081/" in readme, "바뀐 포트의 주소를 안 적는다"
     assert "http://<이 기계의 IP>:8081/" in (REPO / "docs" / "qna.md").read_text()
     assert "PIPER_WEB_PORT=8081" in DOC.read_text(), "트러블슈팅이 옛 override 방식만 안다"
     # 설치 스크립트는 apply.sh 를 exec 하므로 환경변수가 그대로 넘어간다 — 그게 이 방식의 전제다
@@ -105,7 +105,7 @@ def test_a_host_without_a_gpu_gets_a_compose_combination_without_the_reservation
     assert 'vge "$COMPOSE_VER" "2.24"' in apply, "compose 2.24 미만을 안 막는다 — !reset 이 조용히 무시된다"
     for f in ("stage-hostside.sh", "release.sh"):
         assert 'cp docker-compose.nogpu.yml "$OUT/"' in (REPO / "deploy" / f).read_text(), f"{f} 가 조각을 안 싣는다"
-    assert "GPU 가 **아예 없는 기계**" in (REPO / "README.md").read_text()
+    assert "GPU 없이도 설치" in (REPO / "README.md").read_text()
     assert "## GPU 없는 기계에 설치하면?" in (REPO / "docs" / "qna.md").read_text()
     assert 'could not select device driver "nvidia"' in DOC.read_text()
 
@@ -122,7 +122,7 @@ def test_the_python_floor_is_3_10_everywhere_it_is_stated():
     assert "sys.version_info >= (3, 10)" in apply, "apply.sh 가 파이썬 하한을 안 본다"
     assert apply.index("sys.version_info >= (3, 10)") < apply.index('python3 -m venv --system-site-packages "$VENV"'), \
         "venv 를 만든 뒤에야 본다"
-    assert "**3.10 이상**" in (REPO / "README.md").read_text(), "README 전제 표에 파이썬이 없다"
+    assert "Python 3.10 이상" in (REPO / "README.md").read_text(), "README 전제 표에 파이썬이 없다"
     assert "requires a different Python" in DOC.read_text()
 
 
@@ -168,14 +168,20 @@ def test_the_readme_admits_the_first_install_takes_two_runs_and_a_relogin():
     그리고 README 는 짧아야 한다 — 설치와 무관한 절(추론 로그·CAN 규칙 상세)은 docs 로."""
     body = (REPO / "README.md").read_text()
     section = body.split("## 설치", 1)[1].split("\n## ", 1)[0]
-    for phrase in ("처음 한 번은 두 번 돌린다", "다시 로그인", "재부팅"):
+    # ⚠ 문구는 2026-09-21 README 개편에서 바뀌었다 — 지키는 것은 **사실**이다:
+    #   스크립트가 멈추니 다시 실행해야 하고, 그룹은 다시 로그인, 드라이버는 재부팅.
+    for phrase in ("다시 실행", "다시 로그인", "재부팅"):
         assert phrase in section, f"설치 절이 말하지 않는다: {phrase}"
     assert "아직 올라가지 않았다" not in body, "낡은 경고가 남았다 — 이미지도 master 도 올라가 있다"
     assert "docs/inference-logs.md" in body and (REPO / "docs" / "inference-logs.md").exists()
     assert "## 9. 팔을 쓰려면" in DOC.read_text() and "list-can-adapters.py --write-rule" not in body, \
         "CAN 규칙 상세가 README 에 남았다"
-    # 첫머리 스크린샷 표(2열×3행, 10줄)는 글이 아니다 — 상한은 그만큼만 올렸다
-    assert len(body.splitlines()) <= 115, f"README 가 다시 길어졌다: {len(body.splitlines())}줄"
+    # ⚠ **상한이 115 → 320 으로 올랐다 (2026-09-21).** 115 는 "설치하는 사람에게 필요한
+    #   것만" 이던 시절의 값이다. README 의 독자가 **밖에서 판단하는 사람**으로 바뀌면서
+    #   무엇을 푸는 물건인지·한 바퀴가 어떻게 도는지·왜 안전한지가 앞에 왔고, 설치는 그
+    #   뒤에 그대로 남았다. 줄 수가 는 것은 그 결정의 결과이지 방치가 아니다.
+    #   상한 자체는 남긴다 — 없으면 아무도 안 보는 사이 다시 부푼다.
+    assert len(body.splitlines()) <= 320, f"README 가 다시 길어졌다: {len(body.splitlines())}줄"
     for n in ("robot", "camera", "collect", "graph", "study", "inference", "sim"):
         assert f"docs/images/{n}.jpg" in body and (REPO / "docs" / "images" / f"{n}.jpg").exists(), \
             f"스크린샷 {n}.jpg 가 README 에 없거나 파일이 없다"
