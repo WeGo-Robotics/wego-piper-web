@@ -41,6 +41,7 @@ _running = True
 _METHODS = {
     "scan", "attach", "release", "release_all", "estop", "info", "lost",
     "calib_begin", "calib_status", "calib_save", "calib_cancel", "set_side",
+    "set_flipped",
 }
 
 

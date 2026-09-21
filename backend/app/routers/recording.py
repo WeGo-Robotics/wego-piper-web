@@ -105,7 +105,20 @@ def _split_camera_mapping(mapping: dict[str, str]) -> tuple[dict[str, str], dict
     return left, right
 
 
-def _apply_arm_params(params: dict, *, cam_w: int, cam_h: int, cam_fps: int) -> dict:
+async def _so101_flipped(arm: str) -> bool:
+    """이 리더를 180° 돌려 놓고 쓰는가 — 정체는 so101d 가 안다 (릴레이와 같은 출처).
+
+    데몬이 없거나 모르는 팔이면 False 다: 안 돌려 놓은 것이 기본이고, 여기서
+    막으면 거치와 무관한 사람까지 못 찍는다.
+    """
+    from app.services.so101_client import so101_client
+
+    arms = {a["arm"]: a for a in (await asyncio.to_thread(so101_client.info))["arms"]}
+    return bool(arms.get(arm, {}).get("flipped"))
+
+
+def _apply_arm_params(params: dict, *, cam_w: int, cam_h: int, cam_fps: int,
+                      leader_flipped: bool = False) -> dict:
     """단팔/양팔에 따라 포트·카메라 키 집합을 조립한다.
 
     시작과 미리보기가 **같은 조립기**를 써야 미리보기가 거짓말을 안 한다.
@@ -122,6 +135,9 @@ def _apply_arm_params(params: dict, *, cam_w: int, cam_h: int, cam_fps: int) -> 
     # 녹화 로봇과 같은 팔이므로 프론트에 묻지 않고 여기서 채운다
     if str(params.get("teleop_type", "")).startswith("so101"):
         params["teleop_follower"] = params.get("robot_port", "")
+        # ⚠ **릴레이와 같은 표를 타야 한다.** 조종은 맞는데 데이터셋만 거울상인
+        #   상태는 학습까지 가서야 보인다 (feature/so101-flipped.md).
+        params["teleop_flipped"] = bool(leader_flipped)
 
     if len(robot_ports) >= 2:
         params.pop("robot_port", None)
@@ -227,6 +243,7 @@ async def start_recording(body: RecordStartRequest):
     arm_ports = (body.robot_ports + body.teleop_ports) if bimanual \
         else [body.robot_port, body.teleop_port]
     so101_leader = not bimanual and body.teleop_type.startswith("so101")
+    leader_flipped = False
     if web_leader_rec:
         # 리더 세그먼트가 없으면 발행만 시작한다(앵커 = 팔로워 지금 자세). 창은 나중에 열어도
         # 된다 — 열면 "이미 돌고 있다"로 붙는다. 녹화 프로세스는 piper_leader_shm 으로 읽는다.
@@ -255,6 +272,8 @@ async def start_recording(body: RecordStartRequest):
             raise HTTPException(
                 400, f"{body.teleop_port} 는 캘리브레이션이 없습니다 — 카드의 "
                      "[캘리브레이션]을 완주하세요")
+        # 거치 방향도 여기서 받는다 — 이미 물어 본 응답에 실려 온다
+        leader_flipped = bool(la.get("flipped"))
         # ⚠ so101d 가 "발행 중"이라 해도 세그먼트 **경로**가 살아 있어야 녹화 프로세스가
         #   연다 — 다른 데몬의 기동 정리가 unlink 해 버린 뒤에도 so101d 는 모르고 계속
         #   발행했다(2026-09-09: 프로세스가 트레이스백으로 죽음). 여기서 열어 본다.
@@ -316,7 +335,8 @@ async def start_recording(body: RecordStartRequest):
     params.pop("camera_width", None)
     params.pop("camera_height", None)
     params.pop("camera_fps", None)
-    params = _apply_arm_params(params, cam_w=cam_w, cam_h=cam_h, cam_fps=cam_fps)
+    params = _apply_arm_params(params, cam_w=cam_w, cam_h=cam_h, cam_fps=cam_fps,
+                               leader_flipped=leader_flipped)
 
     # 헤드리스 에피소드 제어 채널은 미리보기와 무관하게 항상 켠다.
     # 버스 주소는 ProcessManager 가 모든 자식에게 넣으므로 여기서 넘기지 않는다.
@@ -547,6 +567,9 @@ async def preview_record_args(body: RecordPreviewRequest):
     cam_w = params.pop("camera_width", 0)
     cam_h = params.pop("camera_height", 0)
     cam_fps = params.pop("camera_fps", 0) or body.fps
-    params = _apply_arm_params(params, cam_w=cam_w, cam_h=cam_h, cam_fps=cam_fps)
+    flipped = (await _so101_flipped(body.teleop_port)
+               if body.teleop_type.startswith("so101") else False)
+    params = _apply_arm_params(params, cam_w=cam_w, cam_h=cam_h, cam_fps=cam_fps,
+                               leader_flipped=flipped)
     args = build_record_args(params)
     return {"args": args, "command": " ".join(args)}

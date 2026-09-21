@@ -30,6 +30,29 @@ PAIRS: tuple[tuple[str, str, float], ...] = (
     ("wrist_roll", "joint6", +1.0),
 )
 
+#: 리더를 작업대에서 **반 바퀴 돌려 놓고** 쓸 때의 표 (feature/so101-flipped.md).
+#: 조종자는 제자리에 있고 리더만 돈다 — 그래서 뒤집히는 것은 **요와 롤** 둘뿐이다.
+#:
+#: ⚠ 거치 방향으로 축이 어디를 향하나로 따지면 틀린다. 팔과 축이 **같이** 돌아서
+#:   관절각은 팔의 *모양*만 말하고 거치를 모른다. 기준은 **손짓 → 관절 변화량**이고,
+#:   거기서 끝단이 회전축의 반대편에 앉는 요(joint1)와 축이 조종자를 향하게 되는
+#:   롤(joint6)만 부호가 뒤집힌다. 피치 셋이 그대로인 이유가 핵심이다 —
+#:   **중력은 안 돌아간다.** "위로" 는 팔이 어디를 보든 위다.
+PAIRS_FLIPPED: tuple[tuple[str, str, float], ...] = (
+    ("shoulder_pan", "joint1", -1.0),    # 끝단이 축 반대편으로 간다
+    ("shoulder_lift", "joint2", +1.0),   # 중력 기준 — 안 바뀐다
+    ("elbow_flex", "joint3", +1.0),
+    ("wrist_flex", "joint5", +1.0),
+    ("wrist_roll", "joint6", -1.0),      # 롤 축이 조종자를 향한다
+)
+
+
+def pairs_for(flipped: bool = False) -> tuple[tuple[str, str, float], ...]:
+    """거치 방향에 맞는 부호 표. **180° 만** 있다 — 90°·45° 는 부호로 안 닫히고
+    프레임 회전이 필요하다 (feature/so101-flipped.md §6)."""
+    return PAIRS_FLIPPED if flipped else PAIRS
+
+
 _RAD_PER_TICK = 2.0 * math.pi / 4096.0
 
 #: shm 레코드 자리(joint1..) ← so101 이름 — piper_so101.joints 의 매핑과 동일

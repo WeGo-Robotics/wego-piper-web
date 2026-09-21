@@ -81,6 +81,10 @@ class So101Client:
     def set_side(self, arm: str, side: str) -> dict:
         return _bus().rpc_call(C.SO101D, "set_side", [arm, side], timeout=10)
 
+    def set_flipped(self, arm: str, flipped: bool) -> dict:
+        """리더를 180° 돌려 놓고 쓰는지 — 관절 매칭 부호 표가 갈린다."""
+        return _bus().rpc_call(C.SO101D, "set_flipped", [arm, bool(flipped)], timeout=10)
+
     def calib(self, verb: str, arm: str) -> dict:
         """캘리브레이션 위저드 — begin/status/save/cancel.
         실패 사유(안 움직인 관절 등)가 곧 화면 문구라 attach 처럼 예외를 올린다."""

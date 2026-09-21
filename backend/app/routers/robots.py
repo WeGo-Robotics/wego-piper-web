@@ -840,6 +840,37 @@ async def serial_set_side(body: SerialSideRequest):
         raise HTTPException(400, str(exc))
 
 
+class SerialFlippedRequest(BaseModel):
+    arm: str
+    flipped: bool
+
+
+@router.post("/serial/flipped")
+async def serial_set_flipped(body: SerialFlippedRequest):
+    """SO-101 을 **180° 돌려 놓고** 쓰는지 (feature/so101-flipped.md).
+
+    관절 매칭의 부호 표가 갈린다 — 요(joint1)와 롤(joint6)이 뒤집힌다.
+    데몬 세션에 남으므로 재연결·재기동에도 유지된다.
+    """
+    import asyncio
+
+    from app.services.relay import relay_session
+    from app.services.so101_client import so101_client
+
+    # ⚠ **도는 중에는 거절한다.** 부호가 바뀌면 같은 리더 각도가 다른 방향의
+    #   목표가 되어 팔로워가 그 순간 튄다 — 사람이 리더를 쥐고 있는 자리다.
+    #   앵커는 오프셋만 흡수하지 방향은 못 흡수하므로 재정합으로도 못 덮는다.
+    st = relay_session.status()
+    if st.get("running") and st.get("leader") == body.arm:
+        raise HTTPException(
+            409, f"{body.arm} 로 릴레이가 도는 중입니다 — 거치 방향을 바꾸면 "
+                 "팔로워가 튑니다. 릴레이를 정지한 뒤 바꾸고 다시 정합하세요.")
+    try:
+        return await asyncio.to_thread(so101_client.set_flipped, body.arm, body.flipped)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
 class SerialCalibRequest(BaseModel):
     arm: str
     step: Literal["begin", "save", "cancel"]
@@ -1264,6 +1295,9 @@ async def relay_start(body: RelayStartRequest):
     #   등록부에 없다 — 정체는 so101d 가 안다. Piper 마스터 검사를 그대로
     #   적용하면 "마스터가 없다"로 막힌다 (실기에서 그렇게 막혔다: Piper
     #   마스터가 없어서 SO-101 을 리더로 쓰려는 상황이 바로 그 경우다).
+    # 거치 방향은 **외부 리더에만** 있다 — Piper 마스터는 팔로워와 같은 방향에
+    # 서고, 돌려 놓고 쓰는 것은 SO-101 을 손으로 잡는 구성의 이야기다.
+    leader_flipped = False
     if body.leader_arm == "piper":
         same = _leader_on_side(follower.side)
         if same is None:
@@ -1292,6 +1326,7 @@ async def relay_start(body: RelayStartRequest):
                      "[캘리브레이션]을 완주하세요")
         # 좌우는 둘 다 지정됐을 때만 강제한다 — 팔이 하나뿐인 구성에서
         # 미지정을 막으면 지정할 이유가 없는 사람까지 막는다
+        leader_flipped = bool(la.get("flipped"))
         lside, fside = str(la.get("side") or ""), str(follower.side or "")
         if lside and fside and lside != fside:
             raise HTTPException(
@@ -1299,7 +1334,7 @@ async def relay_start(body: RelayStartRequest):
                      f"{_side_label(fside)}입니다 — 같은 쪽끼리 이으세요")
     try:
         relay_session.start(body.leader, body.follower, body.mode,
-                            body.leader_arm, body.follower_arm)
+                            body.leader_arm, body.follower_arm, leader_flipped)
     except RelayError as e:
         raise HTTPException(409, str(e))
     return {"status": "started", **relay_session.status()}

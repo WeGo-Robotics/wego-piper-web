@@ -294,6 +294,8 @@ type PortInfo = {
 type SerialArmInfo = {
   arm: string; running: boolean; calibrated: boolean; torque_on: boolean
   side?: string
+  /** 이 리더를 180° 돌려 놓고 쓰는가 — 관절 매칭 부호가 갈린다 */
+  flipped?: boolean
   capabilities?: { model: string; dof: number; joint_names: string[] }
 }
 type SerialPortInfo = {
@@ -627,6 +629,17 @@ export default function RobotsPage() {
       loadPorts()
     } catch (e) {
       notifyError(e instanceof Error ? e.message : '좌우 지정 실패')
+    }
+  }
+
+  // 거치 방향 — 그 기계의 물리적 사실이라 데몬 세션에 남는다(좌/우와 같은 자리).
+  // 릴레이가 도는 중이면 백엔드가 거절한다: 부호가 바뀌면 팔로워가 그 자리에서 튄다.
+  const handleSerialFlipped = async (arm: string, flipped: boolean) => {
+    try {
+      await api.post('/robots/serial/flipped', { arm, flipped })
+      loadPorts()
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : '거치 방향 변경 실패')
     }
   }
 
@@ -1043,6 +1056,13 @@ export default function RobotsPage() {
                         att.side ? 'bg-purple-600/30 text-purple-300 border-purple-500/40'
                                  : 'bg-neutral-700/50 text-neutral-500 border-neutral-600'}`}>
                       {att.side === 'left' ? '왼팔' : att.side === 'right' ? '오른팔' : '좌/우?'}
+                    </button>
+                    <button onClick={() => handleSerialFlipped(att.arm, !att.flipped)}
+                      title="리더를 작업대에서 180° 돌려 놓고 잡는 구성입니다 — 켜면 좌우(요)와 손목 롤의 방향이 뒤집힙니다. 릴레이가 도는 중에는 못 바꿉니다"
+                      className={`px-1.5 py-0.5 text-[10px] rounded border ${
+                        att.flipped ? 'bg-amber-600/30 text-amber-300 border-amber-500/40'
+                                    : 'bg-neutral-700/50 text-neutral-500 border-neutral-600'}`}>
+                      {att.flipped ? '↻ 180° 거치' : '정방향 거치'}
                     </button>
                     {!att.calibrated && (
                       <span className="rounded bg-amber-600/25 px-1.5 py-0.5 text-[10px] text-amber-300"

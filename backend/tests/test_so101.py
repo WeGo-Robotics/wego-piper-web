@@ -799,3 +799,179 @@ def test_recording_start_opens_the_leader_segment_before_launching_the_process()
     branch = src.split("so101_leader = not bimanual", 1)[1].split("prepare_arms(arm_ports", 1)[0]
     assert "StateReader(body.teleop_port)" in branch and "ArmSegmentError" in branch
     assert "상태 세그먼트가 없습니다" in branch and "so101d 를 재시작" in branch
+
+
+# ── 거치 방향 (180°) — feature/so101-flipped.md ──
+
+
+def test_the_flipped_mount_turns_only_the_yaw_and_the_roll():
+    """돌려 놓은 리더에서 뒤집히는 것은 **요(joint1)와 롤(joint6)뿐**이다.
+
+    ⚠ 이 테스트가 잠그는 것은 값이 아니라 **근거**다. "거치를 돌렸으니 축이
+    돌았고 그러니 피치도 뒤집어야 한다" 로 고치려는 사람이 여기서 멈춘다:
+    팔과 축이 같이 돌아 관절각은 거치를 모르고, 기준은 손짓 → 관절 변화량이다.
+    피치가 안 바뀌는 이유가 핵심이다 — **중력은 안 돌아간다** (§2).
+    """
+    from piper_so101 import relay_map
+
+    plain, flipped = relay_map.pairs_for(False), relay_map.pairs_for(True)
+    assert plain is relay_map.PAIRS and flipped is relay_map.PAIRS_FLIPPED
+    assert len(plain) == len(flipped) == 5
+    # 같은 관절을 같은 순서로 잇는다 — 갈리는 것은 부호뿐이다
+    assert [(a, b) for a, b, _ in plain] == [(a, b) for a, b, _ in flipped]
+    turned = {b for (_, b, s1), (_, _, s2) in zip(plain, flipped) if s1 != s2}
+    assert turned == {"joint1", "joint6"}, \
+        "요·롤만 뒤집힌다 — 피치를 건드렸다면 중력이 돈다고 가정한 것이다"
+
+
+def test_the_joint_map_rides_whichever_table_it_is_handed():
+    """부호 표는 `map_joint_goal` 의 **인자**다 — 같은 리더 변화량이 표에 따라
+    반대로 간다. 순수 함수라 실기 없이 여기서 확인한다."""
+    import numpy as np
+
+    from piper_so101 import relay_map
+
+    f_anchor = np.array([0.1, 0.2, 0.3, 0.7, 0.5, 0.6])
+    l_anchor = {n: 0.0 for n in SO101_JOINTS if n != "gripper"}
+    lead = dict(l_anchor, shoulder_pan=0.25, wrist_roll=-0.1, shoulder_lift=0.2)
+    plain = relay_map.map_joint_goal(lead, l_anchor, f_anchor,
+                                     relay_map.pairs_for(False))
+    flip = relay_map.map_joint_goal(lead, l_anchor, f_anchor,
+                                    relay_map.pairs_for(True))
+    assert flip[0] == pytest.approx(0.1 - 0.25)    # 요는 반대로
+    assert flip[5] == pytest.approx(0.6 + 0.1)     # 롤도 반대로
+    assert flip[1] == pytest.approx(plain[1])      # 피치는 그대로
+    assert flip[3] == pytest.approx(0.7), "joint4 는 어느 표에서도 앵커 유지"
+
+
+def test_the_flipped_mount_survives_replug_and_daemon_restart(monkeypatch, tmp_path):
+    """돌려 놓았다는 것은 **그 기계의 물리적 사실**이라 좌/우와 같은 자리에
+    같은 방식으로 남는다. 매번 고르게 하면 "어제 그대로 뒀는데 오늘 반대로
+    간다" 가 된다. 키가 없는 옛 세션은 정방향이다."""
+    from piper_so101 import hub as hub_mod
+
+    (tmp_path / "usb-1a86_TEST-if00").write_text("")
+    monkeypatch.setenv("PIPER_SO101_CALIB_DIR", str(tmp_path / "cal"))
+    monkeypatch.setattr(hub_mod, "_BY_ID", tmp_path)
+    monkeypatch.setattr(hub_mod, "_SESSION_PATH", tmp_path / "session.json")
+
+    class _AttachBus(_FakeBus):
+        def __init__(self, port):
+            super().__init__()
+            self.port_name = port
+
+        def ping_all(self, ids):
+            return {i: 777 for i in ids}
+
+    monkeypatch.setattr(hub_mod, "FeetechBus", _AttachBus)
+    monkeypatch.setattr(hub_mod.So101Bridge, "start",
+                        lambda self: setattr(self, "_running", True))
+    monkeypatch.setattr(hub_mod.So101Bridge, "stop",
+                        lambda self: setattr(self, "_running", False))
+
+    hub = hub_mod.So101Hub()
+    assert hub.attach("usb-1a86_TEST-if00", "")["flipped"] is False, "기본은 정방향"
+    assert hub.set_flipped("so101_leader1", True)["flipped"] is True
+    # 재연결 (부활)
+    hub.bridges["so101_leader1"]._running = False
+    assert hub.attach("usb-1a86_TEST-if00", "")["flipped"] is True
+    # 데몬 재기동 (새 허브가 세션을 읽는다)
+    hub2 = hub_mod.So101Hub()
+    assert hub2.attach("usb-1a86_TEST-if00", "")["flipped"] is True
+    assert hub2.set_flipped("so101_leader1", False)["flipped"] is False
+    assert "set_flipped" in (REPO / "daemons" / "so101d.py").read_text(), \
+        "데몬이 안 노출하면 게이트웨이가 부를 수 없다"
+
+
+def test_changing_the_mount_is_refused_while_that_leader_drives():
+    """도는 중에 부호를 바꾸면 같은 리더 각도가 **다른 방향의 목표**가 되어
+    팔로워가 그 자리에서 튄다 — 사람이 리더를 쥐고 있는 자리다. 앵커는
+    오프셋만 흡수하지 방향은 못 흡수하므로 재정합으로도 못 덮는다 (§3.3)."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import relay as relay_mod
+    from app.services import so101_client as client_mod
+
+    calls: list[tuple] = []
+
+    class _Client:
+        def set_flipped(self, arm, flipped):
+            calls.append((arm, flipped))
+            return {"arm": arm, "flipped": flipped}
+
+    class _Relay:
+        def __init__(self, leader):
+            self.leader = leader
+
+        def status(self):
+            return {"running": self.leader is not None, "leader": self.leader}
+
+    old_client, old_relay = client_mod.so101_client, relay_mod.relay_session
+    client_mod.so101_client = _Client()
+    try:
+        with TestClient(app) as c:
+            relay_mod.relay_session = _Relay("so101_leader1")
+            r = c.post("/api/robots/serial/flipped",
+                       json={"arm": "so101_leader1", "flipped": True})
+            assert r.status_code == 409 and "릴레이" in r.json()["detail"]
+            assert "정지" in r.json()["detail"], "무엇을 하라는 말이 없다"
+            assert not calls, "거절했는데 데몬에 썼다"
+            # 다른 팔로 도는 중이면 이 팔의 거치는 바꿔도 안전하다
+            relay_mod.relay_session = _Relay("so101_leader2")
+            assert c.post("/api/robots/serial/flipped",
+                          json={"arm": "so101_leader1", "flipped": True}).status_code == 200
+            assert calls == [("so101_leader1", True)]
+    finally:
+        client_mod.so101_client, relay_mod.relay_session = old_client, old_relay
+
+
+def test_the_relay_pins_the_mount_at_start_and_says_so():
+    """거치 방향은 **시작할 때 못 박는다** — 도는 중 바뀌면 튄다(위 테스트).
+    상태에 실어 화면이 "지금 어느 표로 도나" 를 보이게 한다."""
+    src = (REPO / "backend" / "app" / "services" / "relay.py").read_text()
+    assert "leader_flipped: bool = False" in src
+    assert "self._flipped = bool(leader_flipped)" in src
+    send = src.split("def _send_joint_mapped", 1)[1].split("\n    def ", 1)[0]
+    assert "relay_map.pairs_for(self._flipped)" in send, "릴레이가 표를 안 탄다"
+    assert '"flipped": self._flipped,' in src.split("def status", 1)[1]
+    # 시작은 데몬이 아는 값을 넘긴다 — 프론트가 들고 다니면 두 진실이 생긴다
+    router = (REPO / "backend" / "app" / "routers" / "robots.py").read_text()
+    assert 'leader_flipped = bool(la.get("flipped"))' in router
+    assert "body.follower_arm, leader_flipped)" in router
+
+
+def test_recording_rides_the_same_table_as_the_relay():
+    """조종은 맞는데 데이터셋만 거울상인 상태는 **학습까지 가서야** 보인다.
+    녹화 프로세스 안의 텔레오퍼레이터도 같은 출처(so101d)의 같은 표를 탄다."""
+    from app.core.cli_mapping import build_record_args
+
+    args = " ".join(build_record_args({
+        "robot_type": "piper_follower", "robot_port": "can0",
+        "teleop_type": "so101_leader", "teleop_port": "so101_leader1",
+        "teleop_follower": "can0", "teleop_flipped": True, "repo_id": "x/y"}))
+    assert "--teleop.flipped=true" in args
+    cfg = (REPO / "vendor" / "lerobot_robot_pipershm" / "lerobot_robot_pipershm"
+           / "config_so101shmleader.py").read_text()
+    assert "flipped: bool = False" in cfg
+    leader = (REPO / "vendor" / "lerobot_robot_pipershm" / "lerobot_robot_pipershm"
+              / "so101shmleader.py").read_text()
+    assert "relay_map.pairs_for(self.config.flipped)" in leader
+    rec = (REPO / "backend" / "app" / "routers" / "recording.py").read_text()
+    assert 'params["teleop_flipped"] = bool(leader_flipped)' in rec
+    assert 'leader_flipped = bool(la.get("flipped"))' in rec, "데몬이 아닌 곳에서 왔다"
+    # 미리보기가 거짓말을 하지 않는다 — 같은 조립기에 같은 값을 넣는다
+    assert rec.count("leader_flipped=") == 2
+
+
+def test_the_mount_toggle_sits_next_to_the_side_badge():
+    """거치 방향은 좌/우와 같은 종류의 사실(그 기계의 물리적 상태)이라 같은
+    자리에 산다. 켜져 있으면 눈에 띄어야 한다 — 모르고 켠 채로 시작하면
+    팔로워가 반대로 간다."""
+    page = (REPO / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
+    so101 = page.split("{/* SO-101 로봇 카드", 1)[1].split("{robotArms.map((arm) =>", 1)[0]
+    assert "handleSerialFlipped(att.arm, !att.flipped)" in so101
+    assert "180°" in so101 and "정방향 거치" in so101
+    assert "/robots/serial/flipped" in page
+    panel = (REPO / "frontend" / "src" / "components" / "So101TeleopPanel.tsx").read_text()
+    assert "st.flipped" in panel, "도는 중 어느 표인지 화면이 안 보여 준다"

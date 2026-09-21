@@ -21,6 +21,10 @@ class So101ShmLeaderConfig(TeleoperatorConfig):
     follower: str
     #: 캘리브레이션 이름. 비우면 port 이름으로 찾는다 (위저드가 그 이름으로 저장)
     calib: str = ""
+    #: 리더를 **180° 돌려 놓고** 쓰는가 (feature/so101-flipped.md). 게이트웨이가
+    #: so101d 에게 물어 채운다 — 릴레이와 녹화가 **같은 부호 표**를 타야 한다.
+    #: 갈리면 조종은 맞는데 데이터셋만 거울상이 되고, 그건 학습까지 가서야 보인다.
+    flipped: bool = False
 
     @property
     def type(self) -> str:

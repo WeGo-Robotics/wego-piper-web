@@ -158,6 +158,9 @@ class RelaySession:
         # 양쪽을 앵커로 잡고 변화량만 얹는다 (feature/so101d.md §5-공통):
         # 물리는 순간 점프가 구조적으로 0 이고, 재정합으로 작업 공간을 이어 쓴다.
         self._leader_arm = "piper"
+        #: 리더를 180° 돌려 놓고 쓰는가 — 관절 매칭 부호 표가 갈린다
+        #: (feature/so101-flipped.md). 시작할 때 못 박고 도는 동안 안 바꾼다.
+        self._flipped = False
         self._cross = False
         self._engaged = False
         self._spans: dict[str, float] | None = None
@@ -178,7 +181,8 @@ class RelaySession:
         return self._writer is not None
 
     def start(self, leader: str, follower: str, mode: str = "joint",
-              leader_arm: str = "piper", follower_arm: str = "piper") -> None:
+              leader_arm: str = "piper", follower_arm: str = "piper",
+              leader_flipped: bool = False) -> None:
         from piper_shm import arm as shm_arm
 
         with self._lock:
@@ -229,6 +233,10 @@ class RelaySession:
                 self._reader, self._leader, self._follower = reader, leader, follower
                 self._mode = mode
                 self._leader_arm = leader_arm
+                # ⚠ **여기서 못 박는다.** 도는 중에 부호가 바뀌면 같은 리더 각도가
+                #   다른 방향의 목표가 되어 팔로워가 그 자리에서 튄다 — 앵커는
+                #   오프셋만 흡수하지 방향은 못 흡수한다. 바꾸려면 끊고 재정합한다.
+                self._flipped = bool(leader_flipped)
                 self._cross = leader_arm != follower_arm
                 self._engaged = not self._cross     # 같은 모델은 절대 복제 그대로
                 self._seed = self._last_target = None
@@ -382,7 +390,8 @@ class RelaySession:
             return
         lead = relay_map.leader_rad(values, self._spans)
         goal_rad = relay_map.map_joint_goal(lead, self._l_anchor,
-                                            self._f_anchor_rad)
+                                            self._f_anchor_rad,
+                                            relay_map.pairs_for(self._flipped))
         goal = _norm_from_rad(goal_rad)
         if "gripper" in values:
             goal["gripper"] = float(values["gripper"])
@@ -609,6 +618,7 @@ class RelaySession:
                 "stale": bool(self._stale_since),
                 "mode": self._mode, "blocked": self._blocked,
                 "cross": self._cross, "engaged": self._engaged,
+                "flipped": self._flipped,
                 "ik_iters": self._ik_iters,
                 "leader_arm": getattr(self._leader_model, "name", None) or self._leader_arm,
                 "follower_arm": getattr(self._follower_model, "name", None)}

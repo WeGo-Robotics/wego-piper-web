@@ -13,6 +13,8 @@ type RelayStatus = {
   running: boolean; leader: string | null; follower: string | null
   sent: number; stale: boolean; mode: string; blocked: string
   engaged: boolean; cross: boolean
+  /** 리더를 180° 돌려 놓은 채로 시작했는가 — 시작할 때 못 박힌 값이다 */
+  flipped?: boolean
   /** 팔로워 명령 경로를 쥐고 있는가 — 해제하면 false (수집·추론이 팔을 쓸 수 있다) */
   holding?: boolean
 }
@@ -102,7 +104,8 @@ export default function So101TeleopPanel({ arm, side, followers, onClose }: {
         {running && st && (
           <div className="space-y-3">
             <div className="text-xs text-neutral-300 space-y-1">
-              <p>{st.leader} → {st.follower} · {st.mode === 'joint' ? '관절 매칭' : '말단 POSE'}</p>
+              <p>{st.leader} → {st.follower} · {st.mode === 'joint' ? '관절 매칭' : '말단 POSE'}
+                {st.flipped && <span className="ml-1 text-amber-300">· ↻ 180° 거치</span>}</p>
               <p className={st.engaged ? 'text-green-400' : 'text-amber-400'}>
                 {st.engaged ? `● 정합됨 — 전송 ${st.sent}회`
                   : '○ 해제됨 — 팔로워를 놓았습니다 (수집·추론 가능). 닫으면 릴레이가 끝납니다'}

@@ -79,7 +79,8 @@ class So101ShmLeader(Teleoperator):
         self._l_anchor = relay_map.leader_rad(lead["values"], self._spans)
         self._f_anchor_rad = K.norm_to_rad(np.array(
             [[foll["values"][j] for j in K.ARM_JOINTS]], float))[0]
-        logger.info("%s connected — 정합 완료 (read-only)", self)
+        logger.info("%s connected — 정합 완료 (read-only%s)", self,
+                    ", 거치 180°" if self.config.flipped else "")
 
     @property
     def is_calibrated(self) -> bool:
@@ -106,7 +107,8 @@ class So101ShmLeader(Teleoperator):
                 return dict(self._last)
             raise ConnectionError(f"{self}: 리더 상태가 묵었습니다 (so101d 가 살아 있나요?)")
         lead = relay_map.leader_rad(rec["values"], self._spans)
-        goal_rad = relay_map.map_joint_goal(lead, self._l_anchor, self._f_anchor_rad)
+        goal_rad = relay_map.map_joint_goal(lead, self._l_anchor, self._f_anchor_rad,
+                                            relay_map.pairs_for(self.config.flipped))
         goal = relay_map.piper_norm_from_rad(goal_rad)
         goal["gripper"] = float(rec["values"].get("gripper", 0.0))   # 절대 통과
         self._last = {f"{k}.pos": v for k, v in goal.items()}

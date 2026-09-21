@@ -91,6 +91,10 @@ class So101Bridge:
         self.io_pause = False
         # 좌/우 지정 — 텔레옵 짝짓기용. 데몬 세션에 by_id 별로 남는다
         self.side: str = ""
+        # 이 팔을 **반 바퀴 돌려 놓고** 쓰는가 (feature/so101-flipped.md).
+        # 그 기계의 물리적 사실이라 side 와 같은 자리에 같은 방식으로 남는다 —
+        # 매번 고르게 하면 "어제 그대로 뒀는데 오늘 반대로 간다" 가 된다.
+        self.flipped: bool = False
 
     @property
     def running(self) -> bool:
@@ -310,6 +314,19 @@ class So101Hub:
             self._save_session()
         return self.info(arm_name)
 
+    def set_flipped(self, arm_name: str, flipped: bool) -> dict:
+        """이 리더를 180° 돌려 놓고 쓰는지. 관절 매칭의 **부호 표**가 갈린다
+        (feature/so101-flipped.md §3.2). side 와 같이 by_id 열쇠로 남는다."""
+        b = self.bridges.get(arm_name)
+        if b is None:
+            raise So101Error(f"모르는 팔: {arm_name}")
+        b.flipped = bool(flipped)
+        by_id = self._ports.get(arm_name)
+        if by_id:
+            self._session.setdefault(by_id, {})["flipped"] = b.flipped
+            self._save_session()
+        return self.info(arm_name)
+
     # ── 스캔 ──
 
     def scan(self) -> list[dict]:
@@ -409,6 +426,7 @@ class So101Hub:
 
         bridge = So101Bridge(arm_name, bus, cal, calibrated)
         bridge.side = str(self._session.get(by_id, {}).get("side", ""))
+        bridge.flipped = bool(self._session.get(by_id, {}).get("flipped", False))
         bridge.start()
         self.bridges[arm_name] = bridge
         self._ports[arm_name] = by_id
@@ -439,6 +457,7 @@ class So101Hub:
             return {
                 "arm": a, "by_id": self._ports.get(a, ""),
                 "side": b.side,
+                "flipped": b.flipped,
                 "running": b.running, "calibrated": b.calibrated,
                 "published": b.published, "sent": b.sent,
                 "torque_on": b.torque_on,
