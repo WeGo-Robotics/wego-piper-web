@@ -55,7 +55,7 @@
 
 <table><tr>
 <td><img src="docs/images/study.jpg" alt="학습 — 손실 곡선, 메트릭, 로그"><br><sub>손실 곡선과 로그가 도는 동안 화면에 온다</sub></td>
-<td><img src="docs/images/cloud_gpu.png" alt="클라우드 GPU — 매물 비교, 시간당 값·CUDA·신뢰도·회선·위치"><br><sub>GPU 가 없거나 모자라면 빌린다 — <b>고르기 전에</b> 값과 조건을 나란히 본다</sub></td>
+<td><img src="docs/images/cloud_gpu.jpg" alt="클라우드 GPU — 매물 비교, 시간당 값·CUDA·신뢰도·회선·위치"><br><sub>GPU 가 없거나 모자라면 빌린다 — <b>고르기 전에</b> 값과 조건을 나란히 본다</sub></td>
 </tr></table>
 
 GPU 가 없거나 모자라면 **클라우드 GPU 를 빌려** 같은 화면에서 학습을 건다 — 빌리고, 올리고,
@@ -81,7 +81,7 @@ MuJoCo 시뮬레이터가 **또 하나의 로봇 데몬**으로 붙는다. 실�
 - 시뮬 팔이 실기 팔과 **FK 0.00mm / 0.00°** (같은 공식 URDF 로 대조)
 - **사람 없이** 에피소드를 만든다: 집기-놓기 한 바퀴가 11.9초, 20 에피소드에 약 4분
 
-<img src="docs/images/virtual_env.png" alt="가상환경 — 물체 목록, 메시 자산, 탑뷰 배치">
+<img src="docs/images/virtual_env.jpg" alt="가상환경 — 물체 목록, 메시 자산, 탑뷰 배치">
 
 테이블 위에 무엇을 둘지는 **파일 하나**로 정한다. 상자·구·원기둥·캡슐·타원체를 올리고,
 그릇처럼 오목한 것은 조립식 **통**으로 짓는다. 폰으로 스캔했거나 CAD 에서 뽑은 **메시를
