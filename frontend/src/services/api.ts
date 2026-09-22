@@ -33,6 +33,13 @@ async function request<T>(path: string, options?: RequestInit, timeoutMs = DEFAU
       const body = await res.json()
       if (body.detail) detail = body.detail
     } catch {}
+    // ⚠ 401 은 **화면 하나의 문제가 아니라 전체의 문제**다. 호출부마다 처리하면 어떤
+    //   화면은 로그인으로 가고 어떤 화면은 빨간 글씨만 뜬다. 여기서 한 번 알리고
+    //   `AuthGate` 가 받는다.
+    // ⚠ 로그인 요청 자체는 뺀다 — 비밀번호를 틀린 것은 "세션이 끊겼다" 가 아니다.
+    if (res.status === 401 && !path.startsWith('/auth/')) {
+      window.dispatchEvent(new CustomEvent('piper:unauthorized'))
+    }
     throw new Error(detail)
   }
   return res.json()
@@ -53,5 +60,11 @@ export const api = {
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }, opts?.timeoutMs),
   put: <T>(path: string, body?: unknown, opts?: ApiOptions) =>
     request<T>(path, { method: 'PUT', body: JSON.stringify(body) }, opts?.timeoutMs),
-  delete: <T>(path: string, opts?: ApiOptions) => request<T>(path, { method: 'DELETE' }, opts?.timeoutMs),
+  // ⚠ DELETE 에 본문을 허용한다 — 인증 해제가 "지금 비밀번호" 를 받아야 하기 때문이다.
+  //   안 받으면 로그인만으로 끌 수 있고, 그러면 자리를 비운 사이 누구나 문을 열어 둘 수 있다.
+  delete: <T>(path: string, opts?: ApiOptions & { body?: unknown }) =>
+    request<T>(path, {
+      method: 'DELETE',
+      ...(opts?.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+    }, opts?.timeoutMs),
 }

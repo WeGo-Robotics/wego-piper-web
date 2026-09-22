@@ -2,6 +2,7 @@ import { StrictMode, Suspense, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import './index.css'
+import AuthGate from './components/AuthGate'
 import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/Layout'
 import { SystemMessageProvider } from './components/SystemMessages'
@@ -28,6 +29,9 @@ createRoot(document.getElementById('root')!).render(
     {/* ⚠ 라우터 **밖**이다 — 페이지가 바뀌어도 메시지가 살아 있어야 한다.
         장치가 빠진 뒤 다른 탭으로 옮겼다고 경고가 사라지면 안 된다. */}
     <SystemMessageProvider>
+    {/* ⚠ 라우터 **밖**이다 — 어느 경로로 들어와도 같은 관문을 지난다. 조종 창처럼
+        Layout 밖에 사는 페이지도 예외가 아니다. */}
+    <AuthGate>
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
@@ -59,6 +63,7 @@ createRoot(document.getElementById('root')!).render(
         ))}
       </Routes>
     </BrowserRouter>
+    </AuthGate>
     </SystemMessageProvider>
   </StrictMode>,
 )

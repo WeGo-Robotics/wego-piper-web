@@ -337,7 +337,7 @@ def test_token_lookup_also_honours_the_env_var(monkeypatch, tmp_path):
 
 
 def test_readiness_does_not_hand_out_the_account_email():
-    """⚠ 게이트웨이는 `/api/ext/v1` 말고는 인증이 없다 — LAN 의 누구나 읽는다.
+    """⚠ 게이트웨이 로그인은 켜야 걸리고 기본은 꺼져 있다 — 꺼져 있으면 LAN 의 누구나 읽는다.
 
     화면이 쓰는 것은 크레딧뿐이다. 안 쓰는 것을 내보낼 이유가 없다.
     """

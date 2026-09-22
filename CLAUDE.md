@@ -107,12 +107,25 @@ C4 3계층 다이어그램: [docs/architecture-c4.drawio](docs/architecture-c4.d
 | `POST /api/hub/download` | Hub에서 다운로드 |
 | `POST /api/eval/log` | 평가 결과 기록 |
 | `GET /api/eval/stats` | 평가 통계 |
+| `GET /api/auth/status` | 로그인이 켜져 있나 · 나는 들어와 있나 (**인증 없이 부를 수 있다**) |
+| `POST /api/auth/login` · `/logout` | 세션 쿠키 발급·삭제 ([feature/gateway-auth.md](feature/gateway-auth.md)) |
+| `PUT`·`DELETE /api/auth/password` | 로그인 켜기·바꾸기·끄기 (끄는 것도 지금 비밀번호가 필요) |
 | `/api/ext/v1/*` | 외부 제어 API — 미션·상태·heartbeat·E-stop ([feature/external-api.md](feature/external-api.md)). `PIPER_API_TOKEN` Bearer 필수, 미설정이면 503 |
 | `/api/phase/*` | 작업 단계(phase) 분석·라벨·신호 (분류기 자체는 `python -m piper_phase` 로 단독 실행 가능) |
 | `GET /api/datasets/{id}/episodes/{ep}/frames/{cam}/{i}` | 디코딩 캐시 프레임 (에피소드 뷰어) |
 | `GET /api/datasets/{id}/videos/{cam}/{chunk}/{file}` | chunk mp4 Range 서빙 (뷰어 동영상 모드) |
 | `/api/vision/*` | YOLO 검출(yolod 제어·검출·프리뷰·모델 카탈로그) + LLM 판단 테스트 |
 | `/api/yolo/*` | YOLO 학습 데이터셋 — 캡처·라벨·커스텀 가중치 학습 ([feature/yolo-training.md](feature/yolo-training.md)) |
+
+## 인증
+
+게이트웨이 로그인은 **켜야 걸린다** — 설정 → 보안에서 비밀번호를 정하면 `/api/*` 와
+`/ws` 가 세션 쿠키를 요구한다. 기본은 꺼져 있고(안 그러면 릴리스를 받는 순간 배포된
+로봇이 전부 잠긴다), 꺼진 상태는 화면이 경고한다. 자세한 것은
+[feature/gateway-auth.md](feature/gateway-auth.md).
+
+⚠ **`/api/estop/*` 는 어느 쪽이든 열려 있다.** 멈추는 것을 막을 이유가 없고, heartbeat 가
+401 이면 estopd 가 "브라우저가 죽었다" 로 읽어 **돌던 추론을 SIGKILL** 한다.
 
 ## 안전 관련 주의사항
 

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import FloorGuardPanel from '../components/FloorGuardPanel'
 import HfAccountPanel from '../components/HfAccountPanel'
 import CloudPanel from '../components/CloudPanel'
+import AccessPanel from '../components/AccessPanel'
 import ApiDocsPanel from '../components/ApiDocsPanel'
 import ServicesPanel from '../components/ServicesPanel'
 import VersionCard from '../components/VersionCard'
@@ -19,6 +20,7 @@ import { api } from '../services/api'
 const TABS = [
   { id: 'general', label: '일반' },
   { id: 'safety', label: '안전' },
+  { id: 'access', label: '보안' },
   { id: 'services', label: '서비스' },
   { id: 'hub', label: '저장소' },
   { id: 'cloud', label: '클라우드' },
@@ -115,6 +117,12 @@ export default function SettingsPage() {
           <ServicesPanel onShowLog={(u) => navigate(`/logs?unit=${encodeURIComponent(u)}`)} />
         </div>
       </>)}
+
+      {tab === 'access' && (
+        <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5">
+          <AccessPanel />
+        </div>
+      )}
 
       {tab === 'api' && <ApiDocsPanel />}
       {tab === 'hub' && <HfAccountPanel />}

@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.authgate import AuthGate
 from app.core.config import settings
 
 
@@ -22,7 +23,7 @@ logging.getLogger("uvicorn.access").addFilter(_QuietAccessFilter())
 # ⚠ 이 import 는 위 로깅 필터 설정 **뒤에** 있어야 한다 —
 # uvicorn.access 필터가 라우터 import 보다 먼저 붙어야 한다.
 from app.routers import (
-    activity, alignment, cameras, cloud, datasets, debug_logs, devices, encoder, estop,
+    activity, alignment, auth, cameras, cloud, datasets, debug_logs, devices, encoder, estop,
     eval_log, external, health, hub, inference, logs, models, orchestrator, params, phase,
     policies, policy_server, presets, recording, robots, system, training, vision,
     ws, yolo_train,
@@ -38,7 +39,7 @@ ROUTERS = [
     health, ws, estop, params, models, datasets, hub, inference, eval_log,
     robots, cameras, logs, debug_logs, training, recording, policy_server, system,
     encoder, activity, policies, presets, phase, devices, vision, yolo_train,
-    orchestrator, external, alignment, cloud,
+    orchestrator, external, alignment, cloud, auth,
     web_leader, sim_scenes, sim_assets, sim_demo,
 ]
 from app.services.estop_bridge import estop_bridge
@@ -223,7 +224,10 @@ async def lifespan(app: FastAPI):
 API_DESCRIPTION = """\
 LeRobot 원격 제어 게이트웨이의 REST/WebSocket 표면.
 
-* **`/api/*`** — 웹 UI 가 쓰는 내부 API. LAN 신뢰를 전제로 인증이 없다.
+* **`/api/*`** — 웹 UI 가 쓰는 내부 API. **설정 → 비밀번호를 정하면** 세션 쿠키를
+  요구한다(`core/authgate.py`). 안 정하면 예전처럼 열려 있고, 화면이 그 사실을 경고한다.
+  `/api/estop/*` 는 어느 쪽이든 열려 있다 — 멈추는 것을 막을 이유가 없고, heartbeat 가
+  401 이면 estopd 가 돌던 추론을 SIGKILL 한다.
 * **`/api/ext/v1/*`** — 외부 시스템용 계약. `PIPER_API_TOKEN` Bearer 필수이며
   미설정이면 전체가 503 이다. 깨는 변경은 v2 를 만든다 (`feature/external-api.md`).
 * **`/ws`** — 로그·프로세스 상태 스트리밍. Swagger 로는 호출할 수 없다.
@@ -253,6 +257,12 @@ app = FastAPI(
     description=API_DESCRIPTION,
     lifespan=lifespan,
 )
+
+# ⚠ **CORS 보다 먼저 등록한다.** `add_middleware` 는 목록 앞에 끼우므로 나중에 등록한
+#   것이 바깥이 된다 — 순서를 바꾸면 401 응답에 CORS 헤더가 안 붙어서, 브라우저에는
+#   인증 실패가 아니라 정체불명의 네트워크 오류로 보인다.
+# ⚠ 비밀번호가 없으면 이 관문은 **아무것도 안 한다** (`services/auth.py` 머리말).
+app.add_middleware(AuthGate)
 
 app.add_middleware(
     CORSMiddleware,
