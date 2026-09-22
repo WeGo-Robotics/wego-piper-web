@@ -428,7 +428,12 @@ export default function CamerasPage() {
       const label = (labelDraft[id] ?? '').trim()
       const updated = await api.post<CamInfo>('/cameras/register', { id, label })
       setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
-    } catch { notifyError('등록 실패') }
+    } catch (e) {
+      // ⚠ 서버가 말한 사유를 그대로 보여준다. 고정 문구로 덮으면 현장에서 카메라가
+      //   안 잡힐 때 화면이 아무 단서도 못 준다 — 장치를 못 여는 이유는 매번 다르다
+      //   (`Cannot open /dev/video0`, 드라이버 예외, 대역폭 부족…).
+      notifyError(e instanceof Error ? e.message : '등록 실패')
+    }
     finally { setConnectingId(null) }
   }
 

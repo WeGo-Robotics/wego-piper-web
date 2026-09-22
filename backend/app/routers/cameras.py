@@ -124,8 +124,11 @@ class CameraRegisterRequest(BaseModel):
 
 @router.post("/register")
 async def register_camera(body: CameraRegisterRequest):
-    if not camera_manager.register_camera(body.id, body.label):
-        raise HTTPException(400, "등록 실패: 연결되지 않은 카메라입니다")
+    ok, why = camera_manager.register_camera(body.id, body.label)
+    if not ok:
+        # ⚠ 데몬이 말해 준 사유를 그대로 올린다. 고정 문구로 덮으면 현장에서 화면이
+        #   아무 단서도 못 준다 — 장치를 못 여는 이유는 매번 다르다.
+        raise HTTPException(400, f"등록 실패: {why}")
     camera_manager.save_session()
     cam = camera_manager.cameras.get(body.id)
     return cam.to_dict() if cam else {"status": "registered"}

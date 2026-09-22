@@ -37,7 +37,7 @@ def test_register_accepts_a_label():
     cam.connected = True                      # connect 우회
     m.cameras[cam.id] = cam
 
-    assert m.register_camera("rs:1:color", "  탑뷰  ") is True
+    assert m.register_camera("rs:1:color", "  탑뷰  ")[0] is True
     assert cam.label == "탑뷰", "앞뒤 공백을 안 다듬었다"
     assert cam.ready is True
 
@@ -130,3 +130,40 @@ def test_settings_open_in_a_modal_not_inside_the_card():
     )
     assert src.count("openSettings(cam.id)") == 2, "두 카드가 같은 모달을 열어야 한다"
     assert "fixed inset-0" in src, "모달 오버레이가 없다"
+
+
+def _fake_cam(cam_id: str, why: str):
+    """connect 가 **사유와 함께** 실패하는 카메라. camerad 가 그렇게 답한다."""
+    class _C:
+        id = cam_id
+        connected = False
+        ready = False
+        label = ""
+
+        def connect(self):
+            return False, why
+
+    return _C()
+
+
+def test_a_failed_register_says_why_not_just_that_it_failed():
+    """⚠ 현장(2026-09-22, .120 을 들고 나갔을 때): 스캔은 되는데 등록만 안 됐고 화면은
+    "등록 실패" 한 줄이었다. 진짜 사유는 camerad 가 이미 말하고 있었는데
+    (`Cannot open /dev/video0` 같은) 게이트웨이가 `ok, _ = cam.connect()` 로 **버렸다.**
+
+    사유 없는 실패는 고칠 수 없는 실패다 — 장치를 못 여는 이유는 매번 다르다.
+    """
+    from app.services.camera_manager import CameraManager
+
+    m = CameraManager()
+    m.cameras["/dev/video0"] = _fake_cam("/dev/video0", "Cannot open /dev/video0")
+    ok, why = m.register_camera("/dev/video0")
+    assert ok is False
+    assert "Cannot open /dev/video0" in why, f"사유가 사라졌다: {why!r}"
+
+
+def test_an_unknown_camera_is_not_called_a_connection_problem():
+    from app.services.camera_manager import CameraManager
+
+    ok, why = CameraManager().register_camera("/dev/nope")
+    assert ok is False and "/dev/nope" in why

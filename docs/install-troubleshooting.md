@@ -53,6 +53,9 @@ systemctl --user list-units 'piper-*'            # 무엇이 돌고 무엇이 �
 
 ## 3. 웹은 뜨는데 카메라·팔이 안 보인다
 
+⚠ **스캔은 되는데 등록이 안 되는 것**은 여기 있는 것들과 다른 문제다(권한이면 스캔이
+0개가 된다) — [카메라 트러블슈팅](camera-troubleshooting.md) 으로.
+
 | 증상 | 원인 | 처방 |
 |---|---|---|
 | 카메라 스캔 0개인데 `lsusb`·`/dev/video*` 엔 있다 | 사용자가 **`video` 그룹에 없다.** `/dev/video*` 는 `root:video` 이고 그래픽 세션 사용자에게만 ACL 이 간다 — SSH 로 들어오면 "아까는 됐는데 지금 안 됨" | `sudo usermod -aG video $USER` → 재로그인 → 데몬 재시작(`apply.sh` 또는 [설정 → 서비스]) |

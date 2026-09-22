@@ -403,19 +403,27 @@ class CameraManager:
         cam.update_config(cfg)
         return True
 
-    def register_camera(self, cam_id: str, label: str | None = None) -> bool:
+    def register_camera(self, cam_id: str, label: str | None = None) -> tuple[bool, str]:
+        """등록 = 자동 connect + `ready`. **실패하면 사유를 같이 돌려준다.**
+
+        ⚠ 예전에는 `bool` 만 돌려주고 `ok, _ = cam.connect()` 로 **사유를 버렸다.**
+        화면에는 "등록 실패: 연결되지 않은 카메라입니다" 가 떴는데, 그건 사실이 아니라
+        *결과*였다 — 진짜 사유(`Cannot open /dev/video0`, 드라이버 예외)는 데몬이 이미
+        말해 주고 있었고 여기서 지워졌다. 현장에서 카메라가 안 잡히는데 화면이 아무
+        단서도 안 주는 원인이 이것이었다(2026-09-22, .120 을 들고 나갔을 때).
+        """
         cam = self.cameras.get(cam_id)
         if not cam:
-            return False
+            return False, f"알 수 없는 카메라입니다: {cam_id}"
         # 아직 연결 안 되었으면 자동 connect (백그라운드 캡처 시작)
         if not cam.connected:
-            ok, _ = cam.connect()
+            ok, msg = cam.connect()
             if not ok:
-                return False
+                return False, msg or "카메라를 열지 못했습니다"
         if label is not None:
             cam.label = label.strip()
         cam.ready = True
-        return True
+        return True, "OK"
 
     def set_label(self, cam_id: str, label: str) -> bool:
         """별칭만 바꾼다 — 등록 후에도 고칠 수 있어야 한다.
