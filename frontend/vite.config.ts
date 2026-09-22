@@ -18,6 +18,10 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
+      // Swagger UI / OpenAPI — 개발 서버(:5173)에서도 배포본과 같은 경로로 연다.
+      '/docs': 'http://localhost:8000',
+      '/redoc': 'http://localhost:8000',
+      '/openapi.json': 'http://localhost:8000',
       '/ws': {
         target: 'ws://localhost:8000',
         ws: true,

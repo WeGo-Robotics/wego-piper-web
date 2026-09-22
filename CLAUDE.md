@@ -92,6 +92,7 @@ C4 3계층 다이어그램: [docs/architecture-c4.drawio](docs/architecture-c4.d
 | 경로 | 설명 |
 |------|------|
 | `GET /health` | 헬스체크 |
+| `GET /docs` | **Swagger UI** — 전체 표면(322경로)의 정본. 아래 표는 요약일 뿐이니 실제 인자는 여기서 본다. `/openapi.json` 은 스키마 원본 |
 | `WS /ws` | WebSocket (로그 스트리밍, 프로세스 상태) |
 | `POST /api/estop/trigger` | 긴급 정지 |
 | `POST /api/estop/heartbeat` | heartbeat |

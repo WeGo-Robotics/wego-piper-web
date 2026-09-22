@@ -218,7 +218,41 @@ async def lifespan(app: FastAPI):
 
 
 
-app = FastAPI(title="Piper Studio", lifespan=lifespan)
+#: Swagger UI 머리말. `/docs` 를 여는 사람이 **가장 먼저 알아야 할 것**만 적는다 —
+#: 나머지는 각 라우터의 docstring 이 태그별로 채운다.
+API_DESCRIPTION = """\
+LeRobot 원격 제어 게이트웨이의 REST/WebSocket 표면.
+
+* **`/api/*`** — 웹 UI 가 쓰는 내부 API. LAN 신뢰를 전제로 인증이 없다.
+* **`/api/ext/v1/*`** — 외부 시스템용 계약. `PIPER_API_TOKEN` Bearer 필수이며
+  미설정이면 전체가 503 이다. 깨는 변경은 v2 를 만든다 (`feature/external-api.md`).
+* **`/ws`** — 로그·프로세스 상태 스트리밍. Swagger 로는 호출할 수 없다.
+
+⚠ **여기서 호출하면 실기가 움직인다.** 이 문서는 읽기 전용 참조가 아니라 살아 있는
+게이트웨이다. 추론·녹화·텔레옵을 시작하는 경로는 heartbeat 의무를 함께 지며
+(`POST /api/estop/heartbeat`, 2.5초 타임아웃), Swagger UI 는 heartbeat 를 보내지
+않으므로 estopd 가 곧 SIGKILL 한다. 시작 계열은 화면이나 외부 클라이언트로 부르고,
+`/docs` 는 조회·점검 위주로 쓴다."""
+
+
+def _api_version() -> str:
+    """도는 버전을 제목 옆에 박는다. 못 찾아도 앱을 못 띄우면 안 된다."""
+    try:
+        from app.services.version import running_version
+
+        return running_version().get("version") or "unknown"
+    except Exception:  # pragma: no cover - 버전 조회 실패가 기동을 막지 않는다
+        return "unknown"
+
+
+# docs_url/openapi_url 은 기본값 그대로 (`/docs`, `/openapi.json`) — 리버스 프록시
+# (`frontend/nginx.conf`) 와 vite 프록시가 이 경로를 넘겨야 배포본에서도 열린다.
+app = FastAPI(
+    title="Piper Studio",
+    version=_api_version(),
+    description=API_DESCRIPTION,
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,

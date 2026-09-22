@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import FloorGuardPanel from '../components/FloorGuardPanel'
 import HfAccountPanel from '../components/HfAccountPanel'
 import CloudPanel from '../components/CloudPanel'
+import ApiDocsPanel from '../components/ApiDocsPanel'
 import ServicesPanel from '../components/ServicesPanel'
 import VersionCard from '../components/VersionCard'
 import { useSystemMessage } from '../components/SystemMessages'
@@ -21,6 +22,7 @@ const TABS = [
   { id: 'services', label: '서비스' },
   { id: 'hub', label: '저장소' },
   { id: 'cloud', label: '클라우드' },
+  { id: 'api', label: 'API' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
 
@@ -114,6 +116,7 @@ export default function SettingsPage() {
         </div>
       </>)}
 
+      {tab === 'api' && <ApiDocsPanel />}
       {tab === 'hub' && <HfAccountPanel />}
       {tab === 'cloud' && <CloudPanel />}
 
