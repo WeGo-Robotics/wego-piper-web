@@ -40,6 +40,70 @@ systemctl --user list-units 'piper-*'            # 무엇이 돌고 무엇이 �
 ⚠ 그룹은 **재로그인**이 반영 조건이다. `newgrp video` 는 그 셸만 바꾼다. 이미 도는
 데몬은 옛 그룹을 쥐고 있으니 그룹을 넣은 뒤 `apply.sh` 를 다시 돌려 재시작시킨다.
 
+## 1-2. 스크립트가 중간에 **죽었다** (멈춘 게 아니라)
+
+§1 의 "멈춤" 은 설계다 — 전제를 찍고 사람을 기다린다. 파이썬 트레이스백이나 줄 번호와
+함께 끝났다면 그건 **죽은 것**이고, 그때는 **찍힌 줄 번호를 원인으로 믿으면 안 된다.**
+
+### 실기 보고 (2026-09-22, .120)
+
+| | |
+|---|---|
+| 증상 | `2. 데몬 wheel` 에서 `apply.sh` **404번 줄** 에러 — "pip 가 없다" |
+| 그때 한 것 | 설치를 취소하고 **다시 받아서** 진행 → 문제 없이 끝남 |
+
+### ⚠ 404번 줄은 증상이지 원인이 아니다
+
+404번 줄은 `"$VENV/bin/pip" install --no-deps --force-reinstall …` 이다. 진짜 실패는
+**스무 줄쯤 앞**에서 났고, 거기서 조용히 묻혔다:
+
+```bash
+python3 -m venv --system-site-packages "$VENV" && ok "venv 생성"     # ← 여기서 깨졌다
+"$VENV/bin/pip" install -q redis pyrealsense2 && ok "PyPI 의존"      # ← 여기도 실패, 역시 조용히
+...
+"$VENV/bin/pip" install -q --no-deps --force-reinstall "${WHLS[@]}"  # ← 404: 맨 명령이라 여기서 죽는다
+```
+
+`set -e` 는 **`&&` 왼쪽의 실패를 봐준다**(실측). 그래서 앞의 둘은 실패해도 스크립트가
+계속 가고, `&&` 없이 혼자 선 404번 줄에서야 멈춘다. 사람이 보는 것은 마지막 한 줄뿐이라
+**왜 pip 가 없는지는 아무 데도 안 남는다.**
+
+⚠ 같은 함정을 이 스크립트가 tar 에 대해 이미 적어 뒀었다("`&&` 로 이으면 조용히
+넘어간다") — 정작 venv 두 줄에는 그 교훈이 안 가 있었다.
+
+### pip 가 없는 venv 가 어떻게 생기나
+
+`python3 -m venv` 는 **뼈대를 먼저 만들고 `ensurepip` 를 마지막에 돌린다.** 거기서 깨지면
+**디렉토리는 남고 `bin/pip` 만 없다.** 그리고 옛 `apply.sh` 의 가드는 디렉토리 존재만
+봤다(`[ ! -d "$VENV" ]`) — 그래서 그 반쪽을 "있다" 로 읽고 생성을 통째로 건너뛰었다.
+
+⚠ 0절의 전제 검사도 이걸 못 잡았다. `python3 -c "import venv"` 는 **`python3-venv` 가
+없어도 통과한다** — `venv` 모듈은 표준 라이브러리이고, 데비안이 따로 떼어 둔 것은
+`ensurepip` 다.
+
+### 고쳐진 것 (v0.5.7 뒤 — 아직 릴리스 전)
+
+| 자리 | 전 | 후 |
+|---|---|---|
+| 0절 전제 | `import venv` | **`import ensurepip`** — 진짜 관문 |
+| 2절 가드 | `[ ! -d "$VENV" ]` | **`[ ! -x "$VENV/bin/pip" ]`** + 반쪽이면 `--clear` 로 다시 만든다 |
+| 생성 실패 | `&&` 로 조용히 통과 | **크게 말하고 거기서 멈춘다** (파이썬이 한 말이 바로 위에 남는다) |
+
+`test_a_half_made_venv_is_rebuilt_not_used` · `test_a_broken_venv_does_not_fail_twenty_lines_later` 가 지킨다.
+
+### 옛 번들에서 이 증상을 만나면
+
+```bash
+rm -rf ~/.venvs/piper-daemons      # 반쪽 venv 를 버린다 — 이게 직접적인 처방
+python3 -c "import ensurepip" || sudo apt install python3-venv
+~/piper-web-deploy/<버전>/apply.sh
+```
+
+⚠ **원인이 확정된 것은 아니다.** 그 기계에서 `python3 -m venv` 가 왜 깨졌는지는
+**스크립트가 삼켜서 모른다.** 다시 받아서 됐다는 것은 반쪽 venv 가 그 사이에 치워졌다는
+뜻일 수는 있어도 사유를 말해 주지는 않는다. 다음에 나면 위 고침 덕분에 파이썬이 한 말이
+화면에 남는다.
+
 ## 2. 받지 못한다
 
 | 증상 | 원인 | 처방 |

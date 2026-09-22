@@ -120,7 +120,9 @@ def test_the_python_floor_is_3_10_everywhere_it_is_stated():
         assert 'requires-python = ">=3.10"' in (REPO / p / "pyproject.toml").read_text(), f"{p} 의 하한이 3.10 이 아니다"
     apply = (REPO / "deploy" / "apply.sh").read_text()
     assert "sys.version_info >= (3, 10)" in apply, "apply.sh 가 파이썬 하한을 안 본다"
-    assert apply.index("sys.version_info >= (3, 10)") < apply.index('python3 -m venv --system-site-packages "$VENV"'), \
+    # ⚠ 문자열이 아니라 **순서**가 규칙이다 — 하한 검사가 venv 생성보다 앞이어야 한다.
+    #   (`--clear` 가 붙은 것은 반쪽 venv 를 다시 만들기 위해서다, 2026-09-22)
+    assert apply.index("sys.version_info >= (3, 10)") < apply.index('python3 -m venv --clear'), \
         "venv 를 만든 뒤에야 본다"
     assert "Python 3.10 이상" in (REPO / "README.md").read_text(), "README 전제 표에 파이썬이 없다"
     assert "requires a different Python" in DOC.read_text()

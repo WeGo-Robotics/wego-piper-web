@@ -284,11 +284,42 @@ def test_apply_checks_every_host_tool_it_uses():
     src = code_only(APPLY.read_text())
     head = src.split("if [ ${#NEED_APT[@]}", 1)[0]        # 0절: 전제 확인
     body = src.split("if [ ${#NEED_APT[@]}", 1)[1]        # 그 뒤: 실제로 쓰는 곳
+    # ⚠ venv 의 관문은 **`ensurepip`** 다. `venv` 모듈은 표준 라이브러리라 늘 import
+    #   되고, 데비안이 따로 떼어 둔 것은 ensurepip 다 — `import venv` 로 보면 검사는
+    #   통과하는데 `python3 -m venv` 는 깨진다. 그게 실기에서 실제로 난 구멍이다
+    #   (2026-09-22: 0절 통과 → 2절에서 반쪽 venv → wheel 설치가 "pip 가 없다").
     for tool, probe in (("docker load", "command -v docker"),
                         ("docker compose", "docker compose version"),
-                        ("python3 -m venv", 'python3 -c "import venv"')):
+                        ("python3 -m venv", 'python3 -c "import ensurepip"')):
         assert tool in body, f"{tool} 을 안 쓴다 — 테스트가 낡았다"
         assert probe in head, f"{tool} 을 쓰면서 확인은 안 한다"
+
+
+def test_a_half_made_venv_is_rebuilt_not_used():
+    """⚠ `python3 -m venv` 는 뼈대를 먼저 만들고 `ensurepip` 를 **마지막에** 돌린다 —
+    거기서 깨지면 디렉토리는 남고 `bin/pip` 만 없다. 디렉토리 존재만 보고 건너뛰면 그
+    반쪽을 그대로 쓰게 되고, 스무 줄 뒤 wheel 설치가 "pip 가 없다" 로 죽는다
+    (실기 2026-09-22: "2. 데몬 wheel 에서 404번 줄 에러").
+    """
+    from conftest import code_only
+
+    src = code_only(APPLY.read_text())
+    assert '[ ! -x "$VENV/bin/pip" ]' in src, "디렉토리 존재만 보고 판단한다"
+    assert "python3 -m venv --clear" in src, "반쪽 위에 덧씌운다 — 비우고 다시 만들어야 한다"
+
+
+def test_a_broken_venv_does_not_fail_twenty_lines_later():
+    """⚠ `set -e` 는 `&&` **왼쪽**의 실패를 봐준다(실측). `python3 -m venv … && ok` 로
+    이어 두면 생성이 깨져도 조용히 지나가고, **진짜 사유가 사라진 채** 한참 뒤 맨
+    명령에서 죽는다 — 사람은 "pip 가 없다" 만 보고 왜 없는지는 아무 데서도 못 본다.
+
+    같은 함정을 이 스크립트가 tar 에 대해 이미 적어 뒀다("`&&` 로 이으면 조용히 넘어간다").
+    """
+    from conftest import code_only
+
+    src = code_only(APPLY.read_text())
+    assert not re.search(r"python3 -m venv[^\n]*&&", src), \
+        "venv 생성을 && 로 이었다 — 실패가 조용히 묻히고 사유가 사라진다"
 
 
 BASE_DF = REPO / "backend" / "Dockerfile.base"

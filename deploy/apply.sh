@@ -89,8 +89,11 @@ else
 fi
 # ⚠ `venv` 는 파이썬에 딸려오지 않는다 — 데비안 계열은 `python3-venv` 가 따로다.
 #   없으면 아래 2절의 `python3 -m venv` 가 깨진다.
-python3 -c "import venv" >/dev/null 2>&1 && ok "python3 venv" \
-  || { bad "python3-venv 없음"; NEED_APT+=(python3-venv); }
+# ⚠ **`import venv` 로는 못 잡는다.** `venv` 모듈은 표준 라이브러리라 늘 import 되고,
+#   따로 떨어져 있는 것은 `ensurepip` 다 — 그래서 이 검사는 통과하는데 2절의
+#   `python3 -m venv` 는 "ensurepip is not available" 로 깨진다. 진짜 관문을 본다.
+python3 -c "import ensurepip" >/dev/null 2>&1 && ok "python3 venv(ensurepip)" \
+  || { bad "python3-venv 없음 (ensurepip)"; NEED_APT+=(python3-venv); }
 # ⚠ 데몬 wheel 의 파이썬 하한은 **3.10**(Ubuntu 22.04 의 시스템 파이썬). 실기(NUC, 2026-09-11):
 #   wheel 이 `>=3.11` 을 선언해 3.10 venv 에서 pip 가 거절했는데, 코드는 3.10 에서 전부
 #   import 되는 것을 실측하고 하한을 코드에 맞췄다(pyproject 7개). 그 아래(20.04 의 3.8)는
@@ -372,14 +375,42 @@ wheels_missing() {   # 번들의 wheel 과 이름이든 버전이든 다른 것�
 }
 if [ -n "${wheels:-}" ] || [ ! -d "$VENV" ] || wheels_missing; then
   say "2. 데몬 wheel (${wheels:-처음 설치 — 번들 전부})"
-  if [ ! -d "$VENV" ]; then
-    if [ $CHECK = 1 ]; then bad "$VENV 없음"; else
+  # ⚠ **디렉토리가 있다고 쓸 수 있는 venv 가 아니다.** `python3 -m venv` 는 뼈대를 먼저
+  #   만들고 `ensurepip` 를 마지막에 돌리므로, 거기서 깨지면 **디렉토리는 남고 `bin/pip`
+  #   만 없다.** 디렉토리만 보고 건너뛰면 그 반쪽을 그대로 쓰게 된다 — 실기 보고
+  #   (2026-09-22): "2. 데몬 wheel 에서 404번 줄 에러, pip 가 없다".
+  if [ ! -x "$VENV/bin/pip" ]; then
+    if [ $CHECK = 1 ]; then
+      # 없는 것과 **반쪽인 것**은 처방이 다르다 — 뭉치면 사람이 엉뚱한 곳을 본다.
+      if [ -d "$VENV" ]; then bad "$VENV 가 반쪽이다 — pip 가 없다 (적용하면 다시 만든다)"
+      else bad "$VENV 없음"; fi
+    else
+      if [ -d "$VENV" ]; then warn "$VENV 가 반쪽이다 (pip 없음) — 다시 만든다"; fi
       # ⚠ `--system-site-packages` 로 만든다 — 시스템에 numpy·opencv 가 있으면 다시 안 깐다.
       #   ⚠ **"있겠지" 로 두지 않는다.** 예전 주석은 piper-sdk 도 시스템에 있다고 적었는데,
       #   맨 우분투(NUC)는 없었고 그래서 [연결] 이 `piper_sdk not installed` 로 끝났다.
       #   지금은 아래 wheel 절이 없으면 직접 깐다.
-      python3 -m venv --system-site-packages "$VENV" && ok "venv 생성"
-      "$VENV/bin/pip" install -q redis pyrealsense2 && ok "PyPI 의존(redis·pyrealsense2)"
+      #
+      # ⚠ **`&&` 로 잇지 않는다.** `set -e` 는 `&&` **왼쪽**의 실패를 봐준다(462절이
+      #   같은 함정을 적어 뒀다). 그렇게 이어 두면 venv 생성이 깨져도 조용히 지나가고
+      #   **진짜 사유가 사라진 채** 23줄 뒤의 맨 명령에서 죽는다 — 사람은 "pip 가 없다"
+      #   만 보고, 정작 왜 없는지는 아무 데도 안 남는다.
+      if ! python3 -m venv --clear --system-site-packages "$VENV"; then
+        # ⚠ 여기서 설치 명령을 찍지 않는다 — sudo 가 필요한 것은 **0절이** 모아서
+        #   찍는다(그 규칙을 test_apply_never_installs_packages_itself 가 지킨다).
+        #   0절이 ensurepip 를 보므로 그 사유로 여기까지 오면 안 된다.
+        bad "venv 를 못 만들었다 — 바로 위 출력에 파이썬이 말한 사유가 있다"
+        bad "  (데비안 계열은 ensurepip 가 python3-venv 에 들어 있다. 고친 뒤 다시 부르면"
+        bad "   반쪽 venv 는 알아서 다시 만든다)"
+        exit 1
+      fi
+      ok "venv 생성"
+      if "$VENV/bin/pip" install -q redis pyrealsense2; then
+        ok "PyPI 의존(redis·pyrealsense2)"
+      else
+        # 치명적이진 않다(시스템에 있을 수 있다) — 다만 **조용히 넘기지 않는다.**
+        warn "PyPI 의존(redis·pyrealsense2)을 못 깔았다 — 버스·RealSense 확인 (PyPI 접근?)"
+      fi
       # 시스템 site-packages 에 numpy·opencv 가 없는 맨 우분투(ROS 없음)는 camerad/rsd 가 못 뜬다 —
       # 둘이 import 안 될 때만 PyPI 에서 받는다(있으면 그대로 쓴다). 못 받으면 경고만.
       if "$VENV/bin/python" -c "import numpy, cv2" 2>/dev/null; then ok "numpy·opencv (시스템)"
