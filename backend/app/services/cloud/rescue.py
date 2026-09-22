@@ -127,6 +127,29 @@ def rescue(target, repo_id: str, root: Path | None = None, *,
     return dest
 
 
+def list_checkpoints(target, *, run=None) -> list[tuple[str, str]]:
+    """원격의 **중간** 체크포인트 — `(step, 경로)` 목록. `last` 는 뺀다.
+
+    ## ⚠ 여기서는 예외를 삼키지 않는다
+
+    `fetch_checkpoints` 와 정반대다. 회수는 실패해도 파기가 계속돼야 하니 삼키지만,
+    이걸 부르는 쪽(파기 확인 창)은 **"0개" 와 "못 물어봤다" 를 갈라야** 한다. 못 물어본
+    것을 "없습니다" 로 말하면 사람은 없다고 믿고 지운다 — 그게 이 화면에서 제일 나쁜
+    거짓말이다.
+    """
+    from app.services.training.runners.ssh import _run
+
+    run = run or _run
+    r = run(target, "ls -d /root/outputs/train/*/*/checkpoints/*/"
+                    f"{WANTED} 2>/dev/null")
+    paths = [p.strip() for p in (r.stdout or "").splitlines() if p.strip()]
+    # `checkpoints/<step>/pretrained_model` → step 이 마지막에서 두 번째.
+    # ⚠ **step 이름은 원격 것을 그대로 쓴다.** `020000` 의 제로패딩은 lerobot 이 붙인
+    #   것이고, 여기서 `20000` 으로 고쳐 쓰면 로컬 학습과 이름이 갈린다.
+    found = [(p.rsplit("/", 2)[1], p) for p in paths]
+    return [(step, p) for step, p in found if step != layout.LAST]
+
+
 def fetch_checkpoints(target, repo_id: str, root: Path | None = None, *,
                       run=None, timeout: float = RESCUE_TIMEOUT_S) -> list[Path]:
     """**중간 체크포인트**를 전부 끌어온다. 받은 자리들을 돌려준다.
@@ -146,22 +169,12 @@ def fetch_checkpoints(target, repo_id: str, root: Path | None = None, *,
 
     이건 덤이다. 이것 때문에 파기가 막히면 본전도 못 찾는다 — 기계가 계속 돈다.
     """
-    from app.services.training.runners.ssh import _run
-
-    run = run or _run
     try:
-        r = run(target, "ls -d /root/outputs/train/*/*/checkpoints/*/"
-                        f"{WANTED} 2>/dev/null")
-        paths = [p.strip() for p in (r.stdout or "").splitlines() if p.strip()]
+        wanted = list_checkpoints(target, run=run)
     except Exception as exc:                                        # noqa: BLE001
+        # ⚠ 여기서는 삼킨다 — 덤이 파기를 막으면 기계가 계속 돈다.
         logger.warning("중간 체크포인트 목록을 못 읽었습니다: %s", exc)
         return []
-
-    # `checkpoints/<step>/pretrained_model` → step 이 마지막에서 두 번째.
-    # ⚠ **step 이름은 원격 것을 그대로 쓴다.** `020000` 의 제로패딩은 lerobot 이 붙인
-    #   것이고, 여기서 `20000` 으로 고쳐 쓰면 로컬 학습과 이름이 갈린다.
-    wanted = [(p.rsplit("/", 2)[1], p) for p in paths]
-    wanted = [(step, p) for step, p in wanted if step != layout.LAST]
     if not wanted:
         logger.info("중간 체크포인트가 없습니다 (save_freq 를 안 줬거나 아직 안 찍혔습니다)")
         return []

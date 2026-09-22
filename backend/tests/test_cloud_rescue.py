@@ -8,6 +8,8 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from app.services.cloud import rescue as R
 from app.services.training.runners.ssh import SSHTarget
 
@@ -109,6 +111,36 @@ def test_a_rescue_reports_the_local_run_directory(monkeypatch, tmp_path):
     got = R.rescue(TARGET, "me/m", tmp_path, run=_run_ok)
     assert got == (tmp_path / "2026-09-17" / "00-30-00_act"
                    / "checkpoints" / "last" / "pretrained_model")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 목록과 회수는 **실패를 반대로 다룬다** (2026-09-21)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _boom(_t, _c, **k):
+    raise TimeoutError("접속 시간 초과")
+
+
+def test_listing_does_not_swallow_a_failure():
+    """⚠ 파기 확인 창이 이걸 부른다. 삼키면 못 물어본 것이 **"0개"** 로 그려지고,
+    사람은 없다고 믿고 지운다 — 중간 체크포인트는 Hub 에 없어서 그걸로 끝이다."""
+    with pytest.raises(TimeoutError):
+        R.list_checkpoints(TARGET, run=_boom)
+
+
+def test_fetching_still_swallows_it_because_teardown_must_not_stall(tmp_path):
+    """반대쪽 못 — 회수는 덤이다. 이것 때문에 파기가 막히면 기계가 계속 돈다."""
+    assert R.fetch_checkpoints(TARGET, "me/m", tmp_path, run=_boom) == []
+
+
+def test_the_listing_leaves_out_the_final_weights():
+    """`last` 는 Hub 든 `scp` 든 이미 온다. 창이 그걸 "잃을 것" 으로 세면 겁만 준다."""
+    class _R:
+        stdout = ("/root/outputs/train/d/t/checkpoints/005000/pretrained_model\n"
+                  "/root/outputs/train/d/t/checkpoints/last/pretrained_model\n")
+
+    got = R.list_checkpoints(TARGET, run=lambda *a, **k: _R())
+    assert [step for step, _ in got] == ["005000"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

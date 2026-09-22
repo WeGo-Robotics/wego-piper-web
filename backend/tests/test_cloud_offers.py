@@ -695,6 +695,60 @@ def _readiness(monkeypatch, registered, why=""):
     return TestClient(app).get("/api/cloud/readiness").json()["checks"]["ssh_key"]
 
 
+def _readiness_body(monkeypatch, which):
+    """준비 점검 전체를 받는다. `which` 만 갈아 끼워 **무엇이 없을 때** 를 만든다."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.routers import cloud as router
+    from app.services.cloud.providers.base import Template
+
+    tpl = Template(id=1, name="piper-train slim", image="ghcr.io/x/y", tag="slim",
+                   hash_id="h", disk_gb=40.0, description="", variant="slim",
+                   cuda="cu126")
+
+    async def _reg(want):
+        return True, ""
+
+    monkeypatch.setattr(router, "_ssh_registered", _reg)
+    monkeypatch.setattr(router.shutil, "which", which)
+    monkeypatch.setattr(router.sshkey, "info",
+                        lambda: {"exists": True, "fingerprint": "SHA256:abc"})
+    monkeypatch.setattr(router, "_provider",
+                        lambda: type("P", (), {"whoami": lambda s: {"credit": 1.0},
+                                               "templates": lambda s: [tpl]})())
+    return TestClient(app).get("/api/cloud/readiness").json()
+
+
+def test_everything_present_opens_the_rent_button(monkeypatch):
+    """기준선 — 다 있으면 초록불이어야 한다. 아래 둘이 이것과 대비된다."""
+    d = _readiness_body(monkeypatch, lambda n: f"/usr/bin/{n}")
+    assert d["checks"]["ssh"]["ok"] is True
+    assert d["ready"] is True
+
+
+def test_a_gateway_without_ssh_cannot_rent(monkeypatch):
+    """⚠ **실측(2026-09-21)**: 배포판 이미지에 `vastai` 는 있는데 `ssh` 가 없었다.
+
+    점검이 CLI·API키·SSH키·템플릿 넷만 보던 시절에는 그 호스트도 **초록불**이라
+    [빌리기]가 열렸다. 기계가 만들어지고, **그 다음에야** SSH 러너가 "ssh 가 없습니다"
+    로 끝난다 — 돈은 이미 나간 뒤다. 셋 다 없던 때보다 나쁜 조합이다.
+    """
+    d = _readiness_body(monkeypatch,
+                        lambda n: None if n in ("ssh", "scp") else f"/usr/bin/{n}")
+    assert d["checks"]["ssh"]["ok"] is False
+    assert d["ready"] is False, "ssh 가 없는데 빌리기가 열린다"
+    assert "릴리스" in (d["checks"]["ssh"]["detail"] or ""), \
+        "무엇을 해야 하는지 안 말한다 — 사용자가 컨테이너에 ssh 를 깔 방법은 없다"
+
+
+def test_scp_counts_too_because_that_is_where_the_weights_come_home(monkeypatch):
+    """⚠ `ssh` 만 보면 회수가 빠진다. `rescue.py` 는 `scp` 를 **직접** 부르고, 거기서
+    실패하면 잃는 것은 접속이 아니라 **학습 결과**다."""
+    d = _readiness_body(monkeypatch, lambda n: None if n == "scp" else f"/usr/bin/{n}")
+    assert d["checks"]["ssh"]["ok"] is False
+
+
 def test_a_key_we_could_not_check_is_not_called_unregistered(monkeypatch):
     """⚠ **실측(2026-09-18)**: `vastai show ssh-keys` 가 401 로 죽어 판정이 `None` 이었는데
     화면은 "설정 → 클라우드 에서 [Vast 계정에 등록] 을 눌러 주세요" 라고 말했다.

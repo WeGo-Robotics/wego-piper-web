@@ -64,7 +64,8 @@ def test_the_fingerprint_matches_openssh(sshkey):
 
 
 def test_it_does_not_shell_out_to_ssh_keygen():
-    """⚠ 이미지에 `openssh-client` 가 없다 — 서브프로세스로 만들면 배포판에서 깨진다."""
+    """처음 이유(이미지에 `openssh-client` 가 없다)는 베이스 `cu130-4` 로 사라졌다.
+    그래도 프로세스 안에서 만드는 쪽을 지킨다 — 바이너리 유무에 결과가 안 걸린다."""
     src = (Path(__file__).resolve().parents[1] / "app/services/cloud/sshkey.py").read_text()
     from conftest import python_code_only
 

@@ -83,7 +83,8 @@ const GROUP_AVAILABLE = '고를 수 있습니다'
 const GROUP_UNAVAILABLE = '지금 조건으로는 기계가 없습니다'
 
 const CHECK_LABEL: Record<string, string> = {
-  cli: 'vastai CLI', api_key: 'API 키', ssh_key: 'SSH 키', template: '학습 템플릿',
+  cli: 'vastai CLI', ssh: 'ssh 클라이언트', api_key: 'API 키', ssh_key: 'SSH 키',
+  template: '학습 템플릿',
 }
 type SortKey = 'value' | 'price' | 'cuda' | 'reliability' | 'cpu' | 'inet'
 

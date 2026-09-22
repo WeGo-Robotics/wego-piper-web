@@ -290,6 +290,57 @@ def test_orphans_are_listed_first_because_they_are_what_needs_looking_at(client,
     assert ids == [9, 1], "고아가 맨 위가 아니다"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 파기 창은 **무엇을 잃는지** 말해야 한다 (2026-09-21)
+#
+# ⚠ `push_to_hub` 는 학습 끝에 한 번만 올린다 — 중간 체크포인트는 Hub 에 아예 없고
+#   기계와 함께 사라진다. "있으면 잃습니다" 라고만 하면 있는지를 사람이 알 길이 없다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _ckpts(monkeypatch, fn):
+    from app.services.cloud import rescue
+
+    monkeypatch.setattr(rescue, "list_checkpoints", fn)
+
+
+def test_the_destroy_dialog_is_told_how_many_checkpoints_it_would_erase(client, monkeypatch):
+    c, st = client
+    st["rows"] = [_inst(5)]
+    _ckpts(monkeypatch, lambda t, **k: [("005000", "/p/5"), ("010000", "/p/10")])
+    d = c.get("/api/cloud/instances/5/checkpoints").json()
+    assert d["reachable"] is True and d["count"] == 2
+    assert d["steps"] == ["005000", "010000"], "step 이름은 원격 것 그대로여야 한다"
+
+
+def test_an_unreachable_box_is_not_reported_as_empty(client, monkeypatch):
+    """⚠ **이게 요점이다.** 못 물어본 것을 "0개" 로 뭉개면 있는데 없다고 말하는 것이고,
+    사람은 그 말을 믿고 지운다 — `/readiness` 의 SSH 키 판정에서 겪은 함정과 같다."""
+    c, st = client
+    st["rows"] = [_inst(5)]
+
+    def _boom(t, **k):
+        raise TimeoutError("접속 시간 초과")
+
+    _ckpts(monkeypatch, _boom)
+    d = c.get("/api/cloud/instances/5/checkpoints").json()
+    assert d["reachable"] is False, "확인 못 한 것을 확인했다고 말한다"
+    assert d["count"] == 0 and "확인하지 못했습니다" in d["detail"]
+
+
+def test_a_box_without_an_address_yet_says_so(client, monkeypatch):
+    """뜨는 중이라 ssh 주소가 아직 없을 수 있다 — 그것도 "없음" 이 아니라 "모름" 이다."""
+    c, st = client
+    st["rows"] = [_inst(5, ssh_host=None, ssh_port=None)]
+    d = c.get("/api/cloud/instances/5/checkpoints").json()
+    assert d["reachable"] is False and d["count"] == 0
+
+
+def test_asking_about_a_machine_that_is_gone_is_a_404(client):
+    c, st = client
+    st["rows"] = []
+    assert c.get("/api/cloud/instances/5/checkpoints").status_code == 404
+
+
 def test_destroying_reports_success_only_when_it_is_confirmed(client):
     c, st = client
     st["rows"] = [_inst(5)]

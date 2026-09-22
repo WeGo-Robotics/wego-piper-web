@@ -47,6 +47,10 @@ ORPHAN_PREFIX = "piper-"
 NO_CLI = ("이 게이트웨이에 vastai CLI 가 없습니다 — 컨테이너 배포판은 이미지에 들어 있어야 "
           "합니다(이미지 갱신 필요). 저장소에서 직접 띄웠다면 `pip install vastai`.")
 
+#: ssh 가 없을 때의 문구. ⚠ 역시 사용자 탓이 아니다 — 컨테이너에 사람이 깔 수 없다.
+NO_SSH = ("이 게이트웨이에 ssh·scp 가 없습니다 — 빌린 기계에 접속도, 가중치 회수도 "
+          "못 합니다. 새 릴리스를 받아 주세요(베이스 cu130-4 부터 들어 있습니다).")
+
 
 @router.get("/ssh-key")
 async def get_ssh_key():
@@ -565,6 +569,51 @@ async def orphans():
     return sweeper.snapshot()
 
 
+@router.get("/instances/{instance_id}/checkpoints")
+async def instance_checkpoints(instance_id: int):
+    """이 기계에 **파기하면 같이 사라질** 중간 체크포인트가 몇 개인가.
+
+    ## ⚠ 왜 화면이 이걸 물어야 하나
+
+    `push_to_hub` 는 학습이 끝날 때 **한 번만** 올린다(§12-4) — 중간 체크포인트는 Hub
+    에 아예 안 간다. 그래서 `save_freq` 대로 네 벌이 찍혀 있어도 기계를 파기하면 넷 다
+    사라진다. 파기 창이 "있으면 사라집니다" 라고만 하던 때에는, 있는지 없는지를 사람이
+    알 길이 없었다.
+
+    ## ⚠ 0개와 "못 물어봤다" 는 다른 말이다
+
+    접속이 안 되거나 기계가 아직 안 떴으면 `reachable=false` 로 답한다. 이걸 0개로
+    뭉개면 **있는데 없다고 말하고** 사람은 그 말을 믿고 지운다. `/readiness` 의 SSH 키
+    판정에서 한 번 겪은 함정과 같은 모양이다(§12-23).
+    """
+    from app.services.cloud import rescue
+    from app.services.cloud.rent import _target_for
+
+    try:
+        rows = await asyncio.to_thread(_provider().list_instances)
+    except Exception as exc:                                        # noqa: BLE001
+        raise _to_http(exc) from exc
+
+    inst = next((i for i in rows if i.id == int(instance_id)), None)
+    if inst is None:
+        raise HTTPException(404, f"인스턴스 {instance_id} 를 찾을 수 없습니다")
+    if not inst.ssh:
+        return {"reachable": False, "steps": [], "count": 0,
+                "detail": "아직 접속 주소가 없습니다 — 기계가 뜨는 중일 수 있습니다"}
+
+    try:
+        found = await asyncio.to_thread(rescue.list_checkpoints, _target_for(inst))
+    except Exception as exc:                                        # noqa: BLE001
+        # ⚠ 500 을 내지 않는다. 확인 못 한 것은 **사실**이고, 그걸 말해 주는 편이
+        #   창을 못 여는 것보다 낫다 — 파기 자체를 막을 이유는 없다.
+        logger.warning("체크포인트 목록 조회 실패(%s): %s", instance_id, exc)
+        return {"reachable": False, "steps": [], "count": 0,
+                "detail": f"확인하지 못했습니다 ({str(exc)[:120]})"}
+
+    steps = [step for step, _ in found]
+    return {"reachable": True, "steps": steps, "count": len(steps), "detail": ""}
+
+
 @router.delete("/instances/{instance_id}")
 async def destroy_instance(instance_id: int):
     """인스턴스를 파기한다. **확인될 때만 성공이라고 말한다.**
@@ -658,6 +707,15 @@ async def readiness():
     모자란지 말해 준다 — 그래야 세팅 전에도 가격을 볼 수 있다(§9-2).
     """
     cli = shutil.which("vastai") is not None
+    # ⚠ **나가는 쪽 ssh 다.** 배포판 게이트웨이는 컨테이너라 호스트의 ssh 를 못 빌린다.
+    #   베이스 `cu130-4` 부터 들어 있지만, 그전 이미지로 도는 호스트는 여기서 막아야
+    #   한다 — 안 막으면 기계를 **빌린 다음에야** "ssh 가 없습니다" 로 끝난다(실측
+    #   2026-09-21). `vastai` 만 있고 ssh 가 없는 조합이 제일 나쁘다: 준비 점검이
+    #   초록불이라 사람은 다 됐다고 믿고 돈부터 쓴다.
+    #
+    # ⚠ `scp` 도 같이 본다. 회수(`rescue.py`)가 그걸 직접 부르고, 거기서 실패하면
+    #   잃는 것은 접속이 아니라 **학습 결과**다.
+    ssh_ok = all(shutil.which(b) for b in ("ssh", "scp"))
     key = sshkey.info()
 
     account: dict | None = None
@@ -678,6 +736,7 @@ async def readiness():
 
     checks = {
         "cli": {"ok": cli, "detail": None if cli else NO_CLI},
+        "ssh": {"ok": ssh_ok, "detail": None if ssh_ok else NO_SSH},
         "api_key": {"ok": account is not None,
                     "detail": account_error or (None if account else "API 키가 설정되지 않았습니다")},
         # ⚠ **"확인 못 했다" 를 "안 돼 있다" 로 말하지 않는다.** 실측(2026-09-18):

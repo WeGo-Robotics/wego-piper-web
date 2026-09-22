@@ -31,6 +31,14 @@ type Instance = {
   orphan: boolean
 }
 
+/**
+ * 파기하면 같이 사라질 **중간** 체크포인트.
+ *
+ * ⚠ `reachable` 이 따로 있는 이유: **0개와 "못 물어봤다" 는 다른 말**이다. 접속이
+ * 안 됐는데 "없습니다" 라고 그리면 사람은 없다고 믿고 지운다.
+ */
+type Ckpt = { reachable: boolean; steps: string[]; count: number; detail: string }
+
 const money = (n: number) => `$${n.toFixed(4)}`
 
 export default function CloudInstancesTab() {
@@ -38,6 +46,7 @@ export default function CloudInstancesTab() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
   const [confirming, setConfirming] = useState<Instance | null>(null)
+  const [ckpt, setCkpt] = useState<Ckpt | null>(null)
 
   const load = useCallback(() => {
     setError(null)
@@ -47,6 +56,24 @@ export default function CloudInstancesTab() {
   }, [])
 
   useEffect(load, [load])
+
+  // ⚠ 파기 창을 열 때 **기계에 직접 물어본다.** `push_to_hub` 는 학습이 끝날 때 한 번만
+  //   올리므로 중간 체크포인트는 Hub 에 아예 없다 — 파기하면 그대로 사라지는데, 몇 개가
+  //   걸려 있는지 모르고 누르게 두면 안 된다.
+  // ⚠ 논블로킹이다. 창은 바로 뜨고 숫자만 나중에 채워진다 — 조회가 느리다고 파기를
+  //   막으면, 정작 급할 때(요금이 나가는 중) 못 끄게 된다.
+  useEffect(() => {
+    setCkpt(null)
+    if (!confirming) return
+    let alive = true
+    api.get<Ckpt>(`/cloud/instances/${confirming.id}/checkpoints`, { timeoutMs: 30_000 })
+      .then((r) => { if (alive) setCkpt(r) })
+      .catch((e) => {
+        if (alive) setCkpt({ reachable: false, steps: [], count: 0,
+                             detail: e instanceof Error ? e.message : '확인하지 못했습니다' })
+      })
+    return () => { alive = false }
+  }, [confirming])
 
   const destroy = async (inst: Instance) => {
     setBusy(inst.id)
@@ -157,10 +184,33 @@ export default function CloudInstancesTab() {
               ))}
             </dl>
             <p className="rounded border border-neutral-700 bg-neutral-800/60 p-2 text-xs text-neutral-400">
-              되돌릴 수 없고 기계의 데이터는 사라집니다. 회수하지 않은 체크포인트가 있으면
-              <strong className="text-neutral-300"> 지금 잃습니다</strong> — 푸시는 학습이
-              끝날 때 한 번만 일어납니다.
+              되돌릴 수 없고 기계의 데이터는 사라집니다. 푸시는 학습이 끝날 때 한 번만
+              일어나서 <strong className="text-neutral-300">중간 체크포인트는 Hub 에
+              없습니다</strong>.
             </p>
+            {/* ⚠ 세 상태를 **절대 섞지 않는다** — 확인 중 · 못 물어봄 · 물어봄(N개).
+                못 물어본 것을 "없습니다" 로 그리면 그게 이 창에서 제일 비싼 거짓말이다. */}
+            {ckpt === null ? (
+              <p className="rounded border border-neutral-700 bg-neutral-800/60 p-2 text-xs text-neutral-500">
+                중간 체크포인트를 확인하는 중…
+              </p>
+            ) : !ckpt.reachable ? (
+              <p className="rounded border border-amber-600/40 bg-amber-950/30 p-2 text-xs text-amber-200/90">
+                중간 체크포인트를 <strong>확인하지 못했습니다</strong> — {ckpt.detail}.
+                있는지 모르는 채로 파기하게 됩니다.
+              </p>
+            ) : ckpt.count > 0 ? (
+              <p className="rounded border border-red-500/50 bg-red-950/40 p-2 text-xs text-red-200">
+                회수하지 않은 중간 체크포인트 <strong>{ckpt.count}개</strong>가 있습니다
+                {' '}(step {ckpt.steps.slice(0, 6).join(', ')}{ckpt.steps.length > 6 ? ' …' : ''})
+                {' '}— 파기하면 같이 사라집니다. 학습 페이지에서 [중간 체크포인트도 받기]로
+                다시 돌리거나, 먼저 회수하세요.
+              </p>
+            ) : (
+              <p className="rounded border border-neutral-700 bg-neutral-800/60 p-2 text-xs text-neutral-400">
+                중간 체크포인트는 없습니다.
+              </p>
+            )}
             <div className="flex justify-end gap-2">
               <button onClick={() => setConfirming(null)}
                 className="rounded border border-neutral-600 px-4 py-1.5 text-sm text-neutral-300 hover:border-neutral-400">

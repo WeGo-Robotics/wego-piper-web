@@ -101,3 +101,15 @@ RUN pip install grpcio
 #   할 때는 안 불리므로, 없어도 검출은 되고 학습에서만 ImportError 로 죽는다.
 #   그래서 여기서 같이 깐다(BSD-3).
 RUN pip install "torchmetrics[detection]" scipy
+
+# ── ssh 클라이언트 ──
+# 원격 학습(`train_ssh_host`)과 클라우드 GPU 회수(`scp`)가 **나가는 쪽**에서 쓴다.
+# ⚠ **클라이언트다, 서버가 아니다.** 이 컨테이너로 들어오는 접속은 없다 — 빌린 기계
+#   안에서 도는 sshd 는 학습 이미지(deploy/train/Dockerfile)의 몫이고, tmux 도 거기다
+#   (`command -v tmux` 는 ssh 로 **원격에서** 실행된다, runners/ssh.py).
+# ⚠ 빠져 있어도 로컬 학습·수집·추론은 멀쩡해서 오래 안 걸렸다. 개발 머신은 게이트웨이가
+#   저장소에서 직접 돌아 호스트의 ssh 를 썼고, 배포 호스트(.120·.44)는 클라우드 학습을
+#   아직 안 써 봤다. 그런데 `vastai` 는 들어 있어서 **준비 점검이 초록불이었다** —
+#   빌린 다음에야 "ssh 가 없습니다" 로 끝나는, 셋 다 없던 때보다 나쁜 조합이었다.
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client \
+    && rm -rf /var/lib/apt/lists/*

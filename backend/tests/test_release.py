@@ -908,6 +908,24 @@ def test_the_image_ships_the_npp_runtime_torchcodec_links_against():
         "빌드가 스스로 확인하지 않는다 — 다음에 또 못 쓰는 torchcodec 이 실려 나간다"
 
 
+def test_the_gateway_image_can_reach_out_over_ssh():
+    """⚠ **나가는 쪽 클라이언트**다. 원격 학습(`train_ssh_host`)과 클라우드 회수(`scp`)가
+    이걸 쓰는데, 배포판 게이트웨이는 컨테이너라 호스트의 ssh 를 못 빌린다.
+
+    오래 안 걸린 이유(2026-09-21 실측): 로컬 학습·수집·추론은 ssh 를 아예 안 타고
+    (`train_ssh_host` 가 비면 systemd 러너다), 개발 머신은 게이트웨이가 저장소에서 직접
+    돌아 호스트 것을 썼다. 그런데 `vastai` 는 들어 있어서 **준비 점검이 초록불이었다** —
+    빌린 **다음에야** "ssh 가 없습니다" 로 끝난다. 셋 다 없던 때보다 나쁜 조합이다.
+
+    ⚠ `openssh-server` 가 아니다. 이 컨테이너로 들어오는 접속은 없다 — sshd 도 tmux 도
+    **빌린 기계** 쪽, 즉 학습 이미지의 몫이다(`test_train_image.py`). `command -v tmux` 는
+    ssh 로 원격에서 실행된다(`runners/ssh.py`).
+    """
+    base = (REPO / "backend" / "Dockerfile.base").read_text()
+    assert "openssh-client" in base, "게이트웨이가 ssh·scp 로 나갈 수 없다"
+    assert "openssh-server" not in base, "게이트웨이는 접속을 받지 않는다 — 클라이언트만"
+
+
 def test_the_release_warns_before_reusing_a_published_version():
     """⚠ 호스트의 "새 버전 확인"은 버전 **문자열**을 견준다. 같은 번호로 다시 끊으면
     `v0.5.5 == v0.5.5` 라 "최신입니다" 라고 답하고, 그 기계는 고친 것을 **스스로는 영영
