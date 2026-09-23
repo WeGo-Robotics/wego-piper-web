@@ -161,7 +161,11 @@ export default function EpisodesPage() {
     return v >= 1 && v <= 4 ? v : 3
   })
 
-  const [videoError, setVideoError] = useState(false)
+  // ⚠ 불리언이 아니라 **브라우저가 한 말**을 담는다. 예전에는 참/거짓만 두고 화면이
+  //   "코덱/픽셀 포맷" 이라고 단정했는데, 실기에서 그 파일은 멀쩡했다(h264/yuv420p,
+  //   ffmpeg 로 13256 프레임 전부 디코드, 헤드리스 Chrome 도 재생) — 원인을 모르면서
+  //   이름을 붙이면 사람이 엉뚱한 곳을 몇 시간 판다. 코드와 메시지를 그대로 보여준다.
+  const [videoError, setVideoError] = useState<{ code: number; message: string } | null>(null)
   const [cacheMissing, setCacheMissing] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [baking, setBaking] = useState(false)
@@ -308,7 +312,7 @@ export default function EpisodesPage() {
     setEp(null)
     setSignals(null)
     setPlaying(false)
-    setVideoError(false)
+    setVideoError(null)
     setCacheMissing(false)
     setPreview(null)
     setDraft(null)
@@ -334,7 +338,7 @@ export default function EpisodesPage() {
     setEp(index)
     setFrame(0)
     setPlaying(false)
-    setVideoError(false)
+    setVideoError(null)
     setCacheMissing(false)
     setPreview(null)
     setSignals(await api.get<Signals>(`/phase/${id}/signals/${index}`).catch(() => null))
@@ -392,7 +396,7 @@ export default function EpisodesPage() {
     return out
   }, [ep, detail, cams])
 
-  const videoActive = viewMode === 'video' && videoMeta != null && !videoError
+  const videoActive = viewMode === 'video' && videoMeta != null && videoError == null
 
   /**
    * 그릴 그래프 목록. **한 곳에서만 만든다** — 개수를 따로 세면 목록과 어긋난다.
@@ -519,7 +523,10 @@ export default function EpisodesPage() {
         void v.play().catch((err: unknown) => {
           // ⚠ AbortError 는 에피소드 전환·일시정지가 재생 시작을 끊었을 뿐이다.
           // 이걸 폴백시키면 멀쩡한 h264 데이터셋에서 "코덱" 오진 배너가 뜬다 (실사고).
-          if ((err as DOMException)?.name === 'NotSupportedError') setVideoError(true)
+          // play() 거절도 같은 규칙 — 이름을 지어내지 말고 브라우저가 한 말을 담는다.
+          if ((err as DOMException)?.name === 'NotSupportedError') {
+            setVideoError({ code: 4, message: (err as DOMException).message || 'play() NotSupportedError' })
+          }
         })
       })
     } else els.forEach((v) => v.pause())
@@ -1100,8 +1107,13 @@ export default function EpisodesPage() {
                       onError={(e) => {
                         // 3=DECODE, 4=SRC_NOT_SUPPORTED 만 진짜 재생 불가.
                         // 1(abort)·2(network)는 src 교체·프록시 순단으로도 떠서 폴백하면 오진.
-                        const code = e.currentTarget.error?.code
-                        if (code === 3 || code === 4) setVideoError(true)
+                        const err = e.currentTarget.error
+                        const code = err?.code
+                        if (code === 3 || code === 4) {
+                          setVideoError({ code, message: err?.message || '' })
+                          // eslint-disable-next-line no-console
+                          console.error('[episodes] video error', cam, videoUrl(cam), err)
+                        }
                       }}
                       onLoadedMetadata={(e) => {
                         const m = videoMeta?.[cam]
@@ -1133,8 +1145,22 @@ export default function EpisodesPage() {
             </div>
 
             {videoError && viewMode === 'video' && (
-              <div className="rounded border border-neutral-700 bg-neutral-800 p-2 text-xs text-neutral-400">
-                브라우저가 이 비디오를 재생하지 못합니다 (코덱/픽셀 포맷) — 프레임 캐시로 전환됨
+              <div className="rounded border border-neutral-700 bg-neutral-800 p-2 text-xs text-neutral-400 space-y-1">
+                <div>
+                  브라우저가 이 비디오를 재생하지 못했습니다 — 프레임 캐시로 전환됨
+                  {' '}(<span className="text-neutral-300">
+                    {videoError.code === 3 ? 'DECODE' : 'SRC_NOT_SUPPORTED'}
+                  </span>)
+                </div>
+                {/* ⚠ **원인을 단정하지 않는다.** 코드 3·4 는 코덱 말고도 전송이 끊기거나
+                    src 를 갈아 끼울 때도 뜬다. 브라우저가 한 말을 그대로 옮긴다. */}
+                {videoError.message && (
+                  <div className="text-neutral-500 break-all">{videoError.message}</div>
+                )}
+                <button onClick={() => setVideoError(null)}
+                  className="underline text-neutral-400 hover:text-neutral-200">
+                  동영상으로 다시 시도
+                </button>
               </div>
             )}
 

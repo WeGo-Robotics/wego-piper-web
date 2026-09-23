@@ -1,4 +1,5 @@
 import json
+import os
 import logging
 from pathlib import Path
 from typing import Literal
@@ -251,8 +252,16 @@ async def episode_video(dataset_id: str, cam: str, chunk: int, file: int):
             template = json.loads(info_path.read_text()).get("video_path") or template
         except Exception:
             pass
-    path = (ds_path / template.format(video_key=key, chunk_index=chunk, file_index=file)).resolve()
-    if not str(path).startswith(str(ds_path.resolve())) or not path.exists():
+    # ⚠ **심볼릭을 따라가기 **전에** 판정한다.** 막아야 하는 것은 템플릿 안의 `..` 이지
+    #   데이터셋 안의 심볼릭이 아니다. `.resolve()` 로 판정하면 **허브에서 받은 데이터셋이
+    #   통째로 404 가 된다** — HF 캐시는 `snapshots/<hash>/…` 를 `blobs/<sha>` 로 링크하므로
+    #   resolve 하는 순간 스냅샷 밖으로 나간다(실기 2026-09-23, `wego-mink/sim_two_box_3_120`).
+    #   증상은 "코덱" 오진 배너였다: 브라우저가 mp4 대신 404 JSON 을 받아 Format error 를 냈다.
+    #   `normpath` 는 파일시스템을 안 타고 `..` 만 접는다 — 그게 원래 막으려던 것이다.
+    base = ds_path.resolve()
+    path = Path(os.path.normpath(base / template.format(
+        video_key=key, chunk_index=chunk, file_index=file)))
+    if not path.is_relative_to(base) or not path.exists():
         raise HTTPException(404, "비디오 파일이 없습니다")
     return FileResponse(path, media_type="video/mp4")
 
