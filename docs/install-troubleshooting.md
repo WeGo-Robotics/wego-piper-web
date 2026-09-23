@@ -219,3 +219,15 @@ docker run --rm --gpus all --entrypoint python piper-web-backend:latest \
 ```
 
 GPU 가 아예 없는 기계는 된다 — 학습·추론만 빠진다(QnA "GPU 없는 기계에 설치하면?").
+
+## 11. 바탕화면 아이콘
+
+설치(`apply.sh` 5절)가 앱 메뉴와 바탕화면에 **[Piper Studio]**·**[Piper Studio 진단]** 을 만든다
+(`install-shortcuts.sh`). [Piper Studio] 는 웹을 열고, 프론트가 응답하지 않으면 진단 보고서를
+대신 연다 — 그 보고서가 §0 의 세 명령과 `apply.sh --check` 의 ✗ 줄을 한 장에 모은 것이다.
+
+| 증상 | 원인 | 처방 |
+|---|---|---|
+| 아이콘이 없다 | SSH 로 깔아 바탕화면 디렉토리가 없었거나, v0.5.7 이하 번들 | 그래픽 세션에서 `~/piper-web-deploy/current/install-shortcuts.sh`. 앱 메뉴(Super 키 → "Piper")에는 있다 |
+| 아이콘에 "신뢰할 수 없음"·자물쇠, 눌러도 안 열림 | GNOME 의 실행 허용 표시를 세션 없이(SSH) 깔아서 못 줬다 | 아이콘 우클릭 → **[실행 허용]** 한 번. 또는 `gio set ~/Desktop/piper-studio.desktop metadata::trusted true` |
+| 눌렀는데 웹 대신 "진단" 보고서가 뜬다 | 프론트(nginx)가 응답하지 않는다 — 의도한 동작이다 | 보고서의 [2]·[3] 이 원인을 말한다(docker 안 돎·포트 점유·컨테이너 없음). 웹이 돌아오면 같은 아이콘이 다시 웹을 연다 |

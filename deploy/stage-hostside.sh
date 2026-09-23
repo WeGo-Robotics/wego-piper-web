@@ -54,6 +54,12 @@ cp deploy/apply.sh "$OUT/"
 cp deploy/piper-install.sh "$OUT/"
 cp deploy/piper-uninstall.sh "$OUT/"   # 제거도 번들에서 — 설치가 만든 것을 되돌린다 (데이터는 남긴다)
 cp deploy/pull-progress.py "$OUT/"
+# 바탕화면 바로가기 셋 (feature/field-deployment.md §5) — apply.sh 5절이 current/ 에 깔고 아이콘을 만든다.
+# 아이콘은 프론트의 favicon **그대로** — 원본이 하나여야 갈리지 않는다. release.sh 의 판정에도 같은 경로가 있다.
+cp deploy/install-shortcuts.sh "$OUT/"
+cp deploy/piper-studio.sh "$OUT/"
+cp deploy/piper-doctor.sh "$OUT/"
+cp frontend/public/favicon.svg "$OUT/piper-studio.svg"
 cp CHANGELOG.md "$OUT/"
 
 # ── compose · env 예시 ────────────────────────────────────────────────────

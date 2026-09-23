@@ -640,7 +640,28 @@ say "확인"
 echo "  ./apply.sh --check      # 적용 상태만 다시 본다"
 echo "  docker compose logs -f backend"
 
-# ── 5. 접속 ───────────────────────────────────────────────────────────────
+# ── 5. 바로가기 ───────────────────────────────────────────────────────────
+# 일반 사용자는 주소를 외우지 않는다 (feature/field-deployment.md §5). 아이콘 둘 — [Piper Studio]
+# 는 웹을 열고(안 떠 있으면 진단 보고서를), [Piper Studio 진단] 은 보고서만. 실행 스크립트는
+# 버전 디렉토리가 아니라 **current/** 에 둔다 — 버전이 바뀌어도 아이콘이 가리키는 자리가 같다.
+# ⚠ 옛 번들(v0.5.7 이하)에는 이 파일들이 없다 — 그때는 건너뛰고 말한다.
+# ⚠ 바로가기를 못 만들어도 설치는 성공이다 — 경고로 남기고 계속 간다.
+say "5. 바로가기"
+if [ ! -f "$HERE/install-shortcuts.sh" ]; then
+  warn "번들에 바로가기 파일이 없다 (옛 번들) — 다음 업데이트에서 생긴다"
+elif [ $CHECK = 1 ]; then
+  PIPER_SRC="$SRC" bash "$HERE/install-shortcuts.sh" --check || true
+else
+  if install -m 0755 "$HERE/piper-studio.sh" "$HERE/piper-doctor.sh" "$HERE/install-shortcuts.sh" "$SRC/" \
+     && cp "$HERE/piper-studio.svg" "$SRC/" \
+     && PIPER_SRC="$SRC" PIPER_ICON="$SRC/piper-studio.svg" bash "$SRC/install-shortcuts.sh"; then
+    :
+  else
+    warn "바로가기를 못 만들었다 — 나중에 $SRC/install-shortcuts.sh 를 직접 돌린다"
+  fi
+fi
+
+# ── 6. 접속 ───────────────────────────────────────────────────────────────
 # 끝나고 **어디로 가야 하는지** 아무도 안 알려 줬다 (사용자 지적 2026-09-11). 포트는
 # PIPER_WEB_PORT 나 override 로 옮겨졌을 수 있으니 compose 에 묻는다 — 못 물으면
 # (--check·미기동) .env 의 PIPER_WEB_PORT, 그것도 없으면 80.

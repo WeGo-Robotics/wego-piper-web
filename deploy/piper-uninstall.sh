@@ -110,6 +110,24 @@ else
   skip "배포 디렉토리 없음"
 fi
 
+# ── 4b. 바로가기 ──────────────────────────────────────────────────────────
+# apply.sh 5절(install-shortcuts.sh)이 만든 것 — 앱 메뉴 항목 둘, 바탕화면 사본 둘, 아이콘.
+# 번들이 이미 지워졌을 수 있으니 스크립트를 부르지 않고 **같은 자리**를 직접 지운다.
+say "4b. 바로가기"
+XDG_DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
+DESK="$(xdg-user-dir DESKTOP 2>/dev/null || true)"; DESK="${DESK:-$HOME/Desktop}"
+n=0
+for f in "$XDG_DATA/applications/piper-studio.desktop" "$XDG_DATA/applications/piper-studio-doctor.desktop" \
+         "$DESK/piper-studio.desktop" "$DESK/piper-studio-doctor.desktop" "$XDG_DATA/icons/piper-studio.svg"; do
+  [ -e "$f" ] || continue
+  run rm -f "$f" && ok "$f"; n=$((n + 1))
+done
+if [ $n -gt 0 ]; then
+  if command -v update-desktop-database >/dev/null; then runq update-desktop-database "$XDG_DATA/applications" || true; fi
+else
+  skip "바로가기 없음"
+fi
+
 # ── 5. 데이터 ─────────────────────────────────────────────────────────────
 say "5. 데이터"
 DATA_DIRS=("$DATA" "$HOME/.cache/huggingface/lerobot" "$HOME/.config/piper-web")
