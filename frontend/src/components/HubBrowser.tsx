@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../services/api'
+import { useHubDownload, dlActive, bytes, eta } from '../hooks/useHubDownload'
 
 type HubItem = {
   repo_id: string
@@ -17,12 +18,65 @@ type Props = {
   type: 'models' | 'datasets'
 }
 
+/**
+ * 다운로드 버튼 + 진행 상황.
+ *
+ * ⚠ **다섯 상태를 섞지 않는다.** 특히 `incomplete` — 받긴 받았는데 파일이 빠진 것이라
+ * 실패가 아니라 **다시 받으면 되는 상태**다. 이걸 완료로 그리면, 몇 주 뒤 영상이
+ * 안 나올 때까지 아무도 모른다(2026-09-23 사고).
+ */
+function DownloadCell({ d, onStart }: { d?: import('../hooks/useHubDownload').HubDownload
+                                        onStart: () => void }) {
+  const st = d?.status
+  if (dlActive(st)) {
+    const pct = d?.percent ?? 0
+    return (
+      <div className="ml-4 shrink-0 w-44">
+        <div className="h-1.5 rounded bg-neutral-700 overflow-hidden">
+          <div className="h-full bg-green-500 transition-[width] duration-500"
+               style={{ width: `${Math.max(2, pct)}%` }} />
+        </div>
+        <div className="mt-1 text-[10px] text-neutral-400 tabular-nums">
+          {st === 'verifying' ? '파일 확인 중…' : (
+            <>
+              {d!.files_done}/{d!.files_total} · {pct.toFixed(0)}%
+              {d!.speed_bps > 0 && <> · {bytes(d!.speed_bps)}/s</>}
+              {d!.eta_s != null && d!.eta_s > 0 && <> · {eta(d!.eta_s)}</>}
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
+  if (st === 'completed') {
+    return <span className="ml-4 shrink-0 px-3 py-1.5 text-xs text-green-400">받음 ✓</span>
+  }
+  return (
+    <div className="ml-4 shrink-0 text-right">
+      <button onClick={onStart}
+        className="px-3 py-1.5 text-xs rounded bg-green-600 hover:bg-green-500 text-white">
+        {st === 'incomplete' || st === 'error' ? '다시 받기' : '다운로드'}
+      </button>
+      {st === 'incomplete' && (
+        <div className="mt-1 text-[10px] text-amber-300 max-w-44">
+          {d!.missing.length}개 파일이 빠졌습니다 — 다시 받으면 빠진 것만 받습니다
+        </div>
+      )}
+      {st === 'error' && (
+        <div className="mt-1 text-[10px] text-red-400 max-w-44 break-all">{d!.error}</div>
+      )}
+    </div>
+  )
+}
+
 export default function HubBrowser({ type }: Props) {
   const [items, setItems] = useState<HubItem[]>([])
   const [query, setQuery] = useState('')
   const [author, setAuthor] = useState('')
   const [loading, setLoading] = useState(false)
-  const [downloading, setDownloading] = useState<Set<string>>(new Set())
+  // ⚠ 예전에는 `Set` 에 **넣기만** 하고 지우는 곳이 없어서 "다운로드 중..." 이
+  //   영원히 남고 버튼이 계속 잠겼다. 이제 진행 상황은 훅 한 곳이 본다.
+  const { all: dl, start: startDownload } = useHubDownload()
   const search = (authorOverride?: string) => {
     const a = authorOverride ?? author
     setLoading(true)
@@ -53,17 +107,8 @@ export default function HubBrowser({ type }: Props) {
       })
   }, [type])
 
-  const handleDownload = async (repoId: string) => {
-    setDownloading((prev) => new Set(prev).add(repoId))
-    try {
-      await api.post('/hub/download', {
-        repo_id: repoId,
-        repo_type: type === 'models' ? 'model' : 'dataset',
-      })
-    } catch {
-      // ignore
-    }
-  }
+  const handleDownload = (repoId: string) =>
+    void startDownload(repoId, type === 'models' ? 'model' : 'dataset')
 
   return (
     <div className="space-y-4">
@@ -137,13 +182,7 @@ export default function HubBrowser({ type }: Props) {
                   </div>
                 )}
               </div>
-              <button
-                onClick={() => handleDownload(item.repo_id)}
-                disabled={downloading.has(item.repo_id)}
-                className="ml-4 shrink-0 px-3 py-1.5 text-xs rounded bg-green-600 hover:bg-green-500 text-white disabled:opacity-50"
-              >
-                {downloading.has(item.repo_id) ? '다운로드 중...' : '다운로드'}
-              </button>
+              <DownloadCell d={dl[item.repo_id]} onStart={() => handleDownload(item.repo_id)} />
             </div>
           ))}
         </div>

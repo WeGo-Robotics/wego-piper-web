@@ -4,7 +4,6 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.core.config import settings
 from app.services import hub_client
 
 logger = logging.getLogger(__name__)
@@ -126,13 +125,29 @@ class DownloadRequest(BaseModel):
 
 @router.post("/download")
 async def start_download(body: DownloadRequest):
-    local_dir = str(
-        settings.models_dir if body.repo_type == "model" else settings.datasets_dir
-    )
-    await hub_client.start_download(body.repo_id, body.repo_type, local_dir)
-    return {"status": "started", "repo_id": body.repo_id}
+    """받기 시작하고 **지금 상태를 바로 돌려준다.**
+
+    ⚠ 예전에는 `{"status":"started"}` 라는 고정 문구만 돌려줬고, 화면은 그걸 받고 다시는
+    묻지 않아 "다운로드 중..." 이 영원히 남았다. 시작 응답과 폴링 응답이 **같은 모양**
+    이어야 화면이 한 규칙으로 읽는다.
+    """
+    return await hub_client.start_download(body.repo_id, body.repo_type)
 
 
 @router.get("/download/status")
 async def download_status(repo_id: str):
     return hub_client.get_download_status(repo_id)
+
+
+@router.get("/verify")
+async def verify_repo(repo_id: str, repo_type: str = "dataset"):
+    """이미 받아 둔 것에 **빠진 파일이 있나.** 받는 것과 무관하게 언제든 부를 수 있다.
+
+    ⚠ 받다 만 저장소는 목록·에피소드 수가 멀쩡해 보인다 — 그 숫자는 `meta/` 에서 읽기
+    때문이다. 파일이 다 있는지는 세어 봐야 안다(2026-09-23 사고).
+    """
+    from app.services import hub_download
+
+    missing = await asyncio.to_thread(hub_download.verify, repo_id, repo_type)
+    return {"repo_id": repo_id, "repo_type": repo_type,
+            "complete": not missing, "missing": missing}

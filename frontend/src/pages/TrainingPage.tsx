@@ -4,6 +4,7 @@ import SpecFields from '../components/SpecFields'
 import { usePolicyUi, specDefaults, activeWarnings } from '../hooks/usePolicyUi'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
+import { dlActive } from '../hooks/useHubDownload'
 import TrainWhereForm, { type RentPick } from '../components/TrainWhereForm'
 import CloudRentProgress from '../components/CloudRentProgress'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
@@ -38,7 +39,7 @@ const OPTIMIZER_TYPES = ['adam', 'adamw', 'sgd']
 // `arch: true` = 모델 구조를 정하는 값. 체크포인트에서 이어 학습(pretrained)하면
 // 구조가 이미 고정이라 바꿀 수 없다. 나머지는 **학습 방식** 이라 파인튜닝에도 유효하다
 export default function TrainingPage() {
-  const { confirm: askConfirm } = useSystemMessage()
+  const { confirm: askConfirm, notify } = useSystemMessage()
   // 설정 — localStorage에서 복원
   const _saved = (() => { try { return JSON.parse(localStorage.getItem('piper_train_settings') || '{}') } catch { return {} } })()
   const [datasets, setDatasets] = useState<Dataset[]>([])
@@ -300,13 +301,25 @@ export default function TrainingPage() {
     setFetchingBase(true)
     try {
       await api.post('/hub/download', { repo_id: repoId, repo_type: 'model' })
-      // 다운로드는 백그라운드다 — 완료를 기다렸다가 목록을 새로 읽는다
-      for (let i = 0; i < 120; i++) {
+      // 다운로드는 백그라운드다 — 완료를 기다렸다가 목록을 새로 읽는다.
+      // ⚠ **끝 판정은 서버가 주는 값으로 한다.** 예전에는 `'running'`·`'started'` 가
+      //   아니면 끝이라고 봤는데 서버가 주는 것은 `downloading`·`completed` 라,
+      //   **첫 폴링(2초)에서 바로 빠져나왔다** — 기다리는 척만 했다.
+      let last: { status?: string; missing?: string[] } = {}
+      for (let i = 0; i < 300; i++) {
         await new Promise((r) => setTimeout(r, 2000))
-        const st: { status?: string } = await api
-          .get<{ status?: string }>(`/hub/download/status?repo_id=${encodeURIComponent(repoId)}`)
+        last = await api
+          .get<{ status?: string; missing?: string[] }>(
+            `/hub/download/status?repo_id=${encodeURIComponent(repoId)}`)
           .catch(() => ({}))
-        if (st.status && st.status !== 'running' && st.status !== 'started') break
+        if (!dlActive(last.status as never)) break
+      }
+      // ⚠ 받다 만 것을 조용히 넘기지 않는다 — 목록에는 뜨는데 쓸 때 깨진다.
+      if (last.status === 'incomplete') {
+        notify({ level: 'error', source: '학습',
+                 text: `${repoId}: 파일 ${last.missing?.length ?? 0}개가 빠졌습니다 — 저장소 페이지에서 다시 받으세요` })
+      } else if (last.status === 'error') {
+        notify({ level: 'error', source: '학습', text: `${repoId} 다운로드 실패` })
       }
       setModels(await api.get<Model[]>('/models'))
     } catch { /* 실패 사유는 Hub 페이지에서 확인한다 */ }

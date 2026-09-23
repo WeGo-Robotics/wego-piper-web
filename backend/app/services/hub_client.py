@@ -8,7 +8,7 @@ import logging
 from functools import partial
 from pathlib import Path
 
-from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub import HfApi
 
 from app.core import policies
 from app.core.config import settings
@@ -85,7 +85,6 @@ def clear_token() -> bool:
     return existed
 
 # 다운로드 진행 상태 추적
-_download_status: dict[str, dict] = {}
 
 
 def _search_models(query: str = "", author: str = "lerobot", limit: int = 30) -> list[dict]:
@@ -194,22 +193,6 @@ def _get_dataset_info(repo_id: str) -> dict:
     }
 
 
-def _download(repo_id: str, repo_type: str, local_dir: str) -> str:
-    """동기 다운로드 (스레드에서 실행). HF 캐시 구조로 저장."""
-    _download_status[repo_id] = {"status": "downloading", "progress": 0}
-    try:
-        path = snapshot_download(
-            repo_id=repo_id,
-            repo_type=repo_type,
-            # local_dir 미지정 → HF 기본 캐시 (models--org--name/snapshots/hash/)
-        )
-        _download_status[repo_id] = {"status": "completed", "path": path}
-        return path
-    except Exception as e:
-        _download_status[repo_id] = {"status": "error", "error": str(e)}
-        raise
-
-
 async def search_models(query: str = "", author: str = "lerobot", limit: int = 30) -> list[dict]:
     return await asyncio.get_event_loop().run_in_executor(
         None, partial(_search_models, query, author, limit)
@@ -234,10 +217,19 @@ async def get_dataset_info(repo_id: str) -> dict:
     )
 
 
-async def start_download(repo_id: str, repo_type: str, local_dir: str) -> None:
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, partial(_download, repo_id, repo_type, local_dir))
+async def start_download(repo_id: str, repo_type: str = "model") -> dict:
+    """진행 상황과 완료 검증은 `hub_download` 가 한다 — 그 모듈 머리말이 이유다.
+
+    ⚠ 예전에는 `local_dir` 을 **받아서 버렸다**(주석이 "HF 기본 캐시" 라고 적어 뒀다).
+    라우터가 경로를 계산해 넘기는데 아무 데도 안 쓰여서, 다음 사람이 "여기로 받는구나"
+    로 읽게 되는 인자였다. 지웠다.
+    """
+    from app.services import hub_download
+
+    return hub_download.start(repo_id, repo_type)
 
 
 def get_download_status(repo_id: str) -> dict:
-    return _download_status.get(repo_id, {"status": "not_found"})
+    from app.services import hub_download
+
+    return hub_download.status(repo_id)
