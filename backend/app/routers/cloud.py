@@ -411,7 +411,8 @@ async def rent_and_train(body: RentRequest):
 
     ⚠ **동시에 하나만.** 두 번째를 받아 주면 첫 인스턴스의 핸들을 잃는다 = 고아다.
     """
-    from app.routers.training import _require_push_permission, _train_env
+    from app.routers.training import (_require_dataset_versioned,
+                                      _require_push_permission, _train_env)
     from app.services.cloud import rent
     from app.services.cloud.lifecycle import Budget
     from app.services.exclusivity import Activity, require_idle
@@ -425,6 +426,9 @@ async def rent_and_train(body: RentRequest):
                  "끝나도 결과를 가져올 수 없습니다.")
     _reject_local_only_settings(body)
     await _require_push_permission(body.policy_repo_id)
+    # ⚠ **빌리기 전에** 막는다 — 태그 없는 데이터셋은 임대 서버가 받지도 못하는데,
+    #   안 막으면 기계를 만들고 스택을 깔고 나서야 죽는다(돈을 쓴 뒤다).
+    await _require_dataset_versioned(body.dataset_repo_id)
 
     args = _rent_train_args(body)
 
@@ -469,7 +473,8 @@ async def train_on_instance(body: TrainOnRequest):
     ⚠ 학습이 끝난 기계는 유휴다. 요금은 똑같이 나가므로 스캐너가 일정 시간 뒤부터
     "몇 분째 학습 없이 떠 있습니다" 를 말한다 — 끄는 것은 인스턴스 탭에서 사람이 한다.
     """
-    from app.routers.training import _require_push_permission, _train_env
+    from app.routers.training import (_require_dataset_versioned,
+                                      _require_push_permission, _train_env)
     from app.services.cloud import rent
     from app.services.exclusivity import Activity, require_idle
 
@@ -482,6 +487,9 @@ async def train_on_instance(body: TrainOnRequest):
                  "끝나도 결과를 가져올 수 없습니다.")
     _reject_local_only_settings(body)
     await _require_push_permission(body.policy_repo_id)
+    # ⚠ **빌리기 전에** 막는다 — 태그 없는 데이터셋은 임대 서버가 받지도 못하는데,
+    #   안 막으면 기계를 만들고 스택을 깔고 나서야 죽는다(돈을 쓴 뒤다).
+    await _require_dataset_versioned(body.dataset_repo_id)
 
     try:
         job = await rent.train_on(

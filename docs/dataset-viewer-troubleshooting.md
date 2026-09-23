@@ -139,7 +139,52 @@ curl -X POST "http://<호스트>/api/datasets/$D/decode-cache" \
 curl -X POST "http://<호스트>/api/datasets/$D/decode-cache/delete"
 ```
 
-## 4. 관련 문서
+## 4. 받은 데이터셋으로 학습이 안 될 때
+
+증상은 `FileNotFoundError: …/huggingface/lerobot/<org>/<이름>/meta/info.json` 이고, 그
+뒤에 엉뚱한 예외가 겹쳐 진짜 사유를 가린다:
+
+```
+RevisionNotFoundError: Your dataset must be tagged with a codebase version
+TypeError: HfHubHTTPError.__init__() missing 1 required keyword-only argument: 'response'
+```
+
+⚠ **`TypeError` 를 쫓지 마라.** lerobot 이 예외를 만들다 난 2차 오류다. 진짜 사유는 첫
+줄 — `meta/info.json` 을 **엉뚱한 자리에서** 찾았다는 것이다.
+
+### 자리가 둘이다
+
+| 누가 | 어디 |
+|---|---|
+| lerobot 이 보는 곳 | `HF_LEROBOT_HOME/<repo_id>` = `~/.cache/huggingface/lerobot/<org>/<이름>` |
+| 우리가 받는 곳 | HF 허브 캐시 = `~/.cache/huggingface/hub/datasets--<org>--<이름>/snapshots/<hash>` |
+
+못 찾으면 lerobot 은 허브에 **코드베이스 태그**(`v3.0`)를 물으러 간다. `main` 브랜치만
+있고 태그가 없는 저장소에서는 거기서 죽는다 — 파일은 멀쩡히 받아 놨는데도.
+
+### 처방 — `--dataset.root`
+
+`root` 에 `meta/info.json` 이 있으면 lerobot 은 **허브를 아예 안 탄다**(실측).
+로컬 학습은 이제 게이트웨이가 알아서 붙인다:
+
+```
+--dataset.repo_id=wego-mink/sim_two_box_3_120
+--dataset.root=/home/…/hub/datasets--wego-mink--sim_two_box_3_120/snapshots/5cb955…
+```
+
+⚠ **원격(임대 GPU) 학습에는 안 붙인다** — 그 경로가 거기 없고, 이미지가 제 손으로
+받는다. 대신 원격에서는 같은 이유로 **태그 없는 저장소가 막힐 수 있다.** 그때는 저장소에
+`v3.0` 태그를 달거나, 데이터셋을 기계로 직접 올린다.
+
+손으로 확인:
+
+```bash
+curl -s -X POST localhost:8000/api/training/preview -H 'Content-Type: application/json' \
+  -d '{"dataset_repo_id":"<org>/<이름>","policy_type":"act"}' \
+  | python3 -c "import sys,json;print(' '.join(json.load(sys.stdin)['args']))" | tr ' ' '\n' | grep dataset
+```
+
+## 5. 관련 문서
 
 - [episode-editor.md](../feature/episode-editor.md) — 뷰어 설계, 동영상/프레임 두 모드
 - [install-troubleshooting.md](install-troubleshooting.md) · [camera-troubleshooting.md](camera-troubleshooting.md)

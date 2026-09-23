@@ -243,5 +243,10 @@ def test_the_uploader_prefers_hf_because_huggingface_cli_is_a_dead_stub():
     src = (_P(__file__).resolve().parents[1] / "app" / "routers" / "datasets.py").read_text()
     find = src.split("def _find_hf_cli", 1)[1].split("\nrouter =", 1)[0]
     assert "for name in _HF_CLI_NAMES" in find, "이름 하나만 찾는다 — 순서가 뜻을 잃는다"
-    assert '"upload-large-folder"' in src and '"upload"' in src, "업로드 하위 명령이 사라졌다"
+    # ⚠ 하위 명령은 이제 **스크립트** 안에 있다. 업로드 뒤에 코드베이스 태그를 달아야
+    #   해서 CLI 를 스크립트로 감쌌기 때문이다(2026-09-23) — 고른 이름이 거기까지
+    #   전달되는지도 같이 본다. 이름만 옳고 안 넘어가면 아무 소용이 없다.
+    up = (_P(__file__).resolve().parents[1] / "scripts" / "upload_dataset.py").read_text()
+    assert '"upload-large-folder"' in up and '"upload"' in up, "업로드 하위 명령이 사라졌다"
+    assert "--hf-cli" in up and "--hf-cli=" in src, "고른 CLI 가 스크립트로 안 넘어간다"
     assert "huggingface-cli를 찾을 수 없습니다" not in src, "오류 문구가 죽은 이름을 말한다"

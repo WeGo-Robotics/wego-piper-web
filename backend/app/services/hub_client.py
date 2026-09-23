@@ -233,3 +233,29 @@ def get_download_status(repo_id: str) -> dict:
     from app.services import hub_download
 
     return hub_download.status(repo_id)
+
+
+def dataset_versions(repo_id: str) -> list[str] | None:
+    """이 데이터셋이 가진 **코드베이스 버전 표식**. `None` 은 *못 물어봤다*는 뜻이다.
+
+    ⚠ 없다는 것과 모른다는 것을 섞지 않는다. 망이 끊겨 조회가 실패했는데 "태그가
+    없다" 고 말하면, 멀쩡한 데이터셋으로 학습을 걸려던 사람을 막게 된다.
+
+    ⚠ **브랜치도 센다.** lerobot 의 `get_repo_versions` 가 `branches + tags` 를 보므로
+    (`datasets/utils.py`), 우리만 태그로 좁히면 판정이 갈린다.
+    """
+    import packaging.version
+
+    try:
+        refs = _api.list_repo_refs(repo_id, repo_type="dataset")
+    except Exception as exc:                                        # noqa: BLE001
+        logger.warning("데이터셋 버전 표식을 못 읽었습니다(%s): %s", repo_id, exc)
+        return None
+    out = []
+    for name in [r.name for r in (list(refs.branches) + list(refs.tags))]:
+        try:
+            packaging.version.parse(name.lstrip("v"))
+        except Exception:                                           # noqa: BLE001
+            continue
+        out.append(name)
+    return out

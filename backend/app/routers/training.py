@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.cli_mapping import apply_dim_overrides, build_train_args, resolve_rename_map
+from app.services.dataset_scanner import find_dataset_path
 from app.core.config import settings
 from app.routers.presets import register_domain
 from app.services.exclusivity import Activity, require_idle
@@ -81,6 +82,30 @@ class TrainPreviewRequest(BaseModel):
     rename_map: str = ""
     policy_params: dict[str, Any] = Field(default_factory=dict)
     amp: str = "bf16"  # 혼합정밀도: "off" | "bf16" | "fp16" → ACCELERATE_MIXED_PRECISION env
+
+
+def add_local_dataset_root(params: dict, remote: bool) -> dict:
+    """로컬 학습이면 데이터셋의 **실제 자리**를 알려 준다. 제자리에서 고친다.
+
+    ⚠ `repo_id` 만 주면 lerobot 은 `HF_LEROBOT_HOME/<repo_id>` 를 보는데 우리가 받는
+    자리는 HF **허브 캐시**다. 못 찾으면 허브에 코드베이스 태그(`v3.0`)를 물으러 가고,
+    태그 없는 저장소에서는 거기서 죽는다(실기 2026-09-23).
+
+    ⚠ **원격에는 붙이지 않는다** — 그 경로는 임대 서버에 없고, 거기서는 이미지가 제
+    손으로 받는다.
+
+    ⚠ `/start` 와 `/preview` 가 **같은 함수를 쓴다.** 한쪽에만 있으면 미리보기가 실제로
+    도는 명령과 달라진다 — 그건 미리보기가 아니라 거짓말이다.
+    """
+    if remote or not params.get("dataset_repo_id"):
+        return params
+    root = find_dataset_path(params["dataset_repo_id"])
+    if root:
+        params["dataset_root"] = str(root)
+    else:
+        logger.warning("데이터셋 자리를 못 찾았습니다 — lerobot 이 허브를 봅니다: %s",
+                       params["dataset_repo_id"])
+    return params
 
 
 def train_cli_params(body: BaseModel) -> tuple[dict, str, str, str]:
@@ -178,6 +203,44 @@ def _train_env(amp: str, *, remote: bool = False) -> dict[str, str] | None:
     return env or None
 
 
+async def _require_dataset_versioned(repo_id: str) -> None:
+    """**원격 학습**은 데이터셋을 Hub 에서 받는다 — 코드베이스 표식이 없으면 못 받는다.
+
+    lerobot 은 로컬에 데이터셋이 없으면 Hub 에 `v3.0` 같은 버전을 물어보고, 없으면
+    `RevisionNotFoundError` 를 낸다(`datasets/utils.py::get_safe_version`). **폴백이
+    없다** — 다운로드가 시작조차 안 된다.
+
+    ⚠ **그래서 빌리기 전에 막는다.** 안 막으면 인스턴스가 만들어지고, 스택 설치에 몇 분을
+    쓰고(실측 slim 6분 24초), 그제서야 죽는다 — **돈을 쓴 뒤에** 안다. 실기 2026-09-23:
+    `wego-mink/sim_two_box_3_120` 이 그 경우였다(태그 없음).
+
+    ⚠ 로컬 학습은 해당 없다. `--dataset.root` 로 받아 둔 파일을 직접 가리키므로 이
+    경로를 아예 안 탄다.
+
+    ⚠ **모르면 막지 않는다.** 조회 실패(망·권한)와 "표식이 없다" 는 다르다 —
+    `_require_push_permission` 과 같은 규칙이다.
+    """
+    import asyncio
+
+    from app.services.hub_client import dataset_versions
+
+    if not repo_id:
+        return
+    versions = await asyncio.to_thread(dataset_versions, repo_id)
+    if versions is None:
+        logger.warning("데이터셋 버전 표식을 확인하지 못했습니다(그대로 진행): %s", repo_id)
+        return
+    if versions:
+        return
+    raise HTTPException(
+        400,
+        f"'{repo_id}' 에 코드베이스 버전 표식이 없어 임대 서버가 이 데이터셋을 받지 "
+        f"못합니다. 저장소 페이지에서 다시 업로드하거나, 태그를 직접 다세요:\n"
+        f'  HfApi().create_tag("{repo_id}", tag="v3.0", repo_type="dataset")\n'
+        f"(태그 이름은 meta/info.json 의 codebase_version 과 같아야 합니다. "
+        f"로컬 학습은 이 제한을 안 받습니다.)")
+
+
 async def _require_push_permission(repo_id: str) -> None:
     """`--policy.repo_id` 를 쓰면 학습이 **끝나고 나서** Hub 로 올린다.
 
@@ -235,6 +298,9 @@ async def start_training(body: TrainStartRequest):
                  "없으면 학습이 끝나도 결과를 가져올 수 없습니다.")
     if params.get("policy_repo_id"):
         await _require_push_permission(params["policy_repo_id"])
+    # ⚠ 원격만. 로컬은 `--dataset.root` 로 우회한다(위 함수 머리말).
+    if getattr(train_manager.runner, "is_remote", False):
+        await _require_dataset_versioned(params.get("dataset_repo_id", ""))
 
     rename_map = ""
     if params.get("pretrained_path"):
@@ -246,6 +312,7 @@ async def start_training(body: TrainStartRequest):
     # ⚠ **원격 학습은 로컬의 사실 세 가지가 안 통한다** (2026-09-16 실기, §11~§12).
     #   손으로 우회하던 것을 여기서 채운다.
     remote = getattr(train_manager.runner, "is_remote", False)
+    add_local_dataset_root(params, remote)
     args = build_train_args(
         params, rename_map=rename_map,
         # ⚠ 로컬 인터프리터의 절대경로는 임대 서버에 **없다.** 이미지의 venv 는
@@ -418,6 +485,7 @@ async def preview_train_args(body: TrainPreviewRequest):
     rename_map = (
         resolve_rename_map(params["pretrained_path"]) if params.get("pretrained_path") else ""
     )
+    add_local_dataset_root(params, getattr(train_manager.runner, "is_remote", False))
     args = build_train_args(params, rename_map=rename_map)
     env = {"ACCELERATE_MIXED_PRECISION": amp} if amp and amp != "off" else {}
     return {"args": args, "command": " ".join(args), "env": env}

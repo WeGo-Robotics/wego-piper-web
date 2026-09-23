@@ -443,12 +443,22 @@ async def upload_to_hub(dataset_id: str, body: UploadRequest):
     from app.services.notes_sidecar import ensure_readme, read_notes
     ensure_readme(ds_path, dataset_id, read_notes(ds_path, kind="dataset"))
 
-    # 파일 수에 따라 upload / upload-large-folder 선택
+    # ⚠ CLI 를 직접 부르지 않고 스크립트로 감싼다 — **업로드 뒤에 코드베이스 태그를
+    #   달아야** 하기 때문이다. `hf upload` 는 폴더를 올릴 뿐 태그를 안 만들고, 태그가
+    #   없으면 lerobot 이 임대 GPU 에서 그 데이터셋을 **받지도 못한다**(받기 전에 태그를
+    #   묻고 폴백이 없다). 로컬 학습은 `--dataset.root` 로 우회되지만 원격은 안 된다.
+    #   실기 2026-09-23: `wego-mink/sim_two_box_3_120` 가 그래서 막혔다.
+    #
+    # ⚠ 완료 콜백으로 안 한다. 업로드는 **유닛**이라 게이트웨이를 재시작해도 살아남는데,
+    #   콜백은 그 재시작에서 사라진다 — 태그가 조용히 안 달린 채 끝난다.
+    from app.core.config import settings
+
     file_count = sum(1 for _ in ds_path.rglob("*") if _.is_file())
+    script = Path(__file__).resolve().parents[2] / "scripts" / "upload_dataset.py"
+    args = [settings.grpc_python, "-u", str(script), dataset_id, str(ds_path),
+            f"--hf-cli={hf_cli}"]
     if file_count > 1000:
-        args = [hf_cli, "upload-large-folder", dataset_id, str(ds_path), "--repo-type=dataset"]
-    else:
-        args = [hf_cli, "upload", dataset_id, str(ds_path), ".", "--repo-type=dataset"]
+        args.append("--large")
     if body.private:
         args.append("--private")
     await _upload_pm.start(args)

@@ -233,6 +233,13 @@ TRAIN_CMD = "lerobot-train"
 
 TRAIN_ARGS_MAP: dict[str, str] = {
     "dataset_repo_id": "--dataset.repo_id",
+    # ⚠ **로컬 학습에는 이것이 필요하다.** `repo_id` 만 주면 lerobot 은
+    #   `HF_LEROBOT_HOME/<repo_id>`(`~/.cache/huggingface/lerobot/…`) 를 보는데, 우리가
+    #   받는 자리는 HF **허브 캐시**(`~/.cache/huggingface/hub/datasets--…`)다. 못 찾으면
+    #   허브에 코드베이스 **태그**(`v3.0`)를 물으러 가고, 태그 없는 저장소에서는 거기서
+    #   죽는다(실기 2026-09-23: `wego-mink/sim_two_box_3_120` 는 태그가 없다).
+    #   `root` 에 `meta/info.json` 이 있으면 lerobot 은 **허브를 아예 안 탄다**(실측).
+    "dataset_root": "--dataset.root",
     "policy_type": "--policy.type",
     "pretrained_path": "--policy.path",
     "policy_repo_id": "--policy.repo_id",
