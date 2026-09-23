@@ -60,12 +60,30 @@ CAN 포트를 검색해 로봇을 등록하고 리더·팔로워 역할을 지�
 
 로컬 GPU에서 학습을 실행하고 손실 곡선, 메트릭, 로그를 확인합니다. 클라우드 GPU를 사용할 때는
 임대 조건과 비용 비교부터 데이터 전송, 학습, 가중치 회수, 인스턴스 종료까지 화면에서 관리합니다.
-유휴 인스턴스와 누적 비용도 확인할 수 있습니다.
+유휴 인스턴스와 누적 비용도 확인할 수 있습니다. 임대는 현재 Vast.ai를 지원하며, Vast.ai 계정과
+API 키가 필요합니다.
 
 <table><tr>
 <td><img src="docs/images/study.jpg" alt="학습 — 손실 곡선, 메트릭과 로그"><br><sub>학습 진행 상태와 결과 확인</sub></td>
 <td><img src="docs/images/cloud_gpu.jpg" alt="클라우드 GPU — 임대 요금, CUDA와 인스턴스 조건 비교"><br><sub>클라우드 GPU 임대 조건과 비용 비교</sub></td>
 </tr></table>
+
+#### Google Colab으로 학습하기
+
+로컬 GPU도 임대 GPU도 없다면 Google Colab의 GPU로 ACT 정책을 학습할 수 있습니다. Colab에는
+외부에서 제어할 API가 없어 화면에서 직접 실행하지는 못하고, HuggingFace Hub를 거쳐 데이터셋과
+모델을 주고받습니다.
+
+| 순서 | 어디서 | 무엇을 |
+|---|---|---|
+| 1 | Piper Studio **데이터셋** 페이지 | [Hub 업로드]로 데이터셋을 Hub에 올립니다. 설정 → 저장소에 쓰기 권한 토큰으로 로그인해 두어야 합니다. |
+| 2 | Google Colab — LeRobot 공식 [ACT 학습 노트북](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-act.ipynb) | 런타임을 GPU로 바꾸고, 학습 셀의 `--dataset.repo_id`를 1의 저장소 이름으로, `--policy.repo_id`를 새 모델 이름(`<HF 사용자>/<모델>`)으로 고쳐 실행합니다. 학습이 끝나면 모델이 그 저장소로 올라갑니다. |
+| 3 | Piper Studio **저장소** 페이지 | 2의 모델 저장소를 검색해 [다운로드]하면 **모델** 목록에 나타나고 추론에서 선택할 수 있습니다. |
+
+노트북은 LeRobot 최신 소스를 설치합니다. 추론 기계와 버전이 다르면 체크포인트를 읽지 못할 수
+있으니, 설치 셀을 Piper Studio와 같은 버전(설정 → 서비스의 버전 카드에 표시, 현재
+`pip install lerobot==0.5.0`)으로 맞추는 것을 권합니다. 무료 등급은 세션이 최대 12시간이고 GPU
+배정이 보장되지 않으므로, 긴 학습은 **클라우드 GPU** 페이지의 임대 GPU가 맞습니다.
 
 ### 5. 추론·평가
 
@@ -170,6 +188,8 @@ chmod +x piper-install.sh
 ### 접속과 서비스 시작
 
 설치가 끝나면 마지막에 출력된 주소를 브라우저에서 엽니다. 기본 포트는 **80**입니다.
+설치한 기계의 바탕화면과 앱 메뉴에는 **[Piper Studio]** 아이콘이 생기며, 웹이 열리지 않을 때는
+**[Piper Studio 진단]** 아이콘이 원인을 정리한 보고서를 보여 줍니다.
 
 | 접속 위치 | 주소 |
 |---|---|
