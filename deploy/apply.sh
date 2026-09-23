@@ -411,11 +411,30 @@ if [ -n "${wheels:-}" ] || [ ! -d "$VENV" ] || wheels_missing; then
         # 치명적이진 않다(시스템에 있을 수 있다) — 다만 **조용히 넘기지 않는다.**
         warn "PyPI 의존(redis·pyrealsense2)을 못 깔았다 — 버스·RealSense 확인 (PyPI 접근?)"
       fi
-      # 시스템 site-packages 에 numpy·opencv 가 없는 맨 우분투(ROS 없음)는 camerad/rsd 가 못 뜬다 —
-      # 둘이 import 안 될 때만 PyPI 에서 받는다(있으면 그대로 쓴다). 못 받으면 경고만.
-      if "$VENV/bin/python" -c "import numpy, cv2" 2>/dev/null; then ok "numpy·opencv (시스템)"
-      elif "$VENV/bin/pip" install -q numpy opencv-python-headless 2>/dev/null; then ok "numpy·opencv (PyPI)"
-      else warn "numpy·opencv 를 못 깔았다 — camerad/rsd 가 못 뜬다 (PyPI 접근?)"; fi
+    fi
+  fi
+
+  # ⚠ **매번 본다 — venv 를 만들 때만 보면 안 된다.** 실기(.120, 2026-09-23): 카메라가
+  #   스캔은 되는데 **등록만** 안 됐고, 원인은 데몬 venv 에 `cv2` 가 없는 것이었다.
+  #   열거는 cv2 없이 되지만 장치를 여는 것은 `cv2.VideoCapture` 라 거기서만 죽는다.
+  #   그 기계의 venv 는 이미 있었으므로, 이 검사가 생성 분기 안에 있는 한 영영 안 돌았다.
+  #
+  # ⚠ **"시스템에 있으면 그대로 쓴다" 가 틀릴 수 있다.** `--system-site-packages` 가
+  #   가리키는 것은 *venv 를 만든 파이썬*의 site-packages 다. 그 기계는 conda 가 PATH 에
+  #   있어 venv 가 miniconda 3.13 으로 만들어졌고, OS 의 cv2 는 3.10 용이라 영영 안 보였다.
+  #
+  # ⚠ 경고가 아니라 **빨간 줄**이다. 예전엔 `warn` 이라, 못 깔아도 설치는 "다 됐다"고
+  #   말하고 사람은 몇 주 뒤 카메라 앞에서야 알았다.
+  if [ -x "$VENV/bin/python" ]; then
+    if "$VENV/bin/python" -c "import numpy, cv2" 2>/dev/null; then
+      ok "numpy·opencv (camerad/rsd 가 장치를 연다)"
+    elif [ $CHECK = 1 ]; then
+      bad "데몬 venv 에 numpy·opencv 가 없다 — 카메라가 스캔은 되고 등록이 안 된다"
+    elif "$VENV/bin/pip" install -q numpy opencv-python-headless 2>/dev/null; then
+      ok "numpy·opencv (PyPI)"
+    else
+      bad "numpy·opencv 를 못 깔았다 — 카메라가 스캔은 되고 **등록이 안 된다** (망이 없나?)"
+      bad "  오프라인 처방은 docs/camera-troubleshooting.md 의 「cv2 가 없다」 절"
     fi
   fi
   if [ $CHECK = 1 ]; then

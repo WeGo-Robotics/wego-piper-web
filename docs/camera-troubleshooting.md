@@ -38,6 +38,7 @@ journalctl --user -u piper-camerad -b -n 100
 
 | 사유에 이런 말이 | 뜻 | 처방 |
 |---|---|---|
+| **`No module named 'cv2'`** | **실기에서 실제로 난 원인(§2).** 데몬 venv 에 OpenCV 가 없다 — 열거는 cv2 없이 되고 **여는 것만** `cv2.VideoCapture` 라, 딱 등록에서만 죽는다 | 아래 **§2-1** |
 | `Cannot open /dev/videoN` | 노드는 있는데 열리지 않는다 | 다른 프로세스가 쥐고 있나: `sudo fuser -v /dev/video*`. 브라우저 탭·화상회의 앱이 흔하다 |
 | `Device or resource busy` | 누가 이미 열었다 | 위와 같다. camerad 자신이 이중으로 잡았으면 `systemctl --user restart piper-camerad` |
 | `No space left on device` (열기·`STREAMON`) | **디스크가 아니라 USB 대역폭**이다. 같은 컨트롤러에 카메라를 여러 대 물리면 UVC 대역 예약이 모자란다 | 다른 USB 컨트롤러(다른 쪽 포트)로 옮긴다 · 해상도/FPS 를 낮춘다 · MJPG 로(`fourcc`) |
@@ -46,10 +47,23 @@ journalctl --user -u piper-camerad -b -n 100
 
 ### 현장에서 한 번에 받아둘 것
 
+⚠ **가장 빠른 한 방은 사유를 직접 꺼내는 것이다.** 화면이 사유를 안 주는 버전이라면
+게이트웨이 컨테이너 안에서 RPC 를 그대로 부른다 — 실기에서 이걸로 3분 만에 잡았다:
+
+```bash
+docker exec piper-web-backend python -c "
+from app.services.v4l2_client import v4l2_hub
+print('scan   :', v4l2_hub.scan())
+print('connect:', v4l2_hub.connect('/dev/video0', 0, 0, 0, {}))"
+```
+
+`scan` 은 되는데 `connect` 가 `(False, …)` 면 그 문자열이 답이다.
+
+
 ```bash
 systemctl --user status piper-camerad
 journalctl --user -u piper-camerad -b -n 100     # ⚠ -b = 그 부팅. 재부팅 뒤면 이게 핵심이다
-v4l2-ctl --list-devices
+v4l2-ctl --list-devices                          # 없으면: sudo apt install v4l-utils
 v4l2-ctl -d /dev/video0 --list-formats-ext | head -30
 sudo fuser -v /dev/video*                        # 누가 쥐고 있나
 df -h /dev/shm                                   # 세그먼트 자리
@@ -57,43 +71,94 @@ dmesg | grep -i -E "usb|uvc|video" | tail -30
 lsusb -t                                         # 어느 컨트롤러에 몇 대가 물렸나
 ```
 
-## 2. 사례 — .120 을 밖에 들고 나갔을 때 (2026-09-22, **미해결**)
-
-사용자 보고. **원인은 아직 모른다** — 기계가 돌아오면 §1 의 명령으로 좁힌다.
+## 2. 사례 — .120 (2026-09-22 보고 → 2026-09-23 **해결**)
 
 | | |
 |---|---|
-| 상황 | .120 을 외부로 들고 나가 재부팅. 인터넷·LAN 없음 |
-| 증상 | USB 카메라가 **스캔은 되는데 등록이 안 됨**. 노트북 내장 카메라도 같음 |
-| 화면이 준 단서 | "등록 실패" 한 줄뿐 (그래서 §1 의 사유 표시를 고쳤다) |
+| 상황 | .120(MSI Thin 15 노트북)을 외부로 들고 나가 재부팅. 인터넷 없음 |
+| 증상 | USB 카메라도 내장 카메라도 **스캔은 되는데 등록이 안 됨** |
+| 화면 | "등록 실패: 연결되지 않은 카메라입니다" — 결과를 사유처럼 말하고 있었다 |
+| **원인** | 데몬 venv 에 **`cv2` 가 없었다** |
 
-### 좁혀진 것
+### 어떻게 찾았나
 
-- **camerad 는 살아 있었다.** 스캔이 camerad 를 거치므로(§0), 데몬 기동 실패는 아니다.
-- **장치 하나의 문제가 아니다.** USB 카메라와 내장 카메라가 **둘 다** 그랬다면 그 부팅의
-  환경 문제다 — 케이블·개별 장치 불량 쪽은 약하다.
-- **권한도 아닐 가능성이 높다.** `video` 그룹이 빠졌으면 스캔이 0개가 된다(설치 §3).
+게이트웨이 컨테이너 안에서 RPC 를 직접 불러 **버려지던 사유**를 꺼냈다:
 
-### ⚠ 네트워크 때문은 아니다
+```
+scan      : [{'id': '/dev/video0', 'name': 'HD Webcam: HD Webcam', ...}]   ← 열거는 된다
+connect   : (False, "No module named 'cv2'")                               ← 여는 것이 안 된다
+```
 
-오프라인이 눈에 띄는 조건이라 의심할 만하지만, **카메라 경로에는 네트워크 코드가 없다**
-(`daemons/` 전수 확인: `urlopen`/`requests`/`httpx` 를 쓰는 데몬은 `unitd` 뿐이고, 그것도
-`127.0.0.1:11434`(Ollama) 한 줄이다). 부팅도 막히지 않는다 — 유닛 10개 어디에도
-`After=network-online.target` 이 없다.
+⚠ camerad 저널에는 **등록 시도 흔적이 아예 없었다.** 연결이 데몬에 닿기 전에 끝났기
+때문이다 — 저널만 보면 "데몬은 멀쩡한데 왜 안 되지" 로 막힌다.
 
-인터넷이 필요한 것은 전부 사람이 누를 때다: 저장소 다운로드, 클라우드 GPU, 새 버전 확인.
-수집·추론·텔레옵·로컬 학습은 오프라인으로 된다.
+### 왜 cv2 가 없었나 — 세 겹이다
 
-⚠ 다만 **시계**는 다르다. 네트워크가 없으면 NTP 동기도 없어서, RTC 가 없거나 방전된
-보드는 시각이 틀어진 채 뜬다. 카메라와는 무관하지만 에피소드·학습 폴더 이름이 엉뚱한
-날짜로 찍히고, 클라우드 회수의 "이번 회차 가중치인가" 판정이 벽시계를 쓴다.
+```
+venv  python : 3.13.12   ← ~/miniconda3
+OS    python : 3.10.12
+OS 의 cv2    : ~/.local/lib/python3.10/site-packages/cv2   (4.13.0)
+venv sys.path: …/miniconda3/lib/python3.13/site-packages   ← 3.10 것은 안 보인다
+```
 
-### 남은 후보 (좁히지 못함)
+1. **`--system-site-packages` 의 "시스템" 은 OS 가 아니다.** venv 를 만든 *그 파이썬*의
+   site-packages 다. conda 가 PATH 에 있으면 venv 는 miniconda 로 만들어지고, OS 에 깔린
+   cv2 는 파이썬 버전이 달라 영영 안 보인다. numpy 는 miniconda 에도 있어서 통과했다 —
+   **한 짝만 맞은 것이 더 고약했다.**
+2. **`apply.sh` 의 numpy·opencv 검사가 venv 를 *만들 때만* 돌았다.** 그 venv 는 이미
+   있었으므로 검사가 영영 안 돌았다.
+3. **못 깔아도 `warn` 이었다.** 그래서 설치는 "다 됐다" 고 말했고, 사람은 몇 주 뒤
+   카메라 앞에서야 알았다.
 
-1. `STREAMON` 실패 — USB 대역폭. 밖에서 허브·포트 구성이 달라졌을 수 있다
-2. 다른 프로세스가 장치를 쥠
-3. `/dev/shm` 부족 — 세그먼트 할당 실패
-4. 장치 열기가 `D` 상태로 멈춰 30초 RPC 타임아웃
+### ⚠ 정정 — 네트워크와 **무관하지 않았다**
+
+이 문서는 처음에 "카메라 경로에는 네트워크 코드가 없으니 오프라인은 우연" 이라고
+적었다. **런타임에 대해서는 맞지만 설치에 대해서는 틀렸다.** opencv 는 PyPI 에서
+받아야 하고, 밖에서 망 없이 설치·재설치가 돌면 그 한 줄이 조용히 실패한다. 증상이
+카메라에서 나타났을 뿐 원인은 설치 시점의 오프라인이었다.
+
+### 2-1. 처방
+
+망이 있으면:
+
+```bash
+~/.venvs/piper-daemons/bin/pip install numpy opencv-python-headless
+systemctl --user restart piper-camerad piper-rsd
+```
+
+**망이 없으면** 다른 기계에서 wheel 을 받아 옮긴다. ⚠ `--python-version` 은 **데몬 venv
+의** 파이썬이다(OS 것이 아니다 — 위가 그 함정이다):
+
+```bash
+# 받는 기계에서 — 버전은 `~/.venvs/piper-daemons/bin/python -V` 로 확인
+pip download --no-deps --only-binary=:all: \
+    --python-version 313 --implementation cp --abi cp313 \
+    --platform manylinux2014_x86_64 \
+    opencv-python-headless 'numpy>=2,<2.3' -d whl
+
+# 대상 기계에서
+~/.venvs/piper-daemons/bin/pip install --no-index --find-links whl \
+    opencv-python-headless numpy
+systemctl --user restart piper-camerad piper-rsd
+```
+
+⚠ **numpy 2 를 같이 넣는다.** 요즘 opencv wheel 은 `numpy>=2` 를 요구하는데 miniconda
+쪽 numpy 는 1.26 일 수 있다. 둘을 같이 넣으면 venv 의 것이 이긴다.
+
+### 확인
+
+```
+등록 응답: connected=true  ready=true  has_preview=true  streaming=true
+프리뷰    : 28384 바이트 · JPEG 640x480
+```
+
+### 고쳐진 것 (v0.5.7 뒤 — 아직 릴리스 전)
+
+| 자리 | 전 | 후 |
+|---|---|---|
+| `apply.sh` numpy·opencv 검사 | venv **만들 때만** | **매번** — `--check` 에서도 본다 |
+| 못 깔았을 때 | `warn` (설치는 "다 됐다") | **`bad`** — 무엇이 안 되는지 적는다 |
+| 등록 실패 사유 | 세 겹으로 덮어씀 | camerad 가 한 말을 화면까지 |
 
 ## 3. 등록은 됐는데 영상이 없다
 

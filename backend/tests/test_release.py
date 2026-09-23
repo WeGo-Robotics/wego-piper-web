@@ -322,6 +322,32 @@ def test_a_broken_venv_does_not_fail_twenty_lines_later():
         "venv 생성을 && 로 이었다 — 실패가 조용히 묻히고 사유가 사라진다"
 
 
+def test_the_camera_stack_is_checked_on_every_run():
+    """⚠ 실기(.120, 2026-09-23): 카메라가 스캔은 되는데 **등록만** 안 됐다. 데몬 venv 에
+    `cv2` 가 없었는데, 그 검사가 **venv 를 만드는 분기 안**에 있어서 — venv 는 이미
+    있었으므로 — 영영 안 돌았다.
+
+    열거는 cv2 없이 되고 장치를 여는 것만 `cv2.VideoCapture` 라, 딱 등록에서만 죽는다.
+    그래서 스캔 목록은 멀쩡해 보이고 사람은 카메라 쪽을 의심한다.
+    """
+    from conftest import code_only
+
+    src = code_only(APPLY.read_text())
+    make = src.split('if [ ! -x "$VENV/bin/pip" ]', 1)[1].split("\n  fi\n", 1)[0]
+    assert "import numpy, cv2" in src, "camerad 가 장치를 열 수 있는지 아예 안 본다"
+    assert "import numpy, cv2" not in make, \
+        "venv 를 만들 때만 본다 — 이미 있는 기계에서는 영영 안 돈다"
+
+
+def test_a_missing_camera_stack_is_not_a_mere_warning():
+    """⚠ 예전엔 `warn` 이라 못 깔아도 설치는 "다 됐다" 고 말했다. 사람은 몇 주 뒤
+    카메라 앞에서야 알았고, 그때는 설치할 때 무슨 일이 있었는지 아무 기록도 없다."""
+    from conftest import code_only
+
+    src = code_only(APPLY.read_text())
+    assert 'bad "numpy·opencv 를 못 깔았다' in src, "실패를 경고로 넘긴다"
+
+
 BASE_DF = REPO / "backend" / "Dockerfile.base"
 APP_DF = REPO / "backend" / "Dockerfile"
 
