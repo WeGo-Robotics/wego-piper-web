@@ -69,7 +69,18 @@
 - Swagger 문서를 프론트에서 닿는 자리로 (다른 세션)
 - 새 문서: [카메라](docs/camera-troubleshooting.md) · [에피소드 뷰어](docs/dataset-viewer-troubleshooting.md) ·
   [게이트웨이 로그인](feature/gateway-auth.md) · [허브 다운로드 진행률](feature/hub-download-progress.md) ·
-  [문서 지도와 정리 계획](docs/doc-map.md)
+  [문서 지도와 정리 계획](docs/doc-map.md) · [현장 배포·운영 검토](feature/field-deployment.md)
+- README 에 **Google Colab 으로 학습하는 길**을 적었다 — 데이터셋 [Hub 업로드] → 공식 ACT 노트북
+  → 저장소 [다운로드]. Colab 은 API 가 없어 화면 연동은 못 한다(feature/field-deployment.md §6)
+
+**바탕화면 아이콘 — 주소를 외우지 않는다**
+- 설치가 앱 메뉴와 바탕화면에 **[Piper Studio]**·**[Piper Studio 진단]** 을 만든다
+  (`install-shortcuts.sh`, `apply.sh` 5절). [Piper Studio] 는 웹을 열고 — Chrome 이 있으면 주소창
+  없는 앱 창으로 — 프론트가 응답하지 않으면 **진단 보고서를 대신 연다.** "연결할 수 없음" 흰
+  화면을 일반 사용자에게 보여 주지 않는다
+- [Piper Studio 진단] = `piper-doctor.sh`: 적용본·웹 응답·컨테이너·데몬 유닛·`apply.sh --check`
+  의 ✗ 줄·저널을 한 장으로. 아무것도 바꾸지 않고, 명령이 없어도 죽지 않는다
+- 제거(`piper-uninstall.sh`)가 같은 자리를 지운다. 탭·북마크 이름이 `frontend` 였던 것 → Piper Studio
 
 ⚠ **베이스 이미지가 `cu130-3 → cu130-4` 로 바뀌었다**(`openssh-client`). 파일 끝에 붙여서
 앞 계층은 그대로라 새로 받는 것은 그 한 층뿐이다.
