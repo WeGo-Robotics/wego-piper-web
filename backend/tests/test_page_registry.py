@@ -341,7 +341,9 @@ def test_every_menu_page_titles_itself_the_same_way():
     # 2026-09-28 에 넷을 맞춰 잔고를 비웠다. 다시 채우지 않는다 —
     # 새 페이지가 여기 들어오면 그건 제목을 고치라는 뜻이지 목록을 늘리라는 뜻이 아니다.
     PENDING: set[str] = set()
-    NO_TITLE = {"DashboardPage", "EpisodesPage", "VisionPage"}
+    # 대시보드는 카드 격자라 제목 자리가 없고, 비전·판단은 h2 로 연다. 둘 다
+    # 제목을 다는 것은 클래스 한 줄이 아니라 **머리를 새로 짜는** 일이라 남겨 둔다.
+    NO_TITLE = {"DashboardPage", "VisionPage"}
 
     reg = (_SRC / "config" / "pages.ts").read_text()
     body = reg.split("export const pages: PageEntry[] = [", 1)[1]

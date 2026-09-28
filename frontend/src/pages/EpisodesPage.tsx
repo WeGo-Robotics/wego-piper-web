@@ -834,20 +834,26 @@ export default function EpisodesPage() {
     : null
 
   return (
-    <div className="flex gap-4 items-start">
-      {/* 에피소드 리스트 */}
-      <aside className="w-72 shrink-0 space-y-3">
+    <div className="space-y-6">
+      {/* 머리줄 — 제목 **바로 옆**에 데이터셋. 가상환경 페이지가 가상환경을 고르는 자리와
+          같다: "지금 무엇을 보고 있나"는 제목의 일부지 왼쪽 목록의 첫 줄이 아니다. */}
+      <div className="flex items-center gap-4">
+        <h1 className="text-2xl font-bold">에피소드</h1>
         <select
           value={dsId}
           onChange={(e) => void selectDataset(e.target.value)}
-          className="w-full rounded bg-neutral-800 border border-neutral-700 px-2 py-1.5 text-sm"
+          className="min-w-[18rem] rounded bg-neutral-800 border border-neutral-700 px-2 py-1 text-sm"
         >
           <option value="">데이터셋 선택…</option>
           {datasets.map((d) => (
             <option key={d.id} value={d.id}>{d.id} ({d.total_episodes}){d.baked ? ' · 구운 사본' : ''}</option>
           ))}
         </select>
+      </div>
 
+      <div className="flex gap-4 items-start">
+      {/* 에피소드 리스트 */}
+      <aside className="w-72 shrink-0 space-y-3">
         {detail && (
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-3 text-xs space-y-1">
             <div className="flex items-center justify-between">
@@ -1448,6 +1454,7 @@ export default function EpisodesPage() {
           </>
         )}
       </main>
+      </div>
     </div>
   )
 }
