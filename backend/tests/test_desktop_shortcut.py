@@ -202,3 +202,47 @@ def test_the_bundle_ships_the_shortcuts_and_apply_installs_them():
 def test_the_tab_title_is_the_product_name():
     """탭·북마크·바로가기 이름이 전부 `frontend` 였다."""
     assert "<title>Piper Studio</title>" in (REPO / "frontend" / "index.html").read_text()
+
+
+def test_a_korean_desktop_still_gets_the_icons(tmp_path):
+    """⚠ **실기 사고(2026-09-28)**: 업데이트한 PC에 바탕화면 아이콘이 안 생겼다.
+
+    `xdg-user-dir` 는 `xdg-user-dirs` 패키지라 없는 기계가 있고, 없으면 예전 코드는
+    `$HOME/Desktop` 을 찍었다 — **한국어 데스크톱의 그 디렉토리는 `바탕화면`** 이다.
+    영어 이름을 못 찾으니 "바탕화면 디렉토리가 없다"로 넘어가 앱 메뉴만 만들었다.
+
+    여기서는 그 도구가 **$HOME 을 돌려주는** 상황을 만든다(도구는 있는데 설정이 없는 경우).
+    그래도 `user-dirs.dirs` 를 직접 읽어 찾아내야 한다.
+    """
+    env = _home(tmp_path, desktop=False)
+    home = Path(env["HOME"])
+    (home / "바탕화면").mkdir()
+    (Path(env["XDG_CONFIG_HOME"]) / "user-dirs.dirs").write_text(
+        'XDG_DESKTOP_DIR="$HOME/바탕화면"\n')
+
+    # xdg-user-dir 가 설정을 못 읽어 $HOME 을 돌려주는 상태를 흉내 낸다
+    fake = tmp_path / "bin"; fake.mkdir()
+    (fake / "xdg-user-dir").write_text('#!/bin/sh\nprintf "%s" "$HOME"\n')
+    (fake / "xdg-user-dir").chmod(0o755)
+    env = {**env, "PATH": f"{fake}:{env['PATH']}"}
+
+    r = _run(INSTALL, env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    for name in ("piper-studio", "piper-studio-doctor"):
+        f = home / "바탕화면" / f"{name}.desktop"
+        assert f.exists(), f"한국어 바탕화면에 아이콘이 안 생겼다: {r.stdout}"
+        assert os.access(f, os.X_OK), "실행 비트가 없으면 GNOME 이 잠근다"
+    assert not list(home.glob("*.desktop")), "홈에 흘렸다"
+
+
+def test_a_desktopless_machine_is_still_left_alone(tmp_path):
+    """⚠ 위 수정이 **SSH 전용 기계까지** 바꾸면 안 된다 — 흔한 이름을 훑다가 없는 것을
+    만들어내면, 홈에 .desktop 이 굴러다니던 옛 병이 돌아온다."""
+    env = _home(tmp_path, desktop=False)
+    fake = tmp_path / "bin"; fake.mkdir()
+    (fake / "xdg-user-dir").write_text('#!/bin/sh\nprintf "%s" "$HOME"\n')
+    (fake / "xdg-user-dir").chmod(0o755)
+    r = _run(INSTALL, {**env, "PATH": f"{fake}:{env['PATH']}"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "앱 메뉴 항목만" in r.stdout
+    assert not list(Path(env["HOME"]).glob("*.desktop"))

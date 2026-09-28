@@ -28,7 +28,27 @@ ICON_SRC="${PIPER_ICON:-$HERE/piper-studio.svg}"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 APPS="$DATA/applications"
 ICON="$DATA/icons/piper-studio.svg"
-DESKTOP="$(xdg-user-dir DESKTOP 2>/dev/null || true)"
+# 바탕화면 자리 찾기 — 세 겹이다.
+# ⚠ `xdg-user-dir` 는 `xdg-user-dirs` 패키지이고 **없는 기계가 있다.** 없으면 예전엔
+#   `$HOME/Desktop` 을 찍었는데, 한국어 데스크톱의 그 디렉토리 이름은 **`바탕화면`** 이다 —
+#   그래서 아이콘이 조용히 안 생겼다(사용자 보고 2026-09-28: "업데이트한 PC에 아이콘이 없다").
+#   그 도구가 읽는 파일을 우리가 직접 읽고, 그래도 없으면 흔한 이름들을 본다.
+find_desktop() {
+  local d conf
+  d="$(xdg-user-dir DESKTOP 2>/dev/null || true)"
+  if [ -z "$d" ] || [ "$d" = "$HOME" ]; then
+    conf="${XDG_CONFIG_HOME:-$HOME/.config}/user-dirs.dirs"
+    # 서브셸에서 읽는다 — 이 셸의 변수를 건드리지 않는다 (xdg-user-dir 가 하는 일과 같다)
+    [ -f "$conf" ] && d="$(. "$conf" >/dev/null 2>&1; printf '%s' "${XDG_DESKTOP_DIR:-}")"
+  fi
+  if [ -z "$d" ] || [ "$d" = "$HOME" ] || [ ! -d "$d" ]; then
+    for d in "$HOME/Desktop" "$HOME/바탕화면" "$HOME/바탕 화면"; do
+      [ -d "$d" ] && break
+    done
+  fi
+  printf '%s' "$d"
+}
+DESKTOP="$(find_desktop)"
 DESKTOP="${DESKTOP:-$HOME/Desktop}"
 have_desktop() { [ "$DESKTOP" != "$HOME" ] && [ -d "$DESKTOP" ]; }
 
