@@ -256,7 +256,7 @@ async def start_recording(body: RecordStartRequest):
         arm_ports = [body.robot_port]
     elif so101_leader:
         # 외부 리더는 robotd 등록부에 없다 — 정체는 so101d 에게 묻는다
-        # (릴레이 시작과 같은 규칙). prepare_arms 에는 Piper 만 넘긴다.
+        # (릴레이 시작과 같은 규칙). prepare_arms 에는 PIPER 만 넘긴다.
         # ⚠ 여기서 `import asyncio` 를 하면 함수 전체에서 asyncio 가 **지역 변수**가 되어
         #   위쪽(웹 리더 분기)의 asyncio 가 UnboundLocalError 로 죽는다(실측). 모듈 import 를 쓴다.
         from app.services.so101_client import so101_client

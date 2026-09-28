@@ -1,7 +1,7 @@
 [project]
 name = "wego_piper"
 version = "0.0.2"
-description = "WeGo Piper servo comms (packet/port handler) — vendored for container build"
+description = "WeGo PIPER servo comms (packet/port handler) — vendored for container build"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 dependencies = [

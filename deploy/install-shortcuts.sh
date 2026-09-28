@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# 바탕화면·앱 메뉴 바로가기 — [Piper Studio] 와 [Piper Studio 진단] (feature/field-deployment.md §5).
+# 바탕화면·앱 메뉴 바로가기 — [PIPER Studio] 와 [PIPER Studio 진단] (feature/field-deployment.md §5).
 #
 # 일반 사용자는 주소를 외우지 않는다. 설치(apply.sh 5절)가 이걸 불러 아이콘 둘을 만든다:
-#   [Piper Studio]       웹을 연다. 웹이 안 떠 있으면 진단 보고서를 대신 연다   (piper-studio.sh)
-#   [Piper Studio 진단]  보고서만 만든다 — 웹이 안 뜰 때 원인을 한 장으로        (piper-doctor.sh)
+#   [PIPER Studio]       웹을 연다. 웹이 안 떠 있으면 진단 보고서를 대신 연다   (piper-studio.sh)
+#   [PIPER Studio 진단]  보고서만 만든다 — 웹이 안 뜰 때 원인을 한 장으로        (piper-doctor.sh)
 #
 # ⚠ 그래픽 세션이 없는 기계(SSH 로만 쓰는 NUC)에서도 죽지 않는다 — 앱 메뉴 항목은 늘 만들고,
 #   바탕화면 사본은 그 디렉토리가 **있을 때만** 둔다. `xdg-user-dir` 는 바탕화면이 없으면 $HOME 을
@@ -60,12 +60,12 @@ warn() { printf "  \033[33m!\033[0m %s\n" "$1"; }
 entry_fields() {
   case "$1" in
     piper-studio)
-      printf '%s\n' "Piper Studio" "Piper Studio" \
-        "Open Piper Studio in the browser (shows a diagnosis when the web is down)" \
-        "브라우저에서 Piper Studio 를 연다 (웹이 안 떠 있으면 진단 보고서를 연다)" \
+      printf '%s\n' "PIPER Studio" "PIPER Studio" \
+        "Open PIPER Studio in the browser (shows a diagnosis when the web is down)" \
+        "브라우저에서 PIPER Studio 를 연다 (웹이 안 떠 있으면 진단 보고서를 연다)" \
         "\"$SRC/piper-studio.sh\"" ;;
     piper-studio-doctor)
-      printf '%s\n' "Piper Studio Diagnostics" "Piper Studio 진단" \
+      printf '%s\n' "PIPER Studio Diagnostics" "PIPER Studio 진단" \
         "Why is the web not coming up? One-page report" \
         "웹이 안 뜰 때 원인을 한 장으로" \
         "\"$SRC/piper-doctor.sh\" --open" ;;
@@ -129,7 +129,7 @@ for e in $ENTRIES; do
   write_entry "$APPS/$e.desktop" "$e"
 done
 command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" 2>/dev/null || true
-ok "앱 메뉴: Piper Studio · Piper Studio 진단 ($APPS)"
+ok "앱 메뉴: PIPER Studio · PIPER Studio 진단 ($APPS)"
 
 if have_desktop; then
   trusted=1
@@ -144,9 +144,9 @@ if have_desktop; then
     fi
   done
   if [ $trusted = 1 ]; then
-    ok "바탕화면: Piper Studio · Piper Studio 진단 ($DESKTOP)"
+    ok "바탕화면: PIPER Studio · PIPER Studio 진단 ($DESKTOP)"
   else
-    ok "바탕화면: Piper Studio · Piper Studio 진단 ($DESKTOP)"
+    ok "바탕화면: PIPER Studio · PIPER Studio 진단 ($DESKTOP)"
     warn "\"실행 허용\" 표시를 미리 못 줬다(세션 없음) — 아이콘이 잠겨 보이면 우클릭 → [실행 허용] 한 번"
   fi
 else

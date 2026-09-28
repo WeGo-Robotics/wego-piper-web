@@ -252,7 +252,7 @@ def _api_version() -> str:
 # docs_url/openapi_url 은 기본값 그대로 (`/docs`, `/openapi.json`) — 리버스 프록시
 # (`frontend/nginx.conf`) 와 vite 프록시가 이 경로를 넘겨야 배포본에서도 열린다.
 app = FastAPI(
-    title="Piper Studio",
+    title="PIPER Studio",
     version=_api_version(),
     description=API_DESCRIPTION,
     lifespan=lifespan,

@@ -123,7 +123,7 @@ def _chain_from(root, base: str, tip: str | None) -> tuple[list, str]:
 def _mesh_path(link, urdf_dir: Path, meshes_dir: Path) -> tuple[Path | None, dict]:
     """링크의 충돌 메시 파일과 그 **origin**.
 
-    ⚠ 충돌 origin 을 무시하면 안 된다. Piper 는 전부 0 이라 그동안 문제가 없었는데,
+    ⚠ 충돌 origin 을 무시하면 안 된다. PIPER 는 전부 0 이라 그동안 문제가 없었는데,
       SO-101 은 링크마다 다르다 — 무시하면 메시가 엉뚱한 자리에 놓여 바닥 판정이
       통째로 틀린다.
     """
@@ -160,7 +160,7 @@ def build(cell: float, urdf: Path | None = None, chain: tuple[str, ...] | None =
     """URDF + 메시 → 지오메트리 dict.
 
     ⚠ **관절 한계와 말단 링크 이름을 같이 굽는다.** IK 가 둘 다 쓴다
-      (`armmodel.ArmModel`). 말단을 `link6` 으로 하드코딩하면 Piper 밖에 못 쓴다.
+      (`armmodel.ArmModel`). 말단을 `link6` 으로 하드코딩하면 PIPER 밖에 못 쓴다.
     """
     urdf_path = urdf or ARM_URDF
     urdf_dir = urdf_path.parent
@@ -265,7 +265,7 @@ def main() -> int:
     ap.add_argument("--cell", type=float, default=0.01, help="복셀 한 변 (m)")
     ap.add_argument("--out", type=Path, default=OUT)
     ap.add_argument("--urdf", type=Path, default=None,
-                    help="다른 팔의 URDF (SO-101 등). 생략하면 Piper")
+                    help="다른 팔의 URDF (SO-101 등). 생략하면 PIPER")
     ap.add_argument("--joints", default=None,
                     help="사슬 관절 이름을 쉼표로. 생략하면 base→tip 위상 순서")
     ap.add_argument("--base", default="base_link", help="뿌리 링크")

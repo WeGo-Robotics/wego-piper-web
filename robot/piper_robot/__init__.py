@@ -1,4 +1,4 @@
-"""Piper 팔 — **robotd 데몬의 본체**.
+"""PIPER 팔 — **robotd 데몬의 본체**.
 
 게이트웨이(`backend/`)를 import 하지 않는다. 데몬이 백엔드에 의존하면 분리한 의미가 없다.
 rsd(`piper_rs`)·camerad(`piper_cam`)와 같은 구조다.

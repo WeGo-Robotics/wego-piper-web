@@ -201,7 +201,7 @@ class RobotHub:
                 "summary": D.summarize(self._diag.rows, joints),
                 "plan": self._diag.plan.to_dict(),
                 "iface": arm.iface, "error": self._diag.error,
-                # ⚠ **팔의 시리얼이 아니다** — Piper 는 CAN 으로 시리얼을 안 준다.
+                # ⚠ **팔의 시리얼이 아니다** — PIPER 는 CAN 으로 시리얼을 안 준다.
                 #   이건 "어느 케이블에 물려 있었나" 다. 팔 자체는 사람이 적는다.
                 "adapter_serial": adapter_serial(arm.iface),
                 "firmware": arm.firmware,

@@ -1,4 +1,4 @@
-"""게이트웨이 SSH 키 — **Piper Studio 가 직접 만든다** (feature/vast-training.md §9-1).
+"""게이트웨이 SSH 키 — **PIPER Studio 가 직접 만든다** (feature/vast-training.md §9-1).
 
 ⚠ 사람의 키를 빌려 쓰면 배포판에선 아예 안 된다 — 컨테이너에 `~/.ssh` 가 없다.
 ⚠ `ssh-keygen` 으로 만들면 이미지에 그 바이너리가 없어(실측) 배포판에서만 깨진다.

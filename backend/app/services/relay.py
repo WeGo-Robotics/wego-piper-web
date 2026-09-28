@@ -86,7 +86,7 @@ POSE_MAX_STEP_DEG = 20.0
 
 # ⚠ **관절 공간 걸음 상한 — 직교 상한과 다른 것을 잡는다.** 특이점 근처에서는
 # 말단이 조금 움직여도 IK 해가 한 관절을 수십 도 튕긴다(실측: SO-101 pan 15°
-# 가 Piper 90°). 직교 상한(mm/deg)은 그걸 통과시키고, 그 목표가 robotd 변화율
+# 가 PIPER 90°). 직교 상한(mm/deg)은 그걸 통과시키고, 그 목표가 robotd 변화율
 # 상한에 잘려 팔이 한계로 기어들어가 폴트 래치가 걸린다("꼬여서 죽는다").
 # 한 스텝에 이보다 많이 도는 해는 **보내지 않는다** — 5-DOF 리더 → 6-DOF
 # 팔로워 자세 매핑이 도달 불가·가지 뒤집힘 영역을 지날 때의 안전장치다.
@@ -103,7 +103,7 @@ def _transport_mismatch(model) -> str:
 
     if model.dof != len(K.ARM_JOINTS):
         return (f"{model.name} 은 {model.dof}축인데 팔로워 명령 경로는 "
-                f"{len(K.ARM_JOINTS)}축(Piper)입니다. 기구학 모델은 준비돼 있지만 "
+                f"{len(K.ARM_JOINTS)}축(PIPER)입니다. 기구학 모델은 준비돼 있지만 "
                 f"그 팔의 전송 계층이 아직 없습니다 — 지금은 관절 수가 같은 "
                 f"모델만 쓸 수 있습니다.")
     return ""
@@ -195,7 +195,7 @@ class RelaySession:
             # ⚠ **크로스 모델 POSE 는 막는다.** 5-DOF 리더 → 6-DOF 팔로워 자세
             #   매핑은 pan·roll 에서 도달 불가이거나 관절을 수십 도 튕겨 팔이
             #   꼬인다(feature/so101d.md §5b-실측). 관절 매칭이 작동하는 경로다.
-            #   Piper끼리의 POSE 는 별개라 그대로 둔다.
+            #   PIPER끼리의 POSE 는 별개라 그대로 둔다.
             if mode == "pose" and leader_arm != follower_arm:
                 raise RelayError(
                     "말단(POSE) 모드는 다른 기종 리더에서 아직 쓸 수 없습니다 "
@@ -251,8 +251,8 @@ class RelaySession:
                     from piper_robot.armmodel import ArmModel
                     self._leader_model = ArmModel.load(leader_arm)
                     self._follower_model = ArmModel.load(follower_arm)
-                    # ⚠ 쓰기 경로는 아직 **Piper 전용**이다 — 명령 세그먼트가
-                    #   Piper 6축+그리퍼다. 관절 수가 같은 팔로워만 실린다.
+                    # ⚠ 쓰기 경로는 아직 **PIPER 전용**이다 — 명령 세그먼트가
+                    #   PIPER 6축+그리퍼다. 관절 수가 같은 팔로워만 실린다.
                     why = _transport_mismatch(self._follower_model)
                     if why:
                         raise RelayError(why)

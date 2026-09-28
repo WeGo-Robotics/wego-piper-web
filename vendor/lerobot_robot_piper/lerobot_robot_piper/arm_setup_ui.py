@@ -1,8 +1,8 @@
 """
-arm_setup_ui.py — Piper multi-arm setup wizard
+arm_setup_ui.py — PIPER multi-arm setup wizard
 
 Workflow (based on FIND-ARM.md):
-  Step 1 — Detect all CAN ports, initialize, and verify Piper arms.
+  Step 1 — Detect all CAN ports, initialize, and verify PIPER arms.
             Auto-detect leader/follower mode via SDK.
   Step 2 — Select arm configuration
             (1 Leader/1 Follower, 2 Followers, 2 Leaders, 2 Leaders/2 Followers)
@@ -121,7 +121,7 @@ def rename_can_interface(old_name: str, new_name: str) -> tuple[bool, str]:
 
 
 class DiscoveredArm:
-    """One Piper arm found during the scan step."""
+    """One PIPER arm found during the scan step."""
 
     def __init__(self, iface: str, bus_info: str) -> None:
         self.iface = iface          # current CAN interface name (e.g. "can0")
@@ -137,7 +137,7 @@ class DiscoveredArm:
     def connect_and_verify(self, bitrate: int) -> bool:
         """
         Initialize the CAN port and connect via SDK.
-        Verify this is a Piper arm and detect leader/follower mode.
+        Verify this is a PIPER arm and detect leader/follower mode.
         """
         ok, _ = init_can_interface(self.iface, bitrate)
         if not ok:
@@ -256,7 +256,7 @@ class ArmSetupUI:
     """
     4-step setup wizard
 
-    Step 1 | Scan CAN ports -> verify Piper -> detect leader/follower
+    Step 1 | Scan CAN ports -> verify PIPER -> detect leader/follower
     Step 2 | Select configuration
     Step 3 | [Find] button + move arm 45 deg to assign slot
     Step 4 | Rename CAN ports and save config
@@ -264,7 +264,7 @@ class ArmSetupUI:
 
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("Piper Multi-Arm Setup")
+        self.root.title("PIPER Multi-Arm Setup")
         self.root.resizable(True, True)
 
         self._arms: list[DiscoveredArm] = []
@@ -300,7 +300,7 @@ class ArmSetupUI:
 
     def _build_step1(self, row: int) -> None:
         frm = ttk.LabelFrame(
-            self.root, text="Step 1 — Scan CAN ports and verify Piper arms", padding=6)
+            self.root, text="Step 1 — Scan CAN ports and verify PIPER arms", padding=6)
         frm.grid(row=row, column=0, sticky="ew", padx=8, pady=(8, 4))
         frm.columnconfigure(0, weight=1)
 
@@ -549,7 +549,7 @@ class ArmSetupUI:
             self._ui(lambda: self._scan_btn.config(state="normal"))
             return
 
-        self._log(f"Found {len(interfaces)} CAN port(s). Checking each for Piper...")
+        self._log(f"Found {len(interfaces)} CAN port(s). Checking each for PIPER...")
 
         for d in interfaces:
             iface, bus_info = d["iface"], d["bus_info"]
@@ -558,27 +558,27 @@ class ArmSetupUI:
             is_piper = arm.connect_and_verify(bitrate)
 
             if is_piper:
-                self._log(f"  {iface}: Piper detected  fw={arm.fw}  ctrl_mode={arm.ctrl_mode_str}")
+                self._log(f"  {iface}: PIPER detected  fw={arm.fw}  ctrl_mode={arm.ctrl_mode_str}")
                 self._ui(lambda a=arm:
                          self._scan_tree.insert("", "end",
                              values=(a.iface, a.bus_info, a.fw, a.ctrl_mode_str),
                              tags=("piper",)))
                 self._arms.append(arm)
             else:
-                self._log(f"  {iface}: no Piper or no response", level="warn")
+                self._log(f"  {iface}: no PIPER or no response", level="warn")
                 self._ui(lambda i=iface, b=bus_info:
                          self._scan_tree.insert("", "end",
                              values=(i, b, "-", "none"),
                              tags=("none",)))
 
         n = len(self._arms)
-        self._ui(lambda: self._scan_status_var.set(f"{n} Piper arm(s) found"))
+        self._ui(lambda: self._scan_status_var.set(f"{n} PIPER arm(s) found"))
         self._ui(lambda: self._scan_btn.config(state="normal"))
         if n > 0:
             self._ui(lambda: self._apply_config_btn.config(state="normal"))
-            self._log(f"Scan complete — {n} Piper arm(s). Select a configuration in Step 2.")
+            self._log(f"Scan complete — {n} PIPER arm(s). Select a configuration in Step 2.")
         else:
-            self._log("No Piper arms found.", level="warn")
+            self._log("No PIPER arms found.", level="warn")
 
     # ── Step 2 ────────────────────────────────────────────────────────────
 
@@ -588,7 +588,7 @@ class ArmSetupUI:
         if len(self._arms) < required:
             messagebox.showwarning(
                 "Not enough arms",
-                f"'{config_name}' requires {required} Piper arm(s) but "
+                f"'{config_name}' requires {required} PIPER arm(s) but "
                 f"only {len(self._arms)} were detected.\n\n"
                 "Re-run Step 1 or choose a different configuration."
             )

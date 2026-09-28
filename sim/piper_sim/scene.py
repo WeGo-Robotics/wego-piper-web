@@ -1,4 +1,4 @@
-"""씬 로드와 관절 규약 — MuJoCo 관절각 ↔ Piper 정규화 (feature/sim-env.md §2·§6).
+"""씬 로드와 관절 규약 — MuJoCo 관절각 ↔ PIPER 정규화 (feature/sim-env.md §2·§6).
 
 정규화는 **`piper_robot.joints` 그대로** 쓴다. 시뮬 관절각(rad) → 밀리도 →
 `normalize_all`. 표가 하나여야 실기에서 학습한 정책이 시뮬에서 같은 숫자를 본다.

@@ -6,7 +6,7 @@
 # 하나여야 하고, CAN 제어(robotd)는 살아야 한다.
 
 [Unit]
-Description=Piper SO-101 daemon (owns Feetech serial bus adapters)
+Description=PIPER SO-101 daemon (owns Feetech serial bus adapters)
 Documentation=file://@REPO@/feature/so101d.md
 StartLimitIntervalSec=0
 

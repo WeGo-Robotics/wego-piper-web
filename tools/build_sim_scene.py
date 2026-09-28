@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Piper 시뮬 씬(MJCF)을 굽는다 — feature/sim-env.md 1단계.
+"""PIPER 시뮬 씬(MJCF)을 굽는다 — feature/sim-env.md 1단계.
 
 `tools/build_arm_geometry.py` 와 같은 발상: URDF 는 빌드 때만 읽고, 런타임은
 구운 산출물(`sim/piper_sim/assets/piper_scene.xml`)만 연다.
@@ -135,7 +135,7 @@ GRIPPER_XML = """<body name="gripper_base" pos="0 0 0.035">
 """
 
 # 위치 서보 강성. 링크에 gravcomp=1 을 주므로 kp 는 중력을 이기는 값이 아니라
-# **추종 강성**이다 — 실기 Piper 는 서보가 자세를 딱 잡는다. 감쇠는 진동 방지.
+# **추종 강성**이다 — 실기 PIPER 는 서보가 자세를 딱 잡는다. 감쇠는 진동 방지.
 ACTUATORS = [("joint1", 400), ("joint2", 400), ("joint3", 300), ("joint4", 150),
              ("joint5", 150), ("joint6", 80)]
 JOINT_DAMPING = {"joint1": 8, "joint2": 8, "joint3": 6, "joint4": 3, "joint5": 3, "joint6": 2}

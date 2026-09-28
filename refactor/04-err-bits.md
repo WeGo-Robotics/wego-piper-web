@@ -8,7 +8,7 @@
 
 ## 문제
 
-Piper 팔의 `err_code` 비트 → 의미 매핑 12줄이 두 곳에 동일하게 존재한다.
+PIPER 팔의 `err_code` 비트 → 의미 매핑 12줄이 두 곳에 동일하게 존재한다.
 
 - [robot_manager.py:518-524](../backend/app/services/robot_manager.py#L518-L524) (백엔드)
 - [arm_controller.py:22-28](../wrapper/arm_controller.py#L22-L28) (wrapper)

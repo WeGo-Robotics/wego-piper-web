@@ -791,7 +791,7 @@ export default function RobotsPage() {
   const robotArms = arms.filter((a) => a.ready || a.connected)
   // SO-101 은 robotd 등록부(arms)에 없다 — so101d 가 attach 한 팔이 곧 로봇 카드다.
   // 포트 패널에는 포트 사실만 남기고, 팔의 사실(좌/우·캘리브레이션·텔레옵)은
-  // Piper 와 같은 자리(로봇 패널)에 그린다 — 전송이 달라도 UI 틀은 하나다.
+  // PIPER 와 같은 자리(로봇 패널)에 그린다 — 전송이 달라도 UI 틀은 하나다.
   const so101Arms = serialPorts.flatMap((sp) => sp.attached?.running ? [sp.attached] : [])
   // ⚠ **전체에서 찾는다.** `connectedArms` 는 `!ready` 라 등록하는 순간 빠지는데,
   //   거기서 리더를 찾으면 등록된 팔끼리는 릴레이 버튼이 영영 안 뜬다.
@@ -955,7 +955,7 @@ export default function RobotsPage() {
             {/* 시리얼(SO-101) 포트 — CAN 카드와 **같은 틀**로 그린다: 이름 줄 /
                 통계 줄 / 식별 줄 / 버튼 줄. 링크 UP/DOWN·Rx/Tx 가 없는 자리엔
                 시리얼의 사실(present·bps·by-id)을 놓는다. 팔의 사실은 여기 없다 —
-                [연결]하면 아래 로봇 패널로 간다 (Piper 와 같은 동선). */}
+                [연결]하면 아래 로봇 패널로 간다 (PIPER 와 같은 동선). */}
             {serialPorts.map((sp) => {
               const shortId = sp.id.replace(/^usb-.*_([0-9A-Fa-f]+)(-if\d+)?$/, '$1')
               const attached = !!sp.attached?.running
@@ -987,7 +987,7 @@ export default function RobotsPage() {
                 </div>
               )
             })}
-            {/* 시뮬(simd) 포트 — CAN·시리얼과 같은 카드 틀. [연결]은 Piper 와 같은
+            {/* 시뮬(simd) 포트 — CAN·시리얼과 같은 카드 틀. [연결]은 PIPER 와 같은
                 /attach 경로다 (SimArmInfo 가 robotd 대신 simd 로 간다). */}
             {simPorts.map((sp) => (
               <div key={sp.iface}
@@ -1034,7 +1034,7 @@ export default function RobotsPage() {
           <p className="text-xs text-neutral-400">등록된 로봇이 없습니다 — 포트에서 [연결]을 누르세요.</p>
         ) : (
           <div className="space-y-1.5">
-            {/* SO-101 로봇 카드 — Piper 카드와 같은 틀. 버튼은 capabilities 로 정해진다:
+            {/* SO-101 로봇 카드 — PIPER 카드와 같은 틀. 버튼은 capabilities 로 정해진다:
                 마스터/슬레이브·리셋·상세(파킹/영점/조그)는 SO-101 에 없어 안 그리고,
                 이 팔의 일(캘리브레이션·텔레옵)이 그 자리에 온다. */}
             {so101Arms.map((att) => (
@@ -1078,7 +1078,7 @@ export default function RobotsPage() {
                                        : 'bg-amber-600 hover:bg-amber-500'}`}>캘리브레이션</button>
                     <button onClick={() => setTeleopArm({ arm: att.arm, side: att.side })}
                       disabled={!att.calibrated || serialBusy !== null}
-                      title={att.calibrated ? '이 리더로 Piper 팔로워를 조종합니다' : '캘리브레이션을 먼저 완주하세요'}
+                      title={att.calibrated ? '이 리더로 PIPER 팔로워를 조종합니다' : '캘리브레이션을 먼저 완주하세요'}
                       className="px-2.5 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-40">텔레옵</button>
                     <button onClick={() => handleSerialRelease(att.arm)} disabled={serialBusy !== null}
                       className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white disabled:opacity-40">

@@ -210,7 +210,7 @@ class PiperControlUI:
 
         # Build UI
         self.root = tk.Tk()
-        self.root.title("Piper Arm Controller")
+        self.root.title("PIPER Arm Controller")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Port selection variable (driven by radio buttons; must be after Tk())
@@ -717,7 +717,7 @@ class PiperControlUI:
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Piper Arm Control UI")
+    parser = argparse.ArgumentParser(description="PIPER Arm Control UI")
     parser.add_argument("--port", default="can0", help="CAN port (default: can0)")
     parser.add_argument("--cameras", type=int, nargs="*", default=[], help="Camera indices (e.g. 0 2)")
     args = parser.parse_args()

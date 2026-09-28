@@ -2276,7 +2276,7 @@ cu130-4  ssh_ok=True
 | 이미지 공개 | ☑ **공개 전환 완료** — 네 태그 모두 **익명 pull 확인** |
 | Vast 계정 | ☑ API 키 설정(`vastai` 1.7.0) · 크레딧 **$25** |
 | 오퍼 필터 | ☑ §2 문자열 그대로 **52개** · 최저 $0.376/h RTX 4090 — 필드명까지 확인 |
-| 게이트웨이 SSH 키 | ☑ **Piper Studio 가 만든다** — 설정 → 클라우드 탭(`1cdbca4`). ☑ 계정 등록됨 — 지문 확인(2026-09-16) |
+| 게이트웨이 SSH 키 | ☑ **PIPER Studio 가 만든다** — 설정 → 클라우드 탭(`1cdbca4`). ☑ 계정 등록됨 — 지문 확인(2026-09-16) |
 | 설정 도우미 | ◐ 기획 §9-1 · **키 부분 구현** — `GET/POST /api/cloud/ssh-key` + 등록(지문 확인) |
 | 템플릿 | ☑ **둘 생성** — `piper-train full cu126`(id 728456) · `slim cu126`(id 728457). `runtype=ssh` + `ssh_direct`, onstart `/opt/piper/bootstrap.sh`, disk 40GB |
 

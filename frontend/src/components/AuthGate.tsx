@@ -71,7 +71,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       <form onSubmit={submit}
         className="w-full max-w-sm space-y-4 rounded-lg border border-neutral-700 bg-neutral-800 p-6">
         <div>
-          <h1 className="text-lg font-semibold text-neutral-100">Piper Studio</h1>
+          <h1 className="text-lg font-semibold text-neutral-100">PIPER Studio</h1>
           <p className="mt-1 text-sm text-neutral-400">계속하려면 비밀번호를 입력하세요.</p>
         </div>
 

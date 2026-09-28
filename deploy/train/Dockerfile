@@ -82,7 +82,7 @@ ENV TORCH_CUDA=${TORCH_CUDA} \
 ARG PIPER_TRAIN_IMAGE=unknown
 ENV PIPER_TRAIN_IMAGE=${PIPER_TRAIN_IMAGE}
 LABEL org.opencontainers.image.source="https://github.com/WeGo-Robotics/wego-piper-web" \
-      org.opencontainers.image.description="Piper Studio 학습 전용 이미지 (${VARIANT}, ${TORCH_CUDA})"
+      org.opencontainers.image.description="PIPER Studio 학습 전용 이미지 (${VARIANT}, ${TORCH_CUDA})"
 
 WORKDIR /workspace
 # Vast 의 ssh 모드는 자체 진입점을 쓰고 `--onstart-cmd` 로 부팅 스크립트를 부른다.

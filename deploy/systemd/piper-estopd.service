@@ -7,7 +7,7 @@
 # (안 켜면 세션 종료 시 함께 죽는다 — tmux/학습이 통째로 죽던 것과 같은 원인)
 
 [Unit]
-Description=Piper E-stop watchdog
+Description=PIPER E-stop watchdog
 Documentation=file://@REPO@/refactor/daemon-inventory.md
 
 # ⚠ `StartLimitIntervalSec` 은 **`[Unit]` 에 둔다.** `[Service]` 에 쓰면 이 systemd

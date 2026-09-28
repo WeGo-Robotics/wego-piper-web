@@ -455,7 +455,7 @@ def test_the_side_survives_replug_and_daemon_restart(monkeypatch, tmp_path):
 def test_norm_to_radians_uses_the_calibrated_span():
     """정규화 v 의 각도는 캘리브레이션 폭이 정한다: (v/200)·span·(2π/4096).
     정규화 공간에서 그대로 매핑하면 두 팔의 범위 차이만큼 각도가 왜곡된다 —
-    Piper 마스터 그리퍼 사고와 같은 병이라 각도 공간이 정본이다."""
+    PIPER 마스터 그리퍼 사고와 같은 병이라 각도 공간이 정본이다."""
     import math
 
     from piper_so101 import relay_map
@@ -469,7 +469,7 @@ def test_norm_to_radians_uses_the_calibrated_span():
 
 def test_the_joint_map_moves_deltas_and_freezes_the_forearm():
     """관절 매칭의 본식: 팔로워 = 앵커 + 부호×(리더 변화량). 영점 규약·시작
-    자세 차이는 앵커가 지운다 (ACT-delta 와 같은 산수). 대응 없는 Piper
+    자세 차이는 앵커가 지운다 (ACT-delta 와 같은 산수). 대응 없는 PIPER
     joint4(전완 롤)는 **정합 시점 값 유지** — 0 강제가 아니다."""
     import numpy as np
 
@@ -522,7 +522,7 @@ def test_the_relative_pose_target_is_identity_at_engage():
 def test_cross_relay_engages_at_start_and_disengage_holds():
     """크로스 릴레이는 시작이 곧 첫 정합이고(실패하면 시작 자체를 접는다 —
     반쯤 열린 세션이 최악), 해제는 전송만 멈춘다: robotd 데드맨이 팔로워를
-    세우는 쪽이 정직하다. 같은 모델(Piper끼리)은 기존 절대 복제 그대로 —
+    세우는 쪽이 정직하다. 같은 모델(PIPER끼리)은 기존 절대 복제 그대로 —
     행동이 하나도 안 바뀐다."""
     src = (REPO / "backend" / "app" / "services" / "relay.py").read_text()
     assert "self._engaged = not self._cross" in src, "같은 모델의 동작이 바뀌었다"
@@ -539,8 +539,8 @@ def test_cross_relay_engages_at_start_and_disengage_holds():
 
 
 def test_an_external_leader_does_not_need_a_piper_master():
-    """⚠ **실기: Piper 마스터가 없어 SO-101 을 리더로 쓰려는데 "마스터가
-    없다"로 막혔다.** 같은쪽 리더 검사는 Piper 마스터 등록부를 보는데, 외부
+    """⚠ **실기: PIPER 마스터가 없어 SO-101 을 리더로 쓰려는데 "마스터가
+    없다"로 막혔다.** 같은쪽 리더 검사는 PIPER 마스터 등록부를 보는데, 외부
     리더는 거기 없다 — 정체는 so101d 에게 묻는다: 연결·캘리브레이션을 확인하고,
     좌우는 **둘 다 지정됐을 때만** 강제한다 (팔 하나 구성에서 미지정을 막으면
     지정할 이유가 없는 사람까지 막는다)."""
@@ -557,7 +557,7 @@ def test_pose_mode_refuses_wild_joint_jumps_instead_of_faulting():
     """⚠ **실기: POSE 모드가 관절을 엉뚱한 방향으로 밀어 로봇이 꼬여 죽었다.**
     5-DOF 리더 → 6-DOF 팔로워 자세 매핑은 pan·roll 같은 동작에서 도달
     불가이거나 IK 해가 한 관절을 수십 도 튕긴다(오프라인 실측: SO-101 pan
-    15° → Piper 90°). 직교(mm/deg) 걸음 상한은 그걸 통과시키므로 **관절 공간**
+    15° → PIPER 90°). 직교(mm/deg) 걸음 상한은 그걸 통과시키므로 **관절 공간**
     상한이 따로 있어야 한다 — 크게 뛰는 해는 보내지 않고 막는다."""
     src = (REPO / "backend" / "app" / "services" / "relay.py").read_text()
     assert "POSE_MAX_JOINT_STEP_DEG" in src
@@ -587,7 +587,7 @@ def test_a_failed_relay_start_leaves_no_session_open():
 def test_cross_model_pose_is_disabled_on_both_ends():
     """⚠ **실기 결정: 말단(POSE) 모드는 5-DOF 리더에서 이상하다 — 비활성화.**
     프론트에서 선택지를 빼는 것만으로는 부족하다(API 로 켤 수 있다) —
-    백엔드가 크로스 모델 POSE 를 거부해야 한다. Piper끼리의 POSE 는 별개라
+    백엔드가 크로스 모델 POSE 를 거부해야 한다. PIPER끼리의 POSE 는 별개라
     그대로 살아 있다. 되살리려면 양쪽을 함께 푼다."""
     relay = (REPO / "backend" / "app" / "services" / "relay.py").read_text()
     start = relay.split("def start", 1)[1].split("\n    def ", 1)[0]
@@ -599,7 +599,7 @@ def test_cross_model_pose_is_disabled_on_both_ends():
     assert "const mode = 'joint' as const" in panel
 
 
-# ── 수집 (5단계) — SO-101 리더로 Piper 를 녹화한다 ──
+# ── 수집 (5단계) — SO-101 리더로 PIPER 를 녹화한다 ──
 
 
 def test_the_so101_teleoperator_is_a_registered_lerobot_plugin_type():
@@ -614,7 +614,7 @@ def test_the_so101_teleoperator_is_a_registered_lerobot_plugin_type():
 
 
 def test_the_teleoperator_maps_deltas_from_the_connect_anchor(monkeypatch, tmp_path):
-    """액션은 **팔로워(Piper) 관절계**다 — 학습·추론이 그대로 맞는다. connect
+    """액션은 **팔로워(PIPER) 관절계**다 — 학습·추론이 그대로 맞는다. connect
     순간이 정합이라 첫 액션 = 팔로워 현재 자세(점프 0), 이후 리더 변화량이
     관절쌍 부호로 얹힌다. 그리퍼는 절대 통과. 세그먼트는 읽기만 한다 —
     라이터는 로봇 클래스 하나여야 한다."""
@@ -667,7 +667,7 @@ def test_the_teleoperator_maps_deltas_from_the_connect_anchor(monkeypatch, tmp_p
         assert first[f"{j}.pos"] == pytest.approx(v, abs=0.05), j
     assert first["gripper.pos"] == 40.0
 
-    # 리더 pan 을 +50 (폭 2048 의 1/4 = 512틱 = 45°) → Piper joint1 도 +45°
+    # 리더 pan 을 +50 (폭 2048 의 1/4 = 512틱 = 45°) → PIPER joint1 도 +45°
     _Reader.values["so101_leader1"]["joint1"] = 50.0
     moved = t.get_action()
     from piper_robot.joints import JOINT_CALIBRATION
@@ -706,7 +706,7 @@ def test_record_args_carry_the_so101_teleoperator_and_its_anchor_follower():
 def test_recording_start_asks_so101d_and_keeps_the_leader_out_of_prepare_arms():
     """외부 리더는 robotd 등록부에 없다 — `prepare_arms` 에 넘기면 "팔을 찾을 수
     없습니다"로 막힌다(릴레이가 처음에 그렇게 막혔던 것과 같은 병). 정체는
-    so101d 에게 묻고(연결·캘리브레이션), prepare 에는 Piper 만 넘긴다.
+    so101d 에게 묻고(연결·캘리브레이션), prepare 에는 PIPER 만 넘긴다.
     앵커 팔로워는 미리보기와 시작이 같은 조립기에서 채운다."""
     src = (REPO / "backend" / "app" / "routers" / "recording.py").read_text()
     assert 'params["teleop_follower"] = params.get("robot_port", "")' in src
@@ -719,7 +719,7 @@ def test_recording_start_asks_so101d_and_keeps_the_leader_out_of_prepare_arms():
 def test_the_recording_form_offers_so101_leaders_and_sends_the_type():
     """수집 폼은 so101d 가 연결·캘리브레이션한 팔만 Leader 로 얹고, 고르면
     teleop_type 을 so101_leader 로 보낸다 — 기본값(piper_leader)으로 가면
-    LeRobot 이 SO-101 세그먼트를 Piper 리더로 읽어 관절이 어긋난다."""
+    LeRobot 이 SO-101 세그먼트를 PIPER 리더로 읽어 관절이 어긋난다."""
     page = (REPO / "frontend" / "src" / "pages" / "RecordingPage.tsx").read_text()
     assert "sp.attached.calibrated" in page, "미캘리브레이션 팔이 선택지에 오른다"
     assert "teleop_type: 'so101_leader'" in page
@@ -727,23 +727,23 @@ def test_the_recording_form_offers_so101_leaders_and_sends_the_type():
 
 
 def test_the_so101_side_control_looks_and_cycles_like_pipers():
-    """좌/우 지정은 Piper 카드와 **같은 순환 버튼**이다 (왼팔 → 오른팔 → 미지정).
+    """좌/우 지정은 PIPER 카드와 **같은 순환 버튼**이다 (왼팔 → 오른팔 → 미지정).
     두 카드의 같은 개념이 다르게 생기면(하나는 드롭박스) 사람이 "뭐가 다른가"를
     묻는다 — 실제로 물었다. 스타일 클래스까지 같아야 눈이 같은 것으로 읽는다."""
     page = (REPO / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
     so101 = page.split("{/* SO-101 로봇 카드", 1)[1].split("{robotArms.map((arm) =>", 1)[0]
     assert "<select" not in so101, "SO-101 좌/우가 아직 드롭박스다"
     assert "att.side === 'left' ? 'right' : att.side === 'right' ? '' : 'left'" in so101, \
-        "Piper 와 같은 순환(왼팔→오른팔→미지정)이 아니다"
+        "PIPER 와 같은 순환(왼팔→오른팔→미지정)이 아니다"
     for shared in ("bg-purple-600/30 text-purple-300 border-purple-500/40",
                    "? '왼팔' :", "'오른팔' : '좌/우?'"):
-        assert shared in so101, f"Piper 버튼과 다르게 생겼다: {shared}"
+        assert shared in so101, f"PIPER 버튼과 다르게 생겼다: {shared}"
 
 
 def test_can_and_serial_share_one_ui_frame():
     """⚠ **전송(CAN/시리얼)이 달라도 UI 틀은 하나다** — 사용자가 그렇게 정했다.
     포트 패널에는 **포트의 사실만**(CAN 카드와 같은 그리드·같은 카드 틀), [연결]
-    하면 팔은 **로봇 패널**로 내려가 Piper 카드와 같은 틀에 선다. 팔의 일
+    하면 팔은 **로봇 패널**로 내려가 PIPER 카드와 같은 틀에 선다. 팔의 일
     (좌/우·캘리브레이션·텔레옵·해제)이 포트 카드에 남아 있으면 안 된다."""
     page = (REPO / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
     port_panel = page.split("{/* 포트 — 스캔된 CAN 포트 카드", 1)[1].split("{calibArm && (", 1)[0]
@@ -756,7 +756,7 @@ def test_can_and_serial_share_one_ui_frame():
     robot_panel = page.split("{/* 로봇 — 연결·등록된 팔 카드", 1)[1]
     assert "so101Arms.map((att) =>" in robot_panel, "SO-101 이 로봇 패널에 안 선다"
     assert "robotArms.length + so101Arms.length === 0" in robot_panel
-    # Piper 로봇 카드와 같은 카드 틀·같은 버튼 크기
+    # PIPER 로봇 카드와 같은 카드 틀·같은 버튼 크기
     so101 = robot_panel.split("so101Arms.map((att) =>", 1)[1].split("{robotArms.map((arm) =>", 1)[0]
     assert "rounded border p-2.5 transition-shadow" in so101
     assert so101.count("px-2.5 py-1 text-xs rounded") >= 3

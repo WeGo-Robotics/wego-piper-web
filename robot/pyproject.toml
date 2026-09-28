@@ -1,7 +1,7 @@
 [project]
 name = "piper-robot"
 version = "0.1.0"
-description = "Piper arm CAN ownership, safety filter, shm publishing (robotd body)"
+description = "PIPER arm CAN ownership, safety filter, shm publishing (robotd body)"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 # ⚠ `piper-sdk` 는 **팔을 여는 데 필수**다 (arm.connect 의 늦은 import). 선언이 없어

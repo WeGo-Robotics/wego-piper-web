@@ -1,5 +1,5 @@
 /**
- * Piper 관절 정의 — 이름·라벨·정규화 범위의 단일 소스.
+ * PIPER 관절 정의 — 이름·라벨·정규화 범위의 단일 소스.
  *
  * 이전에는 같은 7관절이 세 파일에 각각 있었다 (RobotsPage, TelemetryPanel,
  * ManualControlPanel). 표현만 달랐다 — `'joint1'` vs `'joint1.pos'`.

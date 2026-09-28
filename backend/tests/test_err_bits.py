@@ -1,6 +1,6 @@
 """`_ERR_BITS` 프로세스 경계 복붙 (refactor/04-err-bits.md).
 
-Piper `err_code` 비트 → 의미 매핑이 백엔드와 wrapper 에 각각 있다.
+PIPER `err_code` 비트 → 의미 매핑이 백엔드와 wrapper 에 각각 있다.
 **안전 관련 표시**라 어긋나면 엉뚱한 관절을 지목하거나 에러를 놓친다.
 
 문서는 (a) "wrapper 에 두고 백엔드가 읽기" 를 권했지만 (c) 테스트 고정을 택했다:

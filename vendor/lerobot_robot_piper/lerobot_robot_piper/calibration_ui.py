@@ -1,8 +1,8 @@
 """
-calibration_ui.py — Piper joint zero-point calibration tool
+calibration_ui.py — PIPER joint zero-point calibration tool
 
 Workflow:
-  1. Connect to a Piper arm via CAN
+  1. Connect to a PIPER arm via CAN
   2. Manually move each joint to its zero (home) position
   3. Click "Set Zero" to call JointConfig(set_zero=0xAE) for each joint
   4. SDK writes zero-point to the motor's flash — persists across power cycles
@@ -81,7 +81,7 @@ def init_can_interface(iface: str, bitrate: int) -> tuple[bool, str]:
 class CalibrationUI:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("Piper Joint Calibration (Zero-Point)")
+        self.root.title("PIPER Joint Calibration (Zero-Point)")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.minsize(700, 480)
 

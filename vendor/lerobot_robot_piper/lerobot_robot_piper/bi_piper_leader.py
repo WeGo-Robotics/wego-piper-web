@@ -1,4 +1,4 @@
-"""양팔 Piper 리더 — `PiperLeader` 둘의 합성 (상류 `BiSOLeader` 관용구).
+"""양팔 PIPER 리더 — `PiperLeader` 둘의 합성 (상류 `BiSOLeader` 관용구).
 
 액션 키는 `left_`/`right_` 접두사로 병합 — `BiPiperFollower.send_action` 이
 같은 접두사로 도로 갈라 보낸다.

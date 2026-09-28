@@ -6,7 +6,7 @@
 # 이름이 겹치지 않게 sim_ 접두사를 쓴다.
 
 [Unit]
-Description=Piper simulation daemon (MuJoCo world publishing arm/camera shm)
+Description=PIPER simulation daemon (MuJoCo world publishing arm/camera shm)
 Documentation=file://@REPO@/feature/sim-env.md
 StartLimitIntervalSec=0
 

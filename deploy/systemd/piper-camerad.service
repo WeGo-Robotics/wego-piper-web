@@ -7,7 +7,7 @@
 # 유닛을 둘로 두는 것이 그 격리를 systemd 수준에서도 유지하는 방법이다.
 
 [Unit]
-Description=Piper v4l2 camera daemon (owns /dev/video*)
+Description=PIPER v4l2 camera daemon (owns /dev/video*)
 Documentation=file://@REPO@/refactor/daemon-inventory.md
 
 # ⚠ `StartLimitIntervalSec` 은 **`[Unit]` 에 둔다.** `[Service]` 에 쓰면 이 systemd

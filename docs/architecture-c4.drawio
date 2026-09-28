@@ -20,7 +20,7 @@
         <mxCell id="sys" value="&lt;b&gt;piper-web&lt;/b&gt;&lt;br&gt;&lt;i&gt;[이 저장소]&lt;/i&gt;&lt;br&gt;&lt;br&gt;LeRobot 을 subprocess 로 감싸 웹에서 통제한다 — 수집·학습·추론·평가와 E-stop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1168BD;strokeColor=#0B4884;fontColor=#FFFFFF;fontSize=12;arcSize=12;" vertex="1" parent="1">
           <mxGeometry x="400" y="300" width="370" height="140" as="geometry" />
         </mxCell>
-        <mxCell id="e-arm" value="&lt;b&gt;Piper 로봇 팔&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CAN]&lt;/i&gt;&lt;br&gt;&lt;br&gt;관절 지령·상태. robotd 가 독점한다" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#6B6B6B;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+        <mxCell id="e-arm" value="&lt;b&gt;PIPER 로봇 팔&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CAN]&lt;/i&gt;&lt;br&gt;&lt;br&gt;관절 지령·상태. robotd 가 독점한다" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#6B6B6B;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
           <mxGeometry x="40" y="590" width="168" height="108" as="geometry" />
         </mxCell>
         <mxCell id="e-cam" value="&lt;b&gt;카메라&lt;/b&gt;&lt;br&gt;&lt;i&gt;[USB]&lt;/i&gt;&lt;br&gt;&lt;br&gt;UVC 웹캠 + RealSense D405" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#6B6B6B;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
@@ -149,7 +149,7 @@
         <mxCell id="rsd" value="&lt;b&gt;piper-rsd&lt;/b&gt;&lt;br&gt;&lt;i&gt;[유닛 · 상시]&lt;/i&gt;&lt;br&gt;&lt;br&gt;RealSense USB 파이프라인 독점" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
           <mxGeometry x="822" y="734" width="196" height="148" as="geometry" />
         </mxCell>
-        <mxCell id="h-arm" value="&lt;b&gt;Piper 로봇 팔&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CAN 2.0]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7A7A7A;strokeColor=#555555;fontColor=#FFFFFF;fontSize=11;arcSize=12;dashed=0;" vertex="1" parent="1">
+        <mxCell id="h-arm" value="&lt;b&gt;PIPER 로봇 팔&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CAN 2.0]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7A7A7A;strokeColor=#555555;fontColor=#FFFFFF;fontSize=11;arcSize=12;dashed=0;" vertex="1" parent="1">
           <mxGeometry x="322" y="938" width="230" height="78" as="geometry" />
         </mxCell>
         <mxCell id="h-cam" value="&lt;b&gt;USB 카메라&lt;/b&gt;&lt;br&gt;&lt;i&gt;[UVC]&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7A7A7A;strokeColor=#555555;fontColor=#FFFFFF;fontSize=11;arcSize=12;dashed=0;" vertex="1" parent="1">

@@ -162,7 +162,7 @@ def test_the_launcher_opens_the_doctor_when_nothing_answers(tmp_path):
     url = seen.read_text()
     assert url.startswith("file://") and url.endswith("/piper-web/doctor.html"), url
     body = Path(url[len("file://"):]).read_text()
-    assert "Piper Studio 진단" in body and "<pre>" in body
+    assert "PIPER Studio 진단" in body and "<pre>" in body
 
 
 def test_the_doctor_never_dies_on_a_bare_machine(tmp_path):
@@ -201,7 +201,7 @@ def test_the_bundle_ships_the_shortcuts_and_apply_installs_them():
 
 def test_the_tab_title_is_the_product_name():
     """탭·북마크·바로가기 이름이 전부 `frontend` 였다."""
-    assert "<title>Piper Studio</title>" in (REPO / "frontend" / "index.html").read_text()
+    assert "<title>PIPER Studio</title>" in (REPO / "frontend" / "index.html").read_text()
 
 
 def test_a_korean_desktop_still_gets_the_icons(tmp_path):

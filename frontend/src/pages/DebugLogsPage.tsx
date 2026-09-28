@@ -144,7 +144,7 @@ export default function DebugLogsPage() {
   const chunkX = useMemo(() => (curInf ? curInf.action_chunk.map((_, i) => i) : []), [curInf])
 
   return (
-    // 앱 셸 안의 보통 페이지다 — 예전엔 자기 헤더("Piper Studio"·메인으로)를 가진 새 창이었다.
+    // 앱 셸 안의 보통 페이지다 — 예전엔 자기 헤더("PIPER Studio"·메인으로)를 가진 새 창이었다.
     // "로그"가 아니라 추론 런의 분석 도구라 로그 페이지(/logs)와 이름이 겹치지 않게 한다.
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">

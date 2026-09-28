@@ -5,7 +5,7 @@ WeGo 내부 패키지 스냅샷. 공개 PyPI에 없어서 Docker 빌드 컨텍�
 
 | 패키지 | 출처 | 비고 |
 |--------|------|------|
-| `lerobot_robot_piper` | `git@github.com:WeGo-Robotics/lerobot_robot_piper` (호스트 `~/lerobot_robot_piper`) | Piper 로봇 LeRobot 플러그인. `.git`/`build`/egg-info 제외한 소스 스냅샷 |
+| `lerobot_robot_piper` | `git@github.com:WeGo-Robotics/lerobot_robot_piper` (호스트 `~/lerobot_robot_piper`) | PIPER 로봇 LeRobot 플러그인. `.git`/`build`/egg-info 제외한 소스 스냅샷 |
 | `wego_piper` | 설치된 wheel(`wego_piper 0.0.2`)에서 재구성 | 순수 파이썬 서보 통신 모듈. `pyproject.toml`은 컨테이너 빌드용으로 추가 |
 
 ## 갱신 방법

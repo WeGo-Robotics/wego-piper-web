@@ -297,7 +297,7 @@ DAEMON_DISTS: Final = {
 #   종료 경로를 다는 것은 별개의 결정이다 (UNIT_READONLY).
 UNIT_CATALOG: Final[dict[str, tuple[str, str]]] = {
     ESTOPD: ("E-stop 감시 — heartbeat 가 끊기면 활동 프로세스를 죽인다", "core"),
-    ROBOTD: ("Piper 팔 (CAN) — 상태 발행·안전 필터·파킹", "core"),
+    ROBOTD: ("PIPER 팔 (CAN) — 상태 발행·안전 필터·파킹", "core"),
     CAMERAD: ("USB 카메라 (V4L2)", "core"),
     RSD: ("RealSense 카메라", "core"),
     UNITD: ("서비스 관리 — 이 화면의 켜기/끄기를 실행한다", "core"),

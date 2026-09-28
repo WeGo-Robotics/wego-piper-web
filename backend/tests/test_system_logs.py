@@ -27,7 +27,7 @@ def test_levels_come_from_the_message_because_stdout_is_always_info():
     assert u.infer_level("ERROR:    Exception in ASGI application", 6) == "error"
     assert u.infer_level("piper-update.service: Failed with result 'exit-code'.", 6) == "error"
     assert u.infer_level("Traceback (most recent call last):", 6) == "error"
-    assert u.infer_level("Started piper-robotd.service - Piper robot daemon", 6) == "info"
+    assert u.infer_level("Started piper-robotd.service - PIPER robot daemon", 6) == "info"
     # 트레이스백 프레임·예외 줄은 첫 줄 없이 와도 오류다 — journald 가 -g 로 골라 보낼 때 그렇다
     assert u.infer_level('  File "/x/hub.py", line 1, in f', 6) == "error"
     assert u.infer_level("RuntimeError: 모터 무응답", 6) == "error"

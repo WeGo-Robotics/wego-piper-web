@@ -56,9 +56,9 @@ class Geometry:
         self.pts = npz["pts"].astype(np.float64)
         self.pt_link = npz["pt_link"]
         self.radius = float(npz["radius"])
-        # ⚠ 말단 링크는 **팔마다 다르다.** Piper 는 `link6`(손목 플랜지), SO-101 은
+        # ⚠ 말단 링크는 **팔마다 다르다.** PIPER 는 `link6`(손목 플랜지), SO-101 은
         #   `gripper_frame_link` 다. 하드코딩하면 그 팔 하나에만 맞는다.
-        #   옛 파일에는 없으므로 Piper 기본값으로 떨어진다.
+        #   옛 파일에는 없으므로 PIPER 기본값으로 떨어진다.
         self.tip = str(npz["tip"]) if "tip" in npz.files else "link6"
         # 부모→자식 고정 변환은 관절값과 무관하다 — 한 번 만들어 둔다
         self.fixed = np.stack([_fixed(self.xyz[i], self.rpy[i])
@@ -113,7 +113,7 @@ def _fixed(xyz, rpy) -> np.ndarray:
 
 
 def _about_axis(axis, q: np.ndarray) -> np.ndarray:
-    """축 회전 (T,4,4). Piper 는 전부 z 축이지만 URDF 를 그대로 따른다 —
+    """축 회전 (T,4,4). PIPER 는 전부 z 축이지만 URDF 를 그대로 따른다 —
     다른 팔이나 갱신된 파일에서 축이 바뀌어도 조용히 틀리지 않게."""
     n = np.linalg.norm(axis)
     x, y, z = (np.asarray(axis) / n) if n else (0.0, 0.0, 1.0)
@@ -296,7 +296,7 @@ def near_gimbal_lock(q_rad: np.ndarray, geom: "Geometry | None" = None) -> bool:
 #
 # ## 왜 수치해인가
 #
-# Piper 는 **구형 손목이 아니다** — joint6 원점이 joint4·5 에서 91mm 떨어져 있어
+# PIPER 는 **구형 손목이 아니다** — joint6 원점이 joint4·5 에서 91mm 떨어져 있어
 # (실측) Pieper 분해가 안 된다. 해석해를 쓰려면 이 팔 전용으로 유도해야 한다.
 #
 # 그런데 이 IK 를 만드는 이유가 **다른 팔(SO-101 등)을 팔로워로 붙이는 것**이다.

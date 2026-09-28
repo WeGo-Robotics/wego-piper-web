@@ -7,7 +7,7 @@
 # 이미 사용자 그룹(dialout·plugdev)으로 풀어둔 상태다.
 
 [Unit]
-Description=Piper robot daemon (owns CAN, safety layer)
+Description=PIPER robot daemon (owns CAN, safety layer)
 Documentation=file://@REPO@/refactor/daemon-inventory.md
 
 # ⚠ `After=redis-server.service` 를 쓰지 않는다 — **사용자 유닛은 시스템 유닛에

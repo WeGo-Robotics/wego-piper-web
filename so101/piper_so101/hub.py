@@ -240,7 +240,7 @@ class So101Bridge:
                     continue
                 if reader.is_stale() and not self._deadman_held:
                     # 위치 제어라 마지막 목표에 그대로 선다 — 보내기를 멈추는
-                    # 것이 곧 정지다 (Piper 와 달리 관성 있는 원거리 목표를
+                    # 것이 곧 정지다 (PIPER 와 달리 관성 있는 원거리 목표를
                     # 스텝 클램프가 애초에 막는다).
                     self._deadman_held = True
                     logger.warning("데드맨 (%s): 명령 중단 — 현 위치 유지",
@@ -420,7 +420,7 @@ class So101Hub:
                 raise
             logger.info("%s: 캘리브레이션 %s", arm_name, path)
 
-        # 연결 직후는 사람이 팔을 만지는 시간 — 토크를 끈다 (Piper attach 와 동일)
+        # 연결 직후는 사람이 팔을 만지는 시간 — 토크를 끈다 (PIPER attach 와 동일)
         for name in SO101_JOINTS:
             bus.set_torque(MOTOR_IDS[name], False)
 

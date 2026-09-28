@@ -25,7 +25,7 @@ GPU 는 없을 수 있음), 참가자 노트북은 Windows·Mac, 현장 외부�
 | 2 | Windows · Mac | 조작하는 PC 는 브라우저라 **지금도 된다.** 로봇 호스트는 Linux 전용(CAN·V4L2·systemd·`/dev/shm`) | 호스트 이식은 **안 한다** | README 에 "조작 PC 는 브라우저면 된다" 한 줄 + qna 항목 | 극소 |
 | 3 | 부팅 실패 안내 | 게이트웨이가 죽어도 화면 껍데기는 뜬다(정적) — 페이지마다 제각각 오류. 프론트 컨테이너가 안 뜨면 연결 거부 | 필요 | 앱 안의 **게이트웨이 관문 + 상태 화면**, unitd 가 쓰는 `boot.json`, 바탕화면 [진단] 도구 | 중 (2일) |
 | 4 | 로컬 서버·USB 설치 | `release.sh --offline` tar 와 LAN 레지스트리가 **이미 있다.** 그러나 venv 의존(PyPI)·apt·ollama 는 망이 필요 — 망이 없으면 **팔·카메라가 안 뜬다** | 필요, 대회 전제 | **현장 키트**(이미지+wheel+pip 캐시+deb) + 손잡이 `PIPER_MIRROR` 하나 + 서빙 스크립트 | 중 (3일) |
-| 5 | 바탕화면 아이콘 | 없음. 탭 제목이 `frontend` | ☑ 09-23 구현(§5-4) | `.desktop` 둘([Piper Studio]·[진단])을 `apply.sh` 가 만든다 | 극소 (반나절) |
+| 5 | 바탕화면 아이콘 | 없음. 탭 제목이 `frontend` | ☑ 09-23 구현(§5-4) | `.desktop` 둘([PIPER Studio]·[진단])을 `apply.sh` 가 만든다 | 극소 (반나절) |
 | 6 | Colab 연동 | — | **API 가 없다** · ☑ README 안내(09-23) | Colab 은 노트북 템플릿 문서로 끝. 다음 프로바이더는 **HF Jobs**(LeRobot 공식 `--job.target`, 조직 과금 — 대회에 맞는다) | 문서 반나절 / HF Jobs 러너 2~3일 |
 | 7 | CI 설치 검증 후 릴리스 | CI 없음. 릴리스는 `release.sh` + 사람 확인 + .120 실기 | 필요 | GitHub Actions — 정적 검사 + **새 우분투 런너에 `piper-install.sh` 그대로** 스모크, `release.sh` 가 초록을 확인한 뒤 push | 중 (3일) |
 
@@ -168,7 +168,7 @@ B 는 A 가 막힐 때(참가자가 계정을 못 만드는 사정). C 는 하�
 - 처방 문구는 **새로 짓지 않는다.** `apply.sh --check` 가 이미 찍는 문장(`redis 소켓 없음 — …`)을
   그대로 실어 나른다. 트러블슈팅 표와 같은 문장이어야 하고 `test_install_docs.py` 가 잠근다.
 - ⚠ unitd 까지 죽었으면 파일이 낡는다 → `written_at` 이 60초 넘게 옛것이면 "호스트 데몬(unitd)도
-  응답이 없습니다 — 바탕화면 [Piper Studio 진단] 을 여세요" 를 띄운다. 낡은 표를 새것처럼 보이지 않는다.
+  응답이 없습니다 — 바탕화면 [PIPER Studio 진단] 을 여세요" 를 띄운다. 낡은 표를 새것처럼 보이지 않는다.
 - ⚠ 인증([gateway-auth.md](gateway-auth.md))을 켠 게이트웨이에서도 이 파일은 인증 밖이다.
   그래서 담는 것은 유닛 이름·상태·처방 문장뿐 — 저널 본문·경로·비밀은 넣지 않는다.
 - ⚠ 업데이트 중에는 VersionCard 가 이미 "돌아오면 새로고침" 을 한다. 관문이 다른 말을 하면 안
@@ -250,7 +250,7 @@ wheel 이 다르다" 고 말한다.
 ### 5-1. 지금
 
 없다. 설치 마지막 줄이 주소를 찍어 줄 뿐이다. 덤으로 [index.html](../frontend/index.html) 의
-`<title>` 이 **`frontend`** 라 탭·북마크·바로가기 이름이 전부 "frontend" 로 나온다 — 한 줄 고침("Piper Studio").
+`<title>` 이 **`frontend`** 라 탭·북마크·바로가기 이름이 전부 "frontend" 로 나온다 — 한 줄 고침("PIPER Studio").
 
 ### 5-2. 방식
 
@@ -261,7 +261,7 @@ wheel 이 다르다" 고 말한다.
 | PWA "앱으로 설치" | manifest + 아이콘이면 Chrome 이 [설치] 를 준다. ⚠ **HTTP 의 LAN 주소에서는 안 뜬다**(secure context — `localhost` 만 예외). 서비스 워커는 넣지 않는다(캐시가 업데이트를 가린다) | 나중에. 로봇 호스트 화면에서만 의미 있다 |
 | 참가자 노트북(Windows/Mac) | 우리 손이 안 닿는다. 첫 화면에 **"이 주소를 바탕화면에 끌어다 놓으세요" 안내 + QR** | 안내 한 줄 |
 
-### 5-3. 둘째 아이콘 — [Piper Studio 진단]
+### 5-3. 둘째 아이콘 — [PIPER Studio 진단]
 
 §3 의 ② 층을 이게 맡는다. `deploy/piper-doctor.sh`: `apply.sh --check` + `docker compose ps` +
 `systemctl --user list-units 'piper-*'` + 유닛별 저널 끝 20줄 + `hostname -I` →
@@ -276,8 +276,8 @@ wheel 이 다르다" 고 말한다.
 | 자리 | 무엇 |
 |---|---|
 | [install-shortcuts.sh](../deploy/install-shortcuts.sh) | 앱 메뉴 항목 둘 + 바탕화면 사본(디렉토리가 있을 때만) + 아이콘. `--check`·`--remove`. 실행 비트와 `gio` 의 `metadata::trusted` 를 미리 준다 |
-| [piper-studio.sh](../deploy/piper-studio.sh) | [Piper Studio]: 포트를 compose → `.env` → 80 순으로 찾고, 프론트가 응답하면 브라우저(Chrome 앱 창 → `xdg-open`), 아니면 진단 보고서 |
-| [piper-doctor.sh](../deploy/piper-doctor.sh) | [Piper Studio 진단]: 적용본·웹·컨테이너·유닛·`apply.sh --check` 의 ✗·! 줄·저널 → 텍스트/HTML. §3 의 ② 층 |
+| [piper-studio.sh](../deploy/piper-studio.sh) | [PIPER Studio]: 포트를 compose → `.env` → 80 순으로 찾고, 프론트가 응답하면 브라우저(Chrome 앱 창 → `xdg-open`), 아니면 진단 보고서 |
+| [piper-doctor.sh](../deploy/piper-doctor.sh) | [PIPER Studio 진단]: 적용본·웹·컨테이너·유닛·`apply.sh --check` 의 ✗·! 줄·저널 → 텍스트/HTML. §3 의 ② 층 |
 | `apply.sh` 5절 · `stage-hostside.sh` · `release.sh` · `piper-uninstall.sh` 4b | 번들에 싣고, `current/` 에 깔고, 제거가 지운다 |
 | 아이콘 | png 대신 **프론트의 favicon.svg 그대로** — GNOME 은 절대 경로 svg 를 받는다. 원본이 하나 |
 | 테스트 | [test_desktop_shortcut.py](../backend/tests/test_desktop_shortcut.py) — 임시 HOME 에서 만들고·두 번 만들고·지우고, 진단이 아무것도 없는 기계에서도 0 으로 끝나는 것, 아이콘이 웹/보고서 중 맞는 쪽을 여는 것 |

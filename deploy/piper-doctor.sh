@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# [Piper Studio 진단] — 웹이 안 뜰 때 원인을 한 장으로 (feature/field-deployment.md §3 ② · §5-3).
+# [PIPER Studio 진단] — 웹이 안 뜰 때 원인을 한 장으로 (feature/field-deployment.md §3 ② · §5-3).
 #
 # 브라우저가 "연결할 수 없음" 만 보여 주는 층(프론트 컨테이너·docker 자체)은 웹이 말해 줄 수 없다 —
 # 그래서 이건 웹 **밖**에서 돈다. 설치가 이미 아는 것(apply.sh --check)과 실행 상태(compose·유닛·저널)를
@@ -39,7 +39,7 @@ strip_ansi() { sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
 report() {
   local port ip fe gw
   port="$(web_port)"
-  echo "Piper Studio 진단 — $(date '+%Y-%m-%d %H:%M:%S') — $(hostname 2>/dev/null || echo '?')"
+  echo "PIPER Studio 진단 — $(date '+%Y-%m-%d %H:%M:%S') — $(hostname 2>/dev/null || echo '?')"
   echo "아무것도 바꾸지 않았다. 이 화면을 캡처해 문의하면 된다."
   echo
 
@@ -111,11 +111,11 @@ report() {
 html_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
 html() {
   cat <<'EOF'
-<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>Piper Studio 진단</title>
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>PIPER Studio 진단</title>
 <style>body{margin:0;background:#171717;color:#e5e5e5;font:14px/1.5 ui-monospace,Menlo,Consolas,monospace}
 h1{font:600 18px system-ui,sans-serif;margin:0;padding:16px 20px;background:#262626;border-bottom:1px solid #404040}
 pre{white-space:pre-wrap;padding:20px;margin:0}</style></head><body>
-<h1>Piper Studio 진단 — 웹이 안 떠서 이 보고서를 대신 열었다</h1>
+<h1>PIPER Studio 진단 — 웹이 안 떠서 이 보고서를 대신 열었다</h1>
 <pre>
 EOF
   report | html_escape

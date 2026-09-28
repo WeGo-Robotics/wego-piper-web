@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# [Piper Studio] 아이콘이 부르는 것 — 웹을 연다. 안 떠 있으면 진단 보고서를 대신 연다.
+# [PIPER Studio] 아이콘이 부르는 것 — 웹을 연다. 안 떠 있으면 진단 보고서를 대신 연다.
 #
 # ⚠ "연결할 수 없음" 흰 화면을 일반 사용자에게 보여 주지 않는다 (feature/field-deployment.md §3 ②).
 #   프론트(nginx)가 응답하면 브라우저를 열고, 응답이 없으면 piper-doctor.sh 가 만든 보고서를 연다 —

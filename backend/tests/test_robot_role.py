@@ -11,7 +11,7 @@
 **`master_slave=master` 인데 `role=follower`** 로 떴다.
 
 전원을 껐다 켜면 마스터 설정이 풀려 Standby(0x00)를 보고하므로
-([메모리] Piper 마스터/슬레이브는 설정해야 켜지는 모드), 실제로 흔히 걸린다.
+([메모리] PIPER 마스터/슬레이브는 설정해야 켜지는 모드), 실제로 흔히 걸린다.
 """
 
 import pytest

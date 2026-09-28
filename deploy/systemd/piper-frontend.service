@@ -10,7 +10,7 @@
 # 아니라 `nvm` 이 깔아주는 PATH 가 없다 — `npm` 을 못 찾아 조용히 실패한다.
 
 [Unit]
-Description=Piper web frontend (vite dev server)
+Description=PIPER web frontend (vite dev server)
 Documentation=file://@REPO@/CLAUDE.md
 StartLimitIntervalSec=0
 

@@ -11,7 +11,7 @@ from app.services.camera_manager import camera_manager
 
 router = APIRouter(prefix="/api/inference", tags=["inference"])
 
-PIPER_JOINTS = 7  # Piper 팔 1대의 관절 수
+PIPER_JOINTS = 7  # PIPER 팔 1대의 관절 수
 
 # 마지막 선택값 (서버 메모리)
 _last_selection: dict = {

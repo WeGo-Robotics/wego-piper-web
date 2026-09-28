@@ -1,4 +1,4 @@
-"""양팔 Piper 설정 — `robot.type = "bi_piper_follower"` / `teleop.type = "bi_piper_leader"`.
+"""양팔 PIPER 설정 — `robot.type = "bi_piper_follower"` / `teleop.type = "bi_piper_leader"`.
 
 상류 `bi_so_follower` 와 같은 모양: 팔 하나짜리 설정 둘을 **중첩**해서 받는다.
 CLI 에서는 `--robot.left_arm_config.port=can_follower1` 식으로 온다.

@@ -1,7 +1,7 @@
 [project]
 name = "piper-rs"
 version = "0.1.0"
-description = "Piper RealSense daemon core (owns pyrealsense2 pipelines)"
+description = "PIPER RealSense daemon core (owns pyrealsense2 pipelines)"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 # ⚠ piper-cam 은 **v4l2 장치를 쓰려는 게 아니다** — `piper_cam.controls` 의

@@ -1,6 +1,6 @@
 # lerobot_robot_piper
 
-LeRobot plugin for the **Agilex Piper** 7-DOF robotic arm. Provides follower (robot) and leader (teleoperator) interfaces that integrate directly with the [LeRobot](https://github.com/huggingface/lerobot) framework for teleoperation, dataset recording, and autonomous policy deployment.
+LeRobot plugin for the **Agilex PIPER** 7-DOF robotic arm. Provides follower (robot) and leader (teleoperator) interfaces that integrate directly with the [LeRobot](https://github.com/huggingface/lerobot) framework for teleoperation, dataset recording, and autonomous policy deployment.
 
 ---
 
@@ -21,7 +21,7 @@ LeRobot plugin for the **Agilex Piper** 7-DOF robotic arm. Provides follower (ro
 - LeRobot >= 0.3.0
 - [`piper_sdk`](https://github.com/agilexrobotics/piper_sdk)
 - [`wego_piper`](https://github.com/agilexrobotics/wego_piper)
-- CAN-USB interface connected to the Piper arm
+- CAN-USB interface connected to the PIPER arm
 
 ```bash
 pip install lerobot_robot_piper
@@ -176,7 +176,7 @@ python -m lerobot.record \
 
 ## Motor Configuration
 
-The Piper arm has 7 joints. Normalization maps raw encoder counts to the ranges shown below.
+The PIPER arm has 7 joints. Normalization maps raw encoder counts to the ranges shown below.
 
 | Joint | Model | Normalized Range | Physical Range |
 |-------|-------|-----------------|----------------|

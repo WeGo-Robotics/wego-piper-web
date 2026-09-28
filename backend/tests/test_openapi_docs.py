@@ -25,7 +25,7 @@ VITE = REPO / "frontend" / "vite.config.ts"
 def test_openapi_schema_builds():
     """라우트 353개가 한 스키마로 직렬화되는지. 모델 충돌이 있으면 여기서 터진다."""
     schema = app.openapi()
-    assert schema["info"]["title"] == "Piper Studio"
+    assert schema["info"]["title"] == "PIPER Studio"
     assert json.dumps(schema)  # 직렬화 불가능한 스키마를 조기에 잡는다
     assert len(schema["paths"]) > 200
 

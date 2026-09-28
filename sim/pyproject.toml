@@ -1,7 +1,7 @@
 [project]
 name = "piper-sim"
 version = "0.1.0"
-description = "Piper MuJoCo simulation daemon core — publishes the same shm contracts as robotd"
+description = "PIPER MuJoCo simulation daemon core — publishes the same shm contracts as robotd"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 # piper-robot: 정규화 표(joints)·안전 필터(safety)·기구학(armmodel)을 **그대로** 쓴다 —

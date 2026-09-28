@@ -1,10 +1,10 @@
 <!-- README.md 교체 검토용 초안. 제품 소개와 설치·운영 절차를 함께 담습니다. -->
 
-# Piper Studio
+# PIPER Studio
 
 **로봇 모방학습의 데이터 수집부터 학습·평가까지 브라우저에서 진행합니다.**
 
-Piper Studio는 [LeRobot](https://github.com/huggingface/lerobot) 기반 웹 인터페이스입니다.
+PIPER Studio는 [LeRobot](https://github.com/huggingface/lerobot) 기반 웹 인터페이스입니다.
 로봇과 카메라를 등록하고, 시범 데이터를 수집·검토하며, 학습한 정책(로봇의 행동을 결정하는 모델)을
 실행해 평가 결과를 기록할 수 있습니다. 실행 명령과 로그를 화면에서 확인하고 작업을 제어합니다.
 
@@ -18,7 +18,7 @@ Piper Studio는 [LeRobot](https://github.com/huggingface/lerobot) 기반 웹 인
 
 ## 주요 기능
 
-모방학습에서는 장치 설정, 데이터 수집, 학습, 평가를 반복합니다. Piper Studio는 이 과정에서
+모방학습에서는 장치 설정, 데이터 수집, 학습, 평가를 반복합니다. PIPER Studio는 이 과정에서
 필요한 설정과 실행 상태, 결과를 웹 인터페이스로 연결합니다.
 
 | 기능 | 할 수 있는 일 |
@@ -76,12 +76,12 @@ API 키가 필요합니다.
 
 | 순서 | 어디서 | 무엇을 |
 |---|---|---|
-| 1 | Piper Studio **데이터셋** 페이지 | [Hub 업로드]로 데이터셋을 Hub에 올립니다. 설정 → 저장소에 쓰기 권한 토큰으로 로그인해 두어야 합니다. |
+| 1 | PIPER Studio **데이터셋** 페이지 | [Hub 업로드]로 데이터셋을 Hub에 올립니다. 설정 → 저장소에 쓰기 권한 토큰으로 로그인해 두어야 합니다. |
 | 2 | Google Colab — LeRobot 공식 [ACT 학습 노트북](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-act.ipynb) | 런타임을 GPU로 바꾸고, 학습 셀의 `--dataset.repo_id`를 1의 저장소 이름으로, `--policy.repo_id`를 새 모델 이름(`<HF 사용자>/<모델>`)으로 고쳐 실행합니다. 학습이 끝나면 모델이 그 저장소로 올라갑니다. |
-| 3 | Piper Studio **저장소** 페이지 | 2의 모델 저장소를 검색해 [다운로드]하면 **모델** 목록에 나타나고 추론에서 선택할 수 있습니다. |
+| 3 | PIPER Studio **저장소** 페이지 | 2의 모델 저장소를 검색해 [다운로드]하면 **모델** 목록에 나타나고 추론에서 선택할 수 있습니다. |
 
 노트북은 LeRobot 최신 소스를 설치합니다. 추론 기계와 버전이 다르면 체크포인트를 읽지 못할 수
-있으니, 설치 셀을 Piper Studio와 같은 버전(설정 → 서비스의 버전 카드에 표시, 현재
+있으니, 설치 셀을 PIPER Studio와 같은 버전(설정 → 서비스의 버전 카드에 표시, 현재
 `pip install lerobot==0.5.0`)으로 맞추는 것을 권합니다. 무료 등급은 세션이 최대 12시간이고 GPU
 배정이 보장되지 않으므로, 긴 학습은 **클라우드 GPU** 페이지의 임대 GPU가 맞습니다.
 
@@ -159,7 +159,7 @@ CAN과 카메라는 담당 데몬이 직접 관리하고, 게이트웨이는 Red
 | Docker | Docker와 Docker Compose v2, 설치 사용자의 Docker 접근 권한. GPU 없는 환경은 Compose **2.24 이상** |
 | 장치 접근 | 설치 사용자가 `video`·`dialout` 그룹에 속해야 합니다. |
 | GPU — 로컬 학습·추론 | NVIDIA 컴퓨트 능력 **7.5 이상**(Turing / RTX 20xx·T4 이상), CUDA **13.0 이상을 지원하는 드라이버**, `nvidia-container-toolkit` |
-| 실물 Piper 로봇 | USB-CAN 어댑터와 해당 기계에서 만든 CAN 이름 규칙. 설정 방법은 [트러블슈팅](docs/install-troubleshooting.md) 9절 참고 |
+| 실물 PIPER 로봇 | USB-CAN 어댑터와 해당 기계에서 만든 CAN 이름 규칙. 설정 방법은 [트러블슈팅](docs/install-troubleshooting.md) 9절 참고 |
 | 시뮬레이터 카메라 | EGL 렌더링 라이브러리. 없으면 `sudo apt install libegl1 libgl1-mesa-dri`로 설치 |
 
 GPU 없이도 설치할 수 있으며, 이 경우 로컬 학습·추론을 제외한 수집·시뮬레이션·조종 기능을
@@ -188,8 +188,8 @@ chmod +x piper-install.sh
 ### 접속과 서비스 시작
 
 설치가 끝나면 마지막에 출력된 주소를 브라우저에서 엽니다. 기본 포트는 **80**입니다.
-설치한 기계의 바탕화면과 앱 메뉴에는 **[Piper Studio]** 아이콘이 생기며, 웹이 열리지 않을 때는
-**[Piper Studio 진단]** 아이콘이 원인을 정리한 보고서를 보여 줍니다.
+설치한 기계의 바탕화면과 앱 메뉴에는 **[PIPER Studio]** 아이콘이 생기며, 웹이 열리지 않을 때는
+**[PIPER Studio 진단]** 아이콘이 원인을 정리한 보고서를 보여 줍니다.
 
 | 접속 위치 | 주소 |
 |---|---|
@@ -265,7 +265,7 @@ chmod +x piper-uninstall.sh
 |---|---|
 | `/srv/piper-data` | 컨테이너의 `/data`에 연결되는 데이터 루트. 데이터셋·모델·로그·설정 저장 |
 | `~/.cache/huggingface/lerobot` | 호스트에서 사용하는 LeRobot 데이터셋·캘리브레이션 |
-| `~/.config/piper-web` | 호스트에서 사용하는 Piper 설정 |
+| `~/.config/piper-web` | 호스트에서 사용하는 PIPER 설정 |
 
 데이터 루트는 `PIPER_DATA_ROOT`로 변경할 수 있습니다. 사용자 지정 경로를 사용했다면
 설치·제거 시 같은 경로를 지정하세요. 재설치·업데이트·기본 제거는 위 데이터를 보존하며,

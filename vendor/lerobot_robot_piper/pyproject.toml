@@ -1,7 +1,7 @@
 [project]
 name = "lerobot_robot_piper"
 version = "0.1.0"
-description = "LeRobot plugin for Agilex Piper robotic arm (follower & leader)"
+description = "LeRobot plugin for Agilex PIPER robotic arm (follower & leader)"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"

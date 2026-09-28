@@ -5,7 +5,7 @@ import { api } from '../services/api'
 /**
  * 임대 GPU(Vast.ai) 준비 — **API 키와 게이트웨이 SSH 키** (feature/vast-training.md §9-1).
  *
- * ## 왜 Piper Studio 가 키를 직접 만드나
+ * ## 왜 PIPER Studio 가 키를 직접 만드나
  *
  * ⚠ **배포판 게이트웨이는 컨테이너라 `~/.ssh` 가 없다.** 사람의 키를 빌려 쓰면
  * 저장소에서 띄웠을 때만 되는 기능이 된다. 그래서 게이트웨이가 자기 키를 갖고,

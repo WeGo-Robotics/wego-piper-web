@@ -103,7 +103,7 @@ def test_inference_analysis_lives_next_to_inference_inside_the_shell():
     assert not e.get("external") and not e.get("standalone"), "아직 새 창으로 뜬다"
     nav = [x["path"] for x in entries if x.get("nav")]
     assert nav.index("/debug") == nav.index("/inference") + 1, "추론 바로 뒤가 아니다"
-    # 셸 안 페이지는 자기 헤더("Piper Studio"·메인으로)를 갖지 않는다 — 코드만 본다,
+    # 셸 안 페이지는 자기 헤더("PIPER Studio"·메인으로)를 갖지 않는다 — 코드만 본다,
     # 주석은 옛 모습을 설명하느라 그 단어를 쓴다
     from conftest import code_only
     page = code_only((_SRC / "pages" / "DebugLogsPage.tsx").read_text())

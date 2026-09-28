@@ -6,7 +6,7 @@
 # 시작"은 전부 이 데몬이 버스로 받아 실행한다. estopd 는 읽기 전용이다.
 
 [Unit]
-Description=Piper unit manager (start/stop/enable piper-* units over the bus)
+Description=PIPER unit manager (start/stop/enable piper-* units over the bus)
 Documentation=file://@REPO@/feature/services.md
 StartLimitIntervalSec=0
 

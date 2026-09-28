@@ -1,5 +1,5 @@
 """
-Piper Monitor UI — subprocess launcher + read-only CAN monitoring.
+PIPER Monitor UI — subprocess launcher + read-only CAN monitoring.
 
 Architecture:
   ┌──────────────────────────────────┐
@@ -184,7 +184,7 @@ class PiperMonitorUI:
         self.mon_hz = 0.0
 
         self.root = tk.Tk()
-        self.root.title("Piper Monitor")
+        self.root.title("PIPER Monitor")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.minsize(750, 550)
 
@@ -581,7 +581,7 @@ class PiperMonitorUI:
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Piper Monitor UI")
+    parser = argparse.ArgumentParser(description="PIPER Monitor UI")
     parser.add_argument("--leader-port", default="can_leader")
     parser.add_argument("--follower-port", default="can_follower")
     args = parser.parse_args()

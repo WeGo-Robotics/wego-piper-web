@@ -10,7 +10,7 @@
 # 게이트웨이도 같은 사용자여야 읽는다 (robotd 유닛의 같은 경고 참고).
 
 [Unit]
-Description=Piper web gateway (FastAPI)
+Description=PIPER web gateway (FastAPI)
 Documentation=file://@REPO@/CLAUDE.md
 
 # ⚠ `StartLimitIntervalSec` 은 **`[Unit]` 에 둔다.** `[Service]` 에 쓰면 이 systemd

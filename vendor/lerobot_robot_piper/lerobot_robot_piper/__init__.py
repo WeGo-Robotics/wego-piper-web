@@ -1,4 +1,4 @@
-# LeRobot plugin for Agilex Piper robotic arm.
+# LeRobot plugin for Agilex PIPER robotic arm.
 # Importing this package registers configs with LeRobot's RobotConfig/TeleoperatorConfig registry.
 
 from .config_piper import PiperFollowerConfig

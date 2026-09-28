@@ -1,4 +1,4 @@
-"""양팔 Piper 팔로워 — `PiperFollower` 둘의 합성 (상류 `BiSOFollower` 관용구).
+"""양팔 PIPER 팔로워 — `PiperFollower` 둘의 합성 (상류 `BiSOFollower` 관용구).
 
 관측·액션 키는 `left_`/`right_` 접두사로 병합한다. 이 접두사 규약은
 grpc_wrapper 의 즉석 조립이 이미 쓰던 것과 동일하므로, 기존 양팔 gRPC

@@ -11,7 +11,7 @@
 # 설치: deploy/install-daemons.sh ollama
 
 [Unit]
-Description=Piper local LLM runtime (Ollama)
+Description=PIPER local LLM runtime (Ollama)
 Documentation=file://@REPO@/feature/llm-integration.md
 ConditionPathExists=%h/tools/bin/ollama
 StartLimitIntervalSec=0

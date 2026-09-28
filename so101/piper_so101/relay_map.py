@@ -1,4 +1,4 @@
-"""SO-101 리더 → Piper 팔로워 매핑 — 릴레이의 순수 계산 (feature/so101d.md §5).
+"""SO-101 리더 → PIPER 팔로워 매핑 — 릴레이의 순수 계산 (feature/so101d.md §5).
 
 두 모드가 여기의 순수 함수를 쓴다:
 
@@ -10,7 +10,7 @@
   ≈0° 라 이 가정이 선다.
 
 ⚠ **정규화 공간에서 매핑하지 않는다.** 두 팔의 관절 범위가 달라 각도가
-비선형으로 왜곡된다 (Piper 마스터 그리퍼 사고와 같은 병). 각도 공간이 정본.
+비선형으로 왜곡된다 (PIPER 마스터 그리퍼 사고와 같은 병). 각도 공간이 정본.
 """
 
 import math
@@ -19,7 +19,7 @@ from pathlib import Path
 from piper_so101 import calibration as cal_mod
 from piper_so101.joints import SO101_JOINTS
 
-#: 관절쌍 (so101 → piper, 부호). Piper joint4(전완 롤)는 대응이 없어
+#: 관절쌍 (so101 → piper, 부호). PIPER joint4(전완 롤)는 대응이 없어
 #: **정합 시점 값 유지** — 조그로 미리 세팅해 두면 그대로 간다.
 #: 부호는 실기 검증 대상 — 방향이 반대면 여기 한 곳만 뒤집는다.
 PAIRS: tuple[tuple[str, str, float], ...] = (
@@ -95,7 +95,7 @@ def map_joint_goal(lead_rad: dict[str, float], lead_anchor: dict[str, float],
                    follower_anchor_rad, pairs=PAIRS):
     """관절 매칭의 본식: 팔로워[j] = 앵커[j] + 부호 × (리더 − 리더앵커).
 
-    `follower_anchor_rad` 는 Piper 6축 라디안 벡터(K.ARM_JOINTS 순).
+    `follower_anchor_rad` 는 PIPER 6축 라디안 벡터(K.ARM_JOINTS 순).
     대응 없는 joint4 는 앵커 값이 그대로 남는다. 순수 함수 — 테스트가 여기를
     직접 민다.
     """
@@ -123,7 +123,7 @@ def relative_target(t_lead, t_lead_anchor, t_follower_anchor):
 
 
 def piper_norm_from_rad(q_rad) -> dict[str, float]:
-    """Piper 6축 라디안 → 정규화 dict (joint1..joint6). 변환은 저장소 정본
+    """PIPER 6축 라디안 → 정규화 dict (joint1..joint6). 변환은 저장소 정본
     (`piper_robot.joints`)을 쓴다 — 여기서 식을 다시 적으면 캘리브레이션이
     두 벌이 된다. 릴레이(backend)와 녹화 플러그인(LeRobot 프로세스)이 같은
     함수를 쓰라고 여기(설치 패키지)에 둔다."""

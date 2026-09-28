@@ -8,7 +8,7 @@
 
 가운데 6D 자세만 건너가므로 **양쪽 팔의 관절 구성이 달라도 된다.** SO-101 처럼
 축 수도 길이도 다른 팔을 팔로워로 붙이려는 것이 이 설계의 이유다 — 그 팔에
-Piper 의 관절값을 직접 대입할 수는 없다.
+PIPER 의 관절값을 직접 대입할 수는 없다.
 
 그래서 FK 도 IK 도 **팔마다 다른 모델**에서 나와야 한다. 이 파일이 그 자리다.
 
@@ -85,14 +85,14 @@ class ArmModel:
             lim = z["limits"] if "limits" in z else None
         if lim is None:
             raise ValueError(f"{path} 에 관절 한계(limits)가 없습니다 — 다시 구우세요")
-        # Piper 와 같은 이유로 여유를 준다 — 실제 팔은 명목 한계 밖에 앉는다.
+        # PIPER 와 같은 이유로 여유를 준다 — 실제 팔은 명목 한계 밖에 앉는다.
         m = math.radians(K.IK_LIMIT_MARGIN_DEG)
         return cls(name, geom, np.asarray(lim, dtype=float) + np.array([-m, m]))
 
     @staticmethod
     def available() -> list[str]:
         """붙일 수 있는 팔 목록. 화면이 고르게 한다."""
-        # ⚠ Piper 것은 파일명이 `arm_geometry.npz` 다 — 팔이 하나뿐이던 시절에
+        # ⚠ PIPER 것은 파일명이 `arm_geometry.npz` 다 — 팔이 하나뿐이던 시절에
         #   붙인 이름이라 여기 규칙(`{팔}_geometry.npz`)에 안 맞는다. 그대로
         #   훑으면 "arm" 이라는 없는 팔이 목록에 뜬다.
         found = {"piper"} if K.available() else set()

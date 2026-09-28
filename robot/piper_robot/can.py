@@ -137,7 +137,7 @@ def _stat(iface: str, name: str) -> int | None:
 def adapter_serial(iface: str) -> str | None:
     """이 인터페이스를 만드는 **USB 어댑터의 시리얼.**
 
-    ⚠ **팔의 시리얼이 아니다.** Piper 는 CAN 으로 시리얼을 신고하지 않는다 —
+    ⚠ **팔의 시리얼이 아니다.** PIPER 는 CAN 으로 시리얼을 신고하지 않는다 —
     SDK 프로토콜에 그런 필드가 없다. 이것은 "어느 케이블에 물려 있었나" 이고,
     배선을 안 바꾸는 한 그 팔을 가리킨다. 팔 자체의 식별은 사람이 적어야 한다.
     """
@@ -207,7 +207,7 @@ def can_unhealthy_reason(iface: str) -> str | None:
 def sniff_can_ids(iface: str, duration: float = 1.2) -> dict:
     """raw CAN 소켓으로 버스를 잠깐 청취해 CAN ID 그룹별 빈도와 마스터/슬레이브 정황을 반환.
 
-    Piper CAN ID 규약:
+    PIPER CAN ID 규약:
       - 0x2A1~0x2A8 : 슬레이브/standby 팔의 주기 피드백 (기본)
       - 0x2B1~0x2C8 : 마스터(示教输入臂)의 오프셋 피드백 (MasterSlaveConfig feedback_offset)
       - 0x150~0x15F : 마스터가 송신하는 관절 제어지령 (위치 변화 시)

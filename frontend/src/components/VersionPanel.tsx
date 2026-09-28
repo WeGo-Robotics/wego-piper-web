@@ -164,7 +164,7 @@ export default function VersionPanel() {
       ))}
 
       <p className="text-xs text-neutral-600">
-        ⚠ <b>관절별 펌웨어 버전은 없습니다.</b> Piper 프로토콜에 그런 필드가 없고
+        ⚠ <b>관절별 펌웨어 버전은 없습니다.</b> PIPER 프로토콜에 그런 필드가 없고
         팔이 문자열 하나(<code>S-VX.X-X</code>)만 신고합니다. 관절마다는 실제로
         읽히는 값 — 전압·온도·설정된 각도/속도/가속 한계 — 을 보여줍니다.
         같은 모델인데 한 관절만 한계가 다르면 그게 단서입니다.

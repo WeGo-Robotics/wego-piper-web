@@ -6,13 +6,13 @@
 
 | 파일 | 팔 | 자유도 | 말단 | 출처 |
 |---|---|---|---|---|
-| `arm_geometry.npz` | Piper | 6 | `link6` | `vendor/agx_arm_urdf` 서브모듈 (AgileX) |
+| `arm_geometry.npz` | PIPER | 6 | `link6` | `vendor/agx_arm_urdf` 서브모듈 (AgileX) |
 | `so101_geometry.npz` | SO-101 | 5 | `gripper_frame_link` | [SO-ARM100](https://github.com/TheRobotStudio/SO-ARM100) `Simulation/SO101/so101_new_calib.urdf`, Apache-2.0 |
 
 ## 다시 굽기
 
 ```bash
-# Piper (서브모듈 필요)
+# PIPER (서브모듈 필요)
 python3 tools/build_arm_geometry.py --cell 0.005
 
 # SO-101 — 저장소를 받아서

@@ -1,5 +1,5 @@
 /**
- * SO-101 리더 → Piper 팔로워 텔레옵 (feature/so101d.md §5).
+ * SO-101 리더 → PIPER 팔로워 텔레옵 (feature/so101d.md §5).
  *
  * 관절 매칭 모드만 연다 — 말단(POSE)은 5-DOF 리더에서 팔이 꼬여 비활성화했다
  * (§5b-실측, 백엔드도 거부). 두 팔은 영점도 시작 자세도 달라 [정합](클러치)
@@ -75,10 +75,10 @@ export default function So101TeleopPanel({ arm, side, followers, onClose }: {
         {!running && (
           <div className="space-y-3">
             <label className="block text-xs text-neutral-300">
-              팔로워 (Piper)
+              팔로워 (PIPER)
               <select value={follower} onChange={(e) => setFollower(e.target.value)}
                 className="mt-1 w-full text-xs rounded bg-neutral-700 border border-neutral-600 px-2 py-1.5">
-                {followers.length === 0 && <option value="">연결된 Piper 가 없습니다</option>}
+                {followers.length === 0 && <option value="">연결된 PIPER 가 없습니다</option>}
                 {followers.map((f) => (
                   <option key={f.iface} value={f.iface}>
                     {f.label}{f.side ? ` (${f.side === 'left' ? '왼쪽' : '오른쪽'})` : ''}
@@ -87,7 +87,7 @@ export default function So101TeleopPanel({ arm, side, followers, onClose }: {
               </select>
             </label>
             <p className="text-[11px] text-neutral-500 leading-relaxed">
-              관절 매칭: 축이 겹치는 관절끼리 변화량을 잇습니다. Piper 전완 롤(J4)은
+              관절 매칭: 축이 겹치는 관절끼리 변화량을 잇습니다. PIPER 전완 롤(J4)은
               정합 시점 값을 유지하니 조그로 미리 세팅해 두세요.
             </p>
             <button onClick={() => call(() => api.post('/robots/relay/start', {

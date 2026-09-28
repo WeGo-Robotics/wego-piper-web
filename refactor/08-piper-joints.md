@@ -6,9 +6,9 @@
 
 ## 문제
 
-Piper 팔 1대의 관절 수가 두 곳에 하드코딩되어 있다.
+PIPER 팔 1대의 관절 수가 두 곳에 하드코딩되어 있다.
 
-- [inference.py:14](../backend/app/routers/inference.py#L14) — `PIPER_JOINTS = 7  # Piper 팔 1대의 관절 수`
+- [inference.py:14](../backend/app/routers/inference.py#L14) — `PIPER_JOINTS = 7  # PIPER 팔 1대의 관절 수`
 - [InferencePage.tsx:71](../frontend/src/pages/InferencePage.tsx#L71) — `const PIPER_JOINTS = 7`
 
 양쪽 모두 모델의 state/action 차원 검증(단일팔 7 vs 양팔 14)에 쓴다.

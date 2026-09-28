@@ -10,7 +10,7 @@
 # (project 메모: xHCI HC died). 자동 재시작이 그 경우까지 낫게 하지는 못한다.
 
 [Unit]
-Description=Piper RealSense daemon (owns pyrealsense2 pipelines)
+Description=PIPER RealSense daemon (owns pyrealsense2 pipelines)
 Documentation=file://@REPO@/refactor/daemon-inventory.md
 
 # ⚠ `StartLimitIntervalSec` 은 **`[Unit]` 에 둔다.** `[Service]` 에 쓰면 이 systemd

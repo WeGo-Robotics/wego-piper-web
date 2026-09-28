@@ -271,7 +271,7 @@ def test_the_workspace_box_is_not_ik():
 
 def test_the_model_is_loaded_by_name():
     """SO-101 처럼 관절 구성이 다른 팔을 팔로워로 쓰려는 것이 이 모드의 이유다.
-    Piper 관절값을 그 팔에 직접 대입할 수는 없다 — 6D 자세만 건너간다."""
+    PIPER 관절값을 그 팔에 직접 대입할 수는 없다 — 6D 자세만 건너간다."""
     from piper_robot.armmodel import ArmModel
 
     m = ArmModel.load("piper")
@@ -353,7 +353,7 @@ def _so101():
 
 
 def test_so101_is_five_dof_with_its_own_tip():
-    """⚠ 말단 링크를 `link6` 로 하드코딩하면 Piper 밖에 못 쓴다.
+    """⚠ 말단 링크를 `link6` 로 하드코딩하면 PIPER 밖에 못 쓴다.
     SO-101 의 말단은 `gripper_frame_link` 이고 메시가 없는 순수 좌표계다."""
     m = _so101()
     assert m.dof == 5
@@ -398,7 +398,7 @@ def test_so101_ik_works_under_teleop_conditions():
 
 
 def test_the_transport_is_still_piper_only_and_says_so():
-    """⚠ 기구학 모델은 팔 무관이지만 **명령 세그먼트는 아직 Piper 6축이다.**
+    """⚠ 기구학 모델은 팔 무관이지만 **명령 세그먼트는 아직 PIPER 6축이다.**
     조용히 시작해서 루프 안에서 터지면 사용자는 '릴레이가 죽었다'만 본다."""
     from app.services.relay import _transport_mismatch
 
@@ -408,7 +408,7 @@ def test_the_transport_is_still_piper_only_and_says_so():
 
 
 def test_the_collision_origin_is_applied():
-    """⚠ Piper 는 충돌 origin 이 전부 0 이라 그동안 무시해도 됐다. SO-101 은
+    """⚠ PIPER 는 충돌 origin 이 전부 0 이라 그동안 무시해도 됐다. SO-101 은
     링크마다 다르다 — 무시하면 메시가 엉뚱한 자리에 놓여 **바닥 판정이 통째로
     틀린다.**"""
     builder = (REPO / "tools" / "build_arm_geometry.py").read_text()

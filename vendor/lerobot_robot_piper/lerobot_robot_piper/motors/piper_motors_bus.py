@@ -94,7 +94,7 @@ class PiperMotorsBus(MotorsBusBase):
     def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
         self.calibration = calibration_dict
 
-    # ---- Piper-specific methods ----
+    # ---- PIPER-specific methods ----
 
     @property
     def is_calibrated(self) -> bool:

@@ -1,7 +1,7 @@
 """SO-101 리더 텔레오퍼레이터 — shm 읽기 전용 + 관절 매칭 (feature/so101d.md §5).
 
 `PiperShmLeader` 와 같은 자리에 서되 `get_action()` 이 다르다: 리더 상태를
-그대로 돌려주는 게 아니라 **정합(클러치) 기준 변화량을 Piper 관절에 매핑**해
+그대로 돌려주는 게 아니라 **정합(클러치) 기준 변화량을 PIPER 관절에 매핑**해
 돌려준다. 정합은 `connect()` 순간이다 — 그때의 리더·팔로워 자세가 앵커라
 첫 액션이 곧 팔로워 현재 자세다(점프 0). 녹화 중 재정합은 v1 에 없다.
 
@@ -47,7 +47,7 @@ class So101ShmLeader(Teleoperator):
 
     @property
     def action_features(self) -> dict:
-        # 액션은 **팔로워(Piper) 관절계**다 — 학습·추론이 그대로 맞는다
+        # 액션은 **팔로워(PIPER) 관절계**다 — 학습·추론이 그대로 맞는다
         return {f"{motor}.pos": float for motor in MOTORS}
 
     @property

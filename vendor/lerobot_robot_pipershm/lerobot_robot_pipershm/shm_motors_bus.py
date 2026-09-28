@@ -144,7 +144,7 @@ class PiperShmMotorsBus(MotorsBusBase):
     def write_calibration(self, calibration_dict, cache: bool = True) -> None:
         self.calibration = calibration_dict
 
-    # ---- Piper 고유 ----
+    # ---- PIPER 고유 ----
 
     @property
     def is_calibrated(self) -> bool:
