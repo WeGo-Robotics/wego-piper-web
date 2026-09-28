@@ -46,6 +46,9 @@ class Activity(str, enum.Enum):
     # 시뮬 세계를 통째로 갈아끼운다 (feature/sim-scene-editor.md). 순간 동작이라
     # 남을 막을 것은 없지만, **남이 돌고 있으면 해서는 안 된다.**
     SCENE_SWAP = "scene_swap"
+    # 시뮬 탑뷰 카메라 높이 (feature/sim-topview-height.md). 교체와 **다른 활동인
+    # 이유**는 막는 대상이 다르기 때문이다 — 아래 표를 보라.
+    CAMERA_MOVE = "camera_move"
 
 
 LABELS: dict[Activity, str] = {
@@ -65,6 +68,7 @@ LABELS: dict[Activity, str] = {
     Activity.ENCODER_PROBE: "인코더 프로브",
     Activity.CAMERA_ACCESS: "카메라 접근",
     Activity.SCENE_SWAP: "가상환경 교체",
+    Activity.CAMERA_MOVE: "카메라 높이 변경",
 }
 
 # 이 활동을 시작하려면 아래 활동들이 멈춰 있어야 한다.
@@ -108,6 +112,13 @@ BLOCKED_BY: dict[Activity, list[Activity]] = {
     #   절반이 B 세계라 **못 쓴다**(관측이 바뀐 것을 라벨은 모른다). 추론·루프도 같다.
     Activity.SCENE_SWAP: [Activity.RECORDING, Activity.INFERENCE, Activity.ORCHESTRATOR,
                           Activity.TELEOP],
+    # ⚠ 교체와 달리 **조종(TELEOP)은 안 막는다.** 관측을 먹는 셋만 막는다:
+    #   에피소드 한가운데 화각이 바뀌면 그 에피소드는 앞뒤가 다른 세계이고, 추론은 한 겹
+    #   더 나쁘다(정책이 **학습한 적 없는 화각**을 받고 그대로 팔을 움직인다).
+    #   반면 카메라가 올라가는 것은 **팔에 아무 일도 안 한다** — 물체가 사라지고 생기는
+    #   교체와 여기서 갈린다. 막을 이유 없는 것을 같이 막으면 사람이 납득을 못 하고,
+    #   납득 못 하는 규칙은 결국 우회된다 (feature/sim-topview-height.md §6).
+    Activity.CAMERA_MOVE: [Activity.RECORDING, Activity.INFERENCE, Activity.ORCHESTRATOR],
 }
 
 

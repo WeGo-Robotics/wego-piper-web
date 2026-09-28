@@ -4,6 +4,7 @@
 렌더러 재생성 없음), 기본값이 바탕 XML 과 갈리지 않는가, 범위는 거절이 아니라 클램프인가.
 """
 
+import inspect
 import re
 from pathlib import Path
 
@@ -159,3 +160,93 @@ def test_the_dataset_records_the_height_it_actually_saw(monkeypatch):
     assert spec["cameras"]["top"]["z"] == pytest.approx(0.82), "파일의 옛 높이를 적었다"
     assert stored["cameras"]["top"]["z"] == pytest.approx(0.60), "저장된 명세를 건드렸다"
     assert sim_scenes.sidecar(spec)["cameras"]["top"]["z"] == pytest.approx(0.82)
+
+
+# ── 게이트웨이 (3단계) ──
+
+
+def test_moving_the_camera_is_refused_while_the_observation_is_being_consumed():
+    """⚠ 에피소드 한가운데 화각이 바뀌면 그 에피소드는 앞뒤가 다른 세계다. 추론은 한 겹
+    더 나쁘다 — 정책이 **학습한 적 없는 화각**을 받고 그대로 팔을 움직인다."""
+    from app.services import exclusivity as X
+
+    blockers = set(X.BLOCKED_BY[X.Activity.CAMERA_MOVE])
+    assert {X.Activity.RECORDING, X.Activity.INFERENCE,
+            X.Activity.ORCHESTRATOR} <= blockers, "관측을 먹는 활동을 안 막는다"
+    assert X.Activity.CAMERA_MOVE in X.LABELS, "409 문구를 만들 라벨이 없다"
+    assert X.Activity.CAMERA_MOVE not in X.STATE_PROVIDERS, \
+        "카메라 높이 변경은 순간 동작이다 — 남을 막는 활동이 아니다"
+
+
+def test_moving_the_camera_is_allowed_while_someone_drives_the_arm():
+    """⚠ **가상환경 교체와 여기서 갈린다.** 물체가 사라지고 생기는 것은 팔을 모는 중에
+    위험하지만, 카메라가 올라가는 것은 팔에 아무 일도 안 한다. 막을 이유 없는 것을 같이
+    막으면 사람이 납득을 못 하고, 납득 못 하는 규칙은 우회된다.
+
+    같은 이유로 조종 창(웹 리더)도 안 본다 — 그건 `busy_reason` 쪽 이야기다.
+    """
+    from app.services import exclusivity as X
+    from app.services import sim_scenes
+
+    assert X.Activity.TELEOP not in X.BLOCKED_BY[X.Activity.CAMERA_MOVE]
+    assert X.Activity.TELEOP in X.BLOCKED_BY[X.Activity.SCENE_SWAP], \
+        "교체 쪽까지 풀어 버렸다"
+    src = inspect.getsource(sim_scenes.camera_busy_reason)
+    assert "web_leader" not in src, "조종 창을 보면 조종 중 높이 조절이 막힌다"
+
+
+def test_the_endpoint_refuses_first_and_asks_the_daemon_second(monkeypatch):
+    """거절이 **먼저**다 — 데몬을 부른 뒤에 막으면 세계는 이미 바뀌어 있다."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import sim_robot_client as sim
+    from app.services import sim_scenes
+
+    called: list = []
+    monkeypatch.setattr(sim, "call_strict",
+                        lambda verb, *a: called.append((verb, a)) or float(a[0]))
+
+    with TestClient(app) as c:
+        monkeypatch.setattr(sim_scenes, "camera_busy_reason", lambda: "녹화")
+        r = c.put("/api/sim/scenes/live/camera", json={"z": 0.9})
+        assert r.status_code == 409 and "녹화" in r.json()["detail"]
+        assert not called, "거절했는데 세계를 건드렸다"
+
+        monkeypatch.setattr(sim_scenes, "camera_busy_reason", lambda: None)
+        r = c.put("/api/sim/scenes/live/camera", json={"z": 0.9})
+        assert r.status_code == 200 and r.json()["z"] == pytest.approx(0.9)
+        assert called == [("set_camera_z", (0.9,))]
+
+
+def test_the_readout_says_what_the_height_means():
+    """높이 숫자만으로는 0.72m 가 무슨 뜻인지 아무도 모른다. fovy 를 아는 쪽이
+    "얼마나 담기나 · 물체가 몇 px 인가 · 테이블이 다 보이나"로 옮겨 준다.
+
+    ⚠ 화면이 fovy 를 베껴 적으면 바탕 XML 을 고치는 날 조용히 어긋난다 — 그래서 서버가 준다.
+    """
+    from piper_sim.world import World
+
+    w = World()
+    w.set_camera_z(0.60)
+    low = w.camera_view(aspect=640 / 480, height_px=480)
+    w.set_camera_z(1.20)
+    high = w.camera_view(aspect=640 / 480, height_px=480)
+
+    # 실측 대조: v0.5.1 이 0.6m 에서 큐브 33px 을 쟀다
+    assert low["probe_px"] == pytest.approx(33, abs=1), low
+    assert low["covers_table"] is False, "0.6m 에서 테이블이 다 보인다면 표가 틀렸다"
+    assert high["covers_table"] is True, "최대 높이에서도 테이블이 안 들어온다"
+    assert high["probe_px"] < low["probe_px"], "올라갔는데 물체가 커졌다"
+    assert high["half_y"] > low["half_y"]
+    # 화면이 클램프 끝을 알아야 슬라이더를 그린다
+    view_src = inspect.getsource(World.camera_view)
+    assert "TABLE_HALF" in view_src, "테이블 크기를 여기에 또 손으로 적었다"
+
+
+def test_the_ui_and_the_click_math_share_one_table_size():
+    """테이블 범위가 두 곳에 손으로 적히면 "다 보인다"는 말과 실제 배치 한계가 갈린다."""
+    src = (REPO / "sim" / "piper_sim" / "world.py").read_text()
+    assert src.count("TABLE_HALF = (") == 1
+    assert "0.35 - 0.55" not in src and "-0.45, 0.45" not in src, \
+        "클램프가 아직 숫자를 손으로 들고 있다"

@@ -164,6 +164,9 @@ class SimHub:
 
     def set_camera_z(self, z): return self._world().set_camera_z(z)
 
+    def camera_view(self, aspect=4.0 / 3.0, height_px=480):
+        return self._world().camera_view(aspect=aspect, height_px=height_px)
+
     # ── 시뮬 전용 ──
 
     def go_to(self, arm_name: str, norm_goal: dict) -> bool:

@@ -174,6 +174,19 @@ def busy_reason() -> str | None:
     return "조종 창" if web_leader.is_running else None
 
 
+def camera_busy_reason() -> str | None:
+    """탑뷰 높이를 바꾸면 안 되는 이유 — 있으면 그 말, 없으면 None.
+
+    ⚠ **교체(`busy_reason`)보다 좁다.** 관측을 먹는 셋(수집·추론·에피소드 루프)만 막고
+    **조종은 막지 않는다** — 물체가 사라지고 생기는 교체와 달리 카메라가 올라가는 것은
+    팔에 아무 일도 안 한다. 그래서 조종 창(웹 리더)도 여기서는 안 본다
+    (feature/sim-topview-height.md §6).
+    """
+    from app.services import exclusivity as X
+
+    return X.blocked_reason(X.Activity.CAMERA_MOVE)
+
+
 def apply(sid: str) -> dict:
     """가상환경을 simd 에 올린다 — 실패하면 **`current` 를 안 바꾼다**.
 

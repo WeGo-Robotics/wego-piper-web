@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 
 PHYSICS_HZ = 500.0
 
+#: 물체를 놓을 수 있는 테이블 범위(중심 x, 반폭 x·y). `ray_to_table` 의 클램프이자
+#: "지금 높이에서 테이블이 다 보이나" 판정의 기준 — **한 곳에만 적는다.**
+TABLE_CENTER_X = 0.35
+TABLE_HALF = (0.55, 0.45)
+
 
 class World:
     def __init__(self, spec: dict | None = None) -> None:
@@ -235,6 +240,35 @@ class World:
         logger.info("탑뷰 높이: %.3f m (요청 %.3f)", zz, float(z))
         return zz
 
+    def camera_view(self, cam_name: str = "top", aspect: float = 4.0 / 3.0,
+                    height_px: int = 480, probe_m: float = 0.04) -> dict:
+        """지금 높이가 **무슨 뜻인지**. 화면이 그대로 읽어 쓴다.
+
+        높이 숫자만 보여 주면 0.72m 가 무슨 뜻인지 아무도 모른다. fovy 를 아는 여기서
+        "얼마나 담기나 · 물체가 몇 px 인가 · 테이블이 다 보이나"로 옮겨 준다 —
+        화면이 fovy 를 베껴 적으면 바탕 XML 을 고치는 날 조용히 어긋난다.
+
+        `probe_m` 는 재는 물건의 크기(기본 4cm — 기본 가상환경의 큐브 한 변).
+        """
+        import math
+
+        import mujoco
+
+        with self._lock:
+            cid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, cam_name)
+            if cid < 0:
+                raise ValueError(f"모르는 카메라입니다: {cam_name}")
+            z = float(self.model.cam_pos[cid][2])
+            tan_v = math.tan(math.radians(float(self.model.cam_fovy[cid])) / 2.0)
+        half_y = z * tan_v
+        # 물체는 테이블이 아니라 그 위에 있다 — 그만큼 카메라에 가깝다
+        d = max(z - probe_m, 1e-3)
+        hx, hy = TABLE_HALF
+        return {"z": round(z, 4),
+                "half_x": round(half_y * max(aspect, 1e-3), 4), "half_y": round(half_y, 4),
+                "probe_px": round(probe_m * height_px / (2.0 * d * tan_v), 1),
+                "covers_table": bool(half_y >= hy and half_y * max(aspect, 1e-3) >= hx)}
+
     def ray_to_table(self, cam_name: str, u: float, v: float, aspect: float,
                      z_plane: float = 0.0) -> list[float] | None:
         """클릭한 픽셀(정규화 u,v: 0..1, u=오른쪽 v=아래) → **테이블 평면 위의 한 점**.
@@ -261,9 +295,10 @@ class World:
             if abs(d[2]) < 1e-6 or (z_plane - pos[2]) / d[2] <= 0:
                 return None                    # 광선이 평면과 평행하거나 뒤로 간다
             hit = pos + (z_plane - pos[2]) / d[2] * d
-            # 테이블(중심 0.35,0 · 반폭 0.6×0.5) 안으로, 물체 반폭 여유
-            x = float(np.clip(hit[0], 0.35 - 0.55, 0.35 + 0.55))
-            y = float(np.clip(hit[1], -0.45, 0.45))
+            # 테이블 안으로 클램프 (물체 반폭 여유가 든 값이다)
+            hx, hy = TABLE_HALF
+            x = float(np.clip(hit[0], TABLE_CENTER_X - hx, TABLE_CENTER_X + hx))
+            y = float(np.clip(hit[1], -hy, hy))
             return [x, y, float(z_plane)]
 
     def object_from_ray(self, cam_name: str, u: float, v: float, aspect: float,

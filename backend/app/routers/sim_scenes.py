@@ -127,6 +127,39 @@ async def place_object(body: PlaceBody):
     return {"id": body.id, "pos": pos}
 
 
+class CameraBody(BaseModel):
+    z: float
+
+
+@router.get("/live/camera")
+async def live_camera(aspect: float = 4.0 / 3.0, height_px: int = 480):
+    """탑뷰 높이와 **그게 무슨 뜻인지**. 숫자만 주면 0.72m 를 아무도 못 읽는다."""
+    from app.services import sim_robot_client as sim
+
+    view = await asyncio.to_thread(sim.call, "camera_view", aspect, height_px, default=None)
+    if not isinstance(view, dict):
+        raise HTTPException(400, "simd 가 응답하지 않습니다")
+    from piper_sim import scene_spec
+
+    return {**view, "range": list(scene_spec.CAMERA_Z_RANGE)}
+
+
+@router.put("/live/camera")
+async def set_live_camera(body: CameraBody):
+    """탑뷰 높이. 살아 있는 세계에 바로 먹는다 — **재컴파일이 아니다.**
+
+    ⚠ 수집·추론·에피소드 루프 중에는 거절한다: 에피소드 한가운데 화각이 바뀌면 그
+    에피소드는 앞뒤가 다른 세계이고, 추론은 정책이 학습한 적 없는 화각을 받는다.
+    **조종 중에는 된다** — 그 차이가 `Activity.CAMERA_MOVE` 가 따로 있는 이유다.
+    """
+    from app.services import sim_robot_client as sim
+
+    if (why := sim_scenes.camera_busy_reason()):
+        raise HTTPException(409, f"{why} 중에는 카메라 높이를 바꿀 수 없습니다")
+    z = await asyncio.to_thread(_guard, sim.call_strict, "set_camera_z", body.z)
+    return {"z": z}
+
+
 @router.post("/live/point-from-view")
 async def point_from_view(body: PlaceFromViewBody):
     """클릭한 픽셀 → 테이블 좌표. **물체는 안 옮긴다** — 고정물을 끌 때 쓴다.
