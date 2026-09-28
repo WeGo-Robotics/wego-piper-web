@@ -250,3 +250,45 @@ def test_the_ui_and_the_click_math_share_one_table_size():
     assert src.count("TABLE_HALF = (") == 1
     assert "0.35 - 0.55" not in src and "-0.45, 0.45" not in src, \
         "클램프가 아직 숫자를 손으로 들고 있다"
+
+
+# ── 조명 기준선 (5단계) ──
+
+
+def test_moving_the_camera_drops_the_light_baseline(monkeypatch):
+    """⚠ 카메라가 움직이면 밝기·색이 튄다 — **맞는 관측이지만 틀린 해석**이다(조명이
+    아니라 화각이 바뀐 것이다). 쓸모없는 경보는 옆의 진짜 경보를 묻는다: v0.5.6 에서
+    손목 카메라 때문에 카메라별 스위치를 단 것과 같은 병이다.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import sim_robot_client as sim
+    from app.services import sim_scenes
+    from app.services.light_watch import light_watch
+
+    monkeypatch.setattr(sim_scenes, "camera_busy_reason", lambda: None)
+    monkeypatch.setattr(sim, "call_strict", lambda verb, *a: float(a[0]))
+    light_watch._judges["sim:top"] = object()
+
+    with TestClient(app) as c:
+        assert c.put("/api/sim/scenes/live/camera", json={"z": 0.9}).status_code == 200
+    assert "sim:top" not in light_watch._judges, "옛 기준선으로 새 화각을 판정한다"
+
+
+def test_the_slider_reads_its_numbers_from_the_server():
+    """화면이 fovy 를 베껴 적으면 바탕 XML 을 고치는 날 조용히 어긋난다.
+    그리고 카메라를 올렸다고 **배치 캔버스가 잠기면 안 된다** — 세계는 이미 그 높이다.
+    """
+    from conftest import code_only
+
+    # ⚠ 코드만 본다 — "화면이 fovy 를 베껴 적으면 안 된다"고 적어 둔 주석이 바로 이
+    #   검사에 걸린다(이 저장소에서 세 번째다).
+    page = code_only((REPO / "frontend" / "src" / "pages" / "ScenePage.tsx").read_text())
+    assert "/sim/scenes/live/camera" in page
+    assert "fovy" not in page and "Math.tan" not in page, "화면이 화각을 직접 계산한다"
+    assert "cam.probe_px" in page and "cam.covers_table" in page, "판독값을 안 보여 준다"
+    # 저장은 `dirty` 와 따로 센다 — 캔버스를 잠그는 값은 그대로 둔다
+    assert "camDirty" in page and "(!dirty && !camDirty)" in page
+    assert "const applied = !!spec && current === sid && !dirty" in page, \
+        "카메라 변경이 배치 캔버스를 잠그게 됐다"

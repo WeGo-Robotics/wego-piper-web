@@ -25,7 +25,16 @@ type Obj = {
   asset?: string; scale?: number          // shape === 'mesh' 일 때
   mass?: number; friction: number[]; condim: number; solref: number[]
 }
-type Spec = { version: number; id: string; name: string; objects: Obj[] }
+type Spec = {
+  version: number; id: string; name: string; objects: Obj[]
+  cameras?: { top?: { z: number } }
+}
+/** 탑뷰 판독값 — **서버가 만든다.** 화면이 fovy 를 베껴 적으면 바탕 XML 을 고치는 날
+ *  조용히 어긋난다 (feature/sim-topview-height.md §5.3). */
+type CamView = {
+  z: number; half_x: number; half_y: number; probe_px: number
+  covers_table: boolean; range: number[]
+}
 type Asset = {
   id: string; name: string; format: string; unit_scale: number; bbox_m: number[]; bytes: number
   error?: string | null
@@ -125,6 +134,12 @@ export default function ScenePage() {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState('')
   const [tick, setTick] = useState(0)          // 탑뷰 스냅샷 폴링
+  const [cam, setCam] = useState<CamView | null>(null)
+  // 높이는 **살아 있는 세계에 바로** 먹는다. 명세에 적히는 것은 [저장] 때다 —
+  // 그래서 `dirty`(배치 캔버스를 잠그는 값)와 따로 센다: 카메라를 올렸다고 해서
+  // "적용해야 배치할 수 있습니다" 가 되면 안 된다. 세계는 이미 그 높이다.
+  const [camDirty, setCamDirty] = useState(false)
+  const camTimer = useRef<number | null>(null)
   const [assets, setAssets] = useState<Asset[]>([])
   const fileRef = useRef<HTMLInputElement | null>(null)
   const meshRef = useRef<HTMLInputElement | null>(null)
@@ -157,12 +172,20 @@ export default function ScenePage() {
       .catch((e) => setErr(e instanceof Error ? e.message : '가상환경을 못 읽었습니다'))
   }, [sid])
 
+  const loadCam = useCallback(async () => {
+    try { setCam(await api.get<CamView>('/sim/scenes/live/camera')) } catch { /* simd 없음 */ }
+  }, [])
+
   // 탑뷰 — 시뮬 카메라는 연결이 멱등·빠르다(실기 프로브 없음)
   useEffect(() => {
     api.post('/cameras/connect', { id: 'sim:top' }).catch(() => {})
+    loadCam()
     const iv = window.setInterval(() => setTick((t) => t + 1), 500)
-    return () => window.clearInterval(iv)
-  }, [])
+    return () => {
+      window.clearInterval(iv)
+      if (camTimer.current) window.clearTimeout(camTimer.current)
+    }
+  }, [loadCam])
 
   const run = useCallback(async (what: string, fn: () => Promise<unknown>) => {
     setErr(''); setBusy(what)
@@ -228,11 +251,27 @@ export default function ScenePage() {
     await loadAssets()
   }), [run, loadAssets])
 
+  // 끄는 동안 미리보기가 따라와야 하므로 보내되, 매 프레임 보내지는 않는다.
+  // 마지막 값은 반드시 나간다(트레일링) — 안 그러면 손을 뗀 자리와 세계가 어긋난다.
+  const pushZ = useCallback((z: number) => {
+    setCam((c) => (c ? { ...c, z } : c))
+    setCamDirty(true)
+    if (camTimer.current) window.clearTimeout(camTimer.current)
+    camTimer.current = window.setTimeout(() => {
+      api.put('/sim/scenes/live/camera', { z })
+        .then(loadCam)                       // 판독값(px·덮음)은 서버에서 다시 받는다
+        .catch((e) => setErr(e instanceof Error ? e.message : '카메라 높이 변경 실패'))
+    }, 120)
+  }, [loadCam])
+
   const save = useCallback(() => run('저장', async () => {
     if (!spec) return
-    await api.put(`/sim/scenes/${sid}`, { spec })
-    setDirty(false); await reload()
-  }), [run, spec, sid, reload])
+    // 지금 세계의 높이를 같이 저장한다 — 슬라이더는 세계를 움직일 뿐이고,
+    // 그 값이 명세에 남는 자리는 여기다.
+    const withCam = cam ? { ...spec, cameras: { top: { z: cam.z } } } : spec
+    await api.put(`/sim/scenes/${sid}`, { spec: withCam })
+    setDirty(false); setCamDirty(false); await reload()
+  }), [run, spec, sid, reload, cam])
 
   const apply = useCallback(() => run('적용', async () => {
     if (dirty) await api.put(`/sim/scenes/${sid}`, { spec })
@@ -336,7 +375,7 @@ export default function ScenePage() {
         <input ref={fileRef} type="file" accept="application/json,.json" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = '' }} />
         <button onClick={exportFile} disabled={!spec} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40">내보내기</button>
-        <button onClick={save} disabled={!spec || !dirty}
+        <button onClick={save} disabled={!spec || (!dirty && !camDirty)}
           className="px-3 py-1 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">
           {busy === '저장' ? '저장 중…' : dirty ? '저장' : '저장됨'}
         </button>
@@ -581,6 +620,24 @@ export default function ScenePage() {
               </div>
             )}
           </div>
+          {cam && (
+            <div className="flex items-center gap-3">
+              <label className="shrink-0 text-xs text-neutral-400" htmlFor="cam-z">탑뷰 높이</label>
+              <input id="cam-z" type="range" className="flex-1 accent-blue-500"
+                min={cam.range[0]} max={cam.range[1]} step={0.01} value={cam.z}
+                onChange={(e) => pushZ(Number(e.target.value))} />
+              {/* 숫자만 보여주면 0.72m 가 무슨 뜻인지 아무도 모른다 — 서버가 준 판독값을 옆에 */}
+              <span className="shrink-0 font-mono text-xs text-neutral-300">
+                {cam.z.toFixed(2)} m
+              </span>
+              <span className="shrink-0 text-[11px] text-neutral-500">
+                큐브 ≈ {Math.round(cam.probe_px)}px ·{' '}
+                {cam.covers_table
+                  ? <span className="text-green-400">테이블 전체 보임</span>
+                  : <span className="text-amber-400">테이블 일부만</span>}
+              </span>
+            </div>
+          )}
           <p className="text-[11px] text-neutral-500">
             {applied
               ? (selected

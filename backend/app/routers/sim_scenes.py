@@ -157,6 +157,11 @@ async def set_live_camera(body: CameraBody):
     if (why := sim_scenes.camera_busy_reason()):
         raise HTTPException(409, f"{why} 중에는 카메라 높이를 바꿀 수 없습니다")
     z = await asyncio.to_thread(_guard, sim.call_strict, "set_camera_z", body.z)
+    # 화각이 바뀌면 밝기·색이 튄다 — 조명 감시가 그걸 조명 급변으로 읽지 않게
+    # 이 카메라의 기준선을 버린다 (재연결 때와 같은 처리).
+    from app.services.light_watch import light_watch
+
+    light_watch.forget("sim:top")
     return {"z": z}
 
 

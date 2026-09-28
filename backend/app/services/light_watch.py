@@ -232,6 +232,18 @@ class LightWatch:
         self._knobs[cam.id] = (now, values)
         return values
 
+    def forget(self, cam_id: str) -> bool:
+        """이 카메라의 판정 기준선을 버린다 — 다음 샘플이 새 기준이 된다.
+
+        ⚠ **카메라가 움직이면 밝기·색이 튄다.** 맞는 관측이지만 틀린 해석이고(조명이
+        아니라 화각이 바뀐 것이다), 쓸모없는 경보는 옆의 진짜 경보를 묻는다. 끊겼다
+        다시 붙을 때 이미 같은 일을 한다 — "재연결하면 기준선을 새로 잡는다".
+        """
+        gone = self._judges.pop(cam_id, None) is not None
+        self._latest.pop(cam_id, None)
+        self._knobs.pop(cam_id, None)
+        return gone
+
     def alerts(self) -> list[Alert]:
         """활성 조명 경보. device_watch 가 자기 목록에 합쳐 전이를 계산한다."""
         return list(self._alerts)

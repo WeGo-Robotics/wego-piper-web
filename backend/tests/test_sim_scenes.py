@@ -232,7 +232,11 @@ def test_the_editor_reads_the_shape_list_from_the_backend(store):
 def test_the_editor_does_not_reimplement_the_ray_math():
     """탑뷰 클릭 → 테이블 좌표는 **카메라 자세·fovy 를 아는** 데몬이 한다. 화면이 하면
     카메라를 옮길 때마다 두 곳이 갈리고, 그건 조용히 빗나간다."""
-    page = PAGE.read_text()
+    from conftest import code_only
+
+    # ⚠ **코드만 본다.** "화면이 fovy 를 베껴 적으면 안 된다"는 설명이 이 검사에 걸린다 —
+    #   `code_only` 가 있는 바로 그 이유이고, 이 저장소에서 네 번째다.
+    page = code_only(PAGE.read_text())
     assert "/sim/scenes/live/place-from-view" in page
     for leaked in ("fovy", "cam_xmat", "Math.tan("):
         assert leaked not in page, f"화면이 광선 계산을 다시 짰다 ({leaked})"
