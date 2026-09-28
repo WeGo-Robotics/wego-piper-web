@@ -268,11 +268,23 @@ def test_a_fixed_object_moves_by_the_mouse_too_even_though_it_has_no_joint():
 
 def test_the_editor_refuses_to_place_into_a_world_that_is_not_this_scene():
     """⚠ 배치 화면은 **적용된 가상환경**의 세계다. 편집 중인 가상환경이 아직 안 올라갔는데 클릭을
-    받으면, 사람은 이 가상환경을 고치고 있다고 믿으면서 **다른 세계**를 건드린다."""
+    받으면, 사람은 이 가상환경을 고치고 있다고 믿으면서 **다른 세계**를 건드린다.
+
+    ⚠ 다만 판정은 `dirty`(저장 안 됨)가 아니라 **`stale`(세계가 다름)** 이다. 겹쳐 뒀더니
+    물체를 한 번 옮긴 순간 캔버스가 잠겼다 — 세계는 이미 그 자리인데도(사용자 보고
+    2026-09-28: "물건을 이동하면 적용하라는 메시지가 뜨고 캠 화면이 흐려진다").
+    배치는 **명세와 세계를 같이** 옮기므로 잠글 이유가 없고, 크기·색을 고치는 것은 세계가
+    아직 모르므로 잠가야 한다.
+    """
     page = PAGE.read_text()
-    assert "const applied = !!spec && current === sid && !dirty" in page
+    assert "const applied = !!spec && current === sid && !stale" in page
     assert "if (!o || !applied) return" in page, "안 올라간 가상환경에서도 클릭이 먹는다"
     assert "적용해야 여기서 배치할 수 있습니다" in page, "왜 못 누르는지 말 안 한다"
+    # 배치는 `patchInSync` 로 간다 — `patch` 로 가면 옮기자마자 잠긴다
+    place = page.split("const placeAt", 1)[1].split("}, [spec, sel", 1)[0]
+    assert "patchInSync(o.id, { pos:" in place and "patch(o.id" not in place
+    # 고정물 경로는 올린 뒤 **둘 다** 푼다
+    assert "setDirty(false); setStale(false)" in place, "다시 올렸는데 잠긴 채로 남는다"
 
 
 def test_the_editor_mirrors_the_backends_resting_height_rule():

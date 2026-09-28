@@ -291,7 +291,7 @@ def test_the_slider_reads_its_numbers_from_the_server():
     assert "cam.probe_px" in page and "cam.covers_table" in page, "판독값을 안 보여 준다"
     # 저장은 `dirty` 와 따로 센다 — 캔버스를 잠그는 값은 그대로 둔다
     assert "camDirty" in page and "(!dirty && !camDirty)" in page
-    assert "const applied = !!spec && current === sid && !dirty" in page, \
+    assert "const applied = !!spec && current === sid && !stale" in page, \
         "카메라 변경이 배치 캔버스를 잠그게 됐다"
     # ⚠ 슬라이더는 **탑뷰와 같은 카드**에 있다 (사용자 요청 2026-09-28). 떼어 놓으면
     #   무엇의 높이인지가 화면에서 안 보이고, 페이지 바탕에 덩그러니 떠 있게 된다.

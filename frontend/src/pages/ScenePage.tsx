@@ -83,7 +83,14 @@ export default function ScenePage() {
   const [current, setCurrent] = useState<string | null>(null)
   const [sid, setSid] = useState('')
   const [spec, setSpec] = useState<Spec | null>(null)
+  // ⚠ **둘은 다른 사실이다.**
+  //   dirty  — 저장이 안 됐다 ([저장] 버튼이 본다)
+  //   stale  — **살아 있는 세계가 이 명세와 다르다** (배치 캔버스가 본다)
+  // 겹쳐 두면 물체를 한 번 옮긴 순간 캔버스가 잠긴다 — 세계는 이미 그 자리인데도.
+  // 사용자 보고 2026-09-28: "물건을 이동하면 '적용해야 배치할 수 있습니다' 가 뜨고
+  // 캠 화면이 흐려진다". 카메라 높이에서 만난 것과 같은 병이다.
   const [dirty, setDirty] = useState(false)
+  const [stale, setStale] = useState(false)
   const [sel, setSel] = useState('')
   const [defs, setDefs] = useState<Defaults | null>(null)
   const [err, setErr] = useState('')
@@ -97,7 +104,7 @@ export default function ScenePage() {
   const camTimer = useRef<number | null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
 
-  const applied = !!spec && current === sid && !dirty
+  const applied = !!spec && current === sid && !stale
 
   const reload = useCallback(async () => {
     const r = await api.get<{ scenes: SceneRow[]; current: string | null }>('/sim/scenes')
@@ -118,7 +125,7 @@ export default function ScenePage() {
   useEffect(() => {
     if (!sid) { setSpec(null); return }
     api.get<Spec>(`/sim/scenes/${sid}`)
-      .then((s) => { setSpec(s); setDirty(false); setSel(s.objects[0]?.id ?? '') })
+      .then((s) => { setSpec(s); setDirty(false); setStale(false); setSel(s.objects[0]?.id ?? '') })
       .catch((e) => setErr(e instanceof Error ? e.message : '가상환경을 못 읽었습니다'))
   }, [sid])
 
@@ -142,10 +149,17 @@ export default function ScenePage() {
     try { await fn() } catch (e) { setErr(e instanceof Error ? e.message : `${what} 실패`) } finally { setBusy('') }
   }, [])
 
-  const patch = useCallback((oid: string, part: Partial<Obj>) => {
+  /** 명세와 **세계가 같이** 바뀐 경우 — 배치가 그렇다. 남은 일은 저장뿐이다. */
+  const patchInSync = useCallback((oid: string, part: Partial<Obj>) => {
     setSpec((s) => s && ({ ...s, objects: s.objects.map((o) => (o.id === oid ? { ...o, ...part } : o)) }))
     setDirty(true)
   }, [])
+
+  /** 명세만 고친다 — 크기·색·물성은 **다시 올려야** 세계에 반영된다. */
+  const patch = useCallback((oid: string, part: Partial<Obj>) => {
+    patchInSync(oid, part)
+    setStale(true)
+  }, [patchInSync])
 
   const addObject = useCallback((shape: string) => {
     if (!spec || !defs) return
@@ -165,7 +179,7 @@ export default function ScenePage() {
     // 새 물체는 테이블에 앉혀 둔다 — 허공에 두면 적용하자마자 떨어진다
     o.pos = [0.3, 0, preset ? 0 : (o.size ? restZ(shape, o.size) : 0)]
     setSpec({ ...spec, objects: [...spec.objects, o] })
-    setSel(o.id); setDirty(true)
+    setSel(o.id); setDirty(true); setStale(true)
   }, [spec, defs])
 
 
@@ -197,7 +211,7 @@ export default function ScenePage() {
   const apply = useCallback(() => run('적용', async () => {
     if (dirty) await api.put(`/sim/scenes/${sid}`, { spec })
     await api.post(`/sim/scenes/${sid}/apply`, undefined, { timeoutMs: 30_000 })
-    setDirty(false); await reload()
+    setDirty(false); setStale(false); await reload()
   }), [run, dirty, sid, spec, reload])
 
   const newScene = useCallback(() => run('새 가상환경', async () => {
@@ -254,7 +268,7 @@ export default function ScenePage() {
         // 움직이는 물체는 살아 있는 세계에서 바로 옮긴다(자유관절이 있다)
         const hit = await api.post<{ pos: number[] }>('/sim/scenes/live/place-from-view',
           { id: o.id, cam: 'sim:top', u, v, aspect: ar })
-        if (hit?.pos) patch(o.id, { pos: hit.pos })
+        if (hit?.pos) patchInSync(o.id, { pos: hit.pos })
         return
       }
       // ⚠ 고정물(통·트레이)은 자유관절이 없어 **qpos 로 못 움직인다** — 자리가 컴파일에
@@ -268,9 +282,9 @@ export default function ScenePage() {
       setSpec(moved)
       await api.put(`/sim/scenes/${sid}`, { spec: moved })
       await api.post(`/sim/scenes/${sid}/apply`, undefined, { timeoutMs: 30_000 })
-      setDirty(false)
+      setDirty(false); setStale(false)          // 방금 올렸다 — 세계가 명세와 같다
     })
-  }, [spec, sel, applied, sid, run, patch])
+  }, [spec, sel, applied, sid, run, patchInSync])
 
   const selected = useMemo(() => spec?.objects.find((o) => o.id === sel) ?? null, [spec, sel])
 
@@ -360,7 +374,7 @@ export default function ScenePage() {
                   className="h-7 w-10 rounded border border-neutral-700 bg-neutral-900" />
                 <button onClick={() => {
                   setSpec((s) => s && ({ ...s, objects: s.objects.filter((o) => o.id !== selected.id) }))
-                  setDirty(true); setSel('')
+                  setDirty(true); setStale(true); setSel('')
                 }} className="px-2 py-1 text-xs rounded bg-red-900/60 hover:bg-red-800 text-red-100">지우기</button>
               </div>
               <p className="text-[11px] font-mono text-neutral-500">id: {selected.id}</p>
@@ -438,7 +452,7 @@ export default function ScenePage() {
               className={`w-full object-contain ${applied && selected ? 'cursor-crosshair' : ''}`} />
             {!applied && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/65 px-6 text-center text-sm text-neutral-200">
-                {dirty ? '고친 내용을 적용해야 여기서 배치할 수 있습니다'
+                {stale ? '고친 내용을 적용해야 여기서 배치할 수 있습니다'
                   : '이 가상환경을 시뮬에 적용하면 여기서 클릭해 배치할 수 있습니다'}
               </div>
             )}
