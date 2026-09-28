@@ -50,6 +50,18 @@ TOP_Z_DEFAULT = 0.60
 #: 0.6m 에서 33px, 1.0m 에서 19px (실측과 일치 — v0.5.1 이 0.9m 에서 21px 을 쟀다).
 CAMERA_Z_RANGE = (0.35, 1.20)
 
+#: 메시(스캔·CAD) 가져오기를 **끈다** (사용자 결정 2026-09-28).
+#:
+#: 끄는 이유: 이건 모델링 도구의 일이다. 쓰려면 사람이 단위·원점·볼록껍질·닫힘 여부를
+#: 다 알아야 하고, 우리가 그걸 대신 판정해 주는 만큼 **틀릴 자리**가 늘어난다. 실제로
+#: 쓰인 적이 없다 — 실기(.120)에 자산도, 메시를 쓰는 가상환경도, 그런 데이터셋도 0 이었다.
+#:
+#: ⚠ **지우지 않고 끈다.** 읽기·측정 코드(`mesh.py`·`assets.py`)는 검증된 채로 남는다 —
+#: 되살릴 일이 생기면 이 상수 하나다. 대신 켜져 있는 동안의 규칙은 그대로다: 자산 파일은
+#: 데이터셋에 안 실리므로 **메시가 든 가상환경은 다른 기계에서 재현이 안 된다**
+#: (feature/sim-provenance.md §2.1). 끈 덕분에 그 구멍이 함께 닫힌다.
+MESH_ENABLED = False
+
 
 def clamp_camera_z(z: float) -> float:
     """범위 안으로. **거절이 아니라 클램프다** — 사람이 슬라이더를 끝까지 끄는 것은
@@ -184,6 +196,10 @@ def _validate_object(raw: dict, seen: set[str]) -> dict:
         n = PRIMITIVES[shape][1]
         obj["size"] = _vec(raw.get("size"), n, f"{oid}.size", 1e-4, 1.0)
     elif shape == "mesh":
+        if not MESH_ENABLED:
+            raise SceneError(
+                f"{oid}: 메시 물체는 지금 꺼져 있습니다 — 프리미티브(상자·구·원기둥·"
+                "캡슐·타원체)나 조립(통)으로 바꾸세요")
         # 크기는 자산의 `unit_scale`(사람이 확인한 단위)이 쥔다 — 여기 `scale` 은 그 위에
         # 얹는 배율이다. ⚠ 자산 **파일 자체는 명세에 안 실린다**: 몇 MB 를 버스로 못 보낸다.
         #   id 만 싣고 양쪽이 자기 루트에서 푼다 (piper_sim/assets.py 의 표).
@@ -196,7 +212,8 @@ def _validate_object(raw: dict, seen: set[str]) -> dict:
             raise SceneError(f"{oid}.scale: 0.001 ~ 1000 이어야 합니다 ({obj['scale']})")
     else:
         raise SceneError(f"{oid}: 모르는 shape '{shape}' — 있는 것: "
-                         + ", ".join(sorted(PRIMITIVES) + ["mesh"]
+                         + ", ".join(sorted(PRIMITIVES)
+                                     + (["mesh"] if MESH_ENABLED else [])
                                      + [f"preset:{p}" for p in sorted(PRESETS)]))
 
     base = MOVABLE_PHYSICS if movable else STATIC_PHYSICS

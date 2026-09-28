@@ -10,12 +10,28 @@
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.services import sim_assets
 
-router = APIRouter(prefix="/api/sim/assets", tags=["sim-assets"])
+def _require_enabled() -> None:
+    """메시가 꺼져 있으면 여기서 끝낸다 (사용자 결정 2026-09-28).
+
+    ⚠ **화면에서 감추는 것으로 끝내지 않는다.** 낡은 탭도 직접 호출도 남아 있고, 그때
+    "올리기는 됐는데 가상환경에는 못 쓴다" 가 되면 감춘 것만 못하다. 라우터 전체에 걸어
+    **동사 하나도 빠지지 않게** 한다 — 하나씩 붙이면 다음에 추가하는 동사가 빠진다.
+    """
+    from piper_sim import scene_spec
+
+    if not scene_spec.MESH_ENABLED:
+        raise HTTPException(
+            404, "메시 가져오기는 꺼져 있습니다 — 프리미티브(상자·구·원기둥·캡슐·타원체)와 "
+                 "조립(통)으로 가상환경을 만드세요")
+
+
+router = APIRouter(prefix="/api/sim/assets", tags=["sim-assets"],
+                   dependencies=[Depends(_require_enabled)])
 
 #: 스캔 원본은 수십 MB 가 예사다 — 받기 전에 끊는다(저장소 자체 상한과 같은 값).
 LIMIT_BYTES = 32 << 20

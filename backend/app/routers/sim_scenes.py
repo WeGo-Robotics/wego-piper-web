@@ -74,6 +74,8 @@ async def defaults():
         "max_objects": S.MAX_OBJECTS,
         "movable_physics": S.MOVABLE_PHYSICS,
         "static_physics": S.STATIC_PHYSICS,
+        # 메시 가져오기는 꺼져 있다 — 화면이 자기 판단으로 숨기면 두 곳이 갈린다
+        "mesh_enabled": S.MESH_ENABLED,
     }
 
 

@@ -12,6 +12,11 @@
    물리는 덩어리다. 얼마나 파였는지 말해 준다.
 ④ **게이트웨이와 데몬이 같은 디렉토리를 본다.** 가상환경은 dict 로 넘기지만 메시는 파일이라
    양쪽이 각자 자기 루트에서 같은 id 를 푼다 — 그 둘이 갈리면 "올렸는데 시뮬에 없다"가 된다.
+
+⚠ **이 기능은 제품에서 꺼져 있다** (`scene_spec.MESH_ENABLED = False`, 사용자 결정
+2026-09-28 — "전문툴도 아닌데 무리수가 많다"). 코드는 지우지 않고 남겼으므로 **검증도
+남긴다**: 안 그러면 꺼져 있는 동안 조용히 썩고, 되살리는 날 아무도 이게 도는지 모른다.
+가상환경 쪽을 건드리는 시험은 `mesh_on` 으로 스위치를 켜고 돈다.
 """
 
 import json
@@ -65,6 +70,14 @@ def tetra_stl() -> bytes:
 
 ASCII_STL = (b"solid t\nfacet normal 0 0 0\nouter loop\n"
              b"vertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid t\n")
+
+
+@pytest.fixture
+def mesh_on(monkeypatch):
+    """꺼 둔 기능을 이 시험 동안만 켠다 — 제품 기본값은 `False` 다."""
+    from piper_sim import scene_spec
+
+    monkeypatch.setattr(scene_spec, "MESH_ENABLED", True)
 
 
 @pytest.fixture
@@ -212,7 +225,7 @@ def test_the_daemon_unit_is_told_where_the_store_is():
 
 # ── 가상환경에 얹기 ────────────────────────────────────────────────────────────
 
-def test_a_mesh_object_lands_on_the_table_and_collides_as_its_hull(store, monkeypatch):
+def test_a_mesh_object_lands_on_the_table_and_collides_as_its_hull(store, monkeypatch, mesh_on):
     """⚠ MuJoCo 는 메시를 **자기 무게중심으로** 옮겨 놓고 geom 위치로 그걸 되돌린다. 우리는
     그 위에 `origin_offset`(AABB 아래면 가운데 → 원점)을 얹어 놓으면 앉게 한다.
     실측: body z 가 -0.0002 로 안착하고 geom 중심이 (0, 0, 반높이)에 온다."""
@@ -234,7 +247,7 @@ def test_a_mesh_object_lands_on_the_table_and_collides_as_its_hull(store, monkey
     assert float(d.xpos[bid][2]) == pytest.approx(0.0, abs=0.002), "테이블에 안 앉았다"
 
 
-def test_a_scene_that_wants_a_mesh_this_machine_lacks_says_so_plainly(store):
+def test_a_scene_that_wants_a_mesh_this_machine_lacks_says_so_plainly(store, mesh_on):
     """가상환경 파일은 기계 사이를 오가는데 **메시는 따라오지 않는다.** 적용할 때 터지는 오류가
     사람 말이어야 하고, 목록에서는 누르기 **전에** 말해 줘야 한다."""
     from piper_sim import scene_spec as S
@@ -247,7 +260,7 @@ def test_a_scene_that_wants_a_mesh_this_machine_lacks_says_so_plainly(store):
         S.build(spec)
 
 
-def test_a_mesh_object_is_rejected_without_a_real_asset_id():
+def test_a_mesh_object_is_rejected_without_a_real_asset_id(mesh_on):
     from piper_sim import scene_spec as S
 
     for bad in (None, "", "nope", "0" * 8, "ZZZZZZZZZZZZZZZZ"):
@@ -259,7 +272,7 @@ def test_a_mesh_object_is_rejected_without_a_real_asset_id():
 
 # ── API ───────────────────────────────────────────────────────────────────
 
-def test_the_upload_takes_a_raw_body_and_hands_back_the_real_reason(store):
+def test_the_upload_takes_a_raw_body_and_hands_back_the_real_reason(store, mesh_on):
     """⚠ multipart 는 `python-multipart` 의존성을 끌고 온다 — 이 저장소는 같은 이유로 이미
     raw 바디를 쓴다(YOLO 이미지·가중치). 창구를 둘로 만들 이유가 없다."""
     from app.main import app
@@ -281,7 +294,7 @@ def test_the_upload_takes_a_raw_body_and_hands_back_the_real_reason(store):
         assert c.delete(f"/api/sim/assets/{aid}").json()["deleted"] is True
 
 
-def test_the_scene_list_warns_about_missing_meshes_before_you_press_apply(store):
+def test_the_scene_list_warns_about_missing_meshes_before_you_press_apply(store, mesh_on):
     from app.main import app
 
     with TestClient(app) as c:
@@ -291,21 +304,7 @@ def test_the_scene_list_warns_about_missing_meshes_before_you_press_apply(store)
     assert row["missing_assets"] == ["0" * 16], "적용을 눌러 보고서야 알게 된다"
 
 
-def test_the_editor_tells_people_which_formats_and_why(store):
-    """화면이 포맷을 말해 주지 않으면 GLB 를 올려 보고 거절당한 뒤에야 안다."""
-    page = (REPO / "frontend" / "src" / "pages" / "ScenePage.tsx").read_text()
-    assert 'accept=".obj,.stl"' in page
-    assert "바이너리" in page and "GLB" in page and "ASCII STL" in page
-    assert "Polycam" in page or "스캔" in page, "어디서 만들어 오는지 말 안 한다"
-    # 오목·열린 메시 경고 — 볼록껍질 충돌은 올리고 나서 알면 늦다
-    assert "볼록껍질" in page and "열린 메시" in page
-    assert "'/sim/assets'" in page and "unit_scale" in page
-    # 업로드는 raw 바디 (multipart 의존성 없음)
-    up = page.split("const uploadMesh", 1)[1].split("}), [", 1)[0]
-    assert "method: 'POST', body: f" in up and "FormData" not in up
-
-
-def test_the_json_a_person_writes_can_name_a_mesh(store, tmp_path):
+def test_the_json_a_person_writes_can_name_a_mesh(store, tmp_path, mesh_on):
     """가상환경 JSON 은 사람이 손으로도 쓴다 — 메시 물체의 모양을 여기 한 번 적어 둔다."""
     from piper_sim import scene_spec as S
 
@@ -319,21 +318,49 @@ def test_the_json_a_person_writes_can_name_a_mesh(store, tmp_path):
     assert S.rest_z(o) == 0.0, "메시는 원점이 이미 바닥이다"
 
 
-def test_the_screen_says_where_to_get_objects(store):
-    """"어디서 구하지?" 가 나오는 자리는 **올리려다 막힌 자리**다 — 도움말을 거기 둔다
-    (사용자 요청 2026-09-17). 링크는 2026-09-17 에 전부 응답을 확인했다.
-    ⚠ 공식 YCB 사이트(ycbbenchmarks.com)는 그때 500 이라 내려받기 도구를 대신 건다."""
+# ── 꺼져 있다 (사용자 결정 2026-09-28) ──
+
+
+def test_meshes_are_off_everywhere_a_person_could_reach_them():
+    """⚠ **감추는 것으로 끝내지 않는다.** 화면에서만 내리면 낡은 탭과 직접 호출이 남고,
+    "올리기는 됐는데 가상환경에는 못 쓴다" 가 된다 — 감춘 것만 못하다.
+
+    끈 이유: 메시는 모델링 도구의 일이다. 쓰려면 단위·원점·볼록껍질·닫힘 여부를 사람이
+    다 알아야 하고, 우리가 대신 판정해 주는 만큼 틀릴 자리가 늘어난다. 실측(.120):
+    자산 0개 · 메시를 쓰는 가상환경 0개 · 그런 데이터셋 0개 — **한 번도 안 쓰였다.**
+
+    덤으로 구멍 하나가 같이 닫힌다: 자산 파일은 데이터셋에 안 실리므로 메시가 든
+    가상환경은 다른 기계에서 재현이 안 됐다 (feature/sim-provenance.md §2.1).
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from piper_sim import scene_spec as S
+
+    assert S.MESH_ENABLED is False, "제품 기본값은 꺼짐이다"
+
+    # ① 명세가 거절한다 — 남이 보낸 JSON 이든 낡은 화면이든
+    with pytest.raises(S.SceneError, match="꺼져 있습니다"):
+        S.validate({"objects": [{"id": "m", "shape": "mesh", "asset": "0" * 16,
+                                 "pos": [0.3, 0, 0]}]})
+    # ② 모르는 shape 안내에도 mesh 를 권하지 않는다
+    with pytest.raises(S.SceneError) as e:
+        S.validate({"objects": [{"id": "m", "shape": "없는것", "pos": [0.3, 0, 0]}]})
+    assert "mesh" not in str(e.value)
+
+    with TestClient(app) as c:
+        # ③ 자산 API 는 **동사 하나도 빠짐없이** 닫혀 있다 (라우터 전체 의존성)
+        for method, url in (("get", "/api/sim/assets"), ("post", "/api/sim/assets"),
+                            ("get", "/api/sim/assets/" + "0" * 16),
+                            ("put", "/api/sim/assets/" + "0" * 16 + "/scale"),
+                            ("put", "/api/sim/assets/" + "0" * 16 + "/name"),
+                            ("delete", "/api/sim/assets/" + "0" * 16)):
+            r = getattr(c, method)(url, **({"content": b"x"} if method == "post" else {}))
+            assert r.status_code == 404 and "꺼져 있습니다" in r.json()["detail"], url
+        # ④ 편집기가 자기 판단으로 숨지 않게, 서버가 말해 준다
+        assert c.get("/api/sim/scenes/defaults").json()["mesh_enabled"] is False
+
+    # ⑤ 화면에 올리는 자리가 없다
     page = (REPO / "frontend" / "src" / "pages" / "ScenePage.tsx").read_text()
-    assert "도움말 — 물체는 어디서 구하나" in page
-    for url in ("https://github.com/kevinzakka/mujoco_scanned_objects",
-                "https://github.com/google-deepmind/mujoco_menagerie",
-                "https://github.com/sea-bass/ycb-tools",
-                "https://objaverse.allenai.org/",
-                "https://poly.cam/", "https://scaniverse.com/",
-                "https://www.blender.org/", "https://github.com/kevinzakka/obj2mjcf"):
-        assert url in page, f"{url} 가 도움말에 없다"
-    assert "ycbbenchmarks.com" not in page.split("SOURCES")[1].split("const hex")[0], \
-        "죽은 사이트를 링크한다"
-    assert 'rel="noreferrer"' in page, "바깥 링크에 rel 이 없다"
-    # 오목한 것은 메시로 받지 말라는 안내 — 이걸 모르면 그릇을 받아 놓고 왜 안 담기는지 모른다
-    assert "볼록껍질" in page and "프리셋으로 지으세요" in page
+    for gone in ("/sim/assets", "uploadMesh", "unit_scale", "볼록껍질", "Polycam"):
+        assert gone not in page, f"편집기에 메시 흔적이 남았다: {gone}"
