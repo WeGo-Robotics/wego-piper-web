@@ -390,7 +390,7 @@ export default function ScenePage() {
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
         {/* 물체 목록 + 추가 */}
         <div className="space-y-3">
-          <div className="rounded-lg border border-neutral-700 bg-neutral-900 p-4 space-y-2">
+          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
             <div className="flex items-center gap-2">
               <input value={spec?.name ?? ''} disabled={!spec}
                 onChange={(e) => { setSpec((s) => s && ({ ...s, name: e.target.value })); setDirty(true) }}
@@ -428,7 +428,7 @@ export default function ScenePage() {
           </ul>
 
           {/* 자산(메시) — 사람이 만들거나 스캔한 물건 */}
-          <div className="rounded-lg border border-neutral-700 bg-neutral-900 p-4 space-y-2">
+          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
             <div className="flex items-center gap-2">
               <h2 className="flex-1 text-sm font-semibold">자산 (메시)</h2>
               <button onClick={() => meshRef.current?.click()}
@@ -444,7 +444,7 @@ export default function ScenePage() {
             </p>
             {/* 도움말 — 물체를 어디서 구하나 (사용자 요청 2026-09-17). 화면 안에 둔다:
                 올리려다 막힌 자리가 곧 "어디서 구하지?" 가 나오는 자리다. */}
-            <details className="rounded border border-neutral-800 bg-neutral-900/40 p-2">
+            <details className="rounded border border-neutral-700 bg-neutral-900 p-2">
               <summary className="cursor-pointer text-xs text-neutral-300">
                 도움말 — 물체는 어디서 구하나
               </summary>
@@ -478,7 +478,7 @@ export default function ScenePage() {
             {assets.length === 0 && <p className="text-xs text-neutral-600">아직 없습니다.</p>}
             <ul className="space-y-1.5">
               {assets.map((a) => (
-                <li key={a.id} className="rounded border border-neutral-800 bg-neutral-900/40 p-2 space-y-1">
+                <li key={a.id} className="rounded border border-neutral-700 bg-neutral-900 p-2 space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="flex-1 truncate text-sm">{a.name}</span>
                     <span className="text-[10px] uppercase text-neutral-500">{a.format}</span>
@@ -514,7 +514,7 @@ export default function ScenePage() {
           </div>
 
           {selected && (
-            <div className="rounded-lg border border-neutral-700 bg-neutral-900 p-4 space-y-3">
+            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
               <div className="flex items-center gap-2">
                 <input value={selected.label} onChange={(e) => patch(selected.id, { label: e.target.value })}
                   className="flex-1 rounded bg-neutral-900 border border-neutral-700 px-2 py-1 text-sm" />

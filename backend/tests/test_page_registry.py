@@ -371,10 +371,21 @@ def test_the_scene_page_uses_the_same_card_and_accent_as_the_rest():
     위에 얹는다: 실측 152곳) 그리고 파랑이 한 단 어두웠다(`blue-700` 7곳 vs
     `blue-600` 84곳). 화면이 "다른 프로그램" 처럼 보이던 실체가 이 둘이다.
     """
+    import re
+
     src = (_SRC / "pages" / "ScenePage.tsx").read_text()
     assert "bg-blue-700" not in src and "bg-blue-800" not in src, \
         "앱의 주요 버튼 파랑은 blue-600/500 이다"
     assert 'className="rounded border border-neutral-700 p-3' not in src, \
         "배경 없는 카드가 남아 있다"
-    assert src.count("border border-neutral-700 bg-neutral-900 p-4") >= 3, \
+    # 집 카드: `rounded-lg border border-neutral-700 bg-neutral-800 p-4` (실측 50곳)
+    assert src.count("rounded-lg border border-neutral-700 bg-neutral-800 p-4") >= 3, \
         "섹션 카드가 다른 페이지와 같은 모양이 아니다"
+
+    # ⚠ **카드를 앱 셸과 같은 색으로 칠하면 안 칠한 것과 같다.** 처음 고칠 때 카드에
+    #   `bg-neutral-900` 을 줬는데 셸이 바로 그 색이라 화면은 그대로였다 — 사용자가
+    #   "아직도 배경이 없다"고 했다. 색을 세는 것으로는 못 잡고, **둘을 견줘야** 잡힌다.
+    shell = re.search(r"bg-(neutral-\d+)", (_SRC / "components" / "Layout.tsx").read_text())
+    assert shell, "레이아웃 셸의 배경색을 못 찾았다"
+    assert f"bg-{shell.group(1)} p-4" not in src, \
+        f"카드가 앱 셸과 같은 색이다(bg-{shell.group(1)}) — 보이지 않는다"
