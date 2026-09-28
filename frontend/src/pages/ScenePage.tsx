@@ -315,9 +315,9 @@ export default function ScenePage() {
   const selected = useMemo(() => spec?.objects.find((o) => o.id === sel) ?? null, [spec, sel])
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-xl font-bold tracking-tight">가상환경</h1>
+        <h1 className="text-2xl font-bold">가상환경</h1>
         <select value={sid} onChange={(e) => setSid(e.target.value)}
           className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1 text-sm">
           {rows.length === 0 && <option value="">가상환경 없음</option>}
@@ -337,7 +337,7 @@ export default function ScenePage() {
           onChange={(e) => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = '' }} />
         <button onClick={exportFile} disabled={!spec} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40">내보내기</button>
         <button onClick={save} disabled={!spec || !dirty}
-          className="px-3 py-1 text-sm rounded bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-40">
+          className="px-3 py-1 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">
           {busy === '저장' ? '저장 중…' : dirty ? '저장' : '저장됨'}
         </button>
         <button onClick={apply} disabled={!spec}
@@ -351,7 +351,7 @@ export default function ScenePage() {
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
         {/* 물체 목록 + 추가 */}
         <div className="space-y-3">
-          <div className="rounded border border-neutral-700 p-3 space-y-2">
+          <div className="rounded-lg border border-neutral-700 bg-neutral-900 p-4 space-y-2">
             <div className="flex items-center gap-2">
               <input value={spec?.name ?? ''} disabled={!spec}
                 onChange={(e) => { setSpec((s) => s && ({ ...s, name: e.target.value })); setDirty(true) }}
@@ -389,7 +389,7 @@ export default function ScenePage() {
           </ul>
 
           {/* 자산(메시) — 사람이 만들거나 스캔한 물건 */}
-          <div className="rounded border border-neutral-700 p-3 space-y-2">
+          <div className="rounded-lg border border-neutral-700 bg-neutral-900 p-4 space-y-2">
             <div className="flex items-center gap-2">
               <h2 className="flex-1 text-sm font-semibold">자산 (메시)</h2>
               <button onClick={() => meshRef.current?.click()}
@@ -439,12 +439,12 @@ export default function ScenePage() {
             {assets.length === 0 && <p className="text-xs text-neutral-600">아직 없습니다.</p>}
             <ul className="space-y-1.5">
               {assets.map((a) => (
-                <li key={a.id} className="rounded border border-neutral-800 p-2 space-y-1">
+                <li key={a.id} className="rounded border border-neutral-800 bg-neutral-900/40 p-2 space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="flex-1 truncate text-sm">{a.name}</span>
                     <span className="text-[10px] uppercase text-neutral-500">{a.format}</span>
                     <button onClick={() => addMesh(a)} disabled={!spec}
-                      className="px-2 py-0.5 text-xs rounded bg-blue-800 hover:bg-blue-700 text-white disabled:opacity-40">
+                      className="px-2 py-0.5 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">
                       가상환경에 추가
                     </button>
                     <button onClick={() => dropAsset(a)}
@@ -475,7 +475,7 @@ export default function ScenePage() {
           </div>
 
           {selected && (
-            <div className="rounded border border-neutral-700 p-3 space-y-3">
+            <div className="rounded-lg border border-neutral-700 bg-neutral-900 p-4 space-y-3">
               <div className="flex items-center gap-2">
                 <input value={selected.label} onChange={(e) => patch(selected.id, { label: e.target.value })}
                   className="flex-1 rounded bg-neutral-900 border border-neutral-700 px-2 py-1 text-sm" />

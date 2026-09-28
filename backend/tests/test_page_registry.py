@@ -320,3 +320,59 @@ def test_refresh_does_not_look_like_a_third_choice():
     action = hub.split("setRefreshKey((n) => n + 1)", 1)[1][:200]
     assert "className={action}" in action, "동작 버튼 모양이 아니다"
     assert "border border-neutral-600" in hub, "테두리가 항상 있지 않다"
+
+
+def test_every_menu_page_titles_itself_the_same_way():
+    """⚠ **페이지 제목은 한 가지 모양이다** — `text-2xl font-bold` (사용자 요청 2026-09-28:
+    "가상환경 페이지가 다른 메뉴들과 달라 통일하자").
+
+    가상환경만 고치면 그건 규칙이 아니라 그 페이지의 사연이 된다(탭 규칙에 같은 말을
+    적어 뒀다). 그래서 **등록부에서 메뉴 페이지를 끌어와** 전부 본다 — 새 페이지는
+    가만히 있어도 이 규칙에 들어온다.
+
+    ⚠ 아래 두 목록은 **잔고**다. 지운 만큼 규칙이 넓어진다:
+    - `PENDING` — 아직 제목이 다른 페이지. 사용자가 지목한 것은 가상환경 하나라 나머지는
+      묻고 맞춘다. 하나를 맞추면 **여기서 지워야** 테스트가 통과한다.
+    - `NO_TITLE` — h1 이 아예 없는 페이지(머리 모양이 다르다). 제목을 다는 날 규칙이 따라붙는다.
+    """
+    import re
+
+    TITLE = "text-2xl font-bold"
+    PENDING = {"EncoderProbePage", "DebugLogsPage", "YoloDemoPage", "YoloTrainPage"}
+    NO_TITLE = {"DashboardPage", "EpisodesPage", "VisionPage"}
+
+    reg = (_SRC / "config" / "pages.ts").read_text()
+    body = reg.split("export const pages: PageEntry[] = [", 1)[1]
+    menu = [m.group(1) for e in re.findall(r"\{[^{}]*?\}", body, re.S) if "nav: true" in e
+            for m in [re.search(r"component:\s*(\w+)", e)] if m]
+    assert len(menu) > 10, "등록부에서 메뉴 페이지를 못 읽었다 — 목록 모양이 바뀌었나"
+
+    seen_no_title, wrong = set(), set()
+    for comp in menu:
+        src = (_SRC / "pages" / f"{comp}.tsx").read_text()
+        m = re.search(r'<h1 className="([^"]*)"', src)
+        if m is None:
+            seen_no_title.add(comp)
+        elif m.group(1) != TITLE:
+            wrong.add(comp)
+
+    assert "ScenePage" not in wrong and "ScenePage" not in seen_no_title, \
+        "가상환경 페이지가 다시 달라졌다"
+    assert wrong == PENDING, (
+        f"제목 모양이 다른 페이지가 바뀌었다: 지금 {sorted(wrong)}, 적어 둔 잔고 {sorted(PENDING)} "
+        "— 맞췄으면 PENDING 에서 지우고, 새로 어긋났으면 제목을 고쳐라")
+    assert seen_no_title == NO_TITLE, f"h1 없는 페이지가 바뀌었다: {sorted(seen_no_title)}"
+
+
+def test_the_scene_page_uses_the_same_card_and_accent_as_the_rest():
+    """⚠ 가상환경 편집기만 **배경 없는 테두리 카드**를 썼다(앱 전체는 `bg-neutral-900`
+    위에 얹는다: 실측 152곳) 그리고 파랑이 한 단 어두웠다(`blue-700` 7곳 vs
+    `blue-600` 84곳). 화면이 "다른 프로그램" 처럼 보이던 실체가 이 둘이다.
+    """
+    src = (_SRC / "pages" / "ScenePage.tsx").read_text()
+    assert "bg-blue-700" not in src and "bg-blue-800" not in src, \
+        "앱의 주요 버튼 파랑은 blue-600/500 이다"
+    assert 'className="rounded border border-neutral-700 p-3' not in src, \
+        "배경 없는 카드가 남아 있다"
+    assert src.count("border border-neutral-700 bg-neutral-900 p-4") >= 3, \
+        "섹션 카드가 다른 페이지와 같은 모양이 아니다"
