@@ -247,7 +247,7 @@ export default function YoloDemoPage() {
     <div className="space-y-4">
       {/* ── 헤더 ── */}
       <header className="flex items-center gap-4 flex-wrap">
-        <h1 className="text-xl font-bold tracking-tight">검출 데모</h1>
+        <h1 className="text-2xl font-bold">검출 데모</h1>
         <span className={`text-xs px-2 py-0.5 rounded-full ${
           running ? 'bg-green-900/70 text-green-300' : 'bg-neutral-800 text-neutral-500'}`}>
           {status?.state ?? '…'}

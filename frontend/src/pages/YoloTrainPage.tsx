@@ -337,7 +337,7 @@ export default function YoloTrainPage() {
     <div className="space-y-4">
       {/* ── 데이터셋 선택/생성 ── */}
       <header className="flex items-center gap-3 flex-wrap">
-        <h1 className="text-xl font-bold tracking-tight">검출 학습</h1>
+        <h1 className="text-2xl font-bold">검출 학습</h1>
         <select value={current} onChange={(e) => setCurrent(e.target.value)}
           className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1 text-sm">
           {datasets.length === 0 && <option value="">데이터셋 없음</option>}

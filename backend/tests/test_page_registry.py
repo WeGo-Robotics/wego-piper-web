@@ -338,7 +338,9 @@ def test_every_menu_page_titles_itself_the_same_way():
     import re
 
     TITLE = "text-2xl font-bold"
-    PENDING = {"EncoderProbePage", "DebugLogsPage", "YoloDemoPage", "YoloTrainPage"}
+    # 2026-09-28 에 넷을 맞춰 잔고를 비웠다. 다시 채우지 않는다 —
+    # 새 페이지가 여기 들어오면 그건 제목을 고치라는 뜻이지 목록을 늘리라는 뜻이 아니다.
+    PENDING: set[str] = set()
     NO_TITLE = {"DashboardPage", "EpisodesPage", "VisionPage"}
 
     reg = (_SRC / "config" / "pages.ts").read_text()

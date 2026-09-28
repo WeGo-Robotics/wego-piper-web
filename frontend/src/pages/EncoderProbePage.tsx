@@ -606,7 +606,7 @@ export default function EncoderProbePage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-lg font-semibold">이미지 엔코더 프로브</h1>
+        <h1 className="text-2xl font-bold">이미지 엔코더 프로브</h1>
         <p className="text-xs text-neutral-400">
           로봇을 움직이지 않고 이미지를 엔코더에만 통과시켜, 여러 장면에서 같은 영역이 비슷한 특징으로 잡히는지 확인합니다.
         </p>

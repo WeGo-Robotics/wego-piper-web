@@ -149,7 +149,7 @@ export default function DebugLogsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold">추론 분석</h1>
+          <h1 className="text-2xl font-bold">추론 분석</h1>
           <p className="mt-1 text-xs text-neutral-400">추론에서 "디버그 모드"를 켜고 돌린 런 — 프레임·관절 궤적·액션 청크·필터 시뮬레이션</p>
         </div>
         <button onClick={fetchRuns} className="shrink-0 px-3 py-1.5 text-sm rounded bg-neutral-700 hover:bg-neutral-600 transition-colors">
