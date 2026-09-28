@@ -385,6 +385,12 @@ def test_the_scene_page_uses_the_same_card_and_accent_as_the_rest():
     # ⚠ **카드를 앱 셸과 같은 색으로 칠하면 안 칠한 것과 같다.** 처음 고칠 때 카드에
     #   `bg-neutral-900` 을 줬는데 셸이 바로 그 색이라 화면은 그대로였다 — 사용자가
     #   "아직도 배경이 없다"고 했다. 색을 세는 것으로는 못 잡고, **둘을 견줘야** 잡힌다.
+    # 물체는 한 줄에 하나씩이 아니라 **흘러야** 한다 — 이름은 짧은데 한 줄씩 쓰면
+    # 물체 열 개짜리 가상환경에서 목록만 화면을 다 먹는다 (사용자 요청 2026-09-28).
+    objects = src.split("{spec?.objects.map((o) =>", 1)[0].rsplit("<ul", 1)[1]
+    assert "flex flex-wrap" in objects, "물체 목록이 아직 한 줄에 하나씩이다"
+    assert "w-full" not in objects, "칩이 줄을 통째로 먹는다"
+
     shell = re.search(r"bg-(neutral-\d+)", (_SRC / "components" / "Layout.tsx").read_text())
     assert shell, "레이아웃 셸의 배경색을 못 찾았다"
     assert f"bg-{shell.group(1)} p-4" not in src, \

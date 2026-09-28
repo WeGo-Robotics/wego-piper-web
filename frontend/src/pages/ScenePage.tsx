@@ -400,32 +400,35 @@ export default function ScenePage() {
             <div className="flex flex-wrap gap-1">
               {defs && [...Object.keys(defs.primitives), ...Object.keys(defs.presets).map((p) => `preset:${p}`)].map((sh) => (
                 <button key={sh} onClick={() => addObject(sh)} disabled={!spec}
-                  className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40">
+                  className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40">
                   ＋ {SHAPE_KO[sh] ?? sh}
                 </button>
               ))}
             </div>
-          </div>
 
-          <ul className="space-y-1">
-            {spec?.objects.map((o) => (
-              <li key={o.id}>
-                <button onClick={() => setSel(o.id)}
-                  className={`flex w-full items-center gap-2 rounded border px-2 py-1.5 text-left text-sm ${
-                    sel === o.id ? 'border-blue-500 bg-blue-500/10' : 'border-neutral-700 hover:bg-neutral-800'}`}>
-                  <span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-black/40" style={{ background: hex(o.rgba) }} />
-                  <span className="flex-1 truncate">{o.label}</span>
-                  <span className="text-[10px] text-neutral-500">{SHAPE_KO[o.shape] ?? o.shape}</span>
-                  {!o.movable && <span className="text-[10px] text-amber-300">고정</span>}
-                </button>
-              </li>
-            ))}
-            {spec && spec.objects.length === 0 && (
-              <li className="rounded border border-dashed border-neutral-700 px-3 py-6 text-center text-sm text-neutral-500">
-                빈 테이블입니다 — 위에서 모양을 골라 올리세요
-              </li>
-            )}
-          </ul>
+            {/* 물체는 **한 줄에 여러 개** 흐른다 — 이름은 짧은데 한 줄씩 쓰면 물체 열
+                개짜리 가상환경에서 목록만 화면을 다 먹는다. 고른 것은 테두리로 말한다. */}
+            <ul className="flex flex-wrap gap-1.5">
+              {spec?.objects.map((o) => (
+                <li key={o.id}>
+                  <button onClick={() => setSel(o.id)}
+                    title={`${SHAPE_KO[o.shape] ?? o.shape}${o.movable ? '' : ' · 고정'}`}
+                    className={`flex max-w-[14rem] items-center gap-1.5 rounded border px-2 py-1 text-left text-sm ${
+                      sel === o.id ? 'border-blue-500 bg-blue-500/15'
+                                   : 'border-neutral-700 bg-neutral-900 hover:border-neutral-500'}`}>
+                    <span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-black/40" style={{ background: hex(o.rgba) }} />
+                    <span className="truncate">{o.label}</span>
+                    {!o.movable && <span className="shrink-0 text-[10px] text-amber-300">고정</span>}
+                  </button>
+                </li>
+              ))}
+              {spec && spec.objects.length === 0 && (
+                <li className="w-full rounded border border-dashed border-neutral-700 px-3 py-6 text-center text-sm text-neutral-500">
+                  빈 테이블입니다 — 위에서 모양을 골라 올리세요
+                </li>
+              )}
+            </ul>
+          </div>
 
           {/* 자산(메시) — 사람이 만들거나 스캔한 물건 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
@@ -607,8 +610,9 @@ export default function ScenePage() {
           )}
         </div>
 
-        {/* 배치 화면 — 시뮬 탑뷰 */}
-        <div className="space-y-2">
+        {/* 배치 화면 — 시뮬 탑뷰. 높이 슬라이더는 **이 화면의 손잡이**라 같은 카드에 있다
+            (따로 떼어 놓으면 무엇의 높이인지가 화면에서 안 보인다). */}
+        <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
           <div className="relative overflow-hidden rounded border border-neutral-700 bg-black">
             <img src={`/api/cameras/sim%3Atop/preview?t=${tick}`} alt="시뮬 탑뷰"
               onClick={placeAt} draggable={false}
