@@ -23,8 +23,10 @@
 보고 다시 올린다(카메라 프로파일을 연결 때 다시 적용하는 것과 같은 규율).
 """
 
+import hashlib
 import json
 import logging
+from functools import lru_cache
 import re
 import time
 from datetime import datetime
@@ -259,6 +261,28 @@ def applied_spec() -> dict | None:
     return spec
 
 
+def _sim_version() -> str:
+    """시뮬 패키지 판 — 사람이 읽는 쪽. 못 알아내면 빈 문자열(모른다고 말한다)."""
+    try:
+        from importlib.metadata import version
+
+        return version("piper-sim")
+    except Exception:
+        return ""
+
+
+@lru_cache(maxsize=1)
+def _base_sha() -> str:
+    """바탕 MJCF 의 내용 해시 — **어느 세계인지**의 정본. 한 프로세스에서 안 바뀐다."""
+    try:
+        from piper_sim import scene_spec
+
+        return hashlib.sha256(scene_spec.SCENE_XML.read_bytes()).hexdigest()[:16]
+    except Exception as exc:
+        logger.warning("바탕 씬 해시를 못 냅니다: %s", exc)
+        return ""
+
+
 def sidecar(spec: dict) -> dict:
     """데이터셋 옆에 남길 가상환경 기록 — **명세를 통째로** 담는다.
 
@@ -266,7 +290,16 @@ def sidecar(spec: dict) -> dict:
     어떤 세계에서 모았나"에 답을 못 한다. 통째로 담으면 데이터셋이 **자기 설명**이 되고,
     다른 기계에서도 그 세계를 다시 지을 수 있다(메시는 자산 id 로 가리킬 뿐이라 함께 옮겨야 한다).
     """
-    return {"id": spec.get("id", ""), "name": spec.get("name", ""),
+    from piper_sim import scene_spec
+
+    return {"spec_version": spec.get("version", scene_spec.SPEC_VERSION),
+            # ⚠ **바탕 세계도 기록한다.** 팔·테이블·조명·카메라 fovy 는 명세가 아니라
+            #   `piper_scene.xml`(wheel 안)이 정하는데, 그게 바뀌면 같은 명세라도 **다른
+            #   세계**다 — v0.5.1 이 탑뷰를 0.9 → 0.6 으로 옮긴 것이 실제 사례다.
+            #   버전 문자열이 아니라 **내용 해시**를 남기는 이유: 릴리스 번호가 그대로여도
+            #   파일이 바뀌면 다른 세계이고, 해시는 그걸 그대로 말한다.
+            "sim": {"package": _sim_version(), "base_sha": _base_sha()},
+            "id": spec.get("id", ""), "name": spec.get("name", ""),
             # ⚠ **카메라 높이도 관측의 일부다.** 같은 물체를 33px 로 본 데이터와 19px 로
             #   본 데이터는 다른 데이터셋인데 프레임만 봐서는 구분이 안 된다
             #   (feature/sim-topview-height.md §4).
@@ -287,6 +320,33 @@ def write_sidecar(dataset_root: Path | str, spec: dict) -> bool:
         return True
     except Exception as exc:
         logger.warning("가상환경 사이드카 기록 실패 (%s): %s", dataset_root, exc)
+        return False
+
+
+def inherit_to_run(dataset_root: Path | str, run_dir: Path | str) -> bool:
+    """데이터셋의 가상환경 기록을 학습 run 루트로 **복사한다** (feature/sim-provenance.md §3-B).
+
+    ⚠ **시작할 때** 한다. 끝날 때 하면 그 사이에 데이터셋이 지워지거나 이름이 바뀐 경우
+    따라갈 곳이 없다 — 체크포인트가 아는 것은 `repo_id` 문자열 하나뿐이라, 그게 끊기면
+    "이 정책이 무엇을 보고 배웠나" 에 영영 답을 못 한다.
+
+    ⚠ 실기 데이터셋이면 **아무것도 안 쓴다.** 없는 것이 정상이고, 빈 파일을 남기면
+    "시뮬인데 기록이 없다" 와 구분이 안 된다.
+
+    run 루트에 두는 것은 `piper_notes.json` 과 같은 규칙이다 — 체크포인트에 자기 것이
+    없으면 run 의 것을 물려받는다(`model_scanner` 가 그렇게 읽는다).
+    """
+    spec = read_sidecar(dataset_root)
+    if spec is None:
+        return False
+    try:
+        p = Path(run_dir) / _SIDECAR_REL.name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
+        logger.info("가상환경 기록을 학습에 물려줌: %s → %s", dataset_root, p)
+        return True
+    except Exception as exc:
+        logger.warning("가상환경 기록 물려주기 실패 (%s): %s", run_dir, exc)
         return False
 
 

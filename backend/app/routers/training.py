@@ -348,8 +348,20 @@ async def start_training(body: TrainStartRequest):
         except Exception as exc:
             logger.warning("가중치 제목·설명 사이드카 기록 실패 (%s): %s",
                            body.output_dir, exc)
+    # 가상환경 기록도 같은 시점에 물려준다 — 실기 데이터셋이면 아무 일도 안 일어난다.
+    scene_inherited = False
+    if body.output_dir and body.dataset_repo_id:
+        try:
+            from pathlib import Path as _P
+
+            from app.services import sim_scenes
+
+            scene_inherited = sim_scenes.inherit_to_run(
+                settings.lerobot_dir / body.dataset_repo_id, _P(body.output_dir))
+        except Exception as exc:
+            logger.warning("가상환경 기록 물려주기 실패 (%s): %s", body.output_dir, exc)
     return {"status": "started", "pid": train_manager.runner.pid, "args": args,
-            "notes_written": notes_written}
+            "notes_written": notes_written, "scene_inherited": scene_inherited}
 
 
 @router.post("/start-custom")

@@ -5,6 +5,7 @@
 """
 
 import inspect
+import json
 import re
 from pathlib import Path
 
@@ -298,3 +299,67 @@ def test_the_slider_reads_its_numbers_from_the_server():
     opened = head.rfind("bg-neutral-800 p-4")        # 슬라이더 위로 가장 가까운 카드
     assert opened != -1 and "sim%3Atop/preview" in head[opened:], \
         "높이 슬라이더가 탑뷰 카드 밖에 있다 — 둘 사이에 탑뷰가 없다"
+
+
+# ── 출처 기록 (feature/sim-provenance.md) ──
+
+
+def test_the_sidecar_says_which_schema_and_which_world():
+    """⚠ **바탕 세계는 명세가 아니라 wheel 안 XML 이 정한다** — 팔·테이블·조명·카메라 fovy.
+    그게 바뀌면 같은 명세라도 다른 세계다. v0.5.1 이 탑뷰를 0.9 → 0.6 으로 옮긴 것이 실제
+    사례이고, 그 전후 데이터는 파일상으로 구분되지 않았다.
+
+    버전 문자열이 아니라 **내용 해시**를 남긴다: 릴리스 번호가 그대로여도 파일이 바뀌면
+    다른 세계이고, 해시는 그걸 그대로 말한다.
+    """
+    import hashlib
+
+    from app.services import sim_scenes
+    from piper_sim import scene_spec
+
+    side = sim_scenes.sidecar({"version": 1, "id": "s", "name": "n", "objects": []})
+    assert side["spec_version"] == scene_spec.SPEC_VERSION
+    want = hashlib.sha256(scene_spec.SCENE_XML.read_bytes()).hexdigest()[:16]
+    assert side["sim"]["base_sha"] == want, "바탕 XML 의 해시가 아니다"
+    assert side["sim"]["package"], "시뮬 패키지 판을 모른다"
+
+
+def test_a_training_run_inherits_the_world_it_learned_in(tmp_path, monkeypatch):
+    """체크포인트가 아는 것은 `dataset.repo_id` 문자열 하나다(.120 실측). 데이터셋이
+    지워지거나 이름이 바뀌면 "이 정책이 무엇을 보고 배웠나"에 영영 답을 못 한다.
+
+    ⚠ **시작할 때** 복사한다 — 끝날 때 하면 그 사이에 사라진 데이터셋을 못 따라간다.
+    """
+    from app.services import sim_scenes
+
+    ds, run = tmp_path / "ds", tmp_path / "run"
+    spec = {"version": 1, "id": "s", "name": "n",
+            "cameras": {"top": {"z": 0.82}}, "objects": []}
+    sim_scenes.write_sidecar(ds, spec)
+
+    assert sim_scenes.inherit_to_run(ds, run) is True
+    got = json.loads((run / "piper_scene.json").read_text())
+    assert got == json.loads((ds / "meta" / "piper_scene.json").read_text()), \
+        "물려준 사본이 데이터셋의 것과 다르다"
+    assert got["cameras"]["top"]["z"] == pytest.approx(0.82)
+    assert got["sim"]["base_sha"], "버전 없는 사본이 체크포인트에 박제됐다"
+
+
+def test_a_real_robot_run_inherits_nothing_at_all(tmp_path):
+    """실기 데이터셋에는 가상환경 기록이 없는 것이 정상이다. 빈 파일을 남기면
+    "시뮬인데 기록이 없다" 와 구분이 안 된다."""
+    from app.services import sim_scenes
+
+    ds, run = tmp_path / "ds", tmp_path / "run"
+    ds.mkdir()
+    assert sim_scenes.inherit_to_run(ds, run) is False
+    assert not (run / "piper_scene.json").exists(), "빈 사이드카를 남겼다"
+
+
+def test_training_start_hands_the_scene_over_where_the_notes_already_go():
+    """붙는 자리가 이미 있다 — 제목·설명 사이드카를 쓰는 그 자리다."""
+    src = (REPO / "backend" / "app" / "routers" / "training.py").read_text()
+    assert "sim_scenes.inherit_to_run" in src
+    start = src.split("notes_written = False", 1)[1].split("return {", 1)[0]
+    assert "inherit_to_run" in start, "학습 시작 경로가 아니다"
+    assert '"scene_inherited"' in src, "물려줬는지 화면이 알 길이 없다"

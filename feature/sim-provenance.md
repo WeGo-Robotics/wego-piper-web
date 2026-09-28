@@ -64,7 +64,7 @@ config.json  model.safetensors  train_config.json  policy_*.json/safetensors
 
 값어치 대비 비용 순서. 하나만 해도 이득이 남는다.
 
-### A. 사이드카에 **버전 둘** (제일 싸다)
+### ☑ A. 사이드카에 **버전 둘** (2026-09-28)
 
 ```json
 { "spec_version": 1,
@@ -77,7 +77,7 @@ config.json  model.safetensors  train_config.json  policy_*.json/safetensors
 - ⚠ **소급은 안 된다.** 이미 모은 데이터에는 못 넣는다. 읽는 쪽 규칙: 키가 없으면
   "v0.5.7 이전" — 그 이상은 알 수 없고, **모른다고 말하는 것**이 틀린 값을 지어내는 것보다 낫다.
 
-### B. 학습이 **장면을 물려받는다**
+### ☑ B. 학습이 **장면을 물려받는다** (2026-09-28)
 
 학습 **시작** 때 데이터셋의 `meta/piper_scene.json` 을 `<output_dir>/piper_scene.json` 으로
 복사한다. 이미 그 자리에서 `notes_sidecar.write_notes(output_dir, kind="model", …)` 를 부르고
@@ -117,9 +117,8 @@ config.json  model.safetensors  train_config.json  policy_*.json/safetensors
 
 ## 6. 순서
 
-1. **A** — 사이드카에 버전 둘. 오늘 모으는 데이터부터 기록이 남기 시작한다(소급 불가라
-   **빨리 넣을수록 이득**이다).
-2. **B** — 학습이 장면을 물려받는다. 붙는 자리가 이미 있어 작다.
+1. ☑ **A** — 사이드카에 버전 둘. 오늘 모으는 데이터부터 기록이 남는다(소급 불가).
+2. ☑ **B** — 학습이 장면을 물려받는다. 제목 사이드카를 쓰는 그 자리에 붙었다.
 3. ~~**C**~~ — 메시를 꺼서 사라졌다.
 
 ⚠ 1 을 2 보다 먼저 하는 이유는 **가중치가 물려받는 내용이 버전을 포함해야** 하기 때문이다.
