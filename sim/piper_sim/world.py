@@ -200,6 +200,41 @@ class World:
         logger.info("가상환경 교체: %s (물체 %d)", v["name"], len(v["objects"]))
         return {"scene": v["name"], "objects": self.objects()}
 
+    def camera_z(self, cam_name: str = "top") -> float | None:
+        """지금 높이. 모르는 카메라면 None."""
+        import mujoco
+
+        with self._lock:
+            cid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, cam_name)
+            return None if cid < 0 else float(self.model.cam_pos[cid][2])
+
+    def set_camera_z(self, z: float, cam_name: str = "top") -> float:
+        """탑뷰 높이. 적용된(클램프된) 값을 돌려준다.
+
+        ⚠ **가상환경 교체가 아니다.** 모델 필드 하나를 쓰는 일이라 재컴파일도 `MjData`
+        재생성도 렌더러 재생성도 없다 — 그래서 `on_model_change` 를 **안 부른다**
+        (실측: `cam_pos[2]=0.86` → `mj_forward` → `data.cam_xpos` 가 따라온다).
+        렌더러는 이 모델 객체를 계속 쥐고 있어도 맞는 그림을 그린다.
+
+        ⚠ 싸다고 위험이 싼 것은 아니다 — 관측이 바뀌는 것은 같아서, 수집·추론 중
+        거절은 게이트웨이가 한다 (feature/sim-topview-height.md §6).
+        """
+        import mujoco
+
+        from piper_sim import scene_spec
+
+        zz = scene_spec.clamp_camera_z(z)
+        with self._lock:
+            cid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, cam_name)
+            if cid < 0:
+                raise ValueError(f"모르는 카메라입니다: {cam_name}")
+            self.model.cam_pos[cid][2] = zz
+            # 클릭→배치(`ray_to_table`)가 읽는 것은 `data.cam_xpos` 다. 여기서 한 번
+            # 돌려 두면 물리 스텝을 기다리지 않고 바로 맞는다.
+            mujoco.mj_forward(self.model, self.data)
+        logger.info("탑뷰 높이: %.3f m (요청 %.3f)", zz, float(z))
+        return zz
+
     def ray_to_table(self, cam_name: str, u: float, v: float, aspect: float,
                      z_plane: float = 0.0) -> list[float] | None:
         """클릭한 픽셀(정규화 u,v: 0..1, u=오른쪽 v=아래) → **테이블 평면 위의 한 점**.

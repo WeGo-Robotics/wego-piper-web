@@ -39,6 +39,24 @@ SPEC_VERSION = 1
 MAX_OBJECTS = 32
 ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
+#: 탑뷰 카메라 — 높이만 사람이 조절한다 (feature/sim-topview-height.md).
+TOP_CAMERA = "top"
+#: 바탕 XML 의 `<camera name="top" pos="0.25 0 0.6">` 와 **같아야 한다.**
+#: 손으로 적은 값 둘이라 `test_sim_topview.py` 가 XML 을 파싱해 대조한다.
+TOP_Z_DEFAULT = 0.60
+#: 아래: 더 내리면 팔이 시야를 크게 가리고 테이블의 절반도 안 보인다(0.40 에서 y 의 46%).
+#: 위: 테이블(y ±0.45)은 0.864 에서 이미 다 들어온다 — 그 위는 여유이고, 물체만 작아진다.
+#: fovy 가 고정이라 **z 가 곧 줌**이다: 640×480 기준 큐브(0.04m) 가 0.4m 에서 51px,
+#: 0.6m 에서 33px, 1.0m 에서 19px (실측과 일치 — v0.5.1 이 0.9m 에서 21px 을 쟀다).
+CAMERA_Z_RANGE = (0.35, 1.20)
+
+
+def clamp_camera_z(z: float) -> float:
+    """범위 안으로. **거절이 아니라 클램프다** — 사람이 슬라이더를 끝까지 끄는 것은
+    잘못이 아니고, 끝이 어디인지는 돌려주는 값이 말한다."""
+    lo, hi = CAMERA_Z_RANGE
+    return float(min(hi, max(lo, float(z))))
+
 #: 프리미티브 → (MuJoCo geom 이름, size 길이). MuJoCo 의 size 뜻은 **반지름·반변**이다.
 PRIMITIVES = {
     "box": ("mjGEOM_BOX", 3),            # 반변 x·y·z

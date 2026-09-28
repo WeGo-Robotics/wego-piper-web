@@ -158,6 +158,12 @@ class SimHub:
     def cam_lost(self): return self.cameras.lost()
     def set_light(self, scale): return self.cameras.set_light(scale)
 
+    # 탑뷰 높이 — `_world()` 로 받는다. 아직 세계가 없으면 여기서 태어난다
+    # (다른 동사들과 같은 규칙: `self.world` 를 직접 만지면 None 에서 죽는다).
+    def camera_z(self): return self._world().camera_z()
+
+    def set_camera_z(self, z): return self._world().set_camera_z(z)
+
     # ── 시뮬 전용 ──
 
     def go_to(self, arm_name: str, norm_goal: dict) -> bool:

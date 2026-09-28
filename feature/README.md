@@ -25,6 +25,7 @@
 | ACT-Aux | ◐ 1~2단계 ☑. ACT 를 **상속**해 행동 + 작업 단계(stage)를 함께 내는 `act_aux` 정책. 기존 ACT 무수정, `lerobot_policy_*` 플러그인 규약으로 꽂는다. 라벨은 phase-annotation 의 FSM 사이드카를 컬럼으로 굽는다 | 설치 패키지 하나 + wrapper 10줄이라 **거의 안 겹침**. 관측 차원을 안 바꿔 refactor #8 과 무관 | [act-aux.md](act-aux.md) |
 | SO-101 180° 거치 | 리더를 반 바퀴 돌려 놓고 잡는 옵션 — **부호 표 하나**로 닫힌다 | [so101d](so101d.md) §5a 관절 매칭의 옵션. POSE 는 크로스 모델에서 막혀 있어 해당 없다 | [so101-flipped.md](so101-flipped.md) |
 | 시뮬 환경 | 하드웨어 없이 등록→수집→학습→추론 왕복. `simd` 하나가 세계(팔+카메라)를 든다 | 계약(shm·RPC)을 그대로 재사용해 **데몬 하나가 늘 뿐** — ◐ 1~3단계 ☑, 4단계(E2E 한 바퀴)가 인수 기준 | [sim-env.md](sim-env.md) |
+| 시뮬 탑뷰 높이 | 탑뷰 카메라를 **z 만** 올리고 내린다 — fovy 고정이라 그게 곧 줌이다 | 가상환경 편집의 다음 손잡이. 지금 높이(0.6m)는 테이블 y 의 69% 만 보여 **클릭으로 못 놓는 자리**가 있다. 재컴파일이 아니라 `cam_pos` 한 줄(실측) | [sim-topview-height.md](sim-topview-height.md) |
 | 가상환경 편집 | 테이블 위 사물을 사람이 올린다. 정본은 **가상환경 JSON**, MJCF 는 `MjSpec` 으로 굽는다 | sim-env 5단계(물체 무작위화)를 앞당긴 것. 물체가 `cube` 하나로 박힌 자리 다섯을 id 로 일반화하는 일이 1단계 | [sim-scene-editor.md](sim-scene-editor.md) |
 | 현장 배포·운영 검토 | 대회·일반 사용자 환경 일곱 항목 — 공유 Vast 계정 · Windows/Mac · 부팅 실패 안내 · 오프라인(USB·로컬 서버) 설치 · 바탕화면 아이콘 · Colab · CI 설치 검증 후 릴리스. 항목마다 지금·조사·권고·규모 | 코드 변경은 작다 — 대부분 배포 스크립트·unitd·프론트 관문 층. 릴리스 절차만 게이트가 하나 는다 | [field-deployment.md](field-deployment.md) |
 

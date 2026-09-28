@@ -26,6 +26,8 @@ _running = True
 
 _METHODS = {"scan", "attach", "release", "release_all", "estop", "info", "lost",
             "cube_pos", "reset_cube", "reset", "cube_from_view", "set_light", "go_to",
+            # 탑뷰 높이 (feature/sim-topview-height.md)
+            "camera_z", "set_camera_z",
             # 장면 — 테이블 위 사물 (feature/sim-scene-editor.md)
             "scene", "load_scene", "objects", "place_object", "object_from_view",
             "point_from_view", "pick_from_view", "reset_objects", "default_object",
