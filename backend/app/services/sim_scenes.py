@@ -222,14 +222,28 @@ _SIDECAR_REL = Path("meta") / "piper_scene.json"
 
 
 def applied_spec() -> dict | None:
-    """지금 적용된 가상환경의 명세. 없거나 못 읽으면 None."""
+    """지금 적용된 가상환경의 명세. 없거나 못 읽으면 None.
+
+    ⚠ **카메라 높이는 살아 있는 세계에서 받아 덮는다.** 저장된 파일이 아니라 지금
+    돌고 있는 값이 그 에피소드가 실제로 본 화각이다 — 사람이 슬라이더를 끌고 저장을
+    안 한 채 수집을 시작할 수 있고, 그때 사이드카가 파일의 옛 높이를 적으면
+    **거짓말이 된다.** 이 함수를 부르는 곳은 녹화 시작 한 곳뿐이라 RPC 한 번이면 된다.
+    """
+    from app.services import sim_robot_client as sim
+
     sid = current_id()
     if not sid:
         return None
     try:
-        return read(sid)
+        spec = read(sid)
     except SceneStoreError:
         return None
+    live_z = sim.call("camera_z", default=None)
+    if isinstance(live_z, (int, float)):
+        cams = dict(spec.get("cameras") or {})
+        cams["top"] = {**(cams.get("top") or {}), "z": float(live_z)}
+        spec = {**spec, "cameras": cams}
+    return spec
 
 
 def sidecar(spec: dict) -> dict:
@@ -240,6 +254,10 @@ def sidecar(spec: dict) -> dict:
     다른 기계에서도 그 세계를 다시 지을 수 있다(메시는 자산 id 로 가리킬 뿐이라 함께 옮겨야 한다).
     """
     return {"id": spec.get("id", ""), "name": spec.get("name", ""),
+            # ⚠ **카메라 높이도 관측의 일부다.** 같은 물체를 33px 로 본 데이터와 19px 로
+            #   본 데이터는 다른 데이터셋인데 프레임만 봐서는 구분이 안 된다
+            #   (feature/sim-topview-height.md §4).
+            "cameras": spec.get("cameras") or {},
             "objects": spec.get("objects") or [],
             "recorded_at": datetime.now().astimezone().isoformat(timespec="seconds")}
 

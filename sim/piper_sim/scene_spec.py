@@ -214,6 +214,29 @@ def _validate_object(raw: dict, seen: set[str]) -> dict:
     return obj
 
 
+def _validate_cameras(raw) -> dict:
+    """카메라 설정. **지금은 탑뷰 높이 하나뿐**이다 (feature/sim-topview-height.md §2).
+
+    모양을 `{"top": {"z": …}}` 로 연 것은 나중에 정면 카메라가 생겨도 자리가 있게 하려는
+    것이지, x·y·회전을 열려는 뜻이 아니다 — 그건 그 기획에서 다시 판단한다.
+
+    ⚠ 범위 밖은 **거절이 아니라 클램프**다. 남이 만든 가상환경 파일 하나 때문에 불러오기
+    자체가 실패하는 것보다, 되는 범위로 들여놓고 화면이 지금 값을 보여주는 편이 낫다.
+    숫자가 아닌 것은 다르다 — 그건 사람이 고쳐야 할 오타라서 말해 준다.
+    """
+    cams = raw if isinstance(raw, dict) else {}
+    top = cams.get(TOP_CAMERA)
+    top = top if isinstance(top, dict) else {}
+    z = top.get("z", TOP_Z_DEFAULT)
+    try:
+        z = float(z)
+    except (TypeError, ValueError):
+        raise SceneError(f"카메라 높이가 숫자가 아닙니다: {z!r}")
+    if z != z:                                   # NaN — float() 는 통과시킨다
+        raise SceneError("카메라 높이가 숫자가 아닙니다: nan")
+    return {TOP_CAMERA: {"z": clamp_camera_z(z)}}
+
+
 def validate(spec: dict) -> dict:
     """가상환경 dict 를 검사하고 **기본값을 채운 사본**을 돌려준다.
 
@@ -235,6 +258,8 @@ def validate(spec: dict) -> dict:
         "version": SPEC_VERSION,
         "id": str(spec.get("id") or "scene"),
         "name": str(spec.get("name") or "이름 없는 가상환경"),
+        # 키가 없는 옛 파일은 기본값(0.60) — **오늘과 완전히 같은 세계**다
+        "cameras": _validate_cameras(spec.get("cameras")),
         "objects": [_validate_object(o, seen) for o in objects],
     }
 
@@ -306,7 +331,14 @@ def compose(spec: dict, base: Path | str | None = None):
     import mujoco
 
     s = mujoco.MjSpec.from_file(str(base or SCENE_XML))
-    for obj in validate(spec)["objects"]:
+    v = validate(spec)
+    # 탑뷰 높이 — 바탕 XML 의 값을 명세가 덮는다. 굽는 세계와 살아 있는 세계가
+    # 같은 높이로 서 있어야 한다(살아 있는 쪽은 `World.set_camera_z`).
+    z = v["cameras"][TOP_CAMERA]["z"]
+    for cam in s.cameras:
+        if cam.name == TOP_CAMERA:
+            cam.pos = [float(cam.pos[0]), float(cam.pos[1]), z]
+    for obj in v["objects"]:
         body = s.worldbody.add_body(name=obj["id"], pos=obj["pos"], quat=euler_quat(obj["euler_deg"]))
         if obj["movable"]:
             # ⚠ 이름은 `<id>_free` 로 고정이다 — world.reset 이 이 이름으로 qpos 를 찾는다.

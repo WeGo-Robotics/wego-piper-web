@@ -96,3 +96,66 @@ def test_the_daemon_exposes_the_height_verbs():
     hub = (REPO / "sim" / "piper_sim" / "hub.py").read_text()
     assert "def set_camera_z" in hub and "_world().set_camera_z" in hub, \
         "허브가 `self.world` 를 직접 만지면 세계가 없을 때 죽는다"
+
+
+# ── 명세에 실린다 (2단계) ──
+
+
+def test_a_scene_without_cameras_keeps_todays_world():
+    """옛 가상환경 파일에는 이 키가 없다. **기본값이 채워져 오늘과 같은 세계**가 되어야
+    한다 — 여기가 어긋나면 업데이트하는 순간 모든 기존 가상환경의 화각이 바뀐다."""
+    from piper_sim import scene_spec
+
+    v = scene_spec.validate({"version": 1, "id": "old", "name": "옛것", "objects": []})
+    assert v["cameras"]["top"]["z"] == pytest.approx(scene_spec.TOP_Z_DEFAULT)
+    # 기본 가상환경(파일)도 같은 값이어야 한다
+    assert scene_spec.default()["cameras"]["top"]["z"] == pytest.approx(
+        scene_spec.TOP_Z_DEFAULT)
+
+
+def test_the_spec_height_is_clamped_but_a_typo_is_refused():
+    """범위 밖은 클램프 — 남의 파일 하나 때문에 불러오기가 통째로 실패하면 안 된다.
+    숫자가 아닌 것은 다르다: 사람이 고쳐야 할 오타라서 말해 준다."""
+    from piper_sim import scene_spec
+
+    lo, hi = scene_spec.CAMERA_Z_RANGE
+    over = scene_spec.validate({"cameras": {"top": {"z": 3.0}}, "objects": []})
+    assert over["cameras"]["top"]["z"] == pytest.approx(hi)
+    under = scene_spec.validate({"cameras": {"top": {"z": 0.01}}, "objects": []})
+    assert under["cameras"]["top"]["z"] == pytest.approx(lo)
+    for bad in ("높이", None, float("nan")):
+        with pytest.raises(scene_spec.SceneError, match="숫자가 아닙니다"):
+            scene_spec.validate({"cameras": {"top": {"z": bad}}, "objects": []})
+
+
+def test_the_world_is_built_at_the_height_the_spec_asks_for():
+    """살아 있는 세계(`set_camera_z`)와 **굽는 세계**가 같은 높이로 서야 한다.
+    안 그러면 가상환경을 다시 올리는 순간 카메라가 조용히 원래 자리로 돌아간다."""
+    from piper_sim import scene_spec
+
+    m = scene_spec.build({"version": 1, "id": "high", "name": "높게",
+                          "cameras": {"top": {"z": 0.75}}, "objects": []})
+    cid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, "top")
+    assert float(m.cam_pos[cid][2]) == pytest.approx(0.75)
+    # x·y 는 안 건드린다 — 높이만 여는 것이 이 기능의 전부다
+    assert [float(v) for v in m.cam_pos[cid][:2]] == pytest.approx([0.25, 0.0])
+
+
+def test_the_dataset_records_the_height_it_actually_saw(monkeypatch):
+    """⚠ **사이드카는 저장된 파일이 아니라 돌고 있는 값을 적는다.** 슬라이더를 끌고
+    저장을 안 한 채 수집을 시작할 수 있고, 그때 파일의 옛 높이를 적으면 거짓말이 된다.
+    """
+    from app.services import sim_scenes
+
+    stored = {"version": 1, "id": "s", "name": "n",
+              "cameras": {"top": {"z": 0.60}}, "objects": []}
+    monkeypatch.setattr(sim_scenes, "current_id", lambda: "s")
+    monkeypatch.setattr(sim_scenes, "read", lambda sid: stored)
+    from app.services import sim_robot_client as sim
+    monkeypatch.setattr(sim, "call",
+                        lambda verb, *a, **kw: 0.82 if verb == "camera_z" else kw.get("default"))
+
+    spec = sim_scenes.applied_spec()
+    assert spec["cameras"]["top"]["z"] == pytest.approx(0.82), "파일의 옛 높이를 적었다"
+    assert stored["cameras"]["top"]["z"] == pytest.approx(0.60), "저장된 명세를 건드렸다"
+    assert sim_scenes.sidecar(spec)["cameras"]["top"]["z"] == pytest.approx(0.82)
