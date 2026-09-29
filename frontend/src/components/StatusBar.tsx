@@ -116,8 +116,12 @@ export default function StatusBar() {
                        flex items-center gap-4 px-4">
       {/* WeGo 로고 — **왼쪽 끝**(사용자 결정 2026-09-29). 오른쪽 끝은 E-STOP 자리다:
           거긴 x 위치가 창 너비에만 달려야 해서 장식이 들어가면 안 된다. */}
-      <img src="/wego-logo-white.png" alt="WeGo Robotics"
-           className="h-7 w-auto shrink-0 select-none" draggable={false} />
+      <a href="https://wego-robotics.com/" target="_blank" rel="noopener noreferrer"
+         title="WeGo Robotics" className="shrink-0">
+        <img src="/wego-logo-white.png" alt="WeGo Robotics"
+             className="h-7 w-auto select-none opacity-90 hover:opacity-100 transition-opacity"
+             draggable={false} />
+      </a>
       <span className="font-bold">PIPER Studio</span>
 
       <div className="flex flex-1 items-center gap-2 overflow-x-auto">
