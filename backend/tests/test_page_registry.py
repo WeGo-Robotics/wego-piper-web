@@ -136,6 +136,20 @@ def test_in_page_tabs_sit_right_beside_the_title(page):
     assert after.index(".map(") < after.index("</div>"), f"{page}: 탭이 제목과 같은 상자 안이 아니다"
 
 
+def test_the_status_bar_opens_with_the_logo_and_closes_with_the_estop():
+    """⚠ **양 끝이 정해져 있다.** 로고는 왼쪽 끝(사용자 결정 2026-09-29), E-STOP 은
+    오른쪽 끝(2026-09-21) — 그쪽은 x 위치가 **창 너비에만** 달려야 하는 자리라 장식이
+    끼어들면 안 된다. 둘을 같이 잠가 둔다: 하나만 보면 다음 사람이 반대쪽에 넣는다.
+    """
+    src = (_SRC / "components" / "StatusBar.tsx").read_text()
+    body = src.split("<header", 1)[1]
+    logo = body.index("wego-logo-white.png")
+    estop = body.index("<EStopButton />")
+    assert logo < body.index("PIPER Studio") < estop, "로고가 왼쪽 끝이 아니다"
+    assert body.index("</header>") - estop < 40, "E-STOP 뒤에 무언가 들어왔다"
+    assert "shrink-0" in body[logo - 200:logo + 200], "좁은 창에서 로고가 찌그러진다"
+
+
 def test_the_estop_button_sits_at_the_end_of_the_status_bar_and_never_shrinks():
     """E-stop 은 **상태바 맨 끝**이다 (사용자 요청 2026-09-21).
 
