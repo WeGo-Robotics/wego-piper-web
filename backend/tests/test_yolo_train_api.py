@@ -322,3 +322,20 @@ def test_delete_image_removes_label_too(root):
     yd.delete_image("d", fname)
     assert not (root / "d" / "labels" / fname).with_suffix(".txt").exists()
     assert json.loads((root / "d" / "classes.json").read_text()) == ["a"]
+
+
+
+def test_the_train_button_says_why_it_is_off_and_agrees_with_the_server():
+    """⚠ 최소 조건은 **라벨된 이미지 4장**이지 상자 4개가 아니다. 버튼만 잠그면 사람은
+    베이스·에폭을 바꿔 보다 포기한다(사용자 보고 2026-09-29). 화면의 숫자와 서버의 400 이
+    같은 값이어야 한다 — 갈리면 버튼은 켜지는데 누르면 거절된다."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    page = (root / "frontend/src/pages/YoloTrainPage.tsx").read_text()
+    router = (root / "backend/app/routers/yolo_train.py").read_text()
+    ui = int(re.search(r"const MIN_LABELED = (\d+)", page).group(1))
+    srv = int(re.search(r'summary\["labeled"\] < (\d+)', router).group(1))
+    assert ui == srv, f"화면 {ui}장 · 서버 {srv}장 — 갈렸다"
+    assert "labeledCount < MIN_LABELED &&" in page, "왜 잠겼는지 화면이 말하지 않는다"

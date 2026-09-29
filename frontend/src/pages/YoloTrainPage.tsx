@@ -41,6 +41,9 @@ const sourceBadge = (s: ImgSource | null) => {
   return s.type
 }
 
+/** 학습 최소 조건 — 서버(`yolo_train.py`)의 400 과 같은 값이다. */
+const MIN_LABELED = 4
+
 export default function YoloTrainPage() {
   const { notify } = useSystemMessage()
   const notifyError = (text: string) => notify({ level: 'error', text, source: '검출 학습' })
@@ -97,6 +100,7 @@ export default function YoloTrainPage() {
 
   // ── 갤러리 ──
   const [images, setImages] = useState<ImgEntry[]>([])
+  const labeledCount = images.filter((i) => i.labeled).length
   const refreshImages = useCallback(async () => {
     if (!current) { setImages([]); return }
     try {
@@ -615,11 +619,21 @@ export default function YoloTrainPage() {
                   {[320, 480, 640, 960].map((v) => <option key={v} value={v}>{v}</option>)}
                 </select>
               </label>
+              {/* ⚠ 최소 조건은 **라벨된 이미지 4장**이다(상자 수가 아니다) — train/val 로 나누려면
+                  양쪽에 이미지가 있어야 한다. 버튼만 잠그고 이유를 안 말하면 사람은 베이스나
+                  에폭을 바꿔 보다가 포기한다(사용자 보고 2026-09-29: "2장에 라벨 4개, 버튼이 안 켜진다"). */}
               <button onClick={() => void startTrain()}
-                disabled={trBusy || !current || images.filter((i) => i.labeled).length < 4}
+                disabled={trBusy || !current || labeledCount < MIN_LABELED}
+                title={labeledCount < MIN_LABELED
+                  ? `라벨된 이미지가 ${labeledCount}장입니다 — 최소 ${MIN_LABELED}장 필요 (상자 수가 아니라 이미지 수)` : undefined}
                 className="px-4 py-1.5 rounded bg-green-700 hover:bg-green-600 text-white disabled:opacity-40">
                 {trBusy ? '시작 중…' : '▶ 학습 시작'}
               </button>
+              {labeledCount < MIN_LABELED && (
+                <span className="text-xs text-amber-400">
+                  라벨된 이미지 {labeledCount}/{MIN_LABELED}장 — 상자가 있는 이미지를 {MIN_LABELED - labeledCount}장 더 만드세요
+                </span>
+              )}
               <span className="text-xs text-neutral-600 basis-full">
                 이전 커스텀 가중치를 베이스로 고르면 이어서 파인튜닝. val 분할은 출처(에피소드) 단위 —
                 완료되면 데모 페이지 모델 목록에 자동 등장
