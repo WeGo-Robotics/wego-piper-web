@@ -222,12 +222,72 @@ def test_the_adapter_covers_everything_the_daemons_use():
     assert not missing_r, f"어댑터에 없는 result 속성: {missing_r}"
 
 
-def test_the_preview_comes_back_as_bgr():
-    """⚠ 호출부가 `cv2.imencode` 에 그대로 넘긴다. RGB 를 주면 **에러 없이**
-    파랑·빨강이 뒤바뀐 프리뷰가 나온다 — 조용히 틀리는 쪽이 더 나쁘다."""
-    import inspect
+def test_the_colour_contract_holds_end_to_end(tmp_path):
+    """⚠ **실기 사고(2026-09-29)**: 검출 데모에서 노란 통이 파랗게 나왔다.
 
+    두 파일의 전제가 어긋나 있었다. `yolod` 는 "세그먼트는 **BGR**"로 바뀌어 프레임을
+    그대로 넘기는데, 어댑터는 옛 전제("받는 것은 RGB")에 멈춰 `plot()` 에서 한 번 더
+    뒤집었다 — 그래서 `cv2.imencode` 가 RGB 를 BGR 로 적었다.
+
+    같은 어긋남이 **모델 입력**도 망가뜨렸다: RT-DETR 은 RGB 로 학습됐는데 BGR 을
+    받고 있었다. 이쪽은 에러가 없고 검출이 조금 나빠질 뿐이라 오래 안 들켰다.
+
+    그래서 둘을 한 함수(`as_rgb_bgr`)에 모으고 여기서 **양쪽 다** 잠근다.
+
+    ⚠⚠ 이 자리에 있던 테스트가 **버그를 지키고 있었다.** `plot()` 소스에
+    `"[..., ::-1]" in src` 를 요구했다 — 결과가 아니라 **구현**을 검사한 것이라,
+    데몬 쪽 규약이 바뀌어 그 뒤집기가 틀린 것이 된 뒤에도 초록이었고 오히려 고치는
+    것을 막았다. 그래서 여기서는 **색이 살아 오는지**를 본다.
+    """
+    import numpy as np
+
+    from detector_loader import as_rgb_bgr
+
+    # 노란 물체 한 장을 **BGR** 로 (yolod 가 넘기는 방식)
+    yellow_bgr = np.zeros((4, 4, 3), np.uint8)
+    yellow_bgr[..., 1:] = 255                      # B=0 G=255 R=255
+    rgb, bgr = as_rgb_bgr(yellow_bgr)
+    assert rgb[0, 0].tolist() == [255, 255, 0], "모델이 노랑을 파랑으로 본다"
+    assert bgr[0, 0].tolist() == yellow_bgr[0, 0].tolist(), "그릴 원본이 뒤집혔다"
+
+    # 파일 경로는 PIL 이 RGB 로 연다 — 사전라벨 경로가 그렇게 부른다
+    png = tmp_path / "y.png"
+    __import__("PIL.Image", fromlist=["Image"]).fromarray(
+        np.dstack([np.full((4, 4), 255, np.uint8)] * 2
+                  + [np.zeros((4, 4), np.uint8)])).save(png)   # RGB 노랑
+    rgb2, bgr2 = as_rgb_bgr(str(png))
+    assert rgb2[0, 0].tolist() == [255, 255, 0]
+    assert bgr2[0, 0].tolist() == [0, 255, 255], "파일 경로에서 BGR 로 안 바꿨다"
+
+    # `plot()` 은 들고 있는 것을 **그대로** 낸다
     from detector_loader import _Result
 
-    src = inspect.getsource(_Result.plot)
-    assert "[..., ::-1]" in src, "RGB→BGR 변환이 없다"
+    class _Empty:
+        xyxy = conf = property(lambda s: None)
+
+    boxes = type("B", (), {
+        "xyxy": type("T", (), {"tolist": lambda s: []})(),
+        "conf": type("T", (), {"tolist": lambda s: []})(),
+        "cls": type("T", (), {"int": lambda s: type("U", (), {"tolist": lambda s: []})()})(),
+    })()
+    out = _Result({}, boxes, bgr).plot()
+    assert out[0, 0].tolist() == yellow_bgr[0, 0].tolist(), "plot() 이 또 뒤집는다"
+
+
+def test_the_daemon_and_the_adapter_agree_on_what_a_frame_is():
+    """⚠ 색 사고의 **진짜 원인은 두 파일의 전제가 갈린 것**이다. 한쪽만 고치면
+    다음에 또 갈린다 — 그래서 양쪽 소스를 같이 본다.
+
+    `yolod` 는 세그먼트를 **안 뒤집고** 넘겨야 하고(BGR), 어댑터는 numpy 입력을
+    **BGR 로 받아** 모델에만 RGB 를 준다.
+    """
+    from conftest import python_code_only
+
+    yolod = python_code_only((_DAEMONS / "yolod.py").read_text())
+    call = yolod.split("model.predict(", 1)[0][-400:]
+    assert "[..., ::-1]" not in call, "데몬이 다시 뒤집기 시작했다 — 어댑터와 갈린다"
+
+    loader = python_code_only((_DAEMONS / "detector_loader.py").read_text())
+    assert "def as_rgb_bgr" in loader, "색 규약이 다시 흩어졌다"
+    plot = loader.split("def plot", 1)[1].split("\n    def ", 1)[0]
+    assert "::-1" not in plot, "plot() 이 또 뒤집는다 — 프리뷰 색이 뒤집힌다"

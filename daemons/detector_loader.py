@@ -31,11 +31,37 @@ class _Boxes:
         self.xyxy, self.conf, self.cls = xyxy, conf, cls
 
 
-class _Result:
-    __slots__ = ("names", "boxes", "_rgb", "speed")
+def as_rgb_bgr(image):
+    """입력 한 장 → (모델에 넣을 **RGB**, 그림에 쓸 **BGR**).
 
-    def __init__(self, names, boxes, rgb=None, speed=None):
-        self.names, self.boxes, self._rgb = names, boxes, rgb
+    ⚠ **numpy 는 BGR 이다.** ultralytics 의 numpy 입력 규약이고, `yolod` 가 shm
+    세그먼트를 변환 없이 그대로 넘긴다("세그먼트는 BGR" — rsd 는 to_bgr 를 거치고
+    camerad 는 OpenCV 프레임 그대로다). 파일 경로는 PIL 이 RGB 로 연다.
+
+    ⚠ 이 둘을 갈라 두는 이유: 모델은 RGB 로 학습됐고 `plot()` 은 BGR 을 돌려줘야
+    한다(호출부가 `cv2.imencode` 에 그대로 넘긴다). 한 배열로 뭉개면 **둘 중 하나가
+    반드시 틀리고**, 틀린 쪽이 색이면 "노란 물체가 파랗게" 나온다 — 에러 없이
+    조용히 틀리는 쪽이라 더 나쁘다(사용자 보고 2026-09-29, 검출 데모).
+    """
+    import numpy as np
+
+    if isinstance(image, (str, bytes)) or hasattr(image, "__fspath__"):
+        from PIL import Image
+
+        rgb = np.asarray(Image.open(image).convert("RGB"))
+    elif hasattr(image, "shape"):
+        # 음수 stride(`frame[..., ::-1]`)는 `torch.from_numpy` 가 거부한다 — 여기서 삼킨다
+        rgb = np.ascontiguousarray(np.ascontiguousarray(image)[..., ::-1])
+    else:                                    # PIL 이미지 등
+        rgb = np.asarray(image.convert("RGB") if hasattr(image, "convert") else image)
+    return rgb, np.ascontiguousarray(rgb[..., ::-1])
+
+
+class _Result:
+    __slots__ = ("names", "boxes", "_bgr", "speed")
+
+    def __init__(self, names, boxes, bgr=None, speed=None):
+        self.names, self.boxes, self._bgr = names, boxes, bgr
         self.speed = speed
 
     def plot(self):
@@ -43,7 +69,7 @@ class _Result:
 
         ⚠ **BGR 로 돌려준다.** 호출부가 `cv2.imencode` 에 그대로 넘기는데, RGB 를
         주면 에러 없이 **파랑·빨강이 뒤바뀐 프리뷰**가 나온다 — 조용히 틀리는 쪽이라
-        더 나쁘다. `predict` 가 받은 것은 RGB 이므로 여기서 뒤집는다.
+        더 나쁘다. `as_rgb_bgr` 가 이미 BGR 로 들려 줬으므로 **여기서 안 뒤집는다**.
 
         ⚠ 색은 클래스 id 로 정한다. 매번 무작위면 같은 물체가 프레임마다 다른
         색이 되어 눈으로 좇을 수가 없다.
@@ -51,9 +77,9 @@ class _Result:
         import cv2
         import numpy as np
 
-        if self._rgb is None:
+        if self._bgr is None:
             raise RuntimeError("그릴 원본이 없습니다")
-        img = np.ascontiguousarray(self._rgb[..., ::-1])      # RGB → BGR
+        img = np.ascontiguousarray(self._bgr)                 # 이미 BGR — 뒤집지 않는다
         xyxy = self.boxes.xyxy.tolist()
         confs = self.boxes.conf.tolist()
         clss = self.boxes.cls.int().tolist()
@@ -114,22 +140,17 @@ class RTDetr:
         # ⚠ 호출부가 **넘기는 것이 두 가지다.** `yolod` 는 numpy 프레임을,
         #   `yolo_prelabel` 은 **파일 경로 문자열**을 준다. ultralytics 는 둘 다
         #   받았으므로 여기서도 둘 다 받는다.
-        if isinstance(image, (str, bytes)) or hasattr(image, "__fspath__"):
-            from PIL import Image
-            image = Image.open(image).convert("RGB")
-        # ⚠ 호출부는 `frame[..., ::-1]`(BGR→RGB)을 넘긴다. 그건 **음수 stride** 라
-        #   `torch.from_numpy` 가 거부한다("negative stride ... not supported").
-        #   ultralytics 는 안에서 삼켰으므로 여기서도 삼킨다 — 이 차이 때문에
-        #   호출부를 고치게 하면 어댑터를 둔 의미가 없다.
-        if hasattr(image, "strides") and any(st < 0 for st in image.strides):
-            import numpy as np
-            image = np.ascontiguousarray(image)
+        # 색 규약은 한 곳에 있다 — numpy 는 BGR, 파일은 RGB (as_rgb_bgr 참고).
+        # 음수 stride 도 거기서 삼킨다(`torch.from_numpy` 가 거부한다).
+        rgb, bgr = as_rgb_bgr(image)
         # ⚠ 단계별 ms 는 **재서** 준다. 화면이 이 값으로 병목을 본다 —
         #   지어내면 "전처리가 느리다" 같은 잘못된 결론을 만든다.
         import time as _t
 
         t0 = _t.perf_counter()
-        inputs = self.processor(images=image, return_tensors="pt").to(self.device)
+        # ⚠ 모델은 **RGB** 로 학습됐다. BGR 을 넣어도 에러는 안 나고 검출만 나빠진다 —
+        #   그래서 오래 안 들켰다(ultralytics 는 이 변환을 자기 안에서 한다).
+        inputs = self.processor(images=rgb, return_tensors="pt").to(self.device)
         t1 = _t.perf_counter()
         with torch.no_grad():
             out = self.model(**inputs)
@@ -138,8 +159,7 @@ class RTDetr:
         t2 = _t.perf_counter()
         # 원본 크기로 되돌려 좌표를 낸다. PIL 은 (w,h), numpy 는 (h,w,...) 다 —
         # 뒤바꾸면 좌표가 통째로 어긋나는데 그림 없이는 알아채기 어렵다.
-        h, w = (image.shape[0], image.shape[1]) if hasattr(image, "shape") \
-            else (image.height, image.width)
+        h, w = rgb.shape[0], rgb.shape[1]
         r = self.processor.post_process_object_detection(
             out, target_sizes=torch.tensor([[h, w]], device=self.device),
             threshold=conf)[0]
@@ -148,13 +168,12 @@ class RTDetr:
         #   `TypeError: '_Result' object is not subscriptable` 로 죽는다 —
         #   실기에서 그렇게 걸렸다. 모양을 흉내 내는 어댑터의 일이다.
         t3 = _t.perf_counter()
-        rgb = image if hasattr(image, "shape") else __import__("numpy").asarray(image)
         speed = {"preprocess": round((t1 - t0) * 1000, 1),
                  "inference": round((t2 - t1) * 1000, 1),
                  "postprocess": round((t3 - t2) * 1000, 1)}
         return [_Result(self.names,
                         _Boxes(r["boxes"].cpu(), r["scores"].cpu(), r["labels"].cpu()),
-                        rgb, speed)]
+                        bgr, speed)]
 
 
 def load_detector(weights: str, device: str = "cpu"):
