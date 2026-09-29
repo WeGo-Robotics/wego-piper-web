@@ -369,6 +369,30 @@ async def prelabel(name: str, body: PrelabelRequest):
 
 _TRAIN_SCRIPT = Path(__file__).resolve().parents[3] / "daemons" / "yolo_traind.py"
 
+#: 학습에만 쓰는 모듈 → 설치 이름. `pyproject.toml` 의 `detect-train` extra 와 같다.
+_TRAIN_DEPS = {"scipy": "scipy", "torchmetrics": "torchmetrics[detection]",
+               "pycocotools": "pycocotools"}
+
+
+def _missing_train_deps() -> str | None:
+    """학습을 돌릴 파이썬에서 빠진 모듈이 있으면 **어디에 무엇을** 깔지 말한다."""
+    import subprocess
+
+    probe = ("import importlib.util as u, sys; "
+             f"print(','.join(m for m in {list(_TRAIN_DEPS)!r} if u.find_spec(m) is None))")
+    try:
+        r = subprocess.run([settings.grpc_python, "-c", probe],
+                           capture_output=True, text=True, timeout=30)
+    except Exception as exc:
+        return f"학습 파이썬({settings.grpc_python})을 실행할 수 없습니다: {exc}"
+    gone = [m for m in r.stdout.strip().split(",") if m]
+    if not gone:
+        return None
+    pkgs = " ".join(f'"{_TRAIN_DEPS[m]}"' for m in gone)
+    return (f"학습에 필요한 {', '.join(gone)} 이(가) 학습 파이썬에 없습니다 — "
+            f"{settings.grpc_python} -m pip install {pkgs}  "
+            "(저장소에서 돌린다면 backend 에서 pip install -e \".[dev,detect-train]\")")
+
 
 class TrainRequest(BaseModel):
     dataset: str
@@ -389,6 +413,12 @@ async def start_train(body: TrainRequest):
     summary = yd.summarize(body.dataset)   # 존재 검증 겸
     if summary["labeled"] < 4:
         raise HTTPException(400, f"라벨된 이미지가 {summary['labeled']}장 — 최소 4장 필요 (train/val 분할)")
+
+    # ⚠ **학습 파이썬에 학습 의존성이 있는지 먼저 본다.** 없으면 유닛이 뜨고, 모델을
+    #   내려받고, 첫 배치에서야 ImportError 로 죽는다 — 사람은 한참 기다린 뒤
+    #   "pip install scipy" 라는, 어느 파이썬에 깔아야 하는지 모르는 말을 본다.
+    if (why := await asyncio.to_thread(_missing_train_deps)):
+        raise HTTPException(400, why)
 
     run_name = f"t{int(time.time())}"
     args = [settings.grpc_python, "-u", str(_TRAIN_SCRIPT),

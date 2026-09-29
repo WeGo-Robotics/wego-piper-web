@@ -43,6 +43,15 @@ dev = [
 analysis = [
     "matplotlib>=3.8",
 ]
+# 검출(RT-DETR) **학습**에만 필요하다 — scipy 는 헝가리안 매처가, torchmetrics 는 mAP 가 쓴다.
+# 추론은 없어도 돌아서 빠진 것을 학습을 눌러 봐야 알게 된다.
+# ⚠ 배포 이미지는 `Dockerfile.base` 가 이미 깐다. 여기 두는 이유는 **개발 설치**
+#   (`pip install -e ".[dev,detect-train]"`)에도 같은 목록이 있어야 해서다 — 한쪽에만
+#   있으니 개발기에서 "RTDetrHungarianMatcher requires the scipy library" 로 죽었다(2026-09-29).
+detect-train = [
+    "torchmetrics[detection]>=1.4",
+    "scipy>=1.11",
+]
 realsense = [
     "pyrealsense2>=2.56",
 ]

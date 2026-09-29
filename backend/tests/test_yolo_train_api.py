@@ -3,6 +3,7 @@
 파일시스템이 정본이므로 테스트도 tmp_path 파일시스템으로 검증한다.
 """
 
+import sys
 import json
 
 import pytest
@@ -339,3 +340,35 @@ def test_the_train_button_says_why_it_is_off_and_agrees_with_the_server():
     srv = int(re.search(r'summary\["labeled"\] < (\d+)', router).group(1))
     assert ui == srv, f"화면 {ui}장 · 서버 {srv}장 — 갈렸다"
     assert "labeledCount < MIN_LABELED &&" in page, "왜 잠겼는지 화면이 말하지 않는다"
+
+
+def test_training_refuses_up_front_when_the_training_python_lacks_its_deps(monkeypatch):
+    """⚠ 실측(2026-09-29, 개발기): 유닛이 뜨고 모델을 받고 첫 배치에서야
+    "RTDetrHungarianMatcher requires the scipy library" 로 죽었다. scipy 는 배포 이미지
+    (`Dockerfile.base`)에만 있고 개발 설치 목록엔 없었다. 이제 **시작 전에** 학습 파이썬을
+    직접 찔러 보고, 빠진 것과 **어느 파이썬에 무엇을 깔지**를 한 문장으로 말한다."""
+    from app.core.config import settings
+    from app.routers import yolo_train as yt
+
+    monkeypatch.setattr(settings, "grpc_python", sys.executable)
+    monkeypatch.setattr(yt, "_TRAIN_DEPS", {"__없는_모듈__": "없는패키지", "json": "json"})
+    why = yt._missing_train_deps()
+    assert why and "__없는_모듈__" in why and sys.executable in why
+    assert "json" not in why.split("이(가)")[0], "있는 모듈까지 없다고 한다"
+
+    monkeypatch.setattr(yt, "_TRAIN_DEPS", {"json": "json"})
+    assert yt._missing_train_deps() is None
+
+
+def test_the_dev_install_lists_what_the_image_installs_for_training():
+    """한쪽(이미지)에만 있으면 다른 쪽(개발기)에서 조용히 빠진다 — 그게 이번 사고였다."""
+    import tomllib
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    extra = tomllib.loads((root / "backend/pyproject.toml").read_text())[
+        "project"]["optional-dependencies"]["detect-train"]
+    base = (root / "backend/Dockerfile.base").read_text()
+    for name in ("scipy", "torchmetrics"):
+        assert any(e.startswith(name) for e in extra), f"개발 설치에 {name} 이 없다"
+        assert name in base, f"이미지에 {name} 이 없다"
