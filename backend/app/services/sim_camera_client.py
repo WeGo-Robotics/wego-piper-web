@@ -57,8 +57,8 @@ class SimCameraClient:
 
     def connect(self, cam_id: str, width: int = 0, height: int = 0,
                 fps: int = 0, controls: dict | None = None,
-                capture: list | None = None) -> tuple[bool, str]:
-        del capture   # 이 데몬엔 캡처 모드가 없다
+                capture: list | None = None, output: list | None = None) -> tuple[bool, str]:
+        del capture, output   # 시뮬 카메라는 렌더 크기를 직접 정한다 — 이 개념이 없다
         return _pair(self._call("connect", cam_id, width, height, fps, controls or {}, timeout=30),
                      "simd 연결 실패")
 

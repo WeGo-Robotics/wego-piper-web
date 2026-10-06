@@ -85,11 +85,14 @@ class RealSenseHub:
     def is_d405(self, serial: str) -> bool:
         return bool(self._call("is_d405", serial, default=False))
 
+    def modes(self, cam_id: str) -> list[dict]:
+        return self._call("modes", cam_id, default=[]) or []
+
     def connect(self, cam_id: str, width: int = 0, height: int = 0,
                 fps: int = 0, controls: dict | None = None,
-                capture: list | None = None) -> tuple[bool, str]:
-        del capture   # 이 데몬엔 캡처 모드가 없다
-        r = self._call("connect", cam_id, width, height, fps, controls or {}, timeout=30)
+                capture: list | None = None, output: list | None = None) -> tuple[bool, str]:
+        r = self._call("connect", cam_id, width, height, fps, controls or {},
+                       capture or None, output or None, timeout=30)
         return _pair(r, "rsd 연결 실패")
 
     def apply_controls(self, cam_id: str, wanted: dict) -> dict:

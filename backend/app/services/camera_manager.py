@@ -110,6 +110,10 @@ class CameraInfo:
     # 맞추되 화각은 넓게 쓰려면 넓은 모드로 받아 줄여야 한다. 어느 모드가 전체 화각인지는
     # 장치가 알려주지 않으므로 사람이 정한다. None 이면 요청 크기 그대로 연다.
     capture: list[int] | None = None
+    # **출력 해상도** `[w, h]` — 이 크기로 줄여 발행한다. None 이면 **원본 해상도**(캡처 그대로).
+    # 데이터셋 크기를 맞추는 손잡이다. shm 녹화는 해상도를 세그먼트에서 읽으므로
+    # 여기서 정한 크기가 그대로 데이터셋에 박힌다.
+    output: list[int] | None = None
     # 마지막 스캔에서 데몬이 이 장치를 **봤는가**. `connected` 와 다른 사실이다:
     # `present && !connected` = 꽂혀 있는데 안 열었다 (정상)
     # `!present`              = 아예 없다 (뽑혔다)
@@ -180,6 +184,7 @@ class CameraInfo:
             "ready": self.ready,
             "light_alarm": self.light_alarm,
             "capture": self.capture,
+            "output": self.output,
             "has_preview": self._hub.has_frame(self.id),
             # ⚠ **프레임이 지금도 오고 있는가.** `has_preview` 와 다른 사실이다:
             # 세그먼트에 마지막 프레임이 남아 있으면 그건 True 지만 스트림은
@@ -229,7 +234,8 @@ class CameraInfo:
         노출·화이트밸런스가 초기화되는 경로가 여럿이었던 건 여는 주체가 여럿이라서다.
         """
         ok, msg = self._hub.connect(self.id, width, height, fps,
-                                    _active_controls(self), capture=self.capture)
+                                    _active_controls(self), capture=self.capture,
+                                    output=self.output)
         self.connected = ok
         return ok, msg
 
@@ -278,6 +284,12 @@ class CameraInfo:
         if fn is None:
             return {"ok": False, "error": "이 카메라는 회색 카드 보정을 지원하지 않습니다"}
         return fn(self.id, roi, target, adjust)
+
+    def modes(self) -> list[dict]:
+        """장치가 낼 수 있는 `[{width, height, fps}]` — 해상도 드롭다운의 재료.
+        데몬이 장치에 직접 물은 값이다(지어내지 않는다). 모르는 데몬은 빈 목록."""
+        fn = getattr(self._hub, "modes", None)
+        return (fn(self.id) or []) if fn else []
 
     def capture_preview(self) -> bytes | None:
         """최신 프레임 JPEG. 세그먼트에서 직접 읽는다 — RPC 가 아니다."""
@@ -562,6 +574,7 @@ class CameraManager:
                     # "껐는데 또 뜬다"가 되고, 그건 안 끈 것보다 나쁘다.
                     "light_alarm": cam.light_alarm,
                     "capture": cam.capture,
+                    "output": cam.output,
                     "config": {
                         "width": cam.width, "height": cam.height, "fps": cam.fps,
                         "color_mode": cam.color_mode, "rotation": cam.rotation, "fourcc": cam.fourcc,
@@ -622,6 +635,7 @@ class CameraManager:
             # 옛 세션 파일에는 이 키가 없다 — 없으면 켜 둔다(기본이 감시다)
             cam.light_alarm = bool(cam_data.get("light_alarm", True))
             cam.capture = parse_capture(cam_data.get("capture"))
+            cam.output = parse_capture(cam_data.get("output"))
             cam.update_config(cam_data.get("config", {}))
             cam.ready = True
             restored += 1

@@ -36,12 +36,13 @@ class _V4l2Camera:
         self.fps: int | None = None
         # 요청 프로파일 `(w, h, fps)`. None 이면 드라이버 기본값.
         self._want: tuple[int, int, int] | None = None
-        # **캡처 모드** `(w, h)` — 장치를 이 크기로 열고, 발행은 `_want` 크기로 줄여서 한다.
-        # 이유는 화각이다: 많은 UVC 카메라가 저해상도를 **센서 가운데를 잘라서** 만든다
-        # (Global Shutter 카메라 실측 2026-10-06: 640×480 은 1920×1200 의 가운데 1/3).
-        # 데이터셋은 640×480 이어야 하고 화각은 넓어야 할 때 — 넓은 모드로 받아 줄인다.
-        # None 이면 요청 크기 그대로 연다(예전 동작).
+        # **캡처 해상도** `(w, h)` — 장치를 이 크기로 연다. None 이면 요청(`_want`) 크기.
+        # **출력 해상도** `(w, h)` — 이 크기로 줄여 발행한다. None 이면 원본(캡처 그대로).
+        # 둘을 가르는 이유는 화각이다: 많은 UVC 카메라가 저해상도를 **센서 가운데를 잘라**
+        # 만든다(AR0234 실측 2026-10-06: 640×480 이 1920×1200 의 가운데 1/3). 넓은 모드로
+        # 받아 줄이면 데이터셋 크기는 같고 화각은 넓다 (piper_cam/fit.py).
         self._capture: tuple[int, int] | None = None
+        self._output: tuple[int, int] | None = None
         self.capture_width: int | None = None
         self.capture_height: int | None = None
         # 장치가 사라졌다고 **데몬이 판정한** 시각. 게이트웨이가 추론하지 않게 하려고
@@ -80,45 +81,28 @@ class _V4l2Camera:
         self.capture_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.capture_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         # 밖에 알리는 크기는 **발행하는 크기**다 — 녹화가 기다리는 세그먼트 크기와
-        # 같아야 한다. 캡처 모드를 쓰면 요청 크기, 아니면 장치가 연 크기.
-        if self._capture and self._want:
-            self.width, self.height = self._want[0], self._want[1]
-        else:
-            self.width, self.height = self.capture_width, self.capture_height
+        # 같아야 한다. 출력 해상도를 정했으면 그것, 아니면 원본(장치가 연 크기).
+        self.width, self.height = self._output or (self.capture_width, self.capture_height)
         self.fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
         return cap, self._shape(frame)
 
     def _shape(self, frame):
-        """캡처 프레임 → 발행 크기. 비율이 다르면 **가운데를 잘라 비율을 맞춘 뒤** 줄인다
-        (늘이면 물체가 찌그러지고, 학습은 그 찌그러짐을 그대로 배운다)."""
-        if not self.width or not self.height:
-            return frame
-        fh, fw = frame.shape[:2]
-        if (fw, fh) == (self.width, self.height):
-            return frame
-        import cv2
+        """캡처 프레임 → 발행 크기 (piper_cam/fit.py — rsd 와 같은 계산)."""
+        from piper_cam.fit import fit_frame
 
-        want_ar = self.width / self.height
-        if fw / fh > want_ar:                    # 옆이 남는다 → 좌우를 자른다
-            cw = round(fh * want_ar)
-            x0 = (fw - cw) // 2
-            frame = frame[:, x0:x0 + cw]
-        elif fw / fh < want_ar:                  # 위아래가 남는다
-            ch = round(fw / want_ar)
-            y0 = (fh - ch) // 2
-            frame = frame[y0:y0 + ch, :]
-        return cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_AREA)
+        return fit_frame(frame, (self.width, self.height) if self.width and self.height else None)
 
     def connect(self, want: tuple[int, int, int] | None = None,
-                capture: tuple[int, int] | None = None) -> tuple[bool, str]:
-        # 이미 열려 있는데 다른 프로파일(또는 캡처 모드)을 요청하면 다시 연다 — 안 그러면
+                capture: tuple[int, int] | None = None,
+                output: tuple[int, int] | None = None) -> tuple[bool, str]:
+        # 이미 열려 있는데 다른 프로파일(캡처·출력 포함)을 요청하면 다시 연다 — 안 그러면
         # UI 에서 해상도를 바꿔도 예전 설정 그대로 돈다.
         if self.connected and ((want is not None and want != self._want)
-                               or capture != self._capture):
+                               or capture != self._capture or output != self._output):
             self.disconnect()
         if want is not None:
             self._want = want
-        self._capture = capture
+        self._capture, self._output = capture, output
         if self.connected:
             return True, "OK"
         try:
@@ -253,6 +237,13 @@ class _V4l2Camera:
             return False, str(exc)
 
 
+def _wh(v) -> tuple[int, int] | None:
+    """RPC 로 온 `[w, h]` → 튜플. 빈값·0 은 None(= 원본/요청 그대로)."""
+    if v and len(v) == 2 and all(v):
+        return int(v[0]), int(v[1])
+    return None
+
+
 class V4l2Hub:
     def __init__(self) -> None:
         self.cams: dict[str, _V4l2Camera] = {}
@@ -283,7 +274,7 @@ class V4l2Hub:
 
     def connect(self, cam_id: str, width: int = 0, height: int = 0,
                 fps: int = 0, controls: dict | None = None,
-                capture: list | None = None) -> tuple[bool, str]:
+                capture: list | None = None, output: list | None = None) -> tuple[bool, str]:
         """셋 다 주면 그 프로파일로 연다. 하나라도 0이면 드라이버 기본값.
 
         `controls` 를 주면 **스트림을 연 뒤** 밀어 넣는다. 순서가 그래야 하는 이유:
@@ -297,9 +288,7 @@ class V4l2Hub:
         if not cam:
             return False, f"Unknown camera: {cam_id}"
         want = (int(width), int(height), int(fps)) if width and height and fps else None
-        cap_wh = (int(capture[0]), int(capture[1])) if capture and len(capture) == 2 \
-            and all(capture) else None
-        ok, msg = cam.connect(want, cap_wh)
+        ok, msg = cam.connect(want, _wh(capture), _wh(output))
         if ok and controls:
             self.apply_controls(cam_id, controls)
         return ok, msg
@@ -545,6 +534,10 @@ class V4l2Hub:
                 "roi": list(roi) if roi else list(gc.center_roi(
                     frame.shape if frame is not None else (480, 640, 3)))}
 
+    def modes(self, cam_id: str) -> list[dict]:
+        """이 장치가 낼 수 있는 모드 — 캡처·출력 해상도 드롭다운의 재료."""
+        return v4l2.list_modes(cam_id) if cam_id.startswith("/dev/") else []
+
     def lost(self) -> list[dict]:
         """**데몬이 판정한** 사라진 장치들. 게이트웨이가 추론하지 않게 하려는 것이다.
 
@@ -561,6 +554,7 @@ class V4l2Hub:
         # 이미 반영한 요청 — rsd 와 같은 계약이다(게이트웨이가 둘을 구분 안 한다)
         base["want"] = list(cam._want or ()) if cam else []
         base["capture"] = list(cam._capture or ()) if cam else []
+        base["output"] = list(cam._output or ()) if cam else []
         if cam and cam.connected:
             base.update(width=cam.width, height=cam.height, fps=cam.fps,
                         capture_width=cam.capture_width, capture_height=cam.capture_height)

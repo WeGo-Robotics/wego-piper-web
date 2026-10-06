@@ -42,7 +42,7 @@ _running = True
 
 # 게이트웨이가 부르는 것만 노출한다 — 데몬을 임의 호출 창구로 만들지 않는다.
 _METHODS = {
-    "scan", "connect", "disconnect", "release_all",
+    "scan", "connect", "disconnect", "release_all", "modes",
     "probe", "list_controls", "set_control", "info",
     "apply_controls", "last_apply_report", "lost",
     # 회색 카드 — rsd 와 같은 동사. USB 웹캠으로 눌러 보니 여기 없어서 "Not a RealSense id" 였다

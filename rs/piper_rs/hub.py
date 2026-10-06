@@ -91,6 +91,13 @@ def make_id(serial: str, stream: str) -> str:
     return f"rs:{serial}:{stream}"
 
 
+def _wh(v) -> tuple[int, int] | None:
+    """RPC 로 온 `[w, h]` → 튜플. 빈값·0 은 None(= 요청 그대로 / 원본)."""
+    if v and len(v) == 2 and all(v):
+        return int(v[0]), int(v[1])
+    return None
+
+
 def parse_id(cam_id: str) -> tuple[str, str] | None:
     """'rs:<serial>:<stream>' → (serial, stream). RealSense id가 아니면 None."""
     if not cam_id.startswith("rs:"):
@@ -167,6 +174,12 @@ class _RSDevice:
         self._mask_warned = False
         # 스트림별 요청 프로파일 `(w, h, fps)`. 없으면 장치 기본값.
         self._want: dict[str, tuple[int, int, int]] = {}
+        # 스트림별 **캡처 해상도**(장치에 요청할 크기)와 **출력 해상도**(발행 크기).
+        # 캡처가 없으면 `_want` 크기, 출력이 없으면 원본 그대로 (piper_cam/fit.py).
+        # ⚠ `_want` 와 따로 둔다 — `info()["want"]` 는 게이트웨이가 "같은 요청을 이미
+        #   반영했나" 를 보는 값이라, 캡처로 덮으면 매번 다르다고 보고 재연결한다.
+        self._capture: dict[str, tuple[int, int]] = {}
+        self._output: dict[str, tuple[int, int]] = {}
         self._profiles: dict[str, list[tuple[int, int, int]]] = {}  # supported() 캐시
         # 지금 파이프라인이 **실제로** 돌리고 있는 프로파일. 요청과 다를 수 있다.
         self._running_profile: dict[str, tuple[int, int, int] | None] = {}
@@ -251,6 +264,14 @@ class _RSDevice:
         self._profiles[stream] = out
         return out
 
+    def _request(self, stream: str) -> tuple[int, int, int] | None:
+        """장치에 실제로 요청할 `(w, h, fps)` — 캡처 해상도가 있으면 그 크기로."""
+        want = self._want.get(stream)
+        cap = self._capture.get(stream)
+        if not cap:
+            return want
+        return (cap[0], cap[1], want[2] if want else 30)
+
     def resolve(self, stream: str, want: tuple[int, int, int] | None
                 ) -> tuple[int, int, int] | None:
         """요청 프로파일 → **장치가 실제로 낼 수 있는** 것.
@@ -307,7 +328,7 @@ class _RSDevice:
             # 요청이 없으면 인자 없이 켠다 = librealsense 기본 프로파일.
             # ⚠ 기본값은 우리가 고른 값이 아니다. D405 는 848x480@**10** 으로 떨어져
             # 녹화 루프를 10Hz 에 묶어버렸다. 그래서 요청을 여기까지 끌고 온다.
-            got = self.resolve(s, self._want.get(s))
+            got = self.resolve(s, self._request(s))
             try:
                 if s == "color":
                     if got:
@@ -336,7 +357,7 @@ class _RSDevice:
         # 안 그러면 UI 에서 해상도를 바꿔도 예전 파이프라인이 그대로 돈다.
         # ⚠ 요청이 없는(None) 스트림은 비교 대상이 아니다 — 장치 기본값과 비교하면
         # 영원히 "다르다"가 되어 매번 재시작한다.
-        wanted = {s: self.resolve(s, self._want.get(s)) for s in streams}
+        wanted = {s: self.resolve(s, self._request(s)) for s in streams}
         if (self._pipeline is not None and streams.issubset(self._active)
                 and all(p is None or self._running_profile.get(s) == p
                         for s, p in wanted.items())
@@ -613,6 +634,12 @@ class _RSDevice:
                     if irf:
                         ir = np.asanyarray(irf.get_data())  # y8 grey
                         updates["infrared"] = cv2.cvtColor(ir, cv2.COLOR_GRAY2BGR)
+                if updates and self._output:
+                    from piper_cam.fit import fit_frame
+
+                    # 깊이는 최근접 — 면적 평균은 경계에서 **없는 거리**를 만든다
+                    updates = {k: fit_frame(v, self._output.get(k), nearest=(k == "depth"))
+                               for k, v in updates.items()}
                 if updates:
                     with self._lock:
                         self._latest.update(updates)
@@ -639,12 +666,19 @@ class _RSDevice:
 
     # ── 연결 수명주기 (스트림 단위 refcount) ──
 
-    def connect_stream(self, stream: str, want: tuple[int, int, int] | None = None) -> bool:
+    def connect_stream(self, stream: str, want: tuple[int, int, int] | None = None,
+                       capture: tuple[int, int] | None = None,
+                       output: tuple[int, int] | None = None) -> bool:
         if stream not in self.available:
             return False
         with self._op_lock:
             if want is not None:
                 self._want[stream] = want
+            for d, v in ((self._capture, capture), (self._output, output)):
+                if v:
+                    d[stream] = v
+                else:
+                    d.pop(stream, None)
             self._refcount[stream] += 1
             ok = self._ensure_streams({s for s, c in self._refcount.items() if c > 0})
             if not ok:
@@ -909,7 +943,8 @@ class RealSenseHub:
         return dev is not None and dev.is_d405()
 
     def connect(self, cam_id: str, width: int = 0, height: int = 0,
-                fps: int = 0, controls: dict | None = None) -> tuple[bool, str]:
+                fps: int = 0, controls: dict | None = None,
+                capture: list | None = None, output: list | None = None) -> tuple[bool, str]:
         """스트림 시작. 셋 다 주면 그 프로파일로 **맞춰서** 연다.
 
         하나라도 0이면 요청 없음으로 보고 장치 기본값에 맡긴다 — 프리뷰처럼
@@ -927,7 +962,7 @@ class RealSenseHub:
         if dev is None:
             return False, f"RealSense {serial} not found (rescan)"
         want = (int(width), int(height), int(fps)) if width and height and fps else None
-        if dev.connect_stream(stream, want):
+        if dev.connect_stream(stream, want, _wh(capture), _wh(output)):
             if controls:
                 self.apply_controls(cam_id, controls)
             return True, "OK"
@@ -1208,8 +1243,13 @@ class RealSenseHub:
             # 또 보내지 않도록(= 불필요한 재연결·refcount 증가) 판단 근거로 쓴다.
             "want": list(dev._want.get(stream) or ()),
         }
+        out["capture"] = list(dev._capture.get(stream) or ())
+        out["output"] = list(dev._output.get(stream) or ())
         if got:
-            out.update(width=got[0], height=got[1], fps=got[2])
+            # 밖에 알리는 크기는 **발행 크기**다 — 녹화가 기다리는 세그먼트 크기와 같아야 한다
+            ow, oh = dev._output.get(stream) or (got[0], got[1])
+            out.update(width=ow, height=oh, fps=got[2],
+                       capture_width=got[0], capture_height=got[1])
         if stream == "depth":
             # 데이터셋 메타에 실려야 하는 값 — 없으면 나중에 같은 픽셀값이
             # 무슨 거리였는지 알 방법이 없다
@@ -1334,6 +1374,14 @@ class RealSenseHub:
             logger.warning("RealSense sensor lookup failed: %s", exc)
         return None
 
+    def modes(self, cam_id: str) -> list[dict]:
+        """이 스트림이 낼 수 있는 모드 — 캡처·출력 해상도 드롭다운의 재료."""
+        parsed = parse_id(cam_id)
+        dev = self._device(parsed[0]) if parsed else None
+        if dev is None:
+            return []
+        return [{"width": w, "height": h, "fps": f} for w, h, f in dev.supported(parsed[1])]
+
     def intrinsics(self, cam_id: str) -> dict | None:
         """이 스트림의 카메라 내부 파라미터. 없으면 None.
 
@@ -1366,10 +1414,15 @@ class RealSenseHub:
         # ⚠ 왜곡 계수도 **같이 낸다.** "RealSense 는 보정된 프레임을 준다" 는
         #   모델마다 참이 아니다 — 0 이라고 가정하면 그 가정이 틀린 카메라에서
         #   mm 단위 답이 조용히 치우친다. 값을 넘겨 받는 쪽이 판단하게 한다.
-        return {"fx": float(i.fx), "fy": float(i.fy),
-                "cx": float(i.ppx), "cy": float(i.ppy),
-                "width": int(i.width), "height": int(i.height),
-                "model": str(i.model), "coeffs": [float(c) for c in i.coeffs]}
+        raw = {"fx": float(i.fx), "fy": float(i.fy),
+               "cx": float(i.ppx), "cy": float(i.ppy),
+               "width": int(i.width), "height": int(i.height),
+               "model": str(i.model), "coeffs": [float(c) for c in i.coeffs]}
+        # ⚠ 출력 해상도로 줄여 발행하면 **내부 파라미터도 같이 바뀐다.** 그대로 두면
+        #   정렬 검사의 mm 답이 조용히 틀린다 — 프레임과 같은 자르기·축소를 적용한다.
+        from piper_cam.fit import fit_intrinsics
+
+        return fit_intrinsics(raw, dev._output.get(stream))
 
     def list_controls(self, cam_id: str) -> list[dict]:
         """해당 스트림 센서가 지원하는 option을 v4l2 컨트롤과 동일한 dict 형태로 반환."""

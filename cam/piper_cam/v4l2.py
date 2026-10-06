@@ -273,6 +273,75 @@ def _scan_one(dev_path: str) -> dict | None:
     return {"id": dev_path, "name": name, "usb_port": _usb_port_path(dev_path)}
 
 
+# ── 지원 모드 열거 — 해상도 드롭다운의 재료 ──
+#
+# OpenCV 는 장치가 낼 수 있는 모드를 알려주지 않는다. 드라이버에게 직접 묻는다.
+# ⚠ **스트리밍 중에도 된다.** V4L2 는 여러 번 여는 것을 허락하고 열거 ioctl 은 스트림을
+#   건드리지 않으므로, camerad 가 돌리고 있는 카메라에도 물어볼 수 있다.
+_VIDIOC_ENUM_FMT = _iowr("V", 2, 64)
+_VIDIOC_ENUM_FRAMESIZES = _iowr("V", 74, 44)
+_VIDIOC_ENUM_FRAMEINTERVALS = _iowr("V", 75, 52)
+_V4L2_BUF_TYPE_VIDEO_CAPTURE = 1
+_V4L2_FRMSIZE_TYPE_DISCRETE = 1
+_V4L2_FRMIVAL_TYPE_DISCRETE = 1
+
+
+def list_modes(dev_path: str) -> list[dict]:
+    """`[{width, height, fps, fourcc}]` — 장치가 신고한 **이산** 모드만.
+
+    연속(stepwise) 크기를 신고하는 장치는 드물고, 거기서 임의 크기를 지어내면
+    "목록에 있는데 안 열린다" 가 된다 — 그런 장치는 빈 목록을 돌려주고 화면이 말한다.
+    """
+    out: list[dict] = []
+    try:
+        fd = os.open(dev_path, os.O_RDWR | os.O_NONBLOCK)
+    except OSError as exc:
+        logger.warning("모드 열거 실패 (%s): %s", dev_path, exc)
+        return out
+    try:
+        fi = 0
+        while True:
+            fmt = bytearray(64)
+            struct.pack_into("II", fmt, 0, fi, _V4L2_BUF_TYPE_VIDEO_CAPTURE)
+            try:
+                fcntl.ioctl(fd, _VIDIOC_ENUM_FMT, fmt)
+            except OSError:
+                break
+            pixfmt = struct.unpack_from("I", fmt, 44)[0]
+            fourcc = pixfmt.to_bytes(4, "little").decode("ascii", "replace")
+            si = 0
+            while True:
+                fs = bytearray(44)
+                struct.pack_into("II", fs, 0, si, pixfmt)
+                try:
+                    fcntl.ioctl(fd, _VIDIOC_ENUM_FRAMESIZES, fs)
+                except OSError:
+                    break
+                if struct.unpack_from("I", fs, 8)[0] != _V4L2_FRMSIZE_TYPE_DISCRETE:
+                    break
+                w, h = struct.unpack_from("II", fs, 12)
+                ii, best = 0, 0.0
+                while True:
+                    fv = bytearray(52)
+                    struct.pack_into("IIII", fv, 0, ii, pixfmt, w, h)
+                    try:
+                        fcntl.ioctl(fd, _VIDIOC_ENUM_FRAMEINTERVALS, fv)
+                    except OSError:
+                        break
+                    if struct.unpack_from("I", fv, 16)[0] == _V4L2_FRMIVAL_TYPE_DISCRETE:
+                        num, den = struct.unpack_from("II", fv, 20)
+                        if num:
+                            best = max(best, den / num)
+                    ii += 1
+                out.append({"width": int(w), "height": int(h),
+                            "fps": int(round(best)) if best else 0, "fourcc": fourcc})
+                si += 1
+            fi += 1
+    finally:
+        os.close(fd)
+    return out
+
+
 def scan_cameras() -> list[dict]:
     """시스템 카메라 스캔 (/dev/video* + v4l2-ctl) — 병렬. 캡처 디바이스만."""
     from concurrent.futures import ThreadPoolExecutor

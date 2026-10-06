@@ -179,22 +179,39 @@ async def set_light_alarm(body: LightAlarmRequest):
     return cam.to_dict()
 
 
-class CaptureRequest(BaseModel):
+class ResolutionRequest(BaseModel):
     id: str
-    capture: str | list[int] | None = None     # "1280x960" · [1280, 960] · 빈값=끔
+    # "1280x960" · [1280, 960] · 빈값. 캡처 빈값 = 요청 해상도 그대로, 출력 빈값 = **원본 해상도**
+    capture: str | list[int] | None = None
+    output: str | list[int] | None = None
 
 
-@router.post("/capture")
-async def set_capture_mode(body: CaptureRequest):
-    """캡처 모드 — 장치를 이 크기로 열고 요청 해상도로 **줄여서** 발행한다.
+@router.get("/modes")
+async def camera_modes(id: str):
+    """장치가 낼 수 있는 모드 — 캡처·출력 해상도 드롭다운의 재료.
 
-    화각 때문이다. 많은 UVC 카메라가 저해상도를 센서 가운데를 잘라 만들어서, 640×480 으로
-    열면 화면이 좁아진다(AR0234 실측 2026-10-06: 가운데 1/3). 넓은 모드(1280×960)로
-    받아 줄이면 데이터셋 크기는 같고 화각은 넓다. 비율이 다르면 가운데를 잘라 맞춘 뒤 줄인다
-    — 늘이면 물체가 찌그러지고 학습이 그걸 배운다.
+    데몬이 장치에 **직접 물은** 값이다(camerad 는 V4L2 열거 ioctl, rsd 는
+    librealsense 스트림 프로파일). 지어낸 목록을 주면 "목록에 있는데 안 열린다" 가 된다.
+    """
+    cam = camera_manager.cameras.get(id)
+    if cam is None:
+        raise HTTPException(404, "카메라를 찾을 수 없습니다")
+    loop = asyncio.get_event_loop()
+    return {"modes": await loop.run_in_executor(_executor, cam.modes)}
 
-    ⚠ 지금 열려 있으면 **같은 요청으로 다시 연다** — 안 그러면 저장만 되고 화면은 그대로라
-    "설정했는데 안 바뀐다" 가 된다.
+
+@router.post("/resolution")
+async def set_resolution(body: ResolutionRequest):
+    """캡처 해상도(장치를 여는 크기)와 출력 해상도(발행 크기)를 따로 정한다.
+
+    둘을 가르는 이유는 화각이다. 많은 카메라가 저해상도를 센서 가운데를 **잘라** 만든다
+    (AR0234 실측 2026-10-06: 640×480 이 가운데 1/3). 넓은 모드로 받아 출력 크기로 줄이면
+    데이터셋 크기는 같고 화각은 넓다. 비율이 다르면 가운데를 잘라 맞춘 뒤 줄인다 —
+    늘이면 물체가 찌그러지고 학습이 그걸 배운다. 깊이는 최근접으로 줄인다.
+
+    ⚠ 출력을 비우면 **원본 해상도** — 받은 그대로 내보낸다(기본값).
+    ⚠ 지금 열려 있으면 **같은 요청으로 다시 연다** — 저장만 되고 화면이 그대로면
+      "설정했는데 안 바뀐다" 가 된다.
     """
     from app.services.camera_manager import parse_capture
 
@@ -203,13 +220,13 @@ async def set_capture_mode(body: CaptureRequest):
     if cam is None:
         raise HTTPException(404, "카메라를 찾을 수 없습니다")
     try:
-        cam.capture = parse_capture(body.capture)
+        capture, output = parse_capture(body.capture), parse_capture(body.output)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    cam.capture, cam.output = capture, output
     camera_manager.save_session()
     if cam.connected:
-        prof = cam.running_profile()
-        want = prof.get("want") or []
+        want = cam.running_profile().get("want") or []
         loop = asyncio.get_event_loop()
         ok, msg = await loop.run_in_executor(
             _executor, lambda: cam.connect(*(want if len(want) == 3 else (0, 0, 0))))

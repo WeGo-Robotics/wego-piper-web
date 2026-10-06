@@ -68,11 +68,14 @@ class V4l2Client:
 
     def connect(self, cam_id: str, width: int = 0, height: int = 0,
                 fps: int = 0, controls: dict | None = None,
-                capture: list | None = None) -> tuple[bool, str]:
+                capture: list | None = None, output: list | None = None) -> tuple[bool, str]:
         return _pair(
             self._call("connect", cam_id, width, height, fps, controls or {},
-                       capture or None, timeout=30),
+                       capture or None, output or None, timeout=30),
             "camerad 연결 실패")
+
+    def modes(self, cam_id: str) -> list[dict]:
+        return self._call("modes", cam_id, default=[]) or []
 
     def apply_controls(self, cam_id: str, wanted: dict) -> dict:
         return self._call("apply_controls", cam_id, wanted, default={}, timeout=30) or {}

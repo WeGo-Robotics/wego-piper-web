@@ -55,8 +55,10 @@ type CamInfo = {
   stream_type?: string
   /** 이 카메라의 조명 경보를 낼 것인가. ⚠ 끄는 것은 **경보뿐** — 측정·발행은 계속한다. */
   light_alarm?: boolean
-  /** 캡처 모드 [w, h] — 이 크기로 받아 요청 해상도로 줄여 발행한다(화각 보존). null 이면 끔 */
+  /** 캡처 해상도 [w, h] — 장치를 이 크기로 연다. null 이면 요청 해상도 그대로 */
   capture?: number[] | null
+  /** 출력 해상도 [w, h] — 이 크기로 줄여 발행한다. null 이면 원본 해상도 */
+  output?: number[] | null
   /** rsd 가 소유하는 깊이 인코딩 파라미터 — 데이터셋 해석의 근거다. */
   depth_encoding?: { near_mm: number; far_mm: number; mode: string } | null
   /** raw 한 단위가 몇 미터인가. D435=0.001, **D405=0.0001**. */
@@ -455,15 +457,22 @@ export default function CamerasPage() {
       setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
     } catch (e) { notifyError(e instanceof Error ? e.message : '조명 경보 설정 실패') }
   }
-  // 캡처 모드 — 저해상도에서 센서 가운데만 잘라 내는 카메라(AR0234 등)의 화각을 지킨다.
-  // 넓은 모드로 받아 요청 크기로 줄인다. 지금 열려 있으면 백엔드가 다시 연다.
-  const handleCapture = async (id: string, capture: string) => {
+  const settingsCamId = settingsCam   // 설정 창이 연 카메라 id (상태값)
+  useEffect(() => {
+    setModes([])
+    if (!settingsCamId || settingsCamId.startsWith('sim:')) return
+    api.get<{ modes: { width: number; height: number; fps: number }[] }>(
+      `/cameras/modes?id=${encodeURIComponent(settingsCamId)}`)
+      .then((r) => setModes(r.modes)).catch(() => {})
+  }, [settingsCamId])
+  // 캡처·출력 해상도 — 저해상도를 센서 가운데를 잘라 만드는 카메라(AR0234 등)의 화각을 지킨다.
+  // 넓은 모드로 받아(캡처) 데이터셋 크기로 줄인다(출력). 지금 열려 있으면 백엔드가 다시 연다.
+  const [modes, setModes] = useState<{ width: number; height: number; fps: number }[]>([])
+  const handleResolution = async (id: string, capture: number[] | null, output: number[] | null) => {
     try {
-      const updated = await api.post<CamInfo>('/cameras/capture', { id, capture: capture.trim() || null })
+      const updated = await api.post<CamInfo>('/cameras/resolution', { id, capture, output })
       setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
-      notify({ level: 'info', source: '카메라',
-               text: capture.trim() ? `${capture.trim()} 로 받아 줄여 발행합니다` : '캡처 모드를 껐습니다' })
-    } catch (e) { notifyError(e instanceof Error ? e.message : '캡처 해상도 설정 실패') }
+    } catch (e) { notifyError(e instanceof Error ? e.message : '해상도 설정 실패') }
   }
   // 스캔 결과까지 전부 비운다 — 별칭·등록은 사람이 정한 값이라 확인창이 그걸 말한다
   const handleClearAll = async () => {
@@ -998,29 +1007,65 @@ export default function CamerasPage() {
               </div>
             )}
 
-            {/* 캡처 해상도 — 일반 웹캠(camerad)만. RealSense·시뮬은 이 개념이 없다 */}
-            {settingsCamera.cam_type === 'opencv' && (
-              <div className="space-y-1 rounded border border-neutral-700 p-2">
-                <label className="flex items-center gap-2 text-xs text-neutral-300">
-                  캡처 해상도
-                  <input key={`${settingsCamera.id}-${(settingsCamera.capture ?? []).join('x')}`}
-                    defaultValue={settingsCamera.capture ? settingsCamera.capture.join('x') : ''}
-                    placeholder="비움 = 요청 해상도 그대로"
-                    onBlur={(e) => {
-                      const cur = settingsCamera.capture ? settingsCamera.capture.join('x') : ''
-                      if (e.target.value.trim() !== cur) void handleCapture(settingsCamera.id, e.target.value)
-                    }}
-                    onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
-                    className="w-40 rounded bg-neutral-900 border border-neutral-700 px-2 py-0.5 font-mono" />
-                </label>
-                <p className="text-[10px] text-neutral-500">
-                  많은 카메라가 저해상도를 <b>센서 가운데를 잘라서</b> 만듭니다 — 640×480 으로 열면 화각이
-                  좁아집니다. 넓은 모드(예: <span className="font-mono">1280x960</span>)를 적으면 그 크기로 받아
-                  <b> 요청 해상도로 줄여</b> 발행합니다. 데이터셋 크기는 그대로, 화각만 넓어집니다.
-                  비율이 다르면 가운데를 잘라 맞춥니다(늘이지 않습니다).
-                </p>
-              </div>
-            )}
+            {/* 캡처·출력 해상도 — camerad·rsd. 시뮬은 렌더 크기를 직접 정해 이 개념이 없다 */}
+            {settingsCamera.cam_type !== 'sim' && (() => {
+              // 장치가 신고한 모드에서 크기만 추린다(같은 크기의 여러 포맷·fps 는 최고 fps 하나로)
+              const sizes = Object.values(modes.reduce<Record<string, { w: number; h: number; fps: number }>>(
+                (acc, m) => {
+                  const k = `${m.width}x${m.height}`
+                  if (!acc[k] || m.fps > acc[k].fps) acc[k] = { w: m.width, h: m.height, fps: m.fps }
+                  return acc
+                }, {})).sort((a, b) => b.w * b.h - a.w * a.h)
+              const key = (v?: number[] | null) => (v && v.length === 2 ? `${v[0]}x${v[1]}` : '')
+              const parse = (k: string) => (k ? k.split('x').map(Number) : null)
+              const cap = settingsCamera.capture ?? null
+              const out = settingsCamera.output ?? null
+              return (
+                <div className="space-y-1.5 rounded border border-neutral-700 p-2 text-xs">
+                  <label className="flex items-center gap-2 text-neutral-300">
+                    <span className="w-24 shrink-0">캡처 해상도</span>
+                    <select value={key(cap)} disabled={sizes.length === 0}
+                      onChange={(e) => handleResolution(settingsCamera.id, parse(e.target.value), out)}
+                      className="flex-1 rounded bg-neutral-900 border border-neutral-700 px-2 py-0.5 font-mono">
+                      <option value="">자동 (요청 해상도)</option>
+                      {sizes.map((m) => (
+                        <option key={`${m.w}x${m.h}`} value={`${m.w}x${m.h}`}>
+                          {m.w}×{m.h}{m.fps ? ` · 최대 ${m.fps}fps` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2 text-neutral-300">
+                    <span className="w-24 shrink-0">출력 해상도</span>
+                    <select value={key(out)} disabled={sizes.length === 0}
+                      onChange={(e) => handleResolution(settingsCamera.id, cap, parse(e.target.value))}
+                      className="flex-1 rounded bg-neutral-900 border border-neutral-700 px-2 py-0.5 font-mono">
+                      <option value="">원본 해상도</option>
+                      {sizes.map((m) => {
+                        // 캡처보다 큰 출력은 확대다 — 화질이 늘지 않고 데이터만 커진다
+                        const bigger = !!cap && m.w * m.h > cap[0] * cap[1]
+                        return (
+                          <option key={`${m.w}x${m.h}`} value={`${m.w}x${m.h}`} disabled={bigger}>
+                            {m.w}×{m.h}{bigger ? ' (캡처보다 큼)' : ''}
+                          </option>
+                        )
+                      })}
+                    </select>
+                  </label>
+                  {sizes.length === 0 ? (
+                    <p className="text-[10px] text-amber-400">
+                      장치가 지원 해상도를 알려주지 않습니다 — 데몬이 꺼져 있거나 장치가 연속 크기를 신고합니다.
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-neutral-500">
+                      많은 카메라가 저해상도를 <b>센서 가운데를 잘라서</b> 만듭니다 — 낮은 캡처 해상도는 화각이 좁습니다.
+                      넓은 캡처(예: 1280×960)에 원하는 출력(예: 640×480)을 고르면 <b>화각은 넓게, 데이터셋 크기는 그대로</b>.
+                      비율이 다르면 가운데를 잘라 맞춥니다(늘이지 않습니다). 출력이 원본이면 받은 그대로 내보냅니다.
+                    </p>
+                  )}
+                </div>
+              )
+            })()}
 
             {/* 회색 카드 보정 — 컬러 스트림에만 뜬다.
                 기하 보정이 아니다. 색·밝기를 재현 가능하게 만드는 것이 전부다. */}
