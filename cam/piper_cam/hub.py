@@ -88,6 +88,8 @@ class _V4l2Camera:
             return False, str(exc)
         if cap is None:
             return False, f"Cannot open {self.id}"
+        # 다시 열렸다 — 예전 "잃어버림" 판정은 이제 거짓이다
+        self.lost_at = 0.0
         self._cap = cap
         self._running = True
         self._last = frame
@@ -223,7 +225,15 @@ class V4l2Hub:
         found = v4l2.scan_cameras()
         for d in found:
             self._info[d["id"]] = d
-            self.cams.setdefault(d["id"], _V4l2Camera(d["id"]))
+            cam = self.cams.setdefault(d["id"], _V4l2Camera(d["id"]))
+            # ⚠ **다시 보이면 "잃어버림"을 지운다.** 예전엔 [끊기]를 눌러야만 지워져서,
+            #   뽑았다 다시 꽂은 카메라가 스캔에는 보이는데 `lost()` 에도 남았다 —
+            #   게이트웨이의 장치 감시가 그걸 보고 **주기마다 "없음"으로 되돌렸다**
+            #   (Global Shutter 카메라, 2026-10-06: 다른 앱에선 잘 나오는데 여기선 "연결 안 됨").
+            #   so101d·rsd 가 같은 병을 이미 겪고 고쳤다(1b036f0) — camerad 만 빠져 있었다.
+            #   돌고 있는 카메라는 건드리지 않는다: 그건 읽기 루프가 판정한다.
+            if cam.lost_at and not cam.connected:
+                cam.lost_at = 0.0
         return found
 
     def _cam(self, cam_id: str) -> _V4l2Camera | None:

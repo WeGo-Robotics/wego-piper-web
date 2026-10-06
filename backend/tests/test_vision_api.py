@@ -70,9 +70,14 @@ def test_models_catalog_shape(client):
     assert {"PekingU/rtdetr_v2_r18vd", "PekingU/rtdetr_v2_r101vd"} <= set(files)
     assert not [f for f in files if f.endswith(".pt")], "ultralytics 가중치가 남아 있다"
     assert len(files) == len(set(files))
+    # ⚠ 커스텀(학습한 가중치)은 모양이 다르다 — 파라미터 수 대신 mAP·클래스 수를 싣는다.
+    #   둘을 한 틀로 보면 **커스텀 모델이 하나라도 있는 기계에서** 이 테스트가 깨진다
+    #   (개발기에서 검출 학습을 한 번 돌린 뒤 그랬다, 2026-10-06).
     for m in models:
-        assert {"family", "file", "label", "params_m", "size_mb", "downloaded"} <= m.keys()
+        assert {"family", "file", "label", "size_mb", "downloaded"} <= m.keys()
         assert isinstance(m["downloaded"], bool)
+        if m["family"] != "커스텀":
+            assert "params_m" in m, m["file"]
 
 
 def test_segments_is_a_list(client):

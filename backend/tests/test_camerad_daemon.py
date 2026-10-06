@@ -11,6 +11,8 @@ rsd 와 **합치지 않는다.** D405 의 UVC 질의가 프로세스를 통째�
 4. 데몬이 게이트웨이를 import 하지 않는다
 """
 
+from pathlib import Path
+REPO = Path(__file__).resolve().parents[2]
 import ast
 from pathlib import Path
 
@@ -121,3 +123,44 @@ def test_failure_backoff_is_time_based_not_count_based():
     loop = ast.parse(inspect.getsource(_V4l2Camera._loop).lstrip())
     calls = {ast.unparse(n.func) for n in ast.walk(loop) if isinstance(n, ast.Call)}
     assert "time.sleep" in calls, "실패해도 안 쉰다 — 루프가 폭주한다"
+
+
+def test_a_camera_that_comes_back_is_not_lost_anymore(monkeypatch):
+    """⚠ **실기 사고(2026-10-06)**: Global Shutter 카메라가 다른 앱에서는 잘 나오는데
+    여기서는 계속 "연결 안 됨"이었다. camerad 가 오전에 한 번 "잃어버림"으로 판정한 뒤
+    **[끊기] 말고는 그 판정을 지울 길이 없었다.** 다시 꽂혀 스캔에 보여도, 다시 연결돼
+    프레임이 나와도 `lost()` 에 남았고, 게이트웨이의 장치 감시가 그걸 보고 주기마다
+    "없음"으로 되돌렸다. so101d·rsd 는 같은 병을 이미 고쳤었다(1b036f0).
+    """
+    from piper_cam import hub as H
+
+    monkeypatch.setattr(H.v4l2, "scan_cameras",
+                        lambda: [{"id": "/dev/video12", "name": "Global Shutter Camera"}])
+    h = H.V4l2Hub()
+    h.scan()
+    h.cams["/dev/video12"].lost_at = 1791265234.0          # 오전에 잃어버림 판정
+    assert h.lost(), "전제: 잃어버림으로 들고 있다"
+
+    h.scan()                                               # 다시 꽂혀 스캔에 보인다
+    assert h.lost() == [], "다시 보이는데 아직 잃어버림이다 — 장치 감시가 또 지운다"
+
+
+def test_a_running_camera_keeps_its_own_verdict(monkeypatch):
+    """돌고 있는 카메라의 판정은 **읽기 루프**가 한다 — 스캔이 덮으면 안 된다."""
+    from piper_cam import hub as H
+
+    monkeypatch.setattr(H.v4l2, "scan_cameras", lambda: [{"id": "/dev/video3", "name": "x"}])
+    h = H.V4l2Hub()
+    h.scan()
+    cam = h.cams["/dev/video3"]
+    cam.lost_at = 123.0
+    monkeypatch.setattr(type(cam), "connected", property(lambda self: True))
+    h.scan()
+    assert cam.lost_at == 123.0
+
+
+def test_a_successful_reconnect_clears_the_lost_verdict():
+    """다시 열렸으면 예전 "잃어버림" 판정은 거짓이다."""
+    src = (REPO / "cam" / "piper_cam" / "hub.py").read_text()
+    after_open = src.split("Cannot open {self.id}", 1)[1][:200]
+    assert "self.lost_at = 0.0" in after_open, "연결에 성공해도 잃어버림이 남는다"
