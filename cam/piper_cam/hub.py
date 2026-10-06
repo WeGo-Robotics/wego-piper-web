@@ -36,6 +36,14 @@ class _V4l2Camera:
         self.fps: int | None = None
         # 요청 프로파일 `(w, h, fps)`. None 이면 드라이버 기본값.
         self._want: tuple[int, int, int] | None = None
+        # **캡처 모드** `(w, h)` — 장치를 이 크기로 열고, 발행은 `_want` 크기로 줄여서 한다.
+        # 이유는 화각이다: 많은 UVC 카메라가 저해상도를 **센서 가운데를 잘라서** 만든다
+        # (Global Shutter 카메라 실측 2026-10-06: 640×480 은 1920×1200 의 가운데 1/3).
+        # 데이터셋은 640×480 이어야 하고 화각은 넓어야 할 때 — 넓은 모드로 받아 줄인다.
+        # None 이면 요청 크기 그대로 연다(예전 동작).
+        self._capture: tuple[int, int] | None = None
+        self.capture_width: int | None = None
+        self.capture_height: int | None = None
         # 장치가 사라졌다고 **데몬이 판정한** 시각. 게이트웨이가 추론하지 않게 하려고
         # 여기서 결론을 낸다 (`lost()` RPC 로 나간다).
         self.lost_at: float = 0.0
@@ -59,27 +67,58 @@ class _V4l2Camera:
             return None, None
         # 요청 프로파일 적용. **드라이버가 거절해도 조용히 무시한다** — 아래에서
         # 실제 값을 다시 읽으므로, 못 맞춘 채로 맞췄다고 착각할 일은 없다.
-        if self._want:
-            w, h, fps = self._want
+        if self._want or self._capture:
+            w, h = self._capture or self._want[:2]
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-            cap.set(cv2.CAP_PROP_FPS, fps)
+            if self._want:
+                cap.set(cv2.CAP_PROP_FPS, self._want[2])
         ok, frame = cap.read()
         if not ok or frame is None:
             cap.release()
             return None, None
-        self.width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self.height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.capture_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.capture_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        # 밖에 알리는 크기는 **발행하는 크기**다 — 녹화가 기다리는 세그먼트 크기와
+        # 같아야 한다. 캡처 모드를 쓰면 요청 크기, 아니면 장치가 연 크기.
+        if self._capture and self._want:
+            self.width, self.height = self._want[0], self._want[1]
+        else:
+            self.width, self.height = self.capture_width, self.capture_height
         self.fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
-        return cap, frame
+        return cap, self._shape(frame)
 
-    def connect(self, want: tuple[int, int, int] | None = None) -> tuple[bool, str]:
-        # 이미 열려 있는데 다른 프로파일을 요청하면 다시 연다 — 안 그러면
+    def _shape(self, frame):
+        """캡처 프레임 → 발행 크기. 비율이 다르면 **가운데를 잘라 비율을 맞춘 뒤** 줄인다
+        (늘이면 물체가 찌그러지고, 학습은 그 찌그러짐을 그대로 배운다)."""
+        if not self.width or not self.height:
+            return frame
+        fh, fw = frame.shape[:2]
+        if (fw, fh) == (self.width, self.height):
+            return frame
+        import cv2
+
+        want_ar = self.width / self.height
+        if fw / fh > want_ar:                    # 옆이 남는다 → 좌우를 자른다
+            cw = round(fh * want_ar)
+            x0 = (fw - cw) // 2
+            frame = frame[:, x0:x0 + cw]
+        elif fw / fh < want_ar:                  # 위아래가 남는다
+            ch = round(fw / want_ar)
+            y0 = (fh - ch) // 2
+            frame = frame[y0:y0 + ch, :]
+        return cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_AREA)
+
+    def connect(self, want: tuple[int, int, int] | None = None,
+                capture: tuple[int, int] | None = None) -> tuple[bool, str]:
+        # 이미 열려 있는데 다른 프로파일(또는 캡처 모드)을 요청하면 다시 연다 — 안 그러면
         # UI 에서 해상도를 바꿔도 예전 설정 그대로 돈다.
-        if self.connected and want is not None and want != self._want:
+        if self.connected and ((want is not None and want != self._want)
+                               or capture != self._capture):
             self.disconnect()
         if want is not None:
             self._want = want
+        self._capture = capture
         if self.connected:
             return True, "OK"
         try:
@@ -131,6 +170,7 @@ class _V4l2Camera:
             except Exception:
                 ok, frame = False, None
             if ok and frame is not None:
+                frame = self._shape(frame)
                 self._last = frame
                 self._publish(frame)
                 failing_since = 0.0
@@ -242,7 +282,8 @@ class V4l2Hub:
         return self.cams.get(cam_id)
 
     def connect(self, cam_id: str, width: int = 0, height: int = 0,
-                fps: int = 0, controls: dict | None = None) -> tuple[bool, str]:
+                fps: int = 0, controls: dict | None = None,
+                capture: list | None = None) -> tuple[bool, str]:
         """셋 다 주면 그 프로파일로 연다. 하나라도 0이면 드라이버 기본값.
 
         `controls` 를 주면 **스트림을 연 뒤** 밀어 넣는다. 순서가 그래야 하는 이유:
@@ -256,7 +297,9 @@ class V4l2Hub:
         if not cam:
             return False, f"Unknown camera: {cam_id}"
         want = (int(width), int(height), int(fps)) if width and height and fps else None
-        ok, msg = cam.connect(want)
+        cap_wh = (int(capture[0]), int(capture[1])) if capture and len(capture) == 2 \
+            and all(capture) else None
+        ok, msg = cam.connect(want, cap_wh)
         if ok and controls:
             self.apply_controls(cam_id, controls)
         return ok, msg
@@ -517,6 +560,8 @@ class V4l2Hub:
         base["connected"] = bool(cam and cam.connected)
         # 이미 반영한 요청 — rsd 와 같은 계약이다(게이트웨이가 둘을 구분 안 한다)
         base["want"] = list(cam._want or ()) if cam else []
+        base["capture"] = list(cam._capture or ()) if cam else []
         if cam and cam.connected:
-            base.update(width=cam.width, height=cam.height, fps=cam.fps)
+            base.update(width=cam.width, height=cam.height, fps=cam.fps,
+                        capture_width=cam.capture_width, capture_height=cam.capture_height)
         return base

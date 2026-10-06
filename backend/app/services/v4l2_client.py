@@ -67,9 +67,11 @@ class V4l2Client:
         return self._call("scan", default=[], timeout=30) or []
 
     def connect(self, cam_id: str, width: int = 0, height: int = 0,
-                fps: int = 0, controls: dict | None = None) -> tuple[bool, str]:
+                fps: int = 0, controls: dict | None = None,
+                capture: list | None = None) -> tuple[bool, str]:
         return _pair(
-            self._call("connect", cam_id, width, height, fps, controls or {}, timeout=30),
+            self._call("connect", cam_id, width, height, fps, controls or {},
+                       capture or None, timeout=30),
             "camerad 연결 실패")
 
     def apply_controls(self, cam_id: str, wanted: dict) -> dict:

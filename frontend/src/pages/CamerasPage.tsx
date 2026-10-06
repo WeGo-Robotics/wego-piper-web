@@ -55,6 +55,8 @@ type CamInfo = {
   stream_type?: string
   /** 이 카메라의 조명 경보를 낼 것인가. ⚠ 끄는 것은 **경보뿐** — 측정·발행은 계속한다. */
   light_alarm?: boolean
+  /** 캡처 모드 [w, h] — 이 크기로 받아 요청 해상도로 줄여 발행한다(화각 보존). null 이면 끔 */
+  capture?: number[] | null
   /** rsd 가 소유하는 깊이 인코딩 파라미터 — 데이터셋 해석의 근거다. */
   depth_encoding?: { near_mm: number; far_mm: number; mode: string } | null
   /** raw 한 단위가 몇 미터인가. D435=0.001, **D405=0.0001**. */
@@ -452,6 +454,16 @@ export default function CamerasPage() {
       const updated = await api.post<CamInfo>('/cameras/light-alarm', { id, enabled })
       setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
     } catch (e) { notifyError(e instanceof Error ? e.message : '조명 경보 설정 실패') }
+  }
+  // 캡처 모드 — 저해상도에서 센서 가운데만 잘라 내는 카메라(AR0234 등)의 화각을 지킨다.
+  // 넓은 모드로 받아 요청 크기로 줄인다. 지금 열려 있으면 백엔드가 다시 연다.
+  const handleCapture = async (id: string, capture: string) => {
+    try {
+      const updated = await api.post<CamInfo>('/cameras/capture', { id, capture: capture.trim() || null })
+      setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
+      notify({ level: 'info', source: '카메라',
+               text: capture.trim() ? `${capture.trim()} 로 받아 줄여 발행합니다` : '캡처 모드를 껐습니다' })
+    } catch (e) { notifyError(e instanceof Error ? e.message : '캡처 해상도 설정 실패') }
   }
   // 스캔 결과까지 전부 비운다 — 별칭·등록은 사람이 정한 값이라 확인창이 그걸 말한다
   const handleClearAll = async () => {
@@ -982,6 +994,30 @@ export default function CamerasPage() {
                   <br />
                   손목처럼 <b>팔과 같이 움직이는</b> 카메라는 조명이 늘 바뀌어 경보가 맞는
                   말이어도 쓸모가 없고, 그런 경보는 옆의 진짜 경보까지 묻습니다.
+                </p>
+              </div>
+            )}
+
+            {/* 캡처 해상도 — 일반 웹캠(camerad)만. RealSense·시뮬은 이 개념이 없다 */}
+            {settingsCamera.cam_type === 'opencv' && (
+              <div className="space-y-1 rounded border border-neutral-700 p-2">
+                <label className="flex items-center gap-2 text-xs text-neutral-300">
+                  캡처 해상도
+                  <input key={`${settingsCamera.id}-${(settingsCamera.capture ?? []).join('x')}`}
+                    defaultValue={settingsCamera.capture ? settingsCamera.capture.join('x') : ''}
+                    placeholder="비움 = 요청 해상도 그대로"
+                    onBlur={(e) => {
+                      const cur = settingsCamera.capture ? settingsCamera.capture.join('x') : ''
+                      if (e.target.value.trim() !== cur) void handleCapture(settingsCamera.id, e.target.value)
+                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                    className="w-40 rounded bg-neutral-900 border border-neutral-700 px-2 py-0.5 font-mono" />
+                </label>
+                <p className="text-[10px] text-neutral-500">
+                  많은 카메라가 저해상도를 <b>센서 가운데를 잘라서</b> 만듭니다 — 640×480 으로 열면 화각이
+                  좁아집니다. 넓은 모드(예: <span className="font-mono">1280x960</span>)를 적으면 그 크기로 받아
+                  <b> 요청 해상도로 줄여</b> 발행합니다. 데이터셋 크기는 그대로, 화각만 넓어집니다.
+                  비율이 다르면 가운데를 잘라 맞춥니다(늘이지 않습니다).
                 </p>
               </div>
             )}

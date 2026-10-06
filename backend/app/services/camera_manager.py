@@ -104,6 +104,12 @@ class CameraInfo:
     #   맞는 말이지만 쓸모가 없고, 쓸모없는 경보는 **옆의 진짜 경보까지 무시하게 만든다**
     #   (사용자 보고 2026-09-18: "손목 카메라에서 너무 자주 뜸").
     light_alarm: bool = True
+    # **캡처 모드** `[w, h]` — 장치를 이 크기로 열고, 요청 해상도로 줄여 발행한다.
+    # 화각 때문이다: 많은 UVC 카메라가 저해상도를 **센서 가운데를 잘라** 만든다
+    # (Global Shutter AR0234 실측 2026-10-06: 640×480 이 가운데 1/3). 데이터셋 크기는
+    # 맞추되 화각은 넓게 쓰려면 넓은 모드로 받아 줄여야 한다. 어느 모드가 전체 화각인지는
+    # 장치가 알려주지 않으므로 사람이 정한다. None 이면 요청 크기 그대로 연다.
+    capture: list[int] | None = None
     # 마지막 스캔에서 데몬이 이 장치를 **봤는가**. `connected` 와 다른 사실이다:
     # `present && !connected` = 꽂혀 있는데 안 열었다 (정상)
     # `!present`              = 아예 없다 (뽑혔다)
@@ -173,6 +179,7 @@ class CameraInfo:
             "present": self.present,
             "ready": self.ready,
             "light_alarm": self.light_alarm,
+            "capture": self.capture,
             "has_preview": self._hub.has_frame(self.id),
             # ⚠ **프레임이 지금도 오고 있는가.** `has_preview` 와 다른 사실이다:
             # 세그먼트에 마지막 프레임이 남아 있으면 그건 True 지만 스트림은
@@ -222,7 +229,7 @@ class CameraInfo:
         노출·화이트밸런스가 초기화되는 경로가 여럿이었던 건 여는 주체가 여럿이라서다.
         """
         ok, msg = self._hub.connect(self.id, width, height, fps,
-                                    _active_controls(self))
+                                    _active_controls(self), capture=self.capture)
         self.connected = ok
         return ok, msg
 
@@ -275,6 +282,27 @@ class CameraInfo:
     def capture_preview(self) -> bytes | None:
         """최신 프레임 JPEG. 세그먼트에서 직접 읽는다 — RPC 가 아니다."""
         return self._hub.get_jpeg(self.id)
+
+
+def parse_capture(value) -> list[int] | None:
+    """캡처 모드 입력 → `[w, h]` 또는 None. `"1280x960"`·`[1280, 960]`·빈값을 받는다.
+
+    ⚠ 틀린 값은 **조용히 버리지 않고** 예외로 알린다 — 사람이 적은 값이 무시되면
+    "설정했는데 화각이 그대로" 가 된다. 빈값(None·""·[])은 "끈다" 는 뜻이다.
+    """
+    if value in (None, "", [], ()):
+        return None
+    if isinstance(value, str):
+        parts = value.lower().replace("×", "x").replace(" ", "").split("x")
+    else:
+        parts = list(value)
+    try:
+        w, h = (int(v) for v in parts)
+    except (TypeError, ValueError):
+        raise ValueError(f"캡처 해상도는 '1280x960' 모양이어야 합니다: {value!r}")
+    if not (16 <= w <= 8192 and 16 <= h <= 8192):
+        raise ValueError(f"캡처 해상도가 범위를 벗어났습니다: {w}x{h}")
+    return [w, h]
 
 
 class CameraManager:
@@ -533,6 +561,7 @@ class CameraManager:
                     # 사람이 끈 경보는 재시작에도 꺼져 있어야 한다 — 다시 켜지면
                     # "껐는데 또 뜬다"가 되고, 그건 안 끈 것보다 나쁘다.
                     "light_alarm": cam.light_alarm,
+                    "capture": cam.capture,
                     "config": {
                         "width": cam.width, "height": cam.height, "fps": cam.fps,
                         "color_mode": cam.color_mode, "rotation": cam.rotation, "fourcc": cam.fourcc,
@@ -592,6 +621,7 @@ class CameraManager:
             cam.label = cam_data.get("label", "")
             # 옛 세션 파일에는 이 키가 없다 — 없으면 켜 둔다(기본이 감시다)
             cam.light_alarm = bool(cam_data.get("light_alarm", True))
+            cam.capture = parse_capture(cam_data.get("capture"))
             cam.update_config(cam_data.get("config", {}))
             cam.ready = True
             restored += 1

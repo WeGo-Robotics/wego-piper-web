@@ -164,3 +164,82 @@ def test_a_successful_reconnect_clears_the_lost_verdict():
     src = (REPO / "cam" / "piper_cam" / "hub.py").read_text()
     after_open = src.split("Cannot open {self.id}", 1)[1][:200]
     assert "self.lost_at = 0.0" in after_open, "연결에 성공해도 잃어버림이 남는다"
+
+
+# ── 캡처 모드 — 화각을 지키며 데이터셋 크기를 맞춘다 (2026-10-06) ──
+
+
+def _cam_with(width, height):
+    from piper_cam import hub as H
+
+    c = H._V4l2Camera("/dev/video12")
+    c.width, c.height = width, height
+    return c
+
+
+def test_a_wide_capture_is_shrunk_to_the_requested_size_without_losing_the_view():
+    """⚠ AR0234(Global Shutter) 실측: 640×480 모드는 센서 가운데 1/3 만 내보낸다.
+    1280×960 으로 받아 640×480 으로 **줄이면** 데이터셋 크기는 같고 화각은 넓다.
+    여기서는 가장자리 표지가 줄인 뒤에도 남는지로 "잘리지 않았다"를 본다."""
+    import numpy as np
+
+    f = np.zeros((960, 1280, 3), np.uint8)
+    f[:, :8] = 255                                # 왼쪽 끝 표지
+    out = _cam_with(640, 480)._shape(f)
+    assert out.shape[:2] == (480, 640)
+    assert out[:, :2].mean() > 100, "왼쪽 끝이 사라졌다 — 줄인 게 아니라 잘랐다"
+
+
+def test_a_different_aspect_is_cropped_to_fit_not_stretched():
+    """1920×1200(16:10) → 640×480(4:3): 늘이면 물체가 찌그러지고 학습이 그걸 배운다.
+    가운데를 4:3 으로 잘라 맞춘 뒤 줄인다 — 좌우 끝만 잃는다."""
+    import numpy as np
+
+    f = np.zeros((1200, 1920, 3), np.uint8)
+    f[:, :100] = 255                              # 잘려 나갈 왼쪽 띠(160px 안쪽)
+    f[600, 960] = 255
+    out = _cam_with(640, 480)._shape(f)
+    assert out.shape[:2] == (480, 640)
+    assert out[:, :4].mean() < 5, "좌우를 안 자르고 늘였다"
+
+
+def test_without_a_capture_mode_frames_pass_untouched():
+    import numpy as np
+
+    f = np.zeros((480, 640, 3), np.uint8)
+    assert _cam_with(640, 480)._shape(f) is f
+
+
+def test_changing_the_capture_mode_reopens_the_device(monkeypatch):
+    """저장만 되고 그대로 돌면 "설정했는데 안 바뀐다" 가 된다."""
+    from piper_cam import hub as H
+
+    c = H._V4l2Camera("/dev/video12")
+    c._cap = object()                             # 열려 있다
+    c._want = (640, 480, 30)
+    closed = []
+    monkeypatch.setattr(c, "disconnect", lambda: (closed.append(1), setattr(c, "_cap", None)))
+    monkeypatch.setattr(c, "_open", lambda: (None, None))
+    c.connect((640, 480, 30), (1280, 960))
+    assert closed and c._capture == (1280, 960)
+
+
+def test_the_capture_mode_is_parsed_strictly_and_survives_a_restart(tmp_path):
+    """사람이 적은 값이 조용히 무시되면 "설정했는데 화각이 그대로" 가 된다."""
+    from app.services.camera_manager import parse_capture
+
+    assert parse_capture("1280x960") == [1280, 960]
+    assert parse_capture("1280 × 960") == [1280, 960]
+    assert parse_capture([1920, 1200]) == [1920, 1200]
+    for off in (None, "", []):
+        assert parse_capture(off) is None
+    for bad in ("1280", "wide", "0x0"):
+        try:
+            parse_capture(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"틀린 값을 받아들였다: {bad!r}")
+
+    src = (REPO / "backend" / "app" / "services" / "camera_manager.py").read_text()
+    assert '"capture": cam.capture' in src, "세션에 안 남는다 — 재시작하면 화각이 다시 좁아진다"
+    assert 'cam.capture = parse_capture(cam_data.get("capture"))' in src

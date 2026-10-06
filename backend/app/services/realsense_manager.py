@@ -86,7 +86,9 @@ class RealSenseHub:
         return bool(self._call("is_d405", serial, default=False))
 
     def connect(self, cam_id: str, width: int = 0, height: int = 0,
-                fps: int = 0, controls: dict | None = None) -> tuple[bool, str]:
+                fps: int = 0, controls: dict | None = None,
+                capture: list | None = None) -> tuple[bool, str]:
+        del capture   # 이 데몬엔 캡처 모드가 없다
         r = self._call("connect", cam_id, width, height, fps, controls or {}, timeout=30)
         return _pair(r, "rsd 연결 실패")
 
