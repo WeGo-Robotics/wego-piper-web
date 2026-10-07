@@ -453,7 +453,7 @@ export default function InferencePage() {
                 </div>
               )}
               {/* 그리퍼 힘 — 프레임마다 실리는 값이라 시작 뒤에도 바꿀 수 있다(실행 중 화면에 같은 슬라이더) */}
-              <div className="space-y-1 border-t border-neutral-700 pt-2">
+              <div className="space-y-1 border-t border-neutral-700 pt-2 empty:hidden">
                 {(robotMode === 'bimanual'
                 ? (<>
                     <GripperEffortSlider iface={leftFollower} label="그리퍼 힘 (왼팔)" />
@@ -732,16 +732,14 @@ export default function InferencePage() {
         <div className="space-y-4">
           {/* 그리퍼 힘 — 추론 도중에도 바로 먹는다(robotd 가 다음 명령 프레임부터 그 힘으로 보낸다).
               물체를 놓치면 올리고, 찌그러뜨리면 내린다 */}
-          <CollapsibleCard title="그리퍼 힘" storageKey="piper_fold_gripper_effort">
-            <div className="space-y-2">
+          <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2 empty:hidden">
               {(robotMode === 'bimanual'
                 ? (<>
                     <GripperEffortSlider iface={leftFollower} label="그리퍼 힘 (왼팔)" />
                     <GripperEffortSlider iface={rightFollower} label="그리퍼 힘 (오른팔)" />
                   </>)
                 : <GripperEffortSlider iface={selectedFollower} />)}
-            </div>
-          </CollapsibleCard>
+          </div>
           {/* ACT 처럼 언어를 안 받는 정책엔 띄우지 않는다 — 입력해도 안 쓰인다.
               판정은 백엔드 레지스트리(`policies.language`)가 갖는다. */}
           {takesLanguage(activePolicy) && (

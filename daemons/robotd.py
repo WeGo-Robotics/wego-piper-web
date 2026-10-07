@@ -134,14 +134,19 @@ class _Serving(RobotHub):
         """이 팔의 그리퍼 힘(N·m)과 범위. 화면 슬라이더의 재료."""
         from piper_robot import gripper_store
 
-        return gripper_store.as_dict(iface)
+        # robotd 가 모르는 팔(시뮬·SO-101 등)은 이 힘을 쓰는 명령 경로가 없다 — 지원 안 함
+        if iface not in self.arms:
+            return {"iface": iface, "supported": False}
+        return {**gripper_store.as_dict(iface), "supported": True}
 
     def set_gripper_effort(self, iface: str, nm: float) -> dict:
         """그리퍼 힘을 바꾼다 — **다음 명령 프레임부터** 그 힘이다(재연결 없음)."""
         from piper_robot import gripper_store
 
+        if iface not in self.arms:
+            return {"iface": iface, "supported": False}
         gripper_store.set_effort(iface, nm)
-        return gripper_store.as_dict(iface)
+        return {**gripper_store.as_dict(iface), "supported": True}
 
     def get_load_limits(self, iface: str) -> dict:
         """이 팔의 부하 임계. **팔마다 다르다** (`load_store` 머리말)."""

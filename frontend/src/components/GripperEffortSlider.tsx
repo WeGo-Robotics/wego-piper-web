@@ -18,16 +18,19 @@ export default function GripperEffortSlider({ iface, label, locked }: {
   locked?: string | false
 }) {
   const [e, setE] = useState<Effort | null>(null)
+  // 못 읽으면(지원 안 하는 팔·옛 게이트웨이·robotd 없음) **아예 안 그린다** — 빈 슬라이더에
+  // "Not Found" 를 다는 것보다 없는 편이 덜 헷갈린다(사용자 요청 2026-10-07)
+  const [unsupported, setUnsupported] = useState(false)
   const [val, setVal] = useState(1)
   const [err, setErr] = useState('')
   const timer = useRef<number | null>(null)
 
   useEffect(() => {
-    setE(null); setErr('')
+    setE(null); setErr(''); setUnsupported(false)
     if (!iface) return
     api.get<Effort>(`/robots/gripper-effort?iface=${encodeURIComponent(iface)}`)
       .then((r) => { setE(r); setVal(r.effort_nm) })
-      .catch((x) => setErr(x instanceof Error ? x.message : '그리퍼 힘을 못 읽었습니다'))
+      .catch(() => setUnsupported(true))
     return () => { if (timer.current) window.clearTimeout(timer.current) }
   }, [iface])
 
@@ -42,7 +45,7 @@ export default function GripperEffortSlider({ iface, label, locked }: {
     }, 150)
   }
 
-  if (!iface) return null
+  if (!iface || unsupported) return null
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-3 text-sm">

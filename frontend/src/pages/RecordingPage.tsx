@@ -509,7 +509,7 @@ export default function RecordingPage() {
             )}
             {/* 그리퍼 힘 — 시작 전에만 고친다. 녹화 중에 바꾸면 한 데이터셋 안에서 잡는 힘이
                 달라지고 그 차이는 프레임 어디에도 남지 않는다(백엔드도 거절한다). */}
-            <div className="space-y-1 border-t border-neutral-700 pt-2">
+            <div className="space-y-1 border-t border-neutral-700 pt-2 empty:hidden">
               {armMode === 'single'
                 ? <GripperEffortSlider iface={followerPort} />
                 : (<>

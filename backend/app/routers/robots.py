@@ -642,6 +642,9 @@ async def get_gripper_effort(iface: str):
     out = await asyncio.to_thread(robot_manager_mod._call, "get_gripper_effort", iface)
     if out is None:
         raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    if out.get("supported") is False:
+        # 화면은 이걸 보고 슬라이더를 **아예 안 그린다**(사용자 요청 2026-10-07)
+        raise HTTPException(404, "이 팔은 그리퍼 힘 조절을 지원하지 않습니다")
     return out
 
 
@@ -665,6 +668,8 @@ async def set_gripper_effort(body: GripperEffortRequest):
                                   body.iface, float(body.effort_nm))
     if out is None:
         raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    if out.get("supported") is False:
+        raise HTTPException(404, "이 팔은 그리퍼 힘 조절을 지원하지 않습니다")
     return out
 
 

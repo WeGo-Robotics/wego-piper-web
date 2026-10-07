@@ -90,3 +90,28 @@ def test_both_screens_carry_the_slider():
         "추론 중에 바꿀 자리가 없다"
     comp = (REPO / "frontend" / "src" / "components" / "GripperEffortSlider.tsx").read_text()
     assert "/robots/gripper-effort" in comp
+
+
+def test_an_arm_robotd_does_not_drive_has_no_slider(monkeypatch):
+    """시뮬·SO-101 처럼 robotd 가 모르는 팔은 이 힘을 쓰는 명령 경로가 없다. 빈 슬라이더에
+    "Not Found" 를 다는 대신 **아예 안 그린다**(사용자 요청 2026-10-07) — 그 신호가 404 다."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import robot_manager as R
+
+    monkeypatch.setattr(R, "_call", lambda m, *a, **k:
+                        {"iface": a[0], "supported": False} if "gripper" in m else None)
+    with TestClient(app) as c:
+        assert c.get("/api/robots/gripper-effort", params={"iface": "sim_follower1"}).status_code == 404
+        assert c.post("/api/robots/gripper-effort",
+                      json={"iface": "sim_follower1", "effort_nm": 2}).status_code == 404
+
+    robotd = (REPO / "daemons" / "robotd.py").read_text()
+    get = robotd.split("def get_gripper_effort", 1)[1].split("\n    def ", 1)[0]
+    assert "if iface not in self.arms" in get, "robotd 가 모르는 팔도 지원한다고 답한다"
+    comp = (REPO / "frontend" / "src" / "components" / "GripperEffortSlider.tsx").read_text()
+    assert "if (!iface || unsupported) return null" in comp
+    for page in ("RecordingPage.tsx", "InferencePage.tsx"):
+        src = (REPO / "frontend" / "src" / "pages" / page).read_text()
+        assert src.count("empty:hidden") >= 1, f"{page}: 슬라이더가 사라져도 빈 칸이 남는다"
