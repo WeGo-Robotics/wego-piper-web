@@ -373,7 +373,10 @@ class Arm:
                     raw["joint1"], raw["joint2"], raw["joint3"],
                     raw["joint4"], raw["joint5"], raw["joint6"],
                 )
-                self._piper.GripperCtrl(abs(raw["gripper"]), 1000, 0x03, 0)
+                from piper_robot import gripper_store
+
+                self._piper.GripperCtrl(abs(raw["gripper"]),
+                                        gripper_store.effort_mnm(self.iface), 0x03, 0)
                 return True
             except Exception as e:
                 logger.error("go_parking error: %s", e)

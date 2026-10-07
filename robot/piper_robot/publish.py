@@ -31,7 +31,7 @@ from piper_robot.can import iface_exists
 from piper_robot.joints import denormalize_all
 from dataclasses import replace
 
-from piper_robot import load_store, safety_store
+from piper_robot import gripper_store, load_store, safety_store
 from piper_robot.load import LoadLimits, LoadWatch, describe as describe_load
 from piper_robot.safety import (
     FloorConfig, Reason, SafetyConfig, filter_goal,
@@ -399,7 +399,9 @@ class ArmBridge:
                 piper.ModeCtrl(0x01, 0x01, 30, 0x00)
                 piper.JointCtrl(raw["joint1"], raw["joint2"], raw["joint3"],
                                 raw["joint4"], raw["joint5"], raw["joint6"])
-                piper.GripperCtrl(abs(raw["gripper"]), 1000, 0x03, 0)
+                # 힘은 프레임마다 싣는다 — 저장소 값을 바꾸면 다음 프레임부터 그 힘이다
+                piper.GripperCtrl(abs(raw["gripper"]), gripper_store.effort_mnm(self.iface),
+                                  0x03, 0)
             self.sent += 1
         except Exception as exc:
             logger.warning("CAN 송신 실패 (%s): %s", self.iface, exc)

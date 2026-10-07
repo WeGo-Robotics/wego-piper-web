@@ -78,6 +78,9 @@ def test_the_list_covers_every_mutating_post():
         # 실으면 저장이 두 곳이 되고, 어긋나면 화면의 임계와 실제로 감시 중인
         # 임계가 달라진다 — 안전 설정에서 그게 제일 나쁜 고장이다.
         "/load",
+        # 그리퍼 힘 — 부하 임계와 같은 자리다. robotd 가 자기 `gripper.json` 에 팔별로
+        # 저장한다(명령을 보내는 쪽이 들어야 게이트웨이가 재시작해도 그 힘으로 잡는다).
+        "/gripper-effort",
         # 연결+슬레이브+토크OFF+등록 복합 — register 를 거치며 **세션을 저장한다**
         # (save_session 호출 포함). 세션 반영이 목적인 라우트다.
         "/attach",

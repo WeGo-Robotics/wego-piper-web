@@ -72,6 +72,7 @@ _METHODS = {
     "set_hardware_zero", "read_raw_all", "stream_end_pose", "read_motion_status",
     "load_status", "load_status_all", "load_history",
     "get_load_limits", "set_load_limits",
+    "get_gripper_effort", "set_gripper_effort",
     "init_interface", "down_interface", "check_active", "unhealthy_reason", "sniff_ids",
     "rename_interface", "recover_usb", "usb_info",
     "lost",
@@ -128,6 +129,19 @@ class _Serving(RobotHub):
     def load_status_all(self) -> dict:
         """연결된 팔 전부의 부하 현황 — **왕복 한 번.** 경보 폴러가 쓴다."""
         return publish.arm_bridge_manager.load_snapshot_all()
+
+    def get_gripper_effort(self, iface: str) -> dict:
+        """이 팔의 그리퍼 힘(N·m)과 범위. 화면 슬라이더의 재료."""
+        from piper_robot import gripper_store
+
+        return gripper_store.as_dict(iface)
+
+    def set_gripper_effort(self, iface: str, nm: float) -> dict:
+        """그리퍼 힘을 바꾼다 — **다음 명령 프레임부터** 그 힘이다(재연결 없음)."""
+        from piper_robot import gripper_store
+
+        gripper_store.set_effort(iface, nm)
+        return gripper_store.as_dict(iface)
 
     def get_load_limits(self, iface: str) -> dict:
         """이 팔의 부하 임계. **팔마다 다르다** (`load_store` 머리말)."""

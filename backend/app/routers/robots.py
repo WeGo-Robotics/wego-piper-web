@@ -626,6 +626,48 @@ async def set_load(body: LoadLimitsRequest):
     return {"limits": out}
 
 
+# ── 그리퍼 힘 (2026-10-07) ──
+
+
+class GripperEffortRequest(BaseModel):
+    iface: str
+    effort_nm: float
+
+
+@router.get("/gripper-effort")
+async def get_gripper_effort(iface: str):
+    """이 팔의 그리퍼 힘(N·m)과 범위. 저장은 robotd 가 한다(`gripper_store`)."""
+    import asyncio
+
+    out = await asyncio.to_thread(robot_manager_mod._call, "get_gripper_effort", iface)
+    if out is None:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    return out
+
+
+@router.post("/gripper-effort")
+async def set_gripper_effort(body: GripperEffortRequest):
+    """그리퍼 힘을 바꾼다. 명령 프레임마다 실리는 값이라 **다음 프레임부터** 반영된다 —
+    추론 도중 슬라이더가 그래서 된다.
+
+    ⚠ **녹화 중에는 거절한다.** 한 데이터셋 안에서 잡는 힘이 바뀌면 같은 관절 궤적이
+    다른 결과(놓침·찌그러짐)를 낳고, 그 차이는 프레임 어디에도 기록되지 않는다.
+    추론은 다르다 — 바꿔 보며 맞는 힘을 찾는 것이 목적이다(사용자 요청).
+    """
+    import asyncio
+
+    from app.services import exclusivity as X
+
+    if X.is_running(X.Activity.RECORDING):
+        raise HTTPException(409, "녹화 중에는 그리퍼 힘을 바꿀 수 없습니다 — "
+                                 "한 데이터셋 안에서 잡는 힘이 달라집니다")
+    out = await asyncio.to_thread(robot_manager_mod._call, "set_gripper_effort",
+                                  body.iface, float(body.effort_nm))
+    if out is None:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    return out
+
+
 # ── USB 진단 / 복구 ──
 
 class UsbRecoverRequest(BaseModel):
