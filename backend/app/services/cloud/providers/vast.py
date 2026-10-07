@@ -241,6 +241,22 @@ class VastProvider:
             raise RuntimeError(str(data.get("msg") or "vastai 오류"))
         return data
 
+    def _text(self, args: list[str], *, timeout: int = TIMEOUT) -> str:
+        """`vastai <args>` → stdout 그대로. **JSON 을 기대하지 않는다.**
+
+        ⚠ 모든 서브커맨드가 `--raw` 로 JSON 을 주지는 않는다. `create template` 은
+        `--raw` 를 줘도 `New Template: {파이썬 repr}` 을 찍는다(실측 2026-10-07) —
+        그걸 `_raw` 로 읽으려다 **템플릿은 만들어졌는데 실패로 보고**했다. 만들어 놓고
+        실패라고 하면 사람이 다시 눌러 같은 이름이 둘이 된다.
+        """
+        if not cli_available():
+            raise FileNotFoundError("vastai")
+        out = subprocess.run(["vastai", *args], capture_output=True,
+                             text=True, timeout=timeout, env=self._env())
+        if out.returncode != 0:
+            raise RuntimeError((out.stderr or out.stdout).strip()[:300] or "vastai 실패")
+        return out.stdout
+
     def _cached(self, key: str, make, ttl: float = CACHE_TTL):
         """⚠ TTL 은 **인자**다. 상수 하나를 공유하면 카탈로그를 위해 늘릴 때 가격표까지
         같이 늙는다 — 10분 묵은 $/h 는 틀린 값이다."""
@@ -400,6 +416,34 @@ class VastProvider:
             image=str(raw.get("image_uuid") or ""),
             message=str(raw.get("status_msg") or "").strip()[:200],
         )
+
+    def create_template(self, spec) -> str:
+        """템플릿 하나를 **이 계정에** 만든다. 새 `hash_id` 를 돌려준다.
+
+        ⚠ 템플릿은 계정 밖으로 안 보인다 — 왜 계정마다 만드는지는
+        `services/cloud/templates.py` 머리말에 있다.
+
+        ⚠ `--search_params` 한 줄이 저장된 `extra_filters` JSON 이 된다. 손으로 JSON 을
+        만들지 않는다 — 버리는 템플릿으로 두 번 예행해 글자까지 같은 것을 확인했다.
+        """
+        from app.services.cloud import templates as T
+
+        self._text(["create", "template",
+                    "--name", spec.name,
+                    "--image", T.IMAGE,
+                    "--image_tag", spec.tag,
+                    "--onstart-cmd", T.ONSTART,
+                    "--disk_space", str(T.DISK_GB),
+                    "--ssh", "--direct",
+                    "--desc", spec.desc,
+                    "--search_params", T.SEARCH_PARAMS])
+        # ⚠ **찍힌 문자열을 파싱하지 않는다.** 만들어졌는지는 목록에 물어본다 — 그게
+        #   어차피 다음 단계(`--template_hash`)가 믿는 자리이고, 출력 형식이 바뀌어도
+        #   안 깨진다.
+        for t in self.templates(refresh=True):
+            if t.name == spec.name:
+                return t.hash_id
+        raise RuntimeError(f"템플릿을 만들었지만 목록에 없습니다: {spec.name}")
 
     def create(self, offer_id: int, *, template_hash: str, disk_gb: float,
                label: str) -> Instance:

@@ -659,6 +659,41 @@ async def cloud_templates(refresh: bool = False):
     return {"templates": [asdict(t) for t in rows]}
 
 
+@router.post("/templates")
+async def create_cloud_templates():
+    """이 계정에 **없는** 학습 템플릿을 만든다. 만든 것과 이미 있던 것을 돌려준다.
+
+    ⚠ **템플릿은 계정 밖으로 안 보인다.** 다른 계정으로 들어가면 `piper-train full cu126`
+    이 아예 없다(사용자 보고 2026-10-07) — 지금까지는 그걸 화면이 "템플릿 없음" 빨간불로만
+    말하고 **어떻게 만드는지는 아무 데도 안 알려 줬다.**
+
+    ⚠ 있는 것은 다시 만들지 않는다. 같은 이름이 둘이면 사람이 어느 것을 고를지 알 수 없고
+    `hash_id` 도 갈린다.
+    """
+    from app.services.cloud import templates as T
+
+    prov = _provider()
+    try:
+        have = await asyncio.to_thread(prov.templates, refresh=True)
+    except Exception as exc:                                        # noqa: BLE001
+        raise _to_http(exc) from exc
+
+    todo = T.missing(have)
+    made, failed = [], []
+    for spec in todo:
+        try:
+            await asyncio.to_thread(prov.create_template, spec)
+            made.append(spec.name)
+        except Exception as exc:                                    # noqa: BLE001
+            # ⚠ 하나가 실패해도 나머지는 만든다 — 둘 중 하나만 있어도 학습은 걸 수 있다.
+            logger.error("템플릿 생성 실패(%s): %s", spec.name, exc)
+            failed.append({"name": spec.name, "error": str(exc)[:200]})
+
+    rows = await asyncio.to_thread(prov.templates, refresh=True)
+    return {"created": made, "existing": [s.name for s in T.SPECS if s not in todo],
+            "failed": failed, "templates": [asdict(t) for t in rows]}
+
+
 async def _ssh_registered(want: str | None) -> tuple[bool | None, str]:
     """계정에 **같은 지문**이 있나 — `(판정, 사유)`.
 

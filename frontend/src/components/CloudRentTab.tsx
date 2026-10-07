@@ -94,6 +94,7 @@ const num = (n: number, d = 0) => n.toLocaleString(undefined, { maximumFractionD
 
 export default function CloudRentTab() {
   const [ready, setReady] = useState<Readiness | null>(null)
+  const [makingTpl, setMakingTpl] = useState(false)
   const [offers, setOffers] = useState<Offer[]>([])
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
@@ -141,6 +142,22 @@ export default function CloudRentTab() {
       })
       .catch(() => setReady(null))
   }, [])
+
+  /** 이 계정에 없는 학습 템플릿을 만든다 — 있는 것은 그대로 둔다. */
+  const makeTemplates = async () => {
+    setMakingTpl(true)
+    try {
+      const r = await api.post<{ created: string[]; failed: { name: string; error: string }[] }>(
+        '/cloud/templates', {}, { timeoutMs: 120_000 })
+      // ⚠ 하나가 실패해도 나머지는 만들어진다 — 실패를 말하되 성공을 지우지 않는다.
+      setError(r.failed?.length
+        ? `템플릿 ${r.failed.length}개를 못 만들었습니다: ${r.failed[0].error}`
+        : null)
+      loadReadiness()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '템플릿을 만들지 못했습니다')
+    } finally { setMakingTpl(false) }
+  }
 
   const loadOffers = useCallback(async (refresh = false) => {
     setLoading(true)
@@ -275,6 +292,15 @@ export default function CloudRentTab() {
               <span key={k} className="text-amber-100/80">
                 <strong>{CHECK_LABEL[k] ?? k}</strong>
                 {c.detail ? ` — ${c.detail}` : ''}
+                {/* ⚠ **템플릿은 계정 밖으로 안 보인다.** 다른 Vast 계정으로 들어오면
+                    우리 템플릿이 아예 없는데, 지금까지는 "없음" 이라고만 하고 어떻게
+                    만드는지는 아무 데도 안 알려 줬다 (사용자 보고 2026-10-07). */}
+                {k === 'template' && (
+                  <button onClick={() => void makeTemplates()} disabled={makingTpl}
+                    className="ml-2 rounded bg-amber-700 px-2 py-0.5 text-xs text-white hover:bg-amber-600 disabled:opacity-50">
+                    {makingTpl ? '만드는 중…' : '이 계정에 만들기'}
+                  </button>
+                )}
               </span>
             ))}
             <a href="/settings" className="ml-auto shrink-0 underline text-amber-200 hover:text-amber-100">
