@@ -285,6 +285,8 @@ type ArmInfo = {
 type PortInfo = {
   iface: string; bus_info?: string; state?: string; can_state?: string | null
   bitrate?: number | null; rx_packets?: number | null; tx_packets?: number | null
+  /** true 호스트에 있음 / false 지금 없음(레지스트리에만 남은 포트) / null 모름 */
+  present?: boolean | null
   connected: boolean; ready: boolean
 }
 
@@ -892,14 +894,21 @@ export default function RobotsPage() {
           //    계속 세 장이었다. `xl`(1280px)로 내려 배율이 걸려도 넷이 되게 한다.
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
             {ports.map((port) => {
-              const isUp = port.state === 'UP'
+              // ⚠ 레지스트리는 한 번 본 포트를 잊지 않는다 — 어댑터가 USB 에서 빠져도 카드가
+              //    남는다. `present === false` 는 **지금 호스트에 없다**는 사실이라 UP/DOWN·
+              //    통계를 지어내지 않고 "장치 없음"으로 그린다. (null=모름은 예전 그대로)
+              const absent = port.present === false
+              const isUp = !absent && port.state === 'UP'
               return (
                 <div key={port.iface}
                      className={`rounded border p-2.5 space-y-1.5 ${
-                       port.connected ? 'border-green-500/40 bg-green-500/5'
-                                      : 'border-neutral-700'}`}>
+                       absent ? 'border-neutral-800 bg-neutral-900/40 opacity-70'
+                       : port.connected ? 'border-green-500/40 bg-green-500/5'
+                                        : 'border-neutral-700'}`}>
                   <div className="flex items-center gap-2">
-                    {renamingIface === port.iface ? (
+                    {absent ? (
+                      <span className="font-mono text-sm text-neutral-400">{port.iface}</span>
+                    ) : renamingIface === port.iface ? (
                       <input type="text" value={renameValue} autoFocus
                         onChange={(e) => setRenameValue(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter') handleRename(port.iface); if (e.key === 'Escape') setRenamingIface(null) }}
@@ -911,21 +920,31 @@ export default function RobotsPage() {
                         title="클릭하여 이름 변경">{port.iface}</span>
                     )}
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                      isUp ? 'bg-green-600/25 text-green-400' : 'bg-red-600/25 text-red-400'}`}>
-                      {port.state ?? '?'}
+                      absent ? 'bg-neutral-700/60 text-neutral-300'
+                      : isUp ? 'bg-green-600/25 text-green-400' : 'bg-red-600/25 text-red-400'}`}>
+                      {absent ? '장치 없음' : (port.state ?? '?')}
                     </span>
                     {port.connected && <span className="text-[10px] text-green-400">연결됨</span>}
                   </div>
                   {/* ⚠ 카운터는 인터페이스를 다시 열면 0 이 된다 — 절대값 비교 금물,
                       "지금 흐르고 있나"의 감으로만 (백엔드 주석과 같은 규칙) */}
-                  <p className="text-[11px] text-neutral-400 tabular-nums">
-                    RX {port.rx_packets ?? '—'} · TX {port.tx_packets ?? '—'}
-                    {port.bitrate ? ` · ${(port.bitrate / 1e6).toFixed(0)}M bps` : ''}
-                    {port.can_state && port.can_state !== 'ERROR-ACTIVE' && (
-                      <span className="ml-1 text-amber-400">{port.can_state}</span>
-                    )}
+                  {absent ? (
+                    <p className="text-[11px] text-neutral-400">
+                      USB 에서 보이지 않습니다 — 케이블·허브를 확인하세요
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-neutral-400 tabular-nums">
+                      RX {port.rx_packets ?? '—'} · TX {port.tx_packets ?? '—'}
+                      {port.bitrate ? ` · ${(port.bitrate / 1e6).toFixed(0)}M bps` : ''}
+                      {port.can_state && port.can_state !== 'ERROR-ACTIVE' && (
+                        <span className="ml-1 text-amber-400">{port.can_state}</span>
+                      )}
+                    </p>
+                  )}
+                  <p className="truncate text-[10px] text-neutral-600">
+                    {absent ? (port.bus_info ? `마지막 확인: ${port.bus_info}` : '')
+                            : (port.bus_info || '')}
                   </p>
-                  <p className="truncate text-[10px] text-neutral-600">{port.bus_info || ''}</p>
                   <div className="flex gap-1">
                     {isUp ? (
                       <button onClick={() => handleCanDown(port.iface)} disabled={port.connected}
@@ -934,14 +953,16 @@ export default function RobotsPage() {
                         DOWN
                       </button>
                     ) : (
-                      <button onClick={() => handleCanUp(port.iface)}
-                        className="px-2 py-1 text-xs rounded bg-yellow-600 hover:bg-yellow-500 text-white">
+                      <button onClick={() => handleCanUp(port.iface)} disabled={absent}
+                        title={absent ? '어댑터가 호스트에서 보이지 않아 올릴 수 없습니다' : undefined}
+                        className="px-2 py-1 text-xs rounded bg-yellow-600 hover:bg-yellow-500 text-white disabled:opacity-40">
                         UP
                       </button>
                     )}
                     <button onClick={() => handleAttach(port.iface)}
                       disabled={!isUp || port.connected || connectingIface === port.iface}
-                      title={!isUp ? '포트가 UP 이어야 연결할 수 있습니다'
+                      title={absent ? '어댑터가 호스트에서 보이지 않습니다'
+                        : !isUp ? '포트가 UP 이어야 연결할 수 있습니다'
                         : port.connected ? '이미 연결됨'
                         : '연결 + 슬레이브 설정 + 토크 OFF + 등록까지 한 번에'}
                       className="flex-1 px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">

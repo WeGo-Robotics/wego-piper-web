@@ -1010,6 +1010,9 @@ async def list_ports():
     #   하므로 지역 `bus_stats` 폴백을 남긴다.
     rows = await asyncio.to_thread(robot_manager_mod._call, "bus_status", 1)
     by_iface = {r.get("iface"): r for r in rows} if isinstance(rows, list) else {}
+    # robotd 가 **답했다** = 호스트의 `ip link show type can` 목록을 받았다. 그 목록에 없는
+    # 포트는 지금 호스트에 없는 것이다. 답이 없으면(None) 모르는 것이지 없는 게 아니다.
+    robotd_answered = isinstance(rows, list)
 
     out = []
     sim_ports = []
@@ -1022,14 +1025,29 @@ async def list_ports():
             sim_ports.append({"iface": iface, "scene": "piper_scene",
                               "connected": bool(arm.connected), "ready": bool(arm.ready)})
             continue
-        stats = by_iface.get(iface) or await asyncio.to_thread(bus_stats, iface)
+        # ⚠ **레지스트리(`arm`)는 한 번 본 포트를 잊지 않는다** — 어댑터가 USB 에서 빠져도
+        #   카드가 남는다. 이때 `arm.state` 폴백을 쓰면 **마지막 스캔 때의 UP/DOWN 이 지금
+        #   링크인 것처럼** 나가, 어댑터가 없는데 카드는 살아 있는 것처럼 읽힌다 (실기
+        #   2026-10-08: 어댑터 4개가 16:56 에 빠졌는데 can1·can2 가 UP 으로 보였다).
+        #   present=False 면 폴백을 쓰지 않고 상태를 비운다 — 화면이 "장치 없음" 으로 그린다.
+        absent = robotd_answered and iface not in by_iface
+        if absent:
+            stats = {}
+        else:
+            stats = by_iface.get(iface) or await asyncio.to_thread(bus_stats, iface)
+        # present: True 호스트에 있음 / False 없음 / None 모름(robotd 도 지역 조회도 못 봄)
+        present = (False if absent
+                   else True if iface in by_iface or stats.get("link")
+                   else None)
         out.append({
             "iface": iface,
             "bus_info": arm.bus_info,
+            "present": present,
             # UP/DOWN 은 **지금 링크 상태**(ip 가 방금 말한 것), can_state 는
             # 컨트롤러 상태(ERROR-ACTIVE 등) — 다른 층의 사실이라 둘 다 낸다.
             # 스캔 캐시(arm.state)는 폴백이다: UP/DOWN 버튼을 누른 순간 낡는다.
-            "state": stats.get("link") or arm.state,
+            # 없는 포트(present=False)는 폴백도 안 쓴다 — 위 주석.
+            "state": None if absent else (stats.get("link") or arm.state),
             "can_state": stats.get("state"),
             "bitrate": stats.get("bitrate"),
             "rx_packets": stats.get("rx_packets"),

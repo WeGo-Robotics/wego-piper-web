@@ -138,3 +138,65 @@ def test_it_reads_a_real_interface_when_present(iface):
         pytest.skip(f"{iface} 없음")
     got = error_counters(iface)
     assert set(got) == set(ERROR_COUNTERS), f"{iface} 파싱 실패: {got}"
+
+
+# ── 포트 카드: 어댑터가 빠진 포트 ──
+
+@pytest.fixture
+def ports_client(monkeypatch):
+    """`/robots/ports` 를 robotd 응답만 바꿔 가며 부르는 틀. 시리얼·시뮬 쪽은 비운다."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import robot_manager as rm
+    from app.services import so101_client as so
+
+    arms = {i: rm.ArmInfo(iface=i, bus_info=b, state=s)
+            for i, b, s in (("can0", "3-6.4.1:1.0", "DOWN"), ("can1", "3-11.2:1.0", "UP"))}
+    monkeypatch.setattr(rm.robot_manager, "arms", arms)
+    monkeypatch.setattr(rm.robot_manager, "sync_sim_arms", lambda: None)
+    monkeypatch.setattr(so.so101_client, "scan", lambda: [])
+    with TestClient(app) as c:
+        yield c, rm
+
+
+def test_a_port_robotd_no_longer_sees_is_absent_not_up(ports_client, monkeypatch):
+    """⚠ 실기(2026-10-08): CAN 어댑터 4개가 16:56 에 USB 에서 빠졌는데 포트 카드는 can1·can2 를
+    UP 으로 계속 보여 줬다. 게이트웨이 레지스트리는 한 번 본 포트를 잊지 않고, `/ports` 가
+    인터페이스가 없을 때 마지막 스캔의 `arm.state` 로 폴백했기 때문이다.
+
+    robotd 가 **답했는데** 목록에 없으면 호스트에 없는 것이다 — 상태를 비우고 present=False."""
+    client, rm = ports_client
+    monkeypatch.setattr(rm, "_call", lambda m, *a, **k: [] if m == "bus_status" else None)
+
+    ports = {p["iface"]: p for p in client.get("/api/robots/ports").json()["ports"]}
+    for iface in ("can0", "can1"):
+        assert ports[iface]["present"] is False
+        assert ports[iface]["state"] is None, "없는 포트가 캐시된 UP/DOWN 을 내보낸다"
+    assert ports["can1"]["bus_info"] == "3-11.2:1.0", "마지막으로 본 위치는 남겨야 한다"
+
+
+def test_a_port_robotd_sees_keeps_its_live_state(ports_client, monkeypatch):
+    client, rm = ports_client
+    rows = [{"iface": "can1", "link": "DOWN", "state": None, "bitrate": None,
+             "rx_packets": 0, "tx_packets": 0}]
+    monkeypatch.setattr(rm, "_call", lambda m, *a, **k: rows if m == "bus_status" else None)
+
+    ports = {p["iface"]: p for p in client.get("/api/robots/ports").json()["ports"]}
+    assert ports["can1"]["present"] is True
+    assert ports["can1"]["state"] == "DOWN", "캐시(UP)가 아니라 지금 링크를 말해야 한다"
+    assert ports["can0"]["present"] is False
+
+
+def test_a_silent_robotd_means_unknown_not_absent(ports_client, monkeypatch):
+    """⚠ robotd 가 죽었거나 늦은 것은 어댑터가 없는 것과 다르다 — 모를 때 "장치 없음" 이라고
+    하면 멀쩡한 포트를 지운 것처럼 읽힌다. 예전 동작(캐시 폴백)을 그대로 둔다."""
+    client, rm = ports_client
+    from piper_robot import can as pcan
+
+    monkeypatch.setattr(rm, "_call", lambda m, *a, **k: None)
+    monkeypatch.setattr(pcan, "bus_stats", lambda iface: {"link": None})
+
+    ports = {p["iface"]: p for p in client.get("/api/robots/ports").json()["ports"]}
+    assert ports["can1"]["present"] is None
+    assert ports["can1"]["state"] == "UP", "모르는데 상태를 지웠다"
