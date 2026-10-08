@@ -24,6 +24,7 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setattr(G, "PATH", tmp_path / "gripper.json")
     monkeypatch.setattr(G, "_cache", None)
     monkeypatch.setattr(G, "_strokes", {})
+    monkeypatch.setattr(G, "_ends", {})
     return G
 
 
@@ -148,6 +149,11 @@ def gw(monkeypatch):
         if m == "set_gripper_stroke":
             return {"iface": a[0], "stroke_mm": a[1], "options_mm": [70, 100],
                     "default_mm": 70, "supported": True}
+        if m in ("capture_gripper_end", "clear_gripper_end"):
+            return {"iface": a[0], "stroke_mm": 100, "options_mm": [70, 100], "default_mm": 70,
+                    "end_um": 82860 if m == "capture_gripper_end" else None,
+                    "raw_max_um": 82860 if m == "capture_gripper_end" else 98000,
+                    "table_raw_max_um": 98000, "supported": True}
         return None
 
     monkeypatch.setattr(R, "_call", fake)
@@ -214,3 +220,181 @@ def test_the_selector_sits_outside_the_role_branch():
     after = head[1].split("arm.role === 'follower'", 1)[0]
     assert "{/*" not in after.split("/>", 1)[0], "선택 UI 가 역할 분기 안으로 들어갔다"
     assert src.index("<GripperStrokeSelect") < src.index("arm.role === 'follower' || arm.role === 'unknown'")
+
+
+# ── 열림 끝 맞추기 — 리더 핸들은 그리퍼 모델이 아니다 ──
+#
+# 실기(2026-10-08): 리더를 끝까지 열어도 지령(0x159)이 최대 82860µm 이었고 팔로워(대형)는 99500µm
+# 까지 열릴 수 있었다. 비율로 매핑하니 팔로워가 82% 에서 멈췄다 — 리더의 끝을 재서 저장한다.
+
+
+def test_a_measured_end_beats_the_table_and_survives_a_restart(store):
+    assert store.raw_max_um("can1") == 68000 and store.end_um("can1") is None
+    assert store.set_end("can1", 82860.4) == 82860
+    assert store.raw_max_um("can1") == 82860 and store.raw_max_um("can0") == 68000, "다른 팔까지 바뀌었다"
+    store._cache = None                                   # robotd 재시작
+    assert store.end_um("can1") == 82860 and store.raw_max_um("can1") == 82860
+
+
+def test_the_leader_full_open_becomes_one_hundred_once_its_end_is_saved(store):
+    """이 기능의 이유: 저장 전엔 리더 끝(82860)이 100 이 못 되고, 저장하면 100 이다."""
+    from piper_robot.joints import normalize_joint
+
+    store.set_stroke("can1", 100)
+    before = normalize_joint("gripper", 82860, store.raw_max_um("can1"))
+    assert 80 < before < 90, f"저장 전 리더 끝이 {before}"       # 98000 기준 → 84.5
+    store.set_end("can1", 82860)
+    assert normalize_joint("gripper", 82860, store.raw_max_um("can1")) == 100.0
+
+
+@pytest.mark.parametrize("bad", [0, 5000, 19999, 120001, 1e9, -1, "abc", None])
+def test_an_end_outside_the_range_is_refused_not_clamped(store, bad):
+    """⚠ 덜 열린 채 눌렀을 때 가까운 값으로 맞춰 저장하면 그 팔의 "100" 이 조용히 틀린 자리가 된다 —
+    상한이 작으면 작은 움직임이 100 이 되어 팔로워가 튄다."""
+    with pytest.raises(ValueError):
+        store.set_end("can1", bad)
+    assert store.end_um("can1") is None, "거절했는데 저장됐다"
+
+
+def test_changing_the_stroke_drops_the_measured_end(store):
+    """다른 그리퍼에서 잰 끝이 새 그리퍼에 남으면 안 된다."""
+    store.set_end("can1", 82860)
+    store.set_stroke("can1", 70)
+    assert store.end_um("can1") is None and store.raw_max_um("can1") == 68000
+    store._cache = None
+    assert store.end_um("can1") is None, "지웠는데 다시 읽혔다"
+
+
+def test_clearing_returns_to_the_table_and_other_arms_keep_theirs(store):
+    store.set_end("can0", 90000)
+    store.set_end("can1", 82860)
+    store.clear_end("can1")
+    assert store.end_um("can1") is None and store.end_um("can0") == 90000
+    store.clear_end("can9")                                # 없는 팔을 지워도 조용하다
+    store._cache = None
+    assert store.end_um("can0") == 90000 and store.end_um("can1") is None
+
+
+def test_the_end_is_in_the_same_file_and_no_writer_erases_the_others(store):
+    """⚠ 힘·행정·끝은 한 파일이다 — 어느 하나를 저장해도 나머지가 살아야 한다."""
+    store.set_end("can1", 82860)
+    store.set_effort("can1", 2.0)
+    store.set_stroke("can0", 100)
+    store._cache = None
+    assert store.end_um("can1") == 82860 and store.effort_nm("can1") == 2.0
+    assert store.stroke_mm("can0") == 100
+
+
+def test_a_hand_edited_end_outside_the_range_is_dropped(store):
+    store.PATH.write_text('{"ends": {"can0": 5, "can1": 82860, "can2": "x"}}')
+    assert store.end_um("can0") is None and store.end_um("can2") is None
+    assert store.end_um("can1") == 82860
+
+
+def test_the_dict_the_screen_reads_names_the_end_and_the_table_it_would_fall_back_to(store):
+    d = store.stroke_dict("can1")
+    assert d["end_um"] is None and d["raw_max_um"] == d["table_raw_max_um"] == 68000
+    store.set_end("can1", 82860)
+    d = store.stroke_dict("can1")
+    assert d["end_um"] == 82860 and d["raw_max_um"] == 82860 and d["table_raw_max_um"] == 68000
+
+
+def test_the_capture_reads_the_same_source_as_the_normalized_state():
+    """⚠ 화면이 보는 값과 저장되는 값이 다른 신호면 "끝까지 열었는데 100 이 안 된다" 가 된다.
+    상태 읽기와 그리퍼 raw 읽기는 `_raw_state_locked` 한 곳을 탄다."""
+    arm = (REPO / "robot" / "piper_robot" / "arm.py").read_text()
+    assert arm.count("self._raw_state_locked()") == 2, "읽기 경로가 둘로 갈렸다"
+    assert "def read_gripper_raw" in arm
+    norm = arm.split("def read_joints_normalized", 1)[1].split("\n    def ", 1)[0]
+    assert "normalize_all(raw, gripper_store.raw_max_um(self.iface))" in norm
+
+
+def test_robotd_exposes_the_end_verbs_for_driven_arms_only():
+    src = (REPO / "daemons" / "robotd.py").read_text()
+    methods = src.split("_METHODS = {", 1)[1].split("}", 1)[0]
+    assert '"capture_gripper_end"' in methods and '"clear_gripper_end"' in methods
+    for verb in ("capture_gripper_end", "clear_gripper_end"):
+        body = src.split(f"def {verb}", 1)[1].split("\n    def ", 1)[0]
+        assert "not in self.arms" in body or "self.arms.get(iface)" in body, f"{verb}: 모르는 팔도 지원한다고 답한다"
+    cap = src.split("def capture_gripper_end", 1)[1].split("\n    def ", 1)[0]
+    assert "arm.read_gripper_raw()" in cap, "열림을 상태 읽기와 다른 곳에서 읽는다"
+
+
+@pytest.fixture
+def gw_arms(gw, monkeypatch):
+    """게이트웨이 등록부에 리더(can1)·팔로워(can0)를 둔다."""
+    from app.services import robot_manager as R
+
+    arms = {"can0": R.ArmInfo(iface="can0", role="follower"),
+            "can1": R.ArmInfo(iface="can1", role="leader")}
+    monkeypatch.setattr(R.robot_manager, "arms", arms)
+    return gw
+
+
+def test_only_a_leader_can_have_its_end_measured(gw_arms, monkeypatch):
+    """⚠ 팔로워의 "100" 이 측정한 물리 끝이면 완전히 열 때마다 스톱을 힘 설정으로 누른다."""
+    from app.services import exclusivity as X
+
+    c, sent = gw_arms
+    monkeypatch.setattr(X, "is_running", lambda a: False)
+    r = c.post("/api/robots/gripper-stroke/end", json={"iface": "can0"})
+    assert r.status_code == 400 and "리더" in r.json()["detail"]
+    assert not [m for m, _ in sent if m == "capture_gripper_end"], "거절했는데 robotd 에 보냈다"
+    r = c.post("/api/robots/gripper-stroke/end", json={"iface": "can9"})
+    assert r.status_code == 400
+
+
+def test_a_leader_capture_goes_to_robotd(gw_arms, monkeypatch):
+    from app.services import exclusivity as X
+
+    c, sent = gw_arms
+    monkeypatch.setattr(X, "is_running", lambda a: False)
+    r = c.post("/api/robots/gripper-stroke/end", json={"iface": "can1"})
+    assert r.status_code == 200, r.text
+    assert ("capture_gripper_end", ("can1",)) in sent
+
+
+def test_clearing_is_allowed_for_any_arm_so_the_way_back_is_never_blocked(gw_arms, monkeypatch):
+    from app.services import exclusivity as X
+
+    c, sent = gw_arms
+    monkeypatch.setattr(X, "is_running", lambda a: False)
+    for iface in ("can0", "can1"):
+        assert c.post("/api/robots/gripper-stroke/end",
+                      json={"iface": iface, "clear": True}).status_code == 200
+    assert [m for m, _ in sent].count("clear_gripper_end") == 2
+
+
+@pytest.mark.parametrize("busy", ["INFERENCE", "RECORDING", "TELEOP"])
+def test_the_end_cannot_move_while_the_arm_moves(gw_arms, monkeypatch, busy):
+    from app.services import exclusivity as X
+
+    c, sent = gw_arms
+    monkeypatch.setattr(X, "is_running", lambda a: a == getattr(X.Activity, busy))
+    for body in ({"iface": "can1"}, {"iface": "can1", "clear": True}):
+        assert c.post("/api/robots/gripper-stroke/end", json=body).status_code == 409
+    assert not [m for m, _ in sent if m.endswith("_gripper_end")], "거절했는데 robotd 에 보냈다"
+
+
+def test_a_refusal_from_robotd_reaches_the_screen_as_a_400(monkeypatch):
+    """덜 열린 채 눌렀다면 robotd 가 사유를 말하고, 화면은 그걸 그대로 보여 준다."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import exclusivity as X
+    from app.services import robot_manager as R
+
+    monkeypatch.setattr(R.robot_manager, "arms", {"can1": R.ArmInfo(iface="can1", role="leader")})
+    monkeypatch.setattr(X, "is_running", lambda a: False)
+    monkeypatch.setattr(R, "_call", lambda m, *a, **k: {
+        "iface": a[0], "supported": True, "error": "지금 열림이 3.0mm 입니다 — 끝까지 연 상태에서 눌러 주세요"})
+    with TestClient(app) as c:
+        r = c.post("/api/robots/gripper-stroke/end", json={"iface": "can1"})
+    assert r.status_code == 400 and "끝까지" in r.json()["detail"]
+
+
+def test_the_screen_shows_the_end_only_on_the_leader():
+    comp = (REPO / "frontend" / "src" / "components" / "GripperStrokeSelect.tsx").read_text()
+    assert "role === 'leader'" in comp and "/robots/gripper-stroke/end" in comp
+    page = (REPO / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
+    assert "<GripperStrokeSelect iface={arm.iface} role={arm.role} />" in page

@@ -120,4 +120,9 @@ def test_a_fresher_command_still_wins():
 def test_both_readers_use_the_same_freshness_rule():
     """같은 사실을 두 함수가 다르게 답하면 어느 쪽이 맞는지 알 길이 없다."""
     for fn in (Arm.read_joints_raw, Arm.read_joints_normalized):
-        assert "_CTRL_FRESHER_S" in inspect.getsource(fn), f"{fn.__name__} 이 나이를 안 본다"
+        src = inspect.getsource(fn)
+        # 정규화 읽기는 규칙을 `_raw_state_locked` 로 옮겼다(그리퍼 raw 읽기와 소스를 **하나로**
+        # 하려고) — 위임했다면 규칙이 거기 있어야 한다
+        if "_raw_state_locked" in src:
+            src += inspect.getsource(Arm._raw_state_locked)
+        assert "_CTRL_FRESHER_S" in src, f"{fn.__name__} 이 나이를 안 본다"

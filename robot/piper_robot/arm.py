@@ -311,35 +311,54 @@ class Arm:
     # 피드백이 항상 이보다 신선하므로 이 분기를 타지 않는다.
     _CTRL_FRESHER_S = 0.5
 
+    def _raw_state_locked(self) -> dict[str, float]:
+        """관절+그리퍼 raw — **락을 쥔 채** 부른다. 피드백이 기본이고, 지령이 더 신선하면 지령(마스터).
+
+        ⚠ 읽기 경로가 **하나**여야 한다. 정규화 읽기와 "지금 그리퍼가 얼마나 열렸나"(열림 끝
+        맞추기)가 소스를 따로 고르면, 화면이 보는 값과 저장되는 값이 다른 신호가 된다."""
+        jm = self._piper.GetArmJointMsgs()
+        gm = self._piper.GetArmGripperMsgs()
+        j = jm.joint_state
+        gripper = float(gm.gripper_state.grippers_angle)
+        jc = self._piper.GetArmJointCtrl()
+        if jc.time_stamp - jm.time_stamp > self._CTRL_FRESHER_S:
+            j = jc.joint_ctrl
+            gc = self._piper.GetArmGripperCtrl()
+            if gc.time_stamp - gm.time_stamp > self._CTRL_FRESHER_S:
+                gripper = float(gc.gripper_ctrl.grippers_angle)
+        return {
+            "joint1": float(j.joint_1), "joint2": float(j.joint_2),
+            "joint3": float(j.joint_3), "joint4": float(j.joint_4),
+            "joint5": float(j.joint_5), "joint6": float(j.joint_6),
+            "gripper": gripper,
+        }
+
     def read_joints_normalized(self) -> dict[str, float] | None:
         """정규화된 관절 위치 읽기 (joint1~6 + gripper)."""
         with self._lock:
             if not self._piper:
                 return None
             try:
-                jm = self._piper.GetArmJointMsgs()
-                gm = self._piper.GetArmGripperMsgs()
-                j = jm.joint_state
-                gripper = float(gm.gripper_state.grippers_angle)
-                jc = self._piper.GetArmJointCtrl()
-                if jc.time_stamp - jm.time_stamp > self._CTRL_FRESHER_S:
-                    j = jc.joint_ctrl
-                    gc = self._piper.GetArmGripperCtrl()
-                    if gc.time_stamp - gm.time_stamp > self._CTRL_FRESHER_S:
-                        gripper = float(gc.gripper_ctrl.grippers_angle)
-                raw = {
-                    "joint1": float(j.joint_1), "joint2": float(j.joint_2),
-                    "joint3": float(j.joint_3), "joint4": float(j.joint_4),
-                    "joint5": float(j.joint_5), "joint6": float(j.joint_6),
-                    "gripper": gripper,
-                }
-                # 그리퍼 상한은 **팔마다** 다르다 (소형 70 / 대형 100) — gripper_store.
-                # 순환 import 라 지역 import (arm ← gripper_store 가 CONFIG_DIR 을 가져간다)
+                raw = self._raw_state_locked()
+                # 그리퍼 상한은 **팔마다** 다르다 (소형 70 / 대형 100 / 리더 핸들은 직접 맞춘 끝)
+                # — gripper_store. 순환 import 라 지역 import (arm ← gripper_store 가
+                # CONFIG_DIR 을 가져간다)
                 from piper_robot import gripper_store
 
                 return normalize_all(raw, gripper_store.raw_max_um(self.iface))
             except Exception as e:
                 logger.debug("read_joints_normalized error: %s", e)
+                return None
+
+    def read_gripper_raw(self) -> float | None:
+        """지금 그리퍼 raw(µm) — 정규화 **전**. 열림 끝 맞추기가 쓴다."""
+        with self._lock:
+            if not self._piper:
+                return None
+            try:
+                return self._raw_state_locked()["gripper"]
+            except Exception as e:
+                logger.debug("read_gripper_raw error: %s", e)
                 return None
 
     def go_parking(self, target: dict | None = None) -> bool:

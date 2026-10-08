@@ -666,6 +666,21 @@ async def get_gripper_stroke(iface: str):
     return out
 
 
+def _refuse_while_the_arm_moves(what: str) -> None:
+    """그리퍼 변환 상한을 바꾸는 조작은 팔을 움직이는 활동 중에 거절한다.
+
+    ⚠ 바꾸는 순간 정규화 값의 뜻이 달라진다 — 추론·텔레옵 도중이면 그리퍼가 튀고, 녹화 중이면 한
+      데이터셋 안에서 같은 값의 뜻이 갈린다 (그 차이는 프레임 어디에도 안 남는다)."""
+    from app.services import exclusivity as X
+
+    movers = [a for a in (X.Activity.INFERENCE, X.Activity.RECORDING, X.Activity.TELEOP)
+              if X.is_running(a)]
+    if movers:
+        names = " · ".join(X.LABELS[a] for a in movers)
+        raise HTTPException(409, f"{names} 실행 중에는 {what}을(를) 바꿀 수 없습니다 — "
+                                 f"같은 값이 다른 그리퍼 폭을 뜻하게 됩니다. 먼저 멈추세요.")
+
+
 @router.post("/gripper-stroke")
 async def set_gripper_stroke(body: GripperStrokeRequest):
     """그리퍼 행정을 고른다. **다음 읽기·명령부터** 그 상한으로 raw 를 변환한다.
@@ -678,18 +693,47 @@ async def set_gripper_stroke(body: GripperStrokeRequest):
 
     from piper_robot.joints import GRIPPER_STROKES_MM
 
-    from app.services import exclusivity as X
-
     if body.stroke_mm not in GRIPPER_STROKES_MM:
         raise HTTPException(400, f"행정은 {list(GRIPPER_STROKES_MM)} mm 중 하나여야 합니다")
-    movers = [a for a in (X.Activity.INFERENCE, X.Activity.RECORDING, X.Activity.TELEOP)
-              if X.is_running(a)]
-    if movers:
-        names = " · ".join(X.LABELS[a] for a in movers)
-        raise HTTPException(409, f"{names} 실행 중에는 그리퍼 행정을 바꿀 수 없습니다 — "
-                                 f"같은 값이 다른 그리퍼 폭을 뜻하게 됩니다. 먼저 멈추세요.")
+    _refuse_while_the_arm_moves("그리퍼 행정")
     out = await asyncio.to_thread(robot_manager_mod._call, "set_gripper_stroke",
                                   body.iface, int(body.stroke_mm))
+    if out is None:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    if out.get("supported") is False:
+        raise HTTPException(404, "이 팔은 그리퍼 행정 설정을 지원하지 않습니다")
+    if out.get("error"):
+        raise HTTPException(400, out["error"])
+    return out
+
+
+class GripperEndRequest(BaseModel):
+    iface: str
+    clear: bool = False
+
+
+@router.post("/gripper-stroke/end")
+async def set_gripper_end(body: GripperEndRequest):
+    """**리더** 그리퍼의 열림 끝을 맞춘다 — 끝까지 연 채로 부르면 그 값이 이 팔의 "100" 이 된다.
+
+    70/100 은 달린 **그리퍼 모델**의 행정이다. 리더는 그리퍼가 아니라 티칭 핸들이고 자기 끝에서
+    멈춘다(실기: 리더 지령이 최대 82860µm, 팔로워는 99500µm 까지 열렸다) — 비율로 매핑하니
+    팔로워가 82% 에서 멈췄다. 리더의 끝을 재서 저장하면 둘 다 끝까지 열린다.
+
+    ⚠ **팔로워는 거절한다.** 팔로워의 "100" 이 측정한 물리 끝이면 완전히 열 때마다 스톱을 힘 설정으로
+      누른다 — 팔로워는 행정 선택(여유 2mm)을 쓴다. `clear` 는 역할을 안 따진다(되돌리는 길을
+      막지 않는다). 행정을 바꾸면 이 값은 같이 버려진다.
+    """
+    import asyncio
+
+    if not body.clear:
+        arm = robot_manager.arms.get(body.iface)
+        if arm is None or arm.role != "leader":
+            raise HTTPException(400, "열림 끝 맞추기는 리더 팔에서만 합니다 — 팔로워는 행정(70/100mm)을 "
+                                     "고르세요. 팔로워의 끝에서 저장하면 매번 스톱을 누르게 됩니다")
+    _refuse_while_the_arm_moves("그리퍼 열림 끝")
+    verb = "clear_gripper_end" if body.clear else "capture_gripper_end"
+    out = await asyncio.to_thread(robot_manager_mod._call, verb, body.iface)
     if out is None:
         raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
     if out.get("supported") is False:

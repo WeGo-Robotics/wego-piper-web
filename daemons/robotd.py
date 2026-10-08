@@ -73,7 +73,7 @@ _METHODS = {
     "load_status", "load_status_all", "load_history",
     "get_load_limits", "set_load_limits",
     "get_gripper_effort", "set_gripper_effort",
-    "get_gripper_stroke", "set_gripper_stroke",
+    "get_gripper_stroke", "set_gripper_stroke", "capture_gripper_end", "clear_gripper_end",
     "init_interface", "down_interface", "check_active", "unhealthy_reason", "sniff_ids",
     "rename_interface", "recover_usb", "usb_info",
     "lost",
@@ -170,6 +170,35 @@ class _Serving(RobotHub):
             gripper_store.set_stroke(iface, mm)
         except ValueError as exc:
             return {**gripper_store.stroke_dict(iface), "supported": True, "error": str(exc)}
+        return {**gripper_store.stroke_dict(iface), "supported": True}
+
+    def capture_gripper_end(self, iface: str) -> dict:
+        """**지금 열림**을 이 팔의 끝(raw 상한)으로 저장한다 — 리더 핸들처럼 모델 표로는 못 맞추는 끝.
+
+        읽는 곳은 정규화 읽기와 **같은 소스**(`Arm.read_gripper_raw`)다. 어느 팔에 허용할지(리더만)
+        는 게이트웨이가 안다 — 데몬은 역할을 모른다."""
+        from piper_robot import gripper_store
+
+        arm = self.arms.get(iface)
+        if arm is None:
+            return {"iface": iface, "supported": False}
+        raw = arm.read_gripper_raw()
+        if raw is None:
+            return {**gripper_store.stroke_dict(iface), "supported": True,
+                    "error": "그리퍼 값을 읽지 못했습니다 — 팔이 연결돼 있나요?"}
+        try:
+            gripper_store.set_end(iface, raw)
+        except ValueError as exc:
+            return {**gripper_store.stroke_dict(iface), "supported": True, "error": str(exc)}
+        return {**gripper_store.stroke_dict(iface), "supported": True}
+
+    def clear_gripper_end(self, iface: str) -> dict:
+        """직접 맞춘 열림 끝을 버린다 — 행정(70/100) 표 값으로 돌아간다."""
+        from piper_robot import gripper_store
+
+        if iface not in self.arms:
+            return {"iface": iface, "supported": False}
+        gripper_store.clear_end(iface)
         return {**gripper_store.stroke_dict(iface), "supported": True}
 
     def get_load_limits(self, iface: str) -> dict:

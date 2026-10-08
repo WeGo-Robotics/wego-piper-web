@@ -83,7 +83,7 @@ def test_the_list_covers_every_mutating_post():
         "/gripper-effort",
         # 그리퍼 행정(70/100mm) — 힘과 같은 파일(`gripper.json`)·같은 이유다. 팔 **하드웨어**
         # 의 사실(어떤 그리퍼가 달렸나)이라 게이트웨이 세션이 아니라 robotd 가 든다.
-        "/gripper-stroke",
+        "/gripper-stroke", "/gripper-stroke/end",
         # 연결+슬레이브+토크OFF+등록 복합 — register 를 거치며 **세션을 저장한다**
         # (save_session 호출 포함). 세션 반영이 목적인 라우트다.
         "/attach",

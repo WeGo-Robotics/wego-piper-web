@@ -395,7 +395,7 @@ function ArmDetailModal({ arm, leader, onConfig, onClose }: {
               {arm.role === 'leader' ? 'Leader 설정' : 'Follower 설정'}
             </h4>
             {/* 리더·팔로워 **둘 다** 그리퍼가 달린다 — 역할 분기 밖에 둔다 */}
-            <GripperStrokeSelect iface={arm.iface} />
+            <GripperStrokeSelect iface={arm.iface} role={arm.role} />
             {arm.role === 'follower' || arm.role === 'unknown' ? (
               <div className="space-y-2">
                 <label className="flex items-center gap-2 text-xs">
