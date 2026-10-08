@@ -87,13 +87,23 @@ def test_the_same_normalized_value_means_a_wider_opening_on_the_large_gripper():
     assert normalize_joint("gripper", small) == 100.0
 
 
+def test_the_large_cap_stays_inside_the_measured_end_stop():
+    """⚠ 실기(2026-10-08): 대형 팔로워가 raw 99500 까지 열렸다. 상한이 그 너머면 "100" 이 스톱을
+    힘 설정으로 누르는 명령이 된다 — 소형이 공칭 70 에 68000 으로 2mm 를 남기는 것과 같은 여유를
+    지킨다. 더 열려면 **다시 재서** 이 숫자와 같이 고친다."""
+    from piper_robot.joints import GRIPPER_RAW_MAX
+
+    assert GRIPPER_RAW_MAX[100] <= 99500 - 1500, "대형 상한이 실측 끝에 너무 가깝거나 너머다"
+    assert GRIPPER_RAW_MAX[100] > GRIPPER_RAW_MAX[70], "대형이 소형보다 안 열린다"
+
+
 def test_the_range_only_changes_the_gripper_never_a_joint():
     """⚠ `gripper_raw_max` 가 관절에 새면 팔이 엉뚱한 곳으로 간다 — 인자는 그리퍼 전용이다."""
     from piper_robot.joints import denormalize_all, normalize_all
 
     norm = {"joint1": 30.0, "joint5": -20.0, "gripper": 40.0}
     base = denormalize_all(norm)
-    big = denormalize_all(norm, 100000)
+    big = denormalize_all(norm, 100000)  # 임의의 다른 상한 — 표 값과 무관한 검사
     assert {k: v for k, v in base.items() if k != "gripper"} == \
            {k: v for k, v in big.items() if k != "gripper"}
     assert big["gripper"] == 40000 and base["gripper"] == int(0.4 * 68000)

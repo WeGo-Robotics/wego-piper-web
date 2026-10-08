@@ -64,12 +64,14 @@ _ZERO_TO_100: frozenset[str] = frozenset({"gripper"})
 #   대조되는 값이고(`tests/test_joints.py`), 팔별 설정이 없는 팔은 예전과 한 자리도
 #   다르지 않아야 한다.
 #
-# ⚠ 대형의 상한은 **공칭 100mm** 다. 실기(2026-10-08)에서 대형 그리퍼가 raw 104400 까지
-#   열린 채 읽혔으므로 실제 행정은 이보다 크다 — 공칭에 두면 끝에 닿지 않아 안전하고,
-#   더 열고 싶으면 이 표 한 줄만 고치면 된다.
+# ⚠ 대형의 상한은 **실측 끝(99500µm)보다 2mm 안쪽**(98000)이다. 실기(2026-10-08)에서 대형
+#   팔로워가 raw 99500 까지 열렸다 — 공칭 100000 에 두면 "100" 이 끝보다 0.5mm 너머라 완전히
+#   열 때마다 스톱을 힘 설정(기본 1 N·m)으로 누른다. 소형이 공칭 70 에 대해 68000 으로 2mm 를
+#   남기는 것과 같은 여유다. (같은 때 리더는 104400 까지 읽혔다 — 티칭 핸들은 행정 계수가 따로라
+#   기준이 아니다.) 더 열고 싶으면 이 표 한 줄만 고치면 된다.
 GRIPPER_STROKES_MM: tuple[int, ...] = (70, 100)
 DEFAULT_GRIPPER_STROKE_MM = 70
-GRIPPER_RAW_MAX: dict[int, int] = {70: JOINT_CALIBRATION["gripper"][1], 100: 100000}
+GRIPPER_RAW_MAX: dict[int, int] = {70: JOINT_CALIBRATION["gripper"][1], 100: 98000}
 
 
 def _range(name: str, gripper_raw_max: int | None) -> tuple[int, int]:
