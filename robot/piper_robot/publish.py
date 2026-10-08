@@ -390,7 +390,7 @@ class ArmBridge:
                                    self.iface, reason.value)
         self._last_logged = reason
 
-        raw = denormalize_all(values)
+        raw = denormalize_all(values, gripper_store.raw_max_um(self.iface))
         piper = getattr(self.arm, "_piper", None)
         if piper is None:
             return

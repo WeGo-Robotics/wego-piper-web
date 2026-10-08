@@ -53,27 +53,55 @@ JOINT_CALIBRATION: dict[str, tuple[int, int]] = {
 # `wrapper/parking_controller.py` 도 이 스케일을 전제로 동작하므로 바꾸면 안 된다.
 _ZERO_TO_100: frozenset[str] = frozenset({"gripper"})
 
+# ── 그리퍼 행정은 **팔마다** 다르다 ──
+#
+# Piper 그리퍼는 두 가지다 — 소형 70mm, 대형 100mm (piper_sdk `max_range_config`:
+# "Small gripper: 70 mm / Large gripper: 100 mm"). 리더·팔로워에 섞여 달릴 수 있다.
+# 정규화 값(0..100)은 **행정에 대한 비율**이라 위쪽(슬라이더·정책·안전 필터·파킹)은 그대로
+# 두고, raw ↔ 정규화 변환만 팔별 상한을 받는다 (`gripper_store.raw_max_um`).
+#
+# ⚠ `JOINT_CALIBRATION["gripper"]` 는 **소형(기본)** 이고 그대로 둔다 — vendor 드라이버와
+#   대조되는 값이고(`tests/test_joints.py`), 팔별 설정이 없는 팔은 예전과 한 자리도
+#   다르지 않아야 한다.
+#
+# ⚠ 대형의 상한은 **공칭 100mm** 다. 실기(2026-10-08)에서 대형 그리퍼가 raw 104400 까지
+#   열린 채 읽혔으므로 실제 행정은 이보다 크다 — 공칭에 두면 끝에 닿지 않아 안전하고,
+#   더 열고 싶으면 이 표 한 줄만 고치면 된다.
+GRIPPER_STROKES_MM: tuple[int, ...] = (70, 100)
+DEFAULT_GRIPPER_STROKE_MM = 70
+GRIPPER_RAW_MAX: dict[int, int] = {70: JOINT_CALIBRATION["gripper"][1], 100: 100000}
 
-def normalize_joint(name: str, raw: float) -> float:
-    """raw 엔코더 값 → 정규화 값 (관절 -100..100, 그리퍼 0..100)."""
+
+def _range(name: str, gripper_raw_max: int | None) -> tuple[int, int]:
     mn, mx = JOINT_CALIBRATION[name]
+    if name == "gripper" and gripper_raw_max:
+        mx = gripper_raw_max
+    return mn, mx
+
+
+def normalize_joint(name: str, raw: float, gripper_raw_max: int | None = None) -> float:
+    """raw 엔코더 값 → 정규화 값 (관절 -100..100, 그리퍼 0..100).
+
+    `gripper_raw_max`: 이 팔 그리퍼의 raw 상한(µm). 없으면 소형 기본값.
+    """
+    mn, mx = _range(name, gripper_raw_max)
     ratio = (raw - mn) / (mx - mn)
     if name in _ZERO_TO_100:
         return round(ratio * 100, 2)
     return round(ratio * 200 - 100, 2)
 
 
-def denormalize_joint(name: str, norm: float) -> int:
+def denormalize_joint(name: str, norm: float, gripper_raw_max: int | None = None) -> int:
     """정규화 값 → raw 엔코더 값. `normalize_joint` 의 역함수."""
-    mn, mx = JOINT_CALIBRATION[name]
+    mn, mx = _range(name, gripper_raw_max)
     if name in _ZERO_TO_100:
         return int(mn + (norm / 100) * (mx - mn))
     return int(mn + ((norm + 100) / 200) * (mx - mn))
 
 
-def normalize_all(raw: dict[str, float]) -> dict[str, float]:
-    return {name: normalize_joint(name, value) for name, value in raw.items()}
+def normalize_all(raw: dict[str, float], gripper_raw_max: int | None = None) -> dict[str, float]:
+    return {name: normalize_joint(name, value, gripper_raw_max) for name, value in raw.items()}
 
 
-def denormalize_all(norm: dict[str, float]) -> dict[str, int]:
-    return {name: denormalize_joint(name, value) for name, value in norm.items()}
+def denormalize_all(norm: dict[str, float], gripper_raw_max: int | None = None) -> dict[str, int]:
+    return {name: denormalize_joint(name, value, gripper_raw_max) for name, value in norm.items()}

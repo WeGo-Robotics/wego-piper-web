@@ -648,6 +648,57 @@ async def get_gripper_effort(iface: str):
     return out
 
 
+class GripperStrokeRequest(BaseModel):
+    iface: str
+    stroke_mm: int
+
+
+@router.get("/gripper-stroke")
+async def get_gripper_stroke(iface: str):
+    """이 팔 그리퍼의 행정(70/100mm)과 고를 수 있는 값. 저장은 robotd 가 한다(`gripper_store`)."""
+    import asyncio
+
+    out = await asyncio.to_thread(robot_manager_mod._call, "get_gripper_stroke", iface)
+    if out is None:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    if out.get("supported") is False:
+        raise HTTPException(404, "이 팔은 그리퍼 행정 설정을 지원하지 않습니다")
+    return out
+
+
+@router.post("/gripper-stroke")
+async def set_gripper_stroke(body: GripperStrokeRequest):
+    """그리퍼 행정을 고른다. **다음 읽기·명령부터** 그 상한으로 raw 를 변환한다.
+
+    ⚠ **팔을 움직이는 활동 중에는 거절한다.** 정규화 값은 행정에 대한 비율이라, 바꾸는 순간
+      같은 값이 다른 물리 폭이 된다 — 추론·텔레옵 도중이면 그리퍼가 튀고, 녹화 중이면 한
+      데이터셋 안에서 같은 값의 뜻이 갈린다 (그 차이는 프레임 어디에도 안 남는다).
+    """
+    import asyncio
+
+    from piper_robot.joints import GRIPPER_STROKES_MM
+
+    from app.services import exclusivity as X
+
+    if body.stroke_mm not in GRIPPER_STROKES_MM:
+        raise HTTPException(400, f"행정은 {list(GRIPPER_STROKES_MM)} mm 중 하나여야 합니다")
+    movers = [a for a in (X.Activity.INFERENCE, X.Activity.RECORDING, X.Activity.TELEOP)
+              if X.is_running(a)]
+    if movers:
+        names = " · ".join(X.LABELS[a] for a in movers)
+        raise HTTPException(409, f"{names} 실행 중에는 그리퍼 행정을 바꿀 수 없습니다 — "
+                                 f"같은 값이 다른 그리퍼 폭을 뜻하게 됩니다. 먼저 멈추세요.")
+    out = await asyncio.to_thread(robot_manager_mod._call, "set_gripper_stroke",
+                                  body.iface, int(body.stroke_mm))
+    if out is None:
+        raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
+    if out.get("supported") is False:
+        raise HTTPException(404, "이 팔은 그리퍼 행정 설정을 지원하지 않습니다")
+    if out.get("error"):
+        raise HTTPException(400, out["error"])
+    return out
+
+
 @router.post("/gripper-effort")
 async def set_gripper_effort(body: GripperEffortRequest):
     """그리퍼 힘을 바꾼다. 명령 프레임마다 실리는 값이라 **다음 프레임부터** 반영된다 —

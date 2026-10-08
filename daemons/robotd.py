@@ -73,6 +73,7 @@ _METHODS = {
     "load_status", "load_status_all", "load_history",
     "get_load_limits", "set_load_limits",
     "get_gripper_effort", "set_gripper_effort",
+    "get_gripper_stroke", "set_gripper_stroke",
     "init_interface", "down_interface", "check_active", "unhealthy_reason", "sniff_ids",
     "rename_interface", "recover_usb", "usb_info",
     "lost",
@@ -147,6 +148,29 @@ class _Serving(RobotHub):
             return {"iface": iface, "supported": False}
         gripper_store.set_effort(iface, nm)
         return {**gripper_store.as_dict(iface), "supported": True}
+
+    def get_gripper_stroke(self, iface: str) -> dict:
+        """이 팔 그리퍼의 행정(70/100mm). 힘과 같은 파일·같은 지원 규칙이다."""
+        from piper_robot import gripper_store
+
+        if iface not in self.arms:
+            return {"iface": iface, "supported": False}
+        return {**gripper_store.stroke_dict(iface), "supported": True}
+
+    def set_gripper_stroke(self, iface: str, mm: int) -> dict:
+        """행정을 바꾼다 — **다음 읽기·명령부터** 그 상한으로 변환한다(재연결 없음).
+
+        ⚠ 정규화 값의 뜻이 바뀐다(같은 50 이 35mm→50mm). 움직이는 활동 중에 막는 것은
+        게이트웨이의 일이다 — 데몬은 어떤 활동이 도는지 모른다."""
+        from piper_robot import gripper_store
+
+        if iface not in self.arms:
+            return {"iface": iface, "supported": False}
+        try:
+            gripper_store.set_stroke(iface, mm)
+        except ValueError as exc:
+            return {**gripper_store.stroke_dict(iface), "supported": True, "error": str(exc)}
+        return {**gripper_store.stroke_dict(iface), "supported": True}
 
     def get_load_limits(self, iface: str) -> dict:
         """이 팔의 부하 임계. **팔마다 다르다** (`load_store` 머리말)."""

@@ -7,6 +7,7 @@ import DiagnosticsPanel from '../components/DiagnosticsPanel'
 import VersionPanel from '../components/VersionPanel'
 import JogPanel from '../components/JogPanel'
 import LoadGuardPanel from '../components/LoadGuardPanel'
+import GripperStrokeSelect from '../components/GripperStrokeSelect'
 import { ZeroCalibrationPanel } from '../components/ZeroCalibrationModal'
 import So101CalibrationWizard from '../components/So101CalibrationWizard'
 import So101TeleopPanel from '../components/So101TeleopPanel'
@@ -393,6 +394,8 @@ function ArmDetailModal({ arm, leader, onConfig, onClose }: {
             <h4 className="text-xs font-semibold text-neutral-400">
               {arm.role === 'leader' ? 'Leader 설정' : 'Follower 설정'}
             </h4>
+            {/* 리더·팔로워 **둘 다** 그리퍼가 달린다 — 역할 분기 밖에 둔다 */}
+            <GripperStrokeSelect iface={arm.iface} />
             {arm.role === 'follower' || arm.role === 'unknown' ? (
               <div className="space-y-2">
                 <label className="flex items-center gap-2 text-xs">

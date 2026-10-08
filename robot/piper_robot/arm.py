@@ -333,7 +333,11 @@ class Arm:
                     "joint5": float(j.joint_5), "joint6": float(j.joint_6),
                     "gripper": gripper,
                 }
-                return normalize_all(raw)
+                # 그리퍼 상한은 **팔마다** 다르다 (소형 70 / 대형 100) — gripper_store.
+                # 순환 import 라 지역 import (arm ← gripper_store 가 CONFIG_DIR 을 가져간다)
+                from piper_robot import gripper_store
+
+                return normalize_all(raw, gripper_store.raw_max_um(self.iface))
             except Exception as e:
                 logger.debug("read_joints_normalized error: %s", e)
                 return None
@@ -366,15 +370,15 @@ class Arm:
                 from lerobot_robot_piper.motors.tables import INITIALIZE_POSITION
                 target = target or INITIALIZE_POSITION
                 # set_action 직접 호출 (정규화 값 → raw 변환)
-                raw = denormalize_all(target)
+                from piper_robot import gripper_store
+
+                raw = denormalize_all(target, gripper_store.raw_max_um(self.iface))
 
                 self._piper.ModeCtrl(0x01, 0x01, 30, 0x00)
                 self._piper.JointCtrl(
                     raw["joint1"], raw["joint2"], raw["joint3"],
                     raw["joint4"], raw["joint5"], raw["joint6"],
                 )
-                from piper_robot import gripper_store
-
                 self._piper.GripperCtrl(abs(raw["gripper"]),
                                         gripper_store.effort_mnm(self.iface), 0x03, 0)
                 return True
