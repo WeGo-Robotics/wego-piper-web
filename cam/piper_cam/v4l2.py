@@ -342,6 +342,26 @@ def list_modes(dev_path: str) -> list[dict]:
     return out
 
 
+def choose_fourcc(modes: list[dict], width: int, height: int, fps: int) -> str | None:
+    """요청한 fps 를 **비압축 포맷으로는 못 내고 MJPG 로는 낼 때만** `"MJPG"` 를 돌려준다.
+
+    포맷을 안 정하고 열면 OpenCV 가 비압축(YUYV 등)을 고르는데, 그건 USB 대역폭을 통째로
+    먹는다. 1080p YUYV 는 5fps, 노트북처럼 USB 컨트롤러를 나눠 쓰는 곳에서는 720p 도
+    그 근처로 떨어진다 — CPU 는 놀고 있는데 프레임이 5Hz 로 고정된다.
+
+    ⚠ **이미 요청을 내는 장치는 건드리지 않는다.** MJPG 는 카메라가 한 번 압축한 영상이라
+    깨끗한 비압축이 나오는 환경에서 굳이 바꿀 이유가 없다.
+    """
+    if not (width and height and fps):
+        return None
+    same = [m for m in modes if m.get("width") == width and m.get("height") == height]
+    if any(m["fourcc"] != "MJPG" and m.get("fps", 0) >= fps for m in same):
+        return None
+    if any(m["fourcc"] == "MJPG" and m.get("fps", 0) >= fps for m in same):
+        return "MJPG"
+    return None
+
+
 def scan_cameras() -> list[dict]:
     """시스템 카메라 스캔 (/dev/video* + v4l2-ctl) — 병렬. 캡처 디바이스만."""
     from concurrent.futures import ThreadPoolExecutor

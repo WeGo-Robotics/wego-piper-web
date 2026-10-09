@@ -70,6 +70,14 @@ class _V4l2Camera:
         # 실제 값을 다시 읽으므로, 못 맞춘 채로 맞췄다고 착각할 일은 없다.
         if self._want or self._capture:
             w, h = self._capture or self._want[:2]
+            # ⚠ 포맷은 크기·fps **보다 먼저** 정해야 OpenCV 가 그 포맷의 모드로 협상한다.
+            # 비압축으로 요청 fps 가 안 나오는 카메라만 MJPG 로 바꾼다 (choose_fourcc).
+            if self._want:
+                fourcc = v4l2.choose_fourcc(v4l2.list_modes(self.id), w, h, self._want[2])
+                if fourcc:
+                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
+                    logger.info("%s: %dx%d@%d 는 비압축으로 안 나와 %s 로 연다",
+                                self.id, w, h, self._want[2], fourcc)
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
             if self._want:
@@ -84,6 +92,10 @@ class _V4l2Camera:
         # 같아야 한다. 출력 해상도를 정했으면 그것, 아니면 원본(장치가 연 크기).
         self.width, self.height = self._output or (self.capture_width, self.capture_height)
         self.fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
+        if self._want and self.fps < self._want[2]:
+            # 조용히 낮게 열리면 녹화 쪽에서는 "새 프레임이 없습니다" 로만 보인다 — 원인을 여기 남긴다
+            logger.warning("%s: %d fps 를 요청했지만 장치가 %d fps 로 열렸습니다 "
+                           "(USB 대역폭·포맷 확인)", self.id, self._want[2], self.fps)
         return cap, self._shape(frame)
 
     def _shape(self, frame):
