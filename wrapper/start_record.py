@@ -18,6 +18,14 @@ lerobot_bootstrap.load_groot_config()
 from lerobot.utils.import_utils import register_third_party_plugins
 register_third_party_plugins()
 
+# `--dataset.vcodec=auto` 가 FFmpeg 빌드에 "들어 있는" NVENC 를 장치 없이도 고르던 것을
+# 막는다 — 실제로 열리는 하드웨어 인코더만 후보로 본다 (hw_encoders.py).
+try:
+    import hw_encoders
+    hw_encoders.install()
+except Exception as _e:   # 판정이 깨져도 녹화는 LeRobot 의 원래 판정으로 계속된다
+    print(f"[start_record] hw encoder probe install failed: {_e}", flush=True)
+
 
 # ── 웹 미리보기 탭 (선택) ──
 # PIPER_PREVIEW=1 이면, LeRobot 이 매 프레임 호출하는 log_rerun_data 를 가로채
