@@ -92,3 +92,58 @@ def test_the_printed_output_is_not_parsed_as_json():
     body = src.split("def create_template", 1)[1].split("\n    def ", 1)[0]
     assert "self._raw(" not in body, "JSON 이 아닌 출력을 JSON 으로 읽는다"
     assert "self.templates(refresh=True)" in body, "만들어졌는지 목록에 안 물어본다"
+
+
+# ── 거절 사유가 버려지지 않는다 ─────────────────────────────────────────────
+#
+# ⚠ vastai 1.7 `create template` 은 서버가 거절해도 종료코드 0 으로 끝내고 사유를 stdout 에만
+#   찍는다(HTTP 오류는 `The response is not valid JSON.` 으로 뭉개진다). 예전 코드는 그
+#   stdout 을 버리고 "만들었지만 목록에 없습니다" 라고만 말했다 — 팀 계정에서 템플릿이 안
+#   만들어지는데 이유를 볼 수 없었다.
+
+def _provider(monkeypatch, *, printed: str, listed: list):
+    from app.services.cloud.providers import vast
+
+    p = vast.VastProvider("k")
+    monkeypatch.setattr(vast.VastProvider, "_text", lambda self, args, **kw: printed)
+    monkeypatch.setattr(vast.VastProvider, "templates", lambda self, **kw: listed)
+    return p
+
+
+def test_a_rejected_create_reports_what_the_cli_said(monkeypatch):
+    import pytest
+
+    p = _provider(monkeypatch, printed="The response is not valid JSON.\n", listed=[])
+    with pytest.raises(RuntimeError) as e:
+        p.create_template(T.SPECS[0])
+    msg = str(e.value)
+    assert "The response is not valid JSON." in msg, "CLI 가 한 말을 버린다"
+    assert T.SPECS[0].name in msg
+    assert "목록에 없습니다" not in msg, "거절을 '만들었지만' 이라고 말한다"
+    assert len(msg) < 200, "라우터가 200자에서 자른다 — 사유가 잘린다"
+
+
+def test_a_success_false_message_comes_through(monkeypatch):
+    import pytest
+
+    p = _provider(monkeypatch, printed="Template name already in use\n", listed=[])
+    with pytest.raises(RuntimeError, match="Template name already in use"):
+        p.create_template(T.SPECS[1])
+
+
+def test_created_but_not_listed_keeps_its_own_message(monkeypatch):
+    import pytest
+
+    p = _provider(monkeypatch, printed="New Template: {'hash_id': 'abc'}\n", listed=[])
+    with pytest.raises(RuntimeError, match="만들었지만 목록에 없습니다"):
+        p.create_template(T.SPECS[0])
+
+
+def test_success_is_decided_by_the_list_not_the_printout(monkeypatch):
+    class _Row:
+        name = T.SPECS[0].name
+        hash_id = "h123"
+
+    # 출력이 비어도 목록에 있으면 만들어진 것이다
+    p = _provider(monkeypatch, printed="", listed=[_Row()])
+    assert p.create_template(T.SPECS[0]) == "h123"

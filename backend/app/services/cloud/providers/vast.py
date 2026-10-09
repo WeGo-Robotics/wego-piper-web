@@ -428,22 +428,35 @@ class VastProvider:
         """
         from app.services.cloud import templates as T
 
-        self._text(["create", "template",
-                    "--name", spec.name,
-                    "--image", T.IMAGE,
-                    "--image_tag", spec.tag,
-                    "--onstart-cmd", T.ONSTART,
-                    "--disk_space", str(T.DISK_GB),
-                    "--ssh", "--direct",
-                    "--desc", spec.desc,
-                    "--search_params", T.SEARCH_PARAMS])
-        # ⚠ **찍힌 문자열을 파싱하지 않는다.** 만들어졌는지는 목록에 물어본다 — 그게
+        out = self._text(["create", "template",
+                          "--name", spec.name,
+                          "--image", T.IMAGE,
+                          "--image_tag", spec.tag,
+                          "--onstart-cmd", T.ONSTART,
+                          "--disk_space", str(T.DISK_GB),
+                          "--ssh", "--direct",
+                          "--desc", spec.desc,
+                          "--search_params", T.SEARCH_PARAMS])
+        # ⚠ **찍힌 문자열로 성공을 판정하지 않는다.** 만들어졌는지는 목록에 물어본다 — 그게
         #   어차피 다음 단계(`--template_hash`)가 믿는 자리이고, 출력 형식이 바뀌어도
         #   안 깨진다.
         for t in self.templates(refresh=True):
             if t.name == spec.name:
                 return t.hash_id
-        raise RuntimeError(f"템플릿을 만들었지만 목록에 없습니다: {spec.name}")
+        # ⚠ **여기까지 왔으면 목록에 없는 것이고, 사유는 CLI 가 찍은 그 문장뿐이다.**
+        #   CLI 1.7 은 서버가 거절해도(HTTP 4xx/5xx → `raise_for_status`) 종료코드 **0** 으로
+        #   끝내고 `The response is not valid JSON.` 만 stdout 에 찍는다(실측 2026-10-10,
+        #   없는 주소로 호출). `success: false` 도 `msg` 를 stdout 에 찍고 0 이다. 그래서
+        #   `_text` 는 통과하고, 예전엔 이 자리가 "만들었지만 목록에 없습니다" 라고만 말해
+        #   **거절 사유가 통째로 버려졌다** — 팀 계정이 왜 안 되는지 아무도 볼 수 없었다.
+        said = (out or "").strip()
+        if said.startswith("New Template"):
+            raise RuntimeError(f"템플릿을 만들었지만 목록에 없습니다: {spec.name}")
+        hint = (" — CLI 는 HTTP 오류 사유를 숨깁니다. API 키 권한(템플릿 쓰기)과 계정 상태를 확인하세요"
+                if "not valid JSON" in said else "")
+        raise RuntimeError(
+            f"Vast 가 템플릿 {spec.name} 생성을 받아 주지 않았습니다 — "
+            f"vastai: {said[:120] or '(출력 없음)'}{hint}")
 
     def create(self, offer_id: int, *, template_hash: str, disk_gb: float,
                label: str) -> Instance:
