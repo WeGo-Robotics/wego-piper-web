@@ -102,6 +102,21 @@ export default function InferencePage() {
   const [cliArgs, setCliArgs] = useState<string>('')
   const [cliEdited, setCliEdited] = useState(false)
   const [inferenceMode, setInferenceMode] = useState<'local' | 'server'>('local')
+  // 정책을 올릴 장치. 기계마다 다른 값이라 프리셋(params)에 넣지 않고 따로 기억한다.
+  const [device, setDevice] = useState<'cuda' | 'cpu'>(() =>
+    localStorage.getItem('piper_inference_device') === 'cpu' ? 'cpu' : 'cuda')
+  // 이 기계에서 CUDA 를 쓸 수 있나. null = 아직/모름(막지 않는다). 한 번만 묻는다 — 폴링 없음
+  const [cudaAvailable, setCudaAvailable] = useState<boolean | null>(null)
+  useEffect(() => {
+    api.get<{ cuda: boolean }>('/models/inference/devices')
+      .then((r) => setCudaAvailable(r.cuda)).catch(() => {})
+  }, [])
+  // 로컬 모드에서 GPU 가 없는데 CUDA 가 골라져 있으면 CPU 로 내린다. 저장하지는 않는다 —
+  // 사람이 고른 값을 지우지 않고, GPU 가 생기면(서버 모드 포함) 원래 선택이 그대로다
+  const noLocalGpu = cudaAvailable === false && inferenceMode === 'local'
+  useEffect(() => {
+    if (noLocalGpu && device === 'cuda') setDevice('cpu')
+  }, [noLocalGpu, device])
   /**
    * 서버 모드의 체크포인트 경로. **서버 기준 경로**다.
    *
@@ -280,7 +295,7 @@ export default function InferencePage() {
             robot_ports: robotMode === 'bimanual' ? ifaces : [],
             camera_mapping: cameraMapping,
             params: taskParams(),
-            inference_mode: inferenceMode, server_address: serverAddress,
+            inference_mode: inferenceMode, device, server_address: serverAddress,
             policy_type: policyType, actions_per_chunk: actionsPerChunk,
             aggregate_fn: aggregateFn, offset_correction: offsetCorrection,
             smoothing, smoothing_window: smoothingWindow, debug_mode: debugMode,
@@ -288,7 +303,7 @@ export default function InferencePage() {
         }
       }
     }).catch(() => {})
-  }, [selectedModel, selectedFollower, robotMode, leftFollower, rightFollower, cameraMapping, inferenceMode, serverAddress, policyType, actionsPerChunk, aggregateFn, offsetCorrection, smoothing, smoothingWindow, debugMode])
+  }, [selectedModel, selectedFollower, robotMode, leftFollower, rightFollower, cameraMapping, inferenceMode, device, serverAddress, policyType, actionsPerChunk, aggregateFn, offsetCorrection, smoothing, smoothingWindow, debugMode])
 
   const saveSelectionRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => {
@@ -316,6 +331,7 @@ export default function InferencePage() {
         camera_profile: cameraProfile,
         params: taskParams(),
         inference_mode: inferenceMode,
+        device,
         server_address: serverAddress,
         policy_type: policyType,
         actions_per_chunk: actionsPerChunk,
@@ -341,7 +357,7 @@ export default function InferencePage() {
     if (model) {
       api.post<{ command: string }>('/models/inference/preview', {
         checkpoint_path: model.path, params,
-        inference_mode: inferenceMode, server_address: serverAddress,
+        inference_mode: inferenceMode, device, server_address: serverAddress,
         policy_type: policyType, actions_per_chunk: actionsPerChunk,
         aggregate_fn: aggregateFn, offset_correction: offsetCorrection,
         smoothing, smoothing_window: smoothingWindow,
@@ -532,6 +548,30 @@ export default function InferencePage() {
                   서버 (gRPC)
                 </label>
               </div>
+              {/* 장치 — 로컬이면 이 기계, 서버면 서버 기계에서 정책이 올라갈 곳이다 */}
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-neutral-400 w-20">장치</span>
+                <select value={device}
+                  onChange={(e) => {
+                    const v = e.target.value === 'cpu' ? 'cpu' : 'cuda'
+                    setDevice(v)
+                    localStorage.setItem('piper_inference_device', v)
+                    setCliEdited(false)
+                  }}
+                  className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
+                  <option value="cuda" disabled={noLocalGpu}>
+                    CUDA (GPU){noLocalGpu ? ' — 이 기계에서 GPU 를 찾지 못했습니다' : ''}
+                  </option>
+                  <option value="cpu">CPU</option>
+                </select>
+              </div>
+              {device === 'cpu' && (
+                <p className="text-[10px] text-amber-400">
+                  CPU 추론은 느립니다 — ACT 는 카메라 2대 기준 청크당 수백 ms 이상 걸립니다.
+                  청크 단위로만 쓰고 <b>temporal ensemble 은 끄세요</b>(스텝마다 추론해 따라가지 못합니다).
+                  끊기면 refill 임계를 30~40% 로 올리세요.
+                </p>
+              )}
               {inferenceMode === 'server' && (
                 <div className="space-y-2">
                   <input type="text" value={serverAddress}

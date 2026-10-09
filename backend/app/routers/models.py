@@ -1,4 +1,5 @@
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -65,6 +66,18 @@ async def add_model_path(body: PathRequest):
 async def remove_model_path(body: PathRequest):
     paths = settings.remove_model_path(body.path)
     return {"paths": paths}
+
+
+# ⚠ `GET /{model_id:path}` 보다 **앞**에 있어야 한다 — 뒤에 두면 `inference/devices` 가 모델 id 로 읽힌다
+@router.get("/inference/devices")
+async def inference_devices():
+    """로컬 추론이 쓸 수 있는 장치. 화면이 GPU 없는 기계에서 CUDA 를 못 고르게 한다.
+
+    **로컬 모드에만 해당한다** — 서버(gRPC) 모드의 장치는 서버 기계의 것이라 여기서 알 수 없다.
+    """
+    from app.services import resources
+
+    return {"cuda": resources.cuda_present()}
 
 
 def _get_first_ready_follower_port() -> str | None:
@@ -143,7 +156,7 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
             "robot_port": body.robot_ports[0] if is_bimanual else robot_port,
             "checkpoint_path": body.checkpoint_path,
             "policy_type": body.policy_type,
-            "policy_device": "cuda",
+            "policy_device": body.device,
             "actions_per_chunk": body.actions_per_chunk,
             "chunk_size_threshold": 0.8,
             "aggregate_fn": body.aggregate_fn,
@@ -166,8 +179,10 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
         "checkpoint_path": body.checkpoint_path,
         "robot_type": robot_type,
         "robot_port": robot_port,
-        "device": "cuda",
-        "use_amp": True,
+        "device": body.device,
+        # AMP(autocast)는 cuda 에서만 의미가 있다 — wrapper 도 cuda 가 아니면 쓰지 않지만
+        # policy.config 에 켜진 채 남기지 않는다
+        "use_amp": body.device == "cuda",
         "debug": body.debug_mode,
         **user_params,
     }
@@ -243,6 +258,9 @@ class InferenceStartRequest(BaseModel):
     camera_profile: str = ""
     params: dict = {}
     inference_mode: str = "local"  # "local" | "server"
+    # 정책을 올릴 장치. 로컬은 wrapper `--device`, 서버는 `--policy-device` 로 간다.
+    # 기본은 예전 그대로 cuda — GPU 가 없는 기계에서는 사람이 cpu 를 고른다.
+    device: Literal["cuda", "cpu"] = "cuda"
     server_address: str = "127.0.0.1:8088"
     policy_type: str = "act"
     actions_per_chunk: int = 100
@@ -260,6 +278,7 @@ class InferencePreviewRequest(BaseModel):
     robot_ports: list[str] = []
     camera_mapping: dict[str, str] = {}
     inference_mode: str = "local"
+    device: Literal["cuda", "cpu"] = "cuda"
     server_address: str = "127.0.0.1:8088"
     policy_type: str = "act"
     aggregate_fn: str = "weighted_average"

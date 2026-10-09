@@ -23,6 +23,23 @@ _FIELDS = ("name", "utilization.gpu", "memory.used", "memory.total",
            "temperature.gpu", "driver_version")
 
 
+def cuda_present() -> bool:
+    """이 기계(= 컨테이너 안)에서 CUDA 를 쓸 NVIDIA 장치가 있나.
+
+    **장치 노드와 실행 파일의 유무만 본다** — 서브프로세스를 안 부르므로 `nvidia-smi` 처럼
+    멈출 일이 없다. `/proc/driver/nvidia` 는 쓰지 않는다: 컨테이너의 `/proc` 은 호스트 커널의
+    것이라 GPU 를 안 준 컨테이너에서도 보인다(실측).
+
+    - `/dev/nvidia0` …: NVIDIA 런타임이 GPU 를 줬을 때만 컨테이너에 생긴다
+    - `/dev/nvhost-gpu`: Jetson 은 노드 이름이 다르다
+    - `nvidia-smi`: 노드가 없어도 실행 파일이 있으면 드라이버가 깔린 기계다
+    """
+    import glob
+
+    return bool(glob.glob("/dev/nvidia[0-9]*") or glob.glob("/dev/nvhost-gpu")
+                or shutil.which("nvidia-smi"))
+
+
 def gpus() -> list[dict]:
     """GPU 목록. nvidia-smi 가 없거나 멈추면 **빈 목록**이다."""
     try:

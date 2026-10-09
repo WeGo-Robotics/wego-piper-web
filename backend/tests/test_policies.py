@@ -224,6 +224,7 @@ def test_both_inference_paths_drop_the_task(monkeypatch):
         checkpoint_path = "ckpt/last"
         robot_ports: list = []
         camera_mapping: dict = {}
+        device = "cuda"
         server_address = "127.0.0.1:8088"
         actions_per_chunk = 100
         aggregate_fn = "weighted_average"
