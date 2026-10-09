@@ -115,7 +115,7 @@ def test_a_rejected_create_reports_what_the_cli_said(monkeypatch):
 
     p = _provider(monkeypatch, printed="The response is not valid JSON.\n", listed=[])
     with pytest.raises(RuntimeError) as e:
-        p.create_template(T.SPECS[0])
+        p.create_template(T.SPECS[0], 698077)
     msg = str(e.value)
     assert "The response is not valid JSON." in msg, "CLI 가 한 말을 버린다"
     assert T.SPECS[0].name in msg
@@ -128,7 +128,7 @@ def test_a_success_false_message_comes_through(monkeypatch):
 
     p = _provider(monkeypatch, printed="Template name already in use\n", listed=[])
     with pytest.raises(RuntimeError, match="Template name already in use"):
-        p.create_template(T.SPECS[1])
+        p.create_template(T.SPECS[1], 698077)
 
 
 def test_created_but_not_listed_keeps_its_own_message(monkeypatch):
@@ -136,7 +136,7 @@ def test_created_but_not_listed_keeps_its_own_message(monkeypatch):
 
     p = _provider(monkeypatch, printed="New Template: {'hash_id': 'abc'}\n", listed=[])
     with pytest.raises(RuntimeError, match="만들었지만 목록에 없습니다"):
-        p.create_template(T.SPECS[0])
+        p.create_template(T.SPECS[0], 698077)
 
 
 def test_success_is_decided_by_the_list_not_the_printout(monkeypatch):
@@ -146,4 +146,65 @@ def test_success_is_decided_by_the_list_not_the_printout(monkeypatch):
 
     # 출력이 비어도 목록에 있으면 만들어진 것이다
     p = _provider(monkeypatch, printed="", listed=[_Row()])
-    assert p.create_template(T.SPECS[0]) == "h123"
+    assert p.create_template(T.SPECS[0], 698077) == "h123"
+
+
+# ── 같은 내용은 계정을 넘어 남의 것에 붙는다 ────────────────────────────────
+#
+# ⚠ 실측(2026-10-10): `create template` 이 `Existing Template Found: 754853. User
+#   relationship added.` 를 `success: false` 로 돌려줬다. 그 템플릿의 `creator_id` 는 **내
+#   계정이 아니었고**(711347 ↔ 698077), `search templates private=true` 는 "내 템플릿만" 이라
+#   그걸 안 돌려줘 화면은 계속 "템플릿 없음" 이었다. 지워도 소용없다 — 다시 만들면 또 붙는다.
+#   `desc` 에 계정 id 를 붙이자 `Template Created Successfully` 였다(판정은 `desc` 까지 본다).
+
+def test_the_description_differs_per_account_so_it_cannot_attach_to_anothers():
+    a = T.desc_for(T.SPECS[0], 698077)
+    b = T.desc_for(T.SPECS[0], 711347)
+    assert a != b, "계정이 달라도 같은 내용이라 남의 템플릿에 붙는다"
+    assert T.SPECS[0].desc in a, "원래 설명을 지운다"
+
+
+def test_the_same_account_gets_the_same_description_every_time():
+    """⚠ 다시 눌러도 같은 문자열이어야 자기 템플릿에 맞는다 — 시각·난수를 넣으면 눌 때마다
+    새 템플릿이 생겨 같은 이름이 늘어난다."""
+    assert T.desc_for(T.SPECS[1], 698077) == T.desc_for(T.SPECS[1], 698077)
+
+
+def test_without_an_account_id_nothing_is_made():
+    """⚠ 표식 없이 보내면 남의 것에 붙어 처음 증상으로 돌아간다 — 모르면 만들지 않는다."""
+    import pytest
+
+    for bad in (None, 0):
+        with pytest.raises(ValueError):
+            T.desc_for(T.SPECS[0], bad)
+
+
+def test_the_account_marker_is_what_the_cli_is_sent(monkeypatch):
+    from app.services.cloud.providers import vast
+
+    sent = []
+    monkeypatch.setattr(vast.VastProvider, "_text",
+                        lambda self, args, **kw: sent.append(args) or "")
+    monkeypatch.setattr(vast.VastProvider, "templates", lambda self, **kw: [])
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        vast.VastProvider("k").create_template(T.SPECS[0], 698077)
+    args = sent[0]
+    assert args[args.index("--desc") + 1] == T.desc_for(T.SPECS[0], 698077)
+
+
+def test_an_existing_template_of_someone_else_is_said_plainly(monkeypatch):
+    """⚠ 이 문장은 '거절' 이 아니다 — 남의 템플릿에 붙은 것이고 그래서 목록에 없다."""
+    import pytest
+
+    p = _provider(monkeypatch,
+                  printed="Existing Template Found: 754853. User relationship added.\n",
+                  listed=[])
+    with pytest.raises(RuntimeError) as e:
+        p.create_template(T.SPECS[0], 698077)
+    msg = str(e.value)
+    assert "754853" in msg and T.SPECS[0].name in msg
+    assert "목록에는 보이지 않습니다" in msg
+    assert "받아 주지 않았습니다" not in msg, "거절이라고 말한다"
+    assert len(msg) < 200

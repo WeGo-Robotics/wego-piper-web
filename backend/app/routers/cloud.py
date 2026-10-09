@@ -680,9 +680,19 @@ async def create_cloud_templates():
 
     todo = T.missing(have)
     made, failed = [], []
+    # ⚠ 계정 id 가 `desc` 에 들어간다 — 같은 내용은 계정을 넘어 남의 것에 붙기 때문이다
+    #   (`services/cloud/templates.py` 머리말). 만들 것이 없으면 묻지 않는다.
+    account_id = None
+    if todo:
+        try:
+            account_id = (await asyncio.to_thread(prov.whoami)).get("id")
+        except Exception as exc:                                    # noqa: BLE001
+            raise _to_http(exc) from exc
+        if not account_id:
+            raise HTTPException(502, "Vast 계정 id 를 읽지 못해 템플릿을 만들지 못했습니다")
     for spec in todo:
         try:
-            await asyncio.to_thread(prov.create_template, spec)
+            await asyncio.to_thread(prov.create_template, spec, account_id)
             made.append(spec.name)
         except Exception as exc:                                    # noqa: BLE001
             # ⚠ 하나가 실패해도 나머지는 만든다 — 둘 중 하나만 있어도 학습은 걸 수 있다.

@@ -417,7 +417,7 @@ class VastProvider:
             message=str(raw.get("status_msg") or "").strip()[:200],
         )
 
-    def create_template(self, spec) -> str:
+    def create_template(self, spec, account_id: int) -> str:
         """템플릿 하나를 **이 계정에** 만든다. 새 `hash_id` 를 돌려준다.
 
         ⚠ 템플릿은 계정 밖으로 안 보인다 — 왜 계정마다 만드는지는
@@ -435,7 +435,7 @@ class VastProvider:
                           "--onstart-cmd", T.ONSTART,
                           "--disk_space", str(T.DISK_GB),
                           "--ssh", "--direct",
-                          "--desc", spec.desc,
+                          "--desc", T.desc_for(spec, account_id),
                           "--search_params", T.SEARCH_PARAMS])
         # ⚠ **찍힌 문자열로 성공을 판정하지 않는다.** 만들어졌는지는 목록에 물어본다 — 그게
         #   어차피 다음 단계(`--template_hash`)가 믿는 자리이고, 출력 형식이 바뀌어도
@@ -450,6 +450,14 @@ class VastProvider:
         #   `_text` 는 통과하고, 예전엔 이 자리가 "만들었지만 목록에 없습니다" 라고만 말해
         #   **거절 사유가 통째로 버려졌다** — 팀 계정이 왜 안 되는지 아무도 볼 수 없었다.
         said = (out or "").strip()
+        # ⚠ `Existing Template Found: N` 은 거절이 아니라 **남의 템플릿에 붙은 것**이다 —
+        #   `desc` 에 계정 id 가 들어가므로 여기 오는 일은 드물다(머리말). 와도 이름이 같은
+        #   것을 찾으며 헤매지 않게 사실을 그대로 말한다.
+        m = re.match(r"Existing Template Found:\s*(\d+)", said)
+        if m:
+            raise RuntimeError(
+                f"템플릿 {spec.name}: Vast 가 같은 내용의 기존 템플릿 {m.group(1)} 에 연결만 했고 "
+                f"이 계정 목록에는 보이지 않습니다")
         if said.startswith("New Template"):
             raise RuntimeError(f"템플릿을 만들었지만 목록에 없습니다: {spec.name}")
         hint = (" — CLI 는 HTTP 오류 사유를 숨깁니다. API 키 권한(템플릿 쓰기)과 계정 상태를 확인하세요"
