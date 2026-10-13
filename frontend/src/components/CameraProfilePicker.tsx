@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 /**
  * 작업(수집·추론)이 쓸 카메라 프로파일 선택.
@@ -16,6 +17,7 @@ type PresetMeta = { name: string; note?: string; updated_at?: string }
 export default function CameraProfilePicker({ value, onChange }: {
   value: string; onChange: (v: string) => void
 }) {
+  const t = useT()
   const [names, setNames] = useState<string[]>([])
 
   useEffect(() => {
@@ -30,13 +32,12 @@ export default function CameraProfilePicker({ value, onChange }: {
 
   return (
     <div className="space-y-1 pt-2">
-      <label className="text-xs text-neutral-400">카메라 프로파일 (시작 시 1회 적용)</label>
+      <label className="text-xs text-neutral-400">{t('카메라 프로파일 (시작 시 1회 적용)')}</label>
       <select value={value} onChange={(e) => onChange(e.target.value)}
-        title="시작 직전에 이 프로파일의 노출·화이트밸런스를 카메라에 밀어 넣습니다.
-카메라 페이지에서 캡처한 프로파일이 목록에 나옵니다."
+        title={t('시작 직전에 이 프로파일의 노출·화이트밸런스를 카메라에 밀어 넣습니다.\n카메라 페이지에서 캡처한 프로파일이 목록에 나옵니다.')}
         className="w-full px-2 py-1.5 rounded bg-neutral-900 border border-neutral-700
                    text-sm text-neutral-100">
-        <option value="">적용 안 함</option>
+        <option value="">{t('적용 안 함')}</option>
         {options.map((n) => <option key={n} value={n}>{n}</option>)}
       </select>
     </div>

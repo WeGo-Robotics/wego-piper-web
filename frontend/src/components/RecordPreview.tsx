@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 /**
  * 녹화 중 카메라 미리보기. 200ms 프레임 폴링을 이 컴포넌트 내부 상태로 가둬,
  * 부모(RecordingPage)와 무거운 로그 뷰어(xterm)가 200ms마다 리렌더되지 않게 한다.
  */
 export default function RecordPreview() {
+  const t = useT()
   const [cams, setCams] = useState<string[]>([])
 
   // 미리보기 가능한 카메라 목록 폴링 (1s)
@@ -24,9 +26,9 @@ export default function RecordPreview() {
 
   return (
     <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
-      <h3 className="text-sm font-semibold mb-2">카메라 미리보기</h3>
+      <h3 className="text-sm font-semibold mb-2">{t('카메라 미리보기')}</h3>
       {cams.length === 0 ? (
-        <p className="text-xs text-neutral-500">프레임 대기 중… (녹화 루프 시작 후 표시됩니다)</p>
+        <p className="text-xs text-neutral-500">{t('프레임 대기 중… (녹화 루프 시작 후 표시됩니다)')}</p>
       ) : (
         // ⚠ 2열 격자였다. 카메라가 셋이면 둘째 줄에 하나만 남고, 넷이면 아래 두 장이
         //   접혀 **동시에 볼 수 없었다** — 녹화 중 미리보기의 요점이 그건데.

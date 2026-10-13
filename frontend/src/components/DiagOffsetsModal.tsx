@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { JOINTS } from '../config/joints'
+import { useT } from '../i18n'
 
 /**
  * 검사 중심 오프셋 — **팔마다 사람이 정한다.**
@@ -19,6 +20,7 @@ const ARM = JOINTS.filter((j) => j.name !== 'gripper')
 type Props = { iface: string; onClose: () => void; onSaved?: () => void }
 
 export default function DiagOffsetsModal({ iface, onClose, onSaved }: Props) {
+  const t = useT()
   const [vals, setVals] = useState<Record<string, string>>({})
   const [limit, setLimit] = useState(90)
   const [busy, setBusy] = useState(false)
@@ -47,15 +49,15 @@ export default function DiagOffsetsModal({ iface, onClose, onSaved }: Props) {
       if (!raw) continue
       const n = Number(raw)
       // ⚠ 숫자가 아닌 값을 0 으로 읽으면 **사람이 적은 오프셋이 조용히 사라진다**
-      if (!Number.isFinite(n)) { setErr(`${j.label}: 숫자가 아닙니다 — "${raw}"`); setBusy(false); return }
-      if (Math.abs(n) > limit) { setErr(`${j.label}: ±${limit}° 를 넘습니다`); setBusy(false); return }
+      if (!Number.isFinite(n)) { setErr(t('{label}: 숫자가 아닙니다 — "{raw}"', { label: j.label, raw })); setBusy(false); return }
+      if (Math.abs(n) > limit) { setErr(t('{label}: ±{limit}° 를 넘습니다', { label: j.label, limit })); setBusy(false); return }
       offsets[j.name] = n
     }
     try {
       await api.post('/robots/diag/offsets', { iface, offsets })
       onSaved?.(); onClose()
     } catch (e) {
-      setErr(e instanceof Error ? e.message : '저장하지 못했습니다')
+      setErr(e instanceof Error ? e.message : t('저장하지 못했습니다'))
     } finally { setBusy(false) }
   }
 
@@ -64,14 +66,15 @@ export default function DiagOffsetsModal({ iface, onClose, onSaved }: Props) {
       onClick={onClose}>
       <div className="w-full max-w-md rounded-lg border border-neutral-700 bg-neutral-900 p-4"
         onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-sm font-semibold text-neutral-100">검사 중심 오프셋 — {iface}</h3>
+        <h3 className="text-sm font-semibold text-neutral-100">{t('검사 중심 오프셋 — {iface}', { iface })}</h3>
         <p className="mt-2 text-xs text-neutral-400">
-          검사는 <b>지금 자세를 중심으로</b> 흔듭니다. 팔에 붙은 기구물에 걸리는
-          관절은 여기서 중심을 옮기세요. 부호는 관절 좌표 그대로입니다 —
-          <b> +30 이면 +30°</b>. 비워 두면 안 옮깁니다.
+          {t.rich('검사는 {b} 흔듭니다. 팔에 붙은 기구물에 걸리는 관절은 여기서 중심을 옮기세요. 부호는 관절 좌표 그대로입니다 —{b_2}. 비워 두면 안 옮깁니다.', {
+            b: <b>{t('지금 자세를 중심으로')}</b>,
+            b_2: <b>{' '}{t('+30 이면 +30°')}</b>,
+          })}
         </p>
         <p className="mt-1 text-xs text-amber-400/90">
-          팔마다 따로 저장됩니다. 기구물은 그 팔에만 붙어 있으니까요.
+          {t('팔마다 따로 저장됩니다. 기구물은 그 팔에만 붙어 있으니까요.')}
         </p>
 
         <div className="mt-3 space-y-1.5">
@@ -83,7 +86,7 @@ export default function DiagOffsetsModal({ iface, onClose, onSaved }: Props) {
                 onChange={(e) => setVals((v) => ({ ...v, [j.name]: e.target.value }))}
                 className="w-24 rounded border border-neutral-700 bg-neutral-950 px-2 py-1
                            text-right text-neutral-100 focus:border-blue-500 focus:outline-none" />
-              <span className="text-neutral-500">도</span>
+              <span className="text-neutral-500">{t('도')}</span>
             </div>
           ))}
         </div>
@@ -94,12 +97,12 @@ export default function DiagOffsetsModal({ iface, onClose, onSaved }: Props) {
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={onClose}
             className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-600">
-            취소
+            {t('취소')}
           </button>
           <button onClick={() => void save()} disabled={busy}
             className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500
                        disabled:opacity-50">
-            {busy ? '…' : '저장'}
+            {busy ? '…' : t('저장')}
           </button>
         </div>
       </div>

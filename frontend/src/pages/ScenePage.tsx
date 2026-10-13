@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { useT, msg } from '../i18n'
 
 /**
  * 가상환경 편집기 — 테이블 위 사물을 사람이 올린다 (feature/sim-scene-editor.md §8).
@@ -44,18 +45,18 @@ type Defaults = {
 }
 
 const SHAPE_KO: Record<string, string> = {
-  box: '상자', sphere: '구', cylinder: '원기둥', capsule: '캡슐', ellipsoid: '타원체',
-  'preset:bin': '통 (조립)',
+  box: msg('상자'), sphere: msg('구'), cylinder: msg('원기둥'), capsule: msg('캡슐'), ellipsoid: msg('타원체'),
+  'preset:bin': msg('통 (조립)'),
 }
 //: 단위 — OBJ·STL 에는 단위가 없다. 사람이 고르는 값이다.
 //: 모양별 size 라벨 — MuJoCo 의 size 는 **반지름·반변**이다. 그 말을 화면에 적어야
 //  사람이 2cm 블럭을 만들 때 0.02 를 넣는다(0.04 가 아니라).
 const SIZE_LABELS: Record<string, string[]> = {
-  box: ['반변 X', '반변 Y', '반변 Z'],
-  sphere: ['반지름'],
-  cylinder: ['반지름', '반높이'],
-  capsule: ['반지름', '반높이'],
-  ellipsoid: ['반지름 X', '반지름 Y', '반지름 Z'],
+  box: [msg('반변 X'), msg('반변 Y'), msg('반변 Z')],
+  sphere: [msg('반지름')],
+  cylinder: [msg('반지름'), msg('반높이')],
+  capsule: [msg('반지름'), msg('반높이')],
+  ellipsoid: [msg('반지름 X'), msg('반지름 Y'), msg('반지름 Z')],
 }
 
 /** 물체를 구하는 곳 — **링크는 전부 확인했다**(2026-09-17). 공식 YCB 사이트
@@ -79,6 +80,7 @@ function Num({ label, value, step = 0.005, onChange }: {
 }
 
 export default function ScenePage() {
+  const t = useT()
   const [rows, setRows] = useState<SceneRow[]>([])
   const [current, setCurrent] = useState<string | null>(null)
   const [sid, setSid] = useState('')
@@ -118,16 +120,16 @@ export default function ScenePage() {
     reload().then((r) => {
       const first = r.current ?? r.scenes.find((s) => !s.error)?.id ?? ''
       if (first) setSid(first)
-    }).catch((e) => setErr(e instanceof Error ? e.message : '목록 실패'))
-  }, [reload])
+    }).catch((e) => setErr(e instanceof Error ? e.message : t('목록 실패')))
+  }, [reload, t])
 
   // 가상환경 선택 → 명세를 읽어 폼으로
   useEffect(() => {
     if (!sid) { setSpec(null); return }
     api.get<Spec>(`/sim/scenes/${sid}`)
       .then((s) => { setSpec(s); setDirty(false); setStale(false); setSel(s.objects[0]?.id ?? '') })
-      .catch((e) => setErr(e instanceof Error ? e.message : '가상환경을 못 읽었습니다'))
-  }, [sid])
+      .catch((e) => setErr(e instanceof Error ? e.message : t('가상환경을 못 읽었습니다')))
+  }, [sid, t])
 
   const loadCam = useCallback(async () => {
     try { setCam(await api.get<CamView>('/sim/scenes/live/camera')) } catch { /* simd 없음 */ }
@@ -146,8 +148,8 @@ export default function ScenePage() {
 
   const run = useCallback(async (what: string, fn: () => Promise<unknown>) => {
     setErr(''); setBusy(what)
-    try { await fn() } catch (e) { setErr(e instanceof Error ? e.message : `${what} 실패`) } finally { setBusy('') }
-  }, [])
+    try { await fn() } catch (e) { setErr(e instanceof Error ? e.message : t('{what} 실패', { what })) } finally { setBusy('') }
+  }, [t])
 
   /** 명세와 **세계가 같이** 바뀐 경우 — 배치가 그렇다. 남은 일은 저장뿐이다. */
   const patchInSync = useCallback((oid: string, part: Partial<Obj>) => {
@@ -195,61 +197,61 @@ export default function ScenePage() {
     camTimer.current = window.setTimeout(() => {
       api.put('/sim/scenes/live/camera', { z })
         .then(loadCam)                       // 판독값(px·덮음)은 서버에서 다시 받는다
-        .catch((e) => setErr(e instanceof Error ? e.message : '카메라 높이 변경 실패'))
+        .catch((e) => setErr(e instanceof Error ? e.message : t('카메라 높이 변경 실패')))
     }, 120)
-  }, [loadCam])
+  }, [loadCam, t])
 
-  const save = useCallback(() => run('저장', async () => {
+  const save = useCallback(() => run(t('저장'), async () => {
     if (!spec) return
     // 지금 세계의 높이를 같이 저장한다 — 슬라이더는 세계를 움직일 뿐이고,
     // 그 값이 명세에 남는 자리는 여기다.
     const withCam = cam ? { ...spec, cameras: { top: { z: cam.z } } } : spec
     await api.put(`/sim/scenes/${sid}`, { spec: withCam })
     setDirty(false); setCamDirty(false); await reload()
-  }), [run, spec, sid, reload, cam])
+  }), [run, spec, sid, reload, cam, t])
 
-  const apply = useCallback(() => run('적용', async () => {
+  const apply = useCallback(() => run(t('적용'), async () => {
     if (dirty) await api.put(`/sim/scenes/${sid}`, { spec })
     await api.post(`/sim/scenes/${sid}/apply`, undefined, { timeoutMs: 30_000 })
     setDirty(false); setStale(false); await reload()
-  }), [run, dirty, sid, spec, reload])
+  }), [run, dirty, sid, spec, reload, t])
 
-  const newScene = useCallback(() => run('새 가상환경', async () => {
+  const newScene = useCallback(() => run(t('새 가상환경'), async () => {
     const id = `scene-${Date.now().toString(36)}`
-    await api.put(`/sim/scenes/${id}`, { spec: { name: '새 가상환경', objects: [] } })
+    await api.put(`/sim/scenes/${id}`, { spec: { name: t('새 가상환경'), objects: [] } })
     await reload(); setSid(id)
-  }), [run, reload])
+  }), [run, reload, t])
 
-  const duplicate = useCallback(() => run('복제', async () => {
+  const duplicate = useCallback(() => run(t('복제'), async () => {
     if (!spec) return
     const id = `${sid}-copy-${Date.now().toString(36).slice(-4)}`
-    await api.put(`/sim/scenes/${id}`, { spec: { ...spec, name: `${spec.name} 사본` } })
+    await api.put(`/sim/scenes/${id}`, { spec: { ...spec, name: t('{name} 사본', { name: spec.name }) } })
     await reload(); setSid(id)
-  }), [run, spec, sid, reload])
+  }), [run, spec, sid, reload, t])
 
-  const remove = useCallback(() => run('지우기', async () => {
+  const remove = useCallback(() => run(t('지우기'), async () => {
     await api.delete(`/sim/scenes/${sid}`)
     const r = await reload(); setSid(r.scenes.find((s) => s.id !== sid)?.id ?? '')
-  }), [run, sid, reload])
+  }), [run, sid, reload, t])
 
   // 환경 불러오기 — 파일 하나 (사용자 요청 2026-09-17)
-  const importFile = useCallback((f: File) => run('불러오기', async () => {
+  const importFile = useCallback((f: File) => run(t('불러오기'), async () => {
     const text = await f.text()
     const made = await api.post<{ id: string }>('/sim/scenes/import', { text, name: '' })
     await reload(); setSid(made.id)
-  }), [run, reload])
+  }), [run, reload, t])
 
   // 환경 내보내기 — 같은 파일을 그대로 내려받는다
-  const exportFile = useCallback(() => run('내보내기', async () => {
+  const exportFile = useCallback(() => run(t('내보내기'), async () => {
     // ⚠ `api.get` 은 무조건 `res.json()` 한다 — 여기는 **파일 내용 그대로**가 필요하다.
     const res = await fetch(`/api/sim/scenes/${sid}/export`)
-    if (!res.ok) throw new Error(`내보내기 실패 (${res.status})`)
+    if (!res.ok) throw new Error(t('내보내기 실패 ({status})', { status: res.status }))
     const text = await res.text()
     const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }))
     const a = document.createElement('a')
     a.href = url; a.download = `${sid}.json`; a.click()
     URL.revokeObjectURL(url)
-  }), [run, sid])
+  }), [run, sid, t])
 
   // 탑뷰 클릭 → 선택한 물체를 그 자리로. 살아 있는 세계를 옮기고, 그 값을 명세에도 적는다.
   const placeAt = useCallback(async (e: React.MouseEvent<HTMLImageElement>) => {
@@ -263,7 +265,7 @@ export default function ScenePage() {
     const u = (e.clientX - r.left - (r.width - dw) / 2) / dw
     const v = (e.clientY - r.top - (r.height - dh) / 2) / dh
     if (u < 0 || u > 1 || v < 0 || v > 1) return
-    await run('배치', async () => {
+    await run(t('배치'), async () => {
       if (o.movable) {
         // 움직이는 물체는 살아 있는 세계에서 바로 옮긴다(자유관절이 있다)
         const hit = await api.post<{ pos: number[] }>('/sim/scenes/live/place-from-view',
@@ -284,38 +286,38 @@ export default function ScenePage() {
       await api.post(`/sim/scenes/${sid}/apply`, undefined, { timeoutMs: 30_000 })
       setDirty(false); setStale(false)          // 방금 올렸다 — 세계가 명세와 같다
     })
-  }, [spec, sel, applied, sid, run, patchInSync])
+  }, [spec, sel, applied, sid, run, patchInSync, t])
 
   const selected = useMemo(() => spec?.objects.find((o) => o.id === sel) ?? null, [spec, sel])
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-2xl font-bold">가상환경</h1>
+        <h1 className="text-2xl font-bold">{t('가상환경')}</h1>
         <select value={sid} onChange={(e) => setSid(e.target.value)}
           className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1 text-sm">
-          {rows.length === 0 && <option value="">가상환경 없음</option>}
+          {rows.length === 0 && <option value="">{t('가상환경 없음')}</option>}
           {rows.map((r) => (
             <option key={r.id} value={r.id}>
-              {r.name} ({r.count}){r.applied ? ' · 적용 중' : ''}{r.error ? ' · 깨짐' : ''}
+              {r.name} ({r.count}){r.applied ? t(' · 적용 중') : ''}{r.error ? t(' · 깨짐') : ''}
             </option>
           ))}
         </select>
-        <button onClick={newScene} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700">＋ 새 가상환경</button>
-        <button onClick={duplicate} disabled={!spec} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40">복제</button>
-        <button onClick={remove} disabled={!spec} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40">지우기</button>
+        <button onClick={newScene} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700">{t('＋ 새 가상환경')}</button>
+        <button onClick={duplicate} disabled={!spec} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40">{t('복제')}</button>
+        <button onClick={remove} disabled={!spec} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40">{t('지우기')}</button>
         <span className="flex-1" />
-        <button onClick={() => fileRef.current?.click()} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700">환경 불러오기</button>
+        <button onClick={() => fileRef.current?.click()} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700">{t('환경 불러오기')}</button>
         <input ref={fileRef} type="file" accept="application/json,.json" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = '' }} />
-        <button onClick={exportFile} disabled={!spec} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40">내보내기</button>
+        <button onClick={exportFile} disabled={!spec} className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40">{t('내보내기')}</button>
         <button onClick={save} disabled={!spec || (!dirty && !camDirty)}
           className="px-3 py-1 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">
-          {busy === '저장' ? '저장 중…' : dirty ? '저장' : '저장됨'}
+          {busy === '저장' ? t('저장 중…') : dirty ? t('저장') : t('저장됨')}
         </button>
         <button onClick={apply} disabled={!spec}
           className="px-3 py-1 text-sm rounded bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-40">
-          {busy === '적용' ? '올리는 중…' : applied ? '적용 중' : '시뮬에 적용'}
+          {busy === '적용' ? t('올리는 중…') : applied ? t('적용 중') : t('시뮬에 적용')}
         </button>
       </div>
 
@@ -335,7 +337,7 @@ export default function ScenePage() {
               {defs && [...Object.keys(defs.primitives), ...Object.keys(defs.presets).map((p) => `preset:${p}`)].map((sh) => (
                 <button key={sh} onClick={() => addObject(sh)} disabled={!spec}
                   className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40">
-                  ＋ {SHAPE_KO[sh] ?? sh}
+                  ＋ {t(SHAPE_KO[sh] ?? sh)}
                 </button>
               ))}
             </div>
@@ -346,19 +348,19 @@ export default function ScenePage() {
               {spec?.objects.map((o) => (
                 <li key={o.id}>
                   <button onClick={() => setSel(o.id)}
-                    title={`${SHAPE_KO[o.shape] ?? o.shape}${o.movable ? '' : ' · 고정'}`}
+                    title={`${t(SHAPE_KO[o.shape] ?? o.shape)}${o.movable ? '' : t(' · 고정')}`}
                     className={`flex max-w-[14rem] items-center gap-1.5 rounded border px-2 py-1 text-left text-sm ${
                       sel === o.id ? 'border-blue-500 bg-blue-500/15'
                                    : 'border-neutral-700 bg-neutral-900 hover:border-neutral-500'}`}>
                     <span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-black/40" style={{ background: hex(o.rgba) }} />
                     <span className="truncate">{o.label}</span>
-                    {!o.movable && <span className="shrink-0 text-[10px] text-amber-300">고정</span>}
+                    {!o.movable && <span className="shrink-0 text-[10px] text-amber-300">{t('고정')}</span>}
                   </button>
                 </li>
               ))}
               {spec && spec.objects.length === 0 && (
                 <li className="w-full rounded border border-dashed border-neutral-700 px-3 py-6 text-center text-sm text-neutral-500">
-                  빈 테이블입니다 — 위에서 모양을 골라 올리세요
+                  {t('빈 테이블입니다 — 위에서 모양을 골라 올리세요')}
                 </li>
               )}
             </ul>
@@ -375,20 +377,20 @@ export default function ScenePage() {
                 <button onClick={() => {
                   setSpec((s) => s && ({ ...s, objects: s.objects.filter((o) => o.id !== selected.id) }))
                   setDirty(true); setStale(true); setSel('')
-                }} className="px-2 py-1 text-xs rounded bg-red-900/60 hover:bg-red-800 text-red-100">지우기</button>
+                }} className="px-2 py-1 text-xs rounded bg-red-900/60 hover:bg-red-800 text-red-100">{t('지우기')}</button>
               </div>
               <p className="text-[11px] font-mono text-neutral-500">id: {selected.id}</p>
 
               <div className="grid grid-cols-3 gap-2">
                 {(['X', 'Y', 'Z'] as const).map((ax, i) => (
-                  <Num key={ax} label={`위치 ${ax} (m)`} value={selected.pos[i]}
+                  <Num key={ax} label={t('위치 {ax} (m)', { ax })} value={selected.pos[i]}
                     onChange={(v) => patch(selected.id, { pos: selected.pos.map((p, j) => (j === i ? v : p)) })} />
                 ))}
               </div>
               {selected.size && (
                 <div className="grid grid-cols-3 gap-2">
                   {selected.size.map((s, i) => (
-                    <Num key={i} label={`${SIZE_LABELS[selected.shape]?.[i] ?? `크기 ${i}`} (m)`} value={s} step={0.005}
+                    <Num key={i} label={`${t(SIZE_LABELS[selected.shape]?.[i] ?? t('크기 {i}', { i }))} (m)`} value={s} step={0.005}
                       onChange={(v) => patch(selected.id, { size: selected.size!.map((x, j) => (j === i ? v : x)) })} />
                   ))}
                 </div>
@@ -410,7 +412,7 @@ export default function ScenePage() {
               )}
               <div className="grid grid-cols-3 gap-2">
                 {(['X', 'Y', 'Z'] as const).map((ax, i) => (
-                  <Num key={ax} label={`회전 ${ax} (°)`} value={selected.euler_deg[i]} step={5}
+                  <Num key={ax} label={t('회전 {ax} (°)', { ax })} value={selected.euler_deg[i]} step={5}
                     onChange={(v) => patch(selected.id, { euler_deg: selected.euler_deg.map((p, j) => (j === i ? v : p)) })} />
                 ))}
               </div>
@@ -422,22 +424,23 @@ export default function ScenePage() {
                       ...(defs ? (e.target.checked ? defs.movable_physics : defs.static_physics) : {}),
                       ...(e.target.checked && selected.mass === undefined ? { mass: 0.05 } : {}),
                     })} />
-                  움직임 (잡을 수 있다)
+                  {t('움직임 (잡을 수 있다)')}
                 </label>
                 {selected.movable && (
                   <div className="w-24">
-                    <Num label="질량 (kg)" value={selected.mass ?? 0.05} step={0.01}
+                    <Num label={t('질량 (kg)')} value={selected.mass ?? 0.05} step={0.01}
                       onChange={(v) => patch(selected.id, { mass: v })} />
                   </div>
                 )}
                 <div className="w-24">
-                  <Num label="마찰" value={selected.friction[0]} step={0.1}
+                  <Num label={t('마찰')} value={selected.friction[0]} step={0.1}
                     onChange={(v) => patch(selected.id, { friction: [v, ...selected.friction.slice(1)] })} />
                 </div>
               </div>
               <p className="text-[11px] text-neutral-500">
-                ⚠ 크기는 <b>반지름·반변</b>입니다 — 한 변 4cm 상자는 0.02 입니다.
-                고정물은 잡을 물건이 아니라 부딪칠 물건이라 접촉 설정이 다릅니다.
+                {t.rich('⚠ 크기는 {b}입니다 — 한 변 4cm 상자는 0.02 입니다. 고정물은 잡을 물건이 아니라 부딪칠 물건이라 접촉 설정이 다릅니다.', {
+                  b: <b>{t('반지름·반변')}</b>,
+                })}
               </p>
             </div>
           )}
@@ -447,19 +450,19 @@ export default function ScenePage() {
             (따로 떼어 놓으면 무엇의 높이인지가 화면에서 안 보인다). */}
         <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
           <div className="relative overflow-hidden rounded border border-neutral-700 bg-black">
-            <img src={`/api/cameras/sim%3Atop/preview?t=${tick}`} alt="시뮬 탑뷰"
+            <img src={`/api/cameras/sim%3Atop/preview?t=${tick}`} alt={t('시뮬 탑뷰')}
               onClick={placeAt} draggable={false}
               className={`w-full object-contain ${applied && selected ? 'cursor-crosshair' : ''}`} />
             {!applied && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/65 px-6 text-center text-sm text-neutral-200">
-                {stale ? '고친 내용을 적용해야 여기서 배치할 수 있습니다'
-                  : '이 가상환경을 시뮬에 적용하면 여기서 클릭해 배치할 수 있습니다'}
+                {stale ? t('고친 내용을 적용해야 여기서 배치할 수 있습니다')
+                  : t('이 가상환경을 시뮬에 적용하면 여기서 클릭해 배치할 수 있습니다')}
               </div>
             )}
           </div>
           {cam && (
             <div className="flex items-center gap-3">
-              <label className="shrink-0 text-xs text-neutral-400" htmlFor="cam-z">탑뷰 높이</label>
+              <label className="shrink-0 text-xs text-neutral-400" htmlFor="cam-z">{t('탑뷰 높이')}</label>
               <input id="cam-z" type="range" className="flex-1 accent-blue-500"
                 min={cam.range[0]} max={cam.range[1]} step={0.01} value={cam.z}
                 onChange={(e) => pushZ(Number(e.target.value))} />
@@ -468,21 +471,20 @@ export default function ScenePage() {
                 {cam.z.toFixed(2)} m
               </span>
               <span className="shrink-0 text-[11px] text-neutral-500">
-                큐브 ≈ {Math.round(cam.probe_px)}px ·{' '}
+                {t('큐브 ≈ {probe_px}px ·', { probe_px: Math.round(cam.probe_px) })}
                 {cam.covers_table
-                  ? <span className="text-green-400">테이블 전체 보임</span>
-                  : <span className="text-amber-400">테이블 일부만</span>}
+                  ? <span className="text-green-400">{t('테이블 전체 보임')}</span>
+                  : <span className="text-amber-400">{t('테이블 일부만')}</span>}
               </span>
             </div>
           )}
           <p className="text-[11px] text-neutral-500">
             {applied
               ? (selected
-                ? `탑뷰를 클릭하면 '${selected.label}' 가 그 자리로 갑니다`
-                  + (selected.movable ? ' — 그 위치가 가상환경에도 적힙니다.'
-                    : ' — 고정물이라 가상환경을 고쳐 다시 올립니다(잠깐 멈춥니다).')
-                : '물체를 고르면 클릭으로 배치할 수 있습니다.')
-              : '탑뷰는 지금 시뮬에 올라간 세계입니다.'}
+                ? t('탑뷰를 클릭하면 \'{label}\' 가 그 자리로 갑니다{movable}', { label: selected.label, movable: (selected.movable ? t(' — 그 위치가 가상환경에도 적힙니다.')
+                    : t(' — 고정물이라 가상환경을 고쳐 다시 올립니다(잠깐 멈춥니다).')) })
+                : t('물체를 고르면 클릭으로 배치할 수 있습니다.'))
+              : t('탑뷰는 지금 시뮬에 올라간 세계입니다.')}
           </p>
         </div>
       </div>

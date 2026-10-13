@@ -5,6 +5,7 @@ import { api } from '../services/api'
 import type { Model } from '../types/models'
 import DiskUsageBar from '../components/DiskUsageBar'
 import HubBrowser from '../components/HubBrowser'
+import { useT, fmt } from '../i18n'
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -17,11 +18,12 @@ function formatBytes(bytes: number): string {
 type SortKey = 'name' | 'size' | 'date' | 'policy'
 
 export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey }: { embedded?: boolean; tab?: 'local' | 'hub'; refreshKey?: number }) {
+  const t = useT()
   // ⚠ `window.alert` 를 쓰지 않는다 — 이벤트 루프를 막아 E-stop heartbeat 가
   //   끊기고, 2초 타임아웃에 추론이 강제 종료된다 (confirm 으로 실제로 겪었다).
   const { notify, confirm: askConfirm } = useSystemMessage()
   const notifyError = (text: string) =>
-    notify({ level: 'error', text, source: '추론' })
+    notify({ level: 'error', text, source: t('추론') })
   const [ownTab, setTab] = useState<'local' | 'hub'>('local')
   // ⚠ **묶여 있을 때는 부모가 정한다.** `로컬|Hub` 는 모델·데이터셋 두 탭이
   //   공유하는 선택이라, 각 페이지가 따로 들고 있으면 탭을 옮길 때마다 되돌아간다.
@@ -53,8 +55,8 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
     const model = models.find((m) => m.id === id)
     const isLocal = model?.path && !model.path.includes('.cache/huggingface/hub/models--')
     const msg = isLocal
-      ? `"${id}" 모델 폴더를 삭제하시겠습니까?\n경로: ${model.path}`
-      : `"${id}" 모델을 삭제하시겠습니까?`
+      ? t('"{id}" 모델 폴더를 삭제하시겠습니까?\n경로: {path}', { id, path: model.path })
+      : t('"{id}" 모델을 삭제하시겠습니까?', { id })
     if (!await askConfirm(msg)) return
     await api.delete(`/models/${id}`)
     fetchModels()
@@ -67,7 +69,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
         checkpoint_path: model.path,
       })
     } catch (e) {
-      notifyError('추론 시작 실패')
+      notifyError(t('추론 시작 실패'))
     }
   }
 
@@ -123,11 +125,11 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
     <div className="space-y-6">
       {!embedded && (
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">모델</h1>
+          <h1 className="text-2xl font-bold">{t('모델')}</h1>
           <div className="flex gap-1">
             <button onClick={() => setTab('local')}
               className={`px-3 py-1.5 rounded text-sm ${tab === 'local' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}>
-              로컬
+              {t('로컬')}
             </button>
             <button onClick={() => setTab('hub')}
               className={`px-3 py-1.5 rounded text-sm ${tab === 'hub' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}>
@@ -135,7 +137,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
             </button>
             <button onClick={fetchModels} disabled={loading}
               className="px-3 py-1.5 rounded text-sm text-neutral-400 hover:text-white hover:bg-neutral-700 disabled:opacity-50">
-              {loading ? '스캔 중...' : '새로고침'}
+              {loading ? t('스캔 중...') : t('새로고침')}
             </button>
           </div>
         </div>
@@ -146,20 +148,20 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
       {tab === 'hub' ? <HubBrowser type="models" /> : null}
 
       {tab === 'local' && loading ? (
-        <p className="text-neutral-400">스캔 중...</p>
+        <p className="text-neutral-400">{t('스캔 중...')}</p>
       ) : tab === 'local' && models.length === 0 ? (
         <p className="text-neutral-400">
-          로컬 모델이 없습니다. Hub에서 다운로드하거나 학습을 실행하세요.
+          {t('로컬 모델이 없습니다. Hub에서 다운로드하거나 학습을 실행하세요.')}
         </p>
       ) : tab === 'local' ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* 모델 목록 */}
           <div className="lg:col-span-1 space-y-2">
             <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
-              placeholder="검색 (이름, 정책)..."
+              placeholder={t('검색 (이름, 정책)...')}
               className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 placeholder:text-neutral-500" />
             <div className="flex gap-1 text-[10px]">
-              {([['name', '이름'], ['policy', '정책'], ['size', '크기'], ['date', '날짜']] as [SortKey, string][]).map(([k, l]) => (
+              {([['name', t('이름')], ['policy', t('정책')], ['size', t('크기')], ['date', t('날짜')]] as [SortKey, string][]).map(([k, l]) => (
                 <button key={k} onClick={() => handleSort(k)}
                   className={`px-2 py-0.5 rounded ${sortKey === k ? 'bg-blue-600 text-white' : 'bg-neutral-700 text-neutral-400'}`}>
                   {l}{sortKey === k ? (sortAsc ? ' ↑' : ' ↓') : ''}
@@ -180,13 +182,15 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                     <span className="truncate font-medium">
                       {g.run && g.list[0]?.run_notes?.name
                         ? <>{g.list[0].run_notes.name} <span className="text-neutral-500 font-normal">({g.run})</span></>
-                        : (g.run || '그 외 (직접 받은 모델)')}
+                        : (g.run || t('그 외 (직접 받은 모델)'))}
                     </span>
                     <span className="ml-auto shrink-0 text-xs text-neutral-500">
-                      {g.run && g.list[0]?.policy_type ? `${g.list[0].policy_type} · ` : ''}
-                      {g.run && g.list[0]?.run_created
-                        ? `${new Date(g.list[0].run_created).toLocaleDateString('ko-KR')} · ` : ''}
-                      {g.list.length}개
+                      {t('{run}{run_2}{length}개', {
+                        run: g.run && g.list[0]?.policy_type ? `${g.list[0].policy_type} · ` : '',
+                        run_2: g.run && g.list[0]?.run_created
+                        ? `${fmt.date(g.list[0].run_created)} · ` : '',
+                        length: g.list.length,
+                      })}
                     </span>
                   </button>
                   {open && (
@@ -210,7 +214,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                         </p>
                         <p className="text-xs text-neutral-400 mt-1">
                           {m.policy_type} · {formatBytes(m.size_bytes)}
-                          {m.created && <> · {new Date(m.created).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })}</>}
+                          {m.created && <> · {fmt.dateTime(m.created, { dateStyle: 'short', timeStyle: 'short' })}</>}
                         </p>
                       </div>
                     </div>
@@ -222,7 +226,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                         }}
                         className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white"
                       >
-                        추론 시작
+                        {t('추론 시작')}
                       </button>
                       <button
                         onClick={(e) => {
@@ -231,7 +235,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                         }}
                         className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white"
                       >
-                        삭제
+                        {t('삭제')}
                       </button>
                     </div>
                   </div>
@@ -254,7 +258,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                 </h2>
 
                 {/* 이름·설명 사이드카 — 체크포인트 형식에 이 자리가 없다 */}
-                <NotesEditor key={selected.id} endpoint={`/models/${selected.id}/notes`} source="모델" />
+                <NotesEditor key={selected.id} endpoint={`/models/${selected.id}/notes`} source={t('모델')} />
 
                 {/* 기본 정보 */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
@@ -263,12 +267,12 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                     <p className="font-medium">{selected.policy_type}</p>
                   </div>
                   <div>
-                    <span className="text-neutral-400 text-xs">크기</span>
+                    <span className="text-neutral-400 text-xs">{t('크기')}</span>
                     <p>{formatBytes(selected.size_bytes)}</p>
                   </div>
                   <div>
-                    <span className="text-neutral-400 text-xs">수정일</span>
-                    <p>{new Date(selected.modified).toLocaleString()}</p>
+                    <span className="text-neutral-400 text-xs">{t('수정일')}</span>
+                    <p>{fmt.dateTime(selected.modified)}</p>
                   </div>
                   <div>
                     <span className="text-neutral-400 text-xs">Repo</span>
@@ -279,19 +283,19 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                 {/* 입출력 요구사항 */}
                 {selected.requirements && (
                   <div className="space-y-2">
-                    <h3 className="text-sm font-semibold text-neutral-300">입출력</h3>
+                    <h3 className="text-sm font-semibold text-neutral-300">{t('입출력')}</h3>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
                       <div>
-                        <span className="text-neutral-400 text-xs">관절 (state)</span>
-                        <p>{selected.requirements.state_dim}개</p>
+                        <span className="text-neutral-400 text-xs">{t('관절 (state)')}</span>
+                        <p>{t('{state_dim}개', { state_dim: selected.requirements.state_dim })}</p>
                       </div>
                       <div>
-                        <span className="text-neutral-400 text-xs">액션</span>
-                        <p>{selected.requirements.action_dim}차원</p>
+                        <span className="text-neutral-400 text-xs">{t('액션')}</span>
+                        <p>{t('{action_dim}차원', { action_dim: selected.requirements.action_dim })}</p>
                       </div>
                       <div>
-                        <span className="text-neutral-400 text-xs">카메라</span>
-                        <p>{selected.requirements.required_cameras.length}대</p>
+                        <span className="text-neutral-400 text-xs">{t('카메라')}</span>
+                        <p>{t('{length}대', { length: selected.requirements.required_cameras.length })}</p>
                       </div>
                     </div>
                     {selected.requirements.required_cameras.length > 0 && (
@@ -299,9 +303,9 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                         <table className="w-full text-xs">
                           <thead className="bg-neutral-900">
                             <tr>
-                              <th className="p-2 text-left text-neutral-400">이름</th>
-                              <th className="p-2 text-left text-neutral-400">해상도</th>
-                              <th className="p-2 text-left text-neutral-400">채널</th>
+                              <th className="p-2 text-left text-neutral-400">{t('이름')}</th>
+                              <th className="p-2 text-left text-neutral-400">{t('해상도')}</th>
+                              <th className="p-2 text-left text-neutral-400">{t('채널')}</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -321,7 +325,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
 
                 {/* 아키텍처 */}
                 <div className="space-y-2">
-                  <h3 className="text-sm font-semibold text-neutral-300">아키텍처</h3>
+                  <h3 className="text-sm font-semibold text-neutral-300">{t('아키텍처')}</h3>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
                     {selected.config.vlm_model_name != null && (
                       <div className="col-span-2 sm:col-span-3">
@@ -330,15 +334,15 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                       </div>
                     )}
                     {[
-                      ['chunk_size', '청크 크기'],
-                      ['n_action_steps', '액션 스텝'],
-                      ['n_obs_steps', '관측 스텝'],
-                      ['num_vlm_layers', 'VLM 레이어'],
-                      ['num_expert_layers', '전문가 레이어'],
-                      ['num_steps', '디노이징 스텝'],
-                      ['attention_mode', '어텐션 모드'],
-                      ['freeze_vision_encoder', '비전 동결'],
-                      ['use_cache', '캐시 사용'],
+                      ['chunk_size', t('청크 크기')],
+                      ['n_action_steps', t('액션 스텝')],
+                      ['n_obs_steps', t('관측 스텝')],
+                      ['num_vlm_layers', t('VLM 레이어')],
+                      ['num_expert_layers', t('전문가 레이어')],
+                      ['num_steps', t('디노이징 스텝')],
+                      ['attention_mode', t('어텐션 모드')],
+                      ['freeze_vision_encoder', t('비전 동결')],
+                      ['use_cache', t('캐시 사용')],
                     ].map(([key, label]) => {
                       const val = selected.config[key]
                       if (val == null) return null
@@ -354,7 +358,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
 
                 {/* 학습 설정 */}
                 <details>
-                  <summary className="text-sm text-neutral-400 cursor-pointer">학습 설정</summary>
+                  <summary className="text-sm text-neutral-400 cursor-pointer">{t('학습 설정')}</summary>
                   <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
                     {[
                       ['optimizer_lr', 'Learning Rate'],
@@ -381,7 +385,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                 {/* 정규화 매핑 */}
                 {selected.config.normalization_mapping != null && (
                   <details>
-                    <summary className="text-sm text-neutral-400 cursor-pointer">정규화</summary>
+                    <summary className="text-sm text-neutral-400 cursor-pointer">{t('정규화')}</summary>
                     <div className="mt-2 grid grid-cols-3 gap-x-4 gap-y-1 text-xs">
                       {Object.entries(selected.config.normalization_mapping as Record<string, string>).map(([k, v]) => (
                         <div key={k}>
@@ -395,7 +399,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
 
                 {/* Config JSON (raw) */}
                 <details>
-                  <summary className="text-sm text-neutral-400 cursor-pointer">Config JSON (전체)</summary>
+                  <summary className="text-sm text-neutral-400 cursor-pointer">{t('Config JSON (전체)')}</summary>
                   <pre className="mt-2 text-xs bg-neutral-900 p-3 rounded overflow-auto max-h-64">
                     {JSON.stringify(selected.config, null, 2)}
                   </pre>
@@ -403,7 +407,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
               </div>
             ) : (
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-6 text-neutral-400 text-center">
-                모델을 선택하면 상세 정보가 표시됩니다
+                {t('모델을 선택하면 상세 정보가 표시됩니다')}
               </div>
             )}
           </div>

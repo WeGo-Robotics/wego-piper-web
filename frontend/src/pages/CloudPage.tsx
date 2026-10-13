@@ -2,6 +2,7 @@ import { useState } from 'react'
 import CloudRentTab from '../components/CloudRentTab'
 import CloudInstancesTab from '../components/CloudInstancesTab'
 import CloudRentProgress from '../components/CloudRentProgress'
+import { useT } from '../i18n'
 
 /**
  * 클라우드 GPU — 남의 GPU 를 빌려 학습한다 (feature/vast-training.md §9-2).
@@ -14,15 +15,16 @@ import CloudRentProgress from '../components/CloudRentProgress'
  * 한 번 맞춰 두는 것과 매일 보는 것을 가른다 — 저장소(HF) 탭과 같은 이유다.
  */
 export default function CloudPage() {
+  const t = useT()
   const [tab, setTab] = useState<'rent' | 'instances'>('rent')
 
   return (
     <div className="space-y-6">
       {/* ⚠ 탭은 제목과 **같은 줄** 바로 옆이다 — 아래로 쌓거나 오른쪽 끝으로 밀지 않는다 */}
       <div className="flex items-center gap-4">
-        <h1 className="text-2xl font-bold">클라우드 GPU</h1>
+        <h1 className="text-2xl font-bold">{t('클라우드 GPU')}</h1>
         <div className="flex overflow-hidden rounded-lg border border-neutral-700 text-sm">
-          {([['rent', 'RENT'], ['instances', '인스턴스']] as const).map(([k, label]) => (
+          {([['rent', 'RENT'], ['instances', t('인스턴스')]] as const).map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)}
               className={`px-4 py-1.5 ${tab === k
                 ? 'bg-neutral-700 text-white' : 'bg-neutral-900 text-neutral-400 hover:text-white'}`}>

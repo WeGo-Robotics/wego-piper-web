@@ -54,7 +54,7 @@ def test_the_switch_is_disabled_while_the_request_is_in_flight():
 def test_the_state_is_also_written_out():
     """색만으로는 색각 이상에서 안 읽힌다 — 글자도 같이 낸다."""
     src = _src()
-    assert "'켜짐' : '꺼짐'" in src
+    assert "t('켜짐') : t('꺼짐')" in src
 
 
 # ── 적용 범위 (화면이 거짓말하지 않는가) ──────────────────────────────────────

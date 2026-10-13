@@ -2,6 +2,7 @@ import { useState } from 'react'
 import DiskUsageBar from '../components/DiskUsageBar'
 import ModelsPage from './ModelsPage'
 import DatasetsPage from './DatasetsPage'
+import { useT } from '../i18n'
 
 /**
  * 저장소 — 모델과 데이터셋을 로컬/Hub 양쪽에서 본다.
@@ -25,6 +26,7 @@ type MainTab = 'models' | 'datasets'
 type Source = 'local' | 'hub'
 
 export default function HubPage() {
+  const t = useT()
   const [mainTab, setMainTab] = useState<MainTab>('models')
   const [source, setSource] = useState<Source>('local')
   const [refreshKey, setRefreshKey] = useState(0)
@@ -44,24 +46,24 @@ export default function HubPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <h1 className="text-2xl font-bold">저장소</h1>
+        <h1 className="text-2xl font-bold">{t('저장소')}</h1>
 
         <div className={group}>
-          <button className={seg(mainTab === 'models')} onClick={() => setMainTab('models')}>모델</button>
-          <button className={seg(mainTab === 'datasets')} onClick={() => setMainTab('datasets')}>데이터셋</button>
+          <button className={seg(mainTab === 'models')} onClick={() => setMainTab('models')}>{t('모델')}</button>
+          <button className={seg(mainTab === 'datasets')} onClick={() => setMainTab('datasets')}>{t('데이터셋')}</button>
         </div>
 
         <span className="h-5 w-px bg-neutral-700" />
 
         <div className={group}>
-          <button className={seg(source === 'local')} onClick={() => setSource('local')}>로컬</button>
+          <button className={seg(source === 'local')} onClick={() => setSource('local')}>{t('로컬')}</button>
           <button className={seg(source === 'hub')} onClick={() => setSource('hub')}>Hub</button>
         </div>
 
         <span className="h-5 w-px bg-neutral-700" />
 
         <button type="button" onClick={() => setRefreshKey((n) => n + 1)} className={action}>
-          <span aria-hidden>⟳</span> 새로고침
+          {t.rich('{span} 새로고침', { span: <span aria-hidden>⟳</span> })}
         </button>
 
         {/* 용량은 오른쪽 끝으로 — 늘 보이되 시선을 안 끈다 */}

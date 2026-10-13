@@ -1,3 +1,4 @@
+import { useT } from '../i18n'
 type Props = {
   label: string
   value: number
@@ -30,6 +31,7 @@ export default function ParamSlider({
   unsafe,
   unit,
 }: Props) {
+  const t = useT()
   const commit = () => onCommit?.(value)
   return (
     <div className={`space-y-1 ${unsafe ? 'opacity-50' : ''}`}>
@@ -37,7 +39,7 @@ export default function ParamSlider({
         <span className="text-neutral-400">
           {label}
           {unsafe && (
-            <span className="ml-1 text-amber-400">(재시작 필요)</span>
+            <span className="ml-1 text-amber-400">{t('(재시작 필요)')}</span>
           )}
         </span>
         <span className="flex items-center gap-1">

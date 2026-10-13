@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import '@xterm/xterm/css/xterm.css'
+import { msg, useT } from '../i18n'
 
 type Props = {
   logs: string[]
@@ -18,9 +19,10 @@ type Props = {
 }
 
 export default function LogViewer({
-  logs, onClear, height = 'h-96', placeholder = '로그 대기 중...',
+  logs, onClear, height = 'h-96', placeholder = msg('로그 대기 중...'),
   hideControls = false, searchable = false,
 }: Props) {
+  const t = useT()
   const termRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -91,7 +93,7 @@ export default function LogViewer({
         // 클리어됨
         term.clear()
       }
-      term.write(`\x1b[90m${placeholder}\x1b[0m`)
+      term.write(`\x1b[90m${t(placeholder)}\x1b[0m`)
       return
     }
 
@@ -116,7 +118,7 @@ export default function LogViewer({
       return
     }
     for (let i = overlap; i < logs.length; i++) term.writeln(logs[i])
-  }, [logs, placeholder])
+  }, [logs, placeholder, t])
 
   // 검색
   useEffect(() => {
@@ -168,7 +170,7 @@ export default function LogViewer({
                 <input type="text" value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.shiftKey ? handleSearchPrev() : handleSearchNext() } }}
-                  placeholder="검색 (Enter/Shift+Enter)..."
+                  placeholder={t('검색 (Enter/Shift+Enter)...')}
                   className="px-2 py-0.5 text-[10px] rounded bg-neutral-800 border border-neutral-700 text-neutral-300 w-44 placeholder:text-neutral-500" />
               </>
             )}
@@ -177,16 +179,16 @@ export default function LogViewer({
           <div className="flex items-center gap-1">
             <button onClick={() => { const term = xtermRef.current; if (term) term.scrollToBottom() }}
               className="px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-400 hover:text-neutral-100">
-              하단
+              {t('하단')}
             </button>
             <button onClick={handleCopy} disabled={logs.length === 0}
               className="px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-400 hover:text-neutral-100 disabled:opacity-30">
-              {copied ? '복사됨' : '복사'}
+              {copied ? t('복사됨') : t('복사')}
             </button>
             {onClear && (
               <button onClick={onClear} disabled={logs.length === 0}
                 className="px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-400 hover:text-neutral-100 disabled:opacity-30">
-                지우기
+                {t('지우기')}
               </button>
             )}
           </div>

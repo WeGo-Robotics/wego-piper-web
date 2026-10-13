@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { phaseColor } from '../config/phases'
 import { JOINT_NAMES, JOINT_RANGE } from '../config/joints'
+import { useT } from '../i18n'
 
 export type TelemetryData = {
   step: number
@@ -64,6 +65,7 @@ function JointBar({ name, value, actionValue }: { name: string; value: number; a
 }
 
 export default function TelemetryPanel({ data, targetFps, cameraNames, showTask = true }: Props) {
+  const t = useT()
   const [camTimestamp, setCamTimestamp] = useState(0)
 
   // 카메라 프리뷰 1초마다 갱신
@@ -75,7 +77,7 @@ export default function TelemetryPanel({ data, targetFps, cameraNames, showTask 
   if (!data) {
     return (
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 text-sm text-neutral-500 text-center">
-        추론 대기 중...
+        {t('추론 대기 중...')}
       </div>
     )
   }
@@ -86,21 +88,20 @@ export default function TelemetryPanel({ data, targetFps, cameraNames, showTask 
     <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-4">
       {/* 상단: FPS + 지연 + GPU */}
       <div className="flex items-center gap-4 flex-wrap">
-        <div className="text-center" title="실제 제어 주기 — 팔이 이 속도로 움직입니다">
+        <div className="text-center" title={t('실제 제어 주기 — 팔이 이 속도로 움직입니다')}>
           <div className="text-2xl font-bold text-blue-400">{data.fps}</div>
           <div className="text-[10px] text-neutral-400">FPS</div>
         </div>
         {data.step_ms !== undefined && (
           <div
             className="text-center"
-            title={`한 스텝 처리에 쓴 시간입니다 (목표 주기 ${Math.round(1000 / targetFps)}ms). `
-              + '카메라 대기가 여기 포함됩니다 — 목표에 가까워지면 여유가 없다는 뜻입니다.'}
+            title={t('한 스텝 처리에 쓴 시간입니다 (목표 주기 {targetFps}ms). 카메라 대기가 여기 포함됩니다 — 목표에 가까워지면 여유가 없다는 뜻입니다.', { targetFps: Math.round(1000 / targetFps) })}
           >
             <div className={`text-2xl font-bold ${
               data.step_ms > 1000 / targetFps ? 'text-red-400'
                 : data.step_ms > 700 / targetFps ? 'text-amber-400' : 'text-neutral-300'
             }`}>{data.step_ms}<span className="text-sm font-normal">ms</span></div>
-            <div className="text-[10px] text-neutral-400">처리 시간</div>
+            <div className="text-[10px] text-neutral-400">{t('처리 시간')}</div>
           </div>
         )}
         <div className="flex-1 space-y-1">
@@ -126,8 +127,7 @@ export default function TelemetryPanel({ data, targetFps, cameraNames, showTask 
         {data.stage && (
           <div
             className="text-center"
-            title={'정책이 예측한 작업 단계입니다. 청크당 한 번 갱신되므로 1~3초마다 바뀝니다.\n'
-              + '확률이 낮으면 모델이 단계를 헷갈리는 중이라는 뜻입니다.'}
+            title={t('정책이 예측한 작업 단계입니다. 청크당 한 번 갱신되므로 1~3초마다 바뀝니다.\n확률이 낮으면 모델이 단계를 헷갈리는 중이라는 뜻입니다.')}
           >
             <div className="flex items-center gap-1.5">
               <span
@@ -142,7 +142,7 @@ export default function TelemetryPanel({ data, targetFps, cameraNames, showTask 
                 }`}>{Math.round(data.stage_p * 100)}%</span>
               )}
             </div>
-            <div className="text-[10px] text-neutral-400">단계</div>
+            <div className="text-[10px] text-neutral-400">{t('단계')}</div>
           </div>
         )}
         <div className="text-xs text-neutral-400">
@@ -153,7 +153,7 @@ export default function TelemetryPanel({ data, targetFps, cameraNames, showTask 
       {/* 관절 위치 + 액션 */}
       <div className="space-y-1">
         <div className="flex justify-between text-[10px] text-neutral-400">
-          <span>관절 위치 <span className="text-blue-400">■</span> 현재  <span className="text-red-400">■</span> 예측</span>
+          <span>{t.rich('관절 위치 {span} 현재  {span_2} 예측', { span: <span className="text-blue-400">■</span>, span_2: <span className="text-red-400">■</span> })}</span>
         </div>
         {data.joints.map((val, i) => (
           <JointBar
@@ -168,7 +168,7 @@ export default function TelemetryPanel({ data, targetFps, cameraNames, showTask 
       {/* 카메라 프리뷰 */}
       {cameraNames.length > 0 && (
         <div className="space-y-1">
-          <span className="text-[10px] text-neutral-400">카메라</span>
+          <span className="text-[10px] text-neutral-400">{t('카메라')}</span>
           <div className="flex gap-2">
             {cameraNames.map((name) => (
               <div key={name} className="flex-1">

@@ -134,9 +134,9 @@ def test_the_version_rows_wrap_inside_the_card():
     src = code_only((REPO / "frontend" / "src" / "components" / "VersionCard.tsx").read_text())
     assert "sm:grid-cols-[auto_minmax(0,1fr)]" in src, "값 트랙이 내용에 밀린다"
     assert "sm:grid-cols-[auto_1fr]" not in src
-    rows = src.split(">컨테이너</span>", 1)[1].split("받아 둔 다른 버전", 1)[0]
+    rows = src.split(">{t('컨테이너')}</span>", 1)[1].split("받아 둔 다른 버전", 1)[0]
     assert rows.count("flex-wrap") >= 4, "값 줄(셋)이나 데몬 묶음이 안 접힌다"
     assert "mr-3 whitespace-nowrap" not in rows, "항목을 margin 으로 이어 붙이던 옛 구조가 남았다"
     for label in ("컨테이너", "호스트", "데몬"):
-        assert f'className="whitespace-nowrap text-neutral-500">{label}' in src, \
+        assert f"className=\"whitespace-nowrap text-neutral-500\">{{t('{label}')}}" in src, \
             f"{label} 라벨이 다시 한 글자씩 접힌다"

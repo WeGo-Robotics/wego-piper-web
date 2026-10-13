@@ -187,6 +187,6 @@ def test_checkpoints_inherit_the_runs_title_from_the_training_form(tmp_path):
     assert items["000100"]["created"] and items["000100"]["run_created"]
     page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages" / "ModelsPage.tsx").read_text()
     assert "run_notes?.name" in page, "그룹 헤더가 run 제목을 안 그린다"
-    assert "run_created" in page and "toLocaleDateString('ko-KR')" in page
+    assert "run_created" in page and "fmt.date(g.list[0].run_created)" in page
     ds_page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages" / "DatasetsPage.tsx").read_text()
     assert "만든 날짜" in ds_page

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { useSystemMessage } from './SystemMessages'
+import { useT } from '../i18n'
 
 /**
  * 이름·설명 사이드카 편집기 — 데이터셋(`meta/piper_notes.json`)과
@@ -18,6 +19,7 @@ export default function NotesEditor({ endpoint, source }: {
   endpoint: string
   source: string
 }) {
+  const t = useT()
   const { notify } = useSystemMessage()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -37,10 +39,10 @@ export default function NotesEditor({ endpoint, source }: {
       const r = await api.put<Notes>(endpoint, { name, description })
       setUpdatedAt(r.updated_at)
       setDirty(false)
-      notify({ level: 'info', text: '이름·설명 저장됨', source })
+      notify({ level: 'info', text: t('이름·설명 저장됨'), source })
     } catch (e) {
       notify({ level: 'error', source,
-        text: e instanceof Error ? e.message : '저장 실패' })
+        text: e instanceof Error ? e.message : t('저장 실패') })
     } finally { setSaving(false) }
   }
 
@@ -48,23 +50,23 @@ export default function NotesEditor({ endpoint, source }: {
     <div className="space-y-1.5 rounded border border-neutral-700 bg-neutral-900/50 p-3">
       <div className="flex items-center gap-2">
         <input value={name} onChange={(e) => { setName(e.target.value); setDirty(true) }}
-          placeholder="이름 (예: 볼트 조립 1차 — 주간 조명)"
+          placeholder={t('이름 (예: 볼트 조립 1차 — 주간 조명)')}
           className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700
                      text-sm text-neutral-100" />
         <button onClick={() => void save()} disabled={saving || !dirty}
           className="shrink-0 px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500
                      text-white disabled:opacity-40">
-          {saving ? '저장 중…' : '저장'}
+          {saving ? t('저장 중…') : t('저장')}
         </button>
       </div>
       <textarea value={description}
         onChange={(e) => { setDescription(e.target.value); setDirty(true) }}
-        placeholder="설명 — 무엇을, 어떤 조건에서 만들었는지. 허브 업로드 시 카드(README)가 됩니다."
+        placeholder={t('설명 — 무엇을, 어떤 조건에서 만들었는지. 허브 업로드 시 카드(README)가 됩니다.')}
         rows={2}
         className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700
                    text-xs text-neutral-200" />
       {updatedAt && !dirty && (
-        <p className="text-[10px] text-neutral-500">마지막 수정 {updatedAt.slice(0, 16).replace('T', ' ')}</p>
+        <p className="text-[10px] text-neutral-500">{t('마지막 수정 {updatedAt}', { updatedAt: updatedAt.slice(0, 16).replace('T', ' ') })}</p>
       )}
     </div>
   )

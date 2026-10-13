@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import SystemLogPanel from '../components/SystemLogPanel'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
+import { useT, msg, fmt } from '../i18n'
 
 /**
  * 로그 — 한 페이지, 두 탭.
@@ -17,12 +18,13 @@ import { api } from '../services/api'
  * [로그]가 딥링크로 들어오고, 뒤로가기가 탭을 되돌린다.
  */
 
-const TABS = [{ id: 'system', label: '시스템' }, { id: 'files', label: '파일' }] as const
+const TABS = [{ id: 'system', label: msg('시스템') }, { id: 'files', label: msg('파일') }] as const
 type TabId = (typeof TABS)[number]['id']
 const LEVELS = ['error', 'warning', 'info'] as const
 type Level = (typeof LEVELS)[number]
 
 export default function LogsPage() {
+  const t = useT()
   const [params, setParams] = useSearchParams()
   const tab: TabId = params.get('tab') === 'files' ? 'files' : 'system'
   const unit = params.get('unit') ?? undefined
@@ -40,13 +42,13 @@ export default function LogsPage() {
       {/* 탭은 **제목 바로 옆** — 카메라·로봇과 같은 머리줄. 오른쪽 끝으로 밀거나(justify-between)
           제목 아래 줄로 쌓지 않는다(사용자 규칙 2026-09-11). */}
       <div className="flex items-center gap-4">
-        <h1 className="text-2xl font-bold">로그</h1>
+        <h1 className="text-2xl font-bold">{t('로그')}</h1>
         <div className="flex rounded-lg border border-neutral-700 overflow-hidden text-sm">
-          {TABS.map((t) => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              className={`px-4 py-1.5 ${tab === t.id
+          {TABS.map((tb) => (
+            <button key={tb.id} onClick={() => setTab(tb.id)}
+              className={`px-4 py-1.5 ${tab === tb.id
                 ? 'bg-neutral-700 text-white' : 'bg-neutral-900 text-neutral-400 hover:text-white'}`}>
-              {t.label}
+              {t(tb.label)}
             </button>
           ))}
         </div>
@@ -67,6 +69,7 @@ type Category = { id: string; label: string; count: number }
 
 /** 파일 탭 — 추론이 /tmp 에 남긴 CSV·차트. 목록·내려받기·차트·삭제. */
 function LogFilesPanel() {
+  const t = useT()
   const { confirm: askConfirm } = useSystemMessage()
   const [logs, setLogs] = useState<LogFile[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -90,7 +93,7 @@ function LogFilesPanel() {
   useEffect(() => { fetchLogs() }, [selectedCat])
 
   const handleDelete = async (name: string) => {
-    if (!await askConfirm(`${name} 파일을 삭제하시겠습니까?`)) return
+    if (!await askConfirm(t('{name} 파일을 삭제하시겠습니까?', { name }))) return
     try {
       await api.delete(`/logs/delete/${name}`)
       fetchLogs()
@@ -103,14 +106,17 @@ function LogFilesPanel() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-neutral-400">추론이 /tmp 에 남긴 파일 — CSV·차트. 오래 둘 것은 내려받으세요.</p>
+        <p className="text-xs text-neutral-400">{t('추론이 /tmp 에 남긴 파일 — CSV·차트. 오래 둘 것은 내려받으세요.')}</p>
         <div className="flex items-center gap-3">
           <span className="text-xs text-neutral-400">
-            {totalFiles}개 파일 / {totalSize > 1024 ? `${(totalSize / 1024).toFixed(1)} MB` : `${totalSize.toFixed(0)} KB`}
+            {t('{totalFiles}개 파일 / {totalSize}', {
+              totalFiles,
+              totalSize: totalSize > 1024 ? `${(totalSize / 1024).toFixed(1)} MB` : `${totalSize.toFixed(0)} KB`,
+            })}
           </span>
           <button onClick={fetchLogs}
             className="px-3 py-1.5 text-sm rounded bg-neutral-700 hover:bg-neutral-600 transition-colors">
-            새로고침
+            {t('새로고침')}
           </button>
         </div>
       </div>
@@ -119,7 +125,7 @@ function LogFilesPanel() {
       <div className="flex gap-2 flex-wrap">
         <button onClick={() => setSelectedCat('')}
           className={`px-3 py-1 text-xs rounded ${!selectedCat ? 'bg-blue-600 text-white' : 'bg-neutral-700 text-neutral-400 hover:text-white'}`}>
-          전체 ({totalFiles})
+          {t('전체 ({totalFiles})', { totalFiles })}
         </button>
         {categories.map((cat) => (
           <button key={cat.id} onClick={() => setSelectedCat(cat.id)}
@@ -130,19 +136,19 @@ function LogFilesPanel() {
       </div>
 
       {loading ? (
-        <p className="text-neutral-400 text-sm">로딩 중...</p>
+        <p className="text-neutral-400 text-sm">{t('로딩 중...')}</p>
       ) : logs.length === 0 ? (
-        <p className="text-neutral-400 text-sm">파일이 없습니다.</p>
+        <p className="text-neutral-400 text-sm">{t('파일이 없습니다.')}</p>
       ) : (
         <div className="rounded-lg border border-neutral-700 bg-neutral-800 overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-neutral-700 text-neutral-400">
-                <th className="text-left px-4 py-2 font-medium">파일명</th>
-                <th className="text-left px-4 py-2 font-medium">카테고리</th>
-                <th className="text-right px-4 py-2 font-medium">크기</th>
-                <th className="text-right px-4 py-2 font-medium">수정일</th>
-                <th className="text-right px-4 py-2 font-medium">작업</th>
+                <th className="text-left px-4 py-2 font-medium">{t('파일명')}</th>
+                <th className="text-left px-4 py-2 font-medium">{t('카테고리')}</th>
+                <th className="text-right px-4 py-2 font-medium">{t('크기')}</th>
+                <th className="text-right px-4 py-2 font-medium">{t('수정일')}</th>
+                <th className="text-right px-4 py-2 font-medium">{t('작업')}</th>
               </tr>
             </thead>
             <tbody>
@@ -154,24 +160,24 @@ function LogFilesPanel() {
                   </td>
                   <td className="px-4 py-2 text-right text-neutral-400 text-xs">{log.size_kb.toFixed(1)} KB</td>
                   <td className="px-4 py-2 text-right text-neutral-400 text-xs">
-                    {new Date(log.modified).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    {fmt.dateTime(log.modified, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
                   </td>
                   <td className="px-4 py-2 text-right space-x-2">
                     <a href={`/api/logs/download/${log.name}`} download
                       className="text-blue-400 hover:text-blue-300 underline text-xs">
-                      다운로드
+                      {t('다운로드')}
                     </a>
                     {log.category === 'inference' ? (
                       <a href={`/api/logs/chart/${log.name}`} target="_blank" rel="noopener noreferrer"
                         className="text-green-400 hover:text-green-300 underline text-xs">
-                        차트
+                        {t('차트')}
                       </a>
                     ) : (
-                      <span className="text-neutral-600 text-xs cursor-not-allowed">차트</span>
+                      <span className="text-neutral-600 text-xs cursor-not-allowed">{t('차트')}</span>
                     )}
                     <button onClick={() => handleDelete(log.name)}
                       className="text-red-400 hover:text-red-300 underline text-xs">
-                      삭제
+                      {t('삭제')}
                     </button>
                   </td>
                 </tr>

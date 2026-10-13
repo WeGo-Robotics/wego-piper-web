@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 /**
  * 프리셋 저장·불러오기 바 — 도메인만 바꿔 재사용한다.
@@ -54,6 +55,7 @@ export default function PresetBar({
   domain, values, onApply, policyType = '', defaults = {},
   scope = 'device', disabled = false, onSelect, onSaveAs, onApplyName,
 }: Props) {
+  const t = useT()
   const [list, setList] = useState<PresetMeta[]>([])
   const [selected, setSelected] = useState('')
   const [msg, setMsg] = useState('')
@@ -65,7 +67,7 @@ export default function PresetBar({
   useEffect(() => { refresh() }, [refresh])
 
   const handleSave = async () => {
-    const name = window.prompt('프리셋 이름', selected || '')
+    const name = window.prompt(t('프리셋 이름'), selected || '')
     if (!name) return
     try {
       if (onSaveAs) {
@@ -74,13 +76,13 @@ export default function PresetBar({
         await api.post(`/presets/${domain}`, {
           name, values: values(), scope, policy_type: policyType,
         })
-        setMsg(`"${name}" 저장됨`)
+        setMsg(t('"{name}" 저장됨', { name }))
       }
       setSelected(name)
       onSelect?.(name)
       refresh()
     } catch (e) {
-      setMsg(`저장 실패: ${(e as Error).message}`)
+      setMsg(t('저장 실패: {message}', { message: (e as Error).message }))
     }
   }
 
@@ -91,7 +93,7 @@ export default function PresetBar({
         onSelect?.(name)
         setMsg(await onApplyName(name))
       } catch (e) {
-        setMsg(`적용 실패: ${(e as Error).message}`)
+        setMsg(t('적용 실패: {message}', { message: (e as Error).message }))
       }
       return
     }
@@ -104,14 +106,14 @@ export default function PresetBar({
       // 조용히 버리지 않는다 — 무엇이 무시됐고 채워졌는지 알린다
       const notes: string[] = []
       if (r.policy_mismatch) {
-        notes.push(`정책이 다름(${r.policy_mismatch.saved} → ${r.policy_mismatch.current}), 공통 항목만 적용`)
+        notes.push(t('정책이 다름({saved} → {current}), 공통 항목만 적용', { saved: r.policy_mismatch.saved, current: r.policy_mismatch.current }))
       }
-      if (r.clamped?.length) notes.push(`범위 조정: ${r.clamped.map((c) => `${c.key} ${c.saved}→${c.applied}`).join(', ')}`)
-      if (r.unknown.length) notes.push(`무시됨: ${r.unknown.join(', ')}`)
-      if (r.missing.length) notes.push(`기본값으로 채움: ${r.missing.join(', ')}`)
-      setMsg(notes.length ? `"${name}" 적용 — ${notes.join(' / ')}` : `"${name}" 적용됨`)
+      if (r.clamped?.length) notes.push(t('범위 조정: {clamped}', { clamped: r.clamped.map((c) => `${c.key} ${c.saved}→${c.applied}`).join(', ') }))
+      if (r.unknown.length) notes.push(t('무시됨: {unknown}', { unknown: r.unknown.join(', ') }))
+      if (r.missing.length) notes.push(t('기본값으로 채움: {missing}', { missing: r.missing.join(', ') }))
+      setMsg(notes.length ? t('"{name}" 적용 — {notes}', { name, notes: notes.join(' / ') }) : t('"{name}" 적용됨', { name }))
     } catch (e) {
-      setMsg(`불러오기 실패: ${(e as Error).message}`)
+      setMsg(t('불러오기 실패: {message}', { message: (e as Error).message }))
     }
   }
 
@@ -121,23 +123,23 @@ export default function PresetBar({
       await api.delete(`/presets/${domain}/${selected}`)
       setSelected('')
       onSelect?.('')
-      setMsg(`"${selected}" 삭제됨`)
+      setMsg(t('"{selected}" 삭제됨', { selected }))
       refresh()
     } catch (e) {
-      setMsg(`삭제 실패: ${(e as Error).message}`)
+      setMsg(t('삭제 실패: {message}', { message: (e as Error).message }))
     }
   }
 
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-2 text-xs">
-        <span className="text-neutral-400">프리셋</span>
+        <span className="text-neutral-400">{t('프리셋')}</span>
         <select
           value={selected}
           onChange={(e) => { setSelected(e.target.value); handleApply(e.target.value) }}
           disabled={disabled}
           className="flex-1 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 disabled:opacity-50">
-          <option value="">— 선택 —</option>
+          <option value="">{t('— 선택 —')}</option>
           {list.map((p) => (
             <option key={p.name} value={p.name}>
               {p.name}{p.policy_type ? ` (${p.policy_type})` : ''}
@@ -145,9 +147,9 @@ export default function PresetBar({
           ))}
         </select>
         <button onClick={handleSave} disabled={disabled}
-          className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40">저장</button>
+          className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40">{t('저장')}</button>
         <button onClick={handleDelete} disabled={disabled || !selected}
-          className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40">삭제</button>
+          className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40">{t('삭제')}</button>
       </div>
       {msg && <p className="text-[10px] text-neutral-400">{msg}</p>}
     </div>

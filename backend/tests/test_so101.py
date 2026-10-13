@@ -736,7 +736,7 @@ def test_the_so101_side_control_looks_and_cycles_like_pipers():
     assert "att.side === 'left' ? 'right' : att.side === 'right' ? '' : 'left'" in so101, \
         "PIPER 와 같은 순환(왼팔→오른팔→미지정)이 아니다"
     for shared in ("bg-purple-600/30 text-purple-300 border-purple-500/40",
-                   "? '왼팔' :", "'오른팔' : '좌/우?'"):
+                   "? t('왼팔') :", "t('오른팔') : t('좌/우?')"):
         assert shared in so101, f"PIPER 버튼과 다르게 생겼다: {shared}"
 
 

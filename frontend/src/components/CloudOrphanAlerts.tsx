@@ -3,6 +3,7 @@ import { useWebSocket } from '../hooks/useWebSocket'
 import { api } from '../services/api'
 import type { CloudOrphan } from '../types/ws'
 import { useSystemMessage } from './SystemMessages'
+import { useT } from '../i18n'
 
 /**
  * 빌린 GPU 가 **관리 밖에서 살아 있다** — 시스템 메시지로 흘려보낸다 (§6-3).
@@ -25,6 +26,7 @@ import { useSystemMessage } from './SystemMessages'
 const PREFIX = 'cloud-orphan:'
 
 export default function CloudOrphanAlerts() {
+  const t = useT()
   const { notify, clear } = useSystemMessage()
 
   const apply = (orphans: CloudOrphan[]) => {
@@ -36,7 +38,7 @@ export default function CloudOrphanAlerts() {
         id: `${PREFIX}${o.id}`,
         level: 'error',
         text: o.text,
-        source: '클라우드 GPU',
+        source: t('클라우드 GPU'),
       })
     }
   }

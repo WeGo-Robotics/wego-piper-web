@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { Model } from '../types/models'
+import { useT, tr, fmt } from '../i18n'
 
 /**
  * 학습 → 체크포인트, 두 단계로 고른다.
@@ -24,11 +25,12 @@ type Props = {
 }
 
 function ckptLabel(m: Model): string {
-  if (m.checkpoint === 'last') return 'last (마지막)'
-  return m.step != null ? `${m.step.toLocaleString()} 스텝` : (m.checkpoint ?? m.id)
+  if (m.checkpoint === 'last') return tr('last (마지막)')
+  return m.step != null ? tr('{step} 스텝', { step: fmt.number(m.step) }) : (m.checkpoint ?? m.id)
 }
 
 export default function CheckpointPicker({ models, value, onChange, includeNonPolicy }: Props) {
+  const t = useT()
   const usable = useMemo(
     () => models.filter((m) => includeNonPolicy || m.is_policy !== false),
     [models, includeNonPolicy])
@@ -74,26 +76,29 @@ export default function CheckpointPicker({ models, value, onChange, includeNonPo
   return (
     <div className="space-y-2">
       <div>
-        <label className="mb-1 block text-xs text-neutral-400">학습</label>
+        <label className="mb-1 block text-xs text-neutral-400">{t('학습')}</label>
         <select value={currentRun} onChange={(e) => pickRun(e.target.value)}
           className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none">
           <option value="" disabled={!runs.some((r) => !r.run)}>
-            {runs.length ? '학습 선택…' : '학습 결과 없음'}
+            {runs.length ? t('학습 선택…') : t('학습 결과 없음')}
           </option>
           {runs.map((r) => (
             <option key={r.run || '_other'} value={r.run}>
-              {r.run || '그 외 (직접 받은 모델)'} · {r.list.length}개
-              {r.list[0]?.policy_type && r.run ? ` · ${r.list[0].policy_type}` : ''}
+              {t('{run} · {length}개{policy_type}', {
+                run: r.run || t('그 외 (직접 받은 모델)'),
+                length: r.list.length,
+                policy_type: r.list[0]?.policy_type && r.run ? ` · ${r.list[0].policy_type}` : '',
+              })}
             </option>
           ))}
         </select>
       </div>
       <div>
-        <label className="mb-1 block text-xs text-neutral-400">체크포인트</label>
+        <label className="mb-1 block text-xs text-neutral-400">{t('체크포인트')}</label>
         <select value={value} onChange={(e) => onChange(e.target.value)}
           disabled={!ckpts.length}
           className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none disabled:opacity-50">
-          <option value="">{ckpts.length ? '체크포인트 선택…' : '먼저 학습을 고르세요'}</option>
+          <option value="">{ckpts.length ? t('체크포인트 선택…') : t('먼저 학습을 고르세요')}</option>
           {ckpts.map((m) => (
             <option key={m.id} value={m.id}>{ckptLabel(m)}</option>
           ))}

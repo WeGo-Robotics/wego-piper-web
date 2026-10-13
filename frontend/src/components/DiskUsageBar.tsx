@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import type { DiskUsage } from '../types/models'
+import { useT } from '../i18n'
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -11,6 +12,7 @@ function formatBytes(bytes: number): string {
 }
 
 export default function DiskUsageBar({ compact = false }: { compact?: boolean }) {
+  const t = useT()
   const [usage, setUsage] = useState<DiskUsage | null>(null)
 
   useEffect(() => {
@@ -30,11 +32,14 @@ export default function DiskUsageBar({ compact = false }: { compact?: boolean })
           <div className={`h-full rounded-full ${usage.warning ? 'bg-amber-500' : 'bg-blue-500'}`}
             style={{ width: `${Math.min(100, (usage.total_gb / usage.threshold_gb) * 100)}%` }} />
         </div>
-        <span title={`${usage.total_gb} GB / 임계치 ${usage.threshold_gb} GB`}>
+        <span title={t('{total_gb} GB / 임계치 {threshold_gb} GB', { total_gb: usage.total_gb, threshold_gb: usage.threshold_gb })}>
           {usage.total_gb}/{usage.threshold_gb} GB
         </span>
         <span className="text-neutral-500">
-          모델 {formatBytes(usage.models_bytes)} · 데이터셋 {formatBytes(usage.datasets_bytes)}
+          {t('모델 {models_bytes} · 데이터셋 {datasets_bytes}', {
+            models_bytes: formatBytes(usage.models_bytes),
+            datasets_bytes: formatBytes(usage.datasets_bytes),
+          })}
         </span>
       </div>
     )
@@ -49,7 +54,7 @@ export default function DiskUsageBar({ compact = false }: { compact?: boolean })
       }`}
     >
       <div className="flex justify-between mb-1">
-        <span>디스크 사용량</span>
+        <span>{t('디스크 사용량')}</span>
         <span>
           {usage.total_gb} GB / {usage.threshold_gb} GB
         </span>
@@ -65,8 +70,8 @@ export default function DiskUsageBar({ compact = false }: { compact?: boolean })
         />
       </div>
       <div className="flex gap-4 mt-1 text-xs">
-        <span>모델: {formatBytes(usage.models_bytes)}</span>
-        <span>데이터셋: {formatBytes(usage.datasets_bytes)}</span>
+        <span>{t('모델: {models_bytes}', { models_bytes: formatBytes(usage.models_bytes) })}</span>
+        <span>{t('데이터셋: {datasets_bytes}', { datasets_bytes: formatBytes(usage.datasets_bytes) })}</span>
       </div>
     </div>
   )

@@ -443,7 +443,7 @@ def test_the_live_button_connects_first():
 
     page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
             / "CamerasPage.tsx").read_text()
-    live = page.split("'중단' : '실시간 보기'", 1)[0][-1200:]
+    live = page.split("t('중단') : t('실시간 보기')", 1)[0][-1200:]
     assert "/cameras/connect" in live
 
 
@@ -483,7 +483,7 @@ def test_the_hint_names_the_active_profile_when_there_is_one():
 
     page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
             / "CamerasPage.tsx").read_text()
-    assert "activeProfile && ` (활성 '${activeProfile}'" in page
+    assert "activeProfile && t(' (활성 \\'{activeProfile}\\'" in page
 
 
 def test_the_active_name_is_readable_without_changing_it():

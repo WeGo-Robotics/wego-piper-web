@@ -1,4 +1,5 @@
 import { useRef, useEffect } from 'react'
+import { useT, fmt } from '../i18n'
 
 type MetricsData = {
   step: number
@@ -86,18 +87,19 @@ function LossChart({ history }: { history: HistoryData }) {
 }
 
 export default function TrainingMetrics({ metrics, history }: { metrics: MetricsData | null; history: HistoryData }) {
+  const t = useT()
   if (!metrics) return null
 
   const pct = Math.round(metrics.progress * 100)
 
   return (
     <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
-      <h3 className="text-sm font-semibold">학습 메트릭</h3>
+      <h3 className="text-sm font-semibold">{t('학습 메트릭')}</h3>
 
       {/* 진행률 바 */}
       <div className="space-y-1">
         <div className="flex justify-between text-xs text-neutral-400">
-          <span>Step {metrics.step.toLocaleString()} / {metrics.total_steps.toLocaleString()}</span>
+          <span>Step {fmt.number(metrics.step)} / {fmt.number(metrics.total_steps)}</span>
           <span>{pct}%</span>
         </div>
         <div className="w-full h-2 bg-neutral-700 rounded overflow-hidden">
@@ -131,7 +133,7 @@ export default function TrainingMetrics({ metrics, history }: { metrics: Metrics
         )}
         {typeof metrics.data_s === 'number' && (
           <div className="flex justify-between">
-            <span className="text-neutral-400">data_s (로딩)</span>
+            <span className="text-neutral-400">{t('data_s (로딩)')}</span>
             <span className="font-mono">{metrics.data_s.toFixed(3)}</span>
           </div>
         )}
@@ -141,9 +143,9 @@ export default function TrainingMetrics({ metrics, history }: { metrics: Metrics
       {typeof metrics.update_s === 'number' && typeof metrics.data_s === 'number'
         && (metrics.update_s > 0 || metrics.data_s > 0) && (
         metrics.data_s > metrics.update_s ? (
-          <p className="text-[11px] text-amber-400">데이터 로딩 병목 (CPU) → num_workers를 늘리세요</p>
+          <p className="text-[11px] text-amber-400">{t('데이터 로딩 병목 (CPU) → num_workers를 늘리세요')}</p>
         ) : (
-          <p className="text-[11px] text-green-400">GPU 연산 병목 → AMP(bf16)·Batch가 효과적</p>
+          <p className="text-[11px] text-green-400">{t('GPU 연산 병목 → AMP(bf16)·Batch가 효과적')}</p>
         )
       )}
 

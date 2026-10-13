@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 /**
  * **어디서 돌릴 것인가** — 로컬이냐, 클라우드냐 (feature/vast-training.md §8 W4).
@@ -42,6 +43,7 @@ export default function TrainWhereForm({ where, onWhere, onPick, runner, disable
   runner: string
   disabledReason?: string
 }) {
+  const t = useT()
   const [rows, setRows] = useState<Instance[]>([])
   const [picked, setPicked] = useState<number | null>(null)
   // ⚠ 기본은 **끈 상태**다. 최종본만 오는 것이 싸고, 대부분은 그것이면 된다.
@@ -59,9 +61,9 @@ export default function TrainWhereForm({ where, onWhere, onPick, runner, disable
     setLoading(true); setErr('')
     api.get<{ instances: Instance[] }>('/cloud/instances', { timeoutMs: 90_000 })
       .then((r) => setRows(r.instances))
-      .catch((e) => setErr(e instanceof Error ? e.message : '인스턴스를 불러오지 못했습니다'))
+      .catch((e) => setErr(e instanceof Error ? e.message : t('인스턴스를 불러오지 못했습니다')))
       .finally(() => setLoading(false))
-  }, [where])
+  }, [where, t])
 
   useEffect(load, [load])
 
@@ -76,9 +78,9 @@ export default function TrainWhereForm({ where, onWhere, onPick, runner, disable
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
-        <span className="text-xs text-neutral-400">실행 위치</span>
+        <span className="text-xs text-neutral-400">{t('실행 위치')}</span>
         <div className="flex overflow-hidden rounded-lg border border-neutral-700 text-sm">
-          {([['here', '로컬'], ['rent', '클라우드']] as const).map(([k, label]) => (
+          {([['here', t('로컬')], ['rent', t('클라우드')]] as const).map(([k, label]) => (
             <button key={k} onClick={() => onWhere(k)}
               disabled={k === 'rent' && !!disabledReason}
               title={k === 'rent' ? disabledReason ?? '' : ''}
@@ -93,7 +95,7 @@ export default function TrainWhereForm({ where, onWhere, onPick, runner, disable
             믿게 두지 않는다. 설정이 없으면(대부분) 이 줄은 안 뜬다. */}
         {where === 'here' && runner === 'ssh' && (
           <span className="text-xs text-amber-300/80">
-            ⚠ 이 게이트웨이는 사내 서버(SSH)로 보냅니다 — 이 기계의 GPU 가 아닙니다
+            {t('⚠ 이 게이트웨이는 사내 서버(SSH)로 보냅니다 — 이 기계의 GPU 가 아닙니다')}
           </span>
         )}
       </div>
@@ -102,23 +104,25 @@ export default function TrainWhereForm({ where, onWhere, onPick, runner, disable
         <div className="space-y-2 rounded-lg border border-blue-800/40 bg-blue-950/10 p-3">
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-xs text-neutral-400">
-              빌려 둔 기계 {usable.length > 0 && <span className="text-neutral-600">· {usable.length}대</span>}
+              {t('빌려 둔 기계')}{' '}{usable.length > 0 && <span className="text-neutral-600">{t('· {length}대', { length: usable.length })}</span>}
             </span>
-            <button onClick={load} className="text-xs text-blue-400 hover:underline">새로고침</button>
+            <button onClick={load} className="text-xs text-blue-400 hover:underline">{t('새로고침')}</button>
             <a href="/cloud" className="ml-auto text-xs text-blue-400 hover:underline">
-              클라우드 GPU 에서 빌리기 →
+              {t('클라우드 GPU 에서 빌리기 →')}
             </a>
           </div>
 
           {err && <p className="text-xs text-red-300">{err}</p>}
-          {loading && <p className="text-xs text-neutral-500">불러오는 중…</p>}
+          {loading && <p className="text-xs text-neutral-500">{t('불러오는 중…')}</p>}
 
           {!loading && usable.length === 0 && (
             /* ⚠ 여기서 빌리게 하지 않는다 — 빌리는 곳은 한 군데여야 한다. 대신 어디로
                가야 하는지 말한다. */
             <p className="text-xs text-neutral-400">
-              빌려 둔 기계가 없습니다 — <a href="/cloud" className="text-blue-400 hover:underline">
-              클라우드 GPU</a> 에서 먼저 빌리세요.
+              {t.rich('빌려 둔 기계가 없습니다 — {a} 에서 먼저 빌리세요.', {
+                a: <a href="/cloud" className="text-blue-400 hover:underline">
+              {t('클라우드 GPU')}</a>,
+              })}
             </p>
           )}
 
@@ -143,12 +147,11 @@ export default function TrainWhereForm({ where, onWhere, onPick, runner, disable
               <input type="checkbox" checked={ckpts} onChange={(e) => setCkpts(e.target.checked)}
                 className="mt-0.5 accent-blue-500" />
               <span>
-                중간 체크포인트도 받기
-                <span className="text-neutral-500">
-                  {' '}— 저장 주기마다 찍힌 것을 기계에서 직접 끌어옵니다. Hub 에는 최종본만
-                  올라가므로, 안 받으면 기계를 파기할 때 같이 사라집니다.
-                  한 벌 약 200MB · 전송비 $0.017/GB.
-                </span>
+                {t.rich('중간 체크포인트도 받기{span}', {
+                  span: <span className="text-neutral-500">
+                  {t('— 저장 주기마다 찍힌 것을 기계에서 직접 끌어옵니다. Hub 에는 최종본만 올라가므로, 안 받으면 기계를 파기할 때 같이 사라집니다. 한 벌 약 200MB · 전송비 $0.017/GB.')}
+                </span>,
+                })}
               </span>
             </label>
           )}
@@ -157,8 +160,10 @@ export default function TrainWhereForm({ where, onWhere, onPick, runner, disable
             /* ⚠ **끝나도 안 끈다**는 것을 여기서 말한다. 한 묶음([빌리기])과 반대라서,
                모르고 있으면 빈 기계가 밤새 돈다. */
             <p className="text-xs text-neutral-500">
-              학습이 끝나도 이 기계는 <strong className="text-neutral-400">꺼지지 않습니다</strong> —
-              {' '}{money(instance.rate_usd_h)}/h 가 계속 나갑니다. 다 쓰면 인스턴스 탭에서 파기하세요.
+              {t.rich('학습이 끝나도 이 기계는 {strong} — {money}/h 가 계속 나갑니다. 다 쓰면 인스턴스 탭에서 파기하세요.', {
+                strong: <strong className="text-neutral-400">{t('꺼지지 않습니다')}</strong>,
+                money: money(instance.rate_usd_h),
+              })}
             </p>
           )}
         </div>

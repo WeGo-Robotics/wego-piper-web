@@ -1,8 +1,10 @@
 import { useEffect, useCallback, useRef } from 'react'
 import { api } from '../services/api'
 import { useWebSocket } from '../hooks/useWebSocket'
+import { useT } from '../i18n'
 
 export default function EStopButton() {
+  const t = useT()
   const triggerEstop = useCallback(async () => {
     try {
       await api.post('/estop/trigger')
@@ -90,7 +92,7 @@ export default function EStopButton() {
     <button
       onClick={triggerEstop}
       className="shrink-0 h-9 px-4 rounded-md bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-xs tracking-wide shadow-md shadow-red-900/40 transition-colors select-none"
-      title="긴급 정지 (Escape)"
+      title={t('긴급 정지 (Escape)')}
     >
       E-STOP
     </button>

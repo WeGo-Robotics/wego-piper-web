@@ -12,6 +12,7 @@ import LightStrip from '../components/LightStrip'
 import RecordPreview from '../components/RecordPreview'
 import { twoColumns } from '../components/LayoutToggle'
 import { camOptionText, type ReadyCam } from '../types/camera'
+import { useT } from '../i18n'
 
 type ReadyArm = { iface: string; role: string; side?: string | null }
 type RecordStatusData = { state?: string; current_episode: number; total_episodes: number; phase: string; progress: number }
@@ -48,6 +49,7 @@ function formatElapsed(ms: number): string {
 }
 
 export default function RecordingPage() {
+  const t = useT()
   const { notify, confirm: askConfirm } = useSystemMessage()
   const [followers, setFollowers] = useState<ReadyArm[]>([])
   const [leaders, setLeaders] = useState<ReadyArm[]>([])
@@ -231,12 +233,12 @@ export default function RecordingPage() {
   }, [repoId, checkTrigger])
 
   const handleDeleteDataset = async () => {
-    if (!repoId || !await askConfirm(`"${repoId}" 데이터셋을 삭제하시겠습니까? 복구할 수 없습니다.`)) return
+    if (!repoId || !await askConfirm(t('"{repoId}" 데이터셋을 삭제하시겠습니까? 복구할 수 없습니다.', { repoId: String(repoId) }))) return
     try {
       await api.delete(`/recording/delete-dataset/${repoId}`)
       setDatasetExists({ exists: false, size_mb: 0 })
-      setLogs(prev => [...prev, `[INFO] 데이터셋 ${repoId} 삭제 완료`])
-    } catch { setLogs(prev => [...prev, `[ERROR] 데이터셋 삭제 실패`]) }
+      setLogs(prev => [...prev, t('[INFO] 데이터셋 {repoId} 삭제 완료', { repoId: String(repoId) })])
+    } catch { setLogs(prev => [...prev, t('[ERROR] 데이터셋 삭제 실패')]) }
   }
 
   // 카메라 매핑 JSON 빌드 (preview/start 공용)
@@ -264,10 +266,10 @@ export default function RecordingPage() {
   const repoIdError = (() => {
     const v = repoId.trim()
     if (!v) return null                                   // 비어 있으면 그냥 시작 불가
-    if (!v.includes('/')) return `'네임스페이스/이름' 형식이어야 합니다 — 예: ${hfUser || 'my-org'}/${v}`
-    if (v.split('/').length > 2) return '슬래시는 하나만 쓸 수 있습니다'
+    if (!v.includes('/')) return t('\'네임스페이스/이름\' 형식이어야 합니다 — 예: {hfUser}/{v}', { hfUser: hfUser || 'my-org', v: String(v) })
+    if (v.split('/').length > 2) return t('슬래시는 하나만 쓸 수 있습니다')
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(v))
-      return '영문·숫자와 -_. 만 쓸 수 있고 각 부분은 영문·숫자로 시작해야 합니다'
+      return t('영문·숫자와 -_. 만 쓸 수 있고 각 부분은 영문·숫자로 시작해야 합니다')
     return null
   })()
 
@@ -292,9 +294,9 @@ export default function RecordingPage() {
       setDemo(await api.post<DemoStatus>('/sim/demo/start',
         { episodes: numEpisodes, relay: !isRunning, randomize: true }))
     } catch (e) {
-      setDemo((d) => ({ ...(d ?? {} as DemoStatus), error: e instanceof Error ? e.message : '시연 실패' }))
+      setDemo((d) => ({ ...(d ?? {} as DemoStatus), error: e instanceof Error ? e.message : t('시연 실패') }))
     }
-  }, [demo, numEpisodes, isRunning])
+  }, [demo, numEpisodes, isRunning, t])
 
   const canStart = armsChosen && !!repoId && !repoIdError && !!singleTask && !isRunning && !isBlocked('recording')
 
@@ -320,11 +322,11 @@ export default function RecordingPage() {
       // 프로파일이 못 덮은 카메라, 리셋이 드러낸 관절 슬립 — 막을 일은 아니지만
       // 시작 전에 알아야 한다. 문구는 백엔드가 만든다.
       for (const w of r.camera_profile?.warnings ?? [])
-        notify({ level: 'warn', text: w, source: '녹화' })
+        notify({ level: 'warn', text: w, source: t('녹화') })
       for (const w of r.arm_reset?.warnings ?? [])
-        notify({ level: 'warn', text: w, source: '녹화' })
+        notify({ level: 'warn', text: w, source: t('녹화') })
     } catch (e) {
-      const msg = e instanceof Error ? e.message : '알 수 없는 오류'
+      const msg = e instanceof Error ? e.message : t('알 수 없는 오류')
       setLogs(prev => [...prev, `[ERROR] ${msg}`])
     }
   }
@@ -338,15 +340,15 @@ export default function RecordingPage() {
   const [liveTask, setLiveTask] = useState('')
   const [taskMsg, setTaskMsg] = useState('')
   const handleTaskChange = async () => {
-    const t = taskDraft.trim()
-    if (!t) return
+    const task = taskDraft.trim()
+    if (!task) return
     try {
-      await api.post('/recording/task', { task: t })
-      setLiveTask(t)
+      await api.post('/recording/task', { task })
+      setLiveTask(task)
       setTaskDraft('')
-      setTaskMsg(`다음 에피소드부터 "${t}" 로 기록됩니다`)
+      setTaskMsg(t('다음 에피소드부터 "{task}" 로 기록됩니다', { task }))
     } catch (e) {
-      setTaskMsg(`변경 실패: ${(e as Error).message}`)
+      setTaskMsg(t('변경 실패: {message}', { message: (e as Error).message }))
     }
   }
   // ⚠ 조용히 실패하지 않는다. 실기(2026-09-14): 탭에 요청이 수백 개 쌓여 세 버튼의 요청이 브라우저
@@ -355,17 +357,17 @@ export default function RecordingPage() {
   const control = async (path: string, label: string) => {
     try { await api.post(path, undefined, { timeoutMs: 10_000 }) }
     catch (e) {
-      notify({ id: 'record-control', level: 'error', source: '수집',
-               text: `${label} 요청 실패: ${(e as Error).message} — 페이지를 새로 고친 뒤 다시 시도하세요` })
+      notify({ id: 'record-control', level: 'error', source: t('수집'),
+               text: t('{label} 요청 실패: {message} — 페이지를 새로 고친 뒤 다시 시도하세요', { label, message: (e as Error).message }) })
     }
   }
   const handleStop = async () => {
     setStopping(true)
-    try { await control('/recording/stop', '정지') }
+    try { await control('/recording/stop', t('정지')) }
     finally { setStopping(false) }
   }
-  const handleSkip = () => control('/recording/skip', '저장하고 다음')
-  const handleRerecord = () => control('/recording/rerecord', '재녹화')
+  const handleSkip = () => control('/recording/skip', t('저장하고 다음'))
+  const handleRerecord = () => control('/recording/rerecord', t('재녹화'))
 
   // ESC = 정지. 버튼 라벨은 오래전부터 "(ESC)" 라고 말했는데 처리기가 없었다(실기 2026-09-14).
   // 수집 중에만, 입력 칸에 타이핑 중이 아닐 때만.
@@ -385,7 +387,7 @@ export default function RecordingPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">데이터 수집</h1>
+        <h1 className="text-2xl font-bold">{t('데이터 수집')}</h1>
         <div className="flex items-center gap-3">
           <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
           {isRunning && (
@@ -403,17 +405,17 @@ export default function RecordingPage() {
           {/* 로봇 선택 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">로봇</h3>
+              <h3 className="text-sm font-semibold">{t('로봇')}</h3>
               <div className="flex gap-3 text-xs text-neutral-300">
                 <label className="flex items-center gap-1 cursor-pointer">
                   <input type="radio" name="recArmMode" checked={armMode === 'single'}
                     onChange={() => { setArmMode('single'); setCliEdited(false) }} className="accent-blue-500" />
-                  단팔
+                  {t('단팔')}
                 </label>
                 <label className="flex items-center gap-1 cursor-pointer">
                   <input type="radio" name="recArmMode" checked={armMode === 'bimanual'}
                     onChange={() => { setArmMode('bimanual'); setCliEdited(false) }} className="accent-blue-500" />
-                  양팔
+                  {t('양팔')}
                 </label>
               </div>
             </div>
@@ -423,28 +425,28 @@ export default function RecordingPage() {
                 <label className="text-xs text-neutral-400">Follower</label>
                 <select value={followerPort} onChange={e => { setFollowerPort(e.target.value); setCliEdited(false) }}
                   className="w-full px-2 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                  <option value="">선택...</option>
+                  <option value="">{t('선택...')}</option>
                   {followers.map(a => <option key={a.iface} value={a.iface}>{a.iface}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-neutral-400">Leader (텔레오퍼레이션)</label>
+                <label className="text-xs text-neutral-400">{t('Leader (텔레오퍼레이션)')}</label>
                 <select value={leaderPort} onChange={e => { setLeaderPort(e.target.value); setCliEdited(false) }}
                   className="w-full px-2 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                  <option value="">선택...</option>
+                  <option value="">{t('선택...')}</option>
                   {leaders.map(a => <option key={a.iface} value={a.iface}>{a.iface}</option>)}
                   {so101Leaders.map(a => <option key={a.iface} value={a.iface}>{a.iface} (SO-101)</option>)}
                   {/* 게이트웨이 리더 — 장치가 아니라 리더 종류다. 녹화 프로세스는
                       piper_leader_shm 으로 그 세그먼트를 읽을 뿐 **누가 쓰는지는 안 본다**:
                       조종 창(사람)이든 스크립트 시연(시뮬)이든 같은 자리다
                       (feature/web-leader.md §6, feature/sim-env.md 4단계) */}
-                  <option value="web_leader1">게이트웨이 리더 (조종 창 · 시뮬 시연)</option>
+                  <option value="web_leader1">{t('게이트웨이 리더 (조종 창 · 시뮬 시연)')}</option>
                 </select>
                 {leaderPort === 'web_leader1' && (
                   <button type="button" onClick={() => window.open(`/teleop?follower=${encodeURIComponent(followerPort)}`, 'piper-teleop', 'popup,width=1280,height=820')}
                     disabled={!followerPort}
                     className="mt-1 w-full px-2 py-1 text-xs rounded bg-purple-800 hover:bg-purple-700 text-white disabled:opacity-40">
-                    조종 창 열기
+                    {t('조종 창 열기')}
                   </button>
                 )}
                 {simDemoable && (
@@ -455,22 +457,24 @@ export default function RecordingPage() {
                       className={`w-full px-2 py-1 text-xs rounded text-white ${
                         demo?.running ? 'bg-amber-700 hover:bg-amber-600' : 'bg-teal-800 hover:bg-teal-700'}`}>
                       {demo?.running
-                        ? `시연 정지 — ${demo.episode}/${demo.episodes} · ${demo.phase || '준비'}`
-                        : '시연 시작 (사람 대신 프로그램이 조종)'}
+                        ? t('시연 정지 — {episode}/{episodes} · {phase}', { episode: demo.episode, episodes: demo.episodes, phase: demo.phase || t('준비') })
+                        : t('시연 시작 (사람 대신 프로그램이 조종)')}
                     </button>
                     {demo?.error && <p className="text-[11px] text-red-400">{demo.error}</p>}
                     {demo && !demo.running && episodeTime > demo.cycle_plan_s * 1.5 && (
                       // ⚠ 에피소드 시간이 한 바퀴보다 훨씬 길면 한 에피소드에 여러 바퀴가
                       //   담긴다 — 정책은 "집어 넣고 또 집어 넣는" 것을 한 동작으로 배운다
                       <p className="text-[11px] text-amber-300">
-                        한 바퀴가 약 {demo.cycle_plan_s}초입니다 — 에피소드 시간({episodeTime}초)을
-                        그에 맞추지 않으면 한 에피소드에 여러 바퀴가 담깁니다.
+                        {t.rich('한 바퀴가 약 {cycle_plan_s}초입니다 — 에피소드 시간({episodeTime}초)을 그에 맞추지 않으면 한 에피소드에 여러 바퀴가 담깁니다.', {
+                          cycle_plan_s: demo.cycle_plan_s,
+                          episodeTime,
+                        })}
                       </p>
                     )}
                     <p className="text-[11px] text-neutral-500">
                       {isRunning
-                        ? '수집 중이라 발행만 합니다 — 팔은 녹화 프로세스가 움직입니다.'
-                        : '큐브를 무작위로 놓고 집어 통에 넣기를 반복합니다. 수집을 시작하면 그대로 기록됩니다.'}
+                        ? t('수집 중이라 발행만 합니다 — 팔은 녹화 프로세스가 움직입니다.')
+                        : t('큐브를 무작위로 놓고 집어 통에 넣기를 반복합니다. 수집을 시작하면 그대로 기록됩니다.')}
                     </p>
                   </div>
                 )}
@@ -479,30 +483,31 @@ export default function RecordingPage() {
             ) : (
             <div className="grid grid-cols-2 gap-2">
               {([
-                { label: '왼팔 Follower', value: leftFollower, set: setLeftFollower, opts: followers },
-                { label: '오른팔 Follower', value: rightFollower, set: setRightFollower, opts: followers },
-                { label: '왼팔 Leader', value: leftLeader, set: setLeftLeader, opts: leaders },
-                { label: '오른팔 Leader', value: rightLeader, set: setRightLeader, opts: leaders },
+                { label: t('왼팔 Follower'), value: leftFollower, set: setLeftFollower, opts: followers },
+                { label: t('오른팔 Follower'), value: rightFollower, set: setRightFollower, opts: followers },
+                { label: t('왼팔 Leader'), value: leftLeader, set: setLeftLeader, opts: leaders },
+                { label: t('오른팔 Leader'), value: rightLeader, set: setRightLeader, opts: leaders },
               ] as { label: string; value: string; set: (v: string) => void; opts: ReadyArm[] }[]).map(({ label, value, set, opts }) => (
                 <div key={label}>
                   <label className="text-xs text-neutral-400">{label}</label>
                   <select value={value} onChange={e => { set(e.target.value); setCliEdited(false) }}
                     className="w-full px-2 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                    <option value="">선택...</option>
-                    {opts.map(a => <option key={a.iface} value={a.iface}>{a.iface}{a.side ? ` (${a.side === 'left' ? '왼' : '오른'})` : ''}</option>)}
+                    <option value="">{t('선택...')}</option>
+                    {opts.map(a => <option key={a.iface} value={a.iface}>{a.iface}{a.side ? ` (${a.side === 'left' ? t('왼') : t('오른')})` : ''}</option>)}
                   </select>
                 </div>
               ))}
               <p className="col-span-2 text-[10px] text-neutral-500">
-                좌/우는 로봇 페이지의 등록(side)에서 프리필됩니다. 카메라 키는 left_/right_ 접두사로 팔에 배정되고, 무접두사(top 등)는 왼팔 소속이 됩니다.
+                {t('좌/우는 로봇 페이지의 등록(side)에서 프리필됩니다. 카메라 키는 left_/right_ 접두사로 팔에 배정되고, 무접두사(top 등)는 왼팔 소속이 됩니다.')}
               </p>
               {rightArmBlind && (
                 <p className="col-span-2 rounded border border-amber-500/40 bg-amber-500/10
                               px-2 py-1.5 text-[11px] leading-relaxed text-amber-300">
-                  <b>오른팔에 배정된 카메라가 없습니다.</b> 지금 매핑은 전부 왼팔로
-                  들어갑니다 — 정책은 오른팔이 무엇을 하는지 못 봅니다.
-                  오른팔 카메라 키에 <code>right_</code> 접두사를 붙이세요
-                  (예: <code>right_hand</code>).
+                  {t.rich('{b} 지금 매핑은 전부 왼팔로 들어갑니다 — 정책은 오른팔이 무엇을 하는지 못 봅니다. 오른팔 카메라 키에 {code} 접두사를 붙이세요 (예: {code_2}).', {
+                    b: <b>{t('오른팔에 배정된 카메라가 없습니다.')}</b>,
+                    code: <code>right_</code>,
+                    code_2: <code>right_hand</code>,
+                  })}
                 </p>
               )}
             </div>
@@ -513,15 +518,15 @@ export default function RecordingPage() {
               {armMode === 'single'
                 ? <GripperEffortSlider iface={followerPort} />
                 : (<>
-                    <GripperEffortSlider iface={leftFollower} label="그리퍼 힘 (왼팔)" />
-                    <GripperEffortSlider iface={rightFollower} label="그리퍼 힘 (오른팔)" />
+                    <GripperEffortSlider iface={leftFollower} label={t('그리퍼 힘 (왼팔)')} />
+                    <GripperEffortSlider iface={rightFollower} label={t('그리퍼 힘 (오른팔)')} />
                   </>)}
             </div>
             {/* 카메라 */}
             {cameras.length > 0 && (
               <div className="space-y-1 pt-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs text-neutral-400">카메라 매핑</label>
+                  <label className="text-xs text-neutral-400">{t('카메라 매핑')}</label>
                   <div className="flex gap-1">
                     {([
                       { label: 'top', preset: { top: '' } },
@@ -540,7 +545,7 @@ export default function RecordingPage() {
                       const name = `cam${Object.keys(cameraMapping).length}`
                       setCameraMapping(prev => ({ ...prev, [name]: '' }))
                       setCliEdited(false)
-                    }} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600/30 text-blue-400 hover:bg-blue-600 hover:text-white">+ 추가</button>
+                    }} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600/30 text-blue-400 hover:bg-blue-600 hover:text-white">{t('+ 추가')}</button>
                   </div>
                 </div>
                 {Object.entries(cameraMapping).map(([name, devId], idx) => (
@@ -557,7 +562,7 @@ export default function RecordingPage() {
                       className="w-16 px-1.5 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 font-mono" />
                     <select value={devId} onChange={e => { setCameraMapping(prev => ({ ...prev, [name]: e.target.value })); setCliEdited(false) }}
                       className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
-                      <option value="">없음</option>
+                      <option value="">{t('없음')}</option>
                       {cameras.map(c => {
                         const usedBy = Object.entries(cameraMapping).find(([k, v]) => v === c.id && k !== name)
                         return <option key={c.id} value={c.id} disabled={!!usedBy}>{camOptionText(c)}{usedBy ? ` — ${usedBy[0]}` : ''}</option>
@@ -609,7 +614,7 @@ export default function RecordingPage() {
 
           {/* 데이터셋 설정 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-            <h3 className="text-sm font-semibold">데이터셋</h3>
+            <h3 className="text-sm font-semibold">{t('데이터셋')}</h3>
             <div>
               <label className="text-xs text-neutral-400">Repo ID</label>
               {/* ⚠ 통째로 타이핑하면 `/` 를 빠뜨린다 — LeRobot 이 두 개로
@@ -622,48 +627,48 @@ export default function RecordingPage() {
                   {!repoId.includes('/') && (
                     <button onClick={() => { setRepoId(`${hfUser || 'my-org'}/${repoId.trim()}`); setCliEdited(false) }}
                       className="shrink-0 px-2 py-0.5 rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white text-[10px]">
-                      {hfUser || 'my-org'}/ 붙이기
+                      {t('{hfUser}/ 붙이기', { hfUser: hfUser || 'my-org' })}
                     </button>
                   )}
                 </div>
               )}
               {datasetExists?.exists && (
                 <div className="flex items-center justify-between mt-1 px-2 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-xs">
-                  <span className="text-amber-300">기존 데이터셋 존재 ({datasetExists.size_mb} MB) — 이어서 녹화됩니다</span>
+                  <span className="text-amber-300">{t('기존 데이터셋 존재 ({size_mb} MB) — 이어서 녹화됩니다', { size_mb: datasetExists.size_mb })}</span>
                   <button onClick={handleDeleteDataset}
                     className="px-2 py-0.5 rounded bg-red-600 hover:bg-red-500 text-white text-[10px]">
-                    삭제
+                    {t('삭제')}
                   </button>
                 </div>
               )}
             </div>
             <div>
-              <label className="text-xs text-neutral-400">Task 설명</label>
+              <label className="text-xs text-neutral-400">{t('Task 설명')}</label>
               <input type="text" value={singleTask}
                 onChange={e => { setSingleTask(e.target.value); setCliEdited(false) }}
                 placeholder="Pick the cube and put in the box"
                 className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
             </div>
             <div>
-              <label className="text-xs text-neutral-400">데이터셋 제목 (선택)</label>
+              <label className="text-xs text-neutral-400">{t('데이터셋 제목 (선택)')}</label>
               <input type="text" value={title}
                 onChange={e => setTitle(e.target.value)}
-                placeholder="사람이 읽는 이름 — 목록과 허브 카드에 repo id 대신 보입니다"
+                placeholder={t('사람이 읽는 이름 — 목록과 허브 카드에 repo id 대신 보입니다')}
                 className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
             </div>
             <div>
-              <label className="text-xs text-neutral-400">데이터셋 설명 (선택)</label>
+              <label className="text-xs text-neutral-400">{t('데이터셋 설명 (선택)')}</label>
               <textarea value={description} rows={2}
                 onChange={e => setDescription(e.target.value)}
-                placeholder="무엇을, 어떤 조건에서 — 정지할 때 데이터셋 옆에 남고, 허브 업로드 시 카드가 됩니다"
+                placeholder={t('무엇을, 어떤 조건에서 — 정지할 때 데이터셋 옆에 남고, 허브 업로드 시 카드가 됩니다')}
                 className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
             </div>
             <div className="grid grid-cols-2 gap-2">
               {[
-                { label: '에피소드 수', val: numEpisodes, set: setNumEpisodes, min: 1, max: 1000 },
+                { label: t('에피소드 수'), val: numEpisodes, set: setNumEpisodes, min: 1, max: 1000 },
                 { label: 'FPS', val: fps, set: setFps, min: 10, max: 60 },
-                { label: '에피소드 시간(s)', val: episodeTime, set: setEpisodeTime, min: 5, max: 300 },
-                { label: '리셋 시간(s)', val: resetTime, set: setResetTime, min: 5, max: 300 },
+                { label: t('에피소드 시간(s)'), val: episodeTime, set: setEpisodeTime, min: 5, max: 300 },
+                { label: t('리셋 시간(s)'), val: resetTime, set: setResetTime, min: 5, max: 300 },
               ].map(({ label, val, set, min, max }) => (
                 <div key={label}>
                   <label className="text-xs text-neutral-400">{label}</label>
@@ -698,23 +703,23 @@ export default function RecordingPage() {
               <div className="flex flex-col gap-1">
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                   <input type="checkbox" checked={streamingEncoding} onChange={e => { setStreamingEncoding(e.target.checked); setCliEdited(false) }} className="accent-blue-500" />
-                  <span className="text-neutral-400">스트리밍 인코딩</span>
+                  <span className="text-neutral-400">{t('스트리밍 인코딩')}</span>
                 </label>
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                   <input type="checkbox" checked={pushToHub} onChange={e => { setPushToHub(e.target.checked); setCliEdited(false) }} className="accent-blue-500" />
-                  <span className="text-neutral-400">Hub 업로드</span>
+                  <span className="text-neutral-400">{t('Hub 업로드')}</span>
                 </label>
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                   <input type="checkbox" checked={resume} onChange={e => { setResume(e.target.checked); setCliEdited(false) }} className="accent-blue-500" />
-                  <span className="text-neutral-400">이어서 녹화 (Resume)</span>
+                  <span className="text-neutral-400">{t('이어서 녹화 (Resume)')}</span>
                 </label>
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                   <input type="checkbox" checked={webPreview} onChange={e => setWebPreview(e.target.checked)} className="accent-blue-500" />
-                  <span className="text-neutral-400">녹화 중 웹 미리보기</span>
+                  <span className="text-neutral-400">{t('녹화 중 웹 미리보기')}</span>
                 </label>
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                   <input type="checkbox" checked={voiceEnabled} onChange={e => setVoiceEnabled(e.target.checked)} className="accent-blue-500" />
-                  <span className="text-neutral-400">음성 안내 (브라우저)</span>
+                  <span className="text-neutral-400">{t('음성 안내 (브라우저)')}</span>
                 </label>
               </div>
             </div>
@@ -725,23 +730,23 @@ export default function RecordingPage() {
           {/* CLI 미리보기 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">CLI 명령어</h3>
-              {cliEdited && <button onClick={() => setCliEdited(false)} className="text-xs text-blue-400 hover:underline">초기화</button>}
+              <h3 className="text-sm font-semibold">{t('CLI 명령어')}</h3>
+              {cliEdited && <button onClick={() => setCliEdited(false)} className="text-xs text-blue-400 hover:underline">{t('초기화')}</button>}
             </div>
             <textarea value={cliArgs} onChange={e => { setCliArgs(e.target.value); setCliEdited(true) }}
               rows={4}
               className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-xs font-mono text-neutral-100 resize-y" />
             {recordBlockedBy && (
-              <p className="text-xs text-amber-400">{recordBlockedBy} 실행 중 — 먼저 중지하세요</p>
+              <p className="text-xs text-amber-400">{t('{recordBlockedBy} 실행 중 — 먼저 중지하세요', { recordBlockedBy })}</p>
             )}
             <button onClick={handleStart} disabled={!canStart}
               className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium">
-              녹화 시작
+              {t('녹화 시작')}
             </button>
           </div>
 
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
-            <h3 className="text-sm font-semibold mb-2">로그</h3>
+            <h3 className="text-sm font-semibold mb-2">{t('로그')}</h3>
             <LogViewer logs={logs} onClear={() => setLogs([])} height="h-64" />
           </div>
         </>
@@ -755,7 +760,7 @@ export default function RecordingPage() {
               <LightStrip />
               {status?.phase === 'recording' && (
                 <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
-                  <div className="text-xs text-neutral-400 mb-1">현재 에피소드 경과 시간</div>
+                  <div className="text-xs text-neutral-400 mb-1">{t('현재 에피소드 경과 시간')}</div>
                   <div className="text-2xl font-mono text-neutral-100">
                     {formatElapsed(episodeElapsedMs)}
                     <span className="text-sm text-neutral-500 ml-1">/ {formatElapsed(episodeTime * 1000)}</span>
@@ -766,12 +771,12 @@ export default function RecordingPage() {
             <div className="space-y-4">
               {/* 녹화 중: 상태 + 제어 */}
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
-                <h3 className="text-sm font-semibold">녹화 진행</h3>
+                <h3 className="text-sm font-semibold">{t('녹화 진행')}</h3>
 
                 {status && (
                   <>
                     <div className="flex justify-between text-xs text-neutral-400">
-                      <span>에피소드 {status.current_episode} / {status.total_episodes}</span>
+                      <span>{t('에피소드 {current_episode} / {total_episodes}', { current_episode: status.current_episode, total_episodes: status.total_episodes })}</span>
                       <span>{Math.round(status.progress * 100)}%</span>
                     </div>
                     <div className="w-full h-2 bg-neutral-700 rounded overflow-hidden">
@@ -785,11 +790,11 @@ export default function RecordingPage() {
                         status.phase === 'saving' ? 'bg-blue-500/20 text-blue-400' :
                         'bg-neutral-700 text-neutral-400'
                       }`}>
-                        {status.phase === 'recording' && '녹화 중'}
-                        {status.phase === 'resetting' && '리셋 대기'}
-                        {status.phase === 'saving' && '저장 중'}
-                        {status.phase === 'done' && '완료'}
-                        {status.phase === 'idle' && '대기'}
+                        {status.phase === 'recording' && t('녹화 중')}
+                        {status.phase === 'resetting' && t('리셋 대기')}
+                        {status.phase === 'saving' && t('저장 중')}
+                        {status.phase === 'done' && t('완료')}
+                        {status.phase === 'idle' && t('대기')}
                       </span>
                     </div>
                   </>
@@ -798,13 +803,13 @@ export default function RecordingPage() {
 
               {/* 에피소드 제어 */}
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
-                <h3 className="text-sm font-semibold">에피소드 제어</h3>
+                <h3 className="text-sm font-semibold">{t('에피소드 제어')}</h3>
 
                 {/* 리셋 대기 중: 준비 완료 버튼 강조 */}
                 {status?.phase === 'resetting' && (
                   <button onClick={handleSkip}
                     className="w-full px-4 py-3 rounded bg-green-600 hover:bg-green-500 text-white text-sm font-semibold animate-pulse">
-                    준비 완료 — 다음 에피소드 시작
+                    {t('준비 완료 — 다음 에피소드 시작')}
                   </button>
                 )}
 
@@ -814,51 +819,57 @@ export default function RecordingPage() {
                       버리는 것은 재녹화뿐이다. 단계에 따라 뜻이 갈려 라벨도 나눈다. */}
                   <button onClick={handleSkip}
                     title={status?.phase === 'resetting'
-                      ? '리셋을 마쳤으니 다음 에피소드를 지금 시작한다'
-                      : '지정 시간을 다 안 채우고 이번 에피소드를 여기서 마감해 저장한다'}
+                      ? t('리셋을 마쳤으니 다음 에피소드를 지금 시작한다')
+                      : t('지정 시간을 다 안 채우고 이번 에피소드를 여기서 마감해 저장한다')}
                     className="px-3 py-2 rounded bg-neutral-700 hover:bg-neutral-600 text-sm text-neutral-200">
-                    {status?.phase === 'resetting' ? '준비 완료 →' : '저장하고 다음 →'}
+                    {status?.phase === 'resetting' ? t('준비 완료 →') : t('저장하고 다음 →')}
                   </button>
                   <button onClick={handleRerecord}
                     className="px-3 py-2 rounded bg-amber-600 hover:bg-amber-500 text-sm text-white">
-                    ← 재녹화
+                    {t('← 재녹화')}
                   </button>
                   <button onClick={handleStop} disabled={stopping}
                     className="px-3 py-2 rounded bg-red-600 hover:bg-red-500 text-sm text-white disabled:opacity-60">
-                    {stopping ? '정지 중… (에피소드 저장)' : '정지 (ESC)'}
+                    {stopping ? t('정지 중… (에피소드 저장)') : t('정지 (ESC)')}
                   </button>
                 </div>
                 <p className="text-[10px] text-neutral-500">
-                  <b>저장하고 다음</b>: 지정 시간을 다 안 채우고 이번 에피소드를 마감해 <b>저장</b> · <b>재녹화</b>: 이번 에피소드를 <b>폐기</b>하고 다시 · <b>정지</b>: 이번 에피소드까지 저장하고 녹화 종료
+                  {t.rich('{b}: 지정 시간을 다 안 채우고 이번 에피소드를 마감해 {b_2} · {b_3}: 이번 에피소드를 {b_4}하고 다시 · {b_5}: 이번 에피소드까지 저장하고 녹화 종료', {
+                    b: <b>{t('저장하고 다음')}</b>,
+                    b_2: <b>{t('저장')}</b>,
+                    b_3: <b>{t('재녹화')}</b>,
+                    b_4: <b>{t('폐기')}</b>,
+                    b_5: <b>{t('정지')}</b>,
+                  })}
                 </p>
               </div>
 
               {/* 녹화 중 Task 메모 (녹화 후 일괄 변경용) */}
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-                <h3 className="text-sm font-semibold">Task 변경</h3>
+                <h3 className="text-sm font-semibold">{t('Task 변경')}</h3>
                 <div className="text-xs text-neutral-400">
-                  현재: <span className="text-neutral-100">{liveTask || singleTask}</span>
+                  {t.rich('현재: {span}', { span: <span className="text-neutral-100">{liveTask || singleTask}</span> })}
                 </div>
                 <div className="flex gap-1.5">
                   <input type="text" value={taskDraft} onChange={e => setTaskDraft(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') handleTaskChange() }}
-                    placeholder="다음 에피소드부터 쓸 task"
+                    placeholder={t('다음 에피소드부터 쓸 task')}
                     className="flex-1 px-2 py-1 text-xs rounded bg-neutral-900 border border-neutral-700 text-neutral-100 placeholder:text-neutral-600" />
                   <button onClick={handleTaskChange} disabled={!taskDraft.trim()}
-                    className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">적용</button>
+                    className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">{t('적용')}</button>
                 </div>
                 {taskMsg && <p className="text-[10px] text-amber-300">{taskMsg}</p>}
                 <p className="text-[10px] text-neutral-500">
-                  ⚠ <b>다음 에피소드부터</b> 적용됩니다. LeRobot 은 에피소드 시작 시점의 task 를
-                  그 에피소드의 모든 프레임에 찍기 때문에, 진행 중인 에피소드는 바뀌지 않습니다.
-                  이미 녹화된 에피소드는 데이터셋 페이지에서 고칠 수 있습니다.
+                  {t.rich('⚠ {b} 적용됩니다. LeRobot 은 에피소드 시작 시점의 task 를 그 에피소드의 모든 프레임에 찍기 때문에, 진행 중인 에피소드는 바뀌지 않습니다. 이미 녹화된 에피소드는 데이터셋 페이지에서 고칠 수 있습니다.', {
+                    b: <b>{t('다음 에피소드부터')}</b>,
+                  })}
                 </p>
               </div>
             </div>
           </div>
 
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
-            <h3 className="text-sm font-semibold mb-2">로그</h3>
+            <h3 className="text-sm font-semibold mb-2">{t('로그')}</h3>
             <LogViewer logs={logs} onClear={() => setLogs([])} />
           </div>
         </>

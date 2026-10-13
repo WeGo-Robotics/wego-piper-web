@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../services/api'
+import { useT, msg, fmt } from '../i18n'
 
 /**
  * RENT — 빌릴 기계를 고른다 (feature/vast-training.md §9-2).
@@ -79,20 +80,21 @@ type Gpu = {
  * 선택지 묶음. ⚠ 고를 수 없는 것도 **숨기지 않는다** — 사용자가 "싹 다 보여줘" 라고
  * 했고, 목록에서 빼 버리면 왜 안 보이는지 알 길이 없다. 대신 왜 못 고르는지를 적는다.
  */
-const GROUP_AVAILABLE = '고를 수 있습니다'
-const GROUP_UNAVAILABLE = '지금 조건으로는 기계가 없습니다'
+const GROUP_AVAILABLE = msg('고를 수 있습니다')
+const GROUP_UNAVAILABLE = msg('지금 조건으로는 기계가 없습니다')
 
 const CHECK_LABEL: Record<string, string> = {
-  cli: 'vastai CLI', ssh: 'ssh 클라이언트', api_key: 'API 키', ssh_key: 'SSH 키',
-  template: '학습 템플릿',
+  cli: 'vastai CLI', ssh: msg('ssh 클라이언트'), api_key: msg('API 키'), ssh_key: msg('SSH 키'),
+  template: msg('학습 템플릿'),
 }
 type SortKey = 'value' | 'price' | 'cuda' | 'reliability' | 'cpu' | 'inet'
 
 const money = (n: number) => `$${n.toFixed(3)}`
 /** 소수는 읽는 사람이 자릿수를 세지 않게 짧게 — 1024 는 1.0k */
-const num = (n: number, d = 0) => n.toLocaleString(undefined, { maximumFractionDigits: d })
+const num = (n: number, d = 0) => fmt.number(n, { maximumFractionDigits: d })
 
 export default function CloudRentTab() {
+  const t = useT()
   const [ready, setReady] = useState<Readiness | null>(null)
   const [makingTpl, setMakingTpl] = useState(false)
   const [offers, setOffers] = useState<Offer[]>([])
@@ -151,11 +153,11 @@ export default function CloudRentTab() {
         '/cloud/templates', {}, { timeoutMs: 120_000 })
       // ⚠ 하나가 실패해도 나머지는 만들어진다 — 실패를 말하되 성공을 지우지 않는다.
       setError(r.failed?.length
-        ? `템플릿 ${r.failed.length}개를 못 만들었습니다: ${r.failed[0].error}`
+        ? t('템플릿 {length}개를 못 만들었습니다: {error}', { length: r.failed.length, error: r.failed[0].error })
         : null)
       loadReadiness()
     } catch (e) {
-      setError(e instanceof Error ? e.message : '템플릿을 만들지 못했습니다')
+      setError(e instanceof Error ? e.message : t('템플릿을 만들지 못했습니다'))
     } finally { setMakingTpl(false) }
   }
 
@@ -176,13 +178,13 @@ export default function CloudRentTab() {
       setPicked((cur) => (r.offers.some((o) => o.id === cur) ? cur : null))
     } catch (e) {
       setOffers([])
-      setError(e instanceof Error ? e.message : '오퍼를 불러오지 못했습니다')
+      setError(e instanceof Error ? e.message : t('오퍼를 불러오지 못했습니다'))
     } finally {
       setLoading(false)
     }
     // ⚠ **고른 템플릿의 CUDA 빌드를 같이 보낸다.** 안 보내면 서버가 기본값으로
     //   판정해서, cu128 템플릿을 골라도 표는 cu126 기준으로 말한다 — 조용히 틀린다.
-  }, [gpu, diskGb, maxPrice, minCpu, template?.cuda])
+  }, [gpu, diskGb, maxPrice, minCpu, template?.cuda, t])
 
   const loadGpus = useCallback(() => {
     // ⚠ **표와 같은 필터를 넘긴다.** 카탈로그가 자기 조건으로 만들어지면 "선택지엔
@@ -196,9 +198,9 @@ export default function CloudRentTab() {
     setGpusLoading(true)
     api.get<{ gpus: Gpu[]; detail: string | null }>(`/cloud/gpus?${p}`, { timeoutMs: 60_000 })
       .then((r) => { setGpus(r.gpus); setGpusDetail(r.detail) })
-      .catch((e) => setGpusDetail(e instanceof Error ? e.message : '기종 목록을 불러오지 못했습니다'))
+      .catch((e) => setGpusDetail(e instanceof Error ? e.message : t('기종 목록을 불러오지 못했습니다')))
       .finally(() => setGpusLoading(false))
-  }, [diskGb, maxPrice, minCpu, template?.cuda])
+  }, [diskGb, maxPrice, minCpu, template?.cuda, t])
 
   useEffect(loadReadiness, [loadReadiness])
   useEffect(() => {
@@ -270,11 +272,11 @@ export default function CloudRentTab() {
   const emptyReason = useMemo(() => {
     if (pickedGpu?.reason) {
       return pickedGpu.support === 'too_new'
-        ? `${pickedGpu.name} — ${pickedGpu.reason} 다른 기종을 고르거나 이미지를 다시 구워야 합니다.`
+        ? t('{name} — {reason} 다른 기종을 고르거나 이미지를 다시 구워야 합니다.', { name: pickedGpu.name, reason: pickedGpu.reason })
         : `${pickedGpu.name} — ${pickedGpu.reason}`
     }
-    return '조건에 맞는 기계가 없습니다 — 필터를 넓혀 보세요.'
-  }, [pickedGpu])
+    return t('조건에 맞는 기계가 없습니다 — 필터를 넓혀 보세요.')
+  }, [pickedGpu, t])
 
   const missing = Object.entries(ready?.checks ?? {}).filter(([, c]) => !c.ok)
   const credit = ready?.credit ?? null
@@ -287,10 +289,10 @@ export default function CloudRentTab() {
       {ready && !ready.ready && (
         <section className="rounded-lg border border-amber-600/40 bg-amber-950/30 p-3 text-sm">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-medium text-amber-200">빌리려면 먼저:</span>
+            <span className="font-medium text-amber-200">{t('빌리려면 먼저:')}</span>
             {missing.map(([k, c]) => (
               <span key={k} className="text-amber-100/80">
-                <strong>{CHECK_LABEL[k] ?? k}</strong>
+                <strong>{t(CHECK_LABEL[k] ?? k)}</strong>
                 {c.detail ? ` — ${c.detail}` : ''}
                 {/* ⚠ **템플릿은 계정 밖으로 안 보인다.** 다른 Vast 계정으로 들어오면
                     우리 템플릿이 아예 없는데, 지금까지는 "없음" 이라고만 하고 어떻게
@@ -298,16 +300,16 @@ export default function CloudRentTab() {
                 {k === 'template' && (
                   <button onClick={() => void makeTemplates()} disabled={makingTpl}
                     className="ml-2 rounded bg-amber-700 px-2 py-0.5 text-xs text-white hover:bg-amber-600 disabled:opacity-50">
-                    {makingTpl ? '만드는 중…' : '이 계정에 만들기'}
+                    {makingTpl ? t('만드는 중…') : t('이 계정에 만들기')}
                   </button>
                 )}
               </span>
             ))}
             <a href="/settings" className="ml-auto shrink-0 underline text-amber-200 hover:text-amber-100">
-              설정 → 클라우드
+              {t('설정 → 클라우드')}
             </a>
           </div>
-          <p className="mt-1 text-xs text-amber-200/60">목록은 그대로 볼 수 있습니다 — 막히는 것은 [빌리기] 뿐입니다.</p>
+          <p className="mt-1 text-xs text-amber-200/60">{t('목록은 그대로 볼 수 있습니다 — 막히는 것은 [빌리기] 뿐입니다.')}</p>
         </section>
       )}
 
@@ -315,16 +317,16 @@ export default function CloudRentTab() {
       <section className="flex flex-wrap items-end gap-3 rounded-lg border border-neutral-700 bg-neutral-800 p-3">
         <label className="flex min-w-0 flex-col gap-1">
           <span className="text-xs text-neutral-400">
-            GPU{gpus.length > 0 && <span className="text-neutral-600"> · {gpus.length}종</span>}
-            {gpusLoading && <span className="text-neutral-600"> · 갱신 중…</span>}
+            GPU{gpus.length > 0 && <span className="text-neutral-600">{' '}{t('· {length}종', { length: gpus.length })}</span>}
+            {gpusLoading && <span className="text-neutral-600">{' '}{t('· 갱신 중…')}</span>}
           </span>
           {/* ⚠ 80종이다. 묶음으로 나누지 않으면 고를 수가 없고, 못 도는 것을 빼 버리면
               왜 안 보이는지 알 길이 없다 — 그래서 묶어서 **다** 보여준다. */}
           <select value={gpu} onChange={(e) => setGpu(e.target.value)}
             className="w-[22rem] min-w-0 max-w-full rounded border border-neutral-600 bg-neutral-900 px-2 py-1.5 text-sm">
-            <option value="">전체 (제한 없음)</option>
+            <option value="">{t('전체 (제한 없음)')}</option>
             {gpuOptions.map(([group, items]) => (
-              <optgroup key={group} label={`${group} — ${items.length}종`}>
+              <optgroup key={group} label={t('{group} — {length}종', { group: t(group), length: items.length })}>
                 {/* ⚠ 라벨은 **이름이 맨 앞**이다. native select 는 접두 일치로 type-ahead 가
                     되므로 포커스한 채 "rtx 30" 을 치면 그 구간으로 점프한다 — 앞에 VRAM·
                     가격을 붙이는 순간 70종에서 찾을 방법이 사라진다. 순서를 바꾸지 마라. */}
@@ -334,7 +336,7 @@ export default function CloudRentTab() {
                     {g.vram_gb > 0 && ` · ${num(g.vram_gb)}GB`}
                     {/* ⚠ "20대" 가 아니라 "20대쯤" 이다 — 같은 질의를 두 번 돌려도
                         행이 갈린다(실측 234~238). 확정값처럼 적으면 새로고침마다 흔들린다 */}
-                    {g.offers_seen > 0 && ` · ${g.offers_seen}대쯤`}
+                    {g.offers_seen > 0 && t(' · {offers_seen}대쯤', { offers_seen: g.offers_seen })}
                     {g.min_hourly > 0 && ` · ${money(g.min_hourly)}~`}
                   </option>
                 ))}
@@ -344,38 +346,38 @@ export default function CloudRentTab() {
         </label>
         <label className="flex w-28 flex-col gap-1">
           {/* ⚠ 필터이자 **가격 입력**이다 — 바꾸면 표 전체의 $/h 가 다시 계산된다 */}
-          <span className="text-xs text-neutral-400">디스크 GB</span>
+          <span className="text-xs text-neutral-400">{t('디스크 GB')}</span>
           <input type="number" min={5} max={2000} value={diskGb}
             onChange={(e) => setDiskGb(Math.max(5, Number(e.target.value) || 40))}
             className="w-full rounded border border-neutral-600 bg-neutral-900 px-2 py-1.5 text-sm" />
         </label>
         <label className="flex w-28 flex-col gap-1">
-          <span className="text-xs text-neutral-400">최대 $/h</span>
-          <input type="number" step="0.05" min={0} placeholder="제한 없음" value={maxPrice}
+          <span className="text-xs text-neutral-400">{t('최대 $/h')}</span>
+          <input type="number" step="0.05" min={0} placeholder={t('제한 없음')} value={maxPrice}
             onChange={(e) => setMaxPrice(e.target.value)}
             className="w-full rounded border border-neutral-600 bg-neutral-900 px-2 py-1.5 text-sm" />
         </label>
         <label className="flex w-28 flex-col gap-1">
-          <span className="text-xs text-neutral-400">최소 CPU 코어</span>
-          <input type="number" min={0} placeholder="제한 없음" value={minCpu}
+          <span className="text-xs text-neutral-400">{t('최소 CPU 코어')}</span>
+          <input type="number" min={0} placeholder={t('제한 없음')} value={minCpu}
             onChange={(e) => setMinCpu(e.target.value)}
             className="w-full rounded border border-neutral-600 bg-neutral-900 px-2 py-1.5 text-sm" />
         </label>
         <label className="flex min-w-0 flex-col gap-1">
-          <span className="text-xs text-neutral-400">정렬</span>
+          <span className="text-xs text-neutral-400">{t('정렬', undefined, 'sort')}</span>
           <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}
             className="min-w-0 rounded border border-neutral-600 bg-neutral-900 px-2 py-1.5 text-sm">
-            <option value="value">가성비</option>
-            <option value="price">낮은 가격</option>
+            <option value="value">{t('가성비')}</option>
+            <option value="price">{t('낮은 가격')}</option>
             <option value="cuda">CUDA</option>
-            <option value="reliability">신뢰도</option>
+            <option value="reliability">{t('신뢰도')}</option>
             <option value="cpu">CPU</option>
-            <option value="inet">네트워크</option>
+            <option value="inet">{t('네트워크')}</option>
           </select>
         </label>
         <button onClick={() => void loadOffers(true)} disabled={loading}
           className="ml-auto rounded bg-neutral-700 px-4 py-1.5 text-sm text-neutral-200 hover:bg-neutral-600 disabled:opacity-50">
-          {loading ? '찾는 중…' : '새로고침'}
+          {loading ? t('찾는 중…') : t('새로고침')}
         </button>
       </section>
 
@@ -387,26 +389,26 @@ export default function CloudRentTab() {
         <p className="rounded border border-amber-700/40 bg-amber-950/30 p-2 text-xs text-amber-200">
           ⚠ <strong>{pickedGpu.name}</strong> — {pickedGpu.reason}
           {pickedGpu.support === 'too_new'
-            && ' (이미지를 cu128 로 다시 구우면 쓸 수 있습니다: TORCH_CUDA=cu128 ./deploy/build-train.sh)'}
+            && t(' (이미지를 cu128 로 다시 구우면 쓸 수 있습니다: TORCH_CUDA=cu128 ./deploy/build-train.sh)')}
         </p>
       )}
 
       {gpusDetail && (
         <p className="flex flex-wrap items-center gap-2 text-xs text-neutral-500">
-          <span>기종 목록: {gpusDetail} — 지금 결과에 보이는 기종만 고를 수 있습니다.</span>
+          <span>{t('기종 목록: {gpusDetail} — 지금 결과에 보이는 기종만 고를 수 있습니다.', { gpusDetail })}</span>
           {/* ⚠ 자동 재시도는 넣지 않는다. 이 저장소는 요청이 쌓여 정지 버튼까지
               안 나간 적이 있다 — 다시 시도는 사람이 누른다. */}
           <button onClick={loadGpus} disabled={gpusLoading}
             className="rounded border border-neutral-600 px-2 py-0.5 text-neutral-300 hover:border-neutral-400 disabled:opacity-50">
-            다시 시도
+            {t('다시 시도')}
           </button>
         </p>
       )}
 
       {query && (
         <p className="text-xs text-neutral-600">
-          질의 <code className="text-neutral-500">{query}</code>
-          {credit !== null && <> · 크레딧 <strong className="text-neutral-400">${credit.toFixed(2)}</strong></>}
+          {t.rich('질의 {code}', { code: <code className="text-neutral-500">{query}</code> })}
+          {credit !== null && <>{' '}{t.rich('· 크레딧 {strong}', { strong: <strong className="text-neutral-400">${credit.toFixed(2)}</strong> })}</>}
         </p>
       )}
 
@@ -421,14 +423,14 @@ export default function CloudRentTab() {
             <tr className="text-left text-neutral-400">
               <th className="p-2 font-medium">GPU</th>
               <th className="p-2 font-medium">$/h</th>
-              <th className="p-2 font-medium">가성비</th>
+              <th className="p-2 font-medium">{t('가성비')}</th>
               <th className="p-2 font-medium">CUDA</th>
-              <th className="p-2 font-medium">신뢰도</th>
-              <th className="p-2 font-medium">네트워크</th>
+              <th className="p-2 font-medium">{t('신뢰도')}</th>
+              <th className="p-2 font-medium">{t('네트워크')}</th>
               <th className="p-2 font-medium">CPU</th>
-              <th className="p-2 font-medium">디스크</th>
-              <th className="p-2 font-medium">위치</th>
-              <th className="p-2 font-medium">잔여</th>
+              <th className="p-2 font-medium">{t('디스크')}</th>
+              <th className="p-2 font-medium">{t('위치')}</th>
+              <th className="p-2 font-medium">{t('잔여')}</th>
               <th className="p-2" />
             </tr>
           </thead>
@@ -446,7 +448,7 @@ export default function CloudRentTab() {
                   {/* ⚠ 굵은 값이 우리 가격. 아래에 출처를 쪼개 둔다 — Vast 표시가와 다른 이유가 여기 있다 */}
                   <div className="font-semibold text-neutral-100">{money(o.hourly)}</div>
                   <div className="text-neutral-500">
-                    GPU {money(o.dph_base)} + 디스크 {money(o.storage_hourly)}
+                    {t('GPU {money} + 디스크 {money_2}', { money: money(o.dph_base), money_2: money(o.storage_hourly) })}
                   </div>
                 </td>
                 <td className="p-2 text-neutral-300">{num(o.dlperf_per_dph)}</td>
@@ -458,7 +460,7 @@ export default function CloudRentTab() {
                 <td className="p-2 text-neutral-300">{num(o.cpu_cores, 1)}</td>
                 <td className="whitespace-nowrap p-2 text-neutral-400">{num(o.disk_space_gb)}GB</td>
                 <td className="whitespace-nowrap p-2 text-neutral-400">{o.geolocation}</td>
-                <td className="whitespace-nowrap p-2 text-neutral-500">{num(o.duration_days)}일</td>
+                <td className="whitespace-nowrap p-2 text-neutral-500">{t('{num}일', { num: num(o.duration_days) })}</td>
                 <td className="p-2">
                   {o.warnings.length > 0 && (
                     <div className="flex flex-col gap-1">
@@ -491,7 +493,7 @@ export default function CloudRentTab() {
             </div>
 
             <label className="flex items-center gap-2">
-              <span className="text-xs text-neutral-400">템플릿</span>
+              <span className="text-xs text-neutral-400">{t('템플릿')}</span>
               <select value={template?.id ?? ''} onChange={(e) => setTemplateId(Number(e.target.value))}
                 className="min-w-0 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm">
                 {/* ⚠ 설명을 버리지 않는다. 백엔드가 "스택 포함, 부팅 즉시 학습" /
@@ -510,32 +512,38 @@ export default function CloudRentTab() {
               <div className="font-semibold text-neutral-100">{money(offer.hourly)}/h</div>
               {/* ⚠ 전송비는 시간이 아니라 GB 로 붙는다 — 시간당에 섞지 않는다 */}
               <div className="text-xs text-neutral-500">
-                + 전송 ${offer.inet_down_cost_per_gb.toFixed(4)}/GB 올림 · ${offer.inet_up_cost_per_gb.toFixed(4)}/GB 내림
+                {t('+ 전송 ${inet_down_cost_per_gb}/GB 올림 · ${inet_up_cost_per_gb}/GB 내림', {
+                  inet_down_cost_per_gb: offer.inet_down_cost_per_gb.toFixed(4),
+                  inet_up_cost_per_gb: offer.inet_up_cost_per_gb.toFixed(4),
+                })}
               </div>
             </div>
 
             <label className="flex items-center gap-2">
-              <span className="text-xs text-neutral-400">예산 상한 $</span>
+              <span className="text-xs text-neutral-400">{t('예산 상한 $')}</span>
               <input type="number" min={1} value={budget}
                 onChange={(e) => setBudget(Math.max(1, Number(e.target.value) || 10))}
                 className="w-20 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-sm" />
             </label>
 
             <div className="text-xs text-neutral-400">
-              {credit !== null && <>크레딧 ${credit.toFixed(2)} → 최대 <strong>{maxHours?.toFixed(0)}시간</strong> · </>}
-              예산 ${budget} → <strong>{budgetHours?.toFixed(1)}시간</strong>
+              {credit !== null && <>{t.rich('크레딧 ${credit} → 최대 {strong} ·', { credit: credit.toFixed(2), strong: <strong>{t.rich('{maxHours}시간', { maxHours: maxHours?.toFixed(0) })}</strong> })}{' '}</>}
+              {t.rich('예산 ${budget} → {strong}', {
+                budget,
+                strong: <strong>{t.rich('{budgetHours}시간', { budgetHours: budgetHours?.toFixed(1) })}</strong>,
+              })}
             </div>
 
             <div className="ml-auto flex gap-2">
               <button onClick={() => setPicked(null)}
                 className="rounded border border-neutral-600 px-3 py-1.5 text-sm text-neutral-300 hover:border-neutral-400">
-                해제
+                {t('해제')}
               </button>
               <button onClick={() => setConfirming(true)}
                 disabled={!ready?.ready}
-                title={!ready?.ready ? '설정 → 클라우드 에서 준비를 마쳐 주세요' : ''}
+                title={!ready?.ready ? t('설정 → 클라우드 에서 준비를 마쳐 주세요') : ''}
                 className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-40">
-                빌리기
+                {t('빌리기')}
               </button>
             </div>
           </div>
@@ -561,6 +569,7 @@ function RentConfirm({ offer, template, budget, credit, onClose, onStarted }: {
   offer: Offer; template: Template | null; budget: number; credit: number | null
   onClose: () => void; onStarted: () => void
 }) {
+  const t = useT()
   const hours = budget / offer.hourly
   const [sending, setSending] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -578,7 +587,7 @@ function RentConfirm({ offer, template, budget, credit, onClose, onStarted }: {
       }, { timeoutMs: 120_000 })
       onStarted()
     } catch (e) {
-      setErr(e instanceof Error ? e.message : '빌리지 못했습니다')
+      setErr(e instanceof Error ? e.message : t('빌리지 못했습니다'))
     } finally {
       setSending(false)
     }
@@ -588,17 +597,17 @@ function RentConfirm({ offer, template, budget, credit, onClose, onStarted }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div className="max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-lg border border-neutral-600 bg-neutral-900 p-5"
         onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-semibold text-neutral-100">이 기계를 빌립니다</h2>
+        <h2 className="text-lg font-semibold text-neutral-100">{t('이 기계를 빌립니다')}</h2>
 
         <dl className="space-y-1.5 text-sm">
           {[
-            ['기계', `${offer.num_gpus}× ${offer.gpu_name} · ${offer.geolocation} · id ${offer.id}`],
-            ['템플릿', template ? `${template.variant || template.name} — ${template.tag ?? ''}` : '없음'],
-            ['디스크', `${offer.disk_gb}GB`],
-            ['시간당', `${money(offer.hourly)} (GPU ${money(offer.dph_base)} + 디스크 ${money(offer.storage_hourly)})`],
-            ['전송비', `올림 $${offer.inet_down_cost_per_gb.toFixed(4)}/GB · 내림 $${offer.inet_up_cost_per_gb.toFixed(4)}/GB`],
-            ['예산 기준', `$${budget} 이면 약 ${hours.toFixed(1)}시간`],
-            ['크레딧', credit !== null ? `$${credit.toFixed(2)}` : '모름'],
+            [t('기계'), `${offer.num_gpus}× ${offer.gpu_name} · ${offer.geolocation} · id ${offer.id}`],
+            [t('템플릿'), template ? `${template.variant || template.name} — ${template.tag ?? ''}` : t('없음')],
+            [t('디스크'), `${offer.disk_gb}GB`],
+            [t('시간당'), t('{money} (GPU {money_2} + 디스크 {money_3})', { money: money(offer.hourly), money_2: money(offer.dph_base), money_3: money(offer.storage_hourly) })],
+            [t('전송비'), t('올림 ${inet_down_cost_per_gb}/GB · 내림 ${inet_up_cost_per_gb}/GB', { inet_down_cost_per_gb: offer.inet_down_cost_per_gb.toFixed(4), inet_up_cost_per_gb: offer.inet_up_cost_per_gb.toFixed(4) })],
+            [t('예산 기준'), t('${budget} 이면 약 {hours}시간', { budget, hours: hours.toFixed(1) })],
+            [t('크레딧'), credit !== null ? `$${credit.toFixed(2)}` : t('모름')],
           ].map(([k, v]) => (
             <div key={k} className="flex gap-3">
               <dt className="w-20 shrink-0 text-neutral-500">{k}</dt>
@@ -618,10 +627,12 @@ function RentConfirm({ offer, template, budget, credit, onClose, onStarted }: {
             때문이다: 학습 스크립트의 timeout(가장 안쪽) · 예산/시간 틱(바깥) ·
             finally 로 보장된 파기. 그전까지 비활성이던 것은 디자인이 아니라 사실이었다. */}
         <p className="rounded border border-amber-700/50 bg-amber-950/20 p-2 text-xs text-amber-200/90">
-          이 버튼은 <strong className="text-amber-100">기계만 만듭니다</strong> — 학습은
-          학습 페이지에서 이 기계를 골라 거세요. 그리고 <strong className="text-amber-100">
-          자동으로 꺼지지 않습니다</strong>: 학습을 안 해도 {money(offer.hourly)}/h 가
-          계속 나가므로, 다 쓰면 인스턴스 탭에서 직접 파기해야 합니다.
+          {t.rich('이 버튼은 {strong} — 학습은 학습 페이지에서 이 기계를 골라 거세요. 그리고 {strong_2}: 학습을 안 해도 {money}/h 가 계속 나가므로, 다 쓰면 인스턴스 탭에서 직접 파기해야 합니다.', {
+            strong: <strong className="text-amber-100">{t('기계만 만듭니다')}</strong>,
+            strong_2: <strong className="text-amber-100">
+          {t('자동으로 꺼지지 않습니다')}</strong>,
+            money: money(offer.hourly),
+          })}
         </p>
 
         {err && (
@@ -631,12 +642,12 @@ function RentConfirm({ offer, template, budget, credit, onClose, onStarted }: {
         <div className="flex justify-end gap-2">
           <button onClick={onClose} disabled={sending}
             className="rounded border border-neutral-600 px-4 py-1.5 text-sm text-neutral-300 hover:border-neutral-400 disabled:opacity-50">
-            닫기
+            {t('닫기')}
           </button>
           <button onClick={() => void rent()} disabled={sending || !template}
-            title={template ? '' : '학습 템플릿이 필요합니다'}
+            title={template ? '' : t('학습 템플릿이 필요합니다')}
             className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-40">
-            {sending ? '만드는 중…' : '기계 빌리기'}
+            {sending ? t('만드는 중…') : t('기계 빌리기')}
           </button>
         </div>
       </div>

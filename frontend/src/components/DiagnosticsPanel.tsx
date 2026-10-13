@@ -3,6 +3,7 @@ import DiagChart, { type Row } from './DiagCharts'
 import { useSystemMessage } from './SystemMessages'
 import DiagOffsetsModal from './DiagOffsetsModal'
 import { api } from '../services/api'
+import { useT, msg, fmt } from '../i18n'
 
 /**
  * 관절 검사 — 정해진 모션으로 흔들며 전 항목을 로그하고 관절끼리 견준다
@@ -23,9 +24,9 @@ const INTENSITY = [
   // ⚠ 속도를 같이 적는다. 폭만 보이면 "강하게" 가 느리게 크게 흔드는 것으로
   //   읽히는데, 관절 이상은 **빠를 때** 드러난다 — 무엇을 고르는지가 폭이 아니라
   //   부하라는 것이 보여야 한다. 70°/s 는 실제 수집 데이터의 상위 5% 자리다.
-  { key: 'gentle', label: '약하게', hint: '±10° · 15°/s' },
-  { key: 'normal', label: '보통', hint: '±20° · 40°/s' },
-  { key: 'strong', label: '강하게', hint: '±30° · 70°/s · 수집 속도' },
+  { key: 'gentle', label: msg('약하게'), hint: '±10° · 15°/s' },
+  { key: 'normal', label: msg('보통'), hint: '±20° · 40°/s' },
+  { key: 'strong', label: msg('강하게'), hint: msg('±30° · 70°/s · 수집 속도') },
 ] as const
 type Intensity = typeof INTENSITY[number]['key']
 
@@ -56,22 +57,22 @@ type Summary = {
 }
 
 const METRIC_LABEL: Record<string, string> = {
-  err_max_deg: '오차 최대', err_rms_deg: '오차 RMS', current_max_a: '전류 최대',
-  current_mean_a: '전류 평균', effort_max_nm: '토크 최대', temp_rise_c: '온도 상승',
+  err_max_deg: msg('오차 최대'), err_rms_deg: msg('오차 RMS'), current_max_a: msg('전류 최대'),
+  current_mean_a: msg('전류 평균'), effort_max_nm: msg('토크 최대'), temp_rise_c: msg('온도 상승'),
 }
 
 const METRICS = [
-  { key: 'err_max_deg', label: '추종 오차 최대', unit: '°' },
-  { key: 'err_rms_deg', label: '추종 오차 RMS', unit: '°' },
-  { key: 'current_max_a', label: '전류 최대', unit: 'A' },
-  { key: 'current_mean_a', label: '전류 평균', unit: 'A' },
-  { key: 'effort_max_nm', label: '토크 최대', unit: 'N·m' },
-  { key: 'temp_rise_c', label: '온도 상승', unit: '℃' },
+  { key: 'err_max_deg', label: msg('추종 오차 최대'), unit: '°' },
+  { key: 'err_rms_deg', label: msg('추종 오차 RMS'), unit: '°' },
+  { key: 'current_max_a', label: msg('전류 최대'), unit: 'A' },
+  { key: 'current_mean_a', label: msg('전류 평균'), unit: 'A' },
+  { key: 'effort_max_nm', label: msg('토크 최대'), unit: 'N·m' },
+  { key: 'temp_rise_c', label: msg('온도 상승'), unit: '℃' },
 ] as const
 
 const FLAG_LABEL: Record<string, string> = {
-  driver_overcurrent: '과전류', stall: '스톨', driver_error: '드라이버 오류',
-  collision: '충돌 보호', angle_limit: '각도 한계', comm_error: '통신 오류',
+  driver_overcurrent: msg('과전류'), stall: msg('스톨'), driver_error: msg('드라이버 오류'),
+  collision: msg('충돌 보호'), angle_limit: msg('각도 한계'), comm_error: msg('통신 오류'),
 }
 
 const num = (v: number | null | undefined, d = 3) => v == null ? '—' : v.toFixed(d)
@@ -80,6 +81,7 @@ export default function DiagnosticsPanel({ arms }: {
   arms: { iface: string; connected: boolean
           master_slave?: string | null; responding?: boolean | null }[]
 }) {
+  const t = useT()
   const { notify, confirm } = useSystemMessage()
   const [iface, setIface] = useState('')
   const [scope, setScope] = useState<'all' | string>('all')
@@ -109,8 +111,8 @@ export default function DiagnosticsPanel({ arms }: {
       await api.post('/robots/diag/save', { name: saveName.trim(), note: saveNote })
       setSaveName(''); setSaveNote(''); loadSaved()
     } catch (e) {
-      notify({ level: 'error', source: '검사',
-               text: e instanceof Error ? e.message : '저장 실패' })
+      notify({ level: 'error', source: t('검사'),
+               text: e instanceof Error ? e.message : t('저장 실패') })
     }
   }
 
@@ -120,8 +122,8 @@ export default function DiagnosticsPanel({ arms }: {
         `/robots/diag/saved/${encodeURIComponent(name)}`)
       setRows(d.rows); setSummary(d.summary); setCmp(null)
     } catch (e) {
-      notify({ level: 'error', source: '검사',
-               text: e instanceof Error ? e.message : '불러오기 실패' })
+      notify({ level: 'error', source: t('검사'),
+               text: e instanceof Error ? e.message : t('불러오기 실패') })
     }
   }
 
@@ -130,8 +132,8 @@ export default function DiagnosticsPanel({ arms }: {
       setCmp(await api.get<Compare>(
         `/robots/diag/compare?a=${encodeURIComponent(pick.a)}&b=${encodeURIComponent(pick.b)}`))
     } catch (e) {
-      notify({ level: 'error', source: '검사',
-               text: e instanceof Error ? e.message : '비교 실패' })
+      notify({ level: 'error', source: t('검사'),
+               text: e instanceof Error ? e.message : t('비교 실패') })
     }
   }
 
@@ -163,10 +165,10 @@ export default function DiagnosticsPanel({ arms }: {
       const d = await api.get<{ rows: Row[]; summary: Summary
                                 error: string | null }>('/robots/diag/result')
       setRows(d.rows); setSummary(d.summary)
-      if (d.error) notify({ level: 'error', source: '검사', text: d.error })
+      if (d.error) notify({ level: 'error', source: t('검사'), text: d.error })
     } catch (e) {
-      notify({ level: 'error', source: '검사',
-               text: e instanceof Error ? e.message : '결과를 읽지 못했습니다' })
+      notify({ level: 'error', source: t('검사'),
+               text: e instanceof Error ? e.message : t('결과를 읽지 못했습니다') })
     }
   }
 
@@ -184,22 +186,14 @@ export default function DiagnosticsPanel({ arms }: {
     const joints = scope === 'all' ? [...JOINTS] : [scope]
     const amp = { gentle: 10, normal: 20, strong: 30 }[intensity]
     if (!await confirm(
-      `${iface} 의 ${scope === 'all' ? '여섯 관절을 모두' : scope + ' 를'} 흔들어 잽니다.\n\n` +
-      `· 지금 자세를 중심으로 사인파 **±${amp}°**\n` +
-      `· 최고 ${{ gentle: 15, normal: 40, strong: 70 }[intensity]}°/s\n` +
-      // ⚠ 중심을 옮겨 뒀으면 **지금 자세가 아닌 곳**에서 흔든다. 안 알리면
-      //   팔이 먼저 움직이는 것이 놀라움이 된다.
-      (offsetCount > 0 ? `· 중심 오프셋 ${offsetCount}개 적용 — 흔들기 전에 그 자세로 이동합니다\n` : '') +
-      '· 끝나면 원래 자세로 돌아옵니다\n' +
-      (scope === 'all' ? '· 여섯이 위상을 어긋나게 움직입니다\n' : '') +
-      '\n팔 주변이 비어 있는지 확인하세요.')) return
+      t('{iface} 의 {scope} 흔들어 잽니다.\n\n· 지금 자세를 중심으로 사인파 **±{amp}°**\n· 최고 {gentle}°/s\n{offsetCount}· 끝나면 원래 자세로 돌아옵니다\n{scope_2}\n팔 주변이 비어 있는지 확인하세요.', { iface, scope: scope === 'all' ? t('여섯 관절을 모두') : t('{scope} 를', { scope }), amp, gentle: { gentle: 15, normal: 40, strong: 70 }[intensity], offsetCount: (offsetCount > 0 ? t('· 중심 오프셋 {offsetCount}개 적용 — 흔들기 전에 그 자세로 이동합니다\n', { offsetCount }) : ''), scope_2: (scope === 'all' ? t('· 여섯이 위상을 어긋나게 움직입니다\n') : '') }))) return
     setBusy(true); setSummary(null); setRows([])
     try {
       await api.post('/robots/diag/start', { iface, joints, intensity })
       await poll()
     } catch (e) {
-      notify({ level: 'error', source: '검사',
-               text: e instanceof Error ? e.message : '시작하지 못했습니다' })
+      notify({ level: 'error', source: t('검사'),
+               text: e instanceof Error ? e.message : t('시작하지 못했습니다') })
     } finally { setBusy(false) }
   }
 
@@ -234,7 +228,7 @@ export default function DiagnosticsPanel({ arms }: {
         <div className="flex flex-wrap items-center gap-2">
           <select value={iface} onChange={(e) => setIface(e.target.value)}
             className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm">
-            <option value="">팔 고르기</option>
+            <option value="">{t('팔 고르기')}</option>
             {usable.map((a) => <option key={a.iface} value={a.iface}>{a.iface}</option>)}
           </select>
 
@@ -242,7 +236,7 @@ export default function DiagnosticsPanel({ arms }: {
             <button onClick={() => setScope('all')}
               className={`rounded px-2 py-1 text-xs ${scope === 'all'
                 ? 'bg-neutral-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}>
-              전체
+              {t('전체')}
             </button>
             {JOINTS.map((j) => (
               <button key={j} onClick={() => setScope(j)}
@@ -256,45 +250,46 @@ export default function DiagnosticsPanel({ arms }: {
           <div className="flex items-center gap-1 rounded bg-neutral-900 p-0.5">
             {INTENSITY.map((it) => (
               <button key={it.key} onClick={() => setIntensity(it.key)}
-                title={it.hint}
+                title={t(it.hint)}
                 className={`rounded px-2 py-1 text-xs ${intensity === it.key
                   ? 'bg-neutral-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}>
-                {it.label}
+                {t(it.label)}
               </button>
             ))}
           </div>
 
           <button onClick={() => setOffsetsOpen(true)} disabled={!iface}
-            title="팔에 붙은 기구물에 걸리는 관절은 검사 중심을 옮기세요 — 팔마다 따로 저장됩니다"
+            title={t('팔에 붙은 기구물에 걸리는 관절은 검사 중심을 옮기세요 — 팔마다 따로 저장됩니다')}
             className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-300
                        hover:bg-neutral-600 disabled:opacity-50">
-            중심 오프셋{offsetCount > 0 ? ` (${offsetCount})` : ''}
+            {t('중심 오프셋{offsetCount}', { offsetCount: offsetCount > 0 ? ` (${offsetCount})` : '' })}
           </button>
 
           {running ? (
             <button onClick={() => void stop()}
               className="rounded bg-red-600 px-4 py-1 text-xs text-white hover:bg-red-500">
-              중지
+              {t('중지')}
             </button>
           ) : (
             <button onClick={() => void start()} disabled={!iface || busy}
               className="rounded bg-green-600 px-4 py-1 text-xs text-white
                          hover:bg-green-500 disabled:opacity-50">
-              검사 시작
+              {t('검사 시작')}
             </button>
           )}
           {rows.length > 0 && !running && (
             <button onClick={csv}
               className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-600">
-              CSV ({rows.length}행)
+              {t('CSV ({length}행)', { length: rows.length })}
             </button>
           )}
         </div>
 
         {usable.length === 0 && (
           <p className="text-xs text-amber-400">
-            검사할 수 있는 팔이 없습니다 — 연결된 <b>슬레이브</b> 팔이 필요합니다.
-            마스터는 외부 명령을 무시해서 "안 움직였다" 가 고장으로 오독됩니다.
+            {t.rich('검사할 수 있는 팔이 없습니다 — 연결된 {b} 팔이 필요합니다. 마스터는 외부 명령을 무시해서 "안 움직였다" 가 고장으로 오독됩니다.', {
+              b: <b>{t('슬레이브')}</b>,
+            })}
           </p>
         )}
 
@@ -304,14 +299,18 @@ export default function DiagnosticsPanel({ arms }: {
               <div className="h-full bg-green-500 transition-all" style={{ width: `${pct}%` }} />
             </div>
             <p className="text-xs text-neutral-400 tabular-nums">
-              {status?.elapsed_s.toFixed(1)}s / {status?.duration_s}s · {status?.samples}샘플
+              {t('{elapsed_s}s / {duration_s}s · {samples}샘플', {
+                elapsed_s: status?.elapsed_s.toFixed(1),
+                duration_s: status?.duration_s,
+                samples: status?.samples,
+              })}
             </p>
           </div>
         )}
 
         {status?.plan && !running && (
           <p className="text-xs text-neutral-500">
-            계획 ({status.plan.duration_s}초): {status.plan.joints.map((p) =>
+            {t('계획 ({duration_s}초):', { duration_s: status.plan.duration_s })}{' '}{status.plan.joints.map((p) =>
               `${p.joint} ±${p.amplitude_deg}° ${p.peak_speed_deg_s}°/s${p.note ? `(${p.note})` : ''}`
             ).join(' · ')}
           </p>
@@ -322,19 +321,19 @@ export default function DiagnosticsPanel({ arms }: {
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-3 space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           <input value={saveName} onChange={(e) => setSaveName(e.target.value)}
-            placeholder="결과 이름" className="w-40 rounded border border-neutral-700
+            placeholder={t('결과 이름')} className="w-40 rounded border border-neutral-700
             bg-neutral-900 px-2 py-1 text-sm" />
           {/* ⚠ 팔은 CAN 으로 **시리얼을 안 준다** — 어댑터 시리얼은 케이블을
               가리킬 뿐이다. 어느 팔인지는 사람이 여기 적어야 한다. */}
           <input value={saveNote} onChange={(e) => setSaveNote(e.target.value)}
-            placeholder="팔 표시 (시리얼·위치 등 — 팔은 시리얼을 안 줍니다)"
+            placeholder={t('팔 표시 (시리얼·위치 등 — 팔은 시리얼을 안 줍니다)')}
             className="flex-1 min-w-[16rem] rounded border border-neutral-700
             bg-neutral-900 px-2 py-1 text-sm" />
           <button onClick={() => void save()} disabled={!saveName.trim() || !rows.length}
-            title={rows.length ? '' : '저장할 결과가 없습니다 — 검사를 먼저 하세요'}
+            title={rows.length ? '' : t('저장할 결과가 없습니다 — 검사를 먼저 하세요')}
             className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-300
                        hover:bg-blue-600 hover:text-white disabled:opacity-50">
-            결과 저장
+            {t('결과 저장')}
           </button>
         </div>
 
@@ -347,11 +346,15 @@ export default function DiagnosticsPanel({ arms }: {
                   {r.name}
                 </button>
                 <span className="text-neutral-500">
-                  {r.iface} · {r.rows}행 · {new Date(r.saved_at * 1000).toLocaleString('ko-KR')}
-                  {r.note ? ` · ${r.note}` : ''}
+                  {t('{iface} · {rows}행 · {Date}{note}', {
+                    iface: r.iface,
+                    rows: r.rows,
+                    Date: fmt.dateTime(r.saved_at * 1000),
+                    note: r.note ? ` · ${r.note}` : '',
+                  })}
                 </span>
-                <span className="text-neutral-600" title="CAN 어댑터의 USB 시리얼 — 팔이 아니라 케이블을 가리킵니다">
-                  어댑터 {r.adapter_serial?.slice(-6) ?? '—'}
+                <span className="text-neutral-600" title={t('CAN 어댑터의 USB 시리얼 — 팔이 아니라 케이블을 가리킵니다')}>
+                  {t('어댑터 {adapter_serial}', { adapter_serial: r.adapter_serial?.slice(-6) ?? '—' })}
                 </span>
                 <button onClick={() => setPick((p) => ({ ...p, a: r.name }))}
                   className={`rounded px-1.5 py-0.5 ${pick.a === r.name
@@ -360,13 +363,13 @@ export default function DiagnosticsPanel({ arms }: {
                   className={`rounded px-1.5 py-0.5 ${pick.b === r.name
                     ? 'bg-orange-600 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}>B</button>
                 <button onClick={() => void api.delete(`/robots/diag/saved/${encodeURIComponent(r.name)}`).then(loadSaved)}
-                  className="text-neutral-600 hover:text-red-400">삭제</button>
+                  className="text-neutral-600 hover:text-red-400">{t('삭제')}</button>
               </div>
             ))}
             <button onClick={() => void runCompare()} disabled={!pick.a || !pick.b || pick.a === pick.b}
               className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-300
                          hover:bg-green-600 hover:text-white disabled:opacity-50">
-              A ↔ B 비교
+              {t('A ↔ B 비교')}
             </button>
           </div>
         )}
@@ -381,17 +384,18 @@ export default function DiagnosticsPanel({ arms }: {
               막지는 않되 **다르다는 사실을 먼저** 말한다. */}
           {cmp.plan_differs.length > 0 && (
             <p className="rounded bg-amber-600/15 p-2 text-xs text-amber-300">
-              ⚠ 두 회차의 모션이 다릅니다 — 아래 차이는 관절이 아니라 계획의 차이일 수
-              있습니다: {cmp.plan_differs.join(' · ')}
+              {t('⚠ 두 회차의 모션이 다릅니다 — 아래 차이는 관절이 아니라 계획의 차이일 수 있습니다: {plan_differs}', {
+                plan_differs: cmp.plan_differs.join(' · '),
+              })}
             </p>
           )}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[40rem] text-xs tabular-nums">
               <thead className="text-neutral-500">
                 <tr className="text-left">
-                  <th className="py-1 pr-3 font-normal">관절</th>
+                  <th className="py-1 pr-3 font-normal">{t('관절')}</th>
                   {cmp.keys.map((k) => (
-                    <th key={k} className="py-1 pr-3 font-normal">{METRIC_LABEL[k] ?? k}</th>
+                    <th key={k} className="py-1 pr-3 font-normal">{t(METRIC_LABEL[k] ?? k)}</th>
                   ))}
                 </tr>
               </thead>
@@ -418,8 +422,7 @@ export default function DiagnosticsPanel({ arms }: {
             </table>
           </div>
           <p className="text-xs text-neutral-600">
-            숫자는 <b>B ÷ A</b> 배율이고 작은 글씨가 차이입니다. 1.5배를 넘거나 0.67배
-            아래일 때만 색이 붙습니다.
+            {t.rich('숫자는 {b} 배율이고 작은 글씨가 차이입니다. 1.5배를 넘거나 0.67배 아래일 때만 색이 붙습니다.', { b: <b>B ÷ A</b> })}
           </p>
         </div>
       )}
@@ -435,11 +438,11 @@ export default function DiagnosticsPanel({ arms }: {
               </colgroup>
               <thead className="text-neutral-500">
                 <tr className="text-left">
-                  <th className="py-1 pr-3 font-normal">관절</th>
+                  <th className="py-1 pr-3 font-normal">{t('관절')}</th>
                   {METRICS.map((m) => (
-                    <th key={m.key} className="py-1 pr-3 font-normal">{m.label}</th>
+                    <th key={m.key} className="py-1 pr-3 font-normal">{t(m.label)}</th>
                   ))}
-                  <th className="py-1 font-normal">플래그</th>
+                  <th className="py-1 font-normal">{t('플래그')}</th>
                 </tr>
               </thead>
               <tbody className="text-neutral-300">
@@ -451,7 +454,7 @@ export default function DiagnosticsPanel({ arms }: {
                       return (
                         <td key={m.key}
                             className={`py-1 pr-3 ${hit ? 'font-semibold text-amber-400' : ''}`}
-                            title={hit ? '다른 관절의 중앙값보다 2배 넘게 큽니다' : ''}>
+                            title={hit ? t('다른 관절의 중앙값보다 2배 넘게 큽니다') : ''}>
                           {num(d[m.key as keyof typeof d] as number | null)}{m.unit}
                         </td>
                       )
@@ -459,7 +462,7 @@ export default function DiagnosticsPanel({ arms }: {
                     <td className="py-1">
                       {d.flags.length
                         ? <span className="text-red-400">
-                            {d.flags.map((f) => FLAG_LABEL[f] ?? f).join(' · ')}
+                            {d.flags.map((f) => t(FLAG_LABEL[f] ?? f)).join(' · ')}
                           </span>
                         : <span className="text-neutral-600">—</span>}
                     </td>
@@ -474,19 +477,19 @@ export default function DiagnosticsPanel({ arms }: {
           <div className="flex flex-wrap gap-4 overflow-x-auto pt-1">
             <DiagChart rows={rows} joints={Object.keys(summary.joints)}
                        field="ctrl_minus_feedback_deg" unit="°"
-                       title="추종 오차 — 시킨 값과 실제의 차이" zeroLine />
+                       title={t('추종 오차 — 시킨 값과 실제의 차이')} zeroLine />
             <DiagChart rows={rows} joints={Object.keys(summary.joints)}
-                       field="motor_current_a" unit="A" title="모터 전류" zeroLine />
+                       field="motor_current_a" unit="A" title={t('모터 전류')} zeroLine />
             <DiagChart rows={rows} joints={Object.keys(summary.joints)}
-                       field="effort_nm" unit="N·m" title="토크" zeroLine />
+                       field="effort_nm" unit="N·m" title={t('토크')} zeroLine />
             <DiagChart rows={rows} joints={Object.keys(summary.joints)}
-                       field="feedback_deg" unit="°" title="실제 각도" />
+                       field="feedback_deg" unit="°" title={t('실제 각도')} />
           </div>
 
           <p className="text-xs text-neutral-600">
-            ⚠ 합격/불합격을 판정하지 않습니다 — 절대 기준이 없습니다. 여섯이 <b>같은
-            모션</b>을 했으므로 관절끼리가 서로의 대조군이고, 중앙값의 2배를 넘는
-            항목에만 색이 붙습니다. 원인은 사람이 봅니다.
+            {t.rich('⚠ 합격/불합격을 판정하지 않습니다 — 절대 기준이 없습니다. 여섯이 {b}을 했으므로 관절끼리가 서로의 대조군이고, 중앙값의 2배를 넘는 항목에만 색이 붙습니다. 원인은 사람이 봅니다.', {
+              b: <b>{t('같은 모션')}</b>,
+            })}
           </p>
         </div>
       )}

@@ -145,7 +145,7 @@ def test_the_window_owns_the_input_and_lets_go_when_it_loses_the_user():
         assert needle in src, needle
     assert "window.confirm(" not in src
     pages = (REPO / "frontend" / "src" / "config" / "pages.ts").read_text()
-    assert "{ path: '/teleop', label: '조종 창', component: TeleopWindowPage, nav: false, standalone: true }" in pages
+    assert "{ path: '/teleop', label: msg('조종 창'), component: TeleopWindowPage, nav: false, standalone: true }" in pages
     robots = (REPO / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
     assert "window.open(`/teleop?follower=${encodeURIComponent(arm.iface)}`, 'piper-teleop'" in robots, "이름 고정 창 — 둘이 한 팔을 조종하지 않는다"
     router = (REPO / "backend" / "app" / "routers" / "web_leader.py").read_text()
@@ -199,7 +199,7 @@ def test_recording_takes_the_follower_from_the_relay_and_the_leader_keeps_publis
     page = (REPO / "frontend" / "src" / "pages" / "RecordingPage.tsx").read_text()
     # 리더 **종류** 하나 — 조종 창(사람)과 스크립트 시연(시뮬)이 같은 세그먼트를 쓴다
     # (feature/sim-env.md 4단계). 둘로 나누면 수집 화면이 매번 하나 더 묻는다.
-    assert '<option value="web_leader1">게이트웨이 리더 (조종 창 · 시뮬 시연)</option>' in page \
+    assert '<option value="web_leader1">{t(\'게이트웨이 리더 (조종 창 · 시뮬 시연)\')}</option>' in page \
         and "'piper-teleop'" in page
     wl_router = (REPO / "backend" / "app" / "routers" / "web_leader.py").read_text()
     assert "ex.is_running(ex.Activity.RECORDING)" in wl_router and "not recording" in wl_router
@@ -297,7 +297,7 @@ def test_recording_can_be_stopped_from_where_the_operator_is():
     (라벨은 오래전부터 "(ESC)" 였는데 처리기가 없었다). 둘 다 실패를 말하고, 시간 제한이 있다."""
     win = (REPO / "frontend" / "src" / "pages" / "TeleopWindowPage.tsx").read_text()
     assert "api.post('/recording/stop', undefined, { timeoutMs: 10_000 })" in win
-    assert "{st.running && st.relaying === false && (" in win and ">수집 정지</button>" in win, \
+    assert "{st.running && st.relaying === false && (" in win and "{t('수집 정지')}</button>" in win, \
         "조종 창에 수집 정지 버튼이 없다"
     assert "수집 정지 실패" in win, "실패를 안 말한다"
     rec = (REPO / "frontend" / "src" / "pages" / "RecordingPage.tsx").read_text()
@@ -536,7 +536,7 @@ def test_the_help_button_opens_a_structured_panel_matching_the_backend_mappings(
     가운데 드래그·휠 선택으로만 움직인다."""
     win = (REPO / "frontend" / "src" / "pages" / "TeleopWindowPage.tsx").read_text()
     # 버튼(또는 Shift+/)이 오버레이를 여닫는다
-    assert ">도움말</button>" in win and "e.code === 'Slash' && e.shiftKey" in win
+    assert "{t('도움말')}</button>" in win and "e.code === 'Slash' && e.shiftKey" in win
     # 세 묶음을 키/설명 행으로
     assert "JOINT_ROWS" in win and "EE_ROWS" in win and "COMMON_ROWS" in win
     assert "조작 도움말" in win and win.count("<HelpSection ") == 3
@@ -609,7 +609,7 @@ def test_the_simulator_is_ee_only_and_the_backend_is_the_one_that_decides(monkey
     assert "if (eeOnly) return" in tab, "시뮬에서 Tab 이 관절로 넘어간다"
     assert "if (s.mode && !eeOnly) setMode(s.mode)" in win, "상태 폴링이 시뮬을 관절로 되돌린다"
     assert '{!eeOnly && <span' in win, "시뮬 헤더에 관절 칩이 남는다"
-    assert '{!eeOnly && <HelpSection title="관절 모드"' in win, "시뮬 도움말에 관절 표가 남는다"
+    assert "{!eeOnly && <HelpSection title={t('관절 모드')}" in win, "시뮬 도움말에 관절 표가 남는다"
     # [ ] 는 두 모드 공통이라(web_leader._step 의 그리퍼 절) 관절 표에 있으면 시뮬에서 사라진다
     common = win.split("const COMMON_ROWS", 1)[1].split("function HelpSection", 1)[0]
     assert "'그리퍼 열기·닫기'" in common, "[ ] 가 관절 표에 갇혀 시뮬 도움말에서 사라진다"

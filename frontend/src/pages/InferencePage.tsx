@@ -19,8 +19,10 @@ import TelemetryPanel, { type TelemetryData } from '../components/TelemetryPanel
 import ManualControlPanel from '../components/ManualControlPanel'
 import { twoColumns } from '../components/LayoutToggle'
 import { camOptionText, type ReadyCam } from '../types/camera'
+import { useT } from '../i18n'
 
 function CameraPreview({ cameraNames }: { cameraNames: string[] }) {
+  const t = useT()
   const [ts, setTs] = useState(0)
   useEffect(() => {
     const id = setInterval(() => setTs(Date.now()), 500)
@@ -29,7 +31,7 @@ function CameraPreview({ cameraNames }: { cameraNames: string[] }) {
   if (cameraNames.length === 0) return null
   return (
     <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-      <span className="text-sm font-semibold">카메라</span>
+      <span className="text-sm font-semibold">{t('카메라')}</span>
       <div className="grid grid-cols-3 gap-3">
         {cameraNames.map((name) => (
           <div key={name}>
@@ -82,6 +84,7 @@ type ValidationResult = { valid: boolean; errors: string[]; warnings: string[]; 
 // robot_joints 는 /inference/validate 응답, 정책 목록은 usePolicies()
 
 export default function InferencePage() {
+  const t = useT()
   const [readyFollowers, setReadyFollowers] = useState<ReadyArm[]>([])
   const [selectedFollower, setSelectedFollower] = useState<string>('')
   const [robotMode, setRobotMode] = useState<'single' | 'bimanual'>('single')
@@ -197,15 +200,15 @@ export default function InferencePage() {
         const filename = d.csv_path.split('/').pop() ?? ''
         setLastLogFile(filename)
         setLogs((prev) => {
-          const next = [...prev, `[INFO] CSV 로그 저장 완료: ${d.csv_path} (${d.steps} steps)`]
-          if (d.debug_dir) next.push(`[INFO] 디버그 기록 저장됨: ${d.debug_dir} → "추론 분석"에서 확인`)
+          const next = [...prev, t('[INFO] CSV 로그 저장 완료: {csv_path} ({steps} steps)', { csv_path: d.csv_path, steps: d.steps })]
+          if (d.debug_dir) next.push(t('[INFO] 디버그 기록 저장됨: {debug_dir} → "추론 분석"에서 확인', { debug_dir: d.debug_dir }))
           return next
         })
       } else if (msg.type === 'log') setLogs((prev) => {
         const next = [...prev, msg.data as string]
         return next.length > MAX_LOGS ? next.slice(-MAX_LOGS) : next
       })
-    }, [refreshActivity]),
+    }, [refreshActivity, t]),
   })
 
   useEffect(() => {
@@ -343,12 +346,12 @@ export default function InferencePage() {
       })
       // 프로파일이 못 덮은 카메라, 리셋이 드러낸 관절 슬립 — 문구는 백엔드가 만든다
       for (const w of r.camera_profile?.warnings ?? [])
-        notify({ level: 'warn', text: w, source: '추론' })
+        notify({ level: 'warn', text: w, source: t('추론') })
       for (const w of r.arm_reset?.warnings ?? [])
-        notify({ level: 'warn', text: w, source: '추론' })
+        notify({ level: 'warn', text: w, source: t('추론') })
     } catch (e) {
-      const msg = e instanceof Error ? e.message : '알 수 없는 오류'
-      setLogs((prev) => [...prev, `[ERROR] 추론 시작 실패: ${msg}`])
+      const msg = e instanceof Error ? e.message : t('알 수 없는 오류')
+      setLogs((prev) => [...prev, t('[ERROR] 추론 시작 실패: {msg}', { msg })])
     }
   }
   const handleResetCli = () => {
@@ -392,10 +395,10 @@ export default function InferencePage() {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">추론</h1>
+          <h1 className="text-2xl font-bold">{t('추론')}</h1>
           <div className="flex items-center gap-3">
             <span className={`inline-block w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="text-xs text-neutral-400">{connected ? '연결됨' : '연결 끊김'}</span>
+            <span className="text-xs text-neutral-400">{connected ? t('연결됨') : t('연결 끊김')}</span>
             <span className={`px-2 py-0.5 rounded text-xs font-medium ${
               processState === 'error' ? 'bg-red-500/20 text-red-400' : 'bg-neutral-700 text-neutral-400'
             }`}>{processState}</span>
@@ -408,18 +411,18 @@ export default function InferencePage() {
             {/* Follower */}
             <div className={`rounded-lg border p-4 space-y-2 ${readyFollowers.length > 0 ? 'border-neutral-700 bg-neutral-800' : 'border-amber-500/50 bg-amber-500/10'}`}>
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold">로봇 (Follower)</h3>
+                <h3 className="text-sm font-semibold">{t('로봇 (Follower)')}</h3>
                 {readyFollowers.length >= 2 && (
                   <div className="flex gap-2 text-xs">
                     <label className="flex items-center gap-1 cursor-pointer">
                       <input type="radio" name="robotMode" value="single" checked={robotMode === 'single'}
                         onChange={() => setRobotMode('single')} className="accent-blue-500" />
-                      단일
+                      {t('단일')}
                     </label>
                     <label className="flex items-center gap-1 cursor-pointer">
                       <input type="radio" name="robotMode" value="bimanual" checked={robotMode === 'bimanual'}
                         onChange={() => setRobotMode('bimanual')} className="accent-blue-500" />
-                      양팔
+                      {t('양팔')}
                     </label>
                   </div>
                 )}
@@ -428,52 +431,52 @@ export default function InferencePage() {
                 robotMode === 'bimanual' ? (
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-neutral-400 w-10">왼팔</span>
+                      <span className="text-xs text-neutral-400 w-10">{t('왼팔')}</span>
                       <select value={leftFollower} onChange={(e) => setLeftFollower(e.target.value)}
                         className="flex-1 min-w-0 px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                        <option value="">선택...</option>
+                        <option value="">{t('선택...')}</option>
                         {readyFollowers.map((a) => (
                           <option key={a.iface} value={a.iface} disabled={a.iface === rightFollower}>
-                            {a.iface}{a.iface === rightFollower ? ' (오른팔)' : ''}
+                            {a.iface}{a.iface === rightFollower ? t(' (오른팔)') : ''}
                           </option>
                         ))}
                       </select>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-neutral-400 w-10">오른팔</span>
+                      <span className="text-xs text-neutral-400 w-10">{t('오른팔')}</span>
                       <select value={rightFollower} onChange={(e) => setRightFollower(e.target.value)}
                         className="flex-1 min-w-0 px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                        <option value="">선택...</option>
+                        <option value="">{t('선택...')}</option>
                         {readyFollowers.map((a) => (
                           <option key={a.iface} value={a.iface} disabled={a.iface === leftFollower}>
-                            {a.iface}{a.iface === leftFollower ? ' (왼팔)' : ''}
+                            {a.iface}{a.iface === leftFollower ? t(' (왼팔)') : ''}
                           </option>
                         ))}
                       </select>
                     </div>
                     {leftFollower && rightFollower && leftFollower === rightFollower && (
-                      <p className="text-xs text-red-400">왼팔과 오른팔은 다른 로봇이어야 합니다</p>
+                      <p className="text-xs text-red-400">{t('왼팔과 오른팔은 다른 로봇이어야 합니다')}</p>
                     )}
                   </div>
                 ) : (
                   <select value={selectedFollower} onChange={(e) => setSelectedFollower(e.target.value)}
                     className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500">
-                    <option value="">팔 선택...</option>
+                    <option value="">{t('팔 선택...')}</option>
                     {readyFollowers.map((a) => <option key={a.iface} value={a.iface}>{a.iface}</option>)}
                   </select>
                 )
               ) : (
                 <div className="text-sm text-amber-300">
-                  <p>등록된 follower가 없습니다</p>
-                  <a href="/robots" className="text-blue-400 underline text-xs">로봇 페이지에서 등록하기</a>
+                  <p>{t('등록된 follower가 없습니다')}</p>
+                  <a href="/robots" className="text-blue-400 underline text-xs">{t('로봇 페이지에서 등록하기')}</a>
                 </div>
               )}
               {/* 그리퍼 힘 — 프레임마다 실리는 값이라 시작 뒤에도 바꿀 수 있다(실행 중 화면에 같은 슬라이더) */}
               <div className="space-y-1 border-t border-neutral-700 pt-2 empty:hidden">
                 {(robotMode === 'bimanual'
                 ? (<>
-                    <GripperEffortSlider iface={leftFollower} label="그리퍼 힘 (왼팔)" />
-                    <GripperEffortSlider iface={rightFollower} label="그리퍼 힘 (오른팔)" />
+                    <GripperEffortSlider iface={leftFollower} label={t('그리퍼 힘 (왼팔)')} />
+                    <GripperEffortSlider iface={rightFollower} label={t('그리퍼 힘 (오른팔)')} />
                   </>)
                 : <GripperEffortSlider iface={selectedFollower} />)}
               </div>
@@ -481,7 +484,7 @@ export default function InferencePage() {
 
             {/* 모델 */}
             <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
-              <h3 className="text-sm font-semibold">체크포인트</h3>
+              <h3 className="text-sm font-semibold">{t('체크포인트')}</h3>
               {/* ⚠ 예전에는 목록 하나에 전부 넣었다 — 학습 10개에 체크포인트 72개라
                   어느 학습의 몇 번째인지 읽을 수가 없었다. 학습을 먼저 고른다. */}
               <CheckpointPicker models={models} value={selectedModel} onChange={setSelectedModel} />
@@ -490,10 +493,10 @@ export default function InferencePage() {
             {/* 모델 요구사항 + 카메라 매핑 */}
             {reqs && (
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
-                <h3 className="text-sm font-semibold">모델 요구사항</h3>
+                <h3 className="text-sm font-semibold">{t('모델 요구사항')}</h3>
                 <div className="flex items-center gap-2 text-xs">
-                  <span className="text-neutral-400">관절:</span>
-                  <span>{reqs.state_dim}개</span>
+                  <span className="text-neutral-400">{t('관절:')}</span>
+                  <span>{t('{state_dim}개', { state_dim: reqs.state_dim })}</span>
                   {selectedFollower && validation?.robot_joints != null && (
                     reqs.state_dim === validation.robot_joints
                       ? <span className="text-green-400">✓</span>
@@ -501,17 +504,17 @@ export default function InferencePage() {
                   )}
                 </div>
                 <div className="space-y-2">
-                  <span className="text-xs text-neutral-400">카메라 ({reqs.required_cameras.length}대):</span>
+                  <span className="text-xs text-neutral-400">{t('카메라 ({length}대):', { length: reqs.required_cameras.length })}</span>
                   {reqs.required_cameras.map((cam) => (
                     <div key={cam.name} className="flex items-center gap-2 text-xs">
                       <span className="w-24 text-neutral-300 font-medium">{cam.name}{cam.model_name && cam.model_name !== cam.name ? <span className="text-neutral-500 text-[10px] ml-1">({cam.model_name})</span> : ''}</span>
                       <span className="text-neutral-500 w-20">{cam.width && cam.height ? `${cam.width}x${cam.height}` : ''}</span>
                       <select value={cameraMapping[cam.name] ?? ''} onChange={(e) => setCameraMapping((prev) => ({ ...prev, [cam.name]: e.target.value }))}
                         className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500">
-                        <option value="">카메라 선택...</option>
+                        <option value="">{t('카메라 선택...')}</option>
                         {readyCameras.map((c) => {
                           const usedBy = Object.entries(cameraMapping).find(([k, v]) => v === c.id && k !== cam.name)
-                          return <option key={c.id} value={c.id} disabled={!!usedBy}>{camOptionText(c)}{usedBy ? ` — ${usedBy[0]}에서 사용 중` : ''}</option>
+                          return <option key={c.id} value={c.id} disabled={!!usedBy}>{camOptionText(c)}{usedBy ? t(' — {usedBy}에서 사용 중', { usedBy: usedBy[0] }) : ''}</option>
                         })}
                       </select>
                       {cameraMapping[cam.name] ? <span className="text-green-400">✓</span> : <span className="text-neutral-500">-</span>}
@@ -525,7 +528,7 @@ export default function InferencePage() {
                   <div className="space-y-1">
                     {validation.errors.map((e, i) => <p key={i} className="text-xs text-red-400">✗ {e}</p>)}
                     {validation.warnings.map((w, i) => <p key={i} className="text-xs text-amber-400">⚠ {w}</p>)}
-                    {validation.valid && <p className="text-xs text-green-400">✓ 추론 준비 완료</p>}
+                    {validation.valid && <p className="text-xs text-green-400">{t('✓ 추론 준비 완료')}</p>}
                   </div>
                 )}
               </div>
@@ -533,24 +536,24 @@ export default function InferencePage() {
 
             {/* 추론 모드 */}
             <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-              <h3 className="text-sm font-semibold">추론 모드</h3>
+              <h3 className="text-sm font-semibold">{t('추론 모드')}</h3>
               <div className="flex gap-4 text-sm">
                 <label className="flex items-center gap-1.5 cursor-pointer">
                   <input type="radio" name="mode" value="local" checked={inferenceMode === 'local'}
                     onChange={() => { setInferenceMode('local'); setCliEdited(false) }}
                     className="accent-blue-500" />
-                  로컬 (wrapper)
+                  {t('로컬 (wrapper)')}
                 </label>
                 <label className="flex items-center gap-1.5 cursor-pointer">
                   <input type="radio" name="mode" value="server" checked={inferenceMode === 'server'}
                     onChange={() => { setInferenceMode('server'); setCliEdited(false) }}
                     className="accent-blue-500" />
-                  서버 (gRPC)
+                  {t('서버 (gRPC)')}
                 </label>
               </div>
               {/* 장치 — 로컬이면 이 기계, 서버면 서버 기계에서 정책이 올라갈 곳이다 */}
               <div className="flex items-center gap-2 text-xs">
-                <span className="text-neutral-400 w-20">장치</span>
+                <span className="text-neutral-400 w-20">{t('장치')}</span>
                 <select value={device}
                   onChange={(e) => {
                     const v = e.target.value === 'cpu' ? 'cpu' : 'cuda'
@@ -560,23 +563,23 @@ export default function InferencePage() {
                   }}
                   className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
                   <option value="cuda" disabled={noLocalGpu}>
-                    CUDA (GPU){noLocalGpu ? ' — 이 기계에서 GPU 를 찾지 못했습니다' : ''}
+                    CUDA (GPU){noLocalGpu ? t(' — 이 기계에서 GPU 를 찾지 못했습니다') : ''}
                   </option>
                   <option value="cpu">CPU</option>
                 </select>
               </div>
               {device === 'cpu' && (
                 <p className="text-[10px] text-amber-400">
-                  CPU 추론은 느립니다 — ACT 는 카메라 2대 기준 청크당 수백 ms 이상 걸립니다.
-                  청크 단위로만 쓰고 <b>temporal ensemble 은 끄세요</b>(스텝마다 추론해 따라가지 못합니다).
-                  끊기면 refill 임계를 30~40% 로 올리세요.
+                  {t.rich('CPU 추론은 느립니다 — ACT 는 카메라 2대 기준 청크당 수백 ms 이상 걸립니다. 청크 단위로만 쓰고 {b}(스텝마다 추론해 따라가지 못합니다). 끊기면 refill 임계를 30~40% 로 올리세요.', {
+                    b: <b>{t('temporal ensemble 은 끄세요')}</b>,
+                  })}
                 </p>
               )}
               {inferenceMode === 'server' && (
                 <div className="space-y-2">
                   <input type="text" value={serverAddress}
                     onChange={(e) => { setServerAddress(e.target.value); setCliEdited(false) }}
-                    placeholder="서버 주소 (예: 127.0.0.1:8088)"
+                    placeholder={t('서버 주소 (예: 127.0.0.1:8088)')}
                     className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
                   {/* ⚠ **서버 기준 경로다.** 모델을 로드하는 건 원격 서버라,
                       이 기계의 모델 목록은 상관이 없다. */}
@@ -586,10 +589,10 @@ export default function InferencePage() {
                       localStorage.setItem('piper_server_checkpoint', e.target.value)
                       setCliEdited(false)
                     }}
-                    placeholder="서버의 체크포인트 경로 (예: /home/사용자/outputs/train/…/pretrained_model)"
+                    placeholder={t('서버의 체크포인트 경로 (예: /home/사용자/outputs/train/…/pretrained_model)')}
                     className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
                   <p className="text-[10px] text-neutral-500">
-                    이 경로는 <b>서버 기계</b>에서 열립니다 — 이 화면의 모델 목록과 무관합니다.
+                    {t.rich('이 경로는 {b}에서 열립니다 — 이 화면의 모델 목록과 무관합니다.', { b: <b>{t('서버 기계')}</b> })}
                   </p>
                   <div className="flex items-center gap-2 text-xs">
                     <span className="text-neutral-400 w-20">Policy</span>
@@ -614,22 +617,22 @@ export default function InferencePage() {
                       <option value="weighted_average">weighted_average (0.3/0.7)</option>
                       <option value="average">average (0.5/0.5)</option>
                       <option value="conservative">conservative (0.7/0.3)</option>
-                      <option value="latest_only">latest_only (새 액션만)</option>
+                      <option value="latest_only">{t('latest_only (새 액션만)')}</option>
                     </select>
                   </div>
                   <label className="flex items-center gap-2 text-xs cursor-pointer">
                     <input type="checkbox" checked={offsetCorrection}
                       onChange={(e) => { setOffsetCorrection(e.target.checked); setCliEdited(false) }}
                       className="accent-blue-500" />
-                    <span className="text-neutral-400">오프셋 보정 (chunk 간 점프 제거)</span>
+                    <span className="text-neutral-400">{t('오프셋 보정 (chunk 간 점프 제거)')}</span>
                   </label>
                   <div className="flex items-center gap-2 text-xs">
                     <span className="text-neutral-400 w-20">Smoothing</span>
                     <select value={smoothing} onChange={(e) => { setSmoothing(e.target.value); setCliEdited(false) }}
                       className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
-                      <option value="none">none (필터 없음)</option>
-                      <option value="moving_avg">이동평균</option>
-                      <option value="exponential">지수이동평균 (EMA)</option>
+                      <option value="none">{t('none (필터 없음)')}</option>
+                      <option value="moving_avg">{t('이동평균')}</option>
+                      <option value="exponential">{t('지수이동평균 (EMA)')}</option>
                     </select>
                     {smoothing !== 'none' && (
                       <input type="number" value={smoothingWindow} min={3} max={20}
@@ -648,33 +651,33 @@ export default function InferencePage() {
                 <h3 className="text-sm font-semibold">Task</h3>
                 <input type="text" value={taskText}
                   onChange={(e) => { setTaskText(e.target.value); localStorage.setItem('piper_task', e.target.value) }}
-                  placeholder="언어 명령어 입력..."
+                  placeholder={t('언어 명령어 입력...')}
                   className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
               </>)}
               <label className="flex items-center gap-2 text-xs cursor-pointer">
                 <input type="checkbox" checked={debugMode}
                   onChange={(e) => { setDebugMode(e.target.checked); setCliEdited(false) }}
                   className="accent-blue-500" />
-                <span className="text-neutral-400">디버그 모드 (주고받은 모든 데이터를 별도 폴더에 기록)</span>
+                <span className="text-neutral-400">{t('디버그 모드 (주고받은 모든 데이터를 별도 폴더에 기록)')}</span>
               </label>
             </div>
 
             {/* CLI */}
             <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold">CLI 인자</h3>
-                {cliEdited && <button onClick={handleResetCli} className="text-[10px] text-neutral-400 hover:text-blue-400">초기화</button>}
+                <h3 className="text-sm font-semibold">{t('CLI 인자')}</h3>
+                {cliEdited && <button onClick={handleResetCli} className="text-[10px] text-neutral-400 hover:text-blue-400">{t('초기화')}</button>}
               </div>
               <textarea value={cliArgs} onChange={(e) => { setCliArgs(e.target.value); setCliEdited(true) }}
-                rows={4} placeholder="모델과 카메라를 매핑하면 CLI 명령어가 자동 생성됩니다"
+                rows={4} placeholder={t('모델과 카메라를 매핑하면 CLI 명령어가 자동 생성됩니다')}
                 className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-xs font-mono text-neutral-100 focus:outline-none focus:border-blue-500 resize-y" />
-              {cliEdited && <p className="text-[10px] text-amber-400">직접 편집됨</p>}
+              {cliEdited && <p className="text-[10px] text-amber-400">{t('직접 편집됨')}</p>}
               {inferBlockedBy && (
-                <p className="text-[10px] text-amber-400">{inferBlockedBy} 실행 중 — 먼저 중지하세요</p>
+                <p className="text-[10px] text-amber-400">{t('{inferBlockedBy} 실행 중 — 먼저 중지하세요', { inferBlockedBy })}</p>
               )}
               <button onClick={handleStart} disabled={!canStart || !cliArgs.trim()}
                 className="w-full py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium disabled:opacity-50">
-                추론 시작
+                {t('추론 시작')}
               </button>
             </div>
           </div>
@@ -682,12 +685,12 @@ export default function InferencePage() {
           {/* 우측: 로그 */}
           <div className="space-y-4">
             <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
-              <h3 className="text-sm font-semibold mb-2">로그</h3>
+              <h3 className="text-sm font-semibold mb-2">{t('로그')}</h3>
               <LogViewer logs={logs} onClear={() => setLogs([])} />
               {lastLogFile && (
                 <a href={`/api/logs/download/${lastLogFile}`}
                   download className="inline-block mt-2 text-xs text-blue-400 hover:text-blue-300 underline">
-                  CSV 로그 다운로드: {lastLogFile}
+                  {t('CSV 로그 다운로드: {lastLogFile}', { lastLogFile })}
                 </a>
               )}
             </div>
@@ -706,29 +709,28 @@ export default function InferencePage() {
           onClick={() => setShowResetConfirm(false)}>
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-6 max-w-sm mx-4 space-y-4"
             onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold">원위치 + 리셋</h3>
+            <h3 className="text-lg font-semibold">{t('원위치 + 리셋')}</h3>
             <p className="text-sm text-neutral-300">
-              로봇을 원위치로 되돌리고 액션 버퍼를 비운 뒤 추론을 새로 시작합니다.
-              팔이 크게 움직입니다. 진행할까요?
+              {t('로봇을 원위치로 되돌리고 액션 버퍼를 비운 뒤 추론을 새로 시작합니다. 팔이 크게 움직입니다. 진행할까요?')}
             </p>
             <div className="flex justify-end gap-2">
               <button onClick={() => setShowResetConfirm(false)}
                 className="px-4 py-1.5 rounded bg-neutral-700 hover:bg-neutral-600 text-white text-sm font-medium">
-                취소
+                {t('취소')}
               </button>
               <button onClick={handleReset}
                 className="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium">
-                원위치+리셋
+                {t('원위치+리셋')}
               </button>
             </div>
           </div>
         </div>
       )}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">추론</h1>
+        <h1 className="text-2xl font-bold">{t('추론')}</h1>
         <div className="flex items-center gap-3">
           <span className={`inline-block w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
-          <span className="text-xs text-neutral-400">{connected ? '연결됨' : '연결 끊김'}</span>
+          <span className="text-xs text-neutral-400">{connected ? t('연결됨') : t('연결 끊김')}</span>
           <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-500/20 text-green-400">
             {processState}
           </span>
@@ -743,25 +745,25 @@ export default function InferencePage() {
             }
           }}
             className={`px-4 py-1.5 rounded text-sm font-medium ${paused ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-amber-600 hover:bg-amber-500 text-white'}`}>
-            {paused ? '추론 재개' : '일시정지'}
+            {paused ? t('추론 재개') : t('일시정지')}
           </button>
           <button onClick={() => setShowResetConfirm(true)}
             className="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium">
-            원위치+리셋
+            {t('원위치+리셋')}
           </button>
           <button onClick={handleStop}
             className="px-4 py-1.5 rounded bg-red-600 hover:bg-red-500 text-white text-sm font-medium">
-            정지
+            {t('정지')}
           </button>
         </div>
       </div>
 
       {/* 요약 바 */}
       <div className={`flex items-center gap-4 text-xs rounded-lg border px-4 py-2 ${paused ? 'border-amber-500/50 bg-amber-500/10 text-amber-300' : 'border-neutral-700 bg-neutral-800 text-neutral-400'}`}>
-        {paused && <span className="font-semibold">⏸ 일시정지</span>}
-        <span>로봇: <span className="text-blue-400">{robotMode === 'bimanual' ? `${leftFollower} / ${rightFollower}` : selectedFollower}</span>{robotMode === 'bimanual' && <span className="text-amber-400 ml-1">(양팔)</span>}</span>
-        <span>모델: <span className="text-blue-400">{selectedModel}</span></span>
-        <span>카메라: <span className="text-blue-400">{Object.values(cameraMapping).join(', ')}</span></span>
+        {paused && <span className="font-semibold">{t('⏸ 일시정지')}</span>}
+        <span>{t.rich('로봇: {span}', { span: <span className="text-blue-400">{robotMode === 'bimanual' ? `${leftFollower} / ${rightFollower}` : selectedFollower}</span> })}{robotMode === 'bimanual' && <span className="text-amber-400 ml-1">{t('(양팔)')}</span>}</span>
+        <span>{t.rich('모델: {span}', { span: <span className="text-blue-400">{selectedModel}</span> })}</span>
+        <span>{t.rich('카메라: {span}', { span: <span className="text-blue-400">{Object.values(cameraMapping).join(', ')}</span> })}</span>
       </div>
 
       {/* 카메라 프리뷰 */}
@@ -775,8 +777,8 @@ export default function InferencePage() {
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2 empty:hidden">
               {(robotMode === 'bimanual'
                 ? (<>
-                    <GripperEffortSlider iface={leftFollower} label="그리퍼 힘 (왼팔)" />
-                    <GripperEffortSlider iface={rightFollower} label="그리퍼 힘 (오른팔)" />
+                    <GripperEffortSlider iface={leftFollower} label={t('그리퍼 힘 (왼팔)')} />
+                    <GripperEffortSlider iface={rightFollower} label={t('그리퍼 힘 (오른팔)')} />
                   </>)
                 : <GripperEffortSlider iface={selectedFollower} />)}
           </div>
@@ -793,7 +795,7 @@ export default function InferencePage() {
                   api.post('/params', { params: { task: e.target.value } }).catch(() => {})
                 }, 500)
               }}
-              placeholder="언어 명령어 입력..."
+              placeholder={t('언어 명령어 입력...')}
               className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
           </CollapsibleCard>
           )}
@@ -803,14 +805,14 @@ export default function InferencePage() {
               values={() => params} onApply={(v) => setParams((prev) => ({ ...prev, ...v }))}
               defaults={specDefaults} onSelect={setActivePreset} />
           </div>
-          <CollapsibleCard title="실행 속도" storageKey="piper_fold_speed">
+          <CollapsibleCard title={t('실행 속도')} storageKey="piper_fold_speed">
             <ParamSlider label="FPS" value={params.fps ?? 20} {...rangeOf('fps', { min: 1, max: 60, step: 1 })}
               onChange={(v) => handleParamChange('fps', v)} />
-            <ParamSlider label="관절 속도 (deg/s)" value={params.max_velocity ?? 180} {...rangeOf('max_velocity', { min: 0, max: 500, step: 10 })}
+            <ParamSlider label={t('관절 속도 (deg/s)')} value={params.max_velocity ?? 180} {...rangeOf('max_velocity', { min: 0, max: 500, step: 10 })}
               onChange={(v) => handleParamChange('max_velocity', v)} />
             <div className="space-y-1">
               <div className="flex justify-between text-xs">
-                <span className="text-neutral-400">관절 속도 제한 (%)</span>
+                <span className="text-neutral-400">{t('관절 속도 제한 (%)')}</span>
                 <span className="text-neutral-100">{Math.round(((params.max_velocity ?? 180) / 500) * 100)}%</span>
               </div>
               <input type="range" value={Math.round(((params.max_velocity ?? 180) / 500) * 100)}
@@ -822,14 +824,14 @@ export default function InferencePage() {
               <input type="checkbox" checked={params.gripper_bypass_filter ?? true}
                 onChange={(e) => handleParamChange('gripper_bypass_filter', e.target.checked)}
                 className="accent-blue-500" />
-              <span className="text-neutral-300">그리퍼 속도 제한/필터 미적용 (원본 그대로)</span>
+              <span className="text-neutral-300">{t('그리퍼 속도 제한/필터 미적용 (원본 그대로)')}</span>
             </label>
             <div className={params.gripper_bypass_filter ? 'opacity-40 pointer-events-none space-y-4' : 'space-y-4'}>
-              <ParamSlider label="그리퍼 속도 (%/s)" value={params.max_gripper_velocity ?? 300} {...rangeOf('max_gripper_velocity', { min: 0, max: 500, step: 10 })}
+              <ParamSlider label={t('그리퍼 속도 (%/s)')} value={params.max_gripper_velocity ?? 300} {...rangeOf('max_gripper_velocity', { min: 0, max: 500, step: 10 })}
                 onChange={(v) => handleParamChange('max_gripper_velocity', v)} />
               <div className="space-y-1">
                 <div className="flex justify-between text-xs">
-                  <span className="text-neutral-400">그리퍼 속도 제한 (%)</span>
+                  <span className="text-neutral-400">{t('그리퍼 속도 제한 (%)')}</span>
                   <span className="text-neutral-100">{Math.round(((params.max_gripper_velocity ?? 300) / 500) * 100)}%</span>
                 </div>
                 <input type="range" value={Math.round(((params.max_gripper_velocity ?? 300) / 500) * 100)}
@@ -843,20 +845,20 @@ export default function InferencePage() {
 
         {/* 2열: 진동 감소 + 정책 파라미터 */}
         <div className="space-y-4">
-          <CollapsibleCard title="진동 감소" storageKey="piper_fold_smooth">
-            <ParamSlider label="저역통과 필터 α (1.0=OFF)" value={params.lowpass_alpha ?? 0.5} {...rangeOf('lowpass_alpha', { min: 0.05, max: 1, step: 0.05 })}
+          <CollapsibleCard title={t('진동 감소')} storageKey="piper_fold_smooth">
+            <ParamSlider label={t('저역통과 필터 α (1.0=OFF)')} value={params.lowpass_alpha ?? 0.5} {...rangeOf('lowpass_alpha', { min: 0.05, max: 1, step: 0.05 })}
               onChange={(v) => handleParamChange('lowpass_alpha', v)} />
-            <ParamSlider label="Jerk 제한 (deg/s², 0=OFF)" value={params.max_jerk ?? 0} {...rangeOf('max_jerk', { min: 0, max: 5000, step: 100 })}
+            <ParamSlider label={t('Jerk 제한 (deg/s², 0=OFF)')} value={params.max_jerk ?? 0} {...rangeOf('max_jerk', { min: 0, max: 5000, step: 100 })}
               onChange={(v) => handleParamChange('max_jerk', v)} />
-            <ParamSlider label="보간 스텝 (0=OFF)" value={params.interpolation_steps ?? 0} {...rangeOf('interpolation_steps', { min: 0, max: 10, step: 1 })}
+            <ParamSlider label={t('보간 스텝 (0=OFF)')} value={params.interpolation_steps ?? 0} {...rangeOf('interpolation_steps', { min: 0, max: 10, step: 1 })}
               onChange={(v) => handleParamChange('interpolation_steps', v)} />
-            <ParamSlider label="받는 액션 청크 크기 (0=모델 전체)" value={params.use_chunk_size ?? 0} {...rangeOf('use_chunk_size', { min: 0, max: 200, step: 5 })}
+            <ParamSlider label={t('받는 액션 청크 크기 (0=모델 전체)')} value={params.use_chunk_size ?? 0} {...rangeOf('use_chunk_size', { min: 0, max: 200, step: 5 })}
               onChange={(v) => handleParamChange('use_chunk_size', v)} />
-            <ParamSlider label="재추론 트리거 (큐 잔량 ≤ %, 0=소진 시)" value={params.refill_threshold_pct ?? 20} {...rangeOf('refill_threshold_pct', { min: 0, max: 100, step: 5 })}
+            <ParamSlider label={t('재추론 트리거 (큐 잔량 ≤ %, 0=소진 시)')} value={params.refill_threshold_pct ?? 20} {...rangeOf('refill_threshold_pct', { min: 0, max: 100, step: 5 })}
               onChange={(v) => handleParamChange('refill_threshold_pct', v)} />
           </CollapsibleCard>
           {isRtc(activePolicy) && (
-            <CollapsibleCard title="RTC 파라미터" storageKey="piper_fold_rtc" defaultOpen={false}>
+            <CollapsibleCard title={t('RTC 파라미터')} storageKey="piper_fold_rtc" defaultOpen={false}>
               <ParamSlider label="max_guidance_weight" value={params.max_guidance_weight} {...rangeOf('max_guidance_weight', { min: 0, max: 50, step: 0.5 })}
                 onChange={(v) => handleParamChange('max_guidance_weight', v)} />
               <ParamSlider label="execution_horizon" value={params.execution_horizon} {...rangeOf('execution_horizon', { min: 1, max: 100, step: 1 })}
@@ -864,11 +866,11 @@ export default function InferencePage() {
             </CollapsibleCard>
           )}
           {activePolicy === 'act' && (
-            <CollapsibleCard title="ACT 파라미터" storageKey="piper_fold_act">
+            <CollapsibleCard title={t('ACT 파라미터')} storageKey="piper_fold_act">
               <ParamSlider label="temporal_ensemble_coeff" value={params.temporal_ensemble_coeff} {...rangeOf('temporal_ensemble_coeff', { min: 0, max: 1, step: 0.001 })}
                 onChange={(v) => handleParamChange('temporal_ensemble_coeff', v)} />
               <p className="text-[10px] text-neutral-500">
-                액션 스텝 수는 위 &ldquo;받는 액션 청크 크기&rdquo;로 통합되었습니다.
+                {t('액션 스텝 수는 위 “받는 액션 청크 크기”로 통합되었습니다.')}
               </p>
             </CollapsibleCard>
           )}
@@ -896,12 +898,12 @@ export default function InferencePage() {
 
       {/* 로그 (하단 전체폭) */}
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
-        <h3 className="text-sm font-semibold mb-2">로그</h3>
+        <h3 className="text-sm font-semibold mb-2">{t('로그')}</h3>
         <LogViewer logs={logs} onClear={() => setLogs([])} height="h-[32rem]" />
         {lastLogFile && !isRunning && (
           <a href={`/api/logs/download/${lastLogFile}`}
             download className="inline-block mt-2 text-xs text-blue-400 hover:text-blue-300 underline">
-            CSV 로그 다운로드: {lastLogFile}
+            {t('CSV 로그 다운로드: {lastLogFile}', { lastLogFile })}
           </a>
         )}
       </div>

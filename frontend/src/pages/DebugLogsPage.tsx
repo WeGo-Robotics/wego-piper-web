@@ -3,6 +3,7 @@ import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import PlotlyChart, { type Series } from '../components/PlotlyChart'
 import { twoColumns } from '../components/LayoutToggle'
+import { useT, fmt } from '../i18n'
 
 type RunSummary = {
   id: string
@@ -37,6 +38,7 @@ const DEFAULT_PARAMS: FilterParams = {
 }
 
 export default function DebugLogsPage() {
+  const t = useT()
   const { confirm: askConfirm } = useSystemMessage()
   const [runs, setRuns] = useState<RunSummary[]>([])
   const [loading, setLoading] = useState(true)
@@ -110,7 +112,7 @@ export default function DebugLogsPage() {
   }, [selected, control, params])
 
   const handleDelete = async (id: string) => {
-    if (!await askConfirm(`디버그 런 ${id} 을(를) 삭제하시겠습니까?`)) return
+    if (!await askConfirm(t('디버그 런 {id} 을(를) 삭제하시겠습니까?', { id }))) return
     try {
       await api.delete(`/debug/runs/${id}`)
       if (selected === id) { setSelected(null); setDetail(null) }
@@ -131,16 +133,16 @@ export default function DebugLogsPage() {
     return [
       { label: 'target (raw)', color: '#6b7fff', data: s.target },
       { label: 'actual', color: '#ff6432', data: s.actual, dash: true },
-      { label: 'filtered (녹화)', color: '#32c832', data: s.filtered_recorded },
-      { label: 'filtered (시뮬)', color: '#eab308', data: s.filtered_sim },
+      { label: t('filtered (녹화)'), color: '#32c832', data: s.filtered_recorded },
+      { label: t('filtered (시뮬)'), color: '#eab308', data: s.filtered_sim },
     ]
-  }, [sim, motor])
+  }, [sim, motor, t])
 
   const chunkSeries: Series[] = useMemo(() => {
     if (!curInf || motorIdx < 0) return []
     const data = curInf.action_chunk.map((row) => (row && motorIdx < row.length ? row[motorIdx] : null))
-    return [{ label: `예측 궤적 (${motor})`, color: '#22d3ee', data }]
-  }, [curInf, motorIdx, motor])
+    return [{ label: t('예측 궤적 ({motor})', { motor }), color: '#22d3ee', data }]
+  }, [curInf, motorIdx, motor, t])
   const chunkX = useMemo(() => (curInf ? curInf.action_chunk.map((_, i) => i) : []), [curInf])
 
   return (
@@ -149,11 +151,11 @@ export default function DebugLogsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">추론 분석</h1>
-          <p className="mt-1 text-xs text-neutral-400">추론에서 "디버그 모드"를 켜고 돌린 런 — 프레임·관절 궤적·액션 청크·필터 시뮬레이션</p>
+          <h1 className="text-2xl font-bold">{t('추론 분석')}</h1>
+          <p className="mt-1 text-xs text-neutral-400">{t('추론에서 "디버그 모드"를 켜고 돌린 런 — 프레임·관절 궤적·액션 청크·필터 시뮬레이션')}</p>
         </div>
         <button onClick={fetchRuns} className="shrink-0 px-3 py-1.5 text-sm rounded bg-neutral-700 hover:bg-neutral-600 transition-colors">
-          새로고침
+          {t('새로고침')}
         </button>
       </div>
 
@@ -164,9 +166,9 @@ export default function DebugLogsPage() {
         {/* 좌: 런 목록 (컴팩트 사이드바) */}
         <div className="rounded-lg border border-neutral-700 bg-neutral-800 overflow-hidden self-start divide-y divide-neutral-700/50">
           {loading ? (
-            <p className="text-neutral-400 text-xs p-3">로딩 중...</p>
+            <p className="text-neutral-400 text-xs p-3">{t('로딩 중...')}</p>
           ) : runs.length === 0 ? (
-            <p className="text-neutral-400 text-xs p-3">디버그 런이 없습니다. 추론 시 "디버그 모드"를 켜세요.</p>
+            <p className="text-neutral-400 text-xs p-3">{t('디버그 런이 없습니다. 추론 시 "디버그 모드"를 켜세요.')}</p>
           ) : (
             runs.map((r) => (
               <div key={r.id}
@@ -178,14 +180,14 @@ export default function DebugLogsPage() {
                 </div>
                 <div className="flex items-center justify-between text-[10px] text-neutral-500 mt-0.5">
                   <span className="truncate">
-                    {new Date(r.modified).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    {fmt.dateTime(r.modified, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
                     {' · '}{r.size_kb > 1024 ? `${(r.size_kb / 1024).toFixed(1)}MB` : `${r.size_kb.toFixed(0)}KB`}
                   </span>
                   <span className="flex gap-1.5 shrink-0">
                     <a href={`/api/debug/runs/${r.id}/download`} download onClick={(e) => e.stopPropagation()}
                       className="text-blue-400 hover:text-blue-300">zip</a>
                     <button onClick={(e) => { e.stopPropagation(); handleDelete(r.id) }}
-                      className="text-red-400 hover:text-red-300">삭제</button>
+                      className="text-red-400 hover:text-red-300">{t('삭제')}</button>
                   </span>
                 </div>
               </div>
@@ -197,10 +199,10 @@ export default function DebugLogsPage() {
         <div className="space-y-4">
           {!selected ? (
             <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-8 text-center text-neutral-500 text-sm">
-              왼쪽에서 런을 선택하세요.
+              {t('왼쪽에서 런을 선택하세요.')}
             </div>
           ) : detailLoading ? (
-            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-8 text-center text-neutral-400 text-sm">로딩 중...</div>
+            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-8 text-center text-neutral-400 text-sm">{t('로딩 중...')}</div>
           ) : (
             <>
               {/* 메타 헤더 */}
@@ -215,13 +217,13 @@ export default function DebugLogsPage() {
                   <span>fps: {String(detail?.meta?.fps ?? '?')}</span>
                   <span>cameras: {detail?.cameras.join(', ') || '-'}</span>
                 </div>
-                {truncated && <p className="text-[11px] text-amber-400">레코드가 많아 일부만 로드되었습니다 (표시가 잘릴 수 있음).</p>}
+                {truncated && <p className="text-[11px] text-amber-400">{t('레코드가 많아 일부만 로드되었습니다 (표시가 잘릴 수 있음).')}</p>}
               </div>
 
               {/* 프레임 스크러버 */}
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">프레임 스크러버</h3>
+                  <h3 className="text-sm font-semibold">{t('프레임 스크러버')}</h3>
                   <span className="text-xs text-neutral-400 font-mono">
                     {obs.length ? `frame ${scrub + 1}/${obs.length} · seq ${curObs?.seq ?? '-'}` : 'no frames'}
                   </span>
@@ -246,7 +248,9 @@ export default function DebugLogsPage() {
                       ))}
                       <div className="flex-1 min-w-[240px] space-y-2">
                         <div className="text-[10px] text-neutral-500">
-                          state (관절) · inference {curInf?.inference_ms != null ? `${curInf.inference_ms}ms` : '-'}
+                          {t('state (관절) · inference {inference_ms}', {
+                            inference_ms: curInf?.inference_ms != null ? `${curInf.inference_ms}ms` : '-',
+                          })}
                         </div>
                         <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] font-mono">
                           {curObs && motors.map((m) => (
@@ -264,23 +268,23 @@ export default function DebugLogsPage() {
                           {chunkX.length > 1
                             ? <PlotlyChart x={chunkX} series={chunkSeries} height={150}
                                 uirevision={`chunk-${selected}-${curObs?.seq}`} />
-                            : <p className="text-[10px] text-neutral-600">이 프레임엔 추론 기록이 없습니다</p>}
+                            : <p className="text-[10px] text-neutral-600">{t('이 프레임엔 추론 기록이 없습니다')}</p>}
                         </div>
-                        <p className="text-[10px] text-neutral-500">현 시점 정책 raw action chunk (미래 예측 스텝)</p>
+                        <p className="text-[10px] text-neutral-500">{t('현 시점 정책 raw action chunk (미래 예측 스텝)')}</p>
                       </div>
                     </div>
                   </>
                 ) : (
-                  <p className="text-xs text-neutral-500">이 런에는 관측 프레임이 없습니다.</p>
+                  <p className="text-xs text-neutral-500">{t('이 런에는 관측 프레임이 없습니다.')}</p>
                 )}
               </div>
 
               {/* 배열 그래프 + 필터 시뮬레이션 */}
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">배열 그래프 · 필터 시뮬레이션</h3>
+                  <h3 className="text-sm font-semibold">{t('배열 그래프 · 필터 시뮬레이션')}</h3>
                   <div className="flex items-center gap-2">
-                    {simBusy && <span className="text-[10px] text-neutral-500">계산 중...</span>}
+                    {simBusy && <span className="text-[10px] text-neutral-500">{t('계산 중...')}</span>}
                     <select value={motor} onChange={(e) => setMotor(e.target.value)}
                       className="px-2 py-1 text-xs rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
                       {motors.map((m) => <option key={m} value={m}>{m}</option>)}
@@ -296,32 +300,34 @@ export default function DebugLogsPage() {
                     <PlotlyChart x={sim.t} series={arraySeries} markerX={markerX} height={280}
                       uirevision={`arr-${selected}-${motor}`} yTitle={motor} />
                   ) : (
-                    <p className="text-xs text-neutral-500">{control.length ? '시뮬레이션 준비 중...' : 'control 데이터가 없습니다.'}</p>
+                    <p className="text-xs text-neutral-500">{control.length ? t('시뮬레이션 준비 중...') : t('control 데이터가 없습니다.')}</p>
                   )}
                 </div>
 
                 {/* 필터 파라미터 */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 pt-1">
                   <FilterSlider label="lowpass_alpha" value={params.lowpass_alpha} min={0.05} max={1} step={0.05}
-                    onChange={(v) => setParams((p) => ({ ...p, lowpass_alpha: v }))} hint="1=OFF, 낮을수록 강함" />
+                    onChange={(v) => setParams((p) => ({ ...p, lowpass_alpha: v }))} hint={t('1=OFF, 낮을수록 강함')} />
                   <FilterSlider label="max_velocity (deg/s)" value={params.max_velocity} min={0} max={1000} step={10}
-                    onChange={(v) => setParams((p) => ({ ...p, max_velocity: v }))} hint="0=무제한" />
+                    onChange={(v) => setParams((p) => ({ ...p, max_velocity: v }))} hint={t('0=무제한')} />
                   <FilterSlider label="max_gripper_velocity" value={params.max_gripper_velocity} min={0} max={500} step={10}
-                    onChange={(v) => setParams((p) => ({ ...p, max_gripper_velocity: v }))} hint="0=무제한" />
+                    onChange={(v) => setParams((p) => ({ ...p, max_gripper_velocity: v }))} hint={t('0=무제한')} />
                   <FilterSlider label="max_jerk (deg/s²)" value={params.max_jerk} min={0} max={5000} step={50}
-                    onChange={(v) => setParams((p) => ({ ...p, max_jerk: v }))} hint="0=무제한" />
+                    onChange={(v) => setParams((p) => ({ ...p, max_jerk: v }))} hint={t('0=무제한')} />
                   <FilterSlider label="interpolation_steps" value={params.interpolation_steps} min={0} max={10} step={1}
-                    onChange={(v) => setParams((p) => ({ ...p, interpolation_steps: v }))} hint="0=OFF (근사)" />
+                    onChange={(v) => setParams((p) => ({ ...p, interpolation_steps: v }))} hint={t('0=OFF (근사)')} />
                   <FilterSlider label="fps" value={params.fps} min={1} max={60} step={1}
-                    onChange={(v) => setParams((p) => ({ ...p, fps: v }))} hint="속도/jerk 계산 기준" />
+                    onChange={(v) => setParams((p) => ({ ...p, fps: v }))} hint={t('속도/jerk 계산 기준')} />
                 </div>
                 <div className="flex items-center justify-between pt-1">
                   <p className="text-[11px] text-neutral-500">
-                    녹화된 raw <span className="text-[#6b7fff]">target</span>을 실제 필터코드로 재생 → <span className="text-[#eab308]">filtered(시뮬)</span>.
-                    velocity/jerk/lowpass 충실, interpolation·서버 smoothing은 근사.
+                    {t.rich('녹화된 raw {span}을 실제 필터코드로 재생 → {span_2}. velocity/jerk/lowpass 충실, interpolation·서버 smoothing은 근사.', {
+                      span: <span className="text-[#6b7fff]">target</span>,
+                      span_2: <span className="text-[#eab308]">{t('filtered(시뮬)')}</span>,
+                    })}
                   </p>
                   <button onClick={() => setParams((p) => ({ ...DEFAULT_PARAMS, fps: p.fps }))}
-                    className="text-xs text-neutral-400 hover:text-white underline">초기화</button>
+                    className="text-xs text-neutral-400 hover:text-white underline">{t('초기화')}</button>
                 </div>
               </div>
             </>

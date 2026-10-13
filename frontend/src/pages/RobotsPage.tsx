@@ -12,6 +12,7 @@ import { ZeroCalibrationPanel } from '../components/ZeroCalibrationModal'
 import So101CalibrationWizard from '../components/So101CalibrationWizard'
 import So101TeleopPanel from '../components/So101TeleopPanel'
 import { JOINT_NAMES } from '../config/joints'
+import { useT } from '../i18n'
 
 // ── 파킹 보정 모달 ──
 //
@@ -27,6 +28,7 @@ import { JOINT_NAMES } from '../config/joints'
 
 /** 상세 창의 파킹 탭 — 파킹 하기 / 현재 위치 읽기 / 파킹 위치 저장. */
 function ParkingPanel({ iface }: { iface: string }) {
+  const t = useT()
   const [joints, setJoints] = useState<Record<string, number>>({})
   //: 저장할 값. **읽기 버튼으로만** 채워진다 — 폴링이 덮어쓰면 찍어 둔 뜻이 없다.
   const [captured, setCaptured] = useState<Record<string, number> | null>(null)
@@ -67,9 +69,9 @@ function ParkingPanel({ iface }: { iface: string }) {
         last = now
       }
       await api.post('/robots/parking/torque?enable=false', { iface })
-      setMsg('파킹 자세에 섰고 토크를 풀었습니다 — 손으로 자세를 맞추세요.')
+      setMsg(t('파킹 자세에 섰고 토크를 풀었습니다 — 손으로 자세를 맞추세요.'))
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : '파킹으로 보내지 못했습니다')
+      setMsg(e instanceof Error ? e.message : t('파킹으로 보내지 못했습니다'))
     } finally { setBusy('') }
   }
 
@@ -77,8 +79,8 @@ function ParkingPanel({ iface }: { iface: string }) {
     setBusy('read'); setMsg('')
     // ⚠ 폴링 상태가 아니라 **지금 응답**을 쓴다 — 상태는 한 박자 늦다
     const now = await readJoints()
-    if (now) { setCaptured(now); setMsg('지금 자세를 찍었습니다. 저장을 누르면 이 값이 들어갑니다.') }
-    else setMsg('관절값을 읽지 못했습니다')
+    if (now) { setCaptured(now); setMsg(t('지금 자세를 찍었습니다. 저장을 누르면 이 값이 들어갑니다.')) }
+    else setMsg(t('관절값을 읽지 못했습니다'))
     setBusy('')
   }
 
@@ -88,9 +90,9 @@ function ParkingPanel({ iface }: { iface: string }) {
     try {
       await api.post('/robots/parking/save', { iface, positions: captured })
       await api.post('/robots/parking/torque?enable=true', { iface })
-      setMsg('파킹 위치를 저장했고 토크를 걸었습니다.')
+      setMsg(t('파킹 위치를 저장했고 토크를 걸었습니다.'))
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : '저장하지 못했습니다')
+      setMsg(e instanceof Error ? e.message : t('저장하지 못했습니다'))
     } finally { setBusy('') }
   }
 
@@ -106,19 +108,20 @@ function ParkingPanel({ iface }: { iface: string }) {
   return (
     <div className="space-y-4">
         <p className="text-xs text-neutral-400">
-          세 버튼은 <b>순서가 정해져 있지 않습니다</b>. 파킹으로 보내고, 손으로
-          맞추고, 읽고, 마음에 안 들면 다시 맞춰 읽으면 됩니다.
+          {t.rich('세 버튼은 {b}. 파킹으로 보내고, 손으로 맞추고, 읽고, 마음에 안 들면 다시 맞춰 읽으면 됩니다.', {
+            b: <b>{t('순서가 정해져 있지 않습니다')}</b>,
+          })}
         </p>
 
         <div className="rounded-lg border border-neutral-700 bg-neutral-900 p-3 space-y-2">
           <div className="flex items-center justify-between">
-            <h3 className="text-xs font-semibold text-neutral-400">관절 위치</h3>
-            {captured && <span className="text-[10px] text-green-400">찍어 둔 값이 있습니다</span>}
+            <h3 className="text-xs font-semibold text-neutral-400">{t('관절 위치')}</h3>
+            {captured && <span className="text-[10px] text-green-400">{t('찍어 둔 값이 있습니다')}</span>}
           </div>
           <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-1 text-xs">
-            <span className="text-[10px] text-neutral-500">관절</span>
-            <span className="text-[10px] text-neutral-500 text-right">지금</span>
-            <span className="text-[10px] text-neutral-500 text-right w-20">저장할 값</span>
+            <span className="text-[10px] text-neutral-500">{t('관절')}</span>
+            <span className="text-[10px] text-neutral-500 text-right">{t('지금')}</span>
+            <span className="text-[10px] text-neutral-500 text-right w-20">{t('저장할 값')}</span>
             {JOINT_NAMES.map((name) => (
               <Fragment key={name}>
                 <span className="text-neutral-400 font-mono">{name}</span>
@@ -135,29 +138,29 @@ function ParkingPanel({ iface }: { iface: string }) {
           </div>
           {captured && JOINT_NAMES.some((n) => Math.abs(drift(n)) > 0.5) && (
             <p className="text-[10px] text-amber-400">
-              찍은 뒤 팔이 움직였습니다 — 지금 자세를 저장하려면 다시 읽으세요.
+              {t('찍은 뒤 팔이 움직였습니다 — 지금 자세를 저장하려면 다시 읽으세요.')}
             </p>
           )}
         </div>
 
         <div className="flex gap-2">
           <button onClick={goParking} disabled={!!busy}
-            title="토크를 걸고 저장된 파킹 자세로 보낸 뒤, 멈추면 토크를 풉니다"
+            title={t('토크를 걸고 저장된 파킹 자세로 보낸 뒤, 멈추면 토크를 풉니다')}
             className="flex-1 px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white
                        text-sm font-medium disabled:opacity-50">
-            {busy === 'park' ? '이동 중…' : '파킹'}
+            {busy === 'park' ? t('이동 중…') : t('파킹')}
           </button>
           <button onClick={capture} disabled={!!busy}
-            title="지금 관절값을 찍어 둡니다 — 저장은 이 값으로 됩니다"
+            title={t('지금 관절값을 찍어 둡니다 — 저장은 이 값으로 됩니다')}
             className="flex-1 px-3 py-2 rounded bg-neutral-700 hover:bg-neutral-600
                        text-neutral-100 text-sm font-medium disabled:opacity-50">
-            {busy === 'read' ? '읽는 중…' : '현재 위치 읽기'}
+            {busy === 'read' ? t('읽는 중…') : t('현재 위치 읽기')}
           </button>
           <button onClick={save} disabled={!!busy || !captured}
-            title={captured ? '찍어 둔 값을 파킹 자세로 저장합니다' : '먼저 현재 위치를 읽으세요'}
+            title={captured ? t('찍어 둔 값을 파킹 자세로 저장합니다') : t('먼저 현재 위치를 읽으세요')}
             className="flex-1 px-3 py-2 rounded bg-green-600 hover:bg-green-500 text-white
                        text-sm font-medium disabled:opacity-50">
-            {busy === 'save' ? '저장 중…' : '파킹 위치 저장'}
+            {busy === 'save' ? t('저장 중…') : t('파킹 위치 저장')}
           </button>
         </div>
 
@@ -171,6 +174,7 @@ function ParkingPanel({ iface }: { iface: string }) {
 type UsbInfo = { flat: string; tree: string; controllers: string[] }
 
 function UsbInfoModal({ onClose }: { onClose: () => void }) {
+  const t = useT()
   // 리바인딩은 되돌릴 수 없고 USB 가 통째로 끊긴다 — 물어보고 한다.
   // `window.confirm` 은 heartbeat 를 막으므로 쓰지 않는다.
   const { confirm: askConfirm } = useSystemMessage()
@@ -182,14 +186,14 @@ function UsbInfoModal({ onClose }: { onClose: () => void }) {
   const load = useCallback(async () => {
     setLoading(true)
     try { setInfo(await api.get<UsbInfo>('/robots/usb/info')) }
-    catch (e) { setMsg(`정보 조회 실패: ${(e as Error).message}`) }
+    catch (e) { setMsg(t('정보 조회 실패: {message}', { message: (e as Error).message })) }
     finally { setLoading(false) }
-  }, [])
+  }, [t])
 
   useEffect(() => { load() }, [load])
 
   const handleRecover = async () => {
-    if (!await askConfirm('xHCI USB 컨트롤러를 재바인딩합니다.\n잠깐 동안 키보드/마우스 등 USB 장치가 모두 끊겼다 다시 연결됩니다.\n계속할까요?')) return
+    if (!await askConfirm(t('xHCI USB 컨트롤러를 재바인딩합니다.\n잠깐 동안 키보드/마우스 등 USB 장치가 모두 끊겼다 다시 연결됩니다.\n계속할까요?'))) return
     setRecovering(true)
     setMsg(null)
     try {
@@ -197,9 +201,9 @@ function UsbInfoModal({ onClose }: { onClose: () => void }) {
         '/robots/usb/recover', {})
       setInfo(r.usb)
       setMsg(r.ok
-        ? `복구 완료 — 재바인딩: ${r.rebound.join(', ') || '없음'}`
-        : `일부 실패: ${r.message}`)
-    } catch (e) { setMsg(`복구 실패: ${(e as Error).message}`) }
+        ? t('복구 완료 — 재바인딩: {rebound}', { rebound: r.rebound.join(', ') || t('없음') })
+        : t('일부 실패: {message}', { message: r.message }))
+    } catch (e) { setMsg(t('복구 실패: {message}', { message: (e as Error).message })) }
     finally { setRecovering(false) }
   }
 
@@ -208,22 +212,24 @@ function UsbInfoModal({ onClose }: { onClose: () => void }) {
       <div className="bg-neutral-800 rounded-xl border border-neutral-600 p-6 w-[720px] max-w-[95vw] max-h-[90vh] overflow-y-auto space-y-4"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold">USB 진단 / 복구</h2>
+          <h2 className="text-lg font-bold">{t('USB 진단 / 복구')}</h2>
           <div className="flex gap-2">
             <button onClick={load} disabled={loading || recovering}
               className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 disabled:opacity-50">
-              새로고침
+              {t('새로고침')}
             </button>
             <button onClick={handleRecover} disabled={recovering}
               className="px-3 py-1 text-xs rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-50 flex items-center gap-1">
-              {recovering ? <><Spinner /> 복구 중...</> : 'USB 컨트롤러 복구'}
+              {recovering ? <><Spinner />{' '}{t('복구 중...')}</> : t('USB 컨트롤러 복구')}
             </button>
           </div>
         </div>
 
         {info?.controllers && info.controllers.length > 0 && (
           <div className="text-xs text-neutral-400">
-            xHCI 컨트롤러: <span className="font-mono text-neutral-200">{info.controllers.join(', ')}</span>
+            {t.rich('xHCI 컨트롤러: {span}', {
+              span: <span className="font-mono text-neutral-200">{info.controllers.join(', ')}</span>,
+            })}
           </div>
         )}
 
@@ -232,26 +238,26 @@ function UsbInfoModal({ onClose }: { onClose: () => void }) {
         )}
 
         {loading ? (
-          <div className="flex items-center gap-2 text-neutral-400 text-sm py-6"><Spinner /> 불러오는 중...</div>
+          <div className="flex items-center gap-2 text-neutral-400 text-sm py-6"><Spinner />{' '}{t('불러오는 중...')}</div>
         ) : (
           <div className="space-y-3">
             <div>
-              <h3 className="text-xs font-semibold text-neutral-400 mb-1">lsusb -t (트리)</h3>
+              <h3 className="text-xs font-semibold text-neutral-400 mb-1">{t('lsusb -t (트리)')}</h3>
               <pre className="rounded-lg border border-neutral-700 bg-neutral-900 p-3 text-[11px] font-mono text-neutral-200 overflow-x-auto whitespace-pre">
-{info?.tree || '(없음)'}
+{info?.tree || t('(없음)')}
               </pre>
             </div>
             <div>
-              <h3 className="text-xs font-semibold text-neutral-400 mb-1">lsusb (목록)</h3>
+              <h3 className="text-xs font-semibold text-neutral-400 mb-1">{t('lsusb (목록)')}</h3>
               <pre className="rounded-lg border border-neutral-700 bg-neutral-900 p-3 text-[11px] font-mono text-neutral-200 overflow-x-auto whitespace-pre">
-{info?.flat || '(없음)'}
+{info?.flat || t('(없음)')}
               </pre>
             </div>
           </div>
         )}
 
         <p className="text-[10px] text-neutral-500">
-          'HC died'로 USB 트리가 사라졌을 때 컨트롤러 복구를 누르면 재부팅 없이 재열거됩니다. 복구 후 "스캔"으로 CAN 포트를 다시 확인하세요.
+          {t('\'HC died\'로 USB 트리가 사라졌을 때 컨트롤러 복구를 누르면 재부팅 없이 재열거됩니다. 복구 후 "스캔"으로 CAN 포트를 다시 확인하세요.')}
         </p>
       </div>
     </div>
@@ -324,6 +330,7 @@ function ArmDetailModal({ arm, leader, onConfig, onClose }: {
   onConfig: (cfg: Record<string, unknown>) => void
   onClose: () => void
 }) {
+  const t = useT()
   const [dtab, setDtab] = useState<
     'parking' | 'zero' | 'jog' | 'load' | 'config'>('parking')
   return (
@@ -336,19 +343,22 @@ function ArmDetailModal({ arm, leader, onConfig, onClose }: {
           <div>
             <h2 className="text-lg font-semibold text-neutral-100">{arm.iface}</h2>
             <p className="text-xs text-neutral-400">
-              {arm.role}{arm.side ? ` · ${arm.side === 'left' ? '왼팔' : '오른팔'}` : ''}
-              {arm.master_slave ? ` · ${arm.master_slave}` : ''} — 팔이 실제로 움직일 수 있습니다
+              {t('{role}{side}{master_slave} — 팔이 실제로 움직일 수 있습니다', {
+                role: arm.role,
+                side: arm.side ? ` · ${arm.side === 'left' ? t('왼팔') : t('오른팔')}` : '',
+                master_slave: arm.master_slave ? ` · ${arm.master_slave}` : '',
+              })}
             </p>
           </div>
           <button onClick={onClose}
                   className="shrink-0 rounded px-2 py-1 text-sm text-neutral-400 hover:text-white">
-            닫기
+            {t('닫기')}
           </button>
         </div>
 
         <div className="flex overflow-hidden rounded border border-neutral-700 text-xs">
-          {([['parking', '파킹'], ['zero', '영점'], ['jog', '조작'],
-             ['load', '부하'], ['config', '설정']] as const).map(([k, label]) => (
+          {([['parking', t('파킹')], ['zero', t('영점')], ['jog', t('조작')],
+             ['load', t('부하')], ['config', t('설정')]] as const).map(([k, label]) => (
             <button key={k} onClick={() => setDtab(k)}
               className={`px-4 py-1.5 ${dtab === k
                 ? 'bg-neutral-700 text-white' : 'bg-neutral-900 text-neutral-400 hover:text-white'}`}>
@@ -365,15 +375,15 @@ function ArmDetailModal({ arm, leader, onConfig, onClose }: {
               iface={arm.iface}
               commandable={arm.role === 'follower'}
               reason={arm.role === 'leader'
-                ? '마스터(리더)는 외부 명령을 무시합니다 — 이 팔로 팔로워를 끄세요'
-                : '역할을 모릅니다 — 카드의 역할 선택에서 지정하세요'}
+                ? t('마스터(리더)는 외부 명령을 무시합니다 — 이 팔로 팔로워를 끄세요')
+                : t('역할을 모릅니다 — 카드의 역할 선택에서 지정하세요')}
               leader={leader}
               side={arm.side} />
             {arm.role === 'follower' && (
               <button onClick={() => window.open(`/teleop?follower=${encodeURIComponent(arm.iface)}`, 'piper-teleop', 'popup,width=1280,height=820')}
-                title="키보드·마우스로 조종하는 별도 창 — 리더암 없이 (feature/web-leader.md)"
+                title={t('키보드·마우스로 조종하는 별도 창 — 리더암 없이 (feature/web-leader.md)')}
                 className="w-full px-3 py-1.5 text-xs rounded bg-purple-800 hover:bg-purple-700 text-white">
-                조종 창 열기 (키보드·마우스)
+                {t('조종 창 열기 (키보드·마우스)')}
               </button>
             )}
             <button onClick={async () => {
@@ -384,7 +394,7 @@ function ArmDetailModal({ arm, leader, onConfig, onClose }: {
             }}
               className="w-full px-3 py-2 rounded bg-neutral-700 hover:bg-blue-600 text-sm
                          text-neutral-200 hover:text-white">
-              파킹 자세로 이동
+              {t('파킹 자세로 이동')}
             </button>
           </div>
         )}
@@ -392,7 +402,7 @@ function ArmDetailModal({ arm, leader, onConfig, onClose }: {
         {dtab === 'config' && (
           <div className="space-y-2">
             <h4 className="text-xs font-semibold text-neutral-400">
-              {arm.role === 'leader' ? 'Leader 설정' : 'Follower 설정'}
+              {arm.role === 'leader' ? t('Leader 설정') : t('Follower 설정')}
             </h4>
             {/* 리더·팔로워 **둘 다** 그리퍼가 달린다 — 역할 분기 밖에 둔다 */}
             <GripperStrokeSelect iface={arm.iface} role={arm.role} />
@@ -402,14 +412,14 @@ function ArmDetailModal({ arm, leader, onConfig, onClose }: {
                   <input type="checkbox"
                     checked={(arm.config.disable_torque_on_disconnect as boolean) ?? true}
                     onChange={(e) => onConfig({ disable_torque_on_disconnect: e.target.checked })} />
-                  연결 해제 시 토크 비활성화
+                  {t('연결 해제 시 토크 비활성화')}
                 </label>
                 <div className="flex items-center gap-2 text-xs">
                   <span className="text-neutral-400 w-40">max_relative_target</span>
                   <input type="number" step="0.1"
                     value={(arm.config.max_relative_target as number) ?? ''}
                     onChange={(e) => onConfig({ max_relative_target: e.target.value ? Number(e.target.value) : null })}
-                    placeholder="null (무제한)"
+                    placeholder={t('null (무제한)')}
                     className="flex-1 px-2 py-1 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
                 </div>
                 <div className="text-xs">
@@ -441,14 +451,15 @@ function MasterSlaveBadge({ ms, responding }: {
   ms?: 'master' | 'slave' | null
   responding?: boolean | null
 }) {
+  const t = useT()
   // ⚠ **조용한 팔을 마스터라 부르지 않는다.** 둘 다 슬레이브 피드백이 없지만
   //   원인도 대처도 다르다 — 실기에서 전원을 내렸다 켠 뒤 네 대가 전부 "마스터"
   //   로 표시돼 원인을 가리기 어려웠다. 켜진 팔은 가만히 있어도 무언가 뿌린다.
   if (responding === false) {
     return (
       <span className="rounded bg-red-600/30 px-1.5 py-0.5 text-[10px] font-medium text-red-300"
-        title="CAN 에서 아무 프레임도 오지 않습니다 — 전원·비상정지·케이블을 확인하세요">
-        응답 없음
+        title={t('CAN 에서 아무 프레임도 오지 않습니다 — 전원·비상정지·케이블을 확인하세요')}>
+        {t('응답 없음')}
       </span>
     )
   }
@@ -457,18 +468,19 @@ function MasterSlaveBadge({ ms, responding }: {
   return (
     <span className={`px-1.5 py-0.5 text-[10px] rounded font-medium ${
       isMaster ? 'bg-purple-600/30 text-purple-300' : 'bg-cyan-600/30 text-cyan-300'}`}
-      title={isMaster ? '마스터 모드 (示教入力/직접 조작)' : '슬레이브 모드 (運動出力/제어 대상)'}>
-      {isMaster ? '마스터' : '슬레이브'}
+      title={isMaster ? t('마스터 모드 (示教入力/직접 조작)') : t('슬레이브 모드 (運動出力/제어 대상)')}>
+      {isMaster ? t('마스터') : t('슬레이브')}
     </span>
   )
 }
 
 export default function RobotsPage() {
+  const t = useT()
   // ⚠ `window.alert` 를 쓰지 않는다 — 이벤트 루프를 막아 E-stop heartbeat 가
   //   끊기고, 2초 타임아웃에 추론이 강제 종료된다 (confirm 으로 실제로 겪었다).
   const { notify, confirm: askConfirm } = useSystemMessage()
   const notifyError = (text: string) =>
-    notify({ level: 'error', text, source: '로봇' })
+    notify({ level: 'error', text, source: t('로봇') })
   const [loading, setLoading] = useState(true)
   const [arms, setArms] = useState<ArmInfo[]>([])
   const [scanning, setScanning] = useState(false)
@@ -551,31 +563,31 @@ export default function RobotsPage() {
     try {
       await api.post('/robots/parking/torque?enable=true', { iface })
       await api.post('/robots/parking/go', { iface })
-      notify({ level: 'info', text: `${iface} 파킹 자세로 이동`, source: '로봇' })
-    } catch (e) { notifyError(e instanceof Error ? e.message : '파킹 실패') }
+      notify({ level: 'info', text: t('{iface} 파킹 자세로 이동', { iface }), source: t('로봇') })
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('파킹 실패')) }
   }
 
   // 카드의 [리셋] — 0x150 재동기화. 간극(=슬립)이 있으면 백엔드 문구가 뜬다.
   const handleResetArm = async (iface: string) => {
     try {
       const r = await api.post<{ warnings: string[] }>('/robots/reset', { iface })
-      for (const w of r.warnings) notify({ level: 'warn', text: w, source: '로봇' })
+      for (const w of r.warnings) notify({ level: 'warn', text: w, source: t('로봇') })
       if (!r.warnings.length)
-        notify({ level: 'info', source: '로봇',
-          text: `${iface} 리셋 완료 — 재동기화 간극 없음` })
-    } catch (e) { notifyError(e instanceof Error ? e.message : '리셋 실패') }
+        notify({ level: 'info', source: t('로봇'),
+          text: t('{iface} 리셋 완료 — 재동기화 간극 없음', { iface }) })
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('리셋 실패')) }
   }
 
   // 카드의 [해제] — 등록을 걷고 연결도 끊어 포트로 되돌린다
   const handleDetach = async (iface: string) => {
     if (!await askConfirm(
-      `${iface} 를 해제합니다.\n연결이 끊기며 토크가 빠질 수 있습니다 — 팔이 드는 자세면 먼저 파킹하세요.`)) return
+      t('{iface} 를 해제합니다.\n연결이 끊기며 토크가 빠질 수 있습니다 — 팔이 드는 자세면 먼저 파킹하세요.', { iface }))) return
     try {
       await api.post('/robots/unregister', { iface }).catch(() => {})
       await api.post('/robots/disconnect', { iface })
       await refreshArms()
       loadPorts()
-    } catch (e) { notifyError(e instanceof Error ? e.message : '해제 실패') }
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('해제 실패')) }
   }
 
   // 연결된 팔의 상태(마스터/슬레이브·ctrl_mode)를 라이브 재읽기
@@ -604,7 +616,7 @@ export default function RobotsPage() {
       await api.post('/robots/can/up', { iface })
       setPortState(iface, 'UP')
       loadPorts()
-    } catch { notifyError('CAN UP 실패') }
+    } catch { notifyError(t('CAN UP 실패')) }
   }
 
   const handleCanDown = async (iface: string) => {
@@ -612,7 +624,7 @@ export default function RobotsPage() {
       await api.post('/robots/can/down', { iface })
       setPortState(iface, 'DOWN')
       loadPorts()
-    } catch (e) { notifyError(e instanceof Error ? e.message : 'CAN DOWN 실패') }
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('CAN DOWN 실패')) }
   }
 
   // ── 시리얼(SO-101) ──
@@ -624,7 +636,7 @@ export default function RobotsPage() {
       loadPorts()
     } catch (e) {
       // 데몬이 만든 문구(케이블 힌트·캘리브레이션 거부)가 곧 화면 문구다
-      notifyError(e instanceof Error ? e.message : 'SO-101 연결 실패')
+      notifyError(e instanceof Error ? e.message : t('SO-101 연결 실패'))
     } finally { setSerialBusy(null) }
   }
 
@@ -633,7 +645,7 @@ export default function RobotsPage() {
       await api.post('/robots/serial/side', { arm, side })
       loadPorts()
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : '좌우 지정 실패')
+      notifyError(e instanceof Error ? e.message : t('좌우 지정 실패'))
     }
   }
 
@@ -644,7 +656,7 @@ export default function RobotsPage() {
       await api.post('/robots/serial/flipped', { arm, flipped })
       loadPorts()
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : '거치 방향 변경 실패')
+      notifyError(e instanceof Error ? e.message : t('거치 방향 변경 실패'))
     }
   }
 
@@ -654,7 +666,7 @@ export default function RobotsPage() {
       await api.post('/robots/serial/release', { arm })
       loadPorts()
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : 'SO-101 해제 실패')
+      notifyError(e instanceof Error ? e.message : t('SO-101 해제 실패'))
     } finally { setSerialBusy(null) }
   }
 
@@ -664,10 +676,10 @@ export default function RobotsPage() {
     setConnectingIface(iface)
     try {
       const r = await api.post<ArmInfo & { warnings?: string[] }>('/robots/attach', { iface })
-      for (const w of r.warnings ?? []) notify({ level: 'warn', text: w, source: '로봇' })
+      for (const w of r.warnings ?? []) notify({ level: 'warn', text: w, source: t('로봇') })
       await refreshArms()
       loadPorts()
-    } catch (e) { notifyError(e instanceof Error ? e.message : '연결 실패') }
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('연결 실패')) }
     finally { setConnectingIface(null) }
   }
 
@@ -680,7 +692,7 @@ export default function RobotsPage() {
       await api.post('/robots/can/rename', { old_name: oldName, new_name: renameValue.trim() })
       setArms((prev) => prev.map((a) => a.iface === oldName ? { ...a, iface: renameValue.trim() } : a))
       setRenamingIface(null)
-    } catch { notifyError('이름 변경 실패') }
+    } catch { notifyError(t('이름 변경 실패')) }
   }
 
   const handleRoleChange = async (iface: string, role: string) => {
@@ -702,7 +714,7 @@ export default function RobotsPage() {
     try {
       const updated = await api.post<ArmInfo>('/robots/master-slave', { iface, master })
       setArms((prev) => prev.map((a) => (a.iface === iface ? updated : a)))
-    } catch (e) { notifyError(`설정 실패: ${(e as Error).message}`) }
+    } catch (e) { notifyError(t('설정 실패: {message}', { message: (e as Error).message })) }
     finally { setSettingMs(null) }
   }
 
@@ -722,9 +734,9 @@ export default function RobotsPage() {
       await api.post('/robots/presets/save', { name: presetName.trim() })
       setPresets(await api.get<string[]>('/robots/presets'))
       setPresetName('')
-      setPresetMsg(`"${presetName.trim()}" 저장됨`)
+      setPresetMsg(t('"{presetName}" 저장됨', { presetName: presetName.trim() }))
     } catch (e) {
-      setPresetMsg(`저장 실패: ${(e as Error).message}`)
+      setPresetMsg(t('저장 실패: {message}', { message: (e as Error).message }))
     }
   }
   const handlePresetLoad = async (name: string) => {
@@ -738,19 +750,19 @@ export default function RobotsPage() {
       await refreshArms()
       const applied = d.applied ?? []
       const notes: string[] = []
-      if (d.missing?.length) notes.push(`못 찾음: ${d.missing.join(', ')} (연결 확인)`)
-      if (d.failed?.length) notes.push(`연결 실패: ${d.failed.join(', ')}`)
+      if (d.missing?.length) notes.push(t('못 찾음: {missing} (연결 확인)', { missing: d.missing.join(', ') }))
+      if (d.failed?.length) notes.push(t('연결 실패: {failed}', { failed: d.failed.join(', ') }))
       setPresetMsg(
         applied.length
-          ? `"${name}" 적용 — ${applied.join(', ')}${notes.length ? ` / ${notes.join(' / ')}` : ''}`
-          : `"${name}" 을 적용하지 못했습니다${notes.length ? ` — ${notes.join(' / ')}` : ''}`
+          ? t('"{name}" 적용 — {applied}{length}', { name, applied: applied.join(', '), length: notes.length ? ` / ${notes.join(' / ')}` : '' })
+          : t('"{name}" 을 적용하지 못했습니다{length}', { name, length: notes.length ? ` — ${notes.join(' / ')}` : '' })
       )
     } catch (e) {
-      setPresetMsg(`불러오기 실패: ${(e as Error).message}`)
+      setPresetMsg(t('불러오기 실패: {message}', { message: (e as Error).message }))
     } finally { setPresetBusy(false) }
   }
   const handlePresetDelete = async (name: string) => {
-    if (!await askConfirm(`"${name}" 프리셋을 삭제하시겠습니까?`)) return
+    if (!await askConfirm(t('"{name}" 프리셋을 삭제하시겠습니까?', { name }))) return
     await api.delete(`/robots/presets/${name}`)
     setPresets(await api.get<string[]>('/robots/presets'))
   }
@@ -764,20 +776,17 @@ export default function RobotsPage() {
     if (!n) return
     const connected = arms.filter((a) => a.connected).length
     if (!await askConfirm(
-      `등록된 로봇과 1·2단계 목록을 모두 비웁니다 (팔 ${n}대).\n\n` +
-      '· 역할·좌우·슬롯·설정이 사라지고 세션 파일도 지워집니다\n' +
-      (connected ? `· 연결된 ${connected}대는 끊깁니다 — 토크가 빠져 팔이 주저앉습니다\n` : '') +
-      '\n' + (connected ? '먼저 파킹 자세로 내려두세요. 계속할까요?' : '계속할까요?'))) return
+      t('등록된 로봇과 1·2단계 목록을 모두 비웁니다 (팔 {n}대).\n\n· 역할·좌우·슬롯·설정이 사라지고 세션 파일도 지워집니다\n{connected}\n{connected_2}', { n, connected: (connected ? t('· 연결된 {connected}대는 끊깁니다 — 토크가 빠져 팔이 주저앉습니다\n', { connected }) : ''), connected_2: (connected ? t('먼저 파킹 자세로 내려두세요. 계속할까요?') : t('계속할까요?')) }))) return
     setClearing(true)
     try {
       await api.post('/robots/clear', {})
       setArms([])
       setDetailIface(null)
-      notify({ level: 'info', source: '로봇',
-               text: '로봇 상태를 초기화했습니다 — 1단계부터 다시 시작하세요.' })
+      notify({ level: 'info', source: t('로봇'),
+               text: t('로봇 상태를 초기화했습니다 — 1단계부터 다시 시작하세요.') })
     } catch (e) {
-      notify({ level: 'error', source: '로봇',
-               text: e instanceof Error ? e.message : '초기화 실패' })
+      notify({ level: 'error', source: t('로봇'),
+               text: e instanceof Error ? e.message : t('초기화 실패') })
     } finally {
       setClearing(false)
     }
@@ -807,17 +816,17 @@ export default function RobotsPage() {
          : undefined
 
   if (loading) {
-    return <div className="flex items-center justify-center h-64 gap-2 text-neutral-400"><Spinner /> 로딩 중...</div>
+    return <div className="flex items-center justify-center h-64 gap-2 text-neutral-400"><Spinner />{' '}{t('로딩 중...')}</div>
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <h1 className="text-2xl font-bold">로봇</h1>
+        <h1 className="text-2xl font-bold">{t('로봇')}</h1>
         <div className="flex overflow-hidden rounded-lg border border-neutral-700 text-sm">
-          {([['devices', '디바이스'], ['alignment', '정렬'],
-             ['bus', '버스 상태'], ['versions', '버전'],
-             ['diag', '검사']] as const).map(([k, label]) => (
+          {([['devices', t('디바이스')], ['alignment', t('정렬')],
+             ['bus', t('버스 상태')], ['versions', t('버전')],
+             ['diag', t('검사')]] as const).map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)}
               className={`px-4 py-1.5 ${tab === k
                 ? 'bg-neutral-700 text-white' : 'bg-neutral-900 text-neutral-400 hover:text-white'}`}>
@@ -828,11 +837,11 @@ export default function RobotsPage() {
         <div className="ml-auto flex gap-2">
           <button onClick={handleRefresh} disabled={refreshing}
             className="px-3 py-1.5 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 disabled:opacity-50 flex items-center gap-1">
-            {refreshing ? <><Spinner /> 새로고침 중...</> : '↻ 상태 새로고침'}
+            {refreshing ? <><Spinner />{' '}{t('새로고침 중...')}</> : t('↻ 상태 새로고침')}
           </button>
           <button onClick={() => setUsbModalOpen(true)}
             className="px-3 py-1.5 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300">
-            USB 진단 / 복구
+            {t('USB 진단 / 복구')}
           </button>
           {/* 비울 게 없으면 안 보인다 — 이미 깨끗한데 "초기화" 를 권하면
               누를 이유를 만들어 주는 셈이고, 위험한 버튼일수록 그러면 안 된다. */}
@@ -840,7 +849,7 @@ export default function RobotsPage() {
             <button onClick={handleClearAll} disabled={clearing}
               className="px-3 py-1.5 text-xs rounded bg-neutral-700 hover:bg-red-600
                          text-neutral-400 hover:text-white disabled:opacity-50">
-              {clearing ? '초기화 중…' : '전체 초기화'}
+              {clearing ? t('초기화 중…') : t('전체 초기화')}
             </button>
           )}
         </div>
@@ -849,15 +858,15 @@ export default function RobotsPage() {
       {tab === 'devices' && (<>
       {/* 프리셋 */}
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
-        <h2 className="text-sm font-semibold">프리셋</h2>
+        <h2 className="text-sm font-semibold">{t('프리셋')}</h2>
         <div className="flex gap-2 flex-wrap">
           {presets.length === 0
-            ? <span className="text-xs text-neutral-500">저장된 프리셋 없음</span>
+            ? <span className="text-xs text-neutral-500">{t('저장된 프리셋 없음')}</span>
             : presets.map((p) => (
                 <div key={p} className="flex items-center gap-1">
                   <button onClick={() => handlePresetLoad(p)} disabled={presetBusy}
                     className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-50">
-                    {presetBusy ? '적용 중…' : p}
+                    {presetBusy ? t('적용 중…') : p}
                   </button>
                   <button onClick={() => handlePresetDelete(p)}
                     className="px-1.5 py-1 text-xs rounded hover:bg-red-600 text-neutral-500 hover:text-white">x</button>
@@ -866,10 +875,10 @@ export default function RobotsPage() {
           }
         </div>
         <div className="flex gap-2">
-          <input type="text" value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="프리셋 이름"
+          <input type="text" value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder={t('프리셋 이름')}
             className="flex-1 px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500" />
           <button onClick={handlePresetSave} disabled={!presetName.trim()}
-            className="px-4 py-1.5 text-xs rounded bg-green-600 hover:bg-green-500 text-white disabled:opacity-50">저장</button>
+            className="px-4 py-1.5 text-xs rounded bg-green-600 hover:bg-green-500 text-white disabled:opacity-50">{t('저장')}</button>
         </div>
         {presetMsg && <p className="text-xs text-amber-300 whitespace-pre-wrap">{presetMsg}</p>}
       </div>
@@ -878,14 +887,14 @@ export default function RobotsPage() {
           링크 상태(UP/DOWN)를 보여주고, [연결]은 UP 일 때만 산다. */}
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">포트</h2>
+          <h2 className="text-sm font-semibold">{t('포트')}</h2>
           <button onClick={handleScan} disabled={scanning}
             className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
-            {scanning ? <><Spinner className="inline" /> 스캔 중...</> : '스캔'}
+            {scanning ? <><Spinner className="inline" />{' '}{t('스캔 중...')}</> : t('스캔')}
           </button>
         </div>
         {ports.length + serialPorts.length + simPorts.length === 0 ? (
-          <p className="text-xs text-neutral-400">"스캔"을 눌러 포트(CAN·시리얼)를 검색하세요</p>
+          <p className="text-xs text-neutral-400">{t('"스캔"을 눌러 포트(CAN·시리얼)를 검색하세요')}</p>
         ) : (
           // ⚠ FHD 에서 **네 장이 한 줄**에 들어가야 한다. 팔이 넷인 배치가 기본
           //    이라, 세 장에서 끊기면 마지막 하나만 다음 줄로 떨어져 한눈에 안
@@ -920,20 +929,20 @@ export default function RobotsPage() {
                     ) : (
                       <span className="font-mono text-sm cursor-pointer hover:text-blue-400"
                         onClick={() => { setRenamingIface(port.iface); setRenameValue(port.iface) }}
-                        title="클릭하여 이름 변경">{port.iface}</span>
+                        title={t('클릭하여 이름 변경')}>{port.iface}</span>
                     )}
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${
                       absent ? 'bg-neutral-700/60 text-neutral-300'
                       : isUp ? 'bg-green-600/25 text-green-400' : 'bg-red-600/25 text-red-400'}`}>
-                      {absent ? '장치 없음' : (port.state ?? '?')}
+                      {absent ? t('장치 없음') : (port.state ?? '?')}
                     </span>
-                    {port.connected && <span className="text-[10px] text-green-400">연결됨</span>}
+                    {port.connected && <span className="text-[10px] text-green-400">{t('연결됨')}</span>}
                   </div>
                   {/* ⚠ 카운터는 인터페이스를 다시 열면 0 이 된다 — 절대값 비교 금물,
                       "지금 흐르고 있나"의 감으로만 (백엔드 주석과 같은 규칙) */}
                   {absent ? (
                     <p className="text-[11px] text-neutral-400">
-                      USB 에서 보이지 않습니다 — 케이블·허브를 확인하세요
+                      {t('USB 에서 보이지 않습니다 — 케이블·허브를 확인하세요')}
                     </p>
                   ) : (
                     <p className="text-[11px] text-neutral-400 tabular-nums">
@@ -945,32 +954,32 @@ export default function RobotsPage() {
                     </p>
                   )}
                   <p className="truncate text-[10px] text-neutral-600">
-                    {absent ? (port.bus_info ? `마지막 확인: ${port.bus_info}` : '')
+                    {absent ? (port.bus_info ? t('마지막 확인: {bus_info}', { bus_info: port.bus_info }) : '')
                             : (port.bus_info || '')}
                   </p>
                   <div className="flex gap-1">
                     {isUp ? (
                       <button onClick={() => handleCanDown(port.iface)} disabled={port.connected}
-                        title={port.connected ? '연결된 로봇이 있어 내릴 수 없습니다' : '인터페이스를 내립니다'}
+                        title={port.connected ? t('연결된 로봇이 있어 내릴 수 없습니다') : t('인터페이스를 내립니다')}
                         className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white disabled:opacity-40">
                         DOWN
                       </button>
                     ) : (
                       <button onClick={() => handleCanUp(port.iface)} disabled={absent}
-                        title={absent ? '어댑터가 호스트에서 보이지 않아 올릴 수 없습니다' : undefined}
+                        title={absent ? t('어댑터가 호스트에서 보이지 않아 올릴 수 없습니다') : undefined}
                         className="px-2 py-1 text-xs rounded bg-yellow-600 hover:bg-yellow-500 text-white disabled:opacity-40">
                         UP
                       </button>
                     )}
                     <button onClick={() => handleAttach(port.iface)}
                       disabled={!isUp || port.connected || connectingIface === port.iface}
-                      title={absent ? '어댑터가 호스트에서 보이지 않습니다'
-                        : !isUp ? '포트가 UP 이어야 연결할 수 있습니다'
-                        : port.connected ? '이미 연결됨'
-                        : '연결 + 슬레이브 설정 + 토크 OFF + 등록까지 한 번에'}
+                      title={absent ? t('어댑터가 호스트에서 보이지 않습니다')
+                        : !isUp ? t('포트가 UP 이어야 연결할 수 있습니다')
+                        : port.connected ? t('이미 연결됨')
+                        : t('연결 + 슬레이브 설정 + 토크 OFF + 등록까지 한 번에')}
                       className="flex-1 px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">
-                      {connectingIface === port.iface ? <><Spinner className="inline" /> 연결 중…</>
-                        : port.connected ? '연결됨' : '연결'}
+                      {connectingIface === port.iface ? <><Spinner className="inline" />{' '}{t('연결 중…')}</>
+                        : port.connected ? t('연결됨') : t('연결')}
                     </button>
                   </div>
                 </div>
@@ -992,7 +1001,7 @@ export default function RobotsPage() {
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-600/25 text-green-400">
                       SERIAL
                     </span>
-                    {attached && <span className="text-[10px] text-green-400">연결됨</span>}
+                    {attached && <span className="text-[10px] text-green-400">{t('연결됨')}</span>}
                   </div>
                   <p className="text-[11px] text-neutral-400 tabular-nums">
                     SO-101 · {(sp.baud / 1e6).toFixed(0)}M bps
@@ -1001,11 +1010,11 @@ export default function RobotsPage() {
                   <div className="flex gap-1">
                     <button onClick={() => handleSerialAttach(sp.id)}
                       disabled={attached || serialBusy !== null}
-                      title={attached ? '이미 연결됨 — 아래 로봇 패널에서 다룹니다'
-                        : '연결 + 6모터 확인 + 토크 OFF'}
+                      title={attached ? t('이미 연결됨 — 아래 로봇 패널에서 다룹니다')
+                        : t('연결 + 6모터 확인 + 토크 OFF')}
                       className="flex-1 px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">
-                      {serialBusy === sp.id ? <><Spinner className="inline" /> 연결 중…</>
-                        : attached ? '연결됨' : '연결'}
+                      {serialBusy === sp.id ? <><Spinner className="inline" />{' '}{t('연결 중…')}</>
+                        : attached ? t('연결됨') : t('연결')}
                     </button>
                   </div>
                 </div>
@@ -1020,17 +1029,17 @@ export default function RobotsPage() {
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-sm">{sp.iface}</span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-600/25 text-purple-300">SIM</span>
-                  {sp.connected && <span className="text-[10px] text-green-400">연결됨</span>}
+                  {sp.connected && <span className="text-[10px] text-green-400">{t('연결됨')}</span>}
                 </div>
                 <p className="text-[11px] text-neutral-400">MuJoCo · {sp.scene}</p>
                 <p className="truncate text-[10px] text-neutral-600">simd</p>
                 <div className="flex gap-1">
                   <button onClick={() => handleAttach(sp.iface)}
                     disabled={sp.connected || connectingIface === sp.iface}
-                    title={sp.connected ? '이미 연결됨 — 아래 로봇 패널에서 다룹니다' : '시뮬 팔 연결 + 등록'}
+                    title={sp.connected ? t('이미 연결됨 — 아래 로봇 패널에서 다룹니다') : t('시뮬 팔 연결 + 등록')}
                     className="flex-1 px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">
-                    {connectingIface === sp.iface ? <><Spinner className="inline" /> 연결 중…</>
-                      : sp.connected ? '연결됨' : '연결'}
+                    {connectingIface === sp.iface ? <><Spinner className="inline" />{' '}{t('연결 중…')}</>
+                      : sp.connected ? t('연결됨') : t('연결')}
                   </button>
                 </div>
               </div>
@@ -1053,9 +1062,9 @@ export default function RobotsPage() {
       {/* 로봇 — 연결·등록된 팔 카드. 움직임이 감지되면 깜빡인다
           (마스터는 지령, 슬레이브는 피드백으로 — 백엔드가 가려서 잰다). */}
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
-        <h2 className="text-sm font-semibold">로봇</h2>
+        <h2 className="text-sm font-semibold">{t('로봇')}</h2>
         {robotArms.length + so101Arms.length === 0 ? (
-          <p className="text-xs text-neutral-400">등록된 로봇이 없습니다 — 포트에서 [연결]을 누르세요.</p>
+          <p className="text-xs text-neutral-400">{t('등록된 로봇이 없습니다 — 포트에서 [연결]을 누르세요.')}</p>
         ) : (
           <div className="space-y-1.5">
             {/* SO-101 로봇 카드 — PIPER 카드와 같은 틀. 버튼은 capabilities 로 정해진다:
@@ -1075,38 +1084,38 @@ export default function RobotsPage() {
                     </span>
                     <button onClick={() => handleSerialSide(att.arm,
                         att.side === 'left' ? 'right' : att.side === 'right' ? '' : 'left')}
-                      title="텔레옵 짝짓기용 좌/우 (클릭해서 변경) — 재연결·재기동에도 유지됩니다"
+                      title={t('텔레옵 짝짓기용 좌/우 (클릭해서 변경) — 재연결·재기동에도 유지됩니다')}
                       className={`px-1.5 py-0.5 text-[10px] rounded border ${
                         att.side ? 'bg-purple-600/30 text-purple-300 border-purple-500/40'
                                  : 'bg-neutral-700/50 text-neutral-500 border-neutral-600'}`}>
-                      {att.side === 'left' ? '왼팔' : att.side === 'right' ? '오른팔' : '좌/우?'}
+                      {att.side === 'left' ? t('왼팔') : att.side === 'right' ? t('오른팔') : t('좌/우?')}
                     </button>
                     <button onClick={() => handleSerialFlipped(att.arm, !att.flipped)}
-                      title="리더를 작업대에서 180° 돌려 놓고 잡는 구성입니다 — 켜면 좌우(요)와 손목 롤의 방향이 뒤집힙니다. 릴레이가 도는 중에는 못 바꿉니다"
+                      title={t('리더를 작업대에서 180° 돌려 놓고 잡는 구성입니다 — 켜면 좌우(요)와 손목 롤의 방향이 뒤집힙니다. 릴레이가 도는 중에는 못 바꿉니다')}
                       className={`px-1.5 py-0.5 text-[10px] rounded border ${
                         att.flipped ? 'bg-amber-600/30 text-amber-300 border-amber-500/40'
                                     : 'bg-neutral-700/50 text-neutral-500 border-neutral-600'}`}>
-                      {att.flipped ? '↻ 180° 거치' : '정방향 거치'}
+                      {att.flipped ? t('↻ 180° 거치') : t('정방향 거치')}
                     </button>
                     {!att.calibrated && (
                       <span className="rounded bg-amber-600/25 px-1.5 py-0.5 text-[10px] text-amber-300"
-                            title="캘리브레이션을 완주해야 텔레옵·수집에 쓸 수 있습니다">
-                        ⚠ 미캘리브레이션</span>
+                            title={t('캘리브레이션을 완주해야 텔레옵·수집에 쓸 수 있습니다')}>
+                        {t('⚠ 미캘리브레이션')}</span>
                     )}
                   </div>
                   <div className="flex gap-1 flex-wrap">
                     <button onClick={() => setCalibArm(att.arm)} disabled={serialBusy !== null}
-                      title="범위 스윕으로 중앙을 자동 산출합니다"
+                      title={t('범위 스윕으로 중앙을 자동 산출합니다')}
                       className={`px-2.5 py-1 text-xs rounded text-white disabled:opacity-40 ${
                         att.calibrated ? 'bg-neutral-700 hover:bg-neutral-600'
-                                       : 'bg-amber-600 hover:bg-amber-500'}`}>캘리브레이션</button>
+                                       : 'bg-amber-600 hover:bg-amber-500'}`}>{t('캘리브레이션')}</button>
                     <button onClick={() => setTeleopArm({ arm: att.arm, side: att.side })}
                       disabled={!att.calibrated || serialBusy !== null}
-                      title={att.calibrated ? '이 리더로 PIPER 팔로워를 조종합니다' : '캘리브레이션을 먼저 완주하세요'}
-                      className="px-2.5 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-40">텔레옵</button>
+                      title={att.calibrated ? t('이 리더로 PIPER 팔로워를 조종합니다') : t('캘리브레이션을 먼저 완주하세요')}
+                      className="px-2.5 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-40">{t('텔레옵')}</button>
                     <button onClick={() => handleSerialRelease(att.arm)} disabled={serialBusy !== null}
                       className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white disabled:opacity-40">
-                      {serialBusy === att.arm ? <><Spinner className="inline" /> 해제 중…</> : '해제'}
+                      {serialBusy === att.arm ? <><Spinner className="inline" />{' '}{t('해제 중…')}</> : t('해제')}
                     </button>
                   </div>
                 </div>
@@ -1126,10 +1135,10 @@ export default function RobotsPage() {
                     </span>
                     <span className="font-mono text-sm cursor-pointer hover:text-blue-400"
                       onClick={() => { setRenamingIface(arm.iface); setRenameValue(arm.iface) }}
-                      title="포트(=로봇) 이름 — 클릭하여 변경">{arm.iface}</span>
+                      title={t('포트(=로봇) 이름 — 클릭하여 변경')}>{arm.iface}</span>
                     <select value={arm.role} onChange={(e) => handleRoleChange(arm.iface, e.target.value)}
                       className="px-1.5 py-0.5 text-[10px] rounded bg-neutral-900 border border-neutral-600 text-neutral-100">
-                      <option value="unknown">역할?</option>
+                      <option value="unknown">{t('역할?')}</option>
                       <option value="leader">leader</option>
                       <option value="follower">follower</option>
                     </select>
@@ -1137,52 +1146,52 @@ export default function RobotsPage() {
                       ? <span className="px-1.5 py-0.5 text-[10px] rounded bg-purple-600/25 text-purple-300">SIM</span>
                       : <MasterSlaveBadge ms={arm.master_slave} responding={arm.responding} />}
                     <button onClick={() => handleSideToggle(arm)}
-                      title="양팔에서 이 팔의 좌/우 (클릭해서 변경)"
+                      title={t('양팔에서 이 팔의 좌/우 (클릭해서 변경)')}
                       className={`px-1.5 py-0.5 text-[10px] rounded border ${
                         arm.side ? 'bg-purple-600/30 text-purple-300 border-purple-500/40'
                                  : 'bg-neutral-700/50 text-neutral-500 border-neutral-600'}`}>
-                      {arm.side === 'left' ? '왼팔' : arm.side === 'right' ? '오른팔' : '좌/우?'}
+                      {arm.side === 'left' ? t('왼팔') : arm.side === 'right' ? t('오른팔') : t('좌/우?')}
                     </button>
-                    {arm.moving && <span className="text-[10px] text-amber-400">● 움직임</span>}
-                    {!arm.connected && <span className="text-[10px] text-amber-400">연결 끊김</span>}
+                    {arm.moving && <span className="text-[10px] text-amber-400">{t('● 움직임')}</span>}
+                    {!arm.connected && <span className="text-[10px] text-amber-400">{t('연결 끊김')}</span>}
                     {arm.mode_mismatch && (
                       <span className="rounded bg-red-600/25 px-1.5 py-0.5 text-[10px] text-red-300"
-                            title={arm.mode_mismatch}>⚠ 모드 불일치</span>
+                            title={arm.mode_mismatch}>{t('⚠ 모드 불일치')}</span>
                     )}
                   </div>
                   <div className="flex gap-1.5 flex-wrap shrink-0">
                     {!arm.connected && (
                       <button onClick={() => handleAttach(arm.iface)} disabled={connectingIface === arm.iface}
                         className="px-2.5 py-1 text-xs rounded bg-green-600 hover:bg-green-500 text-white disabled:opacity-50">
-                        {connectingIface === arm.iface ? '연결 중…' : '연결'}
+                        {connectingIface === arm.iface ? t('연결 중…') : t('연결')}
                       </button>
                     )}
                     {arm.transport !== 'sim' && <>
                     <button onClick={() => handleSetMasterSlave(arm.iface, true)} disabled={settingMs === arm.iface}
                       className="px-2.5 py-1 text-xs rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50"
-                      title="이 팔을 마스터(示教入力)로 설정">마스터</button>
+                      title={t('이 팔을 마스터(示教入力)로 설정')}>{t('마스터')}</button>
                     <button onClick={() => handleSetMasterSlave(arm.iface, false)} disabled={settingMs === arm.iface}
                       className="px-2.5 py-1 text-xs rounded bg-cyan-700 hover:bg-cyan-600 text-white disabled:opacity-50"
-                      title="이 팔을 슬레이브(運動出力)로 설정">슬레이브</button>
+                      title={t('이 팔을 슬레이브(運動出力)로 설정')}>{t('슬레이브')}</button>
                     <button onClick={async () => {
                       try { await api.post('/robots/parking/torque?enable=true', { iface: arm.iface }) }
-                      catch { notifyError('토크 ON 실패') }
-                    }} className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white">토크 ON</button>
+                      catch { notifyError(t('토크 ON 실패')) }
+                    }} className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white">{t('토크 ON')}</button>
                     <button onClick={async () => {
                       try { await api.post('/robots/parking/torque?enable=false', { iface: arm.iface }) }
-                      catch { notifyError('토크 OFF 실패') }
-                    }} className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-amber-600 text-neutral-300 hover:text-white">토크 OFF</button>
+                      catch { notifyError(t('토크 OFF 실패')) }
+                    }} className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-amber-600 text-neutral-300 hover:text-white">{t('토크 OFF')}</button>
                     <button onClick={() => handleParkNow(arm.iface)} disabled={!arm.connected}
-                      title="토크를 걸고 저장된 파킹 자세로 보냅니다"
-                      className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-40">파킹</button>
+                      title={t('토크를 걸고 저장된 파킹 자세로 보냅니다')}
+                      className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-40">{t('파킹')}</button>
                     <button onClick={() => handleResetArm(arm.iface)} disabled={!arm.connected}
-                      title="0x150 재동기화 — 슬립으로 밀린 보고 위치를 실제에 맞춥니다"
-                      className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-40">리셋</button>
+                      title={t('0x150 재동기화 — 슬립으로 밀린 보고 위치를 실제에 맞춥니다')}
+                      className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-40">{t('리셋')}</button>
                     </>}
                     <button onClick={() => setDetailIface(arm.iface)} disabled={!arm.connected}
-                      className="px-2.5 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-40">상세</button>
+                      className="px-2.5 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-40">{t('상세')}</button>
                     <button onClick={() => handleDetach(arm.iface)}
-                      className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">해제</button>
+                      className="px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">{t('해제')}</button>
                   </div>
                 </div>
               </div>

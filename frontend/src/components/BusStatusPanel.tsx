@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ErrorChart, RateChart, RX_COLOR, TX_COLOR, type Point } from './BusCharts'
 import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
+import { useT, msg, fmt } from '../i18n'
 
 /**
  * CAN 버스 상태 — 지금 상태 + 누적 오류 + 트래픽.
@@ -31,8 +32,8 @@ type Bus = {
 }
 
 const COUNTER_LABEL: Record<string, string> = {
-  restarts: '재시작', bus_errors: '버스 오류', arbitration_lost: '조정 실패',
-  error_warning: '경고', error_passive: '수동', bus_off: '버스 오프',
+  restarts: msg('재시작'), bus_errors: msg('버스 오류'), arbitration_lost: msg('조정 실패'),
+  error_warning: msg('경고'), error_passive: msg('수동'), bus_off: msg('버스 오프'),
 }
 
 /** 로깅 창 (분). 데몬은 늘 가장 긴 것(30분)을 모으고, 여기서 고른 만큼만 받는다 —
@@ -43,7 +44,7 @@ const WINDOWS = [5, 10, 30] as const
 const INTERVALS = [2, 5, 15] as const
 
 const num = (v: number | null | undefined) =>
-  v == null ? '—' : v.toLocaleString('ko-KR')
+  v == null ? '—' : fmt.number(v)
 
 /**
  * 백만 프레임당 오류. 트래픽이 없으면 뜻이 없으므로 null.
@@ -60,6 +61,7 @@ function perMillion(bus: Bus): number | null {
 }
 
 export default function BusStatusPanel() {
+  const t = useT()
   const { notify, confirm } = useSystemMessage()
   const [buses, setBuses] = useState<Bus[]>([])
   const [err, setErr] = useState<string | null>(null)
@@ -79,9 +81,9 @@ export default function BusStatusPanel() {
       setBuses(d.buses); setErr(null); setAt(new Date())
 
     } catch (e) {
-      setErr(e instanceof Error ? e.message : '읽지 못했습니다')
+      setErr(e instanceof Error ? e.message : t('읽지 못했습니다'))
     } finally { setBusy(false) }
-  }, [minutes])
+  }, [minutes, t])
 
   useEffect(() => { void load() }, [load])
 
@@ -97,21 +99,16 @@ export default function BusStatusPanel() {
   //   기준을 다시 잡아야 한다. 다만 그 사실을 누르기 전에 말해야 한다.
   const reset = async (iface: string) => {
     if (!await confirm(
-      `${iface} 버스를 내렸다 올립니다.\n\n` +
-      '· 이 버스의 팔 **연결이 끊깁니다** — 디바이스 탭에서 다시 연결하세요\n' +
-      '· CAN 컨트롤러가 다시 세워집니다 (BUS-OFF 에서 빠져나오는 유일한 길입니다 —\n' +
-      '  이 어댑터는 자동 복구를 지원하지 않습니다)\n' +
-      '· 누적 오류 카운터는 **안 지워집니다** — 대신 "초기화 이후" 를 세기 시작합니다\n\n' +
-      '계속할까요?')) return
+      t('{iface} 버스를 내렸다 올립니다.\n\n· 이 버스의 팔 **연결이 끊깁니다** — 디바이스 탭에서 다시 연결하세요\n· CAN 컨트롤러가 다시 세워집니다 (BUS-OFF 에서 빠져나오는 유일한 길입니다 —\n  이 어댑터는 자동 복구를 지원하지 않습니다)\n· 누적 오류 카운터는 **안 지워집니다** — 대신 "초기화 이후" 를 세기 시작합니다\n\n계속할까요?', { iface }))) return
     setResetting(iface)
     try {
       await api.post('/robots/bus/reset', { iface })
       await load()
-      notify({ level: 'info', source: '버스',
-               text: `${iface} 를 초기화했습니다 — 팔을 다시 연결하세요.` })
+      notify({ level: 'info', source: t('버스'),
+               text: t('{iface} 를 초기화했습니다 — 팔을 다시 연결하세요.', { iface }) })
     } catch (e) {
-      notify({ level: 'error', source: '버스',
-               text: e instanceof Error ? e.message : '초기화 실패' })
+      notify({ level: 'error', source: t('버스'),
+               text: e instanceof Error ? e.message : t('초기화 실패') })
     } finally { setResetting(null) }
   }
 
@@ -121,7 +118,7 @@ export default function BusStatusPanel() {
         <label className="flex items-center gap-1.5 text-xs text-neutral-300">
           <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)}
             className="accent-blue-500" />
-          자동 새로고침
+          {t('자동 새로고침')}
         </label>
         <div className="flex items-center gap-1 rounded bg-neutral-800 p-0.5">
           {INTERVALS.map((s) => (
@@ -129,35 +126,35 @@ export default function BusStatusPanel() {
               className={`rounded px-2 py-1 text-xs transition-colors ${
                 auto && every === s ? 'bg-neutral-600 text-white'
                                     : 'text-neutral-400 hover:text-neutral-200'}`}>
-              {s}초
+              {t('{s}초', { s })}
             </button>
           ))}
         </div>
         <div className="flex items-center gap-1 rounded bg-neutral-800 p-0.5"
-             title="그래프가 보여줄 기간. 데몬은 늘 30분치를 모으므로 바꾸면 과거가 바로 보입니다.">
-          <span className="pl-1.5 text-[10px] text-neutral-500">기간</span>
+             title={t('그래프가 보여줄 기간. 데몬은 늘 30분치를 모으므로 바꾸면 과거가 바로 보입니다.')}>
+          <span className="pl-1.5 text-[10px] text-neutral-500">{t('기간')}</span>
           {WINDOWS.map((m) => (
             <button key={m} onClick={() => setMinutes(m)}
               className={`rounded px-2 py-1 text-xs transition-colors ${minutes === m
                 ? 'bg-neutral-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}>
-              {m}분
+              {t('{m}분', { m })}
             </button>
           ))}
         </div>
         <button onClick={() => void load()} disabled={busy}
           className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-300
                      hover:bg-neutral-600 disabled:opacity-50">
-          {busy ? '읽는 중…' : '↻ 새로고침'}
+          {busy ? t('읽는 중…') : t('↻ 새로고침')}
         </button>
         <span className="text-xs text-neutral-500">
-          {at ? `${at.toLocaleTimeString('ko-KR')} 기준` : '아직 안 읽음'}
+          {at ? t('{toLocaleTimeString} 기준', { toLocaleTimeString: fmt.time(at) }) : t('아직 안 읽음')}
         </span>
       </div>
 
       {err && <p className="text-xs text-red-400">{err}</p>}
 
       {buses.length === 0 && !err ? (
-        <p className="text-xs text-neutral-500">CAN 인터페이스가 없습니다.</p>
+        <p className="text-xs text-neutral-500">{t('CAN 인터페이스가 없습니다.')}</p>
       ) : buses.map((b) => {
         const rate = perMillion(b)
         return (
@@ -166,22 +163,22 @@ export default function BusStatusPanel() {
               <span className="font-mono text-sm text-neutral-100">{b.iface}</span>
               <span className={`rounded px-2 py-0.5 text-xs ${b.healthy
                 ? 'bg-green-600/20 text-green-400' : 'bg-red-600/20 text-red-400'}`}>
-                {b.state ?? '알 수 없음'}
+                {b.state ?? t('알 수 없음')}
               </span>
               {b.bitrate && (
                 <span className="text-xs text-neutral-500">{b.bitrate / 1000}kbps</span>
               )}
               <span className="ml-auto text-xs tabular-nums text-neutral-400"
                     title={b.rx_since_reset != null
-                      ? `초기화 이후 · 누적 RX ${num(b.rx_packets)} / TX ${num(b.tx_packets)}`
-                      : '누적'}>
+                      ? t('초기화 이후 · 누적 RX {num} / TX {num_2}', { num: num(b.rx_packets), num_2: num(b.tx_packets) })
+                      : t('누적')}>
                 RX {num(b.rx_since_reset ?? b.rx_packets)} · TX {num(b.tx_since_reset ?? b.tx_packets)}
               </span>
               <button onClick={() => void reset(b.iface)} disabled={resetting !== null}
-                title="버스를 내렸다 올립니다 — 팔 연결이 끊기고 카운터가 0 이 됩니다"
+                title={t('버스를 내렸다 올립니다 — 팔 연결이 끊기고 카운터가 0 이 됩니다')}
                 className="rounded bg-neutral-700 px-2 py-0.5 text-xs text-neutral-400
                            hover:bg-amber-600 hover:text-white disabled:opacity-50">
-                {resetting === b.iface ? '초기화 중…' : '초기화'}
+                {resetting === b.iface ? t('초기화 중…') : t('초기화')}
               </button>
             </div>
 
@@ -193,32 +190,32 @@ export default function BusStatusPanel() {
               {Object.entries(b.counters_since_reset ?? b.counters).map(([k, v]) => (
                 <span key={k} className={v ? 'text-amber-400' : 'text-neutral-500'}
                       title={b.counters_since_reset
-                        ? `초기화 이후 ${num(v)} · 누적 ${num(b.counters[k])}`
-                        : `누적 ${num(v)}`}>
-                  {COUNTER_LABEL[k] ?? k} <b>{num(v)}</b>
+                        ? t('초기화 이후 {num} · 누적 {num_2}', { num: num(v), num_2: num(b.counters[k]) })
+                        : t('누적 {num}', { num: num(v) })}>
+                  {t(COUNTER_LABEL[k] ?? k)} <b>{num(v)}</b>
                 </span>
               ))}
               {b.counters_since_reset && (
                 <span className="text-neutral-600">
-                  (초기화 이후 · 누적 {num(b.errors_total)})
+                  {t('(초기화 이후 · 누적 {num})', { num: num(b.errors_total) })}
                 </span>
               )}
             </div>
 
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-neutral-500">
-              <span>드롭 RX {num(b.rx_dropped)} / TX {num(b.tx_dropped)}</span>
-              <span>오류 RX {num(b.rx_errors)} / TX {num(b.tx_errors)}</span>
+              <span>{t('드롭 RX {num} / TX {num_2}', { num: num(b.rx_dropped), num_2: num(b.tx_dropped) })}</span>
+              <span>{t('오류 RX {num} / TX {num_2}', { num: num(b.rx_errors), num_2: num(b.tx_errors) })}</span>
               {rate != null && (
-                <span title="누적 카운터는 인터페이스를 다시 열면 0 이 됩니다 — 절대값끼리 비교하면 안 되고, 이 값이 가동 시간과 무관하게 비교됩니다."
+                <span title={t('누적 카운터는 인터페이스를 다시 열면 0 이 됩니다 — 절대값끼리 비교하면 안 되고, 이 값이 가동 시간과 무관하게 비교됩니다.')}
                       className={rate > 1 ? 'text-amber-400' : ''}>
-                  백만 프레임당 오류 <b>{rate.toFixed(2)}</b>
+                  {t.rich('백만 프레임당 오류 {b}', { b: <b>{rate.toFixed(2)}</b> })}
                 </span>
               )}
             </div>
             <div className="flex flex-wrap gap-4 pt-1">
               <div>
                 <div className="mb-1 flex items-center gap-3 text-[10px] text-neutral-400">
-                  <span>초당 패킷 · 최근 {minutes}분</span>
+                  <span>{t('초당 패킷 · 최근 {minutes}분', { minutes })}</span>
                   {/* 2계열이므로 범례는 늘 있고, 최신값을 직접 붙인다 —
                       TX 가 바닥에 붙어도 숫자는 읽힌다 */}
                   <span className="flex items-center gap-1">
@@ -238,7 +235,9 @@ export default function BusStatusPanel() {
               </div>
               <div>
                 <div className="mb-1 text-[10px] text-neutral-400">
-                  오류 {b.counters_since_reset ? '(초기화 이후)' : '(누적)'}
+                  {t('오류 {counters_since_reset}', {
+                    counters_since_reset: b.counters_since_reset ? t('(초기화 이후)') : t('(누적)'),
+                  })}
                 </div>
                 <ErrorChart counters={b.counters_since_reset ?? b.counters}
                             labels={COUNTER_LABEL} />
@@ -249,11 +248,11 @@ export default function BusStatusPanel() {
       })}
 
       <p className="text-xs text-neutral-600">
-        ⚠ 누적 카운터는 <b>버스를 초기화해도 안 지워집니다</b> — 이 어댑터(gs_usb)의
-        드라이버가 그렇습니다. 초기화하면 그 시점을 기준으로 다시 세기 시작하고,
-        위 숫자는 <b>그 이후</b>의 값입니다(괄호 안이 누적). 팔끼리 비교할 때는
-        절대값이 아니라 <b>백만 프레임당 오류</b>를 보세요 — 실측으로 같은 시각에
-        올라온 두 버스가 0 과 34,794 였습니다.
+        {t.rich('⚠ 누적 카운터는 {b} — 이 어댑터(gs_usb)의 드라이버가 그렇습니다. 초기화하면 그 시점을 기준으로 다시 세기 시작하고, 위 숫자는 {b_2}의 값입니다(괄호 안이 누적). 팔끼리 비교할 때는 절대값이 아니라 {b_3}를 보세요 — 실측으로 같은 시각에 올라온 두 버스가 0 과 34,794 였습니다.', {
+          b: <b>{t('버스를 초기화해도 안 지워집니다')}</b>,
+          b_2: <b>{t('그 이후')}</b>,
+          b_3: <b>{t('백만 프레임당 오류')}</b>,
+        })}
       </p>
     </div>
   )

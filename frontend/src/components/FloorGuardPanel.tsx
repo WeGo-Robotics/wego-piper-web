@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 /**
  * 바닥 필터 설정 (refactor/robotd-safety.md).
@@ -69,23 +70,24 @@ function Switch({ on, onChange, disabled }: {
  * 걸린다고 말하는 것이 여기서 제일 나쁜 고장이다.
  */
 function Coverage({ transport, enabled }: { transport: string; enabled: boolean }) {
+  const t = useT()
   const shm = transport === 'shm'
   const rows: [string, boolean, string][] = [
-    ['녹화 텔레오퍼레이션 (리더→팔로워)', shm,
-     shm ? '' : 'robot_transport=direct — subprocess 가 CAN 을 직접 엽니다'],
-    ['정책 추론', shm,
-     shm ? '' : 'robot_transport=direct — subprocess 가 CAN 을 직접 엽니다'],
-    ['웹 릴레이·관절 조그', true, ''],
-    ['파킹', false, '저장된 파킹 자세로 곧바로 명령합니다'],
-    ['말단(EndPose) 조그', false, '온보드 IK — 관절 목표를 우리가 정하지 않습니다'],
+    [t('녹화 텔레오퍼레이션 (리더→팔로워)'), shm,
+     shm ? '' : t('robot_transport=direct — subprocess 가 CAN 을 직접 엽니다')],
+    [t('정책 추론'), shm,
+     shm ? '' : t('robot_transport=direct — subprocess 가 CAN 을 직접 엽니다')],
+    [t('웹 릴레이·관절 조그'), true, ''],
+    [t('파킹'), false, t('저장된 파킹 자세로 곧바로 명령합니다')],
+    [t('말단(EndPose) 조그'), false, t('온보드 IK — 관절 목표를 우리가 정하지 않습니다')],
   ]
   return (
     <div className="space-y-1">
       <div className="text-sm text-neutral-300">
-        적용 범위
+        {t('적용 범위')}
         {!shm && transport && (
           <span className="ml-2 text-xs text-amber-400">
-            전송 방식 {transport}
+            {t('전송 방식 {transport}', { transport })}
           </span>
         )}
       </div>
@@ -114,6 +116,7 @@ type Floor = {
 }
 
 export default function FloorGuardPanel() {
+  const t = useT()
   const { notify } = useSystemMessage()
   const [floor, setFloor] = useState<Floor | null>(null)
   const [transport, setTransport] = useState<string>('')
@@ -140,33 +143,32 @@ export default function FloorGuardPanel() {
       const r = await api.post<{ floor: Floor }>('/robots/safety', patch)
       setFloor(r.floor)
       setDraft(String(r.floor.min_z_cm))
-      notify({ level: 'info', source: '안전',
+      notify({ level: 'info', source: t('안전'),
         text: r.floor.enabled
-          ? `바닥 필터 켜짐 — 한계 ${r.floor.min_z_cm}cm`
-          : '바닥 필터 꺼짐' })
+          ? t('바닥 필터 켜짐 — 한계 {min_z_cm}cm', { min_z_cm: r.floor.min_z_cm })
+          : t('바닥 필터 꺼짐') })
     } catch (e) {
-      notify({ level: 'error', source: '안전',
-        text: e instanceof Error ? e.message : '설정 변경 실패' })
+      notify({ level: 'error', source: t('안전'),
+        text: e instanceof Error ? e.message : t('설정 변경 실패') })
       refresh()
     } finally {
       setBusy(false)
     }
   }
 
-  if (!loaded) return <div className="text-sm text-neutral-500">불러오는 중…</div>
+  if (!loaded) return <div className="text-sm text-neutral-500">{t('불러오는 중…')}</div>
 
   // ⚠ 게이트웨이가 기본값을 지어내지 않는다 — robotd 가 없으면 팔에 아무것도
   //   안 걸려 있는데 화면만 "켜짐"이라고 말하는 상태가 제일 나쁘다.
   if (!floor) {
     return (
       <div className="space-y-2">
-        <h2 className="text-lg font-semibold">바닥 필터</h2>
+        <h2 className="text-lg font-semibold">{t('바닥 필터')}</h2>
         <p className="text-sm text-amber-400">
-          robotd 가 응답하지 않아 설정을 읽을 수 없습니다.
+          {t('robotd 가 응답하지 않아 설정을 읽을 수 없습니다.')}
         </p>
         <p className="text-xs text-neutral-500">
-          필터는 robotd 안에서 돕니다 — 데몬이 없으면 팔에 아무 필터도 걸려 있지
-          않습니다. [서비스] 탭에서 상태를 확인하세요.
+          {t('필터는 robotd 안에서 돕니다 — 데몬이 없으면 팔에 아무 필터도 걸려 있지 않습니다. [서비스] 탭에서 상태를 확인하세요.')}
         </p>
       </div>
     )
@@ -182,14 +184,14 @@ export default function FloorGuardPanel() {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold">바닥 필터</h2>
+          <h2 className="text-lg font-semibold">{t('바닥 필터')}</h2>
           <p className="text-sm text-neutral-400">
-            팔이 정해둔 높이 아래로 내려가는 명령을 <b>접촉 직전까지</b>로 줄입니다.
+            {t.rich('팔이 정해둔 높이 아래로 내려가는 명령을 {b}로 줄입니다.', { b: <b>{t('접촉 직전까지')}</b> })}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <span className={`text-sm ${floor.enabled ? 'text-green-400' : 'text-neutral-500'}`}>
-            {floor.enabled ? '켜짐' : '꺼짐'}
+            {floor.enabled ? t('켜짐') : t('꺼짐')}
           </span>
           <Switch on={floor.enabled} disabled={busy}
                   onChange={(v) => void send({ enabled: v })} />
@@ -198,17 +200,19 @@ export default function FloorGuardPanel() {
 
       {!floor.enabled && (
         <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
-          필터가 꺼져 있습니다. 관절 범위·변화율 제한과 데드맨은 그대로 돌지만,
-          <b> 팔이 작업면으로 내려가는 것을 막는 것은 없습니다.</b>
+          {t.rich('필터가 꺼져 있습니다. 관절 범위·변화율 제한과 데드맨은 그대로 돌지만,{b}', {
+            b: <b>{' '}{t('팔이 작업면으로 내려가는 것을 막는 것은 없습니다.')}</b>,
+          })}
         </p>
       )}
 
       <div className="space-y-2">
         <label className="block text-sm text-neutral-300">
-          한계 높이
-          <span className="ml-2 text-xs text-neutral-500">
-            팔 밑면(장착면) 기준. 음수면 그 아래까지 허용합니다
-          </span>
+          {t.rich('한계 높이{span}', {
+            span: <span className="ml-2 text-xs text-neutral-500">
+            {t('팔 밑면(장착면) 기준. 음수면 그 아래까지 허용합니다')}
+          </span>,
+          })}
         </label>
         <div className="flex items-center gap-2">
           <input
@@ -226,7 +230,7 @@ export default function FloorGuardPanel() {
             className="rounded bg-blue-600 px-3 py-1 text-sm text-white
                        hover:bg-blue-500 disabled:opacity-40"
           >
-            적용
+            {t('적용')}
           </button>
           {floor.min_z_cm !== floor.default_cm && (
             <button
@@ -235,12 +239,12 @@ export default function FloorGuardPanel() {
               className="rounded bg-neutral-700 px-3 py-1 text-sm text-neutral-300
                          hover:bg-neutral-600 disabled:opacity-40"
             >
-              기본값 ({floor.default_cm})
+              {t('기본값 ({default_cm})', { default_cm: floor.default_cm })}
             </button>
           )}
         </div>
         {!valid && draft.trim() !== '' && (
-          <p className="text-xs text-red-400">{lo} ~ {hi} 사이여야 합니다</p>
+          <p className="text-xs text-red-400">{t('{lo} ~ {hi} 사이여야 합니다', { lo, hi })}</p>
         )}
       </div>
 
@@ -251,18 +255,16 @@ export default function FloorGuardPanel() {
       <div className="space-y-1 rounded border border-neutral-700 bg-neutral-900/60 px-3 py-2
                       text-xs leading-relaxed text-neutral-400">
         <p>
-          기준은 <b>바닥이 아니라 팔 밑면</b>입니다. 실측(데이터셋 4개·84,065프레임)에서
-          정상 작업이 장착면보다 <b>3cm 가까이 아래</b>까지 내려갑니다 — 그리퍼 끝이
-          작업면의 물체를 집을 때입니다. 그래서 기본값이 −4cm 입니다.
+          {t.rich('기준은 {b}입니다. 실측(데이터셋 4개·84,065프레임)에서 정상 작업이 장착면보다 {b_2}까지 내려갑니다 — 그리퍼 끝이 작업면의 물체를 집을 때입니다. 그래서 기본값이 −4cm 입니다.', {
+            b: <b>{t('바닥이 아니라 팔 밑면')}</b>,
+            b_2: <b>{t('3cm 가까이 아래')}</b>,
+          })}
         </p>
         <p>
-          0cm 로 두면 정상 작업의 4.4% 가 막힙니다. 값을 올릴수록 안전 여유는 늘지만
-          팔이 작업면에 못 닿습니다.
+          {t('0cm 로 두면 정상 작업의 4.4% 가 막힙니다. 값을 올릴수록 안전 여유는 늘지만 팔이 작업면에 못 닿습니다.')}
         </p>
         <p className="text-amber-400/80">
-          이 3cm 이 받침대 높이인지 캘리브레이션 오차인지는 아직 확인되지 않았습니다.
-          장착면에서 작업면까지 줄자로 재면 갈립니다 — 후자라면 이 숫자의 절대 높이가
-          통째로 틀린 것입니다.
+          {t('이 3cm 이 받침대 높이인지 캘리브레이션 오차인지는 아직 확인되지 않았습니다. 장착면에서 작업면까지 줄자로 재면 갈립니다 — 후자라면 이 숫자의 절대 높이가 통째로 틀린 것입니다.')}
         </p>
       </div>
     </div>

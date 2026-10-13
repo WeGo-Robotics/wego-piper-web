@@ -8,6 +8,8 @@ import Layout from './components/Layout'
 import { SystemMessageProvider } from './components/SystemMessages'
 import { layoutPages, standalonePages } from './config/pages'
 import type { PageEntry } from './config/pages'
+import PageLoading from './components/PageLoading'
+import { initI18n } from './i18n'
 
 /**
  * 페이지를 렌더하는 **유일한 지점.**
@@ -24,46 +26,46 @@ function renderPage(page: PageEntry) {
   )
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    {/* ⚠ 라우터 **밖**이다 — 페이지가 바뀌어도 메시지가 살아 있어야 한다.
-        장치가 빠진 뒤 다른 탭으로 옮겼다고 경고가 사라지면 안 된다. */}
-    <SystemMessageProvider>
-    {/* ⚠ 라우터 **밖**이다 — 어느 경로로 들어와도 같은 관문을 지난다. 조종 창처럼
-        Layout 밖에 사는 페이지도 예외가 아니다. */}
-    <AuthGate>
-    <BrowserRouter>
-      <Routes>
-        <Route element={<Layout />}>
-          {layoutPages.map((page) =>
-            page.path === '/' ? (
-              <Route key={page.path} index element={renderPage(page)} />
-            ) : (
-              <Route key={page.path} path={page.path.slice(1)} element={renderPage(page)} />
-            )
-          )}
-        </Route>
-        {/* standalone 페이지(조종 창)는 기존 UI와 별개로 전체 화면(Layout 밖)으로 렌더 */}
-        {standalonePages.map((page) => (
-          <Route
-            key={page.path}
-            path={page.path.slice(1)}
-            element={
-              <Suspense
-                fallback={
-                  <div className="min-h-screen bg-neutral-900 text-neutral-100 flex items-center justify-center text-sm text-neutral-400">
-                    로딩 중...
-                  </div>
-                }
-              >
-                {renderPage(page)}
-              </Suspense>
-            }
-          />
-        ))}
-      </Routes>
-    </BrowserRouter>
-    </AuthGate>
-    </SystemMessageProvider>
-  </StrictMode>,
-)
+function mount() {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      {/* ⚠ 라우터 **밖**이다 — 페이지가 바뀌어도 메시지가 살아 있어야 한다.
+          장치가 빠진 뒤 다른 탭으로 옮겼다고 경고가 사라지면 안 된다. */}
+      <SystemMessageProvider>
+      {/* ⚠ 라우터 **밖**이다 — 어느 경로로 들어와도 같은 관문을 지난다. 조종 창처럼
+          Layout 밖에 사는 페이지도 예외가 아니다. */}
+      <AuthGate>
+      <BrowserRouter>
+        <Routes>
+          <Route element={<Layout />}>
+            {layoutPages.map((page) =>
+              page.path === '/' ? (
+                <Route key={page.path} index element={renderPage(page)} />
+              ) : (
+                <Route key={page.path} path={page.path.slice(1)} element={renderPage(page)} />
+              )
+            )}
+          </Route>
+          {/* standalone 페이지(조종 창)는 기존 UI와 별개로 전체 화면(Layout 밖)으로 렌더 */}
+          {standalonePages.map((page) => (
+            <Route
+              key={page.path}
+              path={page.path.slice(1)}
+              element={
+                <Suspense fallback={<PageLoading />}>
+                  {renderPage(page)}
+                </Suspense>
+              }
+            />
+          ))}
+        </Routes>
+      </BrowserRouter>
+      </AuthGate>
+      </SystemMessageProvider>
+    </StrictMode>,
+  )
+}
+
+// 번역이 실린 **뒤에** 첫 화면을 그린다 — 안 그러면 한국어가 번쩍인 뒤 바뀐다.
+// 번역 파일을 못 읽어도 한국어로 뜬다 (`initI18n` 이 삼킨다).
+initI18n().finally(mount)

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSystemMessage } from './SystemMessages'
 import { JOINTS } from '../config/joints'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 /**
  * 하드웨어 영점 설정 (piper SDK `JointConfig(set_zero=0xAE)`, CAN 0x475).
@@ -25,6 +26,7 @@ type Result = { ok: boolean; raw_before?: number | null; raw_after?: number | nu
 
 /** 상세 창의 영점 탭이 임베드한다 — 오버레이·헤더 없는 내용물만. */
 export function ZeroCalibrationPanel({ iface }: { iface: string }) {
+  const t = useT()
   const { notify, confirm } = useSystemMessage()
   const [raw, setRaw] = useState<Record<string, number>>({})
   const [busy, setBusy] = useState<string | null>(null)
@@ -54,14 +56,14 @@ export function ZeroCalibrationPanel({ iface }: { iface: string }) {
     setResetting(true)
     try {
       const r = await api.post<{ warnings: string[] }>('/robots/reset', { iface })
-      for (const w of r.warnings) notify({ level: 'warn', source: '영점', text: w })
+      for (const w of r.warnings) notify({ level: 'warn', source: t('영점'), text: w })
       if (r.warnings.length === 0)
-        notify({ level: 'info', source: '영점',
-          text: '리셋 완료 — 재동기화 간극 없음 (보고 위치가 실제와 일치하고 있었습니다)' })
+        notify({ level: 'info', source: t('영점'),
+          text: t('리셋 완료 — 재동기화 간극 없음 (보고 위치가 실제와 일치하고 있었습니다)') })
       await read()
     } catch (e) {
-      notify({ level: 'error', source: '영점',
-        text: e instanceof Error ? e.message : '리셋 실패' })
+      notify({ level: 'error', source: t('영점'),
+        text: e instanceof Error ? e.message : t('리셋 실패') })
     } finally {
       setResetting(false)
     }
@@ -76,8 +78,8 @@ export function ZeroCalibrationPanel({ iface }: { iface: string }) {
       const d = await api.get<Record<string, number>>(`/robots/joints/raw/${iface}`)
       setRaw(d)
     } catch (e) {
-      notify({ level: 'error', source: '영점',
-        text: e instanceof Error ? e.message : '위치를 읽지 못했습니다' })
+      notify({ level: 'error', source: t('영점'),
+        text: e instanceof Error ? e.message : t('위치를 읽지 못했습니다') })
     } finally {
       setRefreshing(false)
     }
@@ -86,22 +88,19 @@ export function ZeroCalibrationPanel({ iface }: { iface: string }) {
   const setZero = async (joint: string, label: string) => {
     const now = raw[joint]
     const ok = await confirm(
-      `${label} 의 지금 위치를 하드웨어 영점으로 굽습니다.\n\n` +
-      `현재 raw ${now ?? '?'}\n\n` +
-      '이 값이 모터 플래시에 쓰이고 전원을 꺼도 남습니다. 되돌리는 명령이 없습니다.\n' +
-      '이 관절이 정말 원점 자세에 있는지 확인하세요.',
+      t('{label} 의 지금 위치를 하드웨어 영점으로 굽습니다.\n\n현재 raw {now}\n\n이 값이 모터 플래시에 쓰이고 전원을 꺼도 남습니다. 되돌리는 명령이 없습니다.\n이 관절이 정말 원점 자세에 있는지 확인하세요.', { label, now: now ?? '?' }),
       { danger: true })
     if (!ok) return
     setBusy(joint)
     try {
       const r = await api.post<Result>('/robots/zero', { iface, joint })
       setDone((d) => ({ ...d, [joint]: r }))
-      notify({ level: 'info', source: '영점',
-        text: `${label} 영점 설정 — raw ${r.raw_before} → ${r.raw_after}` })
+      notify({ level: 'info', source: t('영점'),
+        text: t('{label} 영점 설정 — raw {raw_before} → {raw_after}', { label, raw_before: String(r.raw_before), raw_after: String(r.raw_after) }) })
     } catch (e) {
-      const msg = e instanceof Error ? e.message : '영점 설정 실패'
+      const msg = e instanceof Error ? e.message : t('영점 설정 실패')
       setDone((d) => ({ ...d, [joint]: { ok: false, error: msg } }))
-      notify({ level: 'error', source: '영점', text: `${label}: ${msg}` })
+      notify({ level: 'error', source: t('영점'), text: `${label}: ${msg}` })
     } finally {
       setBusy(null)
     }
@@ -112,34 +111,29 @@ export function ZeroCalibrationPanel({ iface }: { iface: string }) {
         {/* ⚠ 이 경고가 없으면 버튼 일곱 개짜리 평범한 창으로 보인다. */}
         <div className="space-y-1 rounded border border-red-500/40 bg-red-500/10 px-3 py-2
                         text-xs leading-relaxed text-red-300">
-          <p><b>되돌릴 수 없습니다.</b> SDK 에 영점 해제 명령이 없습니다.
-            되돌리려면 그 관절을 원래 자세로 되돌려 놓고 다시 구워야 하는데,
-            그 자세를 기록해 두지 않았다면 찾을 수 없습니다.</p>
-          <p>영점을 옮기면 <b>raw 값의 의미가 바뀝니다.</b> 정규화·순기구학·바닥
-            필터의 높이, 저장된 파킹 자세, <b>이미 녹화한 데이터셋의 뜻</b>까지
-            그 팔 기준으로 어긋납니다.</p>
+          <p>{t.rich('{b} SDK 에 영점 해제 명령이 없습니다. 되돌리려면 그 관절을 원래 자세로 되돌려 놓고 다시 구워야 하는데, 그 자세를 기록해 두지 않았다면 찾을 수 없습니다.', { b: <b>{t('되돌릴 수 없습니다.')}</b> })}</p>
+          <p>{t.rich('영점을 옮기면 {b} 정규화·순기구학·바닥 필터의 높이, 저장된 파킹 자세, {b_2}까지 그 팔 기준으로 어긋납니다.', { b: <b>{t('raw 값의 의미가 바뀝니다.')}</b>, b_2: <b>{t('이미 녹화한 데이터셋의 뜻')}</b> })}</p>
         </div>
 
         <ol className="list-decimal space-y-0.5 pl-5 text-xs text-neutral-400">
-          <li>[리셋]으로 보고 위치를 실제와 재동기화합니다 — 간극이 크게 나오면
-            영점이 아니라 <b>슬립</b>이었던 것입니다 (굽지 마세요)</li>
-          <li>토크를 끄고 관절을 손으로 원점 자세에 맞춥니다</li>
-          <li>아래 raw 값이 그 자세에서 멈춘 것을 확인합니다</li>
-          <li>그 관절의 [영점] 을 누릅니다</li>
+          <li>{t.rich('[리셋]으로 보고 위치를 실제와 재동기화합니다 — 간극이 크게 나오면 영점이 아니라 {b}이었던 것입니다 (굽지 마세요)', { b: <b>{t('슬립')}</b> })}</li>
+          <li>{t('토크를 끄고 관절을 손으로 원점 자세에 맞춥니다')}</li>
+          <li>{t('아래 raw 값이 그 자세에서 멈춘 것을 확인합니다')}</li>
+          <li>{t('그 관절의 [영점] 을 누릅니다')}</li>
         </ol>
 
         <div className="flex items-center gap-2">
           <button onClick={() => void doReset()} disabled={resetting || busy !== null}
-            title="MotionCtrl_1(0x02,0,0) — 급정지 해제 + 에러 클리어 + 보고 위치를 출력축 실제값에 재동기화. 슬립(piper_sdk #120)이 쌓여 있었다면 간극이 경고로 뜹니다."
+            title={t('MotionCtrl_1(0x02,0,0) — 급정지 해제 + 에러 클리어 + 보고 위치를 출력축 실제값에 재동기화. 슬립(piper_sdk #120)이 쌓여 있었다면 간극이 경고로 뜹니다.')}
             className="rounded bg-blue-600 px-3 py-1.5 text-xs text-white
                        hover:bg-blue-500 disabled:opacity-40">
-            {resetting ? '리셋 중…' : '리셋 (0x150 재동기화)'}
+            {resetting ? t('리셋 중…') : t('리셋 (0x150 재동기화)')}
           </button>
           <button onClick={() => void doRefresh()} disabled={refreshing}
-            title="raw 위치를 지금 다시 읽습니다 (평소에도 0.3초마다 자동 갱신됩니다)"
+            title={t('raw 위치를 지금 다시 읽습니다 (평소에도 0.3초마다 자동 갱신됩니다)')}
             className="rounded bg-neutral-700 px-3 py-1.5 text-xs text-neutral-200
                        hover:bg-neutral-600 disabled:opacity-40">
-            {refreshing ? '읽는 중…' : '위치 새로고침'}
+            {refreshing ? t('읽는 중…') : t('위치 새로고침')}
           </button>
         </div>
 
@@ -167,7 +161,7 @@ export function ZeroCalibrationPanel({ iface }: { iface: string }) {
                   disabled={busy !== null}
                   className="shrink-0 rounded bg-red-600/80 px-2.5 py-1 text-xs text-white
                              hover:bg-red-600 disabled:opacity-40">
-                  {busy === j.name ? '…' : '영점'}
+                  {busy === j.name ? '…' : t('영점')}
                 </button>
               </div>
             )
@@ -177,8 +171,7 @@ export function ZeroCalibrationPanel({ iface }: { iface: string }) {
         {/* 전체 한 번에 굽는 버튼은 두지 않는다 — 되돌릴 수 없는 조작을 일곱 개
             묶어 한 번에 실행할 이유가 없고, 하나라도 자세가 틀리면 전부 다시 맞춰야 한다. */}
         <p className="text-xs text-neutral-600">
-          한 번에 하나씩만 굽습니다. 일곱 개를 묶어 실행하면 하나가 틀렸을 때
-          어느 것이 틀렸는지 알 수 없습니다.
+          {t('한 번에 하나씩만 굽습니다. 일곱 개를 묶어 실행하면 하나가 틀렸을 때 어느 것이 틀렸는지 알 수 없습니다.')}
         </p>
     </div>
   )
@@ -187,6 +180,7 @@ export function ZeroCalibrationPanel({ iface }: { iface: string }) {
 /** 단독 모달 래퍼 — 상세 창 밖에서 영점만 열고 싶을 때. */
 export default function ZeroCalibrationModal({ iface, onClose }:
   { iface: string; onClose: () => void }) {
+  const t = useT()
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
          onClick={onClose}>
@@ -196,13 +190,13 @@ export default function ZeroCalibrationModal({ iface, onClose }:
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold text-neutral-100">
-              하드웨어 영점 — {iface}
+              {t('하드웨어 영점 — {iface}', { iface })}
             </h2>
-            <p className="text-xs text-neutral-400">모터 플래시에 굽습니다. [파킹]과 다른 물건입니다.</p>
+            <p className="text-xs text-neutral-400">{t('모터 플래시에 굽습니다. [파킹]과 다른 물건입니다.')}</p>
           </div>
           <button onClick={onClose}
                   className="shrink-0 rounded px-2 py-1 text-sm text-neutral-400 hover:text-white">
-            닫기
+            {t('닫기')}
           </button>
         </div>
         <ZeroCalibrationPanel iface={iface} />

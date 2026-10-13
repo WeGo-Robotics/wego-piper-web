@@ -9,6 +9,7 @@ import ServicesPanel from '../components/ServicesPanel'
 import VersionCard from '../components/VersionCard'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
+import { useT, msg } from '../i18n'
 
 /**
  * 설정 — 탭으로 나눈다.
@@ -18,12 +19,12 @@ import { api } from '../services/api'
  */
 
 const TABS = [
-  { id: 'general', label: '일반' },
-  { id: 'safety', label: '안전' },
-  { id: 'access', label: '보안' },
-  { id: 'services', label: '서비스' },
-  { id: 'hub', label: '저장소' },
-  { id: 'cloud', label: '클라우드' },
+  { id: 'general', label: msg('일반') },
+  { id: 'safety', label: msg('안전') },
+  { id: 'access', label: msg('보안') },
+  { id: 'services', label: msg('서비스') },
+  { id: 'hub', label: msg('저장소') },
+  { id: 'cloud', label: msg('클라우드') },
   { id: 'api', label: 'API' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
@@ -31,11 +32,12 @@ type TabId = (typeof TABS)[number]['id']
 type ModelPath = { path: string; exists: boolean }
 
 export default function SettingsPage() {
+  const t = useT()
   // ⚠ `window.alert` 를 쓰지 않는다 — 이벤트 루프를 막아 E-stop heartbeat 가
   //   끊기고, 2초 타임아웃에 추론이 강제 종료된다 (confirm 으로 실제로 겪었다).
   const { notify } = useSystemMessage()
   const notifyError = (text: string) =>
-    notify({ level: 'error', text, source: '설정' })
+    notify({ level: 'error', text, source: t('설정') })
   const [tab, setTab] = useState<TabId>('general')
   const navigate = useNavigate()
   const [paths, setPaths] = useState<ModelPath[]>([])
@@ -57,14 +59,14 @@ export default function SettingsPage() {
   }, [])
   const saveDiskThreshold = async () => {
     const v = Number(diskThreshold)
-    if (!Number.isFinite(v) || v <= 0) { notifyError('0보다 큰 GB 값을 입력하세요'); return }
+    if (!Number.isFinite(v) || v <= 0) { notifyError(t('0보다 큰 GB 값을 입력하세요')); return }
     try {
       const r = await api.post<{ threshold_gb: number }>('/datasets/disk-threshold', { threshold_gb: v })
       setDiskThreshold(String(r.threshold_gb))
-      notify({ level: 'info', source: '설정',
-               text: `디스크 경고 임계치 ${r.threshold_gb}GB 저장됨 — 상태바 💾 에 바로 반영됩니다` })
+      notify({ level: 'info', source: t('설정'),
+               text: t('디스크 경고 임계치 {threshold_gb}GB 저장됨 — 상태바 💾 에 바로 반영됩니다', { threshold_gb: r.threshold_gb }) })
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : '저장 실패')
+      notifyError(e instanceof Error ? e.message : t('저장 실패'))
     }
   }
 
@@ -76,28 +78,28 @@ export default function SettingsPage() {
       setNewPath('')
       fetchPaths()
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : '경로 추가 실패')
+      notifyError(e instanceof Error ? e.message : t('경로 추가 실패'))
     }
   }
 
   const handleRemove = async (path: string) => {
-    if (paths.length <= 1) { notifyError('최소 1개의 경로가 필요합니다'); return }
+    if (paths.length <= 1) { notifyError(t('최소 1개의 경로가 필요합니다')); return }
     await api.post('/models/paths/remove', { path })
     fetchPaths()
   }
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">설정</h1>
+      <h1 className="text-2xl font-bold">{t('설정')}</h1>
 
       <div className="flex gap-1 border-b border-neutral-700">
-        {TABS.map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)}
+        {TABS.map((tb) => (
+          <button key={tb.id} onClick={() => setTab(tb.id)}
             className={`-mb-px border-b-2 px-3 py-1.5 text-sm transition-colors ${
-              tab === t.id
+              tab === tb.id
                 ? 'border-blue-500 text-white'
                 : 'border-transparent text-neutral-400 hover:text-neutral-200'}`}>
-            {t.label}
+            {t(tb.label)}
           </button>
         ))}
       </div>
@@ -131,10 +133,10 @@ export default function SettingsPage() {
       {tab === 'general' && (<>
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5 space-y-3">
         <div>
-          <h2 className="text-lg font-semibold">디스크 경고 임계치</h2>
+          <h2 className="text-lg font-semibold">{t('디스크 경고 임계치')}</h2>
           <p className="text-xs text-neutral-400 mt-1">
-            데이터셋·모델 사용량 합이 이 값을 넘으면 상태바 💾 에 ⚠ 가 붙습니다.
-            {diskTotal != null && <> 지금 사용량: <b>{diskTotal}GB</b></>}
+            {t('데이터셋·모델 사용량 합이 이 값을 넘으면 상태바 💾 에 ⚠ 가 붙습니다.')}
+            {diskTotal != null && <>{' '}{t.rich('지금 사용량: {b}', { b: <b>{diskTotal}GB</b> })}</>}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -144,17 +146,17 @@ export default function SettingsPage() {
             className="w-32 px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 text-right tabular-nums focus:outline-none focus:border-blue-500" />
           <span className="text-sm text-neutral-400">GB</span>
           <button onClick={saveDiskThreshold}
-            className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white">저장</button>
+            className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white">{t('저장')}</button>
         </div>
         <p className="text-[10px] text-neutral-500">
-          저장값은 파일로 남아 재시작·환경변수(PIPER_DISK_WARNING_THRESHOLD_GB)보다 우선합니다.
+          {t('저장값은 파일로 남아 재시작·환경변수(PIPER_DISK_WARNING_THRESHOLD_GB)보다 우선합니다.')}
         </p>
       </div>
 
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-5 space-y-4">
         <div>
-          <h2 className="text-lg font-semibold">모델 검색 경로</h2>
-          <p className="text-xs text-neutral-400 mt-1">추론에 사용할 모델 체크포인트를 검색하는 디렉토리 목록입니다.</p>
+          <h2 className="text-lg font-semibold">{t('모델 검색 경로')}</h2>
+          <p className="text-xs text-neutral-400 mt-1">{t('추론에 사용할 모델 체크포인트를 검색하는 디렉토리 목록입니다.')}</p>
         </div>
 
         <div className="space-y-2">
@@ -162,9 +164,9 @@ export default function SettingsPage() {
             <div key={p.path} className="flex items-center gap-3 rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2.5">
               <span className={`w-2 h-2 rounded-full flex-shrink-0 ${p.exists ? 'bg-green-500' : 'bg-red-500'}`} />
               <span className="flex-1 font-mono text-sm text-neutral-200 truncate">{p.path}</span>
-              {!p.exists && <span className="text-xs text-red-400 flex-shrink-0">경로 없음</span>}
+              {!p.exists && <span className="text-xs text-red-400 flex-shrink-0">{t('경로 없음')}</span>}
               <button onClick={() => handleRemove(p.path)}
-                className="text-neutral-500 hover:text-red-400 text-sm flex-shrink-0 px-2">삭제</button>
+                className="text-neutral-500 hover:text-red-400 text-sm flex-shrink-0 px-2">{t('삭제')}</button>
             </div>
           ))}
         </div>
@@ -172,10 +174,10 @@ export default function SettingsPage() {
         <div className="flex gap-2">
           <input type="text" value={newPath} onChange={(e) => setNewPath(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-            placeholder="경로 추가 (예: /home/user/models)"
+            placeholder={t('경로 추가 (예: /home/user/models)')}
             className="flex-1 px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-blue-500" />
           <button onClick={handleAdd}
-            className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white">추가</button>
+            className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white">{t('추가')}</button>
         </div>
       </div>
       </>)}

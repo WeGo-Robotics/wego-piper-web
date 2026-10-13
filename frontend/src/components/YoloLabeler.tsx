@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 export type LabelBox = { cls: number; cx: number; cy: number; w: number; h: number }
 
@@ -35,6 +36,7 @@ type Drag =
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v))
 
 export default function YoloLabeler({ dataset, classes, files, index, onNavigate, onSaved, onError }: Props) {
+  const t = useT()
   const file = files[index]
   const [boxes, setBoxes] = useState<LabelBox[] | null>(null)
   const [loaded, setLoaded] = useState(false)   // 라벨 GET 완료 전 조작 금지
@@ -57,7 +59,7 @@ export default function YoloLabeler({ dataset, classes, files, index, onNavigate
     fileRef.current = file
     api.get<{ boxes: LabelBox[] | null }>(`/yolo/datasets/${dataset}/labels/${file}`)
       .then((r) => { setBoxes(r.boxes); dirtyRef.current = false; setLoaded(true) })
-      .catch((e) => onError(e instanceof Error ? e.message : '라벨 로드 실패'))
+      .catch((e) => onError(e instanceof Error ? e.message : t('라벨 로드 실패')))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataset, file])
 
@@ -70,7 +72,7 @@ export default function YoloLabeler({ dataset, classes, files, index, onNavigate
       setSavedAt(Date.now())
       onSaved(f, true)
     } catch (e) {
-      onError(e instanceof Error ? e.message : '라벨 저장 실패')
+      onError(e instanceof Error ? e.message : t('라벨 저장 실패'))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataset])
@@ -183,7 +185,7 @@ export default function YoloLabeler({ dataset, classes, files, index, onNavigate
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, selected, boxes, classes.length, files.length])
 
-  if (!file) return <div className="text-sm text-neutral-500 py-10 text-center">이미지가 없습니다</div>
+  if (!file) return <div className="text-sm text-neutral-500 py-10 text-center">{t('이미지가 없습니다')}</div>
 
   // 그리는 중인 임시 박스
   const temp = drag?.kind === 'draw' ? {
@@ -208,8 +210,8 @@ export default function YoloLabeler({ dataset, classes, files, index, onNavigate
         ))}
         <span className="ml-auto text-xs text-neutral-500">
           {index + 1}/{files.length}
-          {boxes == null ? ' · 미라벨' : ` · 박스 ${boxes.length}개`}
-          {savedAt > 0 && dirtyRef.current === false && boxes != null && ' · 저장됨'}
+          {boxes == null ? t(' · 미라벨') : t(' · 박스 {length}개', { length: boxes.length })}
+          {savedAt > 0 && dirtyRef.current === false && boxes != null && t(' · 저장됨')}
         </span>
       </div>
 
@@ -251,14 +253,14 @@ export default function YoloLabeler({ dataset, classes, files, index, onNavigate
       {/* 동작 줄 */}
       <div className="flex items-center gap-2 flex-wrap text-xs text-neutral-500">
         <button onClick={() => navigate(index - 1)} disabled={index === 0}
-          className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 disabled:opacity-40">← 이전</button>
+          className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 disabled:opacity-40">{t('← 이전')}</button>
         <button onClick={() => navigate(index + 1)} disabled={index >= files.length - 1}
-          className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 disabled:opacity-40">다음 →</button>
+          className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 disabled:opacity-40">{t('다음 →')}</button>
         {boxes == null && (
           <button onClick={() => mutate([])}
             className="px-2 py-1 rounded bg-neutral-800 hover:bg-green-700 text-neutral-300 hover:text-white"
-            title="박스 0개로 저장 — 이 장면에 대상 물체가 없음을 사람이 확인함">
-            배경으로 저장
+            title={t('박스 0개로 저장 — 이 장면에 대상 물체가 없음을 사람이 확인함')}>
+            {t('배경으로 저장')}
           </button>
         )}
         {boxes != null && (
@@ -268,13 +270,13 @@ export default function YoloLabeler({ dataset, classes, files, index, onNavigate
               dirtyRef.current = false
               setBoxes(null); setSelected(null)
               onSaved(file, false)
-            } catch (e) { onError(e instanceof Error ? e.message : '해제 실패') }
+            } catch (e) { onError(e instanceof Error ? e.message : t('해제 실패')) }
           }}
             className="px-2 py-1 rounded bg-neutral-800 hover:bg-red-700 text-neutral-300 hover:text-white">
-            미라벨로
+            {t('미라벨로')}
           </button>
         )}
-        <span className="ml-auto">드래그=박스 · Del=삭제 · 1~9=클래스 · ←→=이동</span>
+        <span className="ml-auto">{t('드래그=박스 · Del=삭제 · 1~9=클래스 · ←→=이동')}</span>
       </div>
     </div>
   )

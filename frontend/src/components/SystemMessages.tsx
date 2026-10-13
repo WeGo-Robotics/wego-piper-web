@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { useT } from '../i18n'
 
 /**
  * 시스템 메시지 — **어느 페이지에 있든** 같은 자리에 뜬다.
@@ -71,6 +72,7 @@ let _seq = 0
 type Ask = { text: string; danger: boolean; resolve: (ok: boolean) => void }
 
 export function SystemMessageProvider({ children }: { children: ReactNode }) {
+  const t = useT()
   const [messages, setMessages] = useState<SystemMessage[]>([])
   const [history, setHistory] = useState<SystemMessage[]>([])
   const [ask, setAsk] = useState<Ask | null>(null)
@@ -142,10 +144,10 @@ export function SystemMessageProvider({ children }: { children: ReactNode }) {
             <p className="whitespace-pre-line text-sm text-neutral-100">{ask.text}</p>
             <div className="flex justify-end gap-2">
               <button onClick={() => answer(false)}
-                className="px-3 py-1.5 text-sm rounded bg-neutral-700 hover:bg-neutral-600">취소</button>
+                className="px-3 py-1.5 text-sm rounded bg-neutral-700 hover:bg-neutral-600">{t('취소')}</button>
               <button autoFocus onClick={() => answer(true)}
                 className={`px-3 py-1.5 text-sm rounded text-white ${ask.danger
-                  ? 'bg-red-600 hover:bg-red-500' : 'bg-blue-600 hover:bg-blue-500'}`}>확인</button>
+                  ? 'bg-red-600 hover:bg-red-500' : 'bg-blue-600 hover:bg-blue-500'}`}>{t('확인')}</button>
             </div>
           </div>
         </div>
@@ -188,6 +190,7 @@ const ICON: Record<MessageLevel, string> = { info: 'ℹ', warn: '⚠', error: '�
  * 토스트는 2초 뒤 사라진다 — 놓쳤어도 상태바 🔔 알림함에 남아 있다.
  */
 export function SystemMessageHost() {
+  const t = useT()
   const { messages, dismiss } = useSystemMessage()
   if (messages.length === 0) return null
   return (
@@ -206,7 +209,7 @@ export function SystemMessageHost() {
           {/* ✕ 아이콘은 작아서 못 찾고 못 눌렀다 — 글자 버튼이 과녁도 크다 */}
           <button onClick={() => dismiss(m.id)}
                   className="shrink-0 rounded border border-current/40 px-2 py-0.5 text-xs
-                             opacity-80 hover:opacity-100">닫기</button>
+                             opacity-80 hover:opacity-100">{t('닫기')}</button>
         </div>
       ))}
     </div>
@@ -226,6 +229,7 @@ function timeOf(at: number): string {
  * (`clear`) 여기서도 걷힌다 — 사람이 지우는 것만 남는 게 아니다.
  */
 export function NotificationBell() {
+  const t = useT()
   const { history, remove, clearAll } = useSystemMessage()
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -258,7 +262,7 @@ export function NotificationBell() {
       <button onClick={() => setOpen((o) => !o)}
               className="relative flex items-center px-1 text-base leading-none
                          opacity-80 hover:opacity-100"
-              aria-label={`알림 ${history.length}개`} aria-expanded={open}>
+              aria-label={t('알림 {length}개', { length: history.length })} aria-expanded={open}>
         <span aria-hidden>🔔</span>
         {history.length > 0 && (
           <span className={`absolute -top-1.5 -right-2 min-w-[1.1rem] rounded-full px-1
@@ -274,15 +278,15 @@ export function NotificationBell() {
         <div className="absolute right-0 top-9 z-50 w-[min(26rem,calc(100vw-2rem))]
                         overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
           <div className="flex items-center justify-between border-b border-neutral-800 px-3 py-2">
-            <span className="text-xs text-neutral-400">알림 {history.length}개</span>
+            <span className="text-xs text-neutral-400">{t('알림 {length}개', { length: history.length })}</span>
             {history.length > 0 && (
               <button onClick={clearAll}
                       className="rounded border border-neutral-600 px-2 py-0.5 text-xs
-                                 text-neutral-300 hover:bg-neutral-800">모두 지우기</button>
+                                 text-neutral-300 hover:bg-neutral-800">{t('모두 지우기')}</button>
             )}
           </div>
           {history.length === 0 ? (
-            <p className="px-3 py-6 text-center text-sm text-neutral-500">알림이 없습니다</p>
+            <p className="px-3 py-6 text-center text-sm text-neutral-500">{t('알림이 없습니다')}</p>
           ) : (
             <ul className="max-h-[60vh] overflow-y-auto">
               {history.map((m) => (
@@ -301,7 +305,7 @@ export function NotificationBell() {
                   </div>
                   <button onClick={() => remove(m.id)}
                           className="shrink-0 rounded border border-neutral-600 px-2 py-0.5
-                                     text-xs text-neutral-300 hover:bg-neutral-800">지우기</button>
+                                     text-xs text-neutral-300 hover:bg-neutral-800">{t('지우기')}</button>
                 </li>
               ))}
             </ul>

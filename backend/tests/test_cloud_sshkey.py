@@ -89,7 +89,7 @@ _SRC = Path(__file__).resolve().parents[2] / "frontend" / "src"
 def test_the_cloud_tab_is_reachable():
     """⚠ 탭 목록에 넣고 렌더를 빠뜨리면 빈 화면이 된다 — 둘 다 본다."""
     page = (_SRC / "pages" / "SettingsPage.tsx").read_text()
-    assert "{ id: 'cloud', label: '클라우드' }" in page, "탭 목록에 없다"
+    assert "{ id: 'cloud', label: msg('클라우드') }" in page, "탭 목록에 없다"
     assert "{tab === 'cloud' && <CloudPanel />}" in page, "탭을 골라도 아무것도 안 그린다"
 
 

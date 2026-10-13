@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 /**
  * 그리퍼 힘(토크) 슬라이더 — 팔 하나에 하나 (2026-10-07).
@@ -17,6 +18,7 @@ export default function GripperEffortSlider({ iface, label, locked }: {
   label?: string
   locked?: string | false
 }) {
+  const t = useT()
   const [e, setE] = useState<Effort | null>(null)
   // 못 읽으면(지원 안 하는 팔·옛 게이트웨이·robotd 없음) **아예 안 그린다** — 빈 슬라이더에
   // "Not Found" 를 다는 것보다 없는 편이 덜 헷갈린다(사용자 요청 2026-10-07)
@@ -41,7 +43,7 @@ export default function GripperEffortSlider({ iface, label, locked }: {
     timer.current = window.setTimeout(() => {
       api.post<Effort>('/robots/gripper-effort', { iface, effort_nm: v })
         .then((r) => { setE(r); setVal(r.effort_nm); setErr('') })
-        .catch((x) => setErr(x instanceof Error ? x.message : '그리퍼 힘 변경 실패'))
+        .catch((x) => setErr(x instanceof Error ? x.message : t('그리퍼 힘 변경 실패')))
     }, 150)
   }
 
@@ -49,7 +51,7 @@ export default function GripperEffortSlider({ iface, label, locked }: {
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-3 text-sm">
-        <span className="shrink-0 text-neutral-400">{label ?? '그리퍼 힘'}</span>
+        <span className="shrink-0 text-neutral-400">{label ?? t('그리퍼 힘')}</span>
         <input type="range" className="flex-1 accent-blue-500"
           min={e?.min_nm ?? 0} max={e?.max_nm ?? 5} step={0.1} value={val}
           disabled={!e || !!locked}
@@ -60,7 +62,7 @@ export default function GripperEffortSlider({ iface, label, locked }: {
         {e && Math.abs(val - e.default_nm) > 1e-6 && !locked && (
           <button onClick={() => push(e.default_nm)}
             className="shrink-0 text-[11px] text-neutral-500 hover:text-neutral-200"
-            title={`기본값 ${e.default_nm.toFixed(1)} N·m 로`}>기본</button>
+            title={t('기본값 {default_nm} N·m 로', { default_nm: e.default_nm.toFixed(1) })}>{t('기본')}</button>
         )}
       </div>
       {locked && <p className="text-[11px] text-amber-400">{locked}</p>}

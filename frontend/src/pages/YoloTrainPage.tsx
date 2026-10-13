@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import { useSystemMessage } from '../components/SystemMessages'
 import YoloLabeler from '../components/YoloLabeler'
+import { tb, useT } from '../i18n'
 
 type YoloDs = { name: string; classes: string[]; images: number; labeled: number }
 type ImgSource = {
@@ -45,8 +46,9 @@ const sourceBadge = (s: ImgSource | null) => {
 const MIN_LABELED = 4
 
 export default function YoloTrainPage() {
+  const t = useT()
   const { notify } = useSystemMessage()
-  const notifyError = (text: string) => notify({ level: 'error', text, source: '검출 학습' })
+  const notifyError = (text: string) => notify({ level: 'error', text, source: t('검출 학습') })
 
   // ── 데이터셋 ──
   const [datasets, setDatasets] = useState<YoloDs[]>([])
@@ -71,7 +73,7 @@ export default function YoloTrainPage() {
       await api.post('/yolo/datasets', { name: newName.trim(), classes })
       setCreating(false); setNewName(''); setNewClasses('')
       await refreshDatasets(newName.trim())
-    } catch (e) { notifyError(e instanceof Error ? e.message : '생성 실패') }
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('생성 실패')) }
   }
 
   // 클래스 추가 — 추가만 된다 (삭제·순서 변경은 기존 라벨 txt 의 id 를 깬다)
@@ -85,14 +87,14 @@ export default function YoloTrainPage() {
       await api.post(`/yolo/datasets/${current}/classes`, { classes })
       setAddingCls(false); setNewCls('')
       await refreshDatasets(current)
-    } catch (e) { notifyError(e instanceof Error ? e.message : '클래스 추가 실패') }
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('클래스 추가 실패')) }
   }
 
   const handleDeleteDataset = async () => {
     try {
       await api.delete(`/yolo/datasets/${current}`)
       await refreshDatasets()
-    } catch (e) { notifyError(e instanceof Error ? e.message : '삭제 실패') }
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('삭제 실패')) }
   }
 
   // ── 탭 ── (라이브와 에피소드는 다른 작업이라 화면도 나눈다)
@@ -126,11 +128,11 @@ export default function YoloTrainPage() {
   }, [tab])
 
   const captureLive = useCallback(async (cam: string) => {
-    if (!current) { notifyError('먼저 데이터셋을 만드세요'); return }
+    if (!current) { notifyError(t('먼저 데이터셋을 만드세요')); return }
     try {
       await api.post(`/yolo/datasets/${current}/capture`, { cam })
       setCaptured((c) => ({ ...c, [cam]: (c[cam] ?? 0) + 1 }))
-    } catch (e) { notifyError(e instanceof Error ? e.message : '캡처 실패') }
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('캡처 실패')) }
     // eslint 상: notifyError 는 안정적이지 않지만 여기선 무해
   }, [current])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -191,45 +193,44 @@ export default function YoloTrainPage() {
     : null
 
   const importEpisode = async (indices?: number[]) => {
-    if (!current) { notifyError('먼저 데이터셋을 만드세요'); return }
+    if (!current) { notifyError(t('먼저 데이터셋을 만드세요')); return }
     setImporting(true)
     try {
       const r = await api.post<{ added: number; total_frames: number; method: string }>(
         `/yolo/datasets/${current}/import-episode`,
         { dataset_id: lrId, episode, cam, stride, indices })
       notify({
-        level: 'info', source: '검출 학습',
-        text: `${r.added}장 가져옴 (전체 ${r.total_frames}프레임, ${stride}간격` +
-          `${r.method === 'video' ? ', mp4 직접 추출' : ''})`,
+        level: 'info', source: t('검출 학습'),
+        text: t('{added}장 가져옴 (전체 {total_frames}프레임, {stride}간격{method})', { added: r.added, total_frames: r.total_frames, stride, method: r.method === 'video' ? t(', mp4 직접 추출') : '' }),
       })
       await refreshDatasets(current)
-    } catch (e) { notifyError(e instanceof Error ? e.message : '가져오기 실패') }
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('가져오기 실패')) }
     finally { setImporting(false) }
   }
 
   /** 재생 중인 그 장면을 canvas 로 떠서 업로드 — EpisodesPage 훅과 같은 방식 */
   const captureEpFrame = async () => {
     const v = videoRef.current
-    if (!current) { notifyError('먼저 데이터셋을 만드세요'); return }
-    if (!v || v.readyState < 2 || !vm) { notifyError('비디오가 아직 준비되지 않았습니다'); return }
+    if (!current) { notifyError(t('먼저 데이터셋을 만드세요')); return }
+    if (!v || v.readyState < 2 || !vm) { notifyError(t('비디오가 아직 준비되지 않았습니다')); return }
     try {
       const canvas = document.createElement('canvas')
       canvas.width = v.videoWidth
       canvas.height = v.videoHeight
       canvas.getContext('2d')!.drawImage(v, 0, 0)
       const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9))
-      if (!blob) throw new Error('canvas 캡처 실패')
-      const t = Math.max(0, v.currentTime - vm.from)
+      if (!blob) throw new Error(t('canvas 캡처 실패'))
+      const sec = Math.max(0, v.currentTime - vm.from)
       const q = new URLSearchParams({
-        type: 'episode', dataset: lrId, episode: String(episode), cam, t: t.toFixed(3),
+        type: 'episode', dataset: lrId, episode: String(episode), cam, t: sec.toFixed(3),
       })
       const res = await fetch(`/api/yolo/datasets/${current}/images?${q}`, { method: 'POST', body: blob })
       if (!res.ok) {
         const detail = (await res.json().catch(() => null))?.detail
-        throw new Error(detail ?? `${res.status}`)
+        throw new Error(tb(detail) ?? `${res.status}`)
       }
       setEpCaptured((n) => n + 1)
-    } catch (e) { notifyError(e instanceof Error ? e.message : '캡처 실패') }
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('캡처 실패')) }
   }
 
   // ── 라벨 탭 ──
@@ -277,13 +278,12 @@ export default function YoloTrainPage() {
       const r = await api.post<{ labeled: number; boxes: number; no_match: number; targets: number }>(
         `/yolo/datasets/${current}/prelabel`, { model: plModel, conf: plConf })
       notify({
-        level: 'info', source: '검출 학습',
-        text: `사전 라벨: ${r.targets}장 중 ${r.labeled}장에 박스 ${r.boxes}개` +
-          (r.no_match > 0 ? ` (이름 불일치로 버린 박스 ${r.no_match}개)` : ''),
+        level: 'info', source: t('검출 학습'),
+        text: t('사전 라벨: {targets}장 중 {labeled}장에 박스 {boxes}개{no_match}', { targets: r.targets, labeled: r.labeled, boxes: r.boxes, no_match: (r.no_match > 0 ? t(' (이름 불일치로 버린 박스 {no_match}개)', { no_match: r.no_match }) : '') }),
       })
       await refreshImages()
       snapshotLabelFiles(labelFilter)
-    } catch (e) { notifyError(e instanceof Error ? e.message : '사전 라벨 실패') }
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('사전 라벨 실패')) }
     finally { setPlBusy(false) }
   }
 
@@ -316,15 +316,15 @@ export default function YoloTrainPage() {
       await api.post('/yolo/train', {
         dataset: current, base_model: trBase, epochs: trEpochs, imgsz: trImgsz,
       })
-      notify({ level: 'info', text: `학습 시작: ${current} (${trBase}, ${trEpochs}에폭)`, source: '검출 학습' })
-    } catch (e) { notifyError(e instanceof Error ? e.message : '학습 시작 실패') }
+      notify({ level: 'info', text: t('학습 시작: {current} ({trBase}, {trEpochs}에폭)', { current, trBase, trEpochs }), source: t('검출 학습') })
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('학습 시작 실패')) }
     finally { setTrBusy(false) }
   }
 
   const stopTrain = async () => {
     setTrBusy(true)
     try { await api.post('/yolo/train/stop') } catch (e) {
-      notifyError(e instanceof Error ? e.message : '정지 실패')
+      notifyError(e instanceof Error ? e.message : t('정지 실패'))
     } finally { setTrBusy(false) }
   }
 
@@ -332,7 +332,7 @@ export default function YoloTrainPage() {
     try {
       await api.delete(`/yolo/datasets/${current}/images/${file}`)
       setImages((imgs) => imgs.filter((i) => i.file !== file))
-    } catch (e) { notifyError(e instanceof Error ? e.message : '삭제 실패') }
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('삭제 실패')) }
   }
 
   const ds = datasets.find((d) => d.name === current)
@@ -341,22 +341,22 @@ export default function YoloTrainPage() {
     <div className="space-y-4">
       {/* ── 데이터셋 선택/생성 ── */}
       <header className="flex items-center gap-3 flex-wrap">
-        <h1 className="text-2xl font-bold">검출 학습</h1>
+        <h1 className="text-2xl font-bold">{t('검출 학습')}</h1>
         <select value={current} onChange={(e) => setCurrent(e.target.value)}
           className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1 text-sm">
-          {datasets.length === 0 && <option value="">데이터셋 없음</option>}
+          {datasets.length === 0 && <option value="">{t('데이터셋 없음')}</option>}
           {datasets.map((d) => (
             <option key={d.name} value={d.name}>{d.name} ({d.labeled}/{d.images})</option>
           ))}
         </select>
         <button onClick={() => setCreating((c) => !c)}
           className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300">
-          ＋ 새 데이터셋
+          {t('＋ 새 데이터셋')}
         </button>
         {ds && (
           <>
             <span className="text-xs text-neutral-500">
-              클래스: {ds.classes.join(', ')}
+              {t('클래스: {classes}', { classes: ds.classes.join(', ') })}
             </span>
             {addingCls ? (
               <span className="flex items-center gap-1 text-xs">
@@ -365,18 +365,18 @@ export default function YoloTrainPage() {
                     if (e.key === 'Enter') void handleAddClasses()
                     if (e.key === 'Escape') { setAddingCls(false); setNewCls('') }
                   }}
-                  placeholder="추가할 클래스 (콤마 구분)"
+                  placeholder={t('추가할 클래스 (콤마 구분)')}
                   className="w-48 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
                 <button onClick={() => void handleAddClasses()}
-                  className="px-2 py-1 rounded bg-green-700 hover:bg-green-600 text-white">추가</button>
+                  className="px-2 py-1 rounded bg-green-700 hover:bg-green-600 text-white">{t('추가')}</button>
               </span>
             ) : (
               <button onClick={() => setAddingCls(true)}
-                title="클래스는 추가만 됩니다 — 삭제·순서 변경은 기존 라벨을 깨뜨립니다"
-                className="text-xs text-neutral-500 hover:text-white">＋ 클래스</button>
+                title={t('클래스는 추가만 됩니다 — 삭제·순서 변경은 기존 라벨을 깨뜨립니다')}
+                className="text-xs text-neutral-500 hover:text-white">{t('＋ 클래스')}</button>
             )}
             <button onClick={() => void handleDeleteDataset()}
-              className="text-sm text-neutral-600 hover:text-red-400">삭제</button>
+              className="text-sm text-neutral-600 hover:text-red-400">{t('삭제')}</button>
           </>
         )}
       </header>
@@ -384,22 +384,24 @@ export default function YoloTrainPage() {
       {creating && (
         <div className="flex items-center gap-2 flex-wrap rounded-lg border border-neutral-700 bg-neutral-800 p-3 text-sm">
           <input value={newName} onChange={(e) => setNewName(e.target.value)}
-            placeholder="이름 (영숫자/_/-)"
+            placeholder={t('이름 (영숫자/_/-)')}
             className="w-44 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
           <input value={newClasses} onChange={(e) => setNewClasses(e.target.value)}
-            placeholder="클래스 (콤마 구분: pet_bottle, can, ...)"
+            placeholder={t('클래스 (콤마 구분: pet_bottle, can, ...)')}
             className="flex-1 min-w-60 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
           <button onClick={() => void handleCreate()}
-            className="px-3 py-1 rounded bg-green-700 hover:bg-green-600 text-white">생성</button>
+            className="px-3 py-1 rounded bg-green-700 hover:bg-green-600 text-white">{t('생성')}</button>
         </div>
       )}
 
       {/* 대상 데이터셋이 없으면 아래 기능 전부가 갈 곳이 없다 — 탭을 감춘다 */}
       {!ds ? (
         <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-12 text-center text-sm text-neutral-500">
-          데이터셋이 없습니다 — 위의 <b className="text-neutral-300">＋ 새 데이터셋</b>으로 만들고 시작하세요
+          {t.rich('데이터셋이 없습니다 — 위의 {b}으로 만들고 시작하세요', {
+            b: <b className="text-neutral-300">{t('＋ 새 데이터셋')}</b>,
+          })}
           <div className="mt-2 text-xs text-neutral-600">
-            캡처·라벨·학습·갤러리는 모두 대상 데이터셋 안에서 동작합니다
+            {t('캡처·라벨·학습·갤러리는 모두 대상 데이터셋 안에서 동작합니다')}
           </div>
         </div>
       ) : (
@@ -407,11 +409,11 @@ export default function YoloTrainPage() {
       {/* ── 탭 ── */}
       <div className="flex gap-1 border-b border-neutral-700 text-sm">
         {([
-          ['live', '라이브 캡처'],
-          ['episode', '에피소드 캡처'],
-          ['label', `라벨 (${images.filter((i) => i.labeled).length}/${images.length})`],
-          ['train', '학습'],
-          ['gallery', `갤러리 (${images.length})`],
+          ['live', t('라이브 캡처')],
+          ['episode', t('에피소드 캡처')],
+          ['label', t('라벨 ({length}/{length_2})', { length: images.filter((i) => i.labeled).length, length_2: images.length })],
+          ['train', t('학습')],
+          ['gallery', t('갤러리 ({length})', { length: images.length })],
         ] as const).map(([k, label]) => (
           <button key={k}
             onClick={() => { if (k === 'label') openLabeler(); else setTab(k) }}
@@ -425,16 +427,16 @@ export default function YoloTrainPage() {
       {tab === 'live' && (
           <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
             <div className="flex items-center gap-3">
-              <h2 className="font-semibold">라이브 캡처</h2>
-              <label className="text-xs text-neutral-400 ml-auto">자동 간격
+              <h2 className="font-semibold">{t('라이브 캡처')}</h2>
+              <label className="text-xs text-neutral-400 ml-auto">{t('자동 간격')}
                 <select value={intervalS} onChange={(e) => setIntervalS(Number(e.target.value))}
                   className="ml-1 rounded bg-neutral-900 border border-neutral-700 px-1 py-0.5">
-                  {[2, 5, 10, 30].map((v) => <option key={v} value={v}>{v}초</option>)}
+                  {[2, 5, 10, 30].map((v) => <option key={v} value={v}>{t('{v}초', { v })}</option>)}
                 </select>
               </label>
             </div>
             {segments.length === 0 ? (
-              <div className="text-sm text-neutral-500">살아 있는 카메라 세그먼트가 없습니다</div>
+              <div className="text-sm text-neutral-500">{t('살아 있는 카메라 세그먼트가 없습니다')}</div>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {segments.map((s) => (
@@ -452,11 +454,11 @@ export default function YoloTrainPage() {
                             const next = new Set(auto)
                             if (e.target.checked) next.add(s); else next.delete(s)
                             setAuto(next)
-                          }} />자동
+                          }} />{t('자동')}
                       </label>
                       <button onClick={() => void captureLive(s)}
                         className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-green-600 text-neutral-200">
-                        📸 캡처
+                        {t('📸 캡처')}
                       </button>
                     </div>
                   </div>
@@ -468,7 +470,7 @@ export default function YoloTrainPage() {
 
       {tab === 'episode' && (
           <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
-            <h2 className="font-semibold">에피소드에서 가져오기</h2>
+            <h2 className="font-semibold">{t('에피소드에서 가져오기')}</h2>
             <div className="flex items-center gap-3 flex-wrap text-sm">
               <select value={lrId} onChange={(e) => { setLrId(e.target.value); setEpisode(0) }}
                 className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1 max-w-72">
@@ -483,16 +485,16 @@ export default function YoloTrainPage() {
                 className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1">
                 {lrCams.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
-              <label className="text-neutral-400">간격
+              <label className="text-neutral-400">{t('간격')}
                 <input type="number" min={1} value={stride}
                   onChange={(e) => setStride(Number(e.target.value))}
                   className="ml-1 w-16 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
-                <span className="ml-1 text-xs text-neutral-600">프레임 ({lrDs?.fps ?? 30}fps)</span>
+                <span className="ml-1 text-xs text-neutral-600">{t('프레임 ({fps}fps)', { fps: lrDs?.fps ?? 30 })}</span>
               </label>
               <button onClick={() => void importEpisode()} disabled={importing || !lrId}
-                title="캐시가 있으면 파일 복사, 없으면 mp4 에서 직접 추출 — 캐시 생성 불필요"
+                title={t('캐시가 있으면 파일 복사, 없으면 mp4 에서 직접 추출 — 캐시 생성 불필요')}
                 className="px-3 py-1 rounded bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-50">
-                {importing ? '가져오는 중…' : '일괄 가져오기'}
+                {importing ? t('가져오는 중…') : t('일괄 가져오기')}
               </button>
             </div>
 
@@ -505,18 +507,18 @@ export default function YoloTrainPage() {
                 <div className="flex items-center gap-3 text-sm">
                   <button onClick={() => void captureEpFrame()}
                     className="px-3 py-1 rounded bg-neutral-700 hover:bg-green-600 text-neutral-200">
-                    📸 이 장면 캡처
+                    {t('📸 이 장면 캡처')}
                   </button>
                   {epCaptured > 0 && <span className="text-green-400 text-xs">+{epCaptured}</span>}
                   {vm && (
                     <span className="text-xs text-neutral-600">
-                      에피소드 구간 {vm.from.toFixed(1)}~{vm.to.toFixed(1)}s — 재생·탐색하다가 원하는 장면에서 캡처
+                      {t('에피소드 구간 {from}~{to}s — 재생·탐색하다가 원하는 장면에서 캡처', { from: vm.from.toFixed(1), to: vm.to.toFixed(1) })}
                     </span>
                   )}
                 </div>
               </div>
             ) : (
-              lrId && <div className="text-sm text-neutral-500">에피소드 메타 로드 중… (또는 이 카메라의 비디오 없음)</div>
+              lrId && <div className="text-sm text-neutral-500">{t('에피소드 메타 로드 중… (또는 이 카메라의 비디오 없음)')}</div>
             )}
           </section>
       )}
@@ -531,11 +533,11 @@ export default function YoloTrainPage() {
                 snapshotLabelFiles(f)
               }}
               className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1">
-              <option value="all">전체</option>
-              <option value="unlabeled">미라벨만</option>
+              <option value="all">{t('전체')}</option>
+              <option value="unlabeled">{t('미라벨만')}</option>
             </select>
             <div className="flex items-center gap-2 ml-auto text-xs text-neutral-400">
-              사전 라벨:
+              {t('사전 라벨:')}
               <select value={plModel} onChange={(e) => setPlModel(e.target.value)}
                 className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1">
                 {!plModels.includes(plModel) && <option value={plModel}>{plModel}</option>}
@@ -547,9 +549,9 @@ export default function YoloTrainPage() {
                   className="ml-1 w-16 rounded bg-neutral-900 border border-neutral-700 px-1.5 py-1" />
               </label>
               <button onClick={() => void runPrelabel()} disabled={plBusy}
-                title="미라벨 이미지 전체를 모델로 훑어 초안 박스를 채운다 — 모델 클래스 이름이 데이터셋 클래스와 일치할 때만"
+                title={t('미라벨 이미지 전체를 모델로 훑어 초안 박스를 채운다 — 모델 클래스 이름이 데이터셋 클래스와 일치할 때만')}
                 className="px-2.5 py-1 rounded bg-blue-800 hover:bg-blue-700 text-white disabled:opacity-50">
-                {plBusy ? '실행 중… (모델 로드 수 초)' : '미라벨 일괄 사전 라벨'}
+                {plBusy ? t('실행 중… (모델 로드 수 초)') : t('미라벨 일괄 사전 라벨')}
               </button>
             </div>
           </div>
@@ -580,7 +582,7 @@ export default function YoloTrainPage() {
       {tab === 'train' && (
         <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-4">
           <div className="flex items-center gap-3">
-            <h2 className="font-semibold">커스텀 가중치 학습</h2>
+            <h2 className="font-semibold">{t('커스텀 가중치 학습')}</h2>
             <span className={`text-xs px-2 py-0.5 rounded-full ${
               trainRunning ? 'bg-green-900/70 text-green-300' : 'bg-neutral-700 text-neutral-500'}`}>
               {trainStatus?.state ?? '…'}
@@ -588,27 +590,25 @@ export default function YoloTrainPage() {
             {trainRunning && (
               <button onClick={() => void stopTrain()} disabled={trBusy}
                 className="ml-auto px-3 py-1 text-sm rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white disabled:opacity-50">
-                정지
+                {t('정지')}
               </button>
             )}
           </div>
 
           {!trainRunning && (
             <div className="flex items-center gap-4 flex-wrap text-sm">
-              <label className="text-neutral-400">데이터셋
-                <span className="ml-1 text-neutral-200">{current || '—'}</span>
-                <span className="ml-1 text-xs text-neutral-600">
-                  (라벨 {images.filter((i) => i.labeled).length}장)
-                </span>
+              <label className="text-neutral-400">{t.rich('데이터셋{span}{span_2}', { span: <span className="ml-1 text-neutral-200">{current || '—'}</span>, span_2: <span className="ml-1 text-xs text-neutral-600">
+                  {t('(라벨')}{' '}{images.filter((i) => i.labeled).length}{t('장)')}
+                </span> })}
               </label>
-              <label className="text-neutral-400">베이스
+              <label className="text-neutral-400">{t('베이스')}
                 <select value={trBase} onChange={(e) => setTrBase(e.target.value)}
                   className="ml-1 rounded bg-neutral-900 border border-neutral-700 px-2 py-1">
                   {!plModels.includes(trBase) && <option value={trBase}>{trBase}</option>}
                   {plModels.map((m) => <option key={m} value={m}>{m}</option>)}
                 </select>
               </label>
-              <label className="text-neutral-400">에폭
+              <label className="text-neutral-400">{t('에폭')}
                 <input type="number" min={1} max={1000} value={trEpochs}
                   onChange={(e) => setTrEpochs(Number(e.target.value))}
                   className="ml-1 w-20 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
@@ -625,18 +625,21 @@ export default function YoloTrainPage() {
               <button onClick={() => void startTrain()}
                 disabled={trBusy || !current || labeledCount < MIN_LABELED}
                 title={labeledCount < MIN_LABELED
-                  ? `라벨된 이미지가 ${labeledCount}장입니다 — 최소 ${MIN_LABELED}장 필요 (상자 수가 아니라 이미지 수)` : undefined}
+                  ? t('라벨된 이미지가 {labeledCount}장입니다 — 최소 {MIN_LABELED}장 필요 (상자 수가 아니라 이미지 수)', { labeledCount, MIN_LABELED }) : undefined}
                 className="px-4 py-1.5 rounded bg-green-700 hover:bg-green-600 text-white disabled:opacity-40">
-                {trBusy ? '시작 중…' : '▶ 학습 시작'}
+                {trBusy ? t('시작 중…') : t('▶ 학습 시작')}
               </button>
               {labeledCount < MIN_LABELED && (
                 <span className="text-xs text-amber-400">
-                  라벨된 이미지 {labeledCount}/{MIN_LABELED}장 — 상자가 있는 이미지를 {MIN_LABELED - labeledCount}장 더 만드세요
+                  {t('라벨된 이미지 {labeledCount}/{MIN_LABELED}장 — 상자가 있는 이미지를 {MIN_LABELED_2}장 더 만드세요', {
+                    labeledCount,
+                    MIN_LABELED,
+                    MIN_LABELED_2: MIN_LABELED - labeledCount,
+                  })}
                 </span>
               )}
               <span className="text-xs text-neutral-600 basis-full">
-                이전 커스텀 가중치를 베이스로 고르면 이어서 파인튜닝. val 분할은 출처(에피소드) 단위 —
-                완료되면 데모 페이지 모델 목록에 자동 등장
+                {t('이전 커스텀 가중치를 베이스로 고르면 이어서 파인튜닝. val 분할은 출처(에피소드) 단위 — 완료되면 데모 페이지 모델 목록에 자동 등장')}
               </span>
             </div>
           )}
@@ -646,7 +649,7 @@ export default function YoloTrainPage() {
             <div className="space-y-2 text-sm">
               <div className="flex items-center gap-3 flex-wrap text-neutral-400">
                 <span className="font-mono text-neutral-300">{trainStatus.info.dataset}</span>
-                <span>{trainStatus.info.base_model} · {trainStatus.info.epochs}에폭 · {trainStatus.info.imgsz}px</span>
+                <span>{t('{base_model} · {epochs}에폭 · {imgsz}px', { base_model: trainStatus.info.base_model, epochs: trainStatus.info.epochs, imgsz: trainStatus.info.imgsz })}</span>
                 {trainStatus.info.train != null && (
                   <span className="text-xs">train {trainStatus.info.train} / val {trainStatus.info.val}</span>
                 )}
@@ -662,8 +665,8 @@ export default function YoloTrainPage() {
                     </div>
                     <div className="text-xs text-neutral-500 tabular-nums">
                       {last
-                        ? `에폭 ${last.epoch}/${trainStatus.info.epochs} · box_loss ${last.box_loss} · mAP50 ${last.map50}`
-                        : '첫 에폭 준비 중… (모델 로드·캐시 생성)'}
+                        ? t('에폭 {epoch}/{epochs} · box_loss {box_loss} · mAP50 {map50}', { epoch: last.epoch, epochs: trainStatus.info.epochs, box_loss: last.box_loss, map50: last.map50 })
+                        : t('첫 에폭 준비 중… (모델 로드·캐시 생성)')}
                     </div>
                   </div>
                 )
@@ -671,21 +674,21 @@ export default function YoloTrainPage() {
 
               {trainStatus.info.state === 'done' && !trainRunning && (
                 <div className="rounded border border-green-800 bg-green-950/40 p-3 space-y-2">
-                  <div>✅ 완료 — <b className="font-mono">{trainStatus.info.weight}</b></div>
+                  <div>{t.rich('✅ 완료 — {b}', { b: <b className="font-mono">{trainStatus.info.weight}</b> })}</div>
                   <div className="text-xs text-neutral-400">
                     mAP50 {trainStatus.info.map50} · mAP50-95 {trainStatus.info.map50_95}
                   </div>
                   {trainStatus.info.weight && (
                     <Link to={`/yolo-demo?model=${encodeURIComponent(trainStatus.info.weight)}`}
                       className="inline-block px-3 py-1 text-sm rounded bg-green-700 hover:bg-green-600 text-white">
-                      ▶ 데모에서 이 가중치로 열기
+                      {t('▶ 데모에서 이 가중치로 열기')}
                     </Link>
                   )}
                 </div>
               )}
               {trainStatus.info.state === 'failed' && !trainRunning && (
                 <div className="rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-300">
-                  학습 실패: {trainStatus.info.error}
+                  {t.rich('학습 실패: {error}', { error: trainStatus.info.error })}
                 </div>
               )}
             </div>
@@ -696,13 +699,13 @@ export default function YoloTrainPage() {
       {tab === 'gallery' && (
         <section className="space-y-3">
           <div className="text-sm text-neutral-400">
-            {images.length}장 · 라벨 {images.filter((i) => i.labeled).length}장
+            {t('{length}장 · 라벨', { length: images.length })}{' '}{images.filter((i) => i.labeled).length}{t('장')}
             <button onClick={() => void refreshImages()}
-              className="ml-3 text-neutral-500 hover:text-white">새로고침</button>
+              className="ml-3 text-neutral-500 hover:text-white">{t('새로고침')}</button>
           </div>
           {images.length === 0 ? (
             <div className="text-sm text-neutral-500 py-10 text-center">
-              이미지가 없습니다 — 캡처 탭에서 모으세요
+              {t('이미지가 없습니다 — 캡처 탭에서 모으세요')}
             </div>
           ) : (
             <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-2">
@@ -711,12 +714,12 @@ export default function YoloTrainPage() {
                   <img src={`/api/yolo/datasets/${current}/images/${img.file}`} alt=""
                     loading="lazy" onClick={() => openLabeler(img.file)}
                     className="w-full aspect-video object-cover bg-black cursor-pointer"
-                    title="클릭해서 라벨 편집" />
+                    title={t('클릭해서 라벨 편집')} />
                   <div className="absolute bottom-0 inset-x-0 px-1.5 py-0.5 bg-black/60 text-[10px] text-neutral-300 truncate">
                     {sourceBadge(img.source)}
                   </div>
                   {img.labeled && (
-                    <span className="absolute top-1 left-1 w-2 h-2 rounded-full bg-green-500" title="라벨됨" />
+                    <span className="absolute top-1 left-1 w-2 h-2 rounded-full bg-green-500" title={t('라벨됨')} />
                   )}
                   <button onClick={() => void deleteImage(img.file)}
                     className="absolute top-1 right-1 w-5 h-5 rounded bg-black/60 text-neutral-400 hover:text-red-400 opacity-0 group-hover:opacity-100 text-xs">

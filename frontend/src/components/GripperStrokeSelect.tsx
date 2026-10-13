@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 /**
  * 그리퍼 행정 선택 — 팔 하나에 하나 (2026-10-08).
@@ -26,6 +27,7 @@ type Stroke = {
 }
 
 export default function GripperStrokeSelect({ iface, role }: { iface: string; role?: string }) {
+  const t = useT()
   const [s, setS] = useState<Stroke | null>(null)
   // 못 읽으면(지원 안 하는 팔·옛 게이트웨이·robotd 없음) 아예 안 그린다 — 슬라이더와 같은 규칙
   const [unsupported, setUnsupported] = useState(false)
@@ -45,7 +47,7 @@ export default function GripperStrokeSelect({ iface, role }: { iface: string; ro
     setBusy(true); setErr('')
     api.post<Stroke>('/robots/gripper-stroke', { iface, stroke_mm: mm })
       .then(setS)
-      .catch((x) => setErr(x instanceof Error ? x.message : '그리퍼 행정 변경 실패'))
+      .catch((x) => setErr(x instanceof Error ? x.message : t('그리퍼 행정 변경 실패')))
       .finally(() => setBusy(false))
   }
 
@@ -55,7 +57,7 @@ export default function GripperStrokeSelect({ iface, role }: { iface: string; ro
     setBusy(true); setErr('')
     api.post<Stroke>('/robots/gripper-stroke/end', { iface, clear })
       .then(setS)
-      .catch((x) => setErr(x instanceof Error ? x.message : '열림 끝 변경 실패'))
+      .catch((x) => setErr(x instanceof Error ? x.message : t('열림 끝 변경 실패')))
       .finally(() => setBusy(false))
   }
   const mmOf = (um?: number | null) => (um == null ? '' : `${(um / 1000).toFixed(1)}mm`)
@@ -64,7 +66,7 @@ export default function GripperStrokeSelect({ iface, role }: { iface: string; ro
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-2 text-xs">
-        <span className="w-40 shrink-0 text-neutral-400">그리퍼 행정</span>
+        <span className="w-40 shrink-0 text-neutral-400">{t('그리퍼 행정')}</span>
         <div className="inline-flex overflow-hidden rounded border border-neutral-700">
           {(s?.options_mm ?? [70, 100]).map((mm) => (
             <button key={mm} onClick={() => choose(mm)} disabled={!s || busy}
@@ -76,35 +78,35 @@ export default function GripperStrokeSelect({ iface, role }: { iface: string; ro
           ))}
         </div>
         <span className="text-[11px] text-neutral-500">
-          {s?.stroke_mm === s?.default_mm ? '소형 (기본)' : '대형'}
+          {s?.stroke_mm === s?.default_mm ? t('소형 (기본)') : t('대형')}
         </span>
       </div>
       <p className="text-[11px] text-neutral-500">
-        달린 그리퍼와 맞춰야 "100" 이 끝까지 열림입니다. 다른 행정의 그리퍼로 수집한
-        데이터·정책은 같은 값이 다른 폭이 됩니다.
+        {t('달린 그리퍼와 맞춰야 "100" 이 끝까지 열림입니다. 다른 행정의 그리퍼로 수집한 데이터·정책은 같은 값이 다른 폭이 됩니다.')}
       </p>
       {role === 'leader' && (
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="w-40 shrink-0 text-neutral-400">리더 열림 끝</span>
+            <span className="w-40 shrink-0 text-neutral-400">{t('리더 열림 끝')}</span>
             <span className="font-mono text-neutral-200">
-              {s?.end_um != null ? `${mmOf(s.end_um)} (직접 맞춤)`
-                                 : `${mmOf(s?.table_raw_max_um)} (기본)`}
+              {s?.end_um != null ? t('{mmOf} (직접 맞춤)', { mmOf: mmOf(s.end_um) })
+                                 : t('{mmOf} (기본)', { mmOf: mmOf(s?.table_raw_max_um) })}
             </span>
             <button onClick={() => setEnd(false)} disabled={!s || busy}
-              title="리더 그리퍼를 끝까지 연 채로 누르세요 — 지금 열림이 리더의 100 이 됩니다"
+              title={t('리더 그리퍼를 끝까지 연 채로 누르세요 — 지금 열림이 리더의 100 이 됩니다')}
               className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-500 disabled:opacity-50">
-              현재 열림을 끝으로 저장
+              {t('현재 열림을 끝으로 저장')}
             </button>
             {s?.end_um != null && (
               <button onClick={() => setEnd(true)} disabled={busy}
                 className="text-[11px] text-neutral-500 hover:text-neutral-200"
-                title="직접 맞춘 끝을 지우고 행정 기본값으로">초기화</button>
+                title={t('직접 맞춘 끝을 지우고 행정 기본값으로')}>{t('초기화')}</button>
             )}
           </div>
           <p className="text-[11px] text-neutral-500">
-            리더 핸들은 그리퍼보다 덜 열릴 수 있습니다. <b>리더를 끝까지 연 채로</b> 누르면 그 열림이
-            리더의 100 이 되어, 팔로워도 끝까지 열립니다. 행정을 바꾸면 이 값은 지워집니다.
+            {t.rich('리더 핸들은 그리퍼보다 덜 열릴 수 있습니다. {b} 누르면 그 열림이 리더의 100 이 되어, 팔로워도 끝까지 열립니다. 행정을 바꾸면 이 값은 지워집니다.', {
+              b: <b>{t('리더를 끝까지 연 채로')}</b>,
+            })}
           </p>
         </div>
       )}

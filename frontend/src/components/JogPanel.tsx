@@ -4,6 +4,7 @@ import ManualControlPanel from './ManualControlPanel'
 import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
 import { JOINTS } from '../config/joints'
+import { useT, msg } from '../i18n'
 
 /**
  * 웹 조그 — 추론을 안 띄우고 팔을 움직인다 (feature/manual-control.md §2).
@@ -31,13 +32,14 @@ type Props = {
 
 type Teleop = { running: boolean; iface: string | null; mode: string; started: number | null }
 
-const SIDE_LABEL: Record<string, string> = { left: '왼쪽', right: '오른쪽' }
+const SIDE_LABEL: Record<string, string> = { left: msg('왼쪽'), right: msg('오른쪽') }
 
 const MODE_NAMES: Record<string, string> = {
-  leader: '리더로 조종', joint: '관절 조그', endpoint: '말단 조그',
+  leader: msg('리더로 조종'), joint: msg('관절 조그'), endpoint: msg('말단 조그'),
 }
 
 export default function JogPanel({ iface, commandable, reason, leader, side }: Props) {
+  const t = useT()
   const { notify } = useSystemMessage()
   const [running, setRunning] = useState(false)
   // 시작 자세. **슬라이더의 출발점**이라, 0 이면 첫 조작에 팔이 튄다.
@@ -62,7 +64,7 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
   runningRef.current = running
 
   const fail = (e: unknown, fallback: string) =>
-    notify({ level: 'error', source: '조그',
+    notify({ level: 'error', source: t('조그'),
              text: e instanceof Error ? e.message : fallback })
 
   // ⚠ **서버가 누구를 잡고 있는지 읽는다.** 이걸 안 보면 버튼이 거짓말한다:
@@ -138,8 +140,8 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
     setBusy(true)
     try {
       await api.post('/robots/parking/go', { iface })
-      notify({ level: 'info', source: '로봇', text: `${iface} 파킹 자세로 이동` })
-    } catch (e) { fail(e, '파킹으로 보내지 못했습니다') }
+      notify({ level: 'info', source: t('로봇'), text: t('{iface} 파킹 자세로 이동', { iface }) })
+    } catch (e) { fail(e, t('파킹으로 보내지 못했습니다')) }
     finally { setBusy(false) }
   }
 
@@ -148,7 +150,7 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
     try {
       await api.post('/robots/jog/start', { iface })
       setRunning(true)
-    } catch (e) { fail(e, '조그를 시작하지 못했습니다') }
+    } catch (e) { fail(e, t('조그를 시작하지 못했습니다')) }
     finally { setBusy(false) }
   }
 
@@ -157,7 +159,7 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
     try {
       await api.post('/robots/jog/stop', {})
       setRunning(false)
-    } catch (e) { fail(e, '조그를 멈추지 못했습니다') }
+    } catch (e) { fail(e, t('조그를 멈추지 못했습니다')) }
     finally { setBusy(false) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -178,7 +180,7 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
         leader_arm: 'piper', follower_arm: followerArm,
       })
       setRelaying(true)
-    } catch (e) { fail(e, '릴레이를 시작하지 못했습니다') }
+    } catch (e) { fail(e, t('릴레이를 시작하지 못했습니다')) }
     finally { setBusy(false) }
   }
 
@@ -187,19 +189,19 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
     try {
       await api.post('/robots/relay/stop', {})
       setRelaying(false)
-    } catch (e) { fail(e, '릴레이를 멈추지 못했습니다') }
+    } catch (e) { fail(e, t('릴레이를 멈추지 못했습니다')) }
     finally { setBusy(false) }
   }
 
   const heldLabel = heldBy
-    ? `${heldBy.iface} ${MODE_NAMES[heldBy.mode] ?? heldBy.mode} 중`
+    ? t('{iface} {MODE_NAMES} 중', { iface: String(heldBy.iface), MODE_NAMES: t(MODE_NAMES[heldBy.mode] ?? heldBy.mode) })
     : ''
 
   const send = (values: Record<string, number>) => {
     api.post('/robots/jog/goal', { iface, values }).catch((e) => {
       // 세션이 닫혔는데 계속 밀면 같은 오류가 쌓인다 — 한 번 알리고 멈춘다
       setRunning(false)
-      fail(e, '목표를 보내지 못했습니다')
+      fail(e, t('목표를 보내지 못했습니다'))
     })
   }
 
@@ -209,7 +211,7 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
   if (!commandable) {
     return (
       <p className="rounded border border-neutral-700 bg-neutral-800 px-3 py-2 text-xs text-neutral-500">
-        {reason ?? '이 팔은 조작할 수 없습니다'}
+        {reason ?? t('이 팔은 조작할 수 없습니다')}
       </p>
     )
   }
@@ -224,40 +226,40 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
       {!side && (
         <p className="rounded border border-neutral-700 bg-neutral-800 px-3 py-2
                       text-xs text-neutral-500">
-          좌/우가 지정되지 않아 <b>수동 조작만</b> 됩니다 — [좌/우?] 로 정하면
-          같은 쪽 리더로 조종할 수 있습니다.
+          {t.rich('좌/우가 지정되지 않아 {b} 됩니다 — [좌/우?] 로 정하면 같은 쪽 리더로 조종할 수 있습니다.', { b: <b>{t('수동 조작만')}</b> })}
         </p>
       )}
       {side && !leader && (
         <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2
                       text-xs text-amber-300">
-          {SIDE_LABEL[side] ?? side}에 리더 팔이 없습니다 — 그 쪽 팔 하나를
-          [마스터] 로 설정하면 조종할 수 있습니다.
+          {t('{SIDE_LABEL}에 리더 팔이 없습니다 — 그 쪽 팔 하나를 [마스터] 로 설정하면 조종할 수 있습니다.', {
+            SIDE_LABEL: t(SIDE_LABEL[side] ?? side),
+          })}
         </p>
       )}
       {side && leader && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs text-neutral-400">
-              {leader} 로 조종
+              {t('{leader} 로 조종', { leader })}
               {relaying && (
                 <span className="ml-2 text-amber-400">
-                  · {runningMode === 'pose' ? '6D 자세' : '관절 복제'}로 따라가는 중
+                  {t('· {runningMode}로 따라가는 중', { runningMode: runningMode === 'pose' ? t('6D 자세') : t('관절 복제') })}
                 </span>
               )}
             </span>
             <button onClick={relaying ? stopRelay : startRelay} disabled={busy || running}
-              title={running ? '조그를 먼저 끝내세요' : undefined}
+              title={running ? t('조그를 먼저 끝내세요') : undefined}
               className={`px-2 py-1 text-xs rounded text-white disabled:opacity-50 ${
                 relaying ? 'bg-red-600 hover:bg-red-500' : 'bg-purple-700 hover:bg-purple-600'}`}>
-              {relaying ? '릴레이 끝내기' : '리더로 조종'}
+              {relaying ? t('릴레이 끝내기') : t('리더로 조종')}
             </button>
           </div>
 
           {/* 모드는 시작 전에만 고른다 — 도는 중에 바꾸면 팔이 관절 모드와
               MoveP 사이에서 한 번 튄다. */}
           <div className="flex items-center gap-1">
-            {([['joint', '관절 복제'], ['pose', '6D 자세']] as const).map(([m, label]) => (
+            {([['joint', t('관절 복제')], ['pose', t('6D 자세')]] as const).map(([m, label]) => (
               <button key={m} onClick={() => setRelayMode(m)} disabled={relaying || busy}
                 className={`px-2 py-0.5 text-[11px] rounded border transition-colors
                   disabled:opacity-40 ${relayMode === m
@@ -268,8 +270,8 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
             ))}
             <span className="ml-1 text-[11px] text-neutral-600">
               {relayMode === 'joint'
-                ? '리더 관절을 그대로 복제합니다'
-                : 'FK → 6D 자세 → IK → 팔로워 관절 (다른 팔도 가능)'}
+                ? t('리더 관절을 그대로 복제합니다')
+                : t('FK → 6D 자세 → IK → 팔로워 관절 (다른 팔도 가능)')}
             </span>
           </div>
 
@@ -279,16 +281,17 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
             <div className="space-y-1 rounded border border-neutral-700 bg-neutral-900/60
                             px-2 py-1.5 text-[11px] leading-relaxed text-neutral-400">
               <p>
-                리더 관절 → FK → <b>말단 6D 자세</b> → IK → 팔로워 관절.
-                가운데 자세만 건너가므로 <b>관절 구성이 다른 팔</b>도 팔로워로 쓸 수 있습니다.
+                {t.rich('리더 관절 → FK → {b} → IK → 팔로워 관절. 가운데 자세만 건너가므로 {b_2}도 팔로워로 쓸 수 있습니다.', {
+                  b: <b>{t('말단 6D 자세')}</b>,
+                  b_2: <b>{t('관절 구성이 다른 팔')}</b>,
+                })}
               </p>
               <p>
-                관절 목표로 끝나므로 바닥 필터·관절 범위·변화율 제한이
-                관절 복제와 <b>똑같이 걸립니다.</b>
+                {t.rich('관절 목표로 끝나므로 바닥 필터·관절 범위·변화율 제한이 관절 복제와 {b}', { b: <b>{t('똑같이 걸립니다.')}</b> })}
               </p>
               {arms.length > 1 && (
                 <div className="flex items-center gap-1 pt-0.5">
-                  <span>팔로워 모델</span>
+                  <span>{t('팔로워 모델')}</span>
                   <select value={followerArm} onChange={(e) => setFollowerArm(e.target.value)}
                     disabled={relaying}
                     className="rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5
@@ -304,16 +307,17 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
           {relaying && runningMode && runningMode !== relayMode && (
             <p className="rounded border border-red-500/50 bg-red-500/10 px-2 py-1.5
                           text-[11px] text-red-300">
-              고른 모드는 <b>{relayMode === 'pose' ? '6D 자세' : '관절 복제'}</b> 인데
-              실제로는 <b>{runningMode === 'pose' ? '6D 자세' : '관절 복제'}</b> 로 돌고 있습니다.
-              백엔드가 새 코드인지 확인하세요 ([설정]-[서비스]).
+              {t.rich('고른 모드는 {b} 인데 실제로는 {b_2} 로 돌고 있습니다. 백엔드가 새 코드인지 확인하세요 ([설정]-[서비스]).', {
+                b: <b>{relayMode === 'pose' ? t('6D 자세') : t('관절 복제')}</b>,
+                b_2: <b>{runningMode === 'pose' ? t('6D 자세') : t('관절 복제')}</b>,
+              })}
             </p>
           )}
 
           {relaying && relayBlocked && (
             <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5
                           text-[11px] text-amber-300">
-              멈춤: {relayBlocked}
+              {t('멈춤: {relayBlocked}', { relayBlocked })}
             </p>
           )}
         </div>
@@ -321,8 +325,8 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
 
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs text-neutral-400">
-          웹 조그
-          {running && <span className="ml-2 text-amber-400">· 명령 경로 점유 중</span>}
+          {t('웹 조그')}
+          {running && <span className="ml-2 text-amber-400">{t('· 명령 경로 점유 중')}</span>}
         </span>
         <span className="flex gap-1">
         {/* ⚠ **"원점" 이라 부르지 않는다.** 여기는 엔코더 영점이 아니라 사람이
@@ -330,24 +334,24 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
             "원점으로" 였을 때 "0 으로 갈 줄 알았는데 엉뚱한 데로 간다" 로
             보고됐다. 하드웨어 영점은 로봇 페이지의 영점 굽기 쪽이다. */}
         <button onClick={goParking} disabled={busy || running || relaying}
-          title={running || relaying ? '조작을 먼저 끝내세요'
-                 : '저장된 파킹 자세로 이동 (없으면 기본 자세)'}
+          title={running || relaying ? t('조작을 먼저 끝내세요')
+                 : t('저장된 파킹 자세로 이동 (없으면 기본 자세)')}
           className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white disabled:opacity-50">
-          파킹
+          {t('파킹')}
         </button>
         <button onClick={running ? stop : start} disabled={busy || relaying || !!blocked}
-          title={blocked ? `${heldLabel} — 먼저 멈추세요`
-                 : relaying ? '릴레이를 먼저 끝내세요' : undefined}
+          title={blocked ? t('{heldLabel} — 먼저 멈추세요', { heldLabel })
+                 : relaying ? t('릴레이를 먼저 끝내세요') : undefined}
           className={`px-2 py-1 text-xs rounded text-white disabled:opacity-50 ${
             running ? 'bg-red-600 hover:bg-red-500' : 'bg-amber-600 hover:bg-amber-500'}`}>
-          {busy ? '…' : running ? '조그 끝내기' : '조그 시작'}
+          {busy ? '…' : running ? t('조그 끝내기') : t('조그 시작')}
         </button>
         </span>
       </div>
 
       {blocked && (
         <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          {heldLabel}입니다 — 조작은 한 번에 하나입니다. 먼저 그것을 멈추세요.
+          {t('{heldLabel}입니다 — 조작은 한 번에 하나입니다. 먼저 그것을 멈추세요.', { heldLabel })}
         </p>
       )}
 
@@ -355,8 +359,8 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
         currentJoints={joints}
         disabled={!running}
         onSend={send}
-        title={`${iface} 관절 조그`}
-        disabledHint="[조그 시작] 을 누르면 움직일 수 있습니다"
+        title={t('{iface} 관절 조그', { iface })}
+        disabledHint={t('[조그 시작] 을 누르면 움직일 수 있습니다')}
       />
 
       {/* 말단 조그 — 조그 세션과 **다른 경로**다(shm 이 아니라 RPC).
@@ -365,8 +369,7 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
 
       {running && (
         <p className="text-[10px] text-neutral-500">
-          슬라이더를 놓으면 그 자세까지 가서 섭니다. 5분 동안 안 만지면 자동으로
-          끝납니다 — 열려 있는 동안 추론·녹화가 막히기 때문입니다.
+          {t('슬라이더를 놓으면 그 자세까지 가서 섭니다. 5분 동안 안 만지면 자동으로 끝납니다 — 열려 있는 동안 추론·녹화가 막히기 때문입니다.')}
         </p>
       )}
     </div>

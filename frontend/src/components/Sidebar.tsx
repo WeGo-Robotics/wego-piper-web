@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import type { PageEntry } from '../config/pages'
 import { navGroups, ungroupedNavPages } from '../config/pages'
+import { useT } from '../i18n'
 
 /**
  * 좌측 세로 내비 (feature/layout-redesign.md).
@@ -20,10 +21,11 @@ import { navGroups, ungroupedNavPages } from '../config/pages'
  */
 
 function Item({ page, collapsed }: { page: PageEntry; collapsed: boolean }) {
+  const t = useT()
   const body = (
     <>
       <span className="w-5 shrink-0 text-center" aria-hidden>{page.icon ?? '·'}</span>
-      {!collapsed && <span className="truncate">{page.label}</span>}
+      {!collapsed && <span className="truncate">{t(page.label)}</span>}
       {!collapsed && page.external && <span className="ml-auto text-xs opacity-50">↗</span>}
     </>
   )
@@ -34,7 +36,7 @@ function Item({ page, collapsed }: { page: PageEntry; collapsed: boolean }) {
   if (page.external) {
     return (
       <a href={page.path} target="_blank" rel="noopener noreferrer"
-         title={collapsed ? page.label : undefined}
+         title={collapsed ? t(page.label) : undefined}
          className={`${base} text-neutral-400 hover:bg-neutral-800 hover:text-white`}>
         {body}
       </a>
@@ -42,7 +44,7 @@ function Item({ page, collapsed }: { page: PageEntry; collapsed: boolean }) {
   }
   return (
     <NavLink to={page.path} end={page.path === '/'}
-             title={collapsed ? page.label : undefined}
+             title={collapsed ? t(page.label) : undefined}
              className={({ isActive }) =>
                `${base} ${isActive
                  ? 'bg-neutral-700 text-white'
@@ -59,9 +61,10 @@ export default function Sidebar({
   collapsed: boolean
   onToggle: () => void
 }) {
+  const t = useT()
   return (
     <nav
-      aria-label="주 메뉴"
+      aria-label={t('주 메뉴')}
       className={`${collapsed ? 'w-14' : 'w-56'} shrink-0 border-r border-neutral-800
         bg-neutral-900 flex flex-col transition-[width] duration-150`}
     >
@@ -80,7 +83,7 @@ export default function Sidebar({
             ) : (
               <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wider
                             text-neutral-600">
-                {group}
+                {t(group)}
               </p>
             )}
             {items.map((p) => (
@@ -94,10 +97,10 @@ export default function Sidebar({
         onClick={onToggle}
         className="border-t border-neutral-800 px-2 py-2 text-sm text-neutral-500
                    hover:bg-neutral-800 hover:text-neutral-300"
-        title={collapsed ? '메뉴 펼치기' : '메뉴 접기'}
+        title={collapsed ? t('메뉴 펼치기') : t('메뉴 접기')}
         aria-expanded={!collapsed}
       >
-        {collapsed ? '»' : '« 접기'}
+        {collapsed ? '»' : t('« 접기')}
       </button>
     </nav>
   )

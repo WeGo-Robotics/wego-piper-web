@@ -66,7 +66,7 @@ def test_the_joint_speed_chart_is_gone_but_the_signal_stays():
     """
     page = _EPISODES.read_text()
     # 목록을 만드는 자리에 관절 속도가 없어야 한다 (아래 FSM 주석에는 나온다)
-    body = page.split("const charts = useMemo", 1)[1].split("}, [signals, showJoints])", 1)[0]
+    body = page.split("const charts = useMemo", 1)[1].split("}, [signals, showJoints, t])", 1)[0]
     assert "관절 속도" not in body, "그래프가 아직 있다"
 
     fsm = (Path(__file__).resolve().parents[2] / "phase" / "piper_phase" / "fsm.py").read_text()

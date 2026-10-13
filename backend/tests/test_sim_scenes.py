@@ -214,7 +214,7 @@ def test_the_editor_is_its_own_page_not_a_tab_in_something_else():
     assert "path: '/scene'" in row
     block = pages.split("path: '/scene'", 1)[1].split("},", 1)[0]
     assert "component: ScenePage" in block and "nav: true" in block, "내비에 없으면 갈 길이 없다"
-    assert "group: '장치'" in block
+    assert "group: msg('장치')" in block
 
 
 def test_the_editor_reads_the_shape_list_from_the_backend(store):

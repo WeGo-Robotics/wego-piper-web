@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { useSystemMessage } from './SystemMessages'
+import { useT } from '../i18n'
 
 /**
  * 카메라 프로파일 탭 — 목록·캡처·적용·활성 지정 + **값 상세 편집**.
@@ -33,6 +34,7 @@ type ProfileReport = {
 /** 프로파일 적용 결과 한 줄. 데몬이 세어 준 것을 그대로 보여준다.
  *  `잠김`은 실패가 아니다 — 자동 노출이 켜져 있어 그 값이 지금 안 쓰이는 상태다. */
 function ApplyBadge({ r }: { r: CamApplyResult }) {
+  const t = useT()
   const bad = r.failed > 0
   return (
     <span
@@ -40,10 +42,13 @@ function ApplyBadge({ r }: { r: CamApplyResult }) {
       className={`rounded px-1.5 py-0.5 text-[10px] ${bad
         ? 'bg-red-500/15 text-red-400' : 'bg-neutral-700/60 text-neutral-300'}`}
     >
-      {r.display_name}: 적용 {r.applied}
-      {r.locked ? ` / 잠김 ${r.locked}` : ''}
-      {r.failed ? ` / 실패 ${r.failed}` : ''}
-      {r.truncated ? ' / 시간초과' : ''}
+      {t('{display_name}: 적용 {applied}{locked}{failed}{truncated}', {
+        display_name: r.display_name,
+        applied: r.applied,
+        locked: r.locked ? t(' / 잠김 {locked}', { locked: r.locked }) : '',
+        failed: r.failed ? t(' / 실패 {failed}', { failed: r.failed }) : '',
+        truncated: r.truncated ? t(' / 시간초과') : '',
+      })}
     </span>
   )
 }
@@ -69,9 +74,10 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
   active: string
   onActiveChange: (name: string) => void
 }) {
+  const t = useT()
   const { notify, confirm: askConfirm } = useSystemMessage()
-  const say = (text: string) => notify({ level: 'info', text, source: '프로파일' })
-  const sayError = (text: string) => notify({ level: 'error', text, source: '프로파일' })
+  const say = (text: string) => notify({ level: 'info', text, source: t('프로파일') })
+  const sayError = (text: string) => notify({ level: 'error', text, source: t('프로파일') })
 
   const [metas, setMetas] = useState<PresetMeta[]>([])
   const [selected, setSelected] = useState<string | null>(null)
@@ -103,7 +109,7 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
 
   const select = async (name: string) => {
     if (dirty && !(await askConfirm(
-      `"${selected}" 에 저장 안 된 수정이 있습니다. 버리고 이동할까요?`))) return
+      t('"{selected}" 에 저장 안 된 수정이 있습니다. 버리고 이동할까요?', { selected: String(selected) })))) return
     try {
       const d = await api.get<ProfileDetail>(`/presets/camera/${encodeURIComponent(name)}`)
       setSelected(name)
@@ -114,7 +120,7 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
       setDirty(false)
       setReport(null)
     } catch (e) {
-      sayError(e instanceof Error ? e.message : '프로파일을 읽지 못했습니다')
+      sayError(e instanceof Error ? e.message : t('프로파일을 읽지 못했습니다'))
     }
   }
 
@@ -132,7 +138,7 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
       const controls: Record<string, number> = {}
       for (const [k, v] of Object.entries(e.controls)) {
         const n = typeof v === 'number' ? v : parseFloat(v)
-        if (Number.isNaN(n)) { sayError(`"${e.key}" 의 ${k} 값이 비었습니다`); return }
+        if (Number.isNaN(n)) { sayError(t('"{key}" 의 {k} 값이 비었습니다', { key: e.key, k })); return }
         controls[k] = n
       }
       cleaned.push({ ...e, controls })
@@ -143,12 +149,12 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
         name: detail.name, values: { cameras: cleaned },
         scope: detail.scope || 'device', note: noteDraft,
       })
-      say(`"${detail.name}" 저장됨`)
+      say(t('"{name}" 저장됨', { name: detail.name }))
       setDirty(false)
       refresh()
       await select(detail.name)
     } catch (e) {
-      sayError(e instanceof Error ? e.message : '저장 실패')
+      sayError(e instanceof Error ? e.message : t('저장 실패'))
     } finally { setBusy(false) }
   }
 
@@ -162,10 +168,10 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
       const sum = r.cameras.reduce((a, c) => ({
         applied: a.applied + c.applied, locked: a.locked + c.locked, failed: a.failed + c.failed,
       }), { applied: 0, locked: 0, failed: 0 })
-      const miss = r.unmatched?.length ? ` / 못 찾음 ${r.unmatched.length}대` : ''
-      say(`"${name}" 적용 — ${sum.applied} 적용 / ${sum.locked} 잠김 / ${sum.failed} 실패${miss}`)
+      const miss = r.unmatched?.length ? t(' / 못 찾음 {length}대', { length: r.unmatched.length }) : ''
+      say(t('"{name}" 적용 — {applied} 적용 / {locked} 잠김 / {failed} 실패{miss}', { name, applied: sum.applied, locked: sum.locked, failed: sum.failed, miss }))
     } catch (e) {
-      sayError(e instanceof Error ? e.message : '적용 실패')
+      sayError(e instanceof Error ? e.message : t('적용 실패'))
     } finally { setBusy(false) }
   }
 
@@ -173,8 +179,8 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
     try {
       await api.post('/cameras/profiles/active', { name })
       onActiveChange(name)
-      say(`활성 프로파일: ${name} — 이제부터 카메라를 열 때마다 적용됩니다`)
-    } catch (e) { sayError(e instanceof Error ? e.message : '활성 지정 실패') }
+      say(t('활성 프로파일: {name} — 이제부터 카메라를 열 때마다 적용됩니다', { name }))
+    } catch (e) { sayError(e instanceof Error ? e.message : t('활성 지정 실패')) }
   }
 
   const capture = async () => {
@@ -188,21 +194,21 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
       }>('/cameras/profiles/capture', { name })
       // 캡처는 백엔드가 활성 지정까지 한다 (기존 동작 유지)
       onActiveChange(name)
-      say(`"${name}" 캡처 — 카메라 ${r.values?.cameras?.length ?? 0}대의 현재 장치값 (활성으로 지정됨)`)
+      say(t('"{name}" 캡처 — 카메라 {length}대의 현재 장치값 (활성으로 지정됨)', { name, length: r.values?.cameras?.length ?? 0 }))
       // AE 켠 채 캡처한 걸 몇 주 뒤 데이터가 안 맞을 때에야 알면 최악이다 —
       // 캡처한 그 자리에서 말한다
       for (const w of r.warnings ?? [])
-        notify({ level: 'warn', text: `${w.key}: ${w.text}`, source: '프로파일' })
+        notify({ level: 'warn', text: `${w.key}: ${w.text}`, source: t('프로파일') })
       setCaptureName('')
       refresh()
       await select(name)
     } catch (e) {
-      sayError(e instanceof Error ? e.message : '캡처 실패')
+      sayError(e instanceof Error ? e.message : t('캡처 실패'))
     } finally { setBusy(false) }
   }
 
   const remove = async (name: string) => {
-    if (!(await askConfirm(`프로파일 "${name}" 을(를) 삭제할까요?\n수집·추론 화면에 이 이름이 지정돼 있으면 그쪽 시작이 거부됩니다.`)))
+    if (!(await askConfirm(t('프로파일 "{name}" 을(를) 삭제할까요?\n수집·추론 화면에 이 이름이 지정돼 있으면 그쪽 시작이 거부됩니다.', { name }))))
       return
     try {
       await api.delete(`/presets/camera/${encodeURIComponent(name)}`)
@@ -212,9 +218,9 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
         onActiveChange('')
       }
       if (selected === name) { setSelected(null); setDetail(null); setEntries([]); setDirty(false) }
-      say(`"${name}" 삭제됨`)
+      say(t('"{name}" 삭제됨', { name }))
       refresh()
-    } catch (e) { sayError(e instanceof Error ? e.message : '삭제 실패') }
+    } catch (e) { sayError(e instanceof Error ? e.message : t('삭제 실패')) }
   }
 
   const matchSummary = (e: ProfileEntry) => {
@@ -230,7 +236,7 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
         <div className="rounded-lg border border-neutral-700 bg-neutral-800 divide-y divide-neutral-700/60">
           {metas.length === 0 && (
             <p className="p-3 text-xs text-neutral-500">
-              프로파일이 없습니다 — 장치 탭에서 노출·WB 를 맞춘 뒤 아래에서 캡처하세요.
+              {t('프로파일이 없습니다 — 장치 탭에서 노출·WB 를 맞춘 뒤 아래에서 캡처하세요.')}
             </p>
           )}
           {metas.map((m) => (
@@ -241,7 +247,7 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
                 <span className="truncate text-neutral-100">{m.name}</span>
                 {active === m.name && (
                   <span className="shrink-0 rounded bg-green-500/15 px-1.5 text-[10px] text-green-400"
-                        title="카메라를 열 때마다 자동 적용되는 프로파일">활성</span>
+                        title={t('카메라를 열 때마다 자동 적용되는 프로파일')}>{t('활성')}</span>
                 )}
               </span>
               <span className="block text-[10px] text-neutral-500">
@@ -252,18 +258,18 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
         </div>
 
         <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-3 space-y-2">
-          <p className="text-xs text-neutral-400">현재 장치값으로 캡처</p>
+          <p className="text-xs text-neutral-400">{t('현재 장치값으로 캡처')}</p>
           <div className="flex gap-2">
             <input value={captureName} onChange={(e) => setCaptureName(e.target.value)}
-              placeholder="이름 (주간/야간/형광등…)"
+              placeholder={t('이름 (주간/야간/형광등…)')}
               className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm" />
             <button onClick={() => void capture()} disabled={busy || !captureName.trim()}
               className="px-3 py-1 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
-              캡처
+              {t('캡처')}
             </button>
           </div>
           <p className="text-[10px] text-neutral-500">
-            화면 상태가 아니라 <b>지금 장치에 들어 있는 값</b>을 읽어 담고, 활성으로 지정합니다.
+            {t.rich('화면 상태가 아니라 {b}을 읽어 담고, 활성으로 지정합니다.', { b: <b>{t('지금 장치에 들어 있는 값')}</b> })}
           </p>
         </div>
       </div>
@@ -271,7 +277,7 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
       {/* ── 오른쪽: 상세 편집 ── */}
       {!detail ? (
         <p className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-6 text-sm text-neutral-500">
-          왼쪽에서 프로파일을 선택하면 카메라별 값을 보고 고칠 수 있습니다.
+          {t('왼쪽에서 프로파일을 선택하면 카메라별 값을 보고 고칠 수 있습니다.')}
         </p>
       ) : (
         <div className="space-y-3">
@@ -280,17 +286,17 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
             <span className="text-[10px] text-neutral-500">{when(detail.updated_at)}</span>
             <div className="ml-auto flex gap-2">
               <button onClick={() => void applyNow(detail.name)} disabled={busy}
-                title={dirty ? '적용은 저장된 값 기준입니다 — 먼저 저장하세요' : '지금 연결된 카메라에 밀어 넣습니다'}
+                title={dirty ? t('적용은 저장된 값 기준입니다 — 먼저 저장하세요') : t('지금 연결된 카메라에 밀어 넣습니다')}
                 className="px-3 py-1 text-sm rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50">
-                지금 적용{dirty ? ' (저장 전 값)' : ''}
+                {t('지금 적용{dirty}', { dirty: dirty ? t(' (저장 전 값)') : '' })}
               </button>
               <button onClick={() => void makeActive(detail.name)} disabled={active === detail.name}
                 className="px-3 py-1 text-sm rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50">
-                {active === detail.name ? '활성임' : '활성으로 지정'}
+                {active === detail.name ? t('활성임') : t('활성으로 지정')}
               </button>
               <button onClick={() => void remove(detail.name)}
                 className="px-3 py-1 text-sm rounded bg-red-600/80 hover:bg-red-500 text-white">
-                삭제
+                {t('삭제')}
               </button>
             </div>
           </div>
@@ -303,7 +309,7 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
 
           {checkWarns.length > 0 && (
             <div className="rounded border border-amber-500/40 bg-amber-950/40 px-3 py-2 space-y-0.5">
-              <p className="text-[10px] font-semibold text-amber-300">재현성 검토</p>
+              <p className="text-[10px] font-semibold text-amber-300">{t('재현성 검토')}</p>
               {checkWarns.map((w, i) => (
                 <p key={i} className="text-[11px] text-amber-200">
                   <span className="font-mono">{w.key}</span> — {w.text}
@@ -314,22 +320,22 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
 
           <input value={noteDraft}
             onChange={(e) => { setNoteDraft(e.target.value); setDirty(true) }}
-            placeholder="메모 (조명 조건 등)"
+            placeholder={t('메모 (조명 조건 등)')}
             className="w-full px-2 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm" />
 
           {entries.map((entry, ei) => (
             <div key={ei} className="rounded-lg border border-neutral-700 bg-neutral-800 p-3 space-y-2">
               <div className="flex items-center gap-2">
-                <span className="font-mono text-sm text-neutral-100">{entry.key || '(키 없음)'}</span>
+                <span className="font-mono text-sm text-neutral-100">{entry.key || t('(키 없음)')}</span>
                 <span className="truncate text-[10px] text-neutral-500" title={matchSummary(entry)}>
                   {matchSummary(entry)}
                 </span>
                 <button onClick={() => {
                   void (async () => {
-                    if (await askConfirm(`"${entry.key}" 항목을 프로파일에서 뺄까요?\n이 카메라에는 더 이상 값이 적용되지 않습니다.`))
+                    if (await askConfirm(t('"{key}" 항목을 프로파일에서 뺄까요?\n이 카메라에는 더 이상 값이 적용되지 않습니다.', { key: entry.key })))
                       edit((prev) => prev.filter((_, i) => i !== ei))
                   })()
-                }} className="ml-auto text-xs text-neutral-500 hover:text-red-400">항목 삭제</button>
+                }} className="ml-auto text-xs text-neutral-500 hover:text-red-400">{t('항목 삭제')}</button>
               </div>
 
               {/* ⚠ 스트림은 **기록용이다.** 연결 해상도는 시작 요청(prepare_cameras)이
@@ -337,8 +343,8 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
                   소비를 배선하기 전까지 화면이 그 사실을 말해준다. */}
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="text-neutral-500"
-                      title="캡처 당시의 해상도·fps 기록입니다. 연결에 쓰는 값은 시작 요청이 정합니다 — 이 값은 아직 어디에도 적용되지 않습니다.">
-                  스트림 (기록용)</span>
+                      title={t('캡처 당시의 해상도·fps 기록입니다. 연결에 쓰는 값은 시작 요청이 정합니다 — 이 값은 아직 어디에도 적용되지 않습니다.')}>
+                  {t('스트림 (기록용)')}</span>
                 {(['width', 'height', 'fps'] as const).map((f) => (
                   <label key={f} className="flex items-center gap-1">
                     <span className="text-neutral-500">{f === 'width' ? 'W' : f === 'height' ? 'H' : 'fps'}</span>
@@ -373,11 +379,11 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
                       if (i !== ei) return x
                       const { [cname]: _drop, ...rest } = x.controls
                       return { ...x, controls: rest }
-                    }))} className="text-neutral-500 hover:text-red-400" title="이 컨트롤을 프로파일에서 뺀다">✕</button>
+                    }))} className="text-neutral-500 hover:text-red-400" title={t('이 컨트롤을 프로파일에서 뺀다')}>✕</button>
                   </div>
                 ))}
                 {Object.keys(entry.controls).length === 0 && (
-                  <p className="text-[10px] text-neutral-500">컨트롤 없음 — 캡처 때 default 와 같은 값은 저장되지 않습니다.</p>
+                  <p className="text-[10px] text-neutral-500">{t('컨트롤 없음 — 캡처 때 default 와 같은 값은 저장되지 않습니다.')}</p>
                 )}
                 <AddControlRow onAdd={(name, value) => edit((prev) => prev.map((x, i) => i === ei
                   ? { ...x, controls: { ...x.controls, [name]: value } } : x))} />
@@ -388,11 +394,11 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
           <div className="flex items-center gap-3">
             <button onClick={() => void save()} disabled={busy || !dirty}
               className="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
-              저장
+              {t('저장')}
             </button>
             {dirty
-              ? <span className="text-xs text-amber-400">저장 안 된 수정이 있습니다 — 적용·연결은 저장된 값을 씁니다</span>
-              : <span className="text-xs text-neutral-500">저장된 값 그대로입니다</span>}
+              ? <span className="text-xs text-amber-400">{t('저장 안 된 수정이 있습니다 — 적용·연결은 저장된 값을 씁니다')}</span>
+              : <span className="text-xs text-neutral-500">{t('저장된 값 그대로입니다')}</span>}
           </div>
         </div>
       )}
@@ -403,21 +409,22 @@ export default function CameraProfilesPanel({ active, onActiveChange }: {
 /** 컨트롤 추가 한 줄. 이름은 장치 컨트롤 이름과 같아야 적용된다 —
  *  장치 탭의 설정 창에서 이름을 확인할 수 있다. */
 function AddControlRow({ onAdd }: { onAdd: (name: string, value: number) => void }) {
+  const t = useT()
   const [name, setName] = useState('')
   const [value, setValue] = useState('')
   const ok = name.trim() !== '' && !Number.isNaN(parseFloat(value))
   return (
     <div className="flex items-center gap-2 pt-1 text-xs">
       <input value={name} onChange={(e) => setName(e.target.value)}
-        placeholder="컨트롤 이름 (예: exposure)"
+        placeholder={t('컨트롤 이름 (예: exposure)')}
         className="w-52 px-1.5 py-0.5 rounded bg-neutral-900 border border-neutral-700 font-mono" />
       <input type="number" step="any" value={value} onChange={(e) => setValue(e.target.value)}
-        placeholder="값"
+        placeholder={t('값')}
         className="w-28 px-1.5 py-0.5 rounded bg-neutral-900 border border-neutral-700 text-right" />
       <button disabled={!ok}
         onClick={() => { onAdd(name.trim(), parseFloat(value)); setName(''); setValue('') }}
         className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40">
-        + 추가
+        {t('+ 추가')}
       </button>
     </div>
   )

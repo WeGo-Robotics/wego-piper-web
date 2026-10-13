@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
+import { msg, tr, useT } from '../i18n'
 
 /**
  * `네임스페이스/이름` 을 고르고 적는다.
@@ -28,13 +29,13 @@ export function repoIdError(v: string): string | null {
   if (!s) return null
   const parts = s.split('/')
   if (parts.length !== 2 || !parts[0] || !parts[1])
-    return "'네임스페이스/이름' 형식이어야 합니다"
-  if (/\s/.test(s)) return '공백은 쓸 수 없습니다'
+    return tr('\'네임스페이스/이름\' 형식이어야 합니다')
+  if (/\s/.test(s)) return tr('공백은 쓸 수 없습니다')
   return null
 }
 
 export default function RepoIdInput({
-  value, onChange, allowEmpty = false, emptyLabel = '올리지 않음 (로컬에만)', uploads = true,
+  value, onChange, allowEmpty = false, emptyLabel = msg('올리지 않음 (로컬에만)'), uploads = true,
 }: {
   value: string
   onChange: (v: string) => void
@@ -44,6 +45,7 @@ export default function RepoIdInput({
    *  여전히 필요하다 — 그래서 "비울 수 있느냐"(allowEmpty)와는 다른 축이다. */
   uploads?: boolean
 }) {
+  const t = useT()
   const [acc, setAcc] = useState<Account | null>(null)
   useEffect(() => {
     api.get<Account>('/hub/whoami').then(setAcc).catch(() => setAcc(null))
@@ -65,11 +67,11 @@ export default function RepoIdInput({
     return (
       <div>
         <input type="text" value={value} onChange={(e) => onChange(e.target.value)}
-          placeholder={allowEmpty ? '비워 두면 로컬에만 남습니다' : '네임스페이스/이름'}
+          placeholder={allowEmpty ? t('비워 두면 로컬에만 남습니다') : t('네임스페이스/이름')}
           className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none" />
         {!acc?.logged_in && (
           <p className="mt-1 text-xs text-neutral-500">
-            설정 → 저장소에서 로그인하면 네임스페이스를 고를 수 있습니다.
+            {t('설정 → 저장소에서 로그인하면 네임스페이스를 고를 수 있습니다.')}
           </p>
         )}
       </div>
@@ -88,27 +90,27 @@ export default function RepoIdInput({
           onChange(`${e.target.value}/${name}`)
         }}
         className="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none">
-        {allowEmpty && <option value={NONE}>{emptyLabel}</option>}
-        {spaces.map((s) => <option key={s} value={s}>{s}{foreign && s === ns ? ' (내 계정 아님)' : ''}</option>)}
+        {allowEmpty && <option value={NONE}>{t(emptyLabel)}</option>}
+        {spaces.map((s) => <option key={s} value={s}>{s}{foreign && s === ns ? t(' (내 계정 아님)') : ''}</option>)}
       </select>
       {!empty && (
         <>
           <span className="self-center text-neutral-500">/</span>
           <input type="text" value={name}
             onChange={(e) => onChange(`${ns || spaces[0]}/${e.target.value}`)}
-            placeholder="이름"
+            placeholder={t('이름')}
             className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none" />
         </>
       )}
     </div>
     {foreign && !empty && uploads && (
       <p className="mt-1 text-xs text-amber-400">
-        {ns} 은 내 계정도, 소속 조직도 아닙니다 — 업로드가 거부될 수 있습니다.
+        {t('{ns} 은 내 계정도, 소속 조직도 아닙니다 — 업로드가 거부될 수 있습니다.', { ns })}
       </p>
     )}
     {!uploads && (
       <p className="mt-1 text-xs text-neutral-500">
-        Hub 업로드가 꺼져 있습니다 — 로컬 폴더 이름으로만 쓰입니다.
+        {t('Hub 업로드가 꺼져 있습니다 — 로컬 폴더 이름으로만 쓰입니다.')}
       </p>
     )}
     </div>

@@ -5,6 +5,7 @@ import { useActivity } from '../hooks/useActivity'
 import { useDeviceSummary } from '../hooks/useDeviceSummary'
 import { ageText, TREND_WINDOW_S, useSystemStatus } from '../hooks/useSystemStatus'
 import type { TrendSample } from '../hooks/useSystemStatus'
+import { useT } from '../i18n'
 
 /**
  * 대시보드 — **"지금 괜찮은가, 아니면 어디가 문제인가"** 하나에만 답한다.
@@ -29,11 +30,12 @@ function Dot({ ok, warn }: { ok: boolean; warn?: boolean }) {
 function Card({ title, to, children }: {
   title: string; to?: string; children: React.ReactNode
 }) {
+  const t = useT()
   return (
     <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="text-sm font-semibold text-neutral-300">{title}</h2>
-        {to && <Link to={to} className="text-xs text-neutral-500 hover:text-blue-400">자세히 →</Link>}
+        {to && <Link to={to} className="text-xs text-neutral-500 hover:text-blue-400">{t('자세히 →')}</Link>}
       </div>
       {children}
     </section>
@@ -63,6 +65,7 @@ type Series = {
 function TrendChart({ samples, series, yMax = 100, caption }: {
   samples: TrendSample[]; series: Series[]; yMax?: number; caption: string
 }) {
+  const t = useT()
   const W = 400
   const H = 80
   // 점 하나로는 선이 안 된다 — 견본이 쌓이면 나타난다
@@ -101,7 +104,7 @@ function TrendChart({ samples, series, yMax = 100, caption }: {
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
            className="mt-1 h-20 w-full rounded border border-neutral-700/60 bg-neutral-900/60"
-           role="img" aria-label={`${series.map((sr) => sr.label).join('·')} 최근 15분 추이`}>
+           role="img" aria-label={t('{series} 최근 15분 추이', { series: series.map((sr) => sr.label).join('·') })}>
         <line x1={0} y1={H / 2} x2={W} y2={H / 2} stroke="#404040"
               strokeDasharray="3 5" strokeWidth={1} vectorEffect="non-scaling-stroke" />
         {series.map((sr) => (
@@ -133,6 +136,7 @@ type HfStatus = {
 }
 
 export default function DashboardPage() {
+  const t = useT()
   const { units, gateway, gpus, disks, estop, cpu, samples } = useSystemStatus()
 
   // 추론 fps 차트 — 창 안에 값이 하나라도 있어야 그린다. 방금 멈춘 추론의
@@ -157,16 +161,16 @@ export default function DashboardPage() {
   const problems: string[] = []
   const staleNames = [
     ...units.filter((u) => u.stale).map((u) => u.name),
-    ...(gateway?.stale ? ['게이트웨이'] : []),
+    ...(gateway?.stale ? [t('게이트웨이')] : []),
   ]
-  if (staleNames.length) problems.push(`옛 코드로 돎: ${staleNames.join(', ')} — 재시작 필요`)
+  if (staleNames.length) problems.push(t('옛 코드로 돎: {staleNames} — 재시작 필요', { staleNames: staleNames.join(', ') }))
   const down = units.filter((u) => !u.active).map((u) => u.name)
-  if (down.length) problems.push(`멈춤: ${down.join(', ')}`)
-  if (devices.alerts > 0) problems.push(`장치 경보 ${devices.alerts}건`)
+  if (down.length) problems.push(t('멈춤: {down}', { down: down.join(', ') }))
+  if (devices.alerts > 0) problems.push(t('장치 경보 {alerts}건', { alerts: devices.alerts }))
   // ⚠ 디스크는 **남은 용량**으로 본다. 사용률 90% 라도 1TB 가 남았으면 문제가 아니다.
-  for (const d of disks) if (d.free_gb < 20) problems.push(`디스크 ${d.free_gb}GB 남음`)
-  if (hf && !hf.logged_in) problems.push('HF 미로그인 — 녹화·학습은 되지만 Hub 업로드 불가')
-  if (hfReadOnly) problems.push('HF 토큰이 읽기 전용 — 학습 끝 업로드에서 실패')
+  for (const d of disks) if (d.free_gb < 20) problems.push(t('디스크 {free_gb}GB 남음', { free_gb: d.free_gb }))
+  if (hf && !hf.logged_in) problems.push(t('HF 미로그인 — 녹화·학습은 되지만 Hub 업로드 불가'))
+  if (hfReadOnly) problems.push(t('HF 토큰이 읽기 전용 — 학습 끝 업로드에서 실패'))
 
   return (
     <div className="space-y-4">
@@ -177,7 +181,7 @@ export default function DashboardPage() {
         <div className="flex items-start gap-3">
           <Dot ok={!problems.length} warn={!!problems.length} />
           {problems.length === 0 ? (
-            <p className="text-sm text-neutral-300">정상 — 문제 없음</p>
+            <p className="text-sm text-neutral-300">{t('정상 — 문제 없음')}</p>
           ) : (
             <ul className="space-y-0.5 text-sm text-amber-200">
               {problems.map((p) => <li key={p}>{p}</li>)}
@@ -189,9 +193,9 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* ── 왼쪽: 지금 무슨 일이 일어나는가 ── */}
         <div className="space-y-4">
-          <Card title="지금 돌고 있는 것">
+          <Card title={t('지금 돌고 있는 것')}>
             {running.length === 0 ? (
-              <p className="text-sm text-neutral-500">없음 — 대기중</p>
+              <p className="text-sm text-neutral-500">{t('없음 — 대기중')}</p>
             ) : (
               <ul className="space-y-1">
                 {running.map((a) => (
@@ -203,22 +207,22 @@ export default function DashboardPage() {
             )}
             {hasFps && (
               <TrendChart samples={samples} yMax={fpsMax}
-                          caption={`최근 15분 · 0–${fpsMax}fps`}
-                          series={[{ label: '추론 fps', color: '#34d399',
+                          caption={t('최근 15분 · 0–{fpsMax}fps', { fpsMax })}
+                          series={[{ label: t('추론 fps'), color: '#34d399',
                                      pick: (s) => s.fps }]} />
             )}
           </Card>
 
-          <Card title="서비스" to="/settings">
+          <Card title={t('서비스')} to="/settings">
             <ul className="space-y-1.5 text-sm">
               {gateway && (
                 <li className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-2">
                     <Dot ok warn={gateway.stale} />
-                    <span className="text-neutral-200">게이트웨이</span>
+                    <span className="text-neutral-200">{t('게이트웨이')}</span>
                   </span>
                   <span className={gateway.stale ? 'text-amber-400' : 'text-neutral-500'}>
-                    {gateway.stale ? '낡음' : `${ageText(gateway.age_s)} 전`}
+                    {gateway.stale ? t('낡음') : t('{ageText} 전', { ageText: ageText(gateway.age_s) })}
                   </span>
                 </li>
               )}
@@ -229,21 +233,21 @@ export default function DashboardPage() {
                     <span className="text-neutral-200">{u.name}</span>
                   </span>
                   <span className={u.stale ? 'text-amber-400' : 'text-neutral-500'}>
-                    {!u.active ? '멈춤' : u.stale ? '낡음' : `${ageText(u.age_s)} 전`}
+                    {!u.active ? t('멈춤') : u.stale ? t('낡음') : t('{ageText} 전', { ageText: ageText(u.age_s) })}
                   </span>
                 </li>
               ))}
-              {units.length === 0 && <li className="text-neutral-500">불러오는 중…</li>}
+              {units.length === 0 && <li className="text-neutral-500">{t('불러오는 중…')}</li>}
             </ul>
           </Card>
 
           <Card title="HuggingFace" to="/settings">
             {!hf ? (
-              <p className="text-sm text-neutral-500">불러오는 중…</p>
+              <p className="text-sm text-neutral-500">{t('불러오는 중…')}</p>
             ) : !hf.logged_in ? (
               <p className="flex items-center gap-2 text-sm">
                 <Dot ok={false} />
-                <span className="text-neutral-400">미로그인 — Hub 업로드 불가</span>
+                <span className="text-neutral-400">{t('미로그인 — Hub 업로드 불가')}</span>
               </p>
             ) : (
               <div className="flex items-center gap-3">
@@ -256,10 +260,10 @@ export default function DashboardPage() {
                     {hf.username}
                     {/* ⚠ 토큰은 **이름만** 적는다. 값을 되돌려 보내는 화면은
                         그 자체가 자격증명 유출 경로다 (feature/hf-account.md §1) */}
-                    {hf.token_name && ` · 토큰 ${hf.token_name}`}
-                    {hf.token_role === 'write' && ' (쓰기)'}
+                    {hf.token_name && t(' · 토큰 {token_name}', { token_name: hf.token_name })}
+                    {hf.token_role === 'write' && t(' (쓰기)')}
                     {hfReadOnly && (
-                      <span className="text-amber-400"> (읽기 전용 — 업로드 불가)</span>
+                      <span className="text-amber-400">{' '}{t('(읽기 전용 — 업로드 불가)')}</span>
                     )}
                   </p>
                 </div>
@@ -271,24 +275,30 @@ export default function DashboardPage() {
 
         {/* ── 오른쪽: 무엇을 쓸 수 있는가 ── */}
         <div className="space-y-4">
-          <Card title="하드웨어" to="/robots">
+          <Card title={t('하드웨어')} to="/robots">
             <ul className="space-y-1.5 text-sm">
               <li className="flex items-center justify-between">
                 <span className="flex items-center gap-2">
                   <Dot ok={devices.robots.ok > 0} warn={devices.robots.warn > 0} />
-                  <span className="text-neutral-200">팔</span>
+                  <span className="text-neutral-200">{t('팔')}</span>
                 </span>
                 <span className="text-neutral-400">
-                  {devices.robots.ok}개{devices.robots.warn > 0 && ` · 경보 ${devices.robots.warn}`}
+                  {t.rich('{ok}개{warn}', {
+                    ok: devices.robots.ok,
+                    warn: devices.robots.warn > 0 && t(' · 경보 {warn}', { warn: devices.robots.warn }),
+                  })}
                 </span>
               </li>
               <li className="flex items-center justify-between">
                 <span className="flex items-center gap-2">
                   <Dot ok={devices.cameras.ok > 0} warn={devices.cameras.warn > 0} />
-                  <span className="text-neutral-200">카메라</span>
+                  <span className="text-neutral-200">{t('카메라')}</span>
                 </span>
                 <span className="text-neutral-400">
-                  {devices.cameras.ok}개{devices.cameras.warn > 0 && ` · 경보 ${devices.cameras.warn}`}
+                  {t.rich('{ok}개{warn}', {
+                    ok: devices.cameras.ok,
+                    warn: devices.cameras.warn > 0 && t(' · 경보 {warn}', { warn: devices.cameras.warn }),
+                  })}
                 </span>
               </li>
               <li className="flex items-center justify-between">
@@ -299,14 +309,14 @@ export default function DashboardPage() {
                   <span className="text-neutral-200">E-stop</span>
                 </span>
                 <span className="text-neutral-400">
-                  {!estop ? '…' : !estop.bus_available ? '버스 없음'
-                    : estop.armed ? '작동됨' : '정상'}
+                  {!estop ? '…' : !estop.bus_available ? t('버스 없음')
+                    : estop.armed ? t('작동됨') : t('정상')}
                 </span>
               </li>
             </ul>
           </Card>
 
-          <Card title="자원">
+          <Card title={t('자원')}>
             <div className="space-y-3">
               {gpus.map((g) => (
                 <div key={g.name}>
@@ -319,17 +329,17 @@ export default function DashboardPage() {
                     </span>
                   </div>
                   <Bar pct={g.util_pct ?? 0} />
-                  <TrendChart samples={samples} caption="최근 15분 · 0–100%"
+                  <TrendChart samples={samples} caption={t('최근 15분 · 0–100%')}
                               series={[
-                                { label: '사용률', color: '#3b82f6',
+                                { label: t('사용률'), color: '#3b82f6',
                                   pick: (s) => s.gpus.find((x) => x.name === g.name)?.util_pct ?? null },
-                                { label: '메모리', color: '#a78bfa',
+                                { label: t('메모리'), color: '#a78bfa',
                                   pick: (s) => s.gpus.find((x) => x.name === g.name)?.mem_pct ?? null },
                               ]} />
                 </div>
               ))}
               {gpus.length === 0 && (
-                <p className="text-sm text-neutral-500">GPU 없음 — 학습·추론은 못 돈다</p>
+                <p className="text-sm text-neutral-500">{t('GPU 없음 — 학습·추론은 못 돈다')}</p>
               )}
               <div>
                 <div className="mb-1 flex items-baseline justify-between text-sm">
@@ -337,16 +347,16 @@ export default function DashboardPage() {
                   <span className="text-neutral-400">{cpu != null ? `${cpu}%` : '?'}</span>
                 </div>
                 <Bar pct={cpu ?? 0} />
-                <TrendChart samples={samples} caption="최근 15분 · 0–100%"
-                            series={[{ label: '사용률', color: '#3b82f6',
+                <TrendChart samples={samples} caption={t('최근 15분 · 0–100%')}
+                            series={[{ label: t('사용률'), color: '#3b82f6',
                                        pick: (s) => s.cpu_pct }]} />
               </div>
               {disks.map((d) => (
                 <div key={d.path}>
                   <div className="mb-1 flex items-baseline justify-between text-sm">
-                    <span className="truncate text-neutral-200" title={d.path}>디스크</span>
+                    <span className="truncate text-neutral-200" title={d.path}>{t('디스크')}</span>
                     <span className={d.free_gb < 20 ? 'text-amber-400' : 'text-neutral-400'}>
-                      {d.free_gb}GB 남음 / {d.total_gb}GB
+                      {t('{free_gb}GB 남음 / {total_gb}GB', { free_gb: d.free_gb, total_gb: d.total_gb })}
                     </span>
                   </div>
                   <Bar pct={d.used_pct ?? 0} warn={d.free_gb < 20} />

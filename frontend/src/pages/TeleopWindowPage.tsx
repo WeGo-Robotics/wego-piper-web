@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { useT, msg } from '../i18n'
 
 /**
  * 조종 창 — 별도 브라우저 창 (feature/web-leader.md §5).
@@ -38,56 +39,57 @@ const SELECT_OF: Record<string, string> = {
 // 가운데 드래그·휠 선택으로만 움직인다 — 그 오탐을 여기서 바로잡는다.
 type HelpRow = [string, string]
 const JOINT_ROWS: HelpRow[] = [
-  ['Q / A', '관절1 — 베이스 회전 (+/−)'],
-  ['W / S', '관절2 — 어깨 (+/−)'],
-  ['E / D', '관절3 — 팔꿈치 (+/−)'],
-  ['R / F', '관절4 — 손목 회전 (+/−)'],
-  ['Y / H', '관절6 — 그리퍼 회전 (+/−)'],
-  ['관절5', '가운데 버튼 상하 드래그, 또는 5 누른 뒤 휠'],
-  ['우클릭 드래그', '관절1(좌우)·관절2(상하) — Shift 시 관절4·관절3'],
-  ['가운데 드래그', '관절6(좌우)·관절5(상하)'],
-  ['1 ~ 7', '관절·그리퍼 선택 → 휠로 조절'],
+  ['Q / A', msg('관절1 — 베이스 회전 (+/−)')],
+  ['W / S', msg('관절2 — 어깨 (+/−)')],
+  ['E / D', msg('관절3 — 팔꿈치 (+/−)')],
+  ['R / F', msg('관절4 — 손목 회전 (+/−)')],
+  ['Y / H', msg('관절6 — 그리퍼 회전 (+/−)')],
+  [msg('관절5'), msg('가운데 버튼 상하 드래그, 또는 5 누른 뒤 휠')],
+  [msg('우클릭 드래그'), msg('관절1(좌우)·관절2(상하) — Shift 시 관절4·관절3')],
+  [msg('가운데 드래그'), msg('관절6(좌우)·관절5(상하)')],
+  ['1 ~ 7', msg('관절·그리퍼 선택 → 휠로 조절')],
 ]
 const EE_ROWS: HelpRow[] = [
-  ['마우스 이동', '앞뒤(세로)·좌우(가로) 이동'],
-  ['키패드 8 / 2', '앞 / 뒤 (X) — 방향키 ↑ ↓ 도 같다'],
-  ['키패드 4 / 6', '왼쪽 / 오른쪽 (Y) — 방향키 ← → 도 같다'],
-  ['휠', '위아래 (Z)'],
-  ['키패드 + / −', '위 / 아래 (Z) — 본체 = / − 도 같다'],
-  ['Q / A', '롤 (+/−)'],
-  ['W / S', '피치 (+/−)'],
-  ['E / D', '요 (+/−)'],
-  ['왼쪽 버튼', '그리퍼 닫기'],
-  ['오른쪽 버튼', '그리퍼 열기'],
-  ['가운데 버튼', '자세 고정 토글'],
+  [msg('마우스 이동'), msg('앞뒤(세로)·좌우(가로) 이동')],
+  [msg('키패드 8 / 2'), msg('앞 / 뒤 (X) — 방향키 ↑ ↓ 도 같다')],
+  [msg('키패드 4 / 6'), msg('왼쪽 / 오른쪽 (Y) — 방향키 ← → 도 같다')],
+  [msg('휠'), msg('위아래 (Z)')],
+  [msg('키패드 + / −'), msg('위 / 아래 (Z) — 본체 = / − 도 같다')],
+  ['Q / A', msg('롤 (+/−)')],
+  ['W / S', msg('피치 (+/−)')],
+  ['E / D', msg('요 (+/−)')],
+  [msg('왼쪽 버튼'), msg('그리퍼 닫기')],
+  [msg('오른쪽 버튼'), msg('그리퍼 열기')],
+  [msg('가운데 버튼'), msg('자세 고정 토글')],
 ]
 // 모드가 둘일 때만 뜻이 있는 줄 — 시뮬(EE 전용)에선 빼고 그린다
 const MODE_ROWS: HelpRow[] = [
-  ['Tab', '관절 ↔ EE 모드 전환'],
-  ['Shift', '빠르게 (관절 이동·우드래그 축 전환)'],
+  ['Tab', msg('관절 ↔ EE 모드 전환')],
+  ['Shift', msg('빠르게 (관절 이동·우드래그 축 전환)')],
 ]
 const COMMON_ROWS: HelpRow[] = [
-  ['Ctrl', '미세 조작'],
-  ['Space', '정지 — 모든 입력 초기화'],
-  ['[  ]', '그리퍼 열기·닫기'],
-  ['Esc', '조종(포인터 락) 해제'],
-  ['X', '자세 고정 토글'],
-  ['0 (키패드 0)', '그리퍼 토글 — 한 번 누르면 2초에 걸쳐 닫히거나 열린다'],
-  ['R', '환경 리셋 — 큐브 + 팔 원위치'],
-  ['T', '팔 초기화 — 팔만 원위치, 큐브·조명 유지'],
-  ['B', '블럭 옮기기 — 켠 뒤 **옮길 물체**를 클릭하고, 놓을 자리를 클릭'],
-  ['? / Shift + /', '이 도움말 열기·닫기'],
+  ['Ctrl', msg('미세 조작')],
+  ['Space', msg('정지 — 모든 입력 초기화')],
+  ['[  ]', msg('그리퍼 열기·닫기')],
+  ['Esc', msg('조종(포인터 락) 해제')],
+  ['X', msg('자세 고정 토글')],
+  [msg('0 (키패드 0)'), msg('그리퍼 토글 — 한 번 누르면 2초에 걸쳐 닫히거나 열린다')],
+  ['R', msg('환경 리셋 — 큐브 + 팔 원위치')],
+  ['T', msg('팔 초기화 — 팔만 원위치, 큐브·조명 유지')],
+  ['B', msg('블럭 옮기기 — 켠 뒤 **옮길 물체**를 클릭하고, 놓을 자리를 클릭')],
+  ['? / Shift + /', msg('이 도움말 열기·닫기')],
 ]
 
 function HelpSection({ title, rows }: { title: string; rows: HelpRow[] }) {
+  const t = useT()
   return (
     <div>
       <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-blue-300">{title}</h3>
       <dl className="space-y-1">
         {rows.map(([k, d]) => (
           <div key={k} className="flex gap-2">
-            <dt className="w-32 shrink-0 font-mono text-neutral-100">{k}</dt>
-            <dd className="text-neutral-400">{d}</dd>
+            <dt className="w-32 shrink-0 font-mono text-neutral-100">{t(k)}</dt>
+            <dd className="text-neutral-400">{t(d)}</dd>
           </div>
         ))}
       </dl>
@@ -96,6 +98,7 @@ function HelpSection({ title, rows }: { title: string; rows: HelpRow[] }) {
 }
 
 export default function TeleopWindowPage() {
+  const t = useT()
   const params = new URLSearchParams(window.location.search)
   const follower = params.get('follower') ?? ''
   const [st, setSt] = useState<Status>({ running: false })
@@ -155,11 +158,11 @@ export default function TeleopWindowPage() {
         setCams(want); if (want[0]) setBig(want[0].id)
         // 첫 프레임이 스트림에 실릴 틈을 주고 화면을 연다
         window.setTimeout(() => { if (!cancelled) setLoading(false) }, want.length ? 700 : 0)
-        if (!want.length) setErr('연결된 카메라가 없습니다')
-      } catch (e) { if (!cancelled) { setErr(e instanceof Error ? e.message : '카메라 목록 실패'); setLoading(false) } }
+        if (!want.length) setErr(t('연결된 카메라가 없습니다'))
+      } catch (e) { if (!cancelled) { setErr(e instanceof Error ? e.message : t('카메라 목록 실패')); setLoading(false) } }
     })()
     return () => { cancelled = true }
-  }, [follower])
+  }, [follower, t])
 
   // 상태 5Hz
   useEffect(() => {
@@ -220,9 +223,9 @@ export default function TeleopWindowPage() {
   const start = useCallback(async () => {
     setErr('')
     try { await api.post('/leader/web/start', { follower, mode }); running.current = true }
-    catch (e) { setErr(e instanceof Error ? e.message : '시작 실패'); return false }
+    catch (e) { setErr(e instanceof Error ? e.message : t('시작 실패')); return false }
     return true
-  }, [follower, mode])
+  }, [follower, mode, t])
   // 키보드 전용(EE + 마우스 끄기) — 클릭·포인터 락 없이 키가 곧 시작이다 (사용자 요청 2026-09-14:
   // "마우스 끄기를 선택했으면 바로 키보드에 반응하게"). 전송 루프는 리더만 살아 있으면 돈다.
   const kbOnly = mouseOff && mode === 'ee'
@@ -235,8 +238,8 @@ export default function TeleopWindowPage() {
   const stopRecording = useCallback(async () => {
     setErr('')
     try { await api.post('/recording/stop', undefined, { timeoutMs: 10_000 }) }
-    catch (e) { setErr(`수집 정지 실패: ${e instanceof Error ? e.message : ''}`) }
-  }, [])
+    catch (e) { setErr(t('수집 정지 실패: {e}', { e: e instanceof Error ? e.message : '' })) }
+  }, [t])
 
   // 블럭 옮기기: 큰 화면(카메라 뷰)에서 클릭한 픽셀 → 정규화 u,v(object-contain 보정) →
   // 백엔드가 그 카메라 광선으로 테이블 좌표를 푼다.
@@ -265,8 +268,8 @@ export default function TeleopWindowPage() {
       }
       await api.post('/leader/web/cube', { cam: big, u, v, aspect: ar, object: blockTarget.id })
       setBlockTarget(null)         // 놓았으면 다음 물체를 고를 수 있게 비운다
-    } catch (err) { setErr(err instanceof Error ? err.message : '블럭 옮기기 실패') }
-  }, [big, blockTarget])
+    } catch (err) { setErr(err instanceof Error ? err.message : t('블럭 옮기기 실패')) }
+  }, [big, blockTarget, t])
 
   const [resetting, setResetting] = useState(false)
   const [moveBlock, setMoveBlock] = useState(false)   // 블럭 옮기기 모드 (B) — 두 번 클릭(고르기 → 놓기)
@@ -274,9 +277,9 @@ export default function TeleopWindowPage() {
     // 리셋 — 큐브까지(환경 리셋) 또는 팔만(T). 조종 중이면 리더도 파킹으로(백엔드가 처리).
     setResetting(true)
     try { await api.post('/leader/web/reset', { follower, arm_only: armOnly }) }
-    catch (e) { setErr(e instanceof Error ? e.message : '리셋 실패') }
+    catch (e) { setErr(e instanceof Error ? e.message : t('리셋 실패')) }
     finally { setResetting(false) }
-  }, [follower])
+  }, [follower, t])
 
   // 포인터 락 — 창을 클릭해야 걸린다. 그 클릭은 그리퍼가 아니다.
   const onArenaClick = async () => {
@@ -355,55 +358,55 @@ export default function TeleopWindowPage() {
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col select-none">
       <div className="flex items-center justify-between px-3 py-1.5 text-xs bg-neutral-900 border-b border-neutral-800">
         <div className="flex items-center gap-3">
-          <span className="font-semibold">조종 — {follower || '(팔로워 없음)'}</span>
-          {real && <span className="rounded bg-red-700/60 px-1.5 py-0.5 text-red-100">실기</span>}
-          {!eeOnly && <span className={`px-1.5 py-0.5 rounded ${mode === 'joint' ? 'bg-blue-600/40' : 'bg-neutral-700'}`}>관절</span>}
+          <span className="font-semibold">{t('조종 — {follower}', { follower: follower || t('(팔로워 없음)') })}</span>
+          {real && <span className="rounded bg-red-700/60 px-1.5 py-0.5 text-red-100">{t('실기')}</span>}
+          {!eeOnly && <span className={`px-1.5 py-0.5 rounded ${mode === 'joint' ? 'bg-blue-600/40' : 'bg-neutral-700'}`}>{t('관절')}</span>}
           <span className={`px-1.5 py-0.5 rounded ${mode === 'ee' ? 'bg-blue-600/40' : 'bg-neutral-700'}`}>EE</span>
           <span className="text-neutral-500">
-            {eeOnly ? 'Ctrl 미세 · QWEASD 회전' : `Tab 전환 · Ctrl 미세${mode === 'ee' ? ' · QWEASD 회전' : ' · Shift 빠르게'}`}
+            {eeOnly ? t('Ctrl 미세 · QWEASD 회전') : t('Tab 전환 · Ctrl 미세{mode}', { mode: mode === 'ee' ? t(' · QWEASD 회전') : t(' · Shift 빠르게') })}
           </span>
           {mode === 'ee' && (
             // 헤더는 arena 밖이라 이 클릭은 조종을 시작하지 않는다. 포인터 락 중엔 Esc 로 풀고 누른다.
             <label className={`flex items-center gap-1 cursor-pointer ${mouseOff ? 'text-amber-300' : 'text-neutral-400'}`}
-                   title="EE 모드에서 마우스 이동·휠·버튼을 무시 — 키패드(8/2/4/6, +/−)와 0 으로만 조종">
+                   title={t('EE 모드에서 마우스 이동·휠·버튼을 무시 — 키패드(8/2/4/6, +/−)와 0 으로만 조종')}>
               <input type="checkbox" checked={mouseOff} onChange={(e) => setMouseOff(e.target.checked)} className="accent-amber-500" />
-              마우스 끄기
+              {t('마우스 끄기')}
             </label>
           )}
-          {st.pose_lock && <span className="text-amber-300">자세 고정</span>}
+          {st.pose_lock && <span className="text-amber-300">{t('자세 고정')}</span>}
         </div>
         <div className="flex items-center gap-2">
           <span className={st.running ? (locked ? 'text-emerald-400' : 'text-amber-300') : 'text-neutral-500'}>
             {st.running
-              ? (st.relaying === false ? '● 수집 중 — 녹화가 팔을 움직임, 여기선 입력만'
-                 : kbOnly ? '● 키보드 조종 중' : locked ? '● 조종 중 — Esc 끝' : '○ 클릭하면 이어서')
-              : kbOnly ? '조종 키를 누르면 시작 (마우스 끄기)' : '클릭해서 시작'}
+              ? (st.relaying === false ? t('● 수집 중 — 녹화가 팔을 움직임, 여기선 입력만')
+                 : kbOnly ? t('● 키보드 조종 중') : locked ? t('● 조종 중 — Esc 끝') : t('○ 클릭하면 이어서'))
+              : kbOnly ? t('조종 키를 누르면 시작 (마우스 끄기)') : t('클릭해서 시작')}
           </span>
           {/* 멈춘 게 영상인지 입력인지 구분: 영상=스트림 fps, 입력=팔에 전송 중인가 */}
-          <span className={videoFps ? 'text-neutral-500' : 'text-red-400'} title="큰 화면 스트림 상태">
-            영상 {videoFps ? `${videoFps}fps` : '멈춤'}
+          <span className={videoFps ? 'text-neutral-500' : 'text-red-400'} title={t('큰 화면 스트림 상태')}>
+            {t('영상 {videoFps}', { videoFps: videoFps ? `${videoFps}fps` : t('멈춤') })}
           </span>
           {locked && (
-            <span className={inputLive ? 'text-neutral-500' : 'text-amber-400'} title="입력이 실제로 팔에 전달되는가">
-              입력 {inputLive ? '전달 중' : '대기'}
+            <span className={inputLive ? 'text-neutral-500' : 'text-amber-400'} title={t('입력이 실제로 팔에 전달되는가')}>
+              {t('입력 {inputLive}', { inputLive: inputLive ? t('전달 중') : t('대기') })}
             </span>
           )}
-          {st.speed_scale !== undefined && st.speed_scale < 1 && <span className="text-red-300">속도 ×{st.speed_scale}</span>}
-          {st.homing && <span className="text-cyan-300">원점 복귀 중… (조작하면 인계)</span>}
-          <button onClick={() => resetWorld(true)} disabled={resetting} title="팔만 파킹으로 (T) — 큐브·조명 유지"
-            className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50">팔 초기화</button>
-          <button onClick={() => resetWorld(false)} disabled={resetting} title="큐브를 시작 위치로, 팔을 파킹으로 (R)"
-            className="px-2 py-0.5 rounded bg-amber-700 hover:bg-amber-600 disabled:opacity-50">{resetting ? '리셋 중…' : '환경 리셋'}</button>
+          {st.speed_scale !== undefined && st.speed_scale < 1 && <span className="text-red-300">{t('속도 ×{speed_scale}', { speed_scale: st.speed_scale })}</span>}
+          {st.homing && <span className="text-cyan-300">{t('원점 복귀 중… (조작하면 인계)')}</span>}
+          <button onClick={() => resetWorld(true)} disabled={resetting} title={t('팔만 파킹으로 (T) — 큐브·조명 유지')}
+            className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50">{t('팔 초기화')}</button>
+          <button onClick={() => resetWorld(false)} disabled={resetting} title={t('큐브를 시작 위치로, 팔을 파킹으로 (R)')}
+            className="px-2 py-0.5 rounded bg-amber-700 hover:bg-amber-600 disabled:opacity-50">{resetting ? t('리셋 중…') : t('환경 리셋')}</button>
           <button onClick={() => { setBlockTarget(null); setMoveBlock((m) => { if (!m) document.exitPointerLock(); return !m }) }}
-            title="블럭 옮기기 (B) — 옮길 물체를 클릭하고, 놓을 자리를 클릭"
-            className={`px-2 py-0.5 rounded ${moveBlock ? 'bg-cyan-600 text-white' : 'bg-neutral-700 hover:bg-neutral-600'}`}>블럭 옮기기</button>
+            title={t('블럭 옮기기 (B) — 옮길 물체를 클릭하고, 놓을 자리를 클릭')}
+            className={`px-2 py-0.5 rounded ${moveBlock ? 'bg-cyan-600 text-white' : 'bg-neutral-700 hover:bg-neutral-600'}`}>{t('블럭 옮기기')}</button>
           {st.running && st.relaying === false && (
-            <button onClick={stopRecording} title="수집을 세운다 — 이번 에피소드까지 저장하고 녹화 종료"
-              className="px-2 py-0.5 rounded bg-red-800 hover:bg-red-700 text-red-100">수집 정지</button>
+            <button onClick={stopRecording} title={t('수집을 세운다 — 이번 에피소드까지 저장하고 녹화 종료')}
+              className="px-2 py-0.5 rounded bg-red-800 hover:bg-red-700 text-red-100">{t('수집 정지')}</button>
           )}
-          {st.running && <button onClick={stop} className="px-2 py-0.5 rounded bg-red-700 hover:bg-red-600">끝내기</button>}
-          <button onClick={() => setHelp((h) => !h)} title="조작 도움말 (Shift+/)"
-            className={`px-2 py-0.5 rounded ${help ? 'bg-blue-600 text-white' : 'bg-neutral-700 hover:bg-neutral-600'}`}>도움말</button>
+          {st.running && <button onClick={stop} className="px-2 py-0.5 rounded bg-red-700 hover:bg-red-600">{t('끝내기')}</button>}
+          <button onClick={() => setHelp((h) => !h)} title={t('조작 도움말 (Shift+/)')}
+            className={`px-2 py-0.5 rounded ${help ? 'bg-blue-600 text-white' : 'bg-neutral-700 hover:bg-neutral-600'}`}>{t('도움말')}</button>
         </div>
       </div>
       <div ref={arena} onClick={onArenaClick} className={`relative flex-1 grid grid-cols-[3fr_1fr] gap-1 p-1 ${loading ? 'cursor-wait' : 'cursor-crosshair'}`}>
@@ -411,16 +414,16 @@ export default function TeleopWindowPage() {
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-neutral-950/85"
                onClickCapture={(e) => e.stopPropagation()}>
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-neutral-600 border-t-blue-400" />
-            <p className="text-sm text-neutral-300">조종 화면 준비 중…</p>
-            <p className="text-[11px] text-neutral-500">카메라를 연결하고 있습니다 — 잠시만요</p>
+            <p className="text-sm text-neutral-300">{t('조종 화면 준비 중…')}</p>
+            <p className="text-[11px] text-neutral-500">{t('카메라를 연결하고 있습니다 — 잠시만요')}</p>
           </div>
         )}
         {moveBlock && (
           <div className="absolute inset-x-0 top-0 z-10 bg-cyan-600/90 py-1 text-center text-xs text-white"
                onClick={(e) => e.stopPropagation()}>
             {blockTarget
-              ? `'${blockTarget.label}' 을 놓을 자리를 클릭하세요 (B 로 끄기)`
-              : '옮길 물체를 클릭하세요 — 그 다음 놓을 자리를 클릭합니다 (B 로 끄기)'}
+              ? t('\'{label}\' 을 놓을 자리를 클릭하세요 (B 로 끄기)', { label: blockTarget.label })
+              : t('옮길 물체를 클릭하세요 — 그 다음 놓을 자리를 클릭합니다 (B 로 끄기)')}
           </div>
         )}
         <div className="relative bg-black rounded overflow-hidden">
@@ -429,11 +432,11 @@ export default function TeleopWindowPage() {
                       onError={() => window.setTimeout(() => setBigTick((n) => n + 1), 200)}
                       onClick={moveBlock ? (e) => { e.stopPropagation(); placeBlock(e) } : undefined}
                       className={`w-full h-full object-contain ${moveBlock ? 'cursor-cell' : ''}`} draggable={false} />
-            : <p className="p-4 text-sm text-neutral-500">카메라가 없습니다</p>}
+            : <p className="p-4 text-sm text-neutral-500">{t('카메라가 없습니다')}</p>}
           <span className="absolute left-2 top-2 text-[11px] text-neutral-300 bg-black/50 px-1 rounded">{big}</span>
           {!loading && (
             <span className={`absolute right-2 top-2 text-[11px] px-1.5 rounded ${videoFps ? 'bg-black/50 text-neutral-300' : 'bg-red-700/80 text-red-100'}`}>
-              {videoFps ? `${videoFps}fps` : '영상 멈춤'}
+              {videoFps ? `${videoFps}fps` : t('영상 멈춤')}
             </span>
           )}
         </div>
@@ -454,15 +457,15 @@ export default function TeleopWindowPage() {
             <div className="max-h-full w-full max-w-3xl overflow-y-auto rounded-lg border border-neutral-600 bg-neutral-900/98 p-5 text-xs text-neutral-200 shadow-xl"
                  onClick={(e) => e.stopPropagation()}>
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-neutral-100">조작 도움말</h2>
+                <h2 className="text-sm font-semibold text-neutral-100">{t('조작 도움말')}</h2>
                 <button onClick={() => setHelp(false)}
-                        className="rounded px-2 py-0.5 text-neutral-400 hover:bg-neutral-700 hover:text-white">닫기</button>
+                        className="rounded px-2 py-0.5 text-neutral-400 hover:bg-neutral-700 hover:text-white">{t('닫기')}</button>
               </div>
               <div className={`grid gap-5 ${eeOnly ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
-                {!eeOnly && <HelpSection title="관절 모드" rows={JOINT_ROWS} />}
-                <HelpSection title={eeOnly ? '이동(마우스·키패드) + 키 회전(동시)'
-                                    : 'EE 모드 · 이동(마우스·키패드) + 키 회전(동시)'} rows={EE_ROWS} />
-                <HelpSection title="공통 · 단축키" rows={eeOnly ? COMMON_ROWS : [...MODE_ROWS, ...COMMON_ROWS]} />
+                {!eeOnly && <HelpSection title={t('관절 모드')} rows={JOINT_ROWS} />}
+                <HelpSection title={eeOnly ? t('이동(마우스·키패드) + 키 회전(동시)')
+                                    : t('EE 모드 · 이동(마우스·키패드) + 키 회전(동시)')} rows={EE_ROWS} />
+                <HelpSection title={t('공통 · 단축키')} rows={eeOnly ? COMMON_ROWS : [...MODE_ROWS, ...COMMON_ROWS]} />
               </div>
             </div>
           </div>
@@ -475,7 +478,7 @@ export default function TeleopWindowPage() {
           </span>
         ))}
         {st.ee && <span className="text-neutral-400">x {st.ee.x.toFixed(3)} y {st.ee.y.toFixed(3)} z {st.ee.z.toFixed(3)} · r {st.ee.roll} p {st.ee.pitch} y {st.ee.yaw}</span>}
-        {st.relay && <span className={st.relay.stale ? 'text-amber-300' : 'text-neutral-500'}>릴레이 {st.relay.running ? `전송 ${st.relay.sent}` : '없음'}{st.relay.stale ? ' · 리더 낡음' : ''}</span>}
+        {st.relay && <span className={st.relay.stale ? 'text-amber-300' : 'text-neutral-500'}>{t('릴레이 {running}{stale}', { running: st.relay.running ? t('전송 {sent}', { sent: st.relay.sent }) : t('없음'), stale: st.relay.stale ? t(' · 리더 낡음') : '' })}</span>}
         {st.blocked && <span className="text-amber-300">⚠ {st.blocked}</span>}
         {err && <span className="text-red-400">{err}</span>}
       </div>

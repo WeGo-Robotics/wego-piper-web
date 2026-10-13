@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../services/api'
 import { useHubDownload, dlActive, bytes, eta } from '../hooks/useHubDownload'
+import { useT, fmt } from '../i18n'
 
 type HubItem = {
   repo_id: string
@@ -27,6 +28,7 @@ type Props = {
  */
 function DownloadCell({ d, onStart }: { d?: import('../hooks/useHubDownload').HubDownload
                                         onStart: () => void }) {
+  const t = useT()
   const st = d?.status
   if (dlActive(st)) {
     const pct = d?.percent ?? 0
@@ -37,7 +39,7 @@ function DownloadCell({ d, onStart }: { d?: import('../hooks/useHubDownload').Hu
                style={{ width: `${Math.max(2, pct)}%` }} />
         </div>
         <div className="mt-1 text-[10px] text-neutral-400 tabular-nums">
-          {st === 'verifying' ? '파일 확인 중…' : (
+          {st === 'verifying' ? t('파일 확인 중…') : (
             <>
               {d!.files_done}/{d!.files_total} · {pct.toFixed(0)}%
               {d!.speed_bps > 0 && <> · {bytes(d!.speed_bps)}/s</>}
@@ -49,17 +51,17 @@ function DownloadCell({ d, onStart }: { d?: import('../hooks/useHubDownload').Hu
     )
   }
   if (st === 'completed') {
-    return <span className="ml-4 shrink-0 px-3 py-1.5 text-xs text-green-400">받음 ✓</span>
+    return <span className="ml-4 shrink-0 px-3 py-1.5 text-xs text-green-400">{t('받음 ✓')}</span>
   }
   return (
     <div className="ml-4 shrink-0 text-right">
       <button onClick={onStart}
         className="px-3 py-1.5 text-xs rounded bg-green-600 hover:bg-green-500 text-white">
-        {st === 'incomplete' || st === 'error' ? '다시 받기' : '다운로드'}
+        {st === 'incomplete' || st === 'error' ? t('다시 받기') : t('다운로드')}
       </button>
       {st === 'incomplete' && (
         <div className="mt-1 text-[10px] text-amber-300 max-w-44">
-          {d!.missing.length}개 파일이 빠졌습니다 — 다시 받으면 빠진 것만 받습니다
+          {t('{length}개 파일이 빠졌습니다 — 다시 받으면 빠진 것만 받습니다', { length: d!.missing.length })}
         </div>
       )}
       {st === 'error' && (
@@ -70,6 +72,7 @@ function DownloadCell({ d, onStart }: { d?: import('../hooks/useHubDownload').Hu
 }
 
 export default function HubBrowser({ type }: Props) {
+  const t = useT()
   const [items, setItems] = useState<HubItem[]>([])
   const [query, setQuery] = useState('')
   const [author, setAuthor] = useState('')
@@ -126,7 +129,7 @@ export default function HubBrowser({ type }: Props) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && search()}
-          placeholder="검색..."
+          placeholder={t('검색...')}
           className="flex-1 px-3 py-1.5 rounded bg-neutral-800 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500"
         />
         <button
@@ -134,13 +137,13 @@ export default function HubBrowser({ type }: Props) {
           disabled={loading}
           className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm text-white disabled:opacity-50"
         >
-          {loading ? '검색 중...' : '검색'}
+          {loading ? t('검색 중...') : t('검색')}
         </button>
       </div>
 
       {/* 결과 목록 */}
       {items.length === 0 && !loading ? (
-        <p className="text-neutral-400 text-sm">결과 없음</p>
+        <p className="text-neutral-400 text-sm">{t('결과 없음')}</p>
       ) : (
         <div className="space-y-2">
           {items.map((item) => (
@@ -159,17 +162,19 @@ export default function HubBrowser({ type }: Props) {
                   )}
                 </div>
                 <div className="flex gap-3 text-xs text-neutral-400">
-                  <span>Downloads: {item.downloads?.toLocaleString() ?? 0}</span>
-                  {item.last_modified && <span>{new Date(item.last_modified).toLocaleDateString()}</span>}
+                  <span>Downloads: {item.downloads != null ? fmt.number(item.downloads) : 0}</span>
+                  {item.last_modified && <span>{fmt.date(item.last_modified)}</span>}
                 </div>
                 {item.base_model && (
                   <div className="text-xs text-neutral-400">
-                    베이스 모델: <span className="text-amber-300 font-mono">{item.base_model}</span>
+                    {t.rich('베이스 모델: {span}', {
+                      span: <span className="text-amber-300 font-mono">{item.base_model}</span>,
+                    })}
                   </div>
                 )}
                 {item.datasets && item.datasets.length > 0 && (
                   <div className="text-xs text-neutral-400">
-                    학습 데이터: {item.datasets.map((d, i) => (
+                    {t('학습 데이터:')}{' '}{item.datasets.map((d, i) => (
                       <span key={d} className="text-green-300 font-mono">{i > 0 && ', '}{d}</span>
                     ))}
                   </div>

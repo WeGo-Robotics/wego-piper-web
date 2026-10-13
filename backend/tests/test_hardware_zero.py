@@ -137,5 +137,5 @@ def test_zero_and_parking_stay_distinct_in_the_detail_modal():
     됐지만 분리는 유지되어야 한다."""
     page = (REPO / "frontend" / "src" / "pages" / "RobotsPage.tsx").read_text()
     assert "ZeroCalibrationPanel" in page, "영점 탭이 사라졌다"
-    assert "'zero', '영점'" in page and "'parking', '파킹'" in page, "탭 분리가 무너졌다"
+    assert "['zero', t('영점')]" in page and "['parking', t('파킹')]" in page, "탭 분리가 무너졌다"
     assert "ParkingPanel" in page, "소프트웨어 파킹 쪽이 사라졌다"

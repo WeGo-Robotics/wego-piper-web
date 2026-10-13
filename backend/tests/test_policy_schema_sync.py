@@ -118,7 +118,7 @@ def test_finetune_list_is_filtered_by_policy():
     assert "m.policy_type === policyType" in _SRC, "정책이 같은 것만 남기지 않는다"
     assert "m.is_policy !== false" in _SRC, "정책이 아닌 모델을 걸러내지 않는다"
     # 드롭다운이 걸러진 목록을 쓰는지 (원본 `models` 를 그대로 쓰면 의미가 없다)
-    dd = _SRC.split('<option value="">처음부터 학습</option>', 1)[1].split("</select>", 1)[0]
+    dd = _SRC.split('<option value="">{t(\'처음부터 학습\')}</option>', 1)[1].split("</select>", 1)[0]
     assert "finetuneCandidates.map" in dd, f"드롭다운이 전체 목록을 쓴다: {dd.strip()[:80]}"
 
 

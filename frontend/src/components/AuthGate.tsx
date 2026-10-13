@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api } from '../services/api'
+import { useT } from '../i18n'
+import LanguageSwitcher from './LanguageSwitcher'
 
 /**
  * 로그인 관문 — **비밀번호를 정한 게이트웨이에서만 뜬다.**
@@ -22,6 +24,7 @@ type Status = { enabled: boolean; authenticated: boolean; broken: boolean; min_l
 const OPEN: Status = { enabled: false, authenticated: true, broken: false, min_length: 4 }
 
 export default function AuthGate({ children }: { children: ReactNode }) {
+  const t = useT()
   const [st, setSt] = useState<Status | null>(null)
   const [pw, setPw] = useState('')
   const [busy, setBusy] = useState(false)
@@ -51,7 +54,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       setPw('')
       check()
     } catch (e) {
-      setErr(e instanceof Error ? e.message : '로그인하지 못했습니다')
+      setErr(e instanceof Error ? e.message : t('로그인하지 못했습니다'))
     } finally {
       setBusy(false)
     }
@@ -60,7 +63,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   if (st === null) {
     return (
       <div className="min-h-screen bg-neutral-900 flex items-center justify-center text-sm text-neutral-500">
-        확인 중…
+        {t('확인 중…')}
       </div>
     )
   }
@@ -70,27 +73,31 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-neutral-900 flex items-center justify-center p-4">
       <form onSubmit={submit}
         className="w-full max-w-sm space-y-4 rounded-lg border border-neutral-700 bg-neutral-800 p-6">
-        <div>
+        <div className="flex items-start justify-between gap-3">
+          <div>
           <h1 className="text-lg font-semibold text-neutral-100">PIPER Studio</h1>
-          <p className="mt-1 text-sm text-neutral-400">계속하려면 비밀번호를 입력하세요.</p>
+          <p className="mt-1 text-sm text-neutral-400">{t('계속하려면 비밀번호를 입력하세요.')}</p>
+          </div>
+          <LanguageSwitcher />
         </div>
 
         {st.broken ? (
           /* ⚠ 여기서 비밀번호를 쳐 봐야 소용없다 — 왜 안 되는지와 푸는 법을 말한다. */
           <p className="rounded border border-red-500/50 bg-red-950/40 p-2 text-xs text-red-200">
-            인증 설정 파일이 깨져서 <strong>아무도 들어올 수 없습니다.</strong>{' '}
-            호스트에서 <code className="text-red-100">~/.config/piper-web/auth.json</code> 를
-            지우면 인증이 꺼진 상태로 돌아갑니다.
+            {t.rich('인증 설정 파일이 깨져서 {strong} 호스트에서 {code} 를 지우면 인증이 꺼진 상태로 돌아갑니다.', {
+              strong: <strong>{t('아무도 들어올 수 없습니다.')}</strong>,
+              code: <code className="text-red-100">~/.config/piper-web/auth.json</code>,
+            })}
           </p>
         ) : (
           <>
             <input type="password" value={pw} onChange={(e) => setPw(e.target.value)}
-              autoFocus autoComplete="current-password" placeholder="비밀번호"
+              autoFocus autoComplete="current-password" placeholder={t('비밀번호')}
               className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none" />
             {err && <p className="text-xs text-red-400">{err}</p>}
             <button type="submit" disabled={busy || !pw}
               className="w-full rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600 disabled:opacity-50">
-              {busy ? '확인 중…' : '들어가기'}
+              {busy ? t('확인 중…') : t('들어가기')}
             </button>
           </>
         )}

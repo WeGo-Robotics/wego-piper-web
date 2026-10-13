@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../services/api'
+import { useT, msg, fmt } from '../i18n'
 
 /**
  * 버전 — 팔별 펌웨어와 관절별 하드웨어 정보.
@@ -27,9 +28,9 @@ type ArmVersions = {
 }
 
 const FLAG_LABEL: Record<string, string> = {
-  voltage_too_low: '저전압', motor_overheating: '모터 과열',
-  driver_overcurrent: '과전류', driver_overheating: '드라이버 과열',
-  collision_status: '충돌 보호', driver_error_status: '드라이버 오류',
+  voltage_too_low: msg('저전압'), motor_overheating: msg('모터 과열'),
+  driver_overcurrent: msg('과전류'), driver_overheating: msg('드라이버 과열'),
+  collision_status: msg('충돌 보호'), driver_error_status: msg('드라이버 오류'),
 }
 
 /** 온도 경고선(℃). 이 위는 색을 준다 — 늘 색이 있으면 아무도 안 본다. */
@@ -37,20 +38,21 @@ const TEMP_WARN = 55
 
 /** 표의 열. 팔마다 표가 따로라 **너비를 여기서 한 번에 정해야** 열이 맞는다. */
 const COLS = [
-  { key: 'joint', label: '관절', width: '9%' },
-  { key: 'volt', label: '전압', width: '9%' },
-  { key: 'dtemp', label: '드라이버 온도', width: '13%' },
-  { key: 'mtemp', label: '모터 온도', width: '12%' },
-  { key: 'angle', label: '각도 범위', width: '17%' },
-  { key: 'spd', label: '최대 속도', width: '13%' },
-  { key: 'acc', label: '최대 가속', width: '13%' },
-  { key: 'state', label: '상태', width: '14%' },
+  { key: 'joint', label: msg('관절'), width: '9%' },
+  { key: 'volt', label: msg('전압'), width: '9%' },
+  { key: 'dtemp', label: msg('드라이버 온도'), width: '13%' },
+  { key: 'mtemp', label: msg('모터 온도'), width: '12%' },
+  { key: 'angle', label: msg('각도 범위'), width: '17%' },
+  { key: 'spd', label: msg('최대 속도'), width: '13%' },
+  { key: 'acc', label: msg('최대 가속'), width: '13%' },
+  { key: 'state', label: msg('상태'), width: '14%' },
 ] as const
 
 const n = (v: number | undefined, unit = '', digits = 0) =>
   v == null ? '—' : `${v.toFixed(digits)}${unit}`
 
 export default function VersionPanel() {
+  const t = useT()
   const [arms, setArms] = useState<ArmVersions[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -62,9 +64,9 @@ export default function VersionPanel() {
       const d = await api.get<{ arms: ArmVersions[] }>('/robots/versions')
       setArms(d.arms); setErr(null); setAt(new Date())
     } catch (e) {
-      setErr(e instanceof Error ? e.message : '읽지 못했습니다')
+      setErr(e instanceof Error ? e.message : t('읽지 못했습니다'))
     } finally { setBusy(false) }
-  }, [])
+  }, [t])
   useEffect(() => { void load() }, [load])
 
   // ⚠ 자동 새로고침을 두지 않는다. 버전은 안 변하고, 이 조회는 팔마다 한계값을
@@ -75,16 +77,16 @@ export default function VersionPanel() {
         <button onClick={() => void load()} disabled={busy}
           className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-300
                      hover:bg-neutral-600 disabled:opacity-50">
-          {busy ? '읽는 중…' : '↻ 다시 읽기'}
+          {busy ? t('읽는 중…') : t('↻ 다시 읽기')}
         </button>
         <span className="text-xs text-neutral-500">
-          {at ? `${at.toLocaleTimeString('ko-KR')} 기준` : '아직 안 읽음'}
+          {at ? t('{toLocaleTimeString} 기준', { toLocaleTimeString: fmt.time(at) }) : t('아직 안 읽음')}
         </span>
       </div>
 
       {err && <p className="text-xs text-red-400">{err}</p>}
       {arms.length === 0 && !err && !busy && (
-        <p className="text-xs text-neutral-500">연결된 팔이 없습니다 — 디바이스 탭에서 먼저 연결하세요.</p>
+        <p className="text-xs text-neutral-500">{t('연결된 팔이 없습니다 — 디바이스 탭에서 먼저 연결하세요.')}</p>
       )}
 
       {arms.map((a) => (
@@ -92,12 +94,12 @@ export default function VersionPanel() {
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="font-mono text-sm text-neutral-100">{a.iface}</span>
             <span className="rounded bg-blue-600/20 px-2 py-0.5 text-xs text-blue-300">
-              {a.firmware || '펌웨어 미상'}
+              {a.firmware || t('펌웨어 미상')}
             </span>
             {a.responding === false
               ? <span className="rounded bg-red-600/30 px-2 py-0.5 text-xs text-red-300"
-                      title="CAN 에서 아무 프레임도 오지 않습니다 — 전원·비상정지·케이블">
-                  응답 없음
+                      title={t('CAN 에서 아무 프레임도 오지 않습니다 — 전원·비상정지·케이블')}>
+                  {t('응답 없음')}
                 </span>
               : a.master_slave && (
                   <span className="text-xs text-neutral-400">{a.master_slave}</span>
@@ -120,7 +122,7 @@ export default function VersionPanel() {
               <thead className="text-neutral-500">
                 <tr className="text-left">
                   {COLS.map((c) => (
-                    <th key={c.key} className="py-1 pr-3 font-normal">{c.label}</th>
+                    <th key={c.key} className="py-1 pr-3 font-normal">{t(c.label)}</th>
                   ))}
                 </tr>
               </thead>
@@ -144,15 +146,15 @@ export default function VersionPanel() {
                     <td className="py-1">
                       {j.feedback === false
                         ? <span className="text-neutral-500"
-                                title="마스터(示教输入臂)는 저속 피드백을 보내지 않습니다 — 값이 없는 것이지 0 인 것이 아닙니다">
-                            피드백 없음
+                                title={t('마스터(示教输入臂)는 저속 피드백을 보내지 않습니다 — 값이 없는 것이지 0 인 것이 아닙니다')}>
+                            {t('피드백 없음')}
                           </span>
                         : j.flags?.length
                         ? <span className="text-red-400">
-                            {j.flags.map((f) => FLAG_LABEL[f] ?? f).join(' · ')}
+                            {j.flags.map((f) => t(FLAG_LABEL[f] ?? f)).join(' · ')}
                           </span>
                         : <span className={j.enabled ? 'text-green-400' : 'text-neutral-500'}>
-                            {j.enabled ? '토크 켜짐' : '토크 꺼짐'}
+                            {j.enabled ? t('토크 켜짐') : t('토크 꺼짐')}
                           </span>}
                     </td>
                   </tr>
@@ -164,10 +166,10 @@ export default function VersionPanel() {
       ))}
 
       <p className="text-xs text-neutral-600">
-        ⚠ <b>관절별 펌웨어 버전은 없습니다.</b> PIPER 프로토콜에 그런 필드가 없고
-        팔이 문자열 하나(<code>S-VX.X-X</code>)만 신고합니다. 관절마다는 실제로
-        읽히는 값 — 전압·온도·설정된 각도/속도/가속 한계 — 을 보여줍니다.
-        같은 모델인데 한 관절만 한계가 다르면 그게 단서입니다.
+        {t.rich('⚠ {b} PIPER 프로토콜에 그런 필드가 없고 팔이 문자열 하나({code})만 신고합니다. 관절마다는 실제로 읽히는 값 — 전압·온도·설정된 각도/속도/가속 한계 — 을 보여줍니다. 같은 모델인데 한 관절만 한계가 다르면 그게 단서입니다.', {
+          b: <b>{t('관절별 펌웨어 버전은 없습니다.')}</b>,
+          code: <code>S-VX.X-X</code>,
+        })}
       </p>
     </div>
   )

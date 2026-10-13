@@ -3,6 +3,7 @@ import { api } from '../services/api'
 import { usePolicies } from '../hooks/usePolicies'
 import { usePolicyUi } from '../hooks/usePolicyUi'
 import { type ReadyCam } from '../types/camera'
+import { useT } from '../i18n'
 
 // ⚠ 정책 이름을 유니언으로 박지 않는다 — 모델이 늘 때마다 여기도 늘어난다.
 // 어떤 정책이 프로브 되는지는 `policies/*.yaml` (capabilities.encoder_probe) 이 정한다.
@@ -229,6 +230,7 @@ function SlotCard({ entry, cameras, blocked, removable, pendingCount, overlays, 
   onRemove: () => void
   onPick: (sid: string, patch: number) => void
 }) {
+  const t = useT()
   const { label, images, busy, error } = entry
   const [cameraId, setCameraId] = useState('')
   const [capError, setCapError] = useState('')
@@ -250,13 +252,13 @@ function SlotCard({ entry, cameras, blocked, removable, pendingCount, overlays, 
     setCapError('')
     try {
       const res = await fetch(`/api/cameras/${cameraId}/preview`)
-      if (!res.ok) throw new Error(`카메라 프레임을 가져올 수 없습니다 (${res.status})`)
+      if (!res.ok) throw new Error(t('카메라 프레임을 가져올 수 없습니다 ({status})', { status: res.status }))
       const src = await blobToDataUrl(await res.blob())
       const cam = cameras.find((c) => c.id === cameraId)
       const stamp = new Date().toTimeString().slice(0, 8)
       onAddImages([{ name: `${cam?.name || cameraId} ${stamp}`, src }])
     } catch (err) {
-      setCapError(err instanceof Error ? err.message : '캡처 실패')
+      setCapError(err instanceof Error ? err.message : t('캡처 실패'))
     }
   }
 
@@ -264,13 +266,13 @@ function SlotCard({ entry, cameras, blocked, removable, pendingCount, overlays, 
   return (
     <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <span className="text-sm font-semibold text-neutral-200">슬롯 {label}</span>
-        <span className="text-[10px] text-neutral-500">{images.length}장{encodedCount > 0 && ` · 인코딩 ${encodedCount}`}</span>
-        {busy && <span className="text-[10px] text-blue-400">인코딩 중…</span>}
-        {!busy && blocked && <span className="text-[10px] text-neutral-500">대기 중</span>}
+        <span className="text-sm font-semibold text-neutral-200">{t('슬롯 {label}', { label })}</span>
+        <span className="text-[10px] text-neutral-500">{t.rich('{length}장{encodedCount}', { length: images.length, encodedCount: encodedCount > 0 && t(' · 인코딩 {encodedCount}', { encodedCount }) })}</span>
+        {busy && <span className="text-[10px] text-blue-400">{t('인코딩 중…')}</span>}
+        {!busy && blocked && <span className="text-[10px] text-neutral-500">{t('대기 중')}</span>}
         <span className="flex-1" />
         {removable && (
-          <button onClick={onRemove} disabled={busy} title="이 슬롯 제거 (이미지 포함)"
+          <button onClick={onRemove} disabled={busy} title={t('이 슬롯 제거 (이미지 포함)')}
             className="px-2 py-0.5 rounded text-xs text-neutral-400 hover:text-red-300 hover:bg-neutral-700 disabled:opacity-40">
             ✕
           </button>
@@ -280,31 +282,31 @@ function SlotCard({ entry, cameras, blocked, removable, pendingCount, overlays, 
       <div className="flex flex-wrap items-center gap-2">
         <select value={cameraId} onChange={(e) => setCameraId(e.target.value)}
           className="px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-xs text-neutral-100 max-w-[9rem]">
-          {cameras.length === 0 && <option value="">카메라 없음</option>}
+          {cameras.length === 0 && <option value="">{t('카메라 없음')}</option>}
           {cameras.map((c) => <option key={c.id} value={c.id}>{c.name || c.id}</option>)}
         </select>
         <button onClick={capture} disabled={busy || !cameraId}
           className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40 text-xs">
-          캡처 추가
+          {t('캡처 추가')}
         </button>
         <button onClick={() => fileRef.current?.click()} disabled={busy}
           className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40 text-xs">
-          파일 추가
+          {t('파일 추가')}
         </button>
         <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
           onChange={(e) => { void pickFiles(e.target.files); e.target.value = '' }} />
         <span className="flex-1" />
         <button onClick={onEncode} disabled={busy || blocked || pendingCount === 0}
-          title={pendingCount === 0 ? '인코딩할 이미지가 없습니다' : '모델을 한 번만 로드해 한꺼번에 처리합니다'}
+          title={pendingCount === 0 ? t('인코딩할 이미지가 없습니다') : t('모델을 한 번만 로드해 한꺼번에 처리합니다')}
           className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-xs font-medium">
-          인코딩 ({pendingCount}장)
+          {t('인코딩 ({pendingCount}장)', { pendingCount })}
         </button>
       </div>
       {(error || capError) && <p className="text-[11px] text-red-400">{error || capError}</p>}
 
       {images.length === 0 ? (
         <p className="text-xs text-neutral-600">
-          이미지가 없습니다. 카메라를 캡처하거나 파일을 여러 장 골라 넣은 뒤 한꺼번에 인코딩하세요.
+          {t('이미지가 없습니다. 카메라를 캡처하거나 파일을 여러 장 골라 넣은 뒤 한꺼번에 인코딩하세요.')}
         </p>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -316,10 +318,10 @@ function SlotCard({ entry, cameras, blocked, removable, pendingCount, overlays, 
               <div key={img.id} className="space-y-1">
                 <div className="flex items-center gap-1.5">
                   <span className="text-[11px] text-neutral-300 truncate" title={img.name}>{img.name}</span>
-                  {!img.result && !img.error && <span className="text-[10px] text-yellow-500 shrink-0">미인코딩</span>}
-                  {isStaleImg && <span className="text-[10px] text-yellow-500 shrink-0">설정 변경됨</span>}
+                  {!img.result && !img.error && <span className="text-[10px] text-yellow-500 shrink-0">{t('미인코딩')}</span>}
+                  {isStaleImg && <span className="text-[10px] text-yellow-500 shrink-0">{t('설정 변경됨')}</span>}
                   <span className="flex-1" />
-                  <button onClick={() => onRemoveImage(img.id)} disabled={busy} title="이미지 제거"
+                  <button onClick={() => onRemoveImage(img.id)} disabled={busy} title={t('이미지 제거')}
                     className="px-1 rounded text-[11px] text-neutral-500 hover:text-red-300 hover:bg-neutral-700 disabled:opacity-40">
                     ✕
                   </button>
@@ -337,15 +339,21 @@ function SlotCard({ entry, cameras, blocked, removable, pendingCount, overlays, 
                 {m && (
                   <div className="text-[10px] text-neutral-500 leading-relaxed">
                     <div>
-                      격자 {m.grid_h}×{m.grid_w} · {m.dim}d · 패치 1개 ≈ 원본 {m.patch_px_orig_x}×{m.patch_px_orig_y}px
-                      {m.valid_row0 > 0 && <span className="text-red-400"> · 상단 {m.valid_row0}행은 패딩</span>}
+                      {t('격자 {grid_h}×{grid_w} · {dim}d · 패치 1개 ≈ 원본 {patch_px_orig_x}×{patch_px_orig_y}px', {
+                        grid_h: m.grid_h,
+                        grid_w: m.grid_w,
+                        dim: m.dim,
+                        patch_px_orig_x: m.patch_px_orig_x,
+                        patch_px_orig_y: m.patch_px_orig_y,
+                      })}
+                      {m.valid_row0 > 0 && <span className="text-red-400">{' '}{t('· 상단 {valid_row0}행은 패딩', { valid_row0: m.valid_row0 })}</span>}
                     </div>
                     <div>
-                      {m.encoder_source === 'base' ? '베이스 가중치' : '체크포인트 가중치'} · {m.device} · {m.elapsed_ms}ms
-                      {m.feature_stats && <span> · norm 아웃라이어 {m.feature_stats.norm_outlier_ratio}배</span>}
+                      {m.encoder_source === 'base' ? t('베이스 가중치') : t('체크포인트 가중치')} · {m.device} · {m.elapsed_ms}ms
+                      {m.feature_stats && <span>{' '}{t('· norm 아웃라이어 {norm_outlier_ratio}배', { norm_outlier_ratio: m.feature_stats.norm_outlier_ratio })}</span>}
                     </div>
                     {sid && overlays[sid]?.info && <div className="text-neutral-400">{overlays[sid]?.info}</div>}
-                    {view === 'sim' && selected?.sid === sid && <div className="text-neutral-400">기준 패치 (클릭해서 옮길 수 있음)</div>}
+                    {view === 'sim' && selected?.sid === sid && <div className="text-neutral-400">{t('기준 패치 (클릭해서 옮길 수 있음)')}</div>}
                   </div>
                 )}
               </div>
@@ -366,6 +374,7 @@ type PatchMatrix = {
 }
 
 export default function EncoderProbePage() {
+  const t = useT()
   const [models, setModels] = useState<EncoderModel[]>([])
   const [cameras, setCameras] = useState<ReadyCam[]>([])
   const [policyType, setPolicyType] = useState<PolicyType>('smolvla')
@@ -496,7 +505,7 @@ export default function EncoderProbePage() {
       const first = res.results.find((r): r is { sid: string; meta: Meta } => 'sid' in r)
       if (!imageKey && first?.meta.image_key) setImageKey(first.meta.image_key)
     } catch (err) {
-      patchEntry(slotId, { error: err instanceof Error ? err.message : '인코딩 실패' })
+      patchEntry(slotId, { error: err instanceof Error ? err.message : t('인코딩 실패') })
     } finally {
       patchEntry(slotId, { busy: false })
     }
@@ -528,7 +537,7 @@ export default function EncoderProbePage() {
           data.set([r, g, b, 255], i * 4)
         }
         const total = res.explained.reduce((a, b) => a + b, 0)
-        return [slot.sid, { data, info: `상위 3개 주성분이 분산의 ${(total * 100).toFixed(1)}% 설명` }]
+        return [slot.sid, { data, info: t('상위 3개 주성분이 분산의 {total}% 설명', { total: (total * 100).toFixed(1) }) }]
       }
 
       if (view === 'sim') {
@@ -545,9 +554,9 @@ export default function EncoderProbePage() {
           data.set([r, g, b, t * 255], i * 4)
         }
         const loc = res.locality_ratio != null
-          ? ` · 국소성 ${res.locality_ratio.toFixed(2)} (상위20이 평균 ${res.locality}패치, 무작위면 ${res.locality_baseline})`
+          ? t(' · 국소성 {locality_ratio} (상위20이 평균 {locality}패치, 무작위면 {locality_baseline})', { locality_ratio: res.locality_ratio.toFixed(2), locality: String(res.locality), locality_baseline: String(res.locality_baseline) })
           : ''
-        return [slot.sid, { data, info: `코사인 ${res.min.toFixed(2)}~${res.max.toFixed(2)} · 평균 ${res.mean.toFixed(2)}${loc}` }]
+        return [slot.sid, { data, info: t('코사인 {min}~{max} · 평균 {mean}{loc}', { min: res.min.toFixed(2), max: res.max.toFixed(2), mean: res.mean.toFixed(2), loc }) }]
       }
 
       const res = await api.get<{ labels: number[]; k: number }>(`/encoder/${slot.sid}/kmeans?k=${k}`)
@@ -558,7 +567,7 @@ export default function EncoderProbePage() {
         const [r, g, b] = hexToRgb(CATEGORICAL[label % CATEGORICAL.length])
         data.set([r, g, b, 255], i * 4)
       }
-      return [slot.sid, { data, info: `${res.k}개 클러스터` }]
+      return [slot.sid, { data, info: t('{k}개 클러스터', { k: res.k }) }]
     }
 
     // 슬롯이 바뀌었으면 **먼저 버린다.** 새 격자에 옛 오버레이를 물리면
@@ -597,25 +606,27 @@ export default function EncoderProbePage() {
   const randomEncoder = Boolean(anySlot?.meta.encoder_stats?.random_init)
 
   const VIEWS: { key: ViewKind; label: string; hint: string }[] = [
-    { key: 'input', label: '입력 + 격자', hint: '모델이 실제로 보는 이미지와 패치 격자' },
-    { key: 'sim', label: '클릭 유사도', hint: '패치를 클릭하면 모든 이미지에서 그 특징과의 코사인 유사도' },
-    { key: 'pca', label: 'PCA → RGB', hint: '패치 특징을 3차원으로 줄여 색으로 표시 (기저는 첫 이미지 기준)' },
-    { key: 'kmeans', label: 'k-means', hint: '패치를 군집화해 장면이 어떻게 갈리는지 확인' },
+    { key: 'input', label: t('입력 + 격자'), hint: t('모델이 실제로 보는 이미지와 패치 격자') },
+    { key: 'sim', label: t('클릭 유사도'), hint: t('패치를 클릭하면 모든 이미지에서 그 특징과의 코사인 유사도') },
+    { key: 'pca', label: 'PCA → RGB', hint: t('패치 특징을 3차원으로 줄여 색으로 표시 (기저는 첫 이미지 기준)') },
+    { key: 'kmeans', label: 'k-means', hint: t('패치를 군집화해 장면이 어떻게 갈리는지 확인') },
   ]
 
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold">이미지 엔코더 프로브</h1>
+        <h1 className="text-2xl font-bold">{t('이미지 엔코더 프로브')}</h1>
         <p className="text-xs text-neutral-400">
-          로봇을 움직이지 않고 이미지를 엔코더에만 통과시켜, 여러 장면에서 같은 영역이 비슷한 특징으로 잡히는지 확인합니다.
+          {t('로봇을 움직이지 않고 이미지를 엔코더에만 통과시켜, 여러 장면에서 같은 영역이 비슷한 특징으로 잡히는지 확인합니다.')}
         </p>
       </div>
 
       {randomEncoder && (
         <div className="rounded-lg border border-red-600 bg-red-950/40 p-3 text-xs text-red-200">
-          ⚠ 이 체크포인트의 비전 인코더는 <b>랜덤 초기화 상태</b>입니다 (사전학습 가중치가 로드되지 않음).
-          학습 시 <code>load_vlm_weights=true</code>가 필요합니다. 아래 결과는 학습된 특징이 아닙니다.
+          {t.rich('⚠ 이 체크포인트의 비전 인코더는 {b}입니다 (사전학습 가중치가 로드되지 않음). 학습 시 {code}가 필요합니다. 아래 결과는 학습된 특징이 아닙니다.', {
+            b: <b>{t('랜덤 초기화 상태')}</b>,
+            code: <code>load_vlm_weights=true</code>,
+          })}
         </div>
       )}
 
@@ -633,7 +644,7 @@ export default function EncoderProbePage() {
           </div>
 
           <div className="flex items-center gap-1.5">
-            <span className="text-xs text-neutral-400">체크포인트</span>
+            <span className="text-xs text-neutral-400">{t('체크포인트')}</span>
             <select value={checkpoint} onChange={(e) => setCheckpoint(e.target.value)}
               className="px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-xs text-neutral-100 max-w-[22rem]">
               {/* 두 정책 다 **학습 전 시작점**을 볼 수 있어야 비교가 성립한다.
@@ -647,7 +658,7 @@ export default function EncoderProbePage() {
               예전엔 `policyType === 'smolvla'` 로 그 사실을 화면이 알고 있었다. */}
           {probe.taps.length > 1 && (
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-neutral-400">추출 지점</span>
+              <span className="text-xs text-neutral-400">{t('추출 지점')}</span>
               <select value={tap} onChange={(e) => setTap(e.target.value)}
                 className="px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-xs text-neutral-100">
                 {probe.taps.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
@@ -657,20 +668,20 @@ export default function EncoderProbePage() {
 
           {probe.image_key_select && (
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-neutral-400">카메라 키</span>
+              <span className="text-xs text-neutral-400">{t('카메라 키')}</span>
               <select value={imageKey} onChange={(e) => setImageKey(e.target.value)}
                 className="px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-xs text-neutral-100">
-                <option value="">자동</option>
+                <option value="">{t('자동')}</option>
                 {(anySlot?.meta.image_keys || []).map((key) => <option key={key} value={key}>{key}</option>)}
               </select>
             </div>
           )}
 
           <div className="flex items-center gap-1.5">
-            <span className="text-xs text-neutral-400">디바이스</span>
+            <span className="text-xs text-neutral-400">{t('디바이스')}</span>
             <select value={device} onChange={(e) => setDevice(e.target.value)}
               className="px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-xs text-neutral-100">
-              <option value="">자동</option>
+              <option value="">{t('자동')}</option>
               <option value="cuda">CUDA</option>
               <option value="cpu">CPU</option>
             </select>
@@ -682,15 +693,18 @@ export default function EncoderProbePage() {
         {note && <p className="text-[11px] text-yellow-500">{note}</p>}
         {filled.length > maxSessions && (
           <p className="text-[11px] text-yellow-500">
-            인코딩된 이미지가 서버 상한({maxSessions}장)을 넘었습니다 — 오래된 것부터 서버에서 지워져 오버레이가 비게 됩니다. 안 쓰는 이미지를 제거하세요.
+            {t('인코딩된 이미지가 서버 상한({maxSessions}장)을 넘었습니다 — 오래된 것부터 서버에서 지워져 오버레이가 비게 됩니다. 안 쓰는 이미지를 제거하세요.', {
+              maxSessions,
+            })}
           </p>
         )}
       </div>
 
       {anyBusy && (
         <div className="rounded border border-blue-700 bg-blue-950/40 px-3 py-2 text-xs text-blue-200">
-          인코딩 중… 모델 로드에 <b>4초 안팎</b>, 그 뒤 장당 1초 미만이 더 걸립니다.
-          컨테이너·서버를 막 켠 뒤 첫 실행은 20~30초까지 걸릴 수 있습니다. 창을 닫지 말고 기다려 주세요.
+          {t.rich('인코딩 중… 모델 로드에 {b}, 그 뒤 장당 1초 미만이 더 걸립니다. 컨테이너·서버를 막 켠 뒤 첫 실행은 20~30초까지 걸릴 수 있습니다. 창을 닫지 말고 기다려 주세요.', {
+            b: <b>{t('4초 안팎')}</b>,
+          })}
         </div>
       )}
 
@@ -711,19 +725,19 @@ export default function EncoderProbePage() {
 
           <div className="flex flex-wrap items-center gap-4 text-xs">
             <label className="flex items-center gap-1.5">
-              <span className="text-neutral-400">불투명도</span>
+              <span className="text-neutral-400">{t('불투명도')}</span>
               <input type="range" min={0} max={1} step={0.05} value={alpha}
                 onChange={(e) => setAlpha(Number(e.target.value))} className="accent-blue-500 w-28" />
             </label>
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)}
                 className="accent-blue-500" />
-              <span className="text-neutral-400">패치 격자</span>
+              <span className="text-neutral-400">{t('패치 격자')}</span>
             </label>
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input type="checkbox" checked={smooth} onChange={(e) => setSmooth(e.target.checked)}
                 className="accent-blue-500" />
-              <span className="text-neutral-400">보간</span>
+              <span className="text-neutral-400">{t('보간')}</span>
             </label>
             {view === 'kmeans' && (
               <label className="flex items-center gap-1.5">
@@ -738,11 +752,11 @@ export default function EncoderProbePage() {
           {/* 범례 */}
           {view === 'sim' && (
             <div className="flex items-center gap-2 max-w-xs">
-              <span className="text-[10px] text-neutral-500">낮음</span>
+              <span className="text-[10px] text-neutral-500">{t('낮음')}</span>
               <div className="flex-1 h-2 rounded"
                 style={{ background: `linear-gradient(to right, rgb(${SEQ_STOPS[0].join(',')}), rgb(${SEQ_STOPS[1].join(',')}), rgb(${SEQ_STOPS[2].join(',')}))` }} />
-              <span className="text-[10px] text-neutral-500">높음</span>
-              {!selected && <span className="text-[11px] text-yellow-500 ml-2">아무 이미지에서나 패치를 클릭하세요 — 모든 이미지에 유사도가 그려집니다</span>}
+              <span className="text-[10px] text-neutral-500">{t('높음')}</span>
+              {!selected && <span className="text-[11px] text-yellow-500 ml-2">{t('아무 이미지에서나 패치를 클릭하세요 — 모든 이미지에 유사도가 그려집니다')}</span>}
             </div>
           )}
           {view === 'sim' && selected && matrix && matrix.sids.length > 1 && (() => {
@@ -752,9 +766,11 @@ export default function EncoderProbePage() {
             return (
               <div className="space-y-1.5">
                 <div className="text-[11px] text-neutral-400">
-                  패치 <b className="text-neutral-200">({row}, {col})</b> 자리의 특징 벡터가 이미지끼리 얼마나 같은가 (코사인)
+                  {t.rich('패치 {b} 자리의 특징 벡터가 이미지끼리 얼마나 같은가 (코사인)', {
+                    b: <b className="text-neutral-200">({row}, {col})</b>,
+                  })}
                   {matrix.mean != null && (
-                    <span className="ml-2">· 평균 <b className="text-neutral-200">{matrix.mean.toFixed(2)}</b> · 최소 <b className="text-neutral-200">{matrix.min?.toFixed(2)}</b></span>
+                    <span className="ml-2">{t.rich('· 평균 {b} · 최소 {b_2}', { b: <b className="text-neutral-200">{matrix.mean.toFixed(2)}</b>, b_2: <b className="text-neutral-200">{matrix.min?.toFixed(2)}</b> })}</span>
                   )}
                 </div>
                 <div className="overflow-x-auto">
@@ -783,14 +799,14 @@ export default function EncoderProbePage() {
                             {matrix.sids.map((csid, j) => {
                               const v = matrix.matrix[i]?.[j]
                               if (v == null) {
-                                return <td key={csid} className="px-1.5 py-1 text-center text-neutral-600 border border-neutral-700/60" title={matrix.valid[i] && matrix.valid[j] ? '' : '이 자리가 격자 밖·패딩이거나 차원이 다르거나 세션이 만료됨'}>—</td>
+                                return <td key={csid} className="px-1.5 py-1 text-center text-neutral-600 border border-neutral-700/60" title={matrix.valid[i] && matrix.valid[j] ? '' : t('이 자리가 격자 밖·패딩이거나 차원이 다르거나 세션이 만료됨')}>—</td>
                               }
-                              const t = Math.max(0, Math.min(1, v))
-                              const [r, g, b] = seqColor(t)
+                              const frac = Math.max(0, Math.min(1, v))
+                              const [r, g, b] = seqColor(frac)
                               const diag = i === j
                               return (
                                 <td key={csid} className={`px-1.5 py-1 text-center tabular-nums border border-neutral-700/60 ${diag ? 'text-neutral-500' : 'text-neutral-900 font-medium'}`}
-                                  style={diag ? undefined : { background: `rgba(${r | 0},${g | 0},${b | 0},${0.25 + 0.75 * t})` }}>
+                                  style={diag ? undefined : { background: `rgba(${r | 0},${g | 0},${b | 0},${0.25 + 0.75 * frac})` }}>
                                   {v.toFixed(2)}
                                 </td>
                               )
@@ -802,7 +818,7 @@ export default function EncoderProbePage() {
                   </table>
                 </div>
                 <div className="text-[10px] text-neutral-500">
-                  1.00 = 같은 방향. 같은 물체가 같은 자리에 있는 이미지끼리는 높고, 다른 물체·빈 배경으로 바뀐 이미지는 낮아야 그 자리 특징이 내용을 따라간다는 뜻입니다. 전부 높으면(0.9↑) 위치만 보고 내용은 못 보는 것.
+                  {t('1.00 = 같은 방향. 같은 물체가 같은 자리에 있는 이미지끼리는 높고, 다른 물체·빈 배경으로 바뀐 이미지는 낮아야 그 자리 특징이 내용을 따라간다는 뜻입니다. 전부 높으면(0.9↑) 위치만 보고 내용은 못 보는 것.')}
                 </div>
               </div>
             )
@@ -817,18 +833,15 @@ export default function EncoderProbePage() {
                 </button>
               ))}
               <span className="text-[10px] text-neutral-500 ml-1">
-                칩을 누르면 해당 클러스터만 표시 (색만으로 구분하지 마세요)
+                {t('칩을 누르면 해당 클러스터만 표시 (색만으로 구분하지 마세요)')}
               </span>
             </div>
           )}
 
           <p className="text-[11px] text-neutral-500 leading-relaxed">
-            판정 기준: 물체를 클릭했을 때 <b>국소성</b>이 낮을수록(0.3 이하면 양호, 0.7 이상이면 장면 전체가
-            비슷하게 보인다는 뜻) 그 물체를 구분한다는 뜻입니다. 다른 이미지에서는 같은 물체 자리에 높은 값이
-            몰리고 나머지는 낮아야 그 영역이 비슷한 특징으로 뽑힌다는 뜻입니다. 조명/위치를 바꾼 여러 장에서
-            같은 물체가 같은 색(PCA)·같은 클러스터로 남는지도 함께 보세요. 대상이 패치 1~2개보다 작으면 엔코더가
-            잡을 수 없습니다. PCA가 얼룩덜룩하면 norm 아웃라이어가 큰 것으로, SigLIP 계열에서는 정상입니다 —
-            판정은 국소성으로 하세요.
+            {t.rich('판정 기준: 물체를 클릭했을 때 {b}이 낮을수록(0.3 이하면 양호, 0.7 이상이면 장면 전체가 비슷하게 보인다는 뜻) 그 물체를 구분한다는 뜻입니다. 다른 이미지에서는 같은 물체 자리에 높은 값이 몰리고 나머지는 낮아야 그 영역이 비슷한 특징으로 뽑힌다는 뜻입니다. 조명/위치를 바꾼 여러 장에서 같은 물체가 같은 색(PCA)·같은 클러스터로 남는지도 함께 보세요. 대상이 패치 1~2개보다 작으면 엔코더가 잡을 수 없습니다. PCA가 얼룩덜룩하면 norm 아웃라이어가 큰 것으로, SigLIP 계열에서는 정상입니다 — 판정은 국소성으로 하세요.', {
+              b: <b>{t('국소성')}</b>,
+            })}
           </p>
         </div>
       )}
@@ -849,7 +862,7 @@ export default function EncoderProbePage() {
 
       <button onClick={addSlot}
         className="w-full rounded-lg border border-dashed border-neutral-600 hover:border-neutral-400 hover:bg-neutral-800/60 py-2.5 text-xs text-neutral-400 hover:text-neutral-200">
-        + 슬롯 추가 (다른 조건의 장면 묶음을 같은 기준으로 비교)
+        {t('+ 슬롯 추가 (다른 조건의 장면 묶음을 같은 기준으로 비교)')}
       </button>
     </div>
   )

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
+import { useT, tr, msg } from '../i18n'
 
 /**
  * 서비스 — 상태·재시작·켜기/끄기·부팅 시 시작 (feature/services.md, service-restart.md).
@@ -38,17 +39,18 @@ type Action = 'start' | 'stop' | 'restart' | 'enable' | 'disable'
 
 function age(sec: number | null): string {
   if (sec === null) return '?'
-  if (sec < 60) return `${sec}초`
-  if (sec < 3600) return `${Math.round(sec / 60)}분`
-  if (sec < 86400) return `${(sec / 3600).toFixed(1)}시간`
-  return `${(sec / 86400).toFixed(1)}일`
+  if (sec < 60) return tr('{sec}초', { sec })
+  if (sec < 3600) return tr('{sec}분', { sec: Math.round(sec / 60) })
+  if (sec < 86400) return tr('{sec}시간', { sec: (sec / 3600).toFixed(1) })
+  return tr('{sec}일', { sec: (sec / 86400).toFixed(1) })
 }
 
 const ACTION_LABEL: Record<Action, string> = {
-  start: '켜짐', stop: '꺼짐', restart: '재시작됨', enable: '부팅 시 시작', disable: '부팅 시 시작 해제',
+  start: msg('켜짐'), stop: msg('꺼짐'), restart: msg('재시작됨'), enable: msg('부팅 시 시작'), disable: msg('부팅 시 시작 해제'),
 }
 
 export default function ServicesPanel({ onShowLog }: { onShowLog?: (unit: string) => void } = {}) {
+  const t = useT()
   const { notify, confirm } = useSystemMessage()
   const [units, setUnits] = useState<Unit[]>([])
   const [gateway, setGateway] = useState<Gateway | null>(null)
@@ -67,21 +69,19 @@ export default function ServicesPanel({ onShowLog }: { onShowLog?: (unit: string
     // (window.confirm 은 이벤트 루프를 막아 E-stop heartbeat 가 끊긴다).
     if (action === 'stop' && u.kind !== 'optional') {
       const yes = await confirm(
-        `${u.name} 을(를) 끕니다.\n\n` +
-        '이 장치(팔·카메라)는 다시 켤 때까지 화면에서 사라집니다.\n' +
-        '부팅 시 시작 설정은 그대로입니다 — 재부팅하면 다시 뜹니다.')
+        t('{name} 을(를) 끕니다.\n\n이 장치(팔·카메라)는 다시 켤 때까지 화면에서 사라집니다.\n부팅 시 시작 설정은 그대로입니다 — 재부팅하면 다시 뜹니다.', { name: u.name }))
       if (!yes) return
     }
     setBusy(u.name)
     try {
       if (action === 'restart') await api.post('/system/services/restart', { name: u.name })
       else await api.post('/system/services/control', { name: u.name, action })
-      notify({ level: 'info', text: `${u.name} ${ACTION_LABEL[action]}`, source: '서비스' })
+      notify({ level: 'info', text: `${u.name} ${t(ACTION_LABEL[action])}`, source: t('서비스') })
       // 유닛이 올라오고 상태가 잡힐 틈을 준다
       setTimeout(refresh, 1500)
     } catch (e) {
-      notify({ level: 'error', source: '서비스',
-        text: e instanceof Error ? e.message : `${u.name} ${action} 실패` })
+      notify({ level: 'error', source: t('서비스'),
+        text: e instanceof Error ? e.message : t('{name} {action} 실패', { name: u.name, action }) })
     } finally { setBusy(null) }
   }
 
@@ -89,18 +89,16 @@ export default function ServicesPanel({ onShowLog }: { onShowLog?: (unit: string
     // ⚠ `window.confirm` 을 쓰지 않는다 — 이벤트 루프를 막아 E-stop heartbeat 가
     //   끊긴다. 논블로킹 모달이다.
     const yes = await confirm(
-      '게이트웨이를 재시작합니다.\n\n' +
-      '몇 초 동안 화면이 끊기고, 그동안 들어온 요청은 실패합니다.\n' +
-      '돌고 있는 학습·정책서버는 별도 유닛이라 영향받지 않습니다.')
+      t('게이트웨이를 재시작합니다.\n\n몇 초 동안 화면이 끊기고, 그동안 들어온 요청은 실패합니다.\n돌고 있는 학습·정책서버는 별도 유닛이라 영향받지 않습니다.'))
     if (!yes) return
     setBusy('gateway')
     try {
       await api.post('/system/restart', {})
-      notify({ level: 'warn', source: '서비스',
-        text: '게이트웨이를 재시작하는 중입니다 — 잠시 뒤 새로고침하세요.' })
+      notify({ level: 'warn', source: t('서비스'),
+        text: t('게이트웨이를 재시작하는 중입니다 — 잠시 뒤 새로고침하세요.') })
     } catch (e) {
-      notify({ level: 'error', source: '서비스',
-        text: e instanceof Error ? e.message : '재시작 실패' })
+      notify({ level: 'error', source: t('서비스'),
+        text: e instanceof Error ? e.message : t('재시작 실패') })
     } finally { setBusy(null) }
   }
 
@@ -113,38 +111,43 @@ export default function ServicesPanel({ onShowLog }: { onShowLog?: (unit: string
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">서비스</h2>
+          <h2 className="text-lg font-semibold">{t('서비스')}</h2>
           <p className="mt-1 text-xs text-neutral-400">
-            유닛은 <b>기동 시점의 코드</b>로 돕니다. 코드를 고쳤으면 재시작해야 반영됩니다.
-            선택 데몬은 여기서 켜고, <b>부팅 시 시작</b>을 고릅니다.
+            {t.rich('유닛은 {b}로 돕니다. 코드를 고쳤으면 재시작해야 반영됩니다. 선택 데몬은 여기서 켜고, {b_2}을 고릅니다.', {
+              b: <b>{t('기동 시점의 코드')}</b>,
+              b_2: <b>{t('부팅 시 시작')}</b>,
+            })}
           </p>
         </div>
         <button onClick={refresh}
           className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600">
-          새로고침
+          {t('새로고침')}
         </button>
       </div>
 
       {staleCount > 0 && (
         <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2
                       text-xs text-amber-300">
-          ⚠ {staleCount}개가 <b>고친 코드보다 먼저</b> 떠 있습니다 — 재시작 전에는
-          그 변경이 반영되지 않습니다.
+          {t.rich('⚠ {staleCount}개가 {b} 떠 있습니다 — 재시작 전에는 그 변경이 반영되지 않습니다.', {
+            staleCount,
+            b: <b>{t('고친 코드보다 먼저')}</b>,
+          })}
         </p>
       )}
       {noUnitd && (
         <p className="rounded border border-neutral-600 bg-neutral-800/60 px-3 py-2
                       text-xs text-neutral-400">
-          켜기/끄기는 호스트의 서비스 관리 데몬(piper-unitd)이 실행합니다 — 지금은 없어서
-          상태만 보입니다. <code>deploy/install-daemons.sh unitd</code>
+          {t.rich('켜기/끄기는 호스트의 서비스 관리 데몬(piper-unitd)이 실행합니다 — 지금은 없어서 상태만 보입니다. {code}', {
+            code: <code>deploy/install-daemons.sh unitd</code>,
+          })}
         </p>
       )}
 
       <div className="space-y-1.5">
         {gateway && (
           <Row
-            name="게이트웨이 (웹 서버)" active stale={gateway.stale}
-            detail={`pid ${gateway.pid} · ${age(gateway.age_s)} 전 기동`}
+            name={t('게이트웨이 (웹 서버)')} active stale={gateway.stale}
+            detail={t('pid {pid} · {age} 전 기동', { pid: gateway.pid, age: age(gateway.age_s) })}
             busy={busy === 'gateway'}
             restartDisabled={!gateway.restartable}
             onRestart={restartGateway}
@@ -152,11 +155,11 @@ export default function ServicesPanel({ onShowLog }: { onShowLog?: (unit: string
         )}
         {core.map((u) => <UnitRow key={u.name} u={u} busy={busy === u.name} onAct={act} onShowLog={onShowLog} />)}
         {optional.length > 0 && (
-          <p className="pt-2 text-[11px] uppercase tracking-wide text-neutral-500">선택 데몬</p>
+          <p className="pt-2 text-[11px] uppercase tracking-wide text-neutral-500">{t('선택 데몬')}</p>
         )}
         {optional.map((u) => <UnitRow key={u.name} u={u} busy={busy === u.name} onAct={act} onShowLog={onShowLog} />)}
         {units.length === 0 && !gateway && (
-          <p className="text-xs text-neutral-500">systemd 유닛을 찾지 못했습니다.</p>
+          <p className="text-xs text-neutral-500">{t('systemd 유닛을 찾지 못했습니다.')}</p>
         )}
       </div>
     </div>
@@ -164,13 +167,14 @@ export default function ServicesPanel({ onShowLog }: { onShowLog?: (unit: string
 }
 
 function UnitRow({ u, busy, onAct, onShowLog }: { u: Unit; busy: boolean; onAct: (u: Unit, a: Action) => void; onShowLog?: (unit: string) => void }) {
+  const t = useT()
   const detail = !u.installed
-    ? '설치 안 됨 — deploy/install-daemons.sh ' + u.name.replace(/^piper-/, '')
+    ? t('설치 안 됨 — deploy/install-daemons.sh {name}', { name: u.name.replace(/^piper-/, '') })
     : `${u.active
-      ? (u.age_s !== null ? `${age(u.age_s)} 전 기동` : '실행 중 · 버스 하트비트')
-      : '멈춤'}${u.pid ? ` · pid ${u.pid}` : ''}`
-  const lock = u.readonly ? '안전장치는 웹에서 손대지 않습니다'
-    : !u.controllable ? '서비스 관리 데몬(piper-unitd)이 없습니다' : undefined
+      ? (u.age_s !== null ? t('{age} 전 기동', { age: age(u.age_s) }) : t('실행 중 · 버스 하트비트'))
+      : t('멈춤')}${u.pid ? ` · pid ${u.pid}` : ''}`
+  const lock = u.readonly ? t('안전장치는 웹에서 손대지 않습니다')
+    : !u.controllable ? t('서비스 관리 데몬(piper-unitd)이 없습니다') : undefined
   return (
     <Row name={u.name} active={u.active} stale={u.stale} detail={detail}
       description={u.description} busy={busy}
@@ -195,6 +199,7 @@ function Row({ name, active, stale, detail, description, busy, restartDisabled, 
   power?: { on: boolean; disabled: boolean; title?: string; onToggle: () => void }
   boot?: { on: boolean; disabled: boolean; title?: string; onToggle: () => void }
 }) {
+  const t = useT()
   return (
     <div className={`flex items-center gap-3 rounded border px-3 py-2 ${stale
       ? 'border-amber-500/40 bg-amber-500/5' : 'border-neutral-700 bg-neutral-800'}`}>
@@ -204,14 +209,14 @@ function Row({ name, active, stale, detail, description, busy, restartDisabled, 
         <p className="truncate text-sm text-neutral-200">
           {name}
           {description && <span className="ml-2 text-xs text-neutral-500">{description}</span>}
-          {stale && <span className="ml-2 text-xs text-amber-400">코드가 더 새것</span>}
+          {stale && <span className="ml-2 text-xs text-amber-400">{t('코드가 더 새것')}</span>}
         </p>
         <p className="text-[11px] text-neutral-500 tabular-nums">{detail}</p>
       </div>
       {onLog && (
-        <button onClick={onLog} title="이 데몬의 저널"
+        <button onClick={onLog} title={t('이 데몬의 저널')}
           className="shrink-0 px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-200">
-          로그
+          {t('로그')}
         </button>
       )}
       {boot && (
@@ -219,7 +224,7 @@ function Row({ name, active, stale, detail, description, busy, restartDisabled, 
           ? 'text-neutral-600' : 'text-neutral-400'}`} title={boot.title}>
           <input type="checkbox" checked={boot.on} disabled={busy || boot.disabled}
             onChange={boot.onToggle} className="accent-blue-500" />
-          부팅 시 시작
+          {t('부팅 시 시작')}
         </label>
       )}
       {power && (
@@ -227,15 +232,15 @@ function Row({ name, active, stale, detail, description, busy, restartDisabled, 
           className={`shrink-0 px-2 py-1 text-xs rounded text-white disabled:bg-neutral-700
             disabled:text-neutral-500 ${power.on
               ? 'bg-neutral-600 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-600'}`}>
-          {busy ? '…' : power.on ? '끄기' : '켜기'}
+          {busy ? '…' : power.on ? t('끄기') : t('켜기')}
         </button>
       )}
       <button onClick={onRestart} disabled={busy || restartDisabled}
-        title={restartDisabled ? '이 방식으로는 재시작할 수 없습니다' : undefined}
+        title={restartDisabled ? t('이 방식으로는 재시작할 수 없습니다') : undefined}
         className={`shrink-0 px-2 py-1 text-xs rounded disabled:bg-neutral-700
           disabled:text-neutral-500 text-white ${stale
             ? 'bg-amber-600 hover:bg-amber-500' : 'bg-blue-600 hover:bg-blue-500'}`}>
-        {busy ? '…' : '재시작'}
+        {busy ? '…' : t('재시작')}
       </button>
     </div>
   )

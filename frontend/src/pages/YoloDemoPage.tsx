@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 type DetObject = { label: string; conf: number; bbox: number[]; center: number[] }
 type DetPayload = {
@@ -62,6 +63,7 @@ const ALIASES = ['top', 'hand', 'side', 'extra']
 const shortId = (s: string) => (s.length > 24 ? `${s.slice(0, 6)}…${s.slice(-10)}` : s)
 
 export default function YoloDemoPage() {
+  const t = useT()
   const [status, setStatus] = useState<YoloStatus | null>(null)
   const [detections, setDetections] = useState<Record<string, DetPayload>>({})
   const [segments, setSegments] = useState<string[]>([])
@@ -105,7 +107,7 @@ export default function YoloDemoPage() {
       await api.post(`/yolo/datasets/${capTarget}/capture`, { cam: seg })
       setCapCount((c) => ({ ...c, [alias]: (c[alias] ?? 0) + 1 }))
     } catch (e) {
-      setError(e instanceof Error ? e.message : '캡처 실패')
+      setError(e instanceof Error ? e.message : t('캡처 실패'))
     }
   }
 
@@ -187,14 +189,14 @@ export default function YoloDemoPage() {
 
   const handleStart = async () => {
     const chosen = segments.filter((s) => picked.has(s))
-    if (chosen.length === 0) { setError('구독할 카메라 세그먼트가 없습니다'); return }
+    if (chosen.length === 0) { setError(t('구독할 카메라 세그먼트가 없습니다')); return }
     setBusy(true)
     setError(null)
     try {
       const cams = Object.fromEntries(chosen.map((s, i) => [ALIASES[i] ?? `cam${i}`, s]))
       await api.post('/vision/start', { cams, model, conf: 0.25, fps, imgsz })
     } catch (e) {
-      setError(e instanceof Error ? e.message : '검출기 시작 실패')
+      setError(e instanceof Error ? e.message : t('검출기 시작 실패'))
     } finally { setBusy(false) }
   }
 
@@ -210,14 +212,14 @@ export default function YoloDemoPage() {
       //   삭제한 뒤 선택이 **받아야 하는 모델**로 옮겨 앉는다. 있는 것 중에서 고른다.
       setModel(list?.find((m) => m.downloaded === true)?.file ?? 'PekingU/rtdetr_v2_r18vd')
     } catch (e) {
-      setError(e instanceof Error ? e.message : '삭제 실패')
+      setError(e instanceof Error ? e.message : t('삭제 실패'))
     }
   }
 
   const handleStop = async () => {
     setBusy(true)
     try { await api.post('/vision/stop') } catch (e) {
-      setError(e instanceof Error ? e.message : '정지 실패')
+      setError(e instanceof Error ? e.message : t('정지 실패'))
     } finally { setBusy(false) }
   }
 
@@ -236,10 +238,10 @@ export default function YoloDemoPage() {
     meta.device,
     `conf ${meta.conf}`,
     `${meta.fps} fps`,
-    meta.imgsz != null && `입력 ${meta.imgsz}px`,
+    meta.imgsz != null && t('입력 {imgsz}px', { imgsz: meta.imgsz }),
     meta.task,
-    meta.classes != null && `${meta.classes} 클래스`,
-    meta.params != null && `${(meta.params / 1e6).toFixed(1)}M 파라미터`,
+    meta.classes != null && t('{classes} 클래스', { classes: meta.classes }),
+    meta.params != null && t('{params}M 파라미터', { params: (meta.params / 1e6).toFixed(1) }),
     meta.gflops != null && `${meta.gflops} GFLOPs`,
   ].filter(Boolean) as string[]
 
@@ -247,19 +249,23 @@ export default function YoloDemoPage() {
     <div className="space-y-4">
       {/* ── 헤더 ── */}
       <header className="flex items-center gap-4 flex-wrap">
-        <h1 className="text-2xl font-bold">검출 데모</h1>
+        <h1 className="text-2xl font-bold">{t('검출 데모')}</h1>
         <span className={`text-xs px-2 py-0.5 rounded-full ${
           running ? 'bg-green-900/70 text-green-300' : 'bg-neutral-800 text-neutral-500'}`}>
           {status?.state ?? '…'}
         </span>
         {running && (
           <span className="text-sm text-neutral-400">
-            객체 <b className="text-2xl text-white tabular-nums align-middle">{totalObjects}</b>
+            {t.rich('객체 {b}', {
+              b: <b className="text-2xl text-white tabular-nums align-middle">{totalObjects}</b>,
+            })}
           </span>
         )}
         {running && avgInferMs != null && (
           <span className="text-sm text-neutral-400">
-            추론 <b className="text-lg text-white tabular-nums align-middle">{avgInferMs.toFixed(1)}</b> ms
+            {t.rich('추론 {b} ms', {
+              b: <b className="text-lg text-white tabular-nums align-middle">{avgInferMs.toFixed(1)}</b>,
+            })}
           </span>
         )}
         {running && avgFps != null && (
@@ -271,12 +277,12 @@ export default function YoloDemoPage() {
         {running && (metaParts ? (
           <span className="text-xs text-neutral-500 font-mono">{metaParts.join(' · ')}</span>
         ) : (
-          <span className="text-xs text-neutral-600 animate-pulse">모델 로드 중…</span>
+          <span className="text-xs text-neutral-600 animate-pulse">{t('모델 로드 중…')}</span>
         ))}
         <div className="ml-auto flex items-center gap-3">
           {error && <span className="text-xs text-red-400">{error}</span>}
           {running && capDatasets.length > 0 && (
-            <label className="text-xs text-neutral-500">캡처 →
+            <label className="text-xs text-neutral-500">{t('캡처 →')}
               <select value={capTarget} onChange={(e) => setCapTarget(e.target.value)}
                 className="ml-1 rounded bg-neutral-900 border border-neutral-700 px-1.5 py-0.5 text-neutral-300">
                 {capDatasets.map((d) => <option key={d} value={d}>{d}</option>)}
@@ -286,7 +292,7 @@ export default function YoloDemoPage() {
           {running && (
             <button onClick={() => void handleStop()} disabled={busy}
               className="px-4 py-1.5 text-sm rounded bg-neutral-800 hover:bg-red-700 text-neutral-300 hover:text-white disabled:opacity-50">
-              정지
+              {t('정지')}
             </button>
           )}
         </div>
@@ -296,9 +302,9 @@ export default function YoloDemoPage() {
       {!running && entries.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-4 py-24 text-neutral-500">
           <div className="text-5xl">👁</div>
-          <div className="text-sm">검출기가 꺼져 있습니다 — 구독할 세그먼트를 고르고 시작하세요</div>
+          <div className="text-sm">{t('검출기가 꺼져 있습니다 — 구독할 세그먼트를 고르고 시작하세요')}</div>
           {segments.length === 0 ? (
-            <div className="text-xs text-neutral-600">살아 있는 카메라 세그먼트가 없습니다 (카메라 페이지에서 연결)</div>
+            <div className="text-xs text-neutral-600">{t('살아 있는 카메라 세그먼트가 없습니다 (카메라 페이지에서 연결)')}</div>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-w-3xl">
               {segments.map((s) => {
@@ -336,7 +342,7 @@ export default function YoloDemoPage() {
           )}
           <div className="flex items-center gap-5 flex-wrap justify-center">
           <label className="flex items-center gap-2 text-sm text-neutral-400">
-            모델
+            {t('모델')}
             <select value={model} onChange={(e) => setModel(e.target.value)}
               className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1 text-neutral-200">
               {[...new Set(models.map((m) => m.family))].map((fam) => (
@@ -346,10 +352,10 @@ export default function YoloDemoPage() {
                       {m.file} — {m.label}
                       {m.params_m != null ? ` · ${m.params_m}M` : ''}
                       {m.trained_on ? ` · ${m.trained_on}` : ''}
-                      {m.classes_n != null ? ` · ${m.classes_n}클래스` : ''}
+                      {m.classes_n != null ? t(' · {classes_n}클래스', { classes_n: m.classes_n }) : ''}
                       {m.map50 != null ? ` · mAP50 ${m.map50}` : ''}
                       {m.downloaded === false
-                        ? ` (다운로드 필요${m.size_mb != null ? `, ${m.size_mb}MB` : ''})` : ''}
+                        ? t(' (다운로드 필요{size_mb})', { size_mb: m.size_mb != null ? `, ${m.size_mb}MB` : '' }) : ''}
                     </option>
                   ))}
                 </optgroup>
@@ -366,7 +372,7 @@ export default function YoloDemoPage() {
             </select>
           </label>
           <label className="flex items-center gap-2 text-sm text-neutral-400">
-            해상도
+            {t('해상도')}
             <select value={imgsz} onChange={(e) => setImgsz(Number(e.target.value))}
               className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1 text-neutral-200">
               {[320, 480, 640, 960, 1280].map((v) => (
@@ -377,18 +383,18 @@ export default function YoloDemoPage() {
           {models.find((m) => m.file === model)?.family === '커스텀' && (
             <button type="button" onClick={() => void handleDeleteModel()}
               className="text-sm text-neutral-500 hover:text-red-400">
-              삭제
+              {t('삭제')}
             </button>
           )}
           </div>
           {models.find((m) => m.file === model)?.downloaded === false && (
             <div className="text-xs text-neutral-600">
-              이 모델은 처음이라 시작 시 자동 다운로드된다 — 로드가 그만큼 늦는다
+              {t('이 모델은 처음이라 시작 시 자동 다운로드된다 — 로드가 그만큼 늦는다')}
             </div>
           )}
           <button onClick={() => void handleStart()} disabled={busy || picked.size === 0}
             className="mt-2 px-10 py-2.5 text-base font-semibold rounded-lg bg-green-700 hover:bg-green-600 text-white disabled:opacity-40">
-            {busy ? '시작 중…' : picked.size === 0 ? '카메라를 선택하세요' : `▶ 시작 (${picked.size}대)`}
+            {busy ? t('시작 중…') : picked.size === 0 ? t('카메라를 선택하세요') : t('▶ 시작 ({size}대)', { size: picked.size })}
           </button>
         </div>
       ) : (
@@ -415,7 +421,7 @@ export default function YoloDemoPage() {
                   )}
                   {d.infer_ms != null && (
                     <span className="px-1.5 py-0.5 rounded bg-black/60 backdrop-blur text-xs text-neutral-400 tabular-nums">
-                      추론 {d.infer_ms.toFixed(1)}ms
+                      {t('추론 {infer_ms}ms', { infer_ms: d.infer_ms.toFixed(1) })}
                     </span>
                   )}
                 </div>
@@ -426,7 +432,7 @@ export default function YoloDemoPage() {
                       <span className="px-1.5 py-0.5 rounded bg-black/60 text-xs text-green-400">+{capCount[name]}</span>
                     )}
                     <button onClick={() => void captureScene(name)}
-                      title={`원본 프레임을 ${capTarget} 데이터셋으로 캡처`}
+                      title={t('원본 프레임을 {capTarget} 데이터셋으로 캡처', { capTarget })}
                       className="px-2 py-0.5 rounded bg-black/60 backdrop-blur text-sm text-neutral-300 hover:bg-green-700 hover:text-white">
                       📸
                     </button>
@@ -441,14 +447,14 @@ export default function YoloDemoPage() {
                     </span>
                   ))}
                   {d.objects.length === 0 && (
-                    <span className="px-2 py-0.5 rounded-full bg-black/50 text-xs text-neutral-500">검출 없음</span>
+                    <span className="px-2 py-0.5 rounded-full bg-black/50 text-xs text-neutral-500">{t('검출 없음')}</span>
                   )}
                 </div>
               </div>
             )
           })}
           {running && entries.length === 0 && (
-            <div className="text-sm text-neutral-500 p-8 text-center">검출 대기 중… (모델 로드에 수 초)</div>
+            <div className="text-sm text-neutral-500 p-8 text-center">{t('검출 대기 중… (모델 로드에 수 초)')}</div>
           )}
         </main>
       )}

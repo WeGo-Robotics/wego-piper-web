@@ -3,6 +3,7 @@ import { useWebSocket } from '../hooks/useWebSocket'
 import { api } from '../services/api'
 import type { DeviceAlert } from '../types/ws'
 import { useSystemMessage } from './SystemMessages'
+import { useT } from '../i18n'
 
 /**
  * 장치 경보를 **시스템 메시지로 흘려보낸다.** 자기 UI 는 없다.
@@ -19,6 +20,7 @@ import { useSystemMessage } from './SystemMessages'
 const PREFIX = 'device:'
 
 export default function DeviceAlerts() {
+  const t = useT()
   const { notify, clear } = useSystemMessage()
 
   const apply = (alerts: DeviceAlert[]) => {
@@ -31,7 +33,7 @@ export default function DeviceAlerts() {
         // 장치가 없어진 것은 오류다. 판정은 백엔드가 `reason` 으로 준다.
         level: a.reason === 'device_gone' ? 'error' : 'warn',
         text: a.text,
-        source: a.kind === 'robot' ? '로봇' : '카메라',
+        source: a.kind === 'robot' ? t('로봇') : t('카메라'),
       })
     }
   }

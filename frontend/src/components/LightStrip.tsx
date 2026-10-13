@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 /**
  * 실시간 조명 표시 — 수집·추론 화면에서 프리뷰 옆에 놓는다
@@ -19,6 +20,7 @@ type LightInfo = {
 const fmt = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`
 
 export default function LightStrip() {
+  const t = useT()
   const [cams, setCams] = useState<LightInfo[]>([])
 
   useEffect(() => {
@@ -33,18 +35,16 @@ export default function LightStrip() {
 
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
-      <span className="text-neutral-500">조명</span>
+      <span className="text-neutral-500">{t('조명')}</span>
       {cams.map((c) => (
         <span key={c.id}
               className="flex items-center gap-1.5 rounded-full border border-neutral-700
                          bg-neutral-800 px-2.5 py-0.5 tabular-nums"
-              title={`${c.label} — 밝기 ${c.luma}/255 · 포화 ${c.sat_pct}% · 암부 ${c.dark_pct}%
-색 비율(log₂): R/G ${fmt(c.log_rg)} · B/G ${fmt(c.log_bg)}
-급변하면 경보(🔔)가 따로 뜹니다`}>
+              title={t('{label} — 밝기 {luma}/255 · 포화 {sat_pct}% · 암부 {dark_pct}%\n색 비율(log₂): R/G {log_rg} · B/G {log_bg}\n급변하면 경보(🔔)가 따로 뜹니다', { label: c.label, luma: c.luma, sat_pct: c.sat_pct, dark_pct: c.dark_pct, log_rg: fmt(c.log_rg), log_bg: fmt(c.log_bg) })}>
           <span className="max-w-[8rem] truncate text-neutral-300">{c.label}</span>
           <span aria-hidden>☀</span>
           <span className="text-neutral-200">{Math.round((c.luma / 255) * 100)}%</span>
-          {(c.sat_pct > 5 || c.dark_pct > 50) && <span aria-hidden title="노출 이상">⚠</span>}
+          {(c.sat_pct > 5 || c.dark_pct > 50) && <span aria-hidden title={t('노출 이상')}>⚠</span>}
         </span>
       ))}
     </div>

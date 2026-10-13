@@ -15,6 +15,7 @@ import LayoutToggle, { useLayout, twoColumns } from '../components/LayoutToggle'
 import PresetBar from '../components/PresetBar'
 import LogViewer from '../components/LogViewer'
 import TrainingMetrics, { type MetricsData, type HistoryData } from '../components/TrainingMetrics'
+import { useT, fmt } from '../i18n'
 
 type Dataset = { id: string; path: string; total_episodes: number; total_frames: number; fps: number | null; features: Record<string, { shape?: number[]; dtype?: string; names?: string[] }> }
 type Model = { id: string; path: string; policy_type?: string; is_policy?: boolean; config?: Record<string, unknown>; requirements?: { required_cameras: { name: string; model_name?: string }[]; state_dim: number; action_dim: number } }
@@ -39,6 +40,7 @@ const OPTIMIZER_TYPES = ['adam', 'adamw', 'sgd']
 // `arch: true` = 모델 구조를 정하는 값. 체크포인트에서 이어 학습(pretrained)하면
 // 구조가 이미 고정이라 바꿀 수 없다. 나머지는 **학습 방식** 이라 파인튜닝에도 유효하다
 export default function TrainingPage() {
+  const t = useT()
   const { confirm: askConfirm, notify } = useSystemMessage()
   // 설정 — localStorage에서 복원
   const _saved = (() => { try { return JSON.parse(localStorage.getItem('piper_train_settings') || '{}') } catch { return {} } })()
@@ -225,11 +227,11 @@ export default function TrainingPage() {
       `/training/jobs/${encodeURIComponent(viewJobId)}/logs?limit=${MAX_LOGS}`
     ).then((r) => {
       if (!alive) return
-      const head = r.dropped > 0 ? [`… 이전 ${r.dropped}줄 생략 (버퍼 한도)`] : []
+      const head = r.dropped > 0 ? [t('… 이전 {dropped}줄 생략 (버퍼 한도)', { dropped: r.dropped })] : []
       setLogs([...head, ...r.lines])
     }).catch(() => {})
     return () => { alive = false }
-  }, [viewJobId])
+  }, [viewJobId, t])
 
   // pretrained 모델 변경 시 rename_map 자동 로드
   useEffect(() => {
@@ -316,10 +318,10 @@ export default function TrainingPage() {
       }
       // ⚠ 받다 만 것을 조용히 넘기지 않는다 — 목록에는 뜨는데 쓸 때 깨진다.
       if (last.status === 'incomplete') {
-        notify({ level: 'error', source: '학습',
-                 text: `${repoId}: 파일 ${last.missing?.length ?? 0}개가 빠졌습니다 — 저장소 페이지에서 다시 받으세요` })
+        notify({ level: 'error', source: t('학습'),
+                 text: t('{repoId}: 파일 {length}개가 빠졌습니다 — 저장소 페이지에서 다시 받으세요', { repoId, length: last.missing?.length ?? 0 }) })
       } else if (last.status === 'error') {
-        notify({ level: 'error', source: '학습', text: `${repoId} 다운로드 실패` })
+        notify({ level: 'error', source: t('학습'), text: t('{repoId} 다운로드 실패', { repoId }) })
       }
       setModels(await api.get<Model[]>('/models'))
     } catch { /* 실패 사유는 Hub 페이지에서 확인한다 */ }
@@ -378,27 +380,27 @@ export default function TrainingPage() {
         ? await api.post<{ command: string; args: string[] }>('/cloud/rent/preview', trainParams())
         : await api.post<{ command: string; args: string[] }>('/training/preview', trainParams())
       const configLines = [
-        '=== 학습 설정 확인 ===',
+        t('=== 학습 설정 확인 ==='),
         '',
-        `데이터셋: ${selectedDataset}`,
-        `정책: ${policyType}`,
-        `Fine-tune: ${pretrainedPath || '(처음부터)'}`,
-        `Repo ID: ${policyRepoId || '(없음)'}`,
-        `Output: ${outputDir || '(자동)'}`,
+        t('데이터셋: {selectedDataset}', { selectedDataset: String(selectedDataset) }),
+        t('정책: {policyType}', { policyType: String(policyType) }),
+        `Fine-tune: ${pretrainedPath || t('(처음부터)')}`,
+        `Repo ID: ${policyRepoId || t('(없음)')}`,
+        `Output: ${outputDir || t('(자동)')}`,
         '',
         `Batch: ${batchSize}  Steps: ${steps}  Save: ${saveFreq}`,
         `Device: ${device}  AMP: ${amp}`,
         `Workers: ${numWorkers}  Seed: ${seed}`,
         `Resume: ${resume}  Preset: ${usePolicyPreset}  State: ${stateDim || 'auto'}  Action: ${actionDim || 'auto'}`,
         '',
-        `Rename map: ${renameMap || '(없음)'}`,
+        `Rename map: ${renameMap || t('(없음)')}`,
         '',
-        '=== CLI 명령어 ===',
+        t('=== CLI 명령어 ==='),
         r.command,
       ].join('\n')
       setConfirmConfig(configLines)
     } catch (e) {
-      const msg = e instanceof Error ? e.message : '미리보기 실패'
+      const msg = e instanceof Error ? e.message : t('미리보기 실패')
       setLogs((prev) => [...prev, `[ERROR] ${msg}`])
     }
   }
@@ -407,7 +409,7 @@ export default function TrainingPage() {
     setConfirmConfig(null)
     try {
       if (where === 'rent') {
-        if (!rentPick) throw new Error('학습을 걸 기계를 고르세요 — 클라우드 GPU 페이지에서 먼저 빌려야 합니다')
+        if (!rentPick) throw new Error(t('학습을 걸 기계를 고르세요 — 클라우드 GPU 페이지에서 먼저 빌려야 합니다'))
         // ⚠ **학습 설정은 이 페이지의 것 그대로 보낸다.** 서버는 `RentRequest` 가
         //   `TrainStartRequest` 를 상속하므로 하나도 안 흘린다(§12-18).
         // ⚠ **빌리지 않는다** — 이미 있는 기계에 얹는다. 빌리기는 클라우드 페이지다.
@@ -422,8 +424,8 @@ export default function TrainingPage() {
         await api.post('/training/start', trainParams())
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : '알 수 없는 오류'
-      setLogs((prev) => [...prev, `[ERROR] 학습 시작 실패: ${msg}`])
+      const msg = e instanceof Error ? e.message : t('알 수 없는 오류')
+      setLogs((prev) => [...prev, t('[ERROR] 학습 시작 실패: {msg}', { msg })])
     }
   }
 
@@ -439,13 +441,13 @@ export default function TrainingPage() {
       <CloudRentProgress />
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold">학습</h1>
+          <h1 className="text-2xl font-bold">{t('학습')}</h1>
           {/* ⚠ 원격이면 **말해 준다.** 이게 없으면 임대 GPU 에서 도는 학습과 이 기계에서
               도는 학습이 화면상 똑같다 — 러너가 조용히 로컬로 떨어졌을 때 알 길이 없다. */}
           {remoteRun && (
             <span className="rounded bg-blue-900/60 px-2 py-0.5 text-xs text-blue-200"
-              title="이 학습은 다른 기계(SSH)에서 돕니다 — 이 기계의 GPU 는 쓰지 않습니다">
-              원격
+              title={t('이 학습은 다른 기계(SSH)에서 돕니다 — 이 기계의 GPU 는 쓰지 않습니다')}>
+              {t('원격')}
             </span>
           )}
         </div>
@@ -459,7 +461,7 @@ export default function TrainingPage() {
               className="px-2 py-1 text-xs rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
               {jobs.map((j) => (
                 <option key={j.job_id} value={j.job_id}>
-                  {j.job_id === LOCAL_JOB_ID ? '로컬' : `${j.runner}:${j.job_id}`} ({j.state})
+                  {j.job_id === LOCAL_JOB_ID ? t('로컬') : `${j.runner}:${j.job_id}`} ({j.state})
                 </option>
               ))}
             </select>
@@ -469,7 +471,7 @@ export default function TrainingPage() {
             <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-500/20 text-green-400">{trainState}</span>
           )}
           {trainBlockedBy && (
-            <span className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-400">{trainBlockedBy} 실행 중 — 학습을 시작할 수 없습니다</span>
+            <span className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-400">{t('{trainBlockedBy} 실행 중 — 학습을 시작할 수 없습니다', { trainBlockedBy })}</span>
           )}
         </div>
       </div>
@@ -494,7 +496,7 @@ export default function TrainingPage() {
           <div className="space-y-6">
           {/* 데이터셋 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-            <h3 className="text-sm font-semibold">데이터셋</h3>
+            <h3 className="text-sm font-semibold">{t('데이터셋')}</h3>
             {/* 정책이 요구하는 feature 가 없는 데이터셋은 빼고 보여준다 — 스펙(`train.requires_features`)이
                 정한다. 조건을 여기 다시 적지 않는다. 이미 고른 것이 조건에 안 맞으면 목록엔 남기되 경고한다. */}
             {(() => {
@@ -508,19 +510,21 @@ export default function TrainingPage() {
                 <>
                   <select value={selectedDataset} onChange={(e) => { setSelectedDataset(e.target.value); setCliEdited(false) }}
                     className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                    <option value="">선택...</option>
+                    <option value="">{t('선택...')}</option>
                     {shown.map((d) => (
                       <option key={d.id} value={d.id}>{d.id} ({d.total_episodes} ep, {d.total_frames} frames)</option>
                     ))}
                   </select>
                   {req.length > 0 && (
                     <p className="text-xs text-neutral-500">
-                      이 정책은 <code>{req.join(', ')}</code> 가 있는 데이터셋만 받습니다
-                      {hidden > 0 && ` — ${hidden}개 숨김`}. 에피소드 화면의 [ACT-Aux용 굽기]로 만듭니다.
+                      {t.rich('이 정책은 {code} 가 있는 데이터셋만 받습니다{hidden}. 에피소드 화면의 [ACT-Aux용 굽기]로 만듭니다.', {
+                        code: <code>{req.join(', ')}</code>,
+                        hidden: hidden > 0 && t(' — {hidden}개 숨김', { hidden }),
+                      })}
                     </p>
                   )}
                   {!selectedOk && (
-                    <p className="text-xs text-amber-400">⚠ 선택한 데이터셋에 <code>{req.join(', ')}</code> 가 없습니다 — 이대로 시작하면 첫 배치에서 죽습니다.</p>
+                    <p className="text-xs text-amber-400">{t.rich('⚠ 선택한 데이터셋에 {code} 가 없습니다 — 이대로 시작하면 첫 배치에서 죽습니다.', { code: <code>{req.join(', ')}</code> })}</p>
                   )}
                 </>
               )
@@ -529,16 +533,16 @@ export default function TrainingPage() {
 
           {/* 정책 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-            <h3 className="text-sm font-semibold">정책</h3>
+            <h3 className="text-sm font-semibold">{t('정책')}</h3>
             <select value={policyType} onChange={(e) => handlePolicyChange(e.target.value)}
               className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
               {trainable.map((p) => <option key={p.type} value={p.type}>{p.label}</option>)}
             </select>
             <div className="space-y-1">
-              <label className="text-xs text-neutral-400">Fine-tune 모델 (선택)</label>
+              <label className="text-xs text-neutral-400">{t('Fine-tune 모델 (선택)')}</label>
               <select value={pretrainedPath} onChange={(e) => { setPretrainedPath(e.target.value); setCliEdited(false) }}
                 className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                <option value="">처음부터 학습</option>
+                <option value="">{t('처음부터 학습')}</option>
                 {finetuneCandidates.map((m) => <option key={m.id} value={m.path}>{m.id}</option>)}
               </select>
               {/* SmolVLA 의 `load_vlm_weights` 는 LeRobot 기본값이 **false** 다.
@@ -552,32 +556,33 @@ export default function TrainingPage() {
                   **무엇을 경고할지는 스펙, 어디에 띄울지는 화면**이다. */}
               {!pretrainedPath && warnings.some((w) => w.level === 'error') && (
                 <p className="mt-1 px-2 py-1.5 rounded bg-red-500/10 border border-red-500/30 text-[10px] text-red-300">
-                  ⚠ 이 상태로 <b>처음부터 학습</b>하면 사실상 학습이 되지 않습니다 —
-                  {' '}{warnings.filter((w) => w.level === 'error').map((w) => w.text).join(' / ')}.
-                  아래 파라미터에서 고치거나 체크포인트를 골라주세요.
+                  {t.rich('⚠ 이 상태로 {b}하면 사실상 학습이 되지 않습니다 —', { b: <b>{t('처음부터 학습')}</b> })}{' '}{warnings.filter((w) => w.level === 'error').map((w) => w.text).join(' / ')}{t('. 아래 파라미터에서 고치거나 체크포인트를 골라주세요.')}
                 </p>
               )}
               {!pretrainedPath && policyUi.scratch_note && (
                 <p className="text-[10px] text-neutral-500 mt-1">
-                  처음부터 학습 — {policyUi.scratch_note}
+                  {t('처음부터 학습 — {scratch_note}', { scratch_note: policyUi.scratch_note })}
                 </p>
               )}
               {finetuneCandidates.length === 0 && (
                 <div className="mt-1 space-y-1">
                   <p className="text-[10px] text-neutral-500">
-                    로컬에 {policyType} 체크포인트가 없습니다.
-                    {models.length > 0 && ` (다른 정책 모델 ${models.length}개는 이어서 학습할 수 없어 숨겼습니다)`}
+                    {t.rich('로컬에 {policyType} 체크포인트가 없습니다.{length}', {
+                      policyType,
+                      length: models.length > 0 && t(' (다른 정책 모델 {length}개는 이어서 학습할 수 없어 숨겼습니다)', { length: models.length }),
+                    })}
                   </p>
                   {policyBase(policyType) && (
                     <div className="flex items-center gap-2 px-2 py-1.5 rounded bg-amber-500/10 border border-amber-500/30">
                       <span className="text-[10px] text-amber-300 flex-1">
-                        권장 시작점: <span className="font-mono">{policyBase(policyType)}</span>
-                        {' '}— 없이 처음부터 학습하면 액션 전문가를 맨바닥에서 올립니다
+                        {t.rich('권장 시작점: {span} — 없이 처음부터 학습하면 액션 전문가를 맨바닥에서 올립니다', {
+                          span: <span className="font-mono">{policyBase(policyType)}</span>,
+                        })}
                       </span>
                       <button onClick={() => handleFetchBase(policyBase(policyType))}
                         disabled={fetchingBase}
                         className="shrink-0 px-2 py-0.5 text-[10px] rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
-                        {fetchingBase ? '받는 중…' : 'Hub 에서 받기'}
+                        {fetchingBase ? t('받는 중…') : t('Hub 에서 받기')}
                       </button>
                     </div>
                   )}
@@ -599,7 +604,7 @@ export default function TrainingPage() {
                   </div>
                   {r.required_cameras.length > 0 && (
                     <div className="text-neutral-400">
-                      카메라: {r.required_cameras.map((c) => (
+                      {t('카메라:')}{' '}{r.required_cameras.map((c) => (
                         <span key={c.name} className="inline-block mr-2">
                           <span className="text-neutral-200">{c.name}</span>
                           {c.model_name && c.model_name !== c.name && <span className="text-neutral-600 text-[10px]">({c.model_name})</span>}
@@ -612,7 +617,7 @@ export default function TrainingPage() {
               )
             })()}
             <div className="space-y-1">
-              <label className="text-xs text-neutral-400">Policy Repo ID (Hub 업로드용)</label>
+              <label className="text-xs text-neutral-400">{t('Policy Repo ID (Hub 업로드용)')}</label>
               {/* ⚠ 비워 두면 `--policy.push_to_hub=false` 가 붙어 로컬에만 남는다.
                   "올리지 않음" 을 명시적인 선택지로 둔다 — 빈 칸을 그냥 두는 것과
                   고르는 것은 다르다. */}
@@ -623,12 +628,12 @@ export default function TrainingPage() {
                 if (!existing) return null
                 return (
                   <p className="text-xs text-amber-400 mt-1">
-                    이미 로컬에 존재합니다: {existing.id}
+                    {t('이미 로컬에 존재합니다: {id}', { id: existing.id })}
                     <button onClick={async () => {
-                      if (!await askConfirm(`"${existing.id}" 모델을 삭제하시겠습니까?\n경로: ${existing.path}`)) return
+                      if (!await askConfirm(t('"{id}" 모델을 삭제하시겠습니까?\n경로: {path}', { id: existing.id, path: existing.path }))) return
                       await api.delete(`/models/${existing.id}`)
                       api.get<Model[]>('/models').then(setModels).catch(() => {})
-                    }} className="ml-2 text-red-400 hover:text-red-300 underline">삭제</button>
+                    }} className="ml-2 text-red-400 hover:text-red-300 underline">{t('삭제')}</button>
                   </p>
                 )
               })()}
@@ -642,10 +647,10 @@ export default function TrainingPage() {
               이제 `arch` 값만 가린다. */}
           {policyFields.length > 0 && (
             <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-              <h3 className="text-sm font-semibold">{policyType.toUpperCase()} 파라미터</h3>
+              <h3 className="text-sm font-semibold">{t.rich('{policyType} 파라미터', { policyType: policyType.toUpperCase() })}</h3>
               {pretrainedPath && (
                 <p className="text-[10px] text-neutral-500">
-                  체크포인트에서 이어 학습 중 — 모델 구조 값(chunk_size 등)은 체크포인트에 고정돼 숨겼습니다.
+                  {t('체크포인트에서 이어 학습 중 — 모델 구조 값(chunk_size 등)은 체크포인트에 고정돼 숨겼습니다.')}
                 </p>
               )}
               <SpecFields fields={policyFields} values={policyParams} onChange={setPolicyParam} />
@@ -653,7 +658,7 @@ export default function TrainingPage() {
                   있을 때만 뜻이 있고, 어느 정책이든 같은 관계다. */}
               {typeof policyParams.n_action_steps === 'number' && typeof policyParams.chunk_size === 'number'
                 && policyParams.n_action_steps > policyParams.chunk_size && (
-                <span className="text-yellow-500 text-[10px]">⚠ n_action_steps는 chunk_size 이하여야 합니다</span>
+                <span className="text-yellow-500 text-[10px]">{t('⚠ n_action_steps는 chunk_size 이하여야 합니다')}</span>
               )}
               {/* 정책별 경고는 스펙이 준다 — 예전엔 `policyType === 'smolvla'` 가
                   화면에 박혀 있었다. 조건도 문구도 `policies/<type>.yaml` 에 있다. */}
@@ -679,24 +684,24 @@ export default function TrainingPage() {
             const cameras = Object.keys(ds.features).filter((k) => k.startsWith('observation.images.'))
             return (
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-                <h3 className="text-sm font-semibold">데이터셋 정보</h3>
+                <h3 className="text-sm font-semibold">{t('데이터셋 정보')}</h3>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div>
-                    <span className="text-neutral-400">관절 (state):</span>
-                    <span className="ml-1 text-neutral-100">{stateShape?.[0] ?? '?'}개</span>
+                    <span className="text-neutral-400">{t('관절 (state):')}</span>
+                    <span className="ml-1 text-neutral-100">{t('{stateShape}개', { stateShape: stateShape?.[0] ?? '?' })}</span>
                     {stateNames && <span className="text-neutral-500 ml-1">({stateNames.join(', ')})</span>}
                   </div>
                   <div>
-                    <span className="text-neutral-400">액션:</span>
-                    <span className="ml-1 text-neutral-100">{actionShape?.[0] ?? '?'}차원</span>
+                    <span className="text-neutral-400">{t('액션:')}</span>
+                    <span className="ml-1 text-neutral-100">{t('{actionShape}차원', { actionShape: actionShape?.[0] ?? '?' })}</span>
                   </div>
                 </div>
                 {stateShape && actionShape && stateShape[0] !== actionShape[0] && (
-                  <p className="text-xs text-amber-400">state({stateShape[0]})와 action({actionShape[0]}) 차원이 다릅니다. 베이스 모델의 기본 state_dim이 다를 수 있으니 CLI에서 확인하세요.</p>
+                  <p className="text-xs text-amber-400">{t('state({stateShape})와 action({actionShape}) 차원이 다릅니다. 베이스 모델의 기본 state_dim이 다를 수 있으니 CLI에서 확인하세요.', { stateShape: stateShape[0], actionShape: actionShape[0] })}</p>
                 )}
                 {cameras.length > 0 && (
                   <div className="text-xs">
-                    <span className="text-neutral-400">카메라 ({cameras.length}대):</span>
+                    <span className="text-neutral-400">{t('카메라 ({length}대):', { length: cameras.length })}</span>
                     <span className="ml-1 text-neutral-100">
                       {cameras.map((c) => c.replace('observation.images.', '')).join(', ')}
                     </span>
@@ -704,8 +709,8 @@ export default function TrainingPage() {
                 )}
                 <div className="text-xs pt-2 space-y-2">
                   <div className="flex items-center justify-between">
-                    <label className="text-neutral-400 font-medium">카메라 이름 매핑</label>
-                    {renameMap && pretrainedPath && <span className="text-[10px] text-green-400">자동 감지됨</span>}
+                    <label className="text-neutral-400 font-medium">{t('카메라 이름 매핑')}</label>
+                    {renameMap && pretrainedPath && <span className="text-[10px] text-green-400">{t('자동 감지됨')}</span>}
                   </div>
                   {(() => {
                     let entries: [string, string][] = []
@@ -721,9 +726,9 @@ export default function TrainingPage() {
                         <table className="w-full text-xs">
                           <thead>
                             <tr className="text-neutral-500">
-                              <th className="text-left py-1 pr-2">데이터셋 카메라</th>
+                              <th className="text-left py-1 pr-2">{t('데이터셋 카메라')}</th>
                               <th className="text-center py-1 px-1">→</th>
-                              <th className="text-left py-1 pl-2">모델 카메라</th>
+                              <th className="text-left py-1 pl-2">{t('모델 카메라')}</th>
                               <th className="w-8"></th>
                             </tr>
                           </thead>
@@ -758,7 +763,7 @@ export default function TrainingPage() {
                           </tbody>
                         </table>
                         <button onClick={() => updateEntries([...entries, ['observation.images.', 'observation.images.camera' + (entries.length + 1)]])}
-                          className="text-[10px] text-blue-400 hover:text-blue-300">+ 매핑 추가</button>
+                          className="text-[10px] text-blue-400 hover:text-blue-300">{t('+ 매핑 추가')}</button>
                       </>
                     )
                   })()}
@@ -771,7 +776,7 @@ export default function TrainingPage() {
 
           {/* 기본 파라미터 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-            <h3 className="text-sm font-semibold">파라미터</h3>
+            <h3 className="text-sm font-semibold">{t('파라미터')}</h3>
             <div className="grid grid-cols-2 gap-2">
               {[
                 { label: 'Batch Size', value: batchSize, set: setBatchSize, min: 1, max: 256 },
@@ -790,28 +795,28 @@ export default function TrainingPage() {
 
             {/* 혼합정밀도(AMP): ACCELERATE_MIXED_PRECISION env로 적용 (--policy.use_amp는 학습 미사용). 속도 최대 레버 */}
             <div>
-              <label className="text-xs text-neutral-400">혼합정밀도 (AMP)</label>
+              <label className="text-xs text-neutral-400">{t('혼합정밀도 (AMP)')}</label>
               <select value={amp} onChange={(e) => { setAmp(e.target.value); setCliEdited(false) }}
                 className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                <option value="bf16">bf16 (권장 · RTX 5090)</option>
+                <option value="bf16">{t('bf16 (권장 · RTX 5090)')}</option>
                 <option value="fp16">fp16</option>
                 <option value="off">off (fp32)</option>
               </select>
               <p className="text-[10px] text-neutral-500 mt-0.5">
-                bf16: 속도↑·VRAM↓ (5090 권장). VRAM 여유 시 Batch를 32~48로 키우세요.
+                {t('bf16: 속도↑·VRAM↓ (5090 권장). VRAM 여유 시 Batch를 32~48로 키우세요.')}
               </p>
             </div>
 
             <label className="flex items-center gap-2 text-xs cursor-pointer">
               <input type="checkbox" checked={resume} onChange={(e) => { setResume(e.target.checked); setCliEdited(false) }}
                 className="accent-blue-500" />
-              <span className="text-neutral-400">체크포인트에서 재개 (Resume)</span>
+              <span className="text-neutral-400">{t('체크포인트에서 재개 (Resume)')}</span>
             </label>
             <label className="flex items-center gap-2 text-xs cursor-pointer">
               <input type="checkbox" checked={usePolicyPreset} onChange={(e) => { setUsePolicyPreset(e.target.checked); setCliEdited(false) }}
                 className="accent-blue-500" />
-              <span className="text-neutral-400">정책 학습 프리셋 사용 (use_policy_training_preset)</span>
-              {!usePolicyPreset && <span className="text-yellow-500 text-[10px]">OFF — config.json 값 그대로 사용</span>}
+              <span className="text-neutral-400">{t('정책 학습 프리셋 사용 (use_policy_training_preset)')}</span>
+              {!usePolicyPreset && <span className="text-yellow-500 text-[10px]">{t('OFF — config.json 값 그대로 사용')}</span>}
             </label>
           </div>
 
@@ -819,7 +824,7 @@ export default function TrainingPage() {
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
             <button onClick={() => setShowAdvanced(!showAdvanced)}
               className="text-sm font-semibold text-neutral-300 hover:text-white">
-              {showAdvanced ? '▾' : '▸'} 고급 설정
+              {t('{showAdvanced} 고급 설정', { showAdvanced: showAdvanced ? '▾' : '▸' })}
             </button>
             {showAdvanced && (
               <div className="grid grid-cols-2 gap-2 pt-2">
@@ -831,7 +836,7 @@ export default function TrainingPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-neutral-400">Learning Rate (0=기본)</label>
+                  <label className="text-xs text-neutral-400">{t('Learning Rate (0=기본)')}</label>
                   <input type="number" value={learningRate} step={0.0001} min={0}
                     onChange={(e) => { setLearningRate(Number(e.target.value)); setCliEdited(false) }}
                     className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
@@ -841,7 +846,7 @@ export default function TrainingPage() {
                   <input type="number" value={numWorkers} min={0} max={32}
                     onChange={(e) => { setNumWorkers(Number(e.target.value)); setCliEdited(false) }}
                     className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
-                  <p className="text-[10px] text-neutral-500 mt-0.5">data_s &gt; updt_s면 ↑ (데이터 로딩 병목)</p>
+                  <p className="text-[10px] text-neutral-500 mt-0.5">{t('data_s > updt_s면 ↑ (데이터 로딩 병목)')}</p>
                 </div>
                 <div>
                   <label className="text-xs text-neutral-400">Seed</label>
@@ -858,33 +863,33 @@ export default function TrainingPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-neutral-400">Output Dir (비우면 자동)</label>
+                  <label className="text-xs text-neutral-400">{t('Output Dir (비우면 자동)')}</label>
                   <input type="text" value={outputDir}
                     onChange={(e) => { setOutputDir(e.target.value); setCliEdited(false) }}
                     className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
                 </div>
                 <div>
-                  <label className="text-xs text-neutral-400">가중치 제목 (선택)</label>
+                  <label className="text-xs text-neutral-400">{t('가중치 제목 (선택)')}</label>
                   <input type="text" value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    placeholder="사람이 읽는 이름 — 모델 목록에 경로 대신 보입니다"
+                    placeholder={t('사람이 읽는 이름 — 모델 목록에 경로 대신 보입니다')}
                     className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
                 </div>
                 <div className="col-span-2">
                   <label className="text-xs text-neutral-400">
-                    가중치 설명 (선택){!outputDir && (title || description) &&
-                      <span className="ml-2 text-amber-400">— Output Dir 이 비어 있으면 저장할 자리를 몰라 남기지 못합니다</span>}
+                    {t('가중치 설명 (선택)')}{!outputDir && (title || description) &&
+                      <span className="ml-2 text-amber-400">{t('— Output Dir 이 비어 있으면 저장할 자리를 몰라 남기지 못합니다')}</span>}
                   </label>
                   <textarea value={description} rows={2}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="어떤 데이터·조건·의도로 학습했는지 — 시작할 때 output_dir 옆에 남고, 모델 페이지에서 고칠 수 있습니다"
+                    placeholder={t('어떤 데이터·조건·의도로 학습했는지 — 시작할 때 output_dir 옆에 남고, 모델 페이지에서 고칠 수 있습니다')}
                     className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
                 </div>
                 <div className="col-span-2">
                   <label className="flex items-center gap-2 text-xs cursor-pointer">
                     <input type="checkbox" checked={wandbEnable} onChange={(e) => { setWandbEnable(e.target.checked); setCliEdited(false) }}
                       className="accent-blue-500" />
-                    <span className="text-neutral-400">WandB 로깅</span>
+                    <span className="text-neutral-400">{t('WandB 로깅')}</span>
                   </label>
                   {wandbEnable && (
                     <input type="text" value={wandbProject} placeholder="WandB project name"
@@ -902,9 +907,9 @@ export default function TrainingPage() {
           {/* CLI 미리보기 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">CLI 명령어</h3>
+              <h3 className="text-sm font-semibold">{t('CLI 명령어')}</h3>
               {cliEdited && (
-                <button onClick={() => setCliEdited(false)} className="text-xs text-blue-400 hover:underline">초기화</button>
+                <button onClick={() => setCliEdited(false)} className="text-xs text-blue-400 hover:underline">{t('초기화')}</button>
               )}
             </div>
             <textarea value={cliArgs}
@@ -914,7 +919,7 @@ export default function TrainingPage() {
             {amp !== 'off' && (
               <p className="text-[10px] font-mono text-neutral-500">
                 env: ACCELERATE_MIXED_PRECISION={amp}
-                <span className="ml-1 not-italic text-neutral-600">(CLI 직접 편집 시 미적용)</span>
+                <span className="ml-1 not-italic text-neutral-600">{t('(CLI 직접 편집 시 미적용)')}</span>
               </p>
             )}
             {/* ⚠ **시작 버튼 바로 위다.** 위쪽 폼 어딘가에 두면 "어디서 도는지" 를
@@ -924,14 +929,14 @@ export default function TrainingPage() {
               runner={runner}
               // ⚠ CLI 를 직접 고친 경우는 임대로 못 보낸다 — `/cloud/rent` 는 인자를
               //   스스로 조립한다. 막고 **왜인지 말한다.**
-              disabledReason={cliEdited ? 'CLI 를 직접 고친 학습은 아직 빌려서 못 돌립니다' : undefined}
+              disabledReason={cliEdited ? t('CLI 를 직접 고친 학습은 아직 빌려서 못 돌립니다') : undefined}
             />
 
             <button onClick={cliEdited ? handleStart : handlePreConfirm}
               disabled={!canStart || (where === 'rent' && !rentPick)}
               className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium">
-              {where === 'rent' ? '고른 기계에서 학습 시작'
-                : cliEdited ? '학습 시작 (CLI 직접)' : '설정 확인 후 시작'}
+              {where === 'rent' ? t('고른 기계에서 학습 시작')
+                : cliEdited ? t('학습 시작 (CLI 직접)') : t('설정 확인 후 시작')}
             </button>
           </div>
 
@@ -939,22 +944,22 @@ export default function TrainingPage() {
           {confirmConfig && (
             <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setConfirmConfig(null)}>
               <div className="bg-neutral-800 border border-neutral-600 rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-                <h3 className="text-lg font-bold mb-3">학습 설정 확인</h3>
+                <h3 className="text-lg font-bold mb-3">{t('학습 설정 확인')}</h3>
                 <pre className="flex-1 overflow-auto text-xs font-mono bg-neutral-900 p-4 rounded border border-neutral-700 text-neutral-200 whitespace-pre-wrap mb-4">
                   {confirmConfig}
                 </pre>
                 <div className="flex gap-3 justify-end">
                   <button onClick={() => setConfirmConfig(null)}
-                    className="px-4 py-2 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 text-sm">취소</button>
+                    className="px-4 py-2 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 text-sm">{t('취소')}</button>
                   <button onClick={handleStart}
-                    className="px-6 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium">학습 시작</button>
+                    className="px-6 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium">{t('학습 시작')}</button>
                 </div>
               </div>
             </div>
           )}
 
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
-            <h3 className="text-sm font-semibold mb-2">로그</h3>
+            <h3 className="text-sm font-semibold mb-2">{t('로그')}</h3>
             <LogViewer logs={logs} onClear={() => setLogs([])} />
           </div>
         </>
@@ -973,11 +978,11 @@ export default function TrainingPage() {
           {/* 체크포인트 */}
           {checkpoints.length > 0 && (
             <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
-              <h3 className="text-sm font-semibold">체크포인트</h3>
+              <h3 className="text-sm font-semibold">{t('체크포인트')}</h3>
               <div className="space-y-1 max-h-40 overflow-y-auto">
                 {checkpoints.map((ck) => (
                   <div key={ck.name} className="flex items-center justify-between text-xs px-2 py-1 rounded bg-neutral-900">
-                    <span className="font-mono">step {ck.step.toLocaleString()}</span>
+                    <span className="font-mono">step {fmt.number(ck.step)}</span>
                     <span className="text-neutral-400">{ck.size_kb.toFixed(0)} KB</span>
                   </div>
                 ))}
@@ -987,7 +992,7 @@ export default function TrainingPage() {
 
           <button onClick={handleStop}
             className="w-full px-4 py-2 rounded bg-red-600 hover:bg-red-500 text-white text-sm font-medium">
-            학습 정지
+            {t('학습 정지')}
           </button>
           </div>
 
@@ -996,7 +1001,7 @@ export default function TrainingPage() {
               돌리면 된다. 설정 화면의 로그와는 사정이 다르다
               (`test_page_layout.py` 는 설정 쪽을 잠근다). */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
-            <h3 className="text-sm font-semibold mb-2">로그</h3>
+            <h3 className="text-sm font-semibold mb-2">{t('로그')}</h3>
             <LogViewer logs={logs} onClear={() => setLogs([])} />
           </div>
           </div>

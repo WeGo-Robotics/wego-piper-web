@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { useT, tr } from '../i18n'
 
 /**
  * 허브 다운로드 진행 상황 — **폴링하는 자리는 여기 하나다.**
@@ -45,9 +46,10 @@ export const bytes = (n: number) =>
       : `${Math.max(1, Math.round(n / 1024))}KB`
 
 export const eta = (s: number | null) =>
-  s == null ? '' : s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`
+  s == null ? '' : s >= 60 ? tr('{s}분 {s_2}초', { s: Math.floor(s / 60), s_2: s % 60 }) : tr('{s}초', { s })
 
 export function useHubDownload() {
+  const t = useT()
   const [all, setAll] = useState<Record<string, HubDownload>>({})
   const watching = useRef<Set<string>>(new Set())
 
@@ -87,11 +89,11 @@ export function useHubDownload() {
         ...p,
         [repoId]: {
           ...(p[repoId] as HubDownload), status: 'error', repo_id: repoId,
-          error: e instanceof Error ? e.message : '시작하지 못했습니다',
+          error: e instanceof Error ? e.message : t('시작하지 못했습니다'),
         },
       }))
     }
-  }, [])
+  }, [t])
 
   return { all, start }
 }

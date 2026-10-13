@@ -127,6 +127,19 @@ C4 3계층 다이어그램: [docs/architecture-c4.drawio](docs/architecture-c4.d
 ⚠ **`/api/estop/*` 는 어느 쪽이든 열려 있다.** 멈추는 것을 막을 이유가 없고, heartbeat 가
 401 이면 estopd 가 "브라우저가 죽었다" 로 읽어 **돌던 추론을 SIGKILL** 한다.
 
+## 다국어
+
+화면 언어를 고를 수 있다(원문 한국어, 영어가 첫 번역). 설계·언어 추가법은
+[feature/i18n.md](feature/i18n.md). 코드에서 지킬 것:
+
+- 화면에 나가는 문장은 **`t('한국어 원문')`**(컴포넌트는 `const t = useT()`)로 쓴다 — 키가
+  곧 원문이다. 문장을 더하거나 고치면 `python tools/i18n.py sync` 후 `en` 을 채운다
+  (`backend/tests/test_i18n.py` 가 영어 누락을 잡는다).
+- 백엔드·데몬은 한국어 문장을 **그대로** 만든다. 프론트가 키의 모양에 맞춰 옮기므로 응답 문구로
+  코드를 분기하지 않는다.
+- ⚠ **언어를 바꿔도 새로고침·루트 재마운트를 하지 않는다** — WS 가 끊겨 E-stop heartbeat 가
+  2초를 넘기면 녹화·추론이 SIGKILL 된다.
+
 ## 안전 관련 주의사항
 
 - E-stop은 웹서버와 **반드시 분리된 독립 watchdog 프로세스**로 구현. WebSocket 끊김 = 즉시 안전 정지

@@ -1,4 +1,5 @@
 import type { SpecField } from '../hooks/usePolicyUi'
+import { useT } from '../i18n'
 
 /**
  * 스펙이 준 필드를 그린다 — 정책마다 다른 것은 **스펙에만** 있다.
@@ -15,6 +16,7 @@ type Props = {
 }
 
 export default function SpecFields({ fields, values, onChange }: Props) {
+  const t = useT()
   if (fields.length === 0) return null
   return (
     <div className="grid grid-cols-2 gap-2">
@@ -42,7 +44,7 @@ export default function SpecFields({ fields, values, onChange }: Props) {
               "LeRobot 문서와 다른데?" 를 코드까지 안 가고 답한다. */}
           {f.override_reason && (
             <p className="text-[10px] text-neutral-500" title={f.override_reason}>
-              기본값이 LeRobot 과 다름
+              {t('기본값이 LeRobot 과 다름')}
             </p>
           )}
         </div>

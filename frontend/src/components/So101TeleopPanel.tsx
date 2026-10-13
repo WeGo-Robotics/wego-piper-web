@@ -8,6 +8,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 type RelayStatus = {
   running: boolean; leader: string | null; follower: string | null
@@ -25,6 +26,7 @@ export default function So101TeleopPanel({ arm, side, followers, onClose }: {
   followers: { iface: string; label: string; side?: string | null }[]
   onClose: () => void
 }) {
+  const t = useT()
   // 좌우가 지정돼 있으면 같은 쪽 팔로워를 기본으로 민다
   const preferred = followers.find((f) => side && f.side === side) ?? followers[0]
   const [follower, setFollower] = useState(preferred?.iface ?? '')
@@ -49,7 +51,7 @@ export default function So101TeleopPanel({ arm, side, followers, onClose }: {
     setBusy(true)
     setError('')
     try { await fn(); refresh() } catch (e) {
-      setError(e instanceof Error ? e.message : `${label} 실패`)
+      setError(e instanceof Error ? e.message : t('{label} 실패', { label }))
     } finally { setBusy(false) }
   }
 
@@ -68,35 +70,34 @@ export default function So101TeleopPanel({ arm, side, followers, onClose }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-md rounded-lg border border-neutral-600 bg-neutral-800 p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">SO-101 텔레옵 — {arm}</h3>
-          <button onClick={onClose} className="text-xs text-neutral-400 hover:text-white">닫기</button>
+          <h3 className="text-sm font-semibold">{t('SO-101 텔레옵 — {arm}', { arm })}</h3>
+          <button onClick={onClose} className="text-xs text-neutral-400 hover:text-white">{t('닫기')}</button>
         </div>
 
         {!running && (
           <div className="space-y-3">
             <label className="block text-xs text-neutral-300">
-              팔로워 (PIPER)
+              {t('팔로워 (PIPER)')}
               <select value={follower} onChange={(e) => setFollower(e.target.value)}
                 className="mt-1 w-full text-xs rounded bg-neutral-700 border border-neutral-600 px-2 py-1.5">
-                {followers.length === 0 && <option value="">연결된 PIPER 가 없습니다</option>}
+                {followers.length === 0 && <option value="">{t('연결된 PIPER 가 없습니다')}</option>}
                 {followers.map((f) => (
                   <option key={f.iface} value={f.iface}>
-                    {f.label}{f.side ? ` (${f.side === 'left' ? '왼쪽' : '오른쪽'})` : ''}
+                    {f.label}{f.side ? ` (${f.side === 'left' ? t('왼쪽') : t('오른쪽')})` : ''}
                   </option>
                 ))}
               </select>
             </label>
             <p className="text-[11px] text-neutral-500 leading-relaxed">
-              관절 매칭: 축이 겹치는 관절끼리 변화량을 잇습니다. PIPER 전완 롤(J4)은
-              정합 시점 값을 유지하니 조그로 미리 세팅해 두세요.
+              {t('관절 매칭: 축이 겹치는 관절끼리 변화량을 잇습니다. PIPER 전완 롤(J4)은 정합 시점 값을 유지하니 조그로 미리 세팅해 두세요.')}
             </p>
             <button onClick={() => call(() => api.post('/robots/relay/start', {
                 leader: arm, follower, mode,
                 leader_arm: 'so101', follower_arm: 'piper',
-              }), '시작')}
+              }), t('시작'))}
               disabled={busy || !follower}
               className="w-full px-3 py-1.5 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">
-              시작 (자동 정합)
+              {t('시작 (자동 정합)')}
             </button>
           </div>
         )}
@@ -104,33 +105,33 @@ export default function So101TeleopPanel({ arm, side, followers, onClose }: {
         {running && st && (
           <div className="space-y-3">
             <div className="text-xs text-neutral-300 space-y-1">
-              <p>{st.leader} → {st.follower} · {st.mode === 'joint' ? '관절 매칭' : '말단 POSE'}
-                {st.flipped && <span className="ml-1 text-amber-300">· ↻ 180° 거치</span>}</p>
+              <p>{st.leader} → {st.follower} · {st.mode === 'joint' ? t('관절 매칭') : t('말단 POSE')}
+                {st.flipped && <span className="ml-1 text-amber-300">{t('· ↻ 180° 거치')}</span>}</p>
               <p className={st.engaged ? 'text-green-400' : 'text-amber-400'}>
-                {st.engaged ? `● 정합됨 — 전송 ${st.sent}회`
-                  : '○ 해제됨 — 팔로워를 놓았습니다 (수집·추론 가능). 닫으면 릴레이가 끝납니다'}
+                {st.engaged ? t('● 정합됨 — 전송 {sent}회', { sent: st.sent })
+                  : t('○ 해제됨 — 팔로워를 놓았습니다 (수집·추론 가능). 닫으면 릴레이가 끝납니다')}
               </p>
-              {st.stale && <p className="text-amber-400">리더 상태가 낡았습니다 — 발행 확인</p>}
+              {st.stale && <p className="text-amber-400">{t('리더 상태가 낡았습니다 — 발행 확인')}</p>}
               {st.blocked && <p className="text-amber-300">{st.blocked}</p>}
             </div>
             <div className="flex gap-2">
               {st.engaged ? (
-                <button onClick={() => call(() => api.post('/robots/relay/disengage', {}), '해제')}
+                <button onClick={() => call(() => api.post('/robots/relay/disengage', {}), t('해제'))}
                   disabled={busy}
                   className="flex-1 px-3 py-1.5 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-40">
-                  해제 (리더 옮기기)
+                  {t('해제 (리더 옮기기)')}
                 </button>
               ) : (
-                <button onClick={() => call(() => api.post('/robots/relay/engage', {}), '정합')}
+                <button onClick={() => call(() => api.post('/robots/relay/engage', {}), t('정합'))}
                   disabled={busy}
                   className="flex-1 px-3 py-1.5 text-xs rounded bg-green-600 hover:bg-green-500 text-white disabled:opacity-40">
-                  정합
+                  {t('정합')}
                 </button>
               )}
-              <button onClick={() => call(() => api.post('/robots/relay/stop', {}), '정지')}
+              <button onClick={() => call(() => api.post('/robots/relay/stop', {}), t('정지'))}
                 disabled={busy}
                 className="flex-1 px-3 py-1.5 text-xs rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-40">
-                정지
+                {t('정지')}
               </button>
             </div>
           </div>

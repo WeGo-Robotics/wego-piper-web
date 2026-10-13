@@ -22,7 +22,9 @@ _PAGES = ["config/pages.ts", "pages/VisionPage.tsx", "pages/YoloDemoPage.tsx",
 # 변수(`yoloTarget`)는 ASCII 뿐이라, 한글이 있는 줄만 보면 내부 이름은 저절로
 # 빠진다 — 이번 범위의 경계가 마침 거기다.
 _HANGUL = re.compile(r"[가-힣]")
-_INTERP = re.compile(r"\$\{[^}]*\}")     # 템플릿 안 식별자는 화면에 안 나온다
+# 화면에 안 나오는 식별자: 템플릿 안 `${x}`, 번역 문장의 자리표시자 `{x}`, 그리고
+# `t('…', { cam, yoloTarget })` 의 **인자 객체**(변수 이름이다)
+_INTERP = re.compile(r"\$\{[^}]*\}|\{[A-Za-z_]\w*\}|,\s*\{[^{}]*\}(?=\s*\))")
 _BRAND = re.compile(r"yolo", re.IGNORECASE)
 
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { useT, msg, fmt } from '../i18n'
 
 /**
  * 시스템 로그 — 데몬 저널을 SSH 없이 (설정 → 로그).
@@ -20,16 +21,16 @@ type UnitOpt = { id: string; label: string }
  *  `frontend` 가 그렇게 빠져 있었다: 백엔드는 받아주는데 고를 수가 없었다.
  *
  *  못 받았을 때만 쓰는 최소 폴백 — 서버가 답할 때까지 셀렉트가 비면 안 된다. */
-const FALLBACK_UNITS: UnitOpt[] = [{ id: 'all', label: '전체 piper-*' }]
+const FALLBACK_UNITS: UnitOpt[] = [{ id: 'all', label: msg('전체 piper-*') }]
 const SINCE: { id: string; label: string }[] = [
-  { id: '1 hour ago', label: '최근 1시간' }, { id: '6 hours ago', label: '최근 6시간' },
-  { id: 'today', label: '오늘' }, { id: '', label: '기간 제한 없음' },
+  { id: '1 hour ago', label: msg('최근 1시간') }, { id: '6 hours ago', label: msg('최근 6시간') },
+  { id: 'today', label: msg('오늘') }, { id: '', label: msg('기간 제한 없음') },
 ]
 const LEVEL_CLASS: Record<Entry['level'], string> = {
   error: 'text-red-300', warning: 'text-amber-300', info: 'text-neutral-300', debug: 'text-neutral-500',
 }
-const ts = (t: number) => t ? new Date(t * 1000).toLocaleTimeString('ko-KR', { hour12: false }) : '--:--:--'
-const day = (t: number) => t ? new Date(t * 1000).toLocaleDateString('ko-KR', { month: '2-digit', day: '2-digit' }) : ''
+const ts = (t: number) => t ? fmt.time(t * 1000, { hour12: false }) : '--:--:--'
+const day = (t: number) => t ? fmt.date(t * 1000, { month: '2-digit', day: '2-digit' }) : ''
 
 type Level = 'error' | 'warning' | 'info'
 
@@ -37,6 +38,7 @@ type Level = 'error' | 'warning' | 'info'
 export default function SystemLogPanel({ initialUnit, initialLevel, initialSince }: {
   initialUnit?: string; initialLevel?: Level; initialSince?: string
 }) {
+  const t = useT()
   const [unit, setUnit] = useState(initialUnit ?? 'all')
   const [level, setLevel] = useState<'error' | 'warning' | 'info'>(initialLevel ?? 'warning')
   const [since, setSince] = useState(initialSince ?? '6 hours ago')
@@ -69,9 +71,9 @@ export default function SystemLogPanel({ initialUnit, initialLevel, initialSince
       const q = new URLSearchParams({ unit, lines: String(lines), level })
       if (since) q.set('since', since)
       setRes(await api.get<Result>(`/system/logs?${q}`)); setErr('')
-    } catch (e) { setErr(e instanceof Error ? e.message : '로그를 읽지 못했습니다') }
+    } catch (e) { setErr(e instanceof Error ? e.message : t('로그를 읽지 못했습니다')) }
     finally { setBusy(false) }
-  }, [unit, lines, level, since])
+  }, [unit, lines, level, since, t])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -89,46 +91,52 @@ export default function SystemLogPanel({ initialUnit, initialLevel, initialSince
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-lg font-semibold">시스템 로그</h2>
+          <h2 className="text-lg font-semibold">{t('시스템 로그')}</h2>
           <p className="mt-1 text-xs text-neutral-400">
-            데몬 저널을 그대로 — 호스트의 서비스 관리 데몬(piper-unitd)이 읽어 줍니다. 기본은 <b>경고 이상</b>만.
+            {t.rich('데몬 저널을 그대로 — 호스트의 서비스 관리 데몬(piper-unitd)이 읽어 줍니다. 기본은 {b}만.', { b: <b>{t('경고 이상')}</b> })}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5 text-xs">
           <select value={unit} onChange={(e) => setUnit(e.target.value)} className="rounded bg-neutral-700 border border-neutral-600 px-2 py-1">
-            {units.map((u) => <option key={u.id} value={u.id}>{u.label}</option>)}
+            {units.map((u) => <option key={u.id} value={u.id}>{t(u.label)}</option>)}
           </select>
           <select value={level} onChange={(e) => setLevel(e.target.value as typeof level)} className="rounded bg-neutral-700 border border-neutral-600 px-2 py-1">
-            <option value="error">오류만</option><option value="warning">경고 이상</option><option value="info">전부</option>
+            <option value="error">{t('오류만')}</option><option value="warning">{t('경고 이상')}</option><option value="info">{t('전부')}</option>
           </select>
           <select value={since} onChange={(e) => setSince(e.target.value)} className="rounded bg-neutral-700 border border-neutral-600 px-2 py-1">
-            {SINCE.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            {SINCE.map((s) => <option key={s.id} value={s.id}>{t(s.label)}</option>)}
           </select>
           <select value={lines} onChange={(e) => setLines(Number(e.target.value))} className="rounded bg-neutral-700 border border-neutral-600 px-2 py-1">
-            {[100, 300, 1000, 3000].map((n) => <option key={n} value={n}>{n}줄</option>)}
+            {[100, 300, 1000, 3000].map((n) => <option key={n} value={n}>{t('{n}줄', { n })}</option>)}
           </select>
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="찾기"
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('찾기')}
             className="w-32 rounded bg-neutral-700 border border-neutral-600 px-2 py-1" />
           <label className="flex items-center gap-1 text-neutral-400">
-            <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} className="accent-blue-500" /> 따라가기
+            <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} className="accent-blue-500" />{' '}{t('따라가기')}
           </label>
           <button onClick={load} disabled={busy} className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50">
-            {busy ? '읽는 중…' : '새로고침'}
+            {busy ? t('읽는 중…') : t('새로고침')}
           </button>
-          <a href={dl} download className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600">내려받기</a>
+          <a href={dl} download className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600">{t('내려받기')}</a>
         </div>
       </div>
 
       {err && <p className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300">{err}</p>}
       {res && (
         <p className="text-[11px] text-neutral-500">
-          {shown.length}줄 표시 · {res.scanned}줄 훑음{res.truncated ? ' · 더 있음 (줄 수를 늘리거나 기간을 좁히세요)' : ''}{res.partial ? ' · 시간 예산(8초) 안에 훑은 만큼 — 최신부터입니다. 기간을 좁히면 다 봅니다' : ''}
-          {res.source === 'docker' ? ' · 컨테이너 로그' : ''}{res.via === 'local' ? ' · 게이트웨이가 직접 읽음' : ''}
+          {t('{length}줄 표시 · {scanned}줄 훑음{truncated}{partial}{source}{via}', {
+            length: shown.length,
+            scanned: res.scanned,
+            truncated: res.truncated ? t(' · 더 있음 (줄 수를 늘리거나 기간을 좁히세요)') : '',
+            partial: res.partial ? t(' · 시간 예산(8초) 안에 훑은 만큼 — 최신부터입니다. 기간을 좁히면 다 봅니다') : '',
+            source: res.source === 'docker' ? t(' · 컨테이너 로그') : '',
+            via: res.via === 'local' ? t(' · 게이트웨이가 직접 읽음') : '',
+          })}
         </p>
       )}
       <div className="max-h-[60vh] overflow-auto rounded border border-neutral-700 bg-neutral-900/70 p-2 font-mono text-[11px] leading-5">
         {shown.length === 0 && !busy && (
-          <p className="px-1 text-neutral-500">해당하는 줄이 없습니다{level !== 'info' ? ' — "전부"로 바꾸면 info 도 보입니다' : ''}.</p>
+          <p className="px-1 text-neutral-500">{t('해당하는 줄이 없습니다{level}.', { level: level !== 'info' ? t(' — "전부"로 바꾸면 info 도 보입니다') : '' })}</p>
         )}
         {shown.map((e, i) => (
           <div key={i} className={`flex gap-2 whitespace-pre-wrap break-all ${LEVEL_CLASS[e.level] ?? 'text-neutral-300'} ${e.level === 'error' ? 'bg-red-500/5' : ''}`}>
@@ -140,7 +148,7 @@ export default function SystemLogPanel({ initialUnit, initialLevel, initialSince
             <span>{e.msg}</span>
             {(e.count ?? 1) > 1 && (
               <span className="shrink-0 rounded bg-neutral-700 px-1 text-[10px] text-neutral-300"
-                title={e.t_last ? `마지막 ${ts(e.t_last)}` : undefined}>×{e.count}</span>
+                title={e.t_last ? t('마지막 {ts}', { ts: ts(e.t_last) }) : undefined}>×{e.count}</span>
             )}
           </div>
         ))}

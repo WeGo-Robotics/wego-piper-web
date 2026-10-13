@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
+import { useT, fmt } from '../i18n'
 
 type EvalStats = {
   total: number
@@ -25,6 +26,7 @@ type Props = {
 }
 
 export default function EvalPanel({ checkpoint, preset = '', params }: Props) {
+  const t = useT()
   const [stats, setStats] = useState<EvalStats | null>(null)
   const [memo, setMemo] = useState('')
 
@@ -44,9 +46,9 @@ export default function EvalPanel({ checkpoint, preset = '', params }: Props) {
 
   return (
     <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
-      <h3 className="text-sm font-semibold">평가</h3>
+      <h3 className="text-sm font-semibold">{t('평가')}</h3>
       {preset && (
-        <p className="text-[10px] text-neutral-500">기록될 프리셋: {preset}</p>
+        <p className="text-[10px] text-neutral-500">{t('기록될 프리셋: {preset}', { preset })}</p>
       )}
 
       {/* 성공/실패 버튼 */}
@@ -55,20 +57,20 @@ export default function EvalPanel({ checkpoint, preset = '', params }: Props) {
           onClick={() => logResult(true)}
           className="flex-1 py-2 rounded bg-green-600 hover:bg-green-500 text-white text-sm font-medium"
         >
-          성공
+          {t('성공')}
         </button>
         <button
           onClick={() => logResult(false)}
           className="flex-1 py-2 rounded bg-red-600 hover:bg-red-500 text-white text-sm font-medium"
         >
-          실패
+          {t('실패')}
         </button>
       </div>
       <input
         type="text"
         value={memo}
         onChange={(e) => setMemo(e.target.value)}
-        placeholder="메모 (선택)"
+        placeholder={t('메모 (선택)')}
         className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-blue-500"
       />
 
@@ -77,17 +79,17 @@ export default function EvalPanel({ checkpoint, preset = '', params }: Props) {
         <>
           <div className="flex gap-4 text-sm">
             <span className="text-neutral-400">
-              전체: <span className="text-neutral-100">{stats.total}</span>
+              {t.rich('전체: {span}', { span: <span className="text-neutral-100">{stats.total}</span> })}
             </span>
             <span className="text-neutral-400">
-              성공:{' '}
-              <span className="text-green-400">{stats.successes}</span>
+              {t.rich('성공: {span}', { span: <span className="text-green-400">{stats.successes}</span> })}
             </span>
             <span className="text-neutral-400">
-              성공률:{' '}
-              <span className="text-blue-400">
+              {t.rich('성공률: {span}', {
+                span: <span className="text-blue-400">
                 {(stats.rate * 100).toFixed(1)}%
-              </span>
+              </span>,
+              })}
             </span>
           </div>
 
@@ -95,7 +97,7 @@ export default function EvalPanel({ checkpoint, preset = '', params }: Props) {
 
           {stats && (stats.by_scene?.length ?? 0) > 0 && (
             <div className="space-y-1">
-              <span className="text-xs text-neutral-400">가상환경별</span>
+              <span className="text-xs text-neutral-400">{t('가상환경별')}</span>
               {stats.by_scene!.map((p) => (
                 <div key={p.scene} className="flex justify-between text-[11px]">
                   <span className="text-purple-300/90">🧱 {p.scene}</span>
@@ -111,7 +113,7 @@ export default function EvalPanel({ checkpoint, preset = '', params }: Props) {
 
             <div className="space-y-1">
 
-              <span className="text-xs text-neutral-400">프리셋별</span>
+              <span className="text-xs text-neutral-400">{t('프리셋별')}</span>
 
               {stats.by_preset.map((p) => (
 
@@ -149,7 +151,7 @@ export default function EvalPanel({ checkpoint, preset = '', params }: Props) {
                   >
                     {r.success ? 'O' : 'X'}
                   </span>
-                  <span>{new Date(r.timestamp * 1000).toLocaleTimeString()}</span>
+                  <span>{fmt.time(r.timestamp * 1000)}</span>
                   {r.memo && <span className="truncate">{r.memo}</span>}
                 </div>
               ))}

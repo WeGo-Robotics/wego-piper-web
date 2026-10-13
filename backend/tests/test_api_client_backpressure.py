@@ -63,4 +63,4 @@ def test_recording_controls_report_failure_instead_of_staying_silent():
     assert "timeoutMs" in ctl and "notify({" in ctl and "level: 'error'" in ctl and "요청 실패" in ctl, \
         "정지·저장하고 다음·재녹화가 실패해도 화면이 조용하다"
     for path, label in (("/recording/stop", "정지"), ("/recording/skip", "저장하고 다음"), ("/recording/rerecord", "재녹화")):
-        assert f"control('{path}', '{label}')" in src, f"{label} 버튼이 실패를 안 알린다"
+        assert f"control('{path}', t('{label}'))" in src, f"{label} 버튼이 실패를 안 알린다"

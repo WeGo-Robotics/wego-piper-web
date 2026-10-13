@@ -669,7 +669,7 @@ def test_the_rent_tab_sends_the_build_and_refetches_when_it_changes():
     src = code_only((Path(__file__).resolve().parents[2] / "frontend" / "src"
                      / "components" / "CloudRentTab.tsx").read_text())
     assert src.count("p.set('cuda', template.cuda)") == 2, "오퍼·기종 중 한쪽만 보낸다"
-    assert src.count("template?.cuda])") == 2, "템플릿이 바뀌어도 다시 안 부른다"
+    assert src.count("template?.cuda, t])") == 2, "템플릿이 바뀌어도 다시 안 부른다"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

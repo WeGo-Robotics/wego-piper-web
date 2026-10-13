@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { JOINTS } from '../config/joints'
+import { msg, useT } from '../i18n'
 
 /**
  * 관절 슬라이더. **목적지는 주입받는다.**
@@ -24,9 +25,10 @@ type Props = {
 }
 
 export default function ManualControlPanel({
-  currentJoints, disabled, onSend, title = '수동 조작',
-  disabledHint = '일시정지 중에만 사용 가능',
+  currentJoints, disabled, onSend, title = msg('수동 조작'),
+  disabledHint = msg('일시정지 중에만 사용 가능'),
 }: Props) {
+  const t = useT()
   const [values, setValues] = useState<Record<string, number>>(() => {
     const init: Record<string, number> = {}
     JOINTS.forEach((j, i) => { init[j.actionKey] = currentJoints[i] ?? 0 })
@@ -71,15 +73,15 @@ export default function ManualControlPanel({
   return (
     <div className={`rounded-lg border p-4 space-y-3 ${disabled ? 'border-neutral-700 bg-neutral-800 opacity-40' : 'border-amber-500/50 bg-amber-500/5'}`}>
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">{title}</h3>
+        <h3 className="text-sm font-semibold">{t(title)}</h3>
         {!disabled && (
           <button onClick={syncFromRobot} className="text-[10px] text-neutral-400 hover:text-blue-400">
-            로봇 위치 동기화
+            {t('로봇 위치 동기화')}
           </button>
         )}
       </div>
       {disabled && (
-        <p className="text-xs text-neutral-500">{disabledHint}</p>
+        <p className="text-xs text-neutral-500">{t(disabledHint)}</p>
       )}
       <div className="space-y-2">
         {JOINTS.map((joint) => (

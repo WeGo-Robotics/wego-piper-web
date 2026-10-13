@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../services/api'
 import LayoutToggle, { useLayout } from '../components/LayoutToggle'
 import { useSystemMessage } from '../components/SystemMessages'
+import { useT } from '../i18n'
 
 type DetObject = { label: string; conf: number; bbox: number[]; center: number[] }
 type DetPayload = {
@@ -48,8 +49,9 @@ type CamRow = { alias: string; camId: string }
 const shortId = (s: string) => (s.length > 24 ? `${s.slice(0, 6)}…${s.slice(-10)}` : s)
 
 export default function VisionPage() {
+  const t = useT()
   const { notify } = useSystemMessage()
-  const notifyError = (text: string) => notify({ level: 'error', text, source: '비전·판단' })
+  const notifyError = (text: string) => notify({ level: 'error', text, source: t('비전·판단') })
 
   // 패널 배치 — col: 세로 스택(패널이 넓다), row: 가로 3열(한눈에 나란히).
   // 학습 페이지도 같은 토글을 쓰므로 한 벌로 뺐다 (`LayoutToggle`).
@@ -95,21 +97,21 @@ export default function VisionPage() {
   }
 
   const handleStart = async () => {
-    if (camRows.length === 0) { notifyError('구독할 카메라를 추가하세요'); return }
+    if (camRows.length === 0) { notifyError(t('구독할 카메라를 추가하세요')); return }
     setBusy(true)
     try {
       const cams = Object.fromEntries(camRows.map((r) => [r.alias.trim() || r.camId, r.camId]))
       await api.post('/vision/start', { cams, model, conf })
-      notify({ level: 'info', text: '검출기 시작 (모델 로드에 수 초)', source: '비전·판단' })
+      notify({ level: 'info', text: t('검출기 시작 (모델 로드에 수 초)'), source: t('비전·판단') })
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : '검출기 시작 실패')
+      notifyError(e instanceof Error ? e.message : t('검출기 시작 실패'))
     } finally { setBusy(false) }
   }
 
   const handleStop = async () => {
     setBusy(true)
     try { await api.post('/vision/stop') } catch (e) {
-      notifyError(e instanceof Error ? e.message : '정지 실패')
+      notifyError(e instanceof Error ? e.message : t('정지 실패'))
     } finally { setBusy(false) }
   }
 
@@ -131,7 +133,7 @@ export default function VisionPage() {
 
   const fillFromDetections = () => {
     const lines = Object.values(detections).map((d) => d.text)
-    if (lines.length === 0) { notifyError('살아 있는 검출이 없습니다 — 검출기를 켜세요'); return }
+    if (lines.length === 0) { notifyError(t('살아 있는 검출이 없습니다 — 검출기를 켜세요')); return }
     setInput(lines.join('\n'))
   }
 
@@ -149,21 +151,21 @@ export default function VisionPage() {
         max_episodes: maxEpisodes, wait_s: waitS, dry_run: dryRun,
         rules, provider, model: llmModel,
       })
-      notify({ level: 'info', text: `분리수거 루프 시작 (${maxEpisodes}회, ${dryRun ? '드라이런' : '실기'})`, source: '비전·판단' })
+      notify({ level: 'info', text: t('분리수거 루프 시작 ({maxEpisodes}회, {dryRun})', { maxEpisodes, dryRun: dryRun ? t('드라이런') : t('실기') }), source: t('비전·판단') })
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : '루프 시작 실패')
+      notifyError(e instanceof Error ? e.message : t('루프 시작 실패'))
     } finally { setOrchBusy(false) }
   }
 
   const handleOrchStop = async () => {
     setOrchBusy(true)
     try { await api.post('/orchestrator/stop') } catch (e) {
-      notifyError(e instanceof Error ? e.message : '정지 실패')
+      notifyError(e instanceof Error ? e.message : t('정지 실패'))
     } finally { setOrchBusy(false) }
   }
 
   const handleJudge = async () => {
-    if (!input.trim()) { notifyError('입력(검출 텍스트)이 비어 있습니다'); return }
+    if (!input.trim()) { notifyError(t('입력(검출 텍스트)이 비어 있습니다')); return }
     setJudging(true)
     setResult(null)
     setJudgeError(null)
@@ -172,7 +174,7 @@ export default function VisionPage() {
         user: input, system: rules, provider, model: llmModel,
       }))
     } catch (e) {
-      setJudgeError(e instanceof Error ? e.message : '판단 실패')
+      setJudgeError(e instanceof Error ? e.message : t('판단 실패'))
     } finally { setJudging(false) }
   }
 
@@ -184,19 +186,19 @@ export default function VisionPage() {
       {/* ── 객체 검출 ── */}
       <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold">객체 검출</h2>
+          <h2 className="text-lg font-semibold">{t('객체 검출')}</h2>
           <span className={`text-xs px-2 py-0.5 rounded ${running ? 'bg-green-900 text-green-300' : 'bg-neutral-700 text-neutral-400'}`}>
             {status?.state ?? '…'}{status?.pid ? ` · pid ${status.pid}` : ''}
           </span>
           {running ? (
             <button onClick={() => void handleStop()} disabled={busy}
               className="ml-auto px-3 py-1 text-sm rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white disabled:opacity-50">
-              정지
+              {t('정지')}
             </button>
           ) : (
             <button onClick={() => void handleStart()} disabled={busy}
               className="ml-auto px-3 py-1 text-sm rounded bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white disabled:opacity-50">
-              시작
+              {t('시작')}
             </button>
           )}
         </div>
@@ -209,12 +211,12 @@ export default function VisionPage() {
                 onChange={(e) => addCam(e.target.value)}
                 className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1"
               >
-                <option value="">카메라 세그먼트 추가…</option>
+                <option value="">{t('카메라 세그먼트 추가…')}</option>
                 {segments.filter((s) => !camRows.some((r) => r.camId === s)).map((s) => (
                   <option key={s} value={s}>{shortId(s)}</option>
                 ))}
               </select>
-              <label className="text-neutral-400">모델
+              <label className="text-neutral-400">{t('모델')}
                 <input value={model} onChange={(e) => setModel(e.target.value)}
                   className="ml-1 w-28 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
               </label>
@@ -286,7 +288,7 @@ export default function VisionPage() {
             )
           })}
           {running && Object.keys(detections).length === 0 && (
-            <div className="text-sm text-neutral-500">검출 대기 중… (모델 로드 수 초)</div>
+            <div className="text-sm text-neutral-500">{t('검출 대기 중… (모델 로드 수 초)')}</div>
           )}
         </div>
       </section>
@@ -294,18 +296,18 @@ export default function VisionPage() {
       {/* ── LLM 판단 ── */}
       <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
-          <h2 className="text-lg font-semibold">LLM 판단</h2>
+          <h2 className="text-lg font-semibold">{t('LLM 판단')}</h2>
           <select value={provider} onChange={(e) => setProvider(e.target.value)}
             className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1 text-sm">
-            <option value="openai_compat">로컬 (Ollama/vLLM)</option>
+            <option value="openai_compat">{t('로컬 (Ollama/vLLM)')}</option>
             <option value="anthropic">Claude API</option>
           </select>
           <input value={llmModel} onChange={(e) => setLlmModel(e.target.value)}
-            placeholder="모델"
+            placeholder={t('모델')}
             className="w-40 rounded bg-neutral-900 border border-neutral-700 px-2 py-1 text-sm" />
           <button onClick={() => setShowRules((s) => !s)}
             className="text-sm text-neutral-400 hover:text-white">
-            규칙 {showRules ? '▴' : '▾'}
+            {t('규칙 {showRules}', { showRules: showRules ? '▴' : '▾' })}
           </button>
         </div>
 
@@ -316,16 +318,16 @@ export default function VisionPage() {
 
         <div className="flex gap-2">
           <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={3}
-            placeholder="검출 텍스트 — [현재 검출 채우기] 또는 직접 입력"
+            placeholder={t('검출 텍스트 — [현재 검출 채우기] 또는 직접 입력')}
             className="flex-1 rounded bg-neutral-900 border border-neutral-700 p-2 text-sm font-mono" />
           <div className="flex flex-col gap-2">
             <button onClick={fillFromDetections}
               className="px-3 py-1 text-sm rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 hover:text-white whitespace-nowrap">
-              현재 검출 채우기
+              {t('현재 검출 채우기')}
             </button>
             <button onClick={() => void handleJudge()} disabled={judging}
               className="px-3 py-1 text-sm rounded bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-50 whitespace-nowrap">
-              {judging ? '판단 중…' : '판단 실행'}
+              {judging ? t('판단 중…') : t('판단 실행')}
             </button>
           </div>
         </div>
@@ -351,7 +353,7 @@ export default function VisionPage() {
       {/* ── 분리수거 루프 (오케스트레이터 1단계) ── */}
       <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
-          <h2 className="text-lg font-semibold">분리수거 루프</h2>
+          <h2 className="text-lg font-semibold">{t('분리수거 루프')}</h2>
           <span className={`text-xs px-2 py-0.5 rounded ${orchRunning ? 'bg-green-900 text-green-300' : 'bg-neutral-700 text-neutral-400'}`}>
             {orch?.state ?? '…'}
             {orchRunning && ` · ${orch?.episode}/${orch?.max_episodes} · ${orch?.step || '—'}`}
@@ -359,34 +361,34 @@ export default function VisionPage() {
           {orchRunning ? (
             <button onClick={() => void handleOrchStop()} disabled={orchBusy}
               className="ml-auto px-3 py-1 text-sm rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white disabled:opacity-50">
-              정지
+              {t('정지')}
             </button>
           ) : (
             <button onClick={() => void handleOrchStart()} disabled={orchBusy}
               className="ml-auto px-3 py-1 text-sm rounded bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white disabled:opacity-50">
-              시작
+              {t('시작')}
             </button>
           )}
         </div>
 
         {!orchRunning && (
           <div className="flex items-center gap-4 text-sm flex-wrap">
-            <label className="text-neutral-400">회차
+            <label className="text-neutral-400">{t('회차')}
               <input type="number" min={1} max={200} value={maxEpisodes}
                 onChange={(e) => setMaxEpisodes(Number(e.target.value))}
                 className="ml-1 w-16 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
             </label>
-            <label className="text-neutral-400">실행 대기(s)
+            <label className="text-neutral-400">{t('실행 대기(s)')}
               <input type="number" min={1} value={waitS}
                 onChange={(e) => setWaitS(Number(e.target.value))}
                 className="ml-1 w-16 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
             </label>
             <label className="text-neutral-400 flex items-center gap-1">
               <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} />
-              드라이런 (task/reset 미전송 — 로봇 없이 루프 확인)
+              {t('드라이런 (task/reset 미전송 — 로봇 없이 루프 확인)')}
             </label>
             <span className="text-xs text-neutral-600">
-              검출→판단→task→대기→리셋. 판단은 위 LLM 설정(프로바이더·모델·규칙)을 쓴다
+              {t('검출→판단→task→대기→리셋. 판단은 위 LLM 설정(프로바이더·모델·규칙)을 쓴다')}
             </span>
           </div>
         )}
@@ -399,7 +401,7 @@ export default function VisionPage() {
                 {h.slots ? (
                   <span>🎯 {h.slots.target} → 🗑 {h.slots.destination}</span>
                 ) : (
-                  <span className="text-neutral-500">판단 없음</span>
+                  <span className="text-neutral-500">{t('판단 없음')}</span>
                 )}
                 <span className={`text-xs px-1.5 rounded ${
                   h.outcome === 'timeout_done' ? 'bg-green-900 text-green-300'

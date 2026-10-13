@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { tr } from '../i18n'
 
 /**
  * 대시보드가 "지금 괜찮은가"를 답하는 데 필요한 것 한 벌.
@@ -120,8 +121,8 @@ export function useSystemStatus() {
 
 export function ageText(sec: number | null): string {
   if (sec === null) return '?'
-  if (sec < 60) return `${sec}초`
-  if (sec < 3600) return `${Math.round(sec / 60)}분`
-  if (sec < 86400) return `${(sec / 3600).toFixed(1)}시간`
-  return `${(sec / 86400).toFixed(1)}일`
+  if (sec < 60) return tr('{sec}초', { sec })
+  if (sec < 3600) return tr('{sec}분', { sec: Math.round(sec / 60) })
+  if (sec < 86400) return tr('{sec}시간', { sec: (sec / 3600).toFixed(1) })
+  return tr('{sec}일', { sec: (sec / 86400).toFixed(1) })
 }

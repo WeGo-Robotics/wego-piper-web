@@ -30,7 +30,8 @@ def _entries() -> list[dict]:
     out = []
     for raw in re.findall(r"\{[^{}]*\}", body):
         entry = {}
-        for key, val in re.findall(r"(\w+):\s*'([^']*)'", raw):
+        # `label: msg('…')` — 번역 표지(`msg`)로 감싼 것도 같은 값이다
+        for key, val in re.findall(r"(\w+):\s*(?:msg\()?'([^']*)'", raw):
             entry[key] = val
         for key in re.findall(r"(\w+):\s*true", raw):
             entry[key] = True
@@ -294,7 +295,7 @@ def test_the_hf_token_name_is_labelled_as_a_token():
     #   패널**. 옮길 때마다 이 수정이 따라와야 한다 — 원래 문구가 아니라 그
     #   **이유**(정체가 안 보인다)가 지켜야 할 것이다.
     src = (_SRC / "components" / "HfAccountPanel.tsx").read_text()
-    assert "토큰 {acc.token_name}" in src, "토큰이라고 안 밝힌다"
+    assert "t('토큰 {token_name}', { token_name: acc.token_name })" in src, "토큰이라고 안 밝힌다"
     assert "` (${acc.token_name})`" not in src, "괄호로만 붙여 정체가 안 보인다"
     settings = (_SRC / "pages" / "SettingsPage.tsx").read_text()
     assert "HfAccountPanel" in settings, "옮겼는데 아무 데도 안 쓰인다"

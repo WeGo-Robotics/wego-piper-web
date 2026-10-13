@@ -1,3 +1,4 @@
+import { tbDeep, tr } from '../i18n'
 const BASE_URL = '/api'
 
 // ⚠ **시간 제한이 없으면 탭이 죽는다.** 실기(2026-09-14): 게이트웨이 재시작 뒤 WS 가 안 붙자
@@ -21,7 +22,7 @@ async function request<T>(path: string, options?: RequestInit, timeoutMs = DEFAU
       ...options,
     })
   } catch (e) {
-    if ((e as Error).name === 'AbortError') throw new Error(`응답 없음 (${Math.round(timeoutMs / 1000)}초): ${path}`)
+    if ((e as Error).name === 'AbortError') throw new Error(tr('응답 없음 ({timeoutMs}초): {path}', { timeoutMs: Math.round(timeoutMs / 1000), path }))
     throw e
   } finally {
     clearTimeout(timer)
@@ -31,7 +32,7 @@ async function request<T>(path: string, options?: RequestInit, timeoutMs = DEFAU
     let detail = `${res.status} ${res.statusText}`
     try {
       const body = await res.json()
-      if (body.detail) detail = body.detail
+      if (body.detail) detail = tbDeep({ detail: body.detail }).detail
     } catch {}
     // ⚠ 401 은 **화면 하나의 문제가 아니라 전체의 문제**다. 호출부마다 처리하면 어떤
     //   화면은 로그인으로 가고 어떤 화면은 빨간 글씨만 뜬다. 여기서 한 번 알리고
@@ -42,7 +43,7 @@ async function request<T>(path: string, options?: RequestInit, timeoutMs = DEFAU
     }
     throw new Error(detail)
   }
-  return res.json()
+  return tbDeep(await res.json())
 }
 
 // 같은 경로의 GET 이 아직 진행 중이면 그 약속을 돌려준다 — 폴링 타이머가 응답보다 빨라도 요청이 안 쌓인다

@@ -7,7 +7,9 @@ import { useWebSocket } from '../hooks/useWebSocket'
 import { api } from '../services/api'
 import type { DiskUsage } from '../types/models'
 import EStopButton from './EStopButton'
+import LanguageSwitcher from './LanguageSwitcher'
 import { NotificationBell } from './SystemMessages'
+import { useT } from '../i18n'
 
 /**
  * 상단 상태바 — **어느 페이지에 있든** 무엇이 도는지 보인다
@@ -47,24 +49,30 @@ const DOT: Record<string, string> = {
 function DeviceChip({ icon, name, count }: {
   icon: string; name: string; count: DeviceCount
 }) {
+  const t = useT()
   const warn = count.warn > 0
   return (
     <span className={`flex shrink-0 items-center gap-1 text-xs tabular-nums ${
       warn ? 'text-amber-400' : 'text-neutral-400'}`}
       title={warn
-        ? `${name} ${count.ok}개 사용 가능, ${count.warn}개 없음 — 등록해뒀는데 지금 못 씁니다`
-        : `${name} ${count.ok}개 사용 가능`}>
+        ? t('{name} {ok}개 사용 가능, {warn}개 없음 — 등록해뒀는데 지금 못 씁니다', { name, ok: count.ok, warn: count.warn })
+        : t('{name} {ok}개 사용 가능', { name, ok: count.ok })}>
       <span aria-hidden>{icon}</span>
       {count.ok}
       {warn && <span aria-hidden>⚠</span>}
       <span className="sr-only">
-        {name} {count.ok}개{warn ? `, ${count.warn}개 없음` : ''}
+        {t('{name} {ok}개{warn}', {
+          name,
+          ok: count.ok,
+          warn: warn ? t(', {warn}개 없음', { warn: count.warn }) : '',
+        })}
       </span>
     </span>
   )
 }
 
 export default function StatusBar() {
+  const t = useT()
   const { running, labelOf, refresh } = useActivity()
   const [detail, setDetail] = useState<Detail>({})
   const devices = useDeviceSummary()
@@ -97,7 +105,7 @@ export default function StatusBar() {
         const { step, total_steps } = msg.data as { step: number; total_steps?: number }
         setDetail((d) => ({
           ...d,
-          training: total_steps ? `${step}/${total_steps}` : `${step} 스텝`,
+          training: total_steps ? `${step}/${total_steps}` : t('{step} 스텝', { step }),
         }))
       } else if (msg.type === 'record_status') {
         const { current_episode, total_episodes } = msg.data
@@ -126,7 +134,7 @@ export default function StatusBar() {
 
       <div className="flex flex-1 items-center gap-2 overflow-x-auto">
         {running.length === 0 ? (
-          <span className="text-sm text-neutral-600">대기중</span>
+          <span className="text-sm text-neutral-600">{t('대기중')}</span>
         ) : (
           running.map((a) => (
             <span key={a}
@@ -142,26 +150,30 @@ export default function StatusBar() {
       </div>
 
       <div className="flex shrink-0 items-center gap-3">
-        <DeviceChip icon="🦾" name="로봇" count={devices.robots} />
-        <DeviceChip icon="📷" name="카메라" count={devices.cameras} />
+        <DeviceChip icon="🦾" name={t('로봇')} count={devices.robots} />
+        <DeviceChip icon="📷" name={t('카메라')} count={devices.cameras} />
         {disk && (
           <span className={`shrink-0 text-xs tabular-nums ${
             disk.warning ? 'text-amber-400' : 'text-neutral-400'}`}
-            title={`데이터셋·모델 ${disk.total_gb}GB / 경고 임계치 ${disk.threshold_gb}GB`}>
+            title={t('데이터셋·모델 {total_gb}GB / 경고 임계치 {threshold_gb}GB', { total_gb: disk.total_gb, threshold_gb: disk.threshold_gb })}>
             💾 {disk.total_gb}GB{disk.warning && ' ⚠'}
           </span>
         )}
       </div>
+
+      {/* 표시 언어 — 맨 위 줄에 둔다. 한국어를 못 읽는 사람도 어느 페이지에서든 바로 찾는다.
+          (로그인 화면은 이 줄이 없어 `AuthGate` 가 따로 하나 둔다.) */}
+      <LanguageSwitcher />
 
       {/* 토스트는 2초 만에 사라진다 — 놓친 메시지는 여기 쌓인다 */}
       <NotificationBell />
 
       {/* 소켓이 끊기면 위 숫자가 **멈춘 값**이 된다 — 그걸 모르면 안 된다 */}
       <span className="flex shrink-0 items-center gap-1.5 text-xs text-neutral-500"
-            title={connected ? '서버 연결됨' : '서버 연결 끊김 — 표시가 멈춰 있습니다'}>
+            title={connected ? t('서버 연결됨') : t('서버 연결 끊김 — 표시가 멈춰 있습니다')}>
         <span className={`h-1.5 w-1.5 rounded-full ${
           connected ? 'bg-emerald-500' : 'bg-red-500'}`} aria-hidden />
-        {connected ? '연결됨' : '끊김'}
+        {connected ? t('연결됨') : t('끊김')}
       </span>
 
       {/* ⚠ **맨 끝**이다 — 앞의 것들이 내용에 따라 늘고 줄어도 E-stop 자리는 안 밀린다.

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useT } from '../i18n'
 
 /**
  * 좌우 분할 — 가운데 선을 끌어 폭을 바꾼다.
@@ -58,6 +59,7 @@ export default function SplitHandle({
   onReset: () => void
   containerRef: React.RefObject<HTMLDivElement | null>
 }) {
+  const t = useT()
   const last = useRef(50)
 
   /**
@@ -80,7 +82,7 @@ export default function SplitHandle({
     <div
       role="separator"
       aria-orientation="vertical"
-      title="끌어서 폭 조절 · 더블클릭으로 반반"
+      title={t('끌어서 폭 조절 · 더블클릭으로 반반')}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId)
         // ⚠ 지금 폭에서 시작한다. 안 그러면 **움직이지 않고 누르기만 해도**

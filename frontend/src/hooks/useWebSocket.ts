@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
+import { tbDeep } from '../i18n'
 import type { WsMessage } from '../types/ws'
 
 export type { WsMessage } from '../types/ws'
@@ -36,7 +37,7 @@ export function useWebSocket(url: string, options: UseWebSocketOptions = {}) {
 
     ws.onmessage = (event) => {
       try {
-        const msg = JSON.parse(event.data) as WsMessage
+        const msg = tbDeep(JSON.parse(event.data) as WsMessage)
         onMessageRef.current?.(msg)
       } catch {
         // ignore non-JSON messages

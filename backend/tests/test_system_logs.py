@@ -132,7 +132,7 @@ def test_the_two_logs_became_one_page_with_the_journal_as_the_default_tab():
     assert "params.get('tab') === 'files' ? 'files' : 'system'" in page, "기본 탭이 시스템이 아니다"
     for needle in ("params.get('unit')", "params.get('level')", "params.get('since')"):
         assert needle in page, needle
-    assert "label: '시스템'" in page and "label: '파일'" in page
+    assert "label: msg('시스템')" in page and "label: msg('파일')" in page
     # 파일 관리자는 그대로(추론 CSV·차트·삭제) — 옮겼을 뿐 잃지 않았다
     for needle in ("/logs/categories", "/api/logs/download/", "/api/logs/chart/", "/logs/delete/"):
         assert needle in page, needle

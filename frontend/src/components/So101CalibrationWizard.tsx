@@ -11,6 +11,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { useT, msg } from '../i18n'
 
 type CalibStatus = {
   arm: string
@@ -74,14 +75,15 @@ function JointGauge({ label, ok, mn, mx, cur, span }: {
 }
 
 const JOINT_LABELS: Record<string, string> = {
-  shoulder_pan: '어깨 팬', shoulder_lift: '어깨 리프트', elbow_flex: '팔꿈치',
-  wrist_flex: '손목 굽힘', wrist_roll: '손목 롤', gripper: '그리퍼',
+  shoulder_pan: msg('어깨 팬'), shoulder_lift: msg('어깨 리프트'), elbow_flex: msg('팔꿈치'),
+  wrist_flex: msg('손목 굽힘'), wrist_roll: msg('손목 롤'), gripper: msg('그리퍼'),
 }
 
 export default function So101CalibrationWizard({ arm, onClose }: {
   arm: string
   onClose: () => void
 }) {
+  const t = useT()
   const [st, setSt] = useState<CalibStatus | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -95,10 +97,10 @@ export default function So101CalibrationWizard({ arm, onClose }: {
       setSt(r)
       return r
     } catch (e) {
-      setError(e instanceof Error ? e.message : `${s} 실패`)
+      setError(e instanceof Error ? e.message : t('{s} 실패', { s }))
       return null
     } finally { setBusy(false) }
-  }, [arm])
+  }, [arm, t])
 
   // 열리면 시작. StrictMode 이중 마운트에 begin 을 두 번 치지 않는다 —
   // 두 번째 begin 이 첫 호밍을 다시 0 으로 되돌린다.
@@ -130,34 +132,34 @@ export default function So101CalibrationWizard({ arm, onClose }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-lg rounded-lg border border-neutral-600 bg-neutral-800 p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">SO-101 캘리브레이션 — {arm}</h3>
+          <h3 className="text-sm font-semibold">{t('SO-101 캘리브레이션 — {arm}', { arm })}</h3>
           <button onClick={handleClose} className="text-xs text-neutral-400 hover:text-white">
-            {st?.stage ? '중단' : '닫기'}
+            {st?.stage ? t('중단') : t('닫기')}
           </button>
         </div>
 
-        {!st && !error && <p className="text-xs text-neutral-400">시작 중…</p>}
+        {!st && !error && <p className="text-xs text-neutral-400">{t('시작 중…')}</p>}
 
         {st?.stage === 'range' && (
           <div className="space-y-3">
             <p className="text-xs text-neutral-300 leading-relaxed">
-              토크가 풀려 있습니다 — 팔을 잡은 채로 <b>각 관절을 양 끝까지
-              천천히</b> 움직여 주세요 (그리퍼는 완전 개폐). 호가 실제로 훑은
-              범위입니다 — <b>도는 방향은 상관없고</b>, 중앙은 저장할 때 자동으로
-              계산됩니다.
+              {t.rich('토크가 풀려 있습니다 — 팔을 잡은 채로 {b} 움직여 주세요 (그리퍼는 완전 개폐). 호가 실제로 훑은 범위입니다 — {b_2}, 중앙은 저장할 때 자동으로 계산됩니다.', {
+                b: <b>{t('각 관절을 양 끝까지 천천히')}</b>,
+                b_2: <b>{t('도는 방향은 상관없고')}</b>,
+              })}
             </p>
             <div className="grid grid-cols-3 gap-2">
               {joints.map((j) => (
-                <JointGauge key={j} label={JOINT_LABELS[j]} ok={!!st.ok[j]}
+                <JointGauge key={j} label={t(JOINT_LABELS[j])} ok={!!st.ok[j]}
                   mn={st.min[j]} mx={st.max[j]} cur={st.raw[j]}
                   span={st.spans[j] ?? 0} />
               ))}
             </div>
             <button onClick={() => step('save')} disabled={busy || !allOk}
-              title={allOk ? 'EEPROM 리밋 + 캘리브레이션 파일 저장'
-                : '아직 충분히 안 움직인 관절이 있습니다'}
+              title={allOk ? t('EEPROM 리밋 + 캘리브레이션 파일 저장')
+                : t('아직 충분히 안 움직인 관절이 있습니다')}
               className="w-full px-3 py-1.5 text-xs rounded bg-green-600 hover:bg-green-500 text-white disabled:opacity-40">
-              저장
+              {t('저장')}
             </button>
           </div>
         )}
@@ -165,12 +167,11 @@ export default function So101CalibrationWizard({ arm, onClose }: {
         {st && !st.stage && st.calibrated && (
           <div className="space-y-3">
             <p className="text-xs text-green-400">
-              ✓ 저장됐습니다 — 서보 리밋과 캘리브레이션 파일(LeRobot 호환)이
-              구워졌고, 발행 값이 즉시 새 캘리브레이션을 씁니다.
+              {t('✓ 저장됐습니다 — 서보 리밋과 캘리브레이션 파일(LeRobot 호환)이 구워졌고, 발행 값이 즉시 새 캘리브레이션을 씁니다.')}
             </p>
             <button onClick={onClose}
               className="w-full px-3 py-1.5 text-xs rounded bg-neutral-600 hover:bg-neutral-500 text-white">
-              닫기
+              {t('닫기')}
             </button>
           </div>
         )}

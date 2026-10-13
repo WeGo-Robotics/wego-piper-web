@@ -18,6 +18,7 @@ import EncoderProbePage from '../pages/EncoderProbePage'
 import LogsPage from '../pages/LogsPage'
 import SettingsPage from '../pages/SettingsPage'
 import ScenePage from '../pages/ScenePage'
+import { msg } from '../i18n'
 
 // 추론 분석은 Plotly를 포함하므로 lazy 로드해 메인 번들에서 코드 분리
 const DebugLogsPage = lazy(() => import('../pages/DebugLogsPage'))
@@ -71,72 +72,72 @@ export type PageEntry = {
  * 수정이 되고 이 파일이 존재하는 이유가 사라진다 (feature/layout-redesign.md §3).
  */
 export const pages: PageEntry[] = [
-  { path: '/', label: '대시보드', component: DashboardPage, nav: true, icon: '🏠' },
+  { path: '/', label: msg('대시보드'), component: DashboardPage, nav: true, icon: '🏠' },
 
   // ── 장치 ──
   {
     path: '/robots',
-    label: '로봇',
-    description: 'CAN 포트 스캔, 팔 연결, 역할 지정',
+    label: msg('로봇'),
+    description: msg('CAN 포트 스캔, 팔 연결, 역할 지정'),
     component: RobotsPage,
     nav: true,
-    group: '장치',
+    group: msg('장치'),
     icon: '🦾',
     card: true,
   },
   {
     path: '/cameras',
-    label: '카메라',
-    description: '카메라 스캔, 연결, 설정, 프리뷰',
+    label: msg('카메라'),
+    description: msg('카메라 스캔, 연결, 설정, 프리뷰'),
     component: CamerasPage,
     nav: true,
-    group: '장치',
+    group: msg('장치'),
     icon: '📷',
     card: true,
   },
   {
     path: '/scene',
-    label: '가상환경',
-    description: '테이블 위 사물 편집 — 만들고 올리고 불러온다',
+    label: msg('가상환경'),
+    description: msg('테이블 위 사물 편집 — 만들고 올리고 불러온다'),
     component: ScenePage,
     nav: true,
-    group: '장치',
+    group: msg('장치'),
     icon: '🧱',
     card: true,
   },
 
   // ── LeRobot (모방학습 본선: 수집 → 학습 → 실행) ──
-  { path: '/recording', label: '수집', component: RecordingPage, nav: true, group: 'LeRobot', icon: '⏺' },
+  { path: '/recording', label: msg('수집'), component: RecordingPage, nav: true, group: 'LeRobot', icon: '⏺' },
   // ⚠ `데이터셋`·`모델` 은 이제 내비에 없다. `저장소` 화면이 **같은 컴포넌트**를
   //   탭으로 그리므로 메뉴에 같은 화면이 두 번 있었다.
   //   경로는 남긴다 — 북마크나 링크가 있으면 열려야 한다.
   //   ⚠ 예전에는 반대 문제였다: 상단 가로바에 자리가 없어 `card` 만 달았고,
   //     그때는 **대시보드 카드가 유일한 입구**였다(feature/layout-redesign.md §1).
   //     지금은 `저장소` 가 그 입구다 — 입구가 없어지지 않았는지 테스트가 본다.
-  { path: '/datasets', label: '데이터셋', component: DatasetsPage, group: 'LeRobot', icon: '🗂' },
+  { path: '/datasets', label: msg('데이터셋'), component: DatasetsPage, group: 'LeRobot', icon: '🗂' },
   {
     path: '/episodes',
-    label: '에피소드',
-    description: '에피소드 재생·신호·페이즈 열람',
+    label: msg('에피소드'),
+    description: msg('에피소드 재생·신호·페이즈 열람'),
     component: EpisodesPage,
     nav: true,
     group: 'LeRobot',
     icon: '🎬',
     card: true,
   },
-  { path: '/training', label: '학습', component: TrainingPage, nav: true, group: 'LeRobot', icon: '📈' },
+  { path: '/training', label: msg('학습'), component: TrainingPage, nav: true, group: 'LeRobot', icon: '📈' },
   // 학습 바로 뒤가 자리다 — 로컬 GPU 로 모자랄 때 그 다음에 보는 화면이다.
   // ⚠ 자격증명은 여기가 아니라 설정 → 클라우드 다 (feature/vast-training.md §9-1).
-  { path: '/cloud', label: '클라우드 GPU', component: CloudPage, nav: true, group: 'LeRobot', icon: '☁️' },
+  { path: '/cloud', label: msg('클라우드 GPU'), component: CloudPage, nav: true, group: 'LeRobot', icon: '☁️' },
   // ⚠ `모델` 항목을 없앴다. `저장소` 의 `모델` 탭이 **같은 컴포넌트**를 그리고
   //   있어서 메뉴에 같은 화면이 두 번 있었다. 경로는 남겨 둔다 — 다른 화면이
   //   `/models` 로 링크하거나 북마크가 있을 수 있고, 열면 그대로 동작한다.
-  { path: '/models', label: '모델', component: ModelsPage, group: 'LeRobot', icon: '🧠' },
-  { path: '/encoder', label: '엔코더', component: EncoderProbePage, nav: true, group: 'LeRobot', icon: '🔬' },
+  { path: '/models', label: msg('모델'), component: ModelsPage, group: 'LeRobot', icon: '🧠' },
+  { path: '/encoder', label: msg('엔코더'), component: EncoderProbePage, nav: true, group: 'LeRobot', icon: '🔬' },
   {
     path: '/inference',
-    label: '추론',
-    description: '모델 배포, 실시간 파라미터 튜닝, 평가',
+    label: msg('추론'),
+    description: msg('모델 배포, 실시간 파라미터 튜닝, 평가'),
     component: InferencePage,
     nav: true,
     group: 'LeRobot',
@@ -147,28 +148,28 @@ export const pages: PageEntry[] = [
   // 켜야 생기니 추론 바로 옆이 자리다. 예전엔 시스템 묶음의 "디버그"로 새 창(standalone)에
   // 떴는데, 로그 페이지와 이름이 겹치고 앱 밖으로 나가 흐름이 끊겼다(사용자 지적 2026).
   // 경로 `/debug` 는 남긴다 — API(`/api/debug/*`)와 북마크가 그 이름이다.
-  { path: '/debug', label: '추론 분석', component: DebugLogsPage, nav: true, group: 'LeRobot', icon: '📊' },
-  { path: '/policy-server', label: '정책서버', component: PolicyServerPage, nav: true, group: 'LeRobot', icon: '🛰' },
+  { path: '/debug', label: msg('추론 분석'), component: DebugLogsPage, nav: true, group: 'LeRobot', icon: '📊' },
+  { path: '/policy-server', label: msg('정책서버'), component: PolicyServerPage, nav: true, group: 'LeRobot', icon: '🛰' },
   // 로컬 + HuggingFace Hub 를 한 화면에서 본다. 모델·데이터셋 탭이 여기 있다.
-  { path: '/hub', label: '저장소', component: HubPage, nav: true, group: 'LeRobot', icon: '☁' },
+  { path: '/hub', label: msg('저장소'), component: HubPage, nav: true, group: 'LeRobot', icon: '☁' },
 
   // ── 객체 검출 (인식: 데모 → 커스텀 학습) ──
   {
     path: '/yolo-demo',
-    label: '검출 데모',
-    description: '시연용 대형 검출 뷰',
+    label: msg('검출 데모'),
+    description: msg('시연용 대형 검출 뷰'),
     component: YoloDemoPage,
     nav: true,
-    group: '객체 검출',
+    group: msg('객체 검출'),
     icon: '🎯',
   },
   {
     path: '/yolo-train',
-    label: '검출 학습',
-    description: '이미지 캡처·라벨링·커스텀 가중치 학습',
+    label: msg('검출 학습'),
+    description: msg('이미지 캡처·라벨링·커스텀 가중치 학습'),
     component: YoloTrainPage,
     nav: true,
-    group: '객체 검출',
+    group: msg('객체 검출'),
     icon: '🏷',
     card: true,
   },
@@ -176,19 +177,19 @@ export const pages: PageEntry[] = [
   // ── 통합 (플랫폼을 엮는 파이프라인 — 객체 검출 → LLM 판단 → VLA 실행) ──
   {
     path: '/vision',
-    label: '비전·판단',
-    description: '객체 검출·LLM 판단 테스트 (분리수거 파이프라인)',
+    label: msg('비전·판단'),
+    description: msg('객체 검출·LLM 판단 테스트 (분리수거 파이프라인)'),
     component: VisionPage,
     nav: true,
-    group: '통합',
+    group: msg('통합'),
     icon: '👁',
     card: true,
   },
 
   // ── 시스템 ──
-  { path: '/logs', label: '로그', component: LogsPage, nav: true, group: '시스템', icon: '📄' },
-  { path: '/settings', label: '설정', component: SettingsPage, nav: true, group: '시스템', icon: '⚙' },
-  { path: '/teleop', label: '조종 창', component: TeleopWindowPage, nav: false, standalone: true },
+  { path: '/logs', label: msg('로그'), component: LogsPage, nav: true, group: msg('시스템'), icon: '📄' },
+  { path: '/settings', label: msg('설정'), component: SettingsPage, nav: true, group: msg('시스템'), icon: '⚙' },
+  { path: '/teleop', label: msg('조종 창'), component: TeleopWindowPage, nav: false, standalone: true },
 ]
 
 export const navPages = pages.filter((p) => p.nav)

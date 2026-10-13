@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { tr } from '../i18n'
 
 /**
  * 페이지 하나가 죽어도 앱 전체를 날리지 않는다.
@@ -41,11 +42,12 @@ export default class ErrorBoundary extends Component<Props, State> {
     return (
       <div className="rounded-lg border border-red-900/60 bg-red-950/20 p-6 space-y-3">
         <h2 className="text-sm font-semibold text-red-300">
-          {this.props.label ? `${this.props.label} 화면에서 오류가 났습니다` : '화면에서 오류가 났습니다'}
+          {this.props.label ? tr('{label} 화면에서 오류가 났습니다', { label: tr(this.props.label) }) : tr('화면에서 오류가 났습니다')}
         </h2>
         <p className="text-xs text-neutral-400 leading-relaxed">
-          이 페이지만 멈췄습니다. <b>학습·녹화·추론은 백엔드에서 계속 돌고 있습니다</b> —
-          다른 메뉴로 이동해 상태를 보거나 정지시킬 수 있습니다.
+          {tr.rich('이 페이지만 멈췄습니다. {b} — 다른 메뉴로 이동해 상태를 보거나 정지시킬 수 있습니다.', {
+            b: <b>{tr('학습·녹화·추론은 백엔드에서 계속 돌고 있습니다')}</b>,
+          })}
         </p>
         <pre className="text-[11px] text-red-300/80 bg-neutral-900 rounded p-3 overflow-x-auto">
           {error.message || String(error)}
@@ -53,11 +55,11 @@ export default class ErrorBoundary extends Component<Props, State> {
         <div className="flex gap-2">
           <button onClick={this.reset}
             className="px-3 py-1.5 rounded bg-neutral-700 hover:bg-neutral-600 text-xs">
-            다시 시도
+            {tr('다시 시도')}
           </button>
           <button onClick={() => window.location.reload()}
             className="px-3 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-xs text-neutral-300">
-            새로고침
+            {tr('새로고침')}
           </button>
         </div>
       </div>

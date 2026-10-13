@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 /**
  * 말단(엔드포인트) 조그 — **관절은 팔의 온보드 IK 가 정한다**
@@ -45,6 +46,7 @@ type Pose = Record<string, number>
 type Box = { x: number[]; y: number[]; z: number[] }
 
 export default function EndPosePanel({ iface, enabled }: { iface: string; enabled: boolean }) {
+  const t = useT()
   const { notify } = useSystemMessage()
   const [pose, setPose] = useState<Pose | null>(null)
   const [box, setBox] = useState<Box | null>(null)
@@ -75,8 +77,8 @@ export default function EndPosePanel({ iface, enabled }: { iface: string; enable
       .catch((e) => {
         // 상자 밖·도달 실패 모두 여기로 온다. 백엔드가 문장을 만든다 —
         // 화면이 조립하면 "왜 안 갔는지"가 두 곳에서 갈린다.
-        notify({ level: 'warn', source: '말단 조그',
-                 text: e instanceof Error ? e.message : '움직이지 못했습니다' })
+        notify({ level: 'warn', source: t('말단 조그'),
+                 text: e instanceof Error ? e.message : t('움직이지 못했습니다') })
       })
     // 가는 동안 자세를 따라 읽는다. 안 하면 눌러도 화면이 가만히 있어
     // "안 먹었나" 싶어 또 누르게 된다.
@@ -104,8 +106,8 @@ export default function EndPosePanel({ iface, enabled }: { iface: string; enable
   return (
     <div className="space-y-2 rounded border border-neutral-700 p-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs text-neutral-400">말단 조그 <span className="text-neutral-600">(온보드 IK)</span></span>
-        <button onClick={read} className="text-[10px] text-neutral-500 hover:text-neutral-300">새로고침</button>
+        <span className="text-xs text-neutral-400">{t.rich('말단 조그 {span}', { span: <span className="text-neutral-600">{t('(온보드 IK)')}</span> })}</span>
+        <button onClick={read} className="text-[10px] text-neutral-500 hover:text-neutral-300">{t('새로고침')}</button>
       </div>
 
       {pose ? (
@@ -116,11 +118,11 @@ export default function EndPosePanel({ iface, enabled }: { iface: string; enable
           </span>
         </p>
       ) : (
-        <p className="text-[11px] text-neutral-500">말단 자세를 읽지 못했습니다</p>
+        <p className="text-[11px] text-neutral-500">{t('말단 자세를 읽지 못했습니다')}</p>
       )}
 
       <div className="flex items-center gap-2 text-[11px] text-neutral-400">
-        <span>한 걸음</span>
+        <span>{t('한 걸음')}</span>
         <input type="number" value={stepMm} min={1} max={20}
           onChange={(e) => setStepMm(Number(e.target.value))}
           className="w-12 rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5 text-right" />
@@ -128,37 +130,44 @@ export default function EndPosePanel({ iface, enabled }: { iface: string; enable
         <input type="number" value={stepDeg} min={1} max={10}
           onChange={(e) => setStepDeg(Number(e.target.value))}
           className="w-12 rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5 text-right" />
-        <span>도</span>
+        <span>{t('도')}</span>
       </div>
 
       {/* ⚠ **방향을 자리로 읽게 한다.** 예전에는 축 라벨 옆에 작은 −/+ 두 개가
           있었는데, 어느 쪽이 앞인지 매번 라벨을 읽어야 했고 버튼이 손가락보다
           작았다. 십자 배치는 누르기 전에 방향이 보인다. */}
       <div className="flex flex-wrap items-start justify-center gap-4 py-1">
-        <Pad title="이동" unit={`${stepMm}mm`}
-             up={{ label: '↑', hint: 'X 앞', on: () => jog('x', stepMm) }}
-             down={{ label: '↓', hint: 'X 뒤', on: () => jog('x', -stepMm) }}
-             left={{ label: '←', hint: 'Y 좌', on: () => jog('y', stepMm) }}
-             right={{ label: '→', hint: 'Y 우', on: () => jog('y', -stepMm) }} />
-        <Pad title="높이" unit={`${stepMm}mm`}
-             up={{ label: '▲', hint: 'Z 위', on: () => jog('z', stepMm) }}
-             down={{ label: '▼', hint: 'Z 아래', on: () => jog('z', -stepMm) }} />
+        <Pad title={t('이동')} unit={`${stepMm}mm`}
+             up={{ label: '↑', hint: t('X 앞'), on: () => jog('x', stepMm) }}
+             down={{ label: '↓', hint: t('X 뒤'), on: () => jog('x', -stepMm) }}
+             left={{ label: '←', hint: t('Y 좌'), on: () => jog('y', stepMm) }}
+             right={{ label: '→', hint: t('Y 우'), on: () => jog('y', -stepMm) }} />
+        <Pad title={t('높이')} unit={`${stepMm}mm`}
+             up={{ label: '▲', hint: t('Z 위'), on: () => jog('z', stepMm) }}
+             down={{ label: '▼', hint: t('Z 아래'), on: () => jog('z', -stepMm) }} />
         {/* ⚠ RX 를 십자 **가운데**에 두었더니 한 방향밖에 안 됐다. 가운데는
             자리가 하나뿐인데 축은 양방향이 필요하다 — 롤은 따로 뺀다. */}
-        <Pad title="손목" unit={`${stepDeg}°`}
-             up={{ label: 'RY+', hint: '숙임', on: () => jog('ry', stepDeg) }}
-             down={{ label: 'RY−', hint: '젖힘', on: () => jog('ry', -stepDeg) }}
-             left={{ label: 'RZ+', hint: '좌', on: () => jog('rz', stepDeg) }}
-             right={{ label: 'RZ−', hint: '우', on: () => jog('rz', -stepDeg) }} />
-        <Pad title="롤 (RX)" unit={`${stepDeg}°`}
+        <Pad title={t('손목')} unit={`${stepDeg}°`}
+             up={{ label: 'RY+', hint: t('숙임'), on: () => jog('ry', stepDeg) }}
+             down={{ label: 'RY−', hint: t('젖힘'), on: () => jog('ry', -stepDeg) }}
+             left={{ label: 'RZ+', hint: t('좌'), on: () => jog('rz', stepDeg) }}
+             right={{ label: 'RZ−', hint: t('우'), on: () => jog('rz', -stepDeg) }} />
+        <Pad title={t('롤 (RX)')} unit={`${stepDeg}°`}
              left={{ label: '↺', hint: 'RX−', on: () => jog('rx', -stepDeg) }}
              right={{ label: '↻', hint: 'RX+', on: () => jog('rx', stepDeg) }} />
       </div>
 
       {box && (
         <p className="text-[10px] text-neutral-600">
-          작업 공간 X {box.x[0]}~{box.x[1]} · Y {box.y[0]}~{box.y[1]} · Z {box.z[0]}~{box.z[1]} mm
-          <span className="block">밖으로 나가는 명령은 <b>보내지 않고 거절</b>합니다.</span>
+          {t.rich('작업 공간 X {x}~{x_2} · Y {y}~{y_2} · Z {z}~{z_2} mm{span}', {
+            x: box.x[0],
+            x_2: box.x[1],
+            y: box.y[0],
+            y_2: box.y[1],
+            z: box.z[0],
+            z_2: box.z[1],
+            span: <span className="block">{t.rich('밖으로 나가는 명령은 {b}합니다.', { b: <b>{t('보내지 않고 거절')}</b> })}</span>,
+          })}
         </p>
       )}
     </div>

@@ -1,4 +1,5 @@
 import { useState, type CSSProperties } from 'react'
+import { useT } from '../i18n'
 
 /**
  * 세로/가로 배치 토글.
@@ -64,10 +65,11 @@ export default function LayoutToggle({
   layout: Layout
   onChange: (l: Layout) => void
 }) {
+  const t = useT()
   return (
     <div className="flex justify-end">
       <div className="flex rounded overflow-hidden border border-neutral-700 text-xs">
-        {([['col', '세로'], ['row', '가로']] as const).map(([l, label]) => (
+        {([['col', t('세로')], ['row', t('가로')]] as const).map(([l, label]) => (
           <button key={l} onClick={() => onChange(l)}
             className={`px-2.5 py-1 ${layout === l
               ? 'bg-neutral-600 text-white' : 'bg-neutral-800 text-neutral-500 hover:text-neutral-300'}`}>

@@ -3,6 +3,7 @@ import ManualControlPanel from './ManualControlPanel'
 import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
 import { JOINTS } from '../config/joints'
+import { useT } from '../i18n'
 
 /**
  * 정렬 자세 만들기 — **조그로 실제 팔을 움직여 자세를 정한다**
@@ -33,6 +34,7 @@ type Props = {
 export default function AlignmentPoseModal({
   iface, cameraId, tagMm, family, onClose, onSaved,
 }: Props) {
+  const t = useT()
   const { notify } = useSystemMessage()
   const [name, setName] = useState('')
   const [joints, setJoints] = useState<number[]>([])
@@ -66,7 +68,7 @@ export default function AlignmentPoseModal({
       } catch (e) {
         if (live.current) {
           setReady(false)
-          setErr(e instanceof Error ? e.message : '조그를 열지 못했습니다')
+          setErr(e instanceof Error ? e.message : t('조그를 열지 못했습니다'))
         }
       }
     }
@@ -78,7 +80,7 @@ export default function AlignmentPoseModal({
       // ⚠ 실패해도 삼킨다 — 닫는 길이 막히면 세션이 영영 남는다
       void api.post('/robots/jog/stop', {}).catch(() => {})
     }
-  }, [iface])
+  }, [iface, t])
 
   // ── 팔이 실제로 어디 있나 ──
   useEffect(() => {
@@ -121,21 +123,21 @@ export default function AlignmentPoseModal({
     void api.post('/robots/jog/goal', { iface, values: out }).catch((e) => {
       // 세션이 닫혔으면 다음 `ensure` 가 다시 연다 — 여기서는 알리기만 한다
       setReady(false)
-      setErr(e instanceof Error ? e.message : '목표를 보내지 못했습니다')
+      setErr(e instanceof Error ? e.message : t('목표를 보내지 못했습니다'))
     })
-  }, [iface])
+  }, [iface, t])
 
   const save = async () => {
     const n = name.trim()
-    if (!n) { setErr('이름을 적으세요'); return }
+    if (!n) { setErr(t('이름을 적으세요')); return }
     setBusy(true); setErr('')
     try {
       await api.post('/alignment/poses', { name: n, iface })
-      notify({ level: 'info', source: '정렬', text: `자세 '${n}' 저장` })
+      notify({ level: 'info', source: t('정렬'), text: t('자세 \'{n}\' 저장', { n }) })
       onSaved(n)
       onClose()
     } catch (e) {
-      setErr(e instanceof Error ? e.message : '저장하지 못했습니다')
+      setErr(e instanceof Error ? e.message : t('저장하지 못했습니다'))
     } finally { setBusy(false) }
   }
 
@@ -145,13 +147,12 @@ export default function AlignmentPoseModal({
                       border-neutral-700 bg-neutral-900 p-4">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-neutral-100">
-            정렬 자세 만들기 — {iface}
+            {t('정렬 자세 만들기 — {iface}', { iface })}
           </h3>
-          <span className="text-xs text-amber-400">조그가 명령 경로를 잡고 있습니다</span>
+          <span className="text-xs text-amber-400">{t('조그가 명령 경로를 잡고 있습니다')}</span>
         </div>
         <p className="mt-1 text-xs text-neutral-400">
-          팔을 움직여 <b>태그가 잘 보이는 자세</b>로 맞춘 뒤 저장하세요. 저장되는
-          것은 지금 관절값입니다(그리퍼 제외).
+          {t.rich('팔을 움직여 {b}로 맞춘 뒤 저장하세요. 저장되는 것은 지금 관절값입니다(그리퍼 제외).', { b: <b>{t('태그가 잘 보이는 자세')}</b> })}
         </p>
 
         <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -159,11 +160,11 @@ export default function AlignmentPoseModal({
             <ManualControlPanel
               currentJoints={joints}
               disabled={!ready}
-              disabledHint={err || '조그를 여는 중…'}
+              disabledHint={err || t('조그를 여는 중…')}
               onSend={send}
-              title="조그" />
+              title={t('조그')} />
             <div className="rounded border border-neutral-700 bg-neutral-950 p-2">
-              <p className="mb-1 text-[11px] text-neutral-500">지금 관절값 (정규화)</p>
+              <p className="mb-1 text-[11px] text-neutral-500">{t('지금 관절값 (정규화)')}</p>
               <div className="grid grid-cols-3 gap-x-3 gap-y-0.5 text-xs text-neutral-300">
                 {ARM.map((j, i) => (
                   <div key={j.name} className="flex justify-between">
@@ -178,15 +179,15 @@ export default function AlignmentPoseModal({
           <div className="space-y-2">
             <div className="overflow-hidden rounded border border-neutral-700 bg-black">
               {cameraId ? (
-                <img alt={`${cameraId} 영상`} className="w-full"
+                <img alt={t('{cameraId} 영상', { cameraId })} className="w-full"
                   src={`/api/cameras/${encodeURIComponent(cameraId)}/stream`} />
               ) : (
-                <p className="p-6 text-center text-xs text-neutral-500">카메라를 고르세요</p>
+                <p className="p-6 text-center text-xs text-neutral-500">{t('카메라를 고르세요')}</p>
               )}
             </div>
             <div className="rounded border border-neutral-700 bg-neutral-950 p-2 text-xs">
               <p className="mb-1 text-[11px] text-neutral-500">
-                보이는 태그 ({family}, {tagMm}mm)
+                {t('보이는 태그 ({family}, {tagMm}mm)', { family, tagMm })}
               </p>
               {tagErr ? (
                 <p className="text-amber-400">{tagErr}</p>
@@ -199,7 +200,7 @@ export default function AlignmentPoseModal({
                 </div>
               ) : (
                 <p className="text-neutral-500">
-                  안 보입니다 — 이 자세로는 검사를 못 합니다
+                  {t('안 보입니다 — 이 자세로는 검사를 못 합니다')}
                 </p>
               )}
             </div>
@@ -211,18 +212,18 @@ export default function AlignmentPoseModal({
 
         <div className="mt-4 flex items-center justify-end gap-2">
           <input value={name} onChange={(e) => setName(e.target.value)}
-            placeholder="자세 이름" 
+            placeholder={t('자세 이름')} 
             className="w-48 rounded border border-neutral-700 bg-neutral-950 px-2 py-1
                        text-xs text-neutral-100 focus:border-blue-500 focus:outline-none" />
           <button onClick={onClose}
             className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-300
                        hover:bg-neutral-600">
-            취소
+            {t('취소')}
           </button>
           <button onClick={() => void save()} disabled={busy || !name.trim() || !ready}
             className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500
                        disabled:opacity-50">
-            {busy ? '…' : '이 자세로 저장'}
+            {busy ? '…' : t('이 자세로 저장')}
           </button>
         </div>
       </div>

@@ -1,3 +1,4 @@
+import { useT } from '../i18n'
 /**
  * 버스별 작은 차트 두 개 — 트래픽(선)과 오류(막대).
  *
@@ -26,6 +27,7 @@ export function RateChart({ points, field, color, width = 300, height = 76 }: {
   points: Point[]; field: 'rx' | 'tx'; color: string
   width?: number; height?: number
 }) {
+  const t = useT()
   const pad = { l: 46, r: 8, t: 8, b: 12 }
   const w = width - pad.l - pad.r
   const h = height - pad.t - pad.b
@@ -34,7 +36,7 @@ export function RateChart({ points, field, color, width = 300, height = 76 }: {
     return (
       <div className="flex items-center justify-center rounded bg-neutral-900/60 text-xs text-neutral-600"
            style={{ width, height }}>
-        표본을 모으는 중…
+        {t('표본을 모으는 중…')}
       </div>
     )
   }
@@ -59,7 +61,7 @@ export function RateChart({ points, field, color, width = 300, height = 76 }: {
   const last = vals[vals.length - 1]
   return (
     <svg width={width} height={height} role="img"
-         aria-label={`${field.toUpperCase()} 초당 ${fmt(last)} (범위 ${fmt(lo)}~${fmt(hi)})`}>
+         aria-label={t('{field} 초당 {last} (범위 {lo}~{hi})', { field: field.toUpperCase(), last: fmt(last), lo: fmt(lo), hi: fmt(hi) })}>
       {[y1, y0].map((v, i) => (
         <g key={i}>
           <line x1={pad.l} x2={pad.l + w} y1={pad.t + h * i} y2={pad.t + h * i}
@@ -71,7 +73,7 @@ export function RateChart({ points, field, color, width = 300, height = 76 }: {
       <path d={d} fill="none" stroke={color} strokeWidth={2}
             strokeLinejoin="round" strokeLinecap="round" />
       <circle cx={x(points.length - 1)} cy={y(last)} r={2.5} fill={color} />
-      <title>{`${field.toUpperCase()} ${fmt(last)}/s · 범위 ${fmt(lo)}~${fmt(hi)}`}</title>
+      <title>{t('{field} {last}/s · 범위 {lo}~{hi}', { field: field.toUpperCase(), last: fmt(last), lo: fmt(lo), hi: fmt(hi) })}</title>
     </svg>
   )
 }
@@ -85,6 +87,7 @@ export function ErrorChart({ counters, labels, width = 300, height = 92 }: {
   counters: Record<string, number>; labels: Record<string, string>
   width?: number; height?: number
 }) {
+  const t = useT()
   const entries = Object.entries(counters)
   const pad = { l: 34, r: 8, t: 8, b: 22 }
   const w = width - pad.l - pad.r
@@ -95,7 +98,7 @@ export function ErrorChart({ counters, labels, width = 300, height = 92 }: {
   const bw = Math.max(4, slot - 2)
 
   return (
-    <svg width={width} height={height} role="img" aria-label="오류 카운터">
+    <svg width={width} height={height} role="img" aria-label={t('오류 카운터')}>
       <line x1={pad.l} x2={pad.l + w} y1={pad.t + h} y2={pad.t + h}
             stroke={GRID} strokeWidth={1} />
       <text x={pad.l - 4} y={pad.t + 7} textAnchor="end" fill={INK} fontSize={9}>
@@ -111,10 +114,10 @@ export function ErrorChart({ counters, labels, width = 300, height = 92 }: {
                   height={Math.max(bh, v ? 2 : 0)} rx={2}
                   fill={v ? ERR : 'transparent'} />
             <text x={bx + bw / 2} y={height - 12} textAnchor="middle"
-                  fill={INK} fontSize={8}>{(labels[k] ?? k).slice(0, 4)}</text>
+                  fill={INK} fontSize={8}>{t(labels[k] ?? k).slice(0, t.lang === 'ko' ? 4 : 7)}</text>
             <text x={bx + bw / 2} y={height - 3} textAnchor="middle"
                   fill={v ? '#e5e5e5' : '#525252'} fontSize={8}>{v}</text>
-            <title>{`${labels[k] ?? k}: ${v}`}</title>
+            <title>{`${t(labels[k] ?? k)}: ${v}`}</title>
           </g>
         )
       })}

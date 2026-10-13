@@ -1,6 +1,7 @@
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { LoadAlert } from '../types/ws'
 import { useSystemMessage } from './SystemMessages'
+import { useT } from '../i18n'
 
 /**
  * 관절 과부하 경보를 **시스템 메시지로 흘려보낸다.** 자기 UI 는 없다 —
@@ -21,6 +22,7 @@ import { useSystemMessage } from './SystemMessages'
  * 덮여 사라지므로, 화면이 나중에 문장을 조립하면 경보 때와 다른 숫자를 말한다.
  */
 export default function LoadAlerts() {
+  const t = useT()
   const { notify } = useSystemMessage()
 
   useWebSocket('/ws', {
@@ -34,7 +36,7 @@ export default function LoadAlerts() {
           // 조용히 오염되는 쪽이라 경고가 아니라 오류로 띄운다.
           level: 'error',
           text: a.text,
-          source: '부하',
+          source: t('부하'),
         })
       }
     },

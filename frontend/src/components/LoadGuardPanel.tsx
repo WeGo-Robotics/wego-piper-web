@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 /**
  * 관절 부하 감시 — 슬립이 나는 **조건**을 잡는다 (robot/piper_robot/load.py).
@@ -87,6 +88,7 @@ function Bar({ nm, warn }: { nm: number; warn: number }) {
 }
 
 export default function LoadGuardPanel({ iface }: { iface: string }) {
+  const t = useT()
   const { notify } = useSystemMessage()
   const [limits, setLimits] = useState<Limits | null>(null)
   const [status, setStatus] = useState<Status>(null)
@@ -138,20 +140,20 @@ export default function LoadGuardPanel({ iface }: { iface: string }) {
       setJointDraft(Object.fromEntries(
         JOINTS.map((j) => [j, r.limits.per_joint[j] != null
           ? String(r.limits.per_joint[j]) : ''])))
-      notify({ level: 'info', source: '부하 감시',
+      notify({ level: 'info', source: t('부하 감시'),
         text: r.limits.enabled
-          ? `${iface} 부하 감시 켜짐 — 공통 임계 ${r.limits.warn_nm}N·m`
-          : `${iface} 부하 감시 꺼짐 (기록은 계속됩니다)` })
+          ? t('{iface} 부하 감시 켜짐 — 공통 임계 {warn_nm}N·m', { iface, warn_nm: r.limits.warn_nm })
+          : t('{iface} 부하 감시 꺼짐 (기록은 계속됩니다)', { iface }) })
     } catch (e) {
-      notify({ level: 'error', source: '부하 감시',
-        text: e instanceof Error ? e.message : '설정 변경 실패' })
+      notify({ level: 'error', source: t('부하 감시'),
+        text: e instanceof Error ? e.message : t('설정 변경 실패') })
       void refresh(true)
     } finally {
       setBusy(false)
     }
   }
 
-  if (!loaded) return <div className="text-sm text-neutral-500">불러오는 중…</div>
+  if (!loaded) return <div className="text-sm text-neutral-500">{t('불러오는 중…')}</div>
 
   // ⚠ 게이트웨이가 기본값을 지어내지 않는다 — 데몬이 없으면 아무것도 안 재고
   //   있는데 화면만 "감시 중" 이라고 말하는 상태가 제일 나쁘다.
@@ -159,10 +161,10 @@ export default function LoadGuardPanel({ iface }: { iface: string }) {
     return (
       <div className="space-y-2">
         <p className="text-sm text-amber-400">
-          robotd 가 응답하지 않아 부하 설정을 읽을 수 없습니다.
+          {t('robotd 가 응답하지 않아 부하 설정을 읽을 수 없습니다.')}
         </p>
         <p className="text-xs text-neutral-500">
-          감시는 robotd 안에서 돕니다 — 데몬이 없으면 아무것도 재고 있지 않습니다.
+          {t('감시는 robotd 안에서 돕니다 — 데몬이 없으면 아무것도 재고 있지 않습니다.')}
         </p>
       </div>
     )
@@ -199,15 +201,15 @@ export default function LoadGuardPanel({ iface }: { iface: string }) {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h3 className="text-sm font-semibold text-neutral-100">
-            부하 감시 (전류·토크)
+            {t('부하 감시 (전류·토크)')}
           </h3>
           <p className="text-xs text-neutral-400">
-            관절이 임계를 넘긴 채 버티면 알립니다 — 슬립이 나는 조건입니다.
+            {t('관절이 임계를 넘긴 채 버티면 알립니다 — 슬립이 나는 조건입니다.')}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <span className={`text-xs ${limits.enabled ? 'text-green-400' : 'text-neutral-500'}`}>
-            {limits.enabled ? '켜짐' : '꺼짐'}
+            {limits.enabled ? t('켜짐') : t('꺼짐')}
           </span>
           <Switch on={limits.enabled} disabled={busy}
                   onChange={(v) => void send({ enabled: v })} />
@@ -218,14 +220,15 @@ export default function LoadGuardPanel({ iface }: { iface: string }) {
           팔이 보호된다고 믿는데, 실제로 막는 것은 아무것도 없다. */}
       <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2
                     text-xs leading-relaxed text-amber-300">
-        <b>전류를 제한하지 않습니다.</b> PIPER 펌웨어에는 관절 전류·토크 상한을 거는
-        명령이 없습니다 — 이 설정은 넘었을 때 <b>알리기만</b> 합니다. 실제로 밀렸는지는
-        리셋(0x150) 전후 간극으로 확인하세요 ([영점] 탭의 리셋).
+        {t.rich('{b} PIPER 펌웨어에는 관절 전류·토크 상한을 거는 명령이 없습니다 — 이 설정은 넘었을 때 {b_2} 합니다. 실제로 밀렸는지는 리셋(0x150) 전후 간극으로 확인하세요 ([영점] 탭의 리셋).', {
+          b: <b>{t('전류를 제한하지 않습니다.')}</b>,
+          b_2: <b>{t('알리기만')}</b>,
+        })}
       </p>
 
       <div className="flex flex-wrap items-end gap-3">
         <label className="space-y-1">
-          <span className="block text-xs text-neutral-400">공통 임계</span>
+          <span className="block text-xs text-neutral-400">{t('공통 임계')}</span>
           <div className="flex items-center gap-1.5">
             <input type="number" step="0.5" min={lo} max={hi} value={warnDraft}
               onChange={(e) => setWarnDraft(e.target.value)}
@@ -236,14 +239,14 @@ export default function LoadGuardPanel({ iface }: { iface: string }) {
           </div>
         </label>
         <label className="space-y-1">
-          <span className="block text-xs text-neutral-400">지속 시간</span>
+          <span className="block text-xs text-neutral-400">{t('지속 시간')}</span>
           <div className="flex items-center gap-1.5">
             <input type="number" step="0.05" min={dlo} max={dhi} value={dwellDraft}
               onChange={(e) => setDwellDraft(e.target.value)}
               disabled={busy}
               className="w-24 rounded border border-neutral-600 bg-neutral-900 px-2 py-1
                          text-sm text-neutral-100 disabled:opacity-50" />
-            <span className="text-xs text-neutral-400">초</span>
+            <span className="text-xs text-neutral-400">{t('초')}</span>
           </div>
         </label>
         <button
@@ -252,38 +255,38 @@ export default function LoadGuardPanel({ iface }: { iface: string }) {
             || (warnNum === limits.warn_nm && dwellNum === limits.dwell_s)}
           className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white
                      hover:bg-blue-500 disabled:opacity-40">
-          적용
+          {t('적용')}
         </button>
         {limits.warn_nm !== limits.default_nm && (
           <button onClick={() => void send({ warn_nm: limits.default_nm })}
             disabled={busy}
             className="rounded bg-neutral-700 px-3 py-1.5 text-sm text-neutral-300
                        hover:bg-neutral-600 disabled:opacity-40">
-            기본값 ({limits.default_nm})
+            {t('기본값 ({default_nm})', { default_nm: limits.default_nm })}
           </button>
         )}
       </div>
       {(!warnOk || !dwellOk) && (
         <p className="text-xs text-red-400">
-          임계는 {lo}~{hi} N·m, 지속 시간은 {dlo}~{dhi} 초 사이여야 합니다
+          {t('임계는 {lo}~{hi} N·m, 지속 시간은 {dlo}~{dhi} 초 사이여야 합니다', { lo, hi, dlo, dhi })}
         </p>
       )}
 
       <div className="space-y-1">
         <div className="flex items-baseline justify-between">
-          <span className="text-xs font-semibold text-neutral-400">관절별</span>
+          <span className="text-xs font-semibold text-neutral-400">{t('관절별')}</span>
           <span className="text-[11px] text-neutral-500">
-            임계 칸을 비우면 공통값을 씁니다
+            {t('임계 칸을 비우면 공통값을 씁니다')}
           </span>
         </div>
         <table className="w-full text-xs">
           <thead className="text-[11px] text-neutral-500">
             <tr className="border-b border-neutral-700">
-              <th className="py-1 text-left font-normal">관절</th>
-              <th className="py-1 text-right font-normal">지금</th>
-              <th className="py-1 text-right font-normal">최대</th>
-              <th className="py-1 text-right font-normal">과부하</th>
-              <th className="py-1 pl-2 text-left font-normal">임계 (N·m)</th>
+              <th className="py-1 text-left font-normal">{t('관절')}</th>
+              <th className="py-1 text-right font-normal">{t('지금')}</th>
+              <th className="py-1 text-right font-normal">{t('최대')}</th>
+              <th className="py-1 text-right font-normal">{t('과부하')}</th>
+              <th className="py-1 pl-2 text-left font-normal">{t('임계 (N·m)')}</th>
             </tr>
           </thead>
           <tbody>
@@ -299,7 +302,7 @@ export default function LoadGuardPanel({ iface }: { iface: string }) {
                       </span>
                       {st?.raised && (
                         <span className="rounded bg-red-600/30 px-1 py-0.5 text-[10px] text-red-300">
-                          과부하
+                          {t('과부하')}
                         </span>
                       )}
                     </div>
@@ -315,7 +318,7 @@ export default function LoadGuardPanel({ iface }: { iface: string }) {
                   </td>
                   <td className="py-1.5 text-right tabular-nums text-neutral-400">
                     {st ? <>{st.over_s.toFixed(1)}s
-                      {st.events > 0 && <span className="text-amber-400"> ·{st.events}회</span>}</>
+                      {st.events > 0 && <span className="text-amber-400">{' '}{t('·{events}회', { events: st.events })}</span>}</>
                       : <span className="text-neutral-600">—</span>}
                   </td>
                   <td className="py-1.5 pl-2">
@@ -343,34 +346,32 @@ export default function LoadGuardPanel({ iface }: { iface: string }) {
           disabled={busy || !jointsValid || !jointsDirty}
           className="rounded bg-blue-600 px-3 py-1 text-xs text-white
                      hover:bg-blue-500 disabled:opacity-40">
-          관절별 임계 적용
+          {t('관절별 임계 적용')}
         </button>
       </div>
 
       {!status && (
         <p className="text-xs text-neutral-500">
-          이 팔의 부하를 아직 못 읽습니다 — 연결돼 있고 전원이 켜져 있어야
-          0x251~0x256 고속 피드백이 옵니다.
+          {t('이 팔의 부하를 아직 못 읽습니다 — 연결돼 있고 전원이 켜져 있어야 0x251~0x256 고속 피드백이 옵니다.')}
         </p>
       )}
 
       <div className="space-y-1 rounded border border-neutral-700 bg-neutral-900/60 px-3 py-2
                       text-xs leading-relaxed text-neutral-400">
         <p className="text-amber-400/80">
-          기본 임계 {limits.default_nm}N·m 는 <b>잠정값</b>입니다. 관측한 것은 둘뿐입니다 —
-          J5 가 기구 한계에 걸렸을 때 드라이버가 10.3A 에서 스스로 끊었고,
-          J2 를 손으로 눌렀을 때는 <b>11.4A(13.5N·m)까지 갔는데 안 끊었습니다.</b>
-          같은 전류라도 관절군마다 토크가 다르므로(J1~3 ×1.18125, J4~6 ×0.95844)
-          여섯 관절에 한 숫자를 쓸 근거는 아직 없습니다.
+          {t.rich('기본 임계 {default_nm}N·m 는 {b}입니다. 관측한 것은 둘뿐입니다 — J5 가 기구 한계에 걸렸을 때 드라이버가 10.3A 에서 스스로 끊었고, J2 를 손으로 눌렀을 때는 {b_2}같은 전류라도 관절군마다 토크가 다르므로(J1~3 ×1.18125, J4~6 ×0.95844) 여섯 관절에 한 숫자를 쓸 근거는 아직 없습니다.', {
+            default_nm: limits.default_nm,
+            b: <b>{t('잠정값')}</b>,
+            b_2: <b>{t('11.4A(13.5N·m)까지 갔는데 안 끊었습니다.')}</b>,
+          })}
         </p>
         <p>
-          진짜 임계는 위 <b>최대</b> 칸에 쌓이는 기록과, 리셋이 재는 실제 슬립각을
-          맞대어 정합니다. 경보가 떴는데 슬립이 0 이면 임계가 낮은 것이고,
-          경보 없이 밀렸으면 임계가 높은 것입니다.
+          {t.rich('진짜 임계는 위 {b} 칸에 쌓이는 기록과, 리셋이 재는 실제 슬립각을 맞대어 정합니다. 경보가 떴는데 슬립이 0 이면 임계가 낮은 것이고, 경보 없이 밀렸으면 임계가 높은 것입니다.', {
+            b: <b>{t('최대')}</b>,
+          })}
         </p>
         <p>
-          감시를 꺼도 <b>기록은 계속됩니다</b> — 끄는 것은 &quot;울리지 마라&quot;지
-          &quot;재지 마라&quot;가 아닙니다.
+          {t.rich('감시를 꺼도 {b} — 끄는 것은 "울리지 마라"지 "재지 마라"가 아닙니다.', { b: <b>{t('기록은 계속됩니다')}</b> })}
         </p>
       </div>
     </div>

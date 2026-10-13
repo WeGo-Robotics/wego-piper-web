@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSystemMessage } from './SystemMessages'
 import { api } from '../services/api'
+import { useT, fmt } from '../i18n'
 
 /**
  * 버전 카드 — "지금 도는 것이 무엇인가", 그리고 [업데이트] (feature/version-update.md).
@@ -56,7 +57,7 @@ const LABEL: Record<string, string> = {
 function fmtDate(iso?: string | null): string {
   if (!iso) return ''
   const d = new Date(iso)
-  return isNaN(d.getTime()) ? iso : d.toLocaleString('ko-KR', { hour12: false })
+  return isNaN(d.getTime()) ? iso : fmt.dateTime(d, { hour12: false })
 }
 
 /** `piper-robot 0.4.5` 처럼 태그가 도장 찍힌 wheel 만, **이번 릴리스가 실제로
@@ -79,6 +80,7 @@ function wheelMismatch(gw: string, wheels: string | null | undefined,
 }
 
 export default function VersionCard() {
+  const t = useT()
   const { notify, confirm } = useSystemMessage()
   const [info, setInfo] = useState<VersionInfo | null>(null)
   const [err, setErr] = useState('')
@@ -93,8 +95,8 @@ export default function VersionCard() {
 
   const loadInfo = useCallback(() => {
     api.get<VersionInfo>('/system/version').then(setInfo)
-      .catch((e) => setErr(e instanceof Error ? e.message : '버전을 읽지 못했습니다'))
-  }, [])
+      .catch((e) => setErr(e instanceof Error ? e.message : t('버전을 읽지 못했습니다')))
+  }, [t])
   const loadStatus = useCallback(() =>
     api.get<UpdateStatus>('/system/update/status').then(setStatus).catch(() => {}), [])
 
@@ -118,7 +120,7 @@ export default function VersionCard() {
   const doCheck = async (force = true) => {
     setChecking(true)
     try { setCheck(await api.get<Check>(`/system/update/check?force=${force ? 1 : 0}`)) }
-    catch (e) { notify({ level: 'error', source: '업데이트', text: e instanceof Error ? e.message : '확인 실패' }) }
+    catch (e) { notify({ level: 'error', source: t('업데이트'), text: e instanceof Error ? e.message : t('확인 실패') }) }
     finally { setChecking(false) }
   }
 
@@ -126,9 +128,9 @@ export default function VersionCard() {
     setBusy(true); setNotes('')
     try {
       await api.post('/system/update/pull', { version })
-      notify({ level: 'info', source: '업데이트', text: `${version} 받는 중 — 아무것도 실행하지 않습니다` })
+      notify({ level: 'info', source: t('업데이트'), text: t('{version} 받는 중 — 아무것도 실행하지 않습니다', { version }) })
       setTimeout(loadStatus, 800)
-    } catch (e) { notify({ level: 'error', source: '업데이트', text: e instanceof Error ? e.message : '받기 실패' }) }
+    } catch (e) { notify({ level: 'error', source: t('업데이트'), text: e instanceof Error ? e.message : t('받기 실패') }) }
     finally { setBusy(false) }
   }
 
@@ -148,22 +150,20 @@ export default function VersionCard() {
   const apply = async (version: string, rollback = false) => {
     // ⚠ window.confirm 금지 — heartbeat 를 막는다. 논블로킹 모달.
     const yes = await confirm(
-      (rollback ? `${version} 으로 되돌립니다.\n\n` : `${version} 을 적용합니다.\n\n`) +
-      '데몬과 게이트웨이가 갈아치워집니다 — 몇 초에서 몇 분 동안 화면이 끊깁니다.\n' +
-      '돌아오면 자동으로 새로고침합니다. 데이터(데이터셋·설정)는 건드리지 않습니다.')
+      t('{rollback}데몬과 게이트웨이가 갈아치워집니다 — 몇 초에서 몇 분 동안 화면이 끊깁니다.\n돌아오면 자동으로 새로고침합니다. 데이터(데이터셋·설정)는 건드리지 않습니다.', { rollback: (rollback ? t('{version} 으로 되돌립니다.\n\n', { version }) : t('{version} 을 적용합니다.\n\n', { version })) }))
     if (!yes) return
     setBusy(true)
     try {
       await api.post('/system/update/apply', { version })
-      notify({ level: 'warn', source: '업데이트', text: `${version} 적용 중 — 곧 연결이 끊깁니다` })
+      notify({ level: 'warn', source: t('업데이트'), text: t('{version} 적용 중 — 곧 연결이 끊깁니다', { version }) })
       setTimeout(loadStatus, 800)
       waitForGateway()
-    } catch (e) { notify({ level: 'error', source: '업데이트', text: e instanceof Error ? e.message : '적용 실패' }) }
+    } catch (e) { notify({ level: 'error', source: t('업데이트'), text: e instanceof Error ? e.message : t('적용 실패') }) }
     finally { setBusy(false) }
   }
 
   if (err) return <p className="text-xs text-red-400">{err}</p>
-  if (!info) return <p className="text-xs text-neutral-500">버전을 읽는 중…</p>
+  if (!info) return <p className="text-xs text-neutral-500">{t('버전을 읽는 중…')}</p>
 
   const gw = info.gateway
   // ⚠ 판정은 **백엔드 한 곳**에서 한다(`version.staleness`) — 규칙이 여기에만 있으면 카드를
@@ -191,37 +191,37 @@ export default function VersionCard() {
             piper-web <span className="font-mono text-emerald-300">{gw.version}</span>
             {check?.available && check.latest && (
               <span className="ml-2 rounded bg-blue-600/30 px-1.5 py-0.5 text-xs text-blue-200">
-                새 버전 {check.latest}
+                {t('새 버전 {latest}', { latest: check.latest })}
               </span>
             )}
           </h2>
           <p className="mt-0.5 text-[11px] text-neutral-500">
-            {gw.source === 'git' ? '소스에서 실행 (git describe)'
-              : gw.source === 'env' || gw.source === 'manifest' ? '배포 이미지'
-              : '버전을 알 수 없습니다'}
-            {gw.built_at && ` · ${fmtDate(gw.built_at)} 빌드`}
-            {gw.prev && ` · 직전 ${gw.prev}`}
-            {info.deploy?.current && ` · 적용본 ${info.deploy.current}`}
-            {check && !check.available && !check.error && ' · 최신입니다'}
-            {check?.error && <span className="text-amber-400"> · 확인 실패: {check.error}</span>}
+            {gw.source === 'git' ? t('소스에서 실행 (git describe)')
+              : gw.source === 'env' || gw.source === 'manifest' ? t('배포 이미지')
+              : t('버전을 알 수 없습니다')}
+            {gw.built_at && t(' · {fmtDate} 빌드', { fmtDate: fmtDate(gw.built_at) })}
+            {gw.prev && t(' · 직전 {prev}', { prev: gw.prev })}
+            {info.deploy?.current && t(' · 적용본 {current}', { current: info.deploy.current })}
+            {check && !check.available && !check.error && t(' · 최신입니다')}
+            {check?.error && <span className="text-amber-400">{' '}{t('· 확인 실패: {error}', { error: check.error })}</span>}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <button onClick={() => doCheck(true)} disabled={checking || busy}
             className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50">
-            {checking ? '확인 중…' : '새 버전 확인'}
+            {checking ? t('확인 중…') : t('새 버전 확인')}
           </button>
           {check?.available && check.latest && check.mode === 'image' && !pulled && (
             <button onClick={() => pull(check.latest!)} disabled={busy || !!status?.active || !canControl}
-              title={!canControl ? '서비스 관리 데몬(piper-unitd)이 없습니다' : '이미지를 받고 꺼내기만 — 실행하지 않습니다'}
+              title={!canControl ? t('서비스 관리 데몬(piper-unitd)이 없습니다') : t('이미지를 받고 꺼내기만 — 실행하지 않습니다')}
               className="px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
-              {check.latest} 받기
+              {t('{latest} 받기', { latest: check.latest })}
             </button>
           )}
           {((pulled && pulledVersion) || (check?.available && check.mode === 'source' && check.latest)) && (
             <button onClick={() => apply(pulledVersion ?? check!.latest!)} disabled={busy || !!status?.active || !canControl}
               className="px-2 py-1 text-xs rounded bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-50">
-              {pulledVersion ?? check!.latest} 적용
+              {t.rich('{pulledVersion} 적용', { pulledVersion: pulledVersion ?? check!.latest })}
             </button>
           )}
         </div>
@@ -229,8 +229,10 @@ export default function VersionCard() {
 
       {mismatch.length > 0 && (
         <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          ⚠ 게이트웨이는 {gw.version} 인데 데몬 wheel 이 다릅니다: {mismatch.join(', ')} —
-          업데이트 뒤 데몬이 재시작을 못 받았습니다. 아래 서비스에서 재시작하세요.
+          {t('⚠ 게이트웨이는 {version} 인데 데몬 wheel 이 다릅니다: {mismatch} — 업데이트 뒤 데몬이 재시작을 못 받았습니다. 아래 서비스에서 재시작하세요.', {
+            version: gw.version,
+            mismatch: mismatch.join(', '),
+          })}
         </p>
       )}
 
@@ -239,24 +241,26 @@ export default function VersionCard() {
           재시작으로는 안 고쳐진다 — 번들에서 설치 스크립트를 한 번 돌려야 한다. */}
       {sourceStale && (
         <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          ⚠ 데몬 소스가 적용된 릴리스와 다릅니다 ({sourceStale}) — 데몬을 재시작해도 안 바뀝니다.
-          받아 둔 번들에서 <code className="font-mono">./piper-install.sh</code> 를 한 번 돌리면 따라잡습니다.
+          {t.rich('⚠ 데몬 소스가 적용된 릴리스와 다릅니다 ({sourceStale}) — 데몬을 재시작해도 안 바뀝니다. 받아 둔 번들에서 {code} 를 한 번 돌리면 따라잡습니다.', {
+            sourceStale,
+            code: <code className="font-mono">./piper-install.sh</code>,
+          })}
         </p>
       )}
 
       {waitingBack && (
         <p className="rounded border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-xs text-blue-200">
-          적용 중 — 게이트웨이가 갈아치워지는 동안 연결이 끊깁니다. 돌아오면 자동으로 새로고침합니다.
+          {t('적용 중 — 게이트웨이가 갈아치워지는 동안 연결이 끊깁니다. 돌아오면 자동으로 새로고침합니다.')}
         </p>
       )}
 
       {status && (status.active || status.finished) && (
         <div className="space-y-1.5 rounded border border-neutral-700 bg-neutral-900/60 p-3">
           <p className="text-xs text-neutral-300">
-            {status.stage === 'pull' ? '받기' : '적용'} {status.version}
-            {status.active ? <span className="ml-2 text-blue-300">진행 중…</span>
-              : status.ok ? <span className="ml-2 text-emerald-400">완료</span>
-              : <span className="ml-2 text-red-400">실패 (종료 코드 {status.exit ?? '?'})</span>}
+            {status.stage === 'pull' ? t('받기') : t('적용')} {status.version}
+            {status.active ? <span className="ml-2 text-blue-300">{t('진행 중…')}</span>
+              : status.ok ? <span className="ml-2 text-emerald-400">{t('완료')}</span>
+              : <span className="ml-2 text-red-400">{t('실패 (종료 코드 {exit})', { exit: status.exit ?? '?' })}</span>}
           </p>
           {/* ⚠ **끝난 방식에 따라 다른 말을 한다.** 예전에는 `need_sudo` 가 있으면
               무조건 "멈췄습니다" 였는데, 멀쩡히 끝난 업데이트에도 그 배너가 떴다 —
@@ -267,22 +271,22 @@ export default function VersionCard() {
               ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
               : 'border-red-500/40 bg-red-500/10 text-red-200'}`}>
               <p className="mb-1">{status.ok
-                ? '적용은 끝났습니다. 다만 아래는 호스트에서 직접 해야 합니다 (그룹은 다시 로그인해야 반영됩니다):'
-                : '전제가 빠져 있어 멈췄습니다. 호스트에서 아래를 실행한 뒤 다시 누르세요 (그룹은 다시 로그인해야 반영됩니다):'}</p>
+                ? t('적용은 끝났습니다. 다만 아래는 호스트에서 직접 해야 합니다 (그룹은 다시 로그인해야 반영됩니다):')
+                : t('전제가 빠져 있어 멈췄습니다. 호스트에서 아래를 실행한 뒤 다시 누르세요 (그룹은 다시 로그인해야 반영됩니다):')}</p>
               <pre className="whitespace-pre-wrap font-mono text-[11px]">{status.need_sudo.join('\n')}</pre>
               <button onClick={() => navigator.clipboard?.writeText(status.need_sudo.join('\n'))}
-                className="mt-1 px-2 py-0.5 text-[11px] rounded bg-neutral-700 hover:bg-neutral-600">복사</button>
+                className="mt-1 px-2 py-0.5 text-[11px] rounded bg-neutral-700 hover:bg-neutral-600">{t('복사')}</button>
             </div>
           )}
           {notes && (
             <details open className="text-xs">
-              <summary className="cursor-pointer text-neutral-400">{status.version} 에서 무엇이 달라졌나</summary>
+              <summary className="cursor-pointer text-neutral-400">{t.rich('{version} 에서 무엇이 달라졌나', { version: status.version })}</summary>
               <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap font-sans text-[11px] text-neutral-300">{notes}</pre>
             </details>
           )}
           {status.log && (
             <details className="text-xs">
-              <summary className="cursor-pointer text-neutral-500">로그</summary>
+              <summary className="cursor-pointer text-neutral-500">{t('로그')}</summary>
               <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-neutral-400">{status.log}</pre>
             </details>
           )}
@@ -300,23 +304,23 @@ export default function VersionCard() {
           "lerobot 0.5.0" 같은 항목 하나만 nowrap 으로 붙들어 둔다.
           라벨 열의 nowrap 은 그대로다 — 한 글자씩 세로로 쌓이던 것을 막는 자리다. */}
       <div className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-[auto_minmax(0,1fr)]">
-        <span className="whitespace-nowrap text-neutral-500">컨테이너</span>
+        <span className="whitespace-nowrap text-neutral-500">{t('컨테이너')}</span>
         <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-neutral-300">
           {pick(info.container, CONTAINER_ORDER).map(([k, v]) => (
             <span key={k} className="whitespace-nowrap">{LABEL[k] ?? k} <b className="font-mono font-normal text-neutral-200">{v}</b></span>
           ))}
           {pick(info.container, CONTAINER_ORDER).length === 0 && <span className="text-neutral-600">—</span>}
         </div>
-        <span className="whitespace-nowrap text-neutral-500">호스트</span>
+        <span className="whitespace-nowrap text-neutral-500">{t('호스트')}</span>
         <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-neutral-300">
           {pick(info.host, HOST_ORDER).map(([k, v]) => (
             <span key={k} className="whitespace-nowrap">{LABEL[k] ?? k} <b className="font-mono font-normal text-neutral-200">{v}</b></span>
           ))}
           {pick(info.host, HOST_ORDER).length === 0 && (
-            <span className="text-neutral-600">— (서비스 관리 데몬 piper-unitd 가 말합니다)</span>
+            <span className="text-neutral-600">{t('— (서비스 관리 데몬 piper-unitd 가 말합니다)')}</span>
           )}
         </div>
-        <span className="whitespace-nowrap text-neutral-500">데몬</span>
+        <span className="whitespace-nowrap text-neutral-500">{t('데몬')}</span>
         <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-neutral-300">
           {daemonRows.map(([d, vs]) => (
             // ⚠ 데몬 하나를 통째로 nowrap 으로 묶으면 그 묶음이 칸보다 길 때 또 넘친다
@@ -328,21 +332,21 @@ export default function VersionCard() {
               ))}
             </span>
           ))}
-          {daemonRows.length === 0 && <span className="text-neutral-600">— (데몬 자기 보고에서 옵니다)</span>}
+          {daemonRows.length === 0 && <span className="text-neutral-600">{t('— (데몬 자기 보고에서 옵니다)')}</span>}
         </div>
       </div>
 
       {others.length > 0 && canControl && (
         <div className="flex items-center gap-2 text-xs text-neutral-400">
-          <span>받아 둔 다른 버전:</span>
+          <span>{t('받아 둔 다른 버전:')}</span>
           <select value={rollbackTo} onChange={(e) => setRollbackTo(e.target.value)}
             className="rounded bg-neutral-700 border border-neutral-600 px-2 py-1 text-xs">
-            <option value="">선택</option>
+            <option value="">{t('선택')}</option>
             {others.map((v) => <option key={v} value={v}>{v}</option>)}
           </select>
           <button onClick={() => apply(rollbackTo, true)} disabled={!rollbackTo || busy || !!status?.active}
             className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50">
-            이 버전으로
+            {t('이 버전으로')}
           </button>
         </div>
       )}

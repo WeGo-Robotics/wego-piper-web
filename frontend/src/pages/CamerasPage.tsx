@@ -6,6 +6,7 @@ import ParamSlider from '../components/ParamSlider'
 import RoiPicker, { centerRoi, toBox } from '../components/RoiPicker'
 import type { Roi } from '../components/RoiPicker'
 import { api } from '../services/api'
+import { useT } from '../i18n'
 
 /**
  * USB 2.0 경고 배지.
@@ -114,11 +115,12 @@ const DEPTH_STEP = 10
 const DEPTH_SLIDER_MAX = 2000
 
 export default function CamerasPage() {
+  const t = useT()
   // ⚠ `window.alert` 를 쓰지 않는다 — 이벤트 루프를 막아 E-stop heartbeat 가
   //   끊기고, 2초 타임아웃에 추론이 강제 종료된다 (confirm 으로 실제로 겪었다).
   const { notify, confirm: askConfirm } = useSystemMessage()
   const notifyError = (text: string) =>
-    notify({ level: 'error', text, source: '카메라' })
+    notify({ level: 'error', text, source: t('카메라') })
   const [loading, setLoading] = useState(true)
   const [cams, setCams] = useState<CamInfo[]>([])
   const [scanning, setScanning] = useState(false)
@@ -231,7 +233,7 @@ export default function CamerasPage() {
           `/cameras/${encodeURIComponent(colorId)}/controls`))
       } catch { /* 표시 갱신일 뿐이다 — 보정 결과는 이미 위 상자에 있다 */ }
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : '보정에 실패했습니다')
+      notifyError(e instanceof Error ? e.message : t('보정에 실패했습니다'))
     } finally {
       setCalibrating(false)
     }
@@ -257,7 +259,7 @@ export default function CamerasPage() {
       })
       bumpPreview([colorId, depthId])
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : '배경 마스킹을 바꾸지 못했습니다')
+      notifyError(e instanceof Error ? e.message : t('배경 마스킹을 바꾸지 못했습니다'))
       // 거부됐으면 화면이 바뀐 척하면 안 된다 — 되돌린다
       setMaskOn(prev.enabled); setMaskFar(prev.far); setMaskKeepUnknown(prev.keep)
     }
@@ -283,7 +285,7 @@ export default function CamerasPage() {
       bumpPreview([id])
     } catch (e) {
       // 거부 사유(far <= near, 녹화 중)는 백엔드가 문장으로 준다
-      notifyError(e instanceof Error ? e.message : '깊이 범위를 바꾸지 못했습니다')
+      notifyError(e instanceof Error ? e.message : t('깊이 범위를 바꾸지 못했습니다'))
       setDepthDraft(server)
     }
   }
@@ -436,7 +438,7 @@ export default function CamerasPage() {
       // ⚠ 서버가 말한 사유를 그대로 보여준다. 고정 문구로 덮으면 현장에서 카메라가
       //   안 잡힐 때 화면이 아무 단서도 못 준다 — 장치를 못 여는 이유는 매번 다르다
       //   (`Cannot open /dev/video0`, 드라이버 예외, 대역폭 부족…).
-      notifyError(e instanceof Error ? e.message : '등록 실패')
+      notifyError(e instanceof Error ? e.message : t('등록 실패'))
     }
     finally { setConnectingId(null) }
   }
@@ -455,7 +457,7 @@ export default function CamerasPage() {
     try {
       const updated = await api.post<CamInfo>('/cameras/light-alarm', { id, enabled })
       setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
-    } catch (e) { notifyError(e instanceof Error ? e.message : '조명 경보 설정 실패') }
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('조명 경보 설정 실패')) }
   }
   const settingsCamId = settingsCam   // 설정 창이 연 카메라 id (상태값)
   useEffect(() => {
@@ -472,22 +474,20 @@ export default function CamerasPage() {
     try {
       const updated = await api.post<CamInfo>('/cameras/resolution', { id, capture, output })
       setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
-    } catch (e) { notifyError(e instanceof Error ? e.message : '해상도 설정 실패') }
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('해상도 설정 실패')) }
   }
   // 스캔 결과까지 전부 비운다 — 별칭·등록은 사람이 정한 값이라 확인창이 그걸 말한다
   const handleClearAll = async () => {
     const registered = cams.filter((c) => c.ready).length
     if (!await askConfirm(
-      `카메라 상태를 전부 비웁니다 (${cams.length}대, 등록 ${registered}대).\n\n` +
-      '· 스캔 결과·연결·등록·별칭이 사라지고 세션 파일도 지워집니다\n' +
-      '· 카메라 프로파일(프리셋)은 남습니다 — 다시 등록하면 연결 시 적용됩니다\n\n계속할까요?')) return
+      t('카메라 상태를 전부 비웁니다 ({length}대, 등록 {registered}대).\n\n· 스캔 결과·연결·등록·별칭이 사라지고 세션 파일도 지워집니다\n· 카메라 프로파일(프리셋)은 남습니다 — 다시 등록하면 연결 시 적용됩니다\n\n계속할까요?', { length: cams.length, registered }))) return
     try {
       await api.post('/cameras/clear', {})
       setCams([])
-      notify({ level: 'info', source: '카메라',
-               text: '카메라 상태를 초기화했습니다 — 스캔부터 다시 시작하세요.' })
+      notify({ level: 'info', source: t('카메라'),
+               text: t('카메라 상태를 초기화했습니다 — 스캔부터 다시 시작하세요.') })
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : '초기화 실패')
+      notifyError(e instanceof Error ? e.message : t('초기화 실패'))
     }
   }
 
@@ -527,7 +527,7 @@ export default function CamerasPage() {
   // RealSense 하드웨어 리셋 (펌웨어 파워사이클) → 재열거 대기 후 재스캔
   const handleResetDevice = async (camId: string) => {
     if (busyId) return
-    if (!await askConfirm('카메라를 하드웨어 리셋합니다.\n수 초간 사라졌다 다시 나타납니다. 계속할까요?')) return
+    if (!await askConfirm(t('카메라를 하드웨어 리셋합니다.\n수 초간 사라졌다 다시 나타납니다. 계속할까요?'))) return
     setBusyId(camId)
     // 실시간 보기/컨트롤 패널 정리 (리셋 중 프리뷰는 무의미)
     setLiveIds((prev) => { const next = new Set(prev); next.delete(camId); return next })
@@ -540,7 +540,7 @@ export default function CamerasPage() {
       setCams(result)
       bumpPreview(result.map((c) => c.id))
     } catch (e) {
-      notifyError('하드웨어 리셋 실패: ' + (e instanceof Error ? e.message : '알 수 없는 오류'))
+      notifyError(t('하드웨어 리셋 실패: {e}', { e: (e instanceof Error ? e.message : t('알 수 없는 오류')) }))
     } finally {
       setBusyId(null)
     }
@@ -550,9 +550,9 @@ export default function CamerasPage() {
   const ResetDeviceButton = ({ cam }: { cam: CamInfo }) =>
     cam.cam_type === 'realsense' ? (
       <button onClick={() => handleResetDevice(cam.id)} disabled={busyId === cam.id}
-        title="하드웨어 리셋 (펌웨어 파워사이클)"
+        title={t('하드웨어 리셋 (펌웨어 파워사이클)')}
         className="py-1 px-2 text-xs rounded bg-neutral-700 hover:bg-orange-600 text-neutral-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-        {busyId === cam.id ? <Spinner className="inline" /> : '리셋'}
+        {busyId === cam.id ? <Spinner className="inline" /> : t('리셋')}
       </button>
     ) : null
 
@@ -596,15 +596,15 @@ export default function CamerasPage() {
   const unconnected = here.filter((c) => !c.connected && !c.ready)
 
   if (loading) {
-    return <div className="flex items-center justify-center h-64 gap-2 text-neutral-400"><Spinner /> 로딩 중...</div>
+    return <div className="flex items-center justify-center h-64 gap-2 text-neutral-400"><Spinner />{' '}{t('로딩 중...')}</div>
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <h1 className="text-2xl font-bold">카메라</h1>
+        <h1 className="text-2xl font-bold">{t('카메라')}</h1>
         <div className="flex rounded-lg border border-neutral-700 overflow-hidden text-sm">
-          {([['devices', '장치'], ['profiles', '프로파일']] as const).map(([k, label]) => (
+          {([['devices', t('장치')], ['profiles', t('프로파일')]] as const).map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)}
               className={`px-4 py-1.5 ${tab === k
                 ? 'bg-neutral-700 text-white' : 'bg-neutral-900 text-neutral-400 hover:text-white'}`}>
@@ -616,19 +616,19 @@ export default function CamerasPage() {
           {/* 측광 모드 — 카드마다 두면 카메라 수만큼 중복된다. 한 곳에서 고르고
               모든 카드가 같은 방식으로 읽힌다. */}
           <div className="ml-auto flex items-center gap-1 rounded-lg bg-neutral-800 p-0.5"
-               title="같은 프레임의 어디를 보고 노출을 잴지. 목표(0.0 EV)는 셋 다 같습니다.">
-            <span className="pl-1.5 text-[10px] text-neutral-500">측광</span>
+               title={t('같은 프레임의 어디를 보고 노출을 잴지. 목표(0.0 EV)는 셋 다 같습니다.')}>
+            <span className="pl-1.5 text-[10px] text-neutral-500">{t('측광')}</span>
             {METERING_MODES.map((m) => (
               <button key={m} onClick={() => setMetering(m)}
                 className={`rounded px-2 py-1 text-xs transition-colors ${metering === m
                   ? 'bg-neutral-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}>
-                {METERING_LABEL[m]}
+                {t(METERING_LABEL[m])}
               </button>
             ))}
           </div>
           <button onClick={handleScan} disabled={scanning}
             className="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
-            {scanning ? <><Spinner className="inline" /> 스캔 중...</> : '스캔'}
+            {scanning ? <><Spinner className="inline" />{' '}{t('스캔 중...')}</> : t('스캔')}
           </button>
           {/* 비울 게 없으면 안 보인다 — 위험한 버튼에 누를 이유를 만들어 주지
               않는다 (로봇 페이지 전체 초기화와 같은 규칙) */}
@@ -636,7 +636,7 @@ export default function CamerasPage() {
             <button onClick={handleClearAll}
               className="px-3 py-1.5 text-sm rounded bg-neutral-700 hover:bg-red-600
                          text-neutral-400 hover:text-white">
-              전체 초기화
+              {t('전체 초기화')}
             </button>
           )}
         </>)}
@@ -652,7 +652,7 @@ export default function CamerasPage() {
           시작하자마자 실패하는데, 화면 아래쪽에 있으면 아무도 안 본다. */}
       {absent.length > 0 && (
         <div className="space-y-2">
-          <h2 className="text-sm font-semibold text-red-400">연결 안 됨 ({absent.length})</h2>
+          <h2 className="text-sm font-semibold text-red-400">{t('연결 안 됨 ({length})', { length: absent.length })}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {absent.map((cam) => (
               <div key={cam.id} className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 space-y-1">
@@ -662,13 +662,12 @@ export default function CamerasPage() {
                 </div>
                 <p className="text-[11px] text-neutral-400">{cam.id}</p>
                 <p className="text-[11px] text-red-300">
-                  스캔에서 안 보입니다 — USB 를 확인하세요. 등록은 남아 있으므로
-                  다시 꽂고 스캔하면 별칭·설정 그대로 돌아옵니다.
+                  {t('스캔에서 안 보입니다 — USB 를 확인하세요. 등록은 남아 있으므로 다시 꽂고 스캔하면 별칭·설정 그대로 돌아옵니다.')}
                 </p>
                 <button
                   onClick={() => handleUnregister(cam.id)}
                   className="text-[11px] text-neutral-400 hover:text-white underline">
-                  더 안 쓸 거면 등록 해제
+                  {t('더 안 쓸 거면 등록 해제')}
                 </button>
               </div>
             ))}
@@ -679,7 +678,7 @@ export default function CamerasPage() {
       {/* 등록됨 */}
       {ready.length > 0 && (
         <div className="space-y-2">
-          <h2 className="text-sm font-semibold text-green-400">사용 가능 ({ready.length})</h2>
+          <h2 className="text-sm font-semibold text-green-400">{t('사용 가능 ({length})', { length: ready.length })}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {ready.map((cam) => {
               const isLive = liveIds.has(cam.id)
@@ -695,12 +694,12 @@ export default function CamerasPage() {
                     <div className="w-full aspect-[4/3] bg-neutral-900 flex flex-col items-center justify-center gap-1 text-center px-3">
                       <span className="text-2xl text-red-400">✕</span>
                       <span className="text-xs text-red-300">
-                        {cam.present === false ? '연결 안 됨' : '영상 끊김'}
+                        {cam.present === false ? t('연결 안 됨') : t('영상 끊김')}
                       </span>
                       <span className="text-[10px] text-neutral-500">
                         {cam.present === false
-                          ? 'USB 를 확인하고 스캔하세요'
-                          : '프레임이 오지 않습니다 — 상단 메시지를 확인하세요'}
+                          ? t('USB 를 확인하고 스캔하세요')
+                          : t('프레임이 오지 않습니다 — 상단 메시지를 확인하세요')}
                       </span>
                     </div>
                   ) : (
@@ -726,10 +725,10 @@ export default function CamerasPage() {
                           if (v !== (cam.label ?? '')) handleLabel(cam.id, v)
                         }}
                         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                        placeholder="이름 없음"
-                        title="표시 이름 — 데이터셋 피처 이름은 바뀌지 않습니다"
+                        placeholder={t('이름 없음')}
+                        title={t('표시 이름 — 데이터셋 피처 이름은 바뀌지 않습니다')}
                         className="flex-1 min-w-0 px-1.5 py-0.5 text-sm rounded bg-transparent border border-transparent hover:border-neutral-700 focus:bg-neutral-900 focus:border-blue-500 text-neutral-100 placeholder:text-neutral-600 focus:outline-none" />
-                      {cam.usb_port && <span className="font-mono text-[10px] text-neutral-500" title="USB 포트">{cam.usb_port}</span>}
+                      {cam.usb_port && <span className="font-mono text-[10px] text-neutral-500" title={t('USB 포트')}>{cam.usb_port}</span>}
                       {cam.usb_warning && <UsbWarning reason={cam.usb_warning} />}
                     </div>
                     <div className="text-xs text-neutral-400">
@@ -742,7 +741,7 @@ export default function CamerasPage() {
                     <div className="flex gap-1.5">
                       <button onClick={() => handleProbe(cam.id)} disabled={busyId === cam.id}
                         className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                        {busyId === cam.id ? <><Spinner className="inline" /> 처리 중</> : '업데이트'}
+                        {busyId === cam.id ? <><Spinner className="inline" />{' '}{t('처리 중')}</> : t('업데이트')}
                       </button>
                       <button onClick={async () => {
                         if (isLive) {
@@ -756,19 +755,19 @@ export default function CamerasPage() {
                             setCams((prev) => prev.map((c) => c.id === cam.id ? updated : c))
                             setLiveIds((prev) => new Set(prev).add(cam.id))
                             bumpPreview([cam.id])
-                          } catch { notifyError('카메라 연결 실패') }
+                          } catch { notifyError(t('카메라 연결 실패')) }
                         }
                       }}
                         className={`flex-1 py-1 text-xs rounded transition-colors ${isLive ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white'}`}>
-                        {isLive ? '중단' : '실시간 보기'}
+                        {isLive ? t('중단') : t('실시간 보기')}
                       </button>
                       <button onClick={() => openSettings(cam.id)}
                         className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-yellow-600 text-neutral-300 hover:text-white transition-colors">
-                        설정
+                        {t('설정')}
                       </button>
                       <button onClick={() => handleUnregister(cam.id)}
                         className="py-1 px-2 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white transition-colors">
-                        해제
+                        {t('해제')}
                       </button>
                       <ResetDeviceButton cam={cam} />
                     </div>
@@ -784,10 +783,12 @@ export default function CamerasPage() {
       {unconnected.length > 0 && (
         <div className="space-y-2">
           <h2 className="text-sm font-semibold text-neutral-400">
-            미등록 ({unconnected.length})
-            <span className="ml-2 font-normal text-neutral-500">
-              — 찾기만 한 상태. 등록해야 녹화·추론에서 씁니다
-            </span>
+            {t.rich('미등록 ({length}){span}', {
+              length: unconnected.length,
+              span: <span className="ml-2 font-normal text-neutral-500">
+              {t('— 찾기만 한 상태. 등록해야 녹화·추론에서 씁니다')}
+            </span>,
+            })}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {unconnected.map((cam) => (
@@ -799,14 +800,14 @@ export default function CamerasPage() {
                     className="w-full aspect-[4/3] object-cover bg-neutral-900" />
                 ) : (
                   <div className="w-full aspect-[4/3] bg-neutral-900 flex items-center justify-center text-neutral-600 text-xs">
-                    프리뷰 없음
+                    {t('프리뷰 없음')}
                   </div>
                 )}
                 <div className="p-3 space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="inline-block w-2 h-2 rounded-full bg-neutral-500" />
                     <span className="font-mono text-sm">{cam.id}</span>
-                      {cam.usb_port && <span className="ml-auto font-mono text-[10px] text-neutral-500" title="USB 포트">{cam.usb_port}</span>}
+                      {cam.usb_port && <span className="ml-auto font-mono text-[10px] text-neutral-500" title={t('USB 포트')}>{cam.usb_port}</span>}
                       {cam.usb_warning && <UsbWarning reason={cam.usb_warning} />}
                   </div>
                   <p className="text-xs text-neutral-400">{cam.name}
@@ -818,12 +819,12 @@ export default function CamerasPage() {
                     value={labelDraft[cam.id] ?? ''}
                     onChange={(e) => setLabelDraft((prev) => ({ ...prev, [cam.id]: e.target.value }))}
                     onKeyDown={(e) => { if (e.key === 'Enter') handleRegister(cam.id) }}
-                    placeholder="이름 (예: 탑뷰, 손목)"
+                    placeholder={t('이름 (예: 탑뷰, 손목)')}
                     className="w-full px-2 py-1 text-xs rounded bg-neutral-900 border border-neutral-700 text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-blue-500" />
                   <div className="flex gap-1.5">
                     <button onClick={() => handleRegister(cam.id)} disabled={connectingId === cam.id}
                       className="flex-1 py-1.5 text-xs rounded bg-neutral-700 group-hover:bg-green-600 text-neutral-300 group-hover:text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
-                      {connectingId === cam.id ? <><Spinner /> 등록 중...</> : '등록'}
+                      {connectingId === cam.id ? <><Spinner />{' '}{t('등록 중...')}</> : t('등록')}
                     </button>
                     <ResetDeviceButton cam={cam} />
                   </div>
@@ -837,7 +838,7 @@ export default function CamerasPage() {
       {/* 연결됨 (미등록) */}
       {connected.length > 0 && (
         <div className="space-y-2">
-          <h2 className="text-sm font-semibold text-neutral-400">연결됨 (미등록)</h2>
+          <h2 className="text-sm font-semibold text-neutral-400">{t('연결됨 (미등록)')}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {connected.map((cam) => {
               return (
@@ -853,12 +854,12 @@ export default function CamerasPage() {
                     <div className="w-full aspect-[4/3] bg-neutral-900 flex flex-col items-center justify-center gap-1 text-center px-3">
                       <span className="text-2xl text-red-400">✕</span>
                       <span className="text-xs text-red-300">
-                        {cam.present === false ? '연결 안 됨' : '영상 끊김'}
+                        {cam.present === false ? t('연결 안 됨') : t('영상 끊김')}
                       </span>
                       <span className="text-[10px] text-neutral-500">
                         {cam.present === false
-                          ? 'USB 를 확인하고 스캔하세요'
-                          : '프레임이 오지 않습니다 — 상단 메시지를 확인하세요'}
+                          ? t('USB 를 확인하고 스캔하세요')
+                          : t('프레임이 오지 않습니다 — 상단 메시지를 확인하세요')}
                       </span>
                     </div>
                   ) : (
@@ -874,7 +875,7 @@ export default function CamerasPage() {
                     <div className="flex items-center gap-2">
                       <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
                       <span className="font-mono text-sm">{cam.id}</span>
-                      {cam.usb_port && <span className="ml-auto font-mono text-[10px] text-neutral-500" title="USB 포트">{cam.usb_port}</span>}
+                      {cam.usb_port && <span className="ml-auto font-mono text-[10px] text-neutral-500" title={t('USB 포트')}>{cam.usb_port}</span>}
                       {cam.usb_warning && <UsbWarning reason={cam.usb_warning} />}
                     </div>
                     <div className="text-xs text-neutral-400">
@@ -885,11 +886,11 @@ export default function CamerasPage() {
                     <ExposureReadout light={light[cam.id]} mode={metering} />
                     <div className="flex gap-1.5">
                       <button onClick={() => openSettings(cam.id)}
-                        className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-yellow-600 text-neutral-300 hover:text-white transition-colors">설정</button>
+                        className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-yellow-600 text-neutral-300 hover:text-white transition-colors">{t('설정')}</button>
                       <button onClick={() => handleRegister(cam.id)}
-                        className="flex-1 py-1 text-xs rounded bg-green-600 hover:bg-green-500 text-white">등록</button>
+                        className="flex-1 py-1 text-xs rounded bg-green-600 hover:bg-green-500 text-white">{t('등록')}</button>
                       <button onClick={() => handleDisconnect(cam.id)}
-                        className="py-1 px-2 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">해제</button>
+                        className="py-1 px-2 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">{t('해제')}</button>
                       <ResetDeviceButton cam={cam} />
                     </div>
                   </div>
@@ -902,7 +903,7 @@ export default function CamerasPage() {
 
       {cams.length === 0 && (
         <p className="text-center text-neutral-500 text-sm py-8">
-          "스캔"을 눌러 카메라를 검색하세요
+          {t('"스캔"을 눌러 카메라를 검색하세요')}
         </p>
       )}
       </>)}
@@ -950,7 +951,7 @@ export default function CamerasPage() {
               {aiming && settingsCamera.stream_type !== 'depth' && (
                 <RoiPicker
                   imgRef={previewRef} roi={roi}
-                  hint={roiReading ? `밝기 ${roiReading.luma} · 얼룩 ${roiReading.spread_pct}%` : undefined}
+                  hint={roiReading ? t('밝기 {luma} · 얼룩 {spread_pct}%', { luma: roiReading.luma, spread_pct: roiReading.spread_pct }) : undefined}
                   onChange={onRoiChange}
                 />
               )}
@@ -958,7 +959,7 @@ export default function CamerasPage() {
                 // 연결 안 된 카메라는 프레임이 안 들어온다. 여기서 몰래 열지 않는다 —
                 // 장치를 쥐는 것은 사용자가 결정할 일이다.
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 rounded">
-                  <p className="text-xs text-neutral-300">연결되지 않아 화면이 갱신되지 않습니다</p>
+                  <p className="text-xs text-neutral-300">{t('연결되지 않아 화면이 갱신되지 않습니다')}</p>
                   <button onClick={async () => {
                     try {
                       const updated = await api.post<CamInfo>('/cameras/connect', { id: settingsCamera.id })
@@ -966,7 +967,7 @@ export default function CamerasPage() {
                       bumpPreview([settingsCamera.id])
                     } catch { /* 연결 실패는 카드 쪽 흐름에서 다룬다 */ }
                   }}
-                    className="px-3 py-1 text-xs rounded bg-green-600 hover:bg-green-500 text-white">연결</button>
+                    className="px-3 py-1 text-xs rounded bg-green-600 hover:bg-green-500 text-white">{t('연결')}</button>
                 </div>
               )}
             </div>
@@ -975,16 +976,16 @@ export default function CamerasPage() {
             <div className="space-y-4 min-h-0 overflow-y-auto pr-1">
             {/* 이름 — 등록 여부와 무관하게 여기서 고칠 수 있다 */}
             <div className="space-y-1">
-              <span className="text-xs text-neutral-400">이름</span>
+              <span className="text-xs text-neutral-400">{t('이름')}</span>
               <input type="text" defaultValue={settingsCamera.label ?? ''} key={`label-${settingsCamera.id}`}
                 onBlur={(e) => {
                   const v = e.target.value.trim()
                   if (v !== (settingsCamera.label ?? '')) handleLabel(settingsCamera.id, v)
                 }}
-                placeholder="예: 탑뷰, 손목"
+                placeholder={t('예: 탑뷰, 손목')}
                 className="w-full px-2 py-1.5 text-sm rounded bg-neutral-900 border border-neutral-700 text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-blue-500" />
               <p className="text-[10px] text-neutral-500">
-                화면에서 알아보기 위한 이름입니다. 데이터셋 피처 이름은 바뀌지 않습니다.
+                {t('화면에서 알아보기 위한 이름입니다. 데이터셋 피처 이름은 바뀌지 않습니다.')}
               </p>
             </div>
 
@@ -995,14 +996,14 @@ export default function CamerasPage() {
                   <input type="checkbox" className="accent-blue-500"
                     checked={settingsCamera.light_alarm !== false}
                     onChange={(e) => handleLightAlarm(settingsCamera.id, e.target.checked)} />
-                  조명이 바뀌면 알린다
+                  {t('조명이 바뀌면 알린다')}
                 </label>
                 <p className="text-[10px] text-neutral-500">
-                  끄면 <b>경보만</b> 안 뜹니다 — 밝기·색 측정은 계속하므로 수집·추론 화면의
-                  표시와 에피소드 뷰어는 그대로입니다.
+                  {t.rich('끄면 {b} 안 뜹니다 — 밝기·색 측정은 계속하므로 수집·추론 화면의 표시와 에피소드 뷰어는 그대로입니다.', { b: <b>{t('경보만')}</b> })}
                   <br />
-                  손목처럼 <b>팔과 같이 움직이는</b> 카메라는 조명이 늘 바뀌어 경보가 맞는
-                  말이어도 쓸모가 없고, 그런 경보는 옆의 진짜 경보까지 묻습니다.
+                  {t.rich('손목처럼 {b} 카메라는 조명이 늘 바뀌어 경보가 맞는 말이어도 쓸모가 없고, 그런 경보는 옆의 진짜 경보까지 묻습니다.', {
+                    b: <b>{t('팔과 같이 움직이는')}</b>,
+                  })}
                 </p>
               </div>
             )}
@@ -1023,30 +1024,30 @@ export default function CamerasPage() {
               return (
                 <div className="space-y-1.5 rounded border border-neutral-700 p-2 text-xs">
                   <label className="flex items-center gap-2 text-neutral-300">
-                    <span className="w-24 shrink-0">캡처 해상도</span>
+                    <span className="w-24 shrink-0">{t('캡처 해상도')}</span>
                     <select value={key(cap)} disabled={sizes.length === 0}
                       onChange={(e) => handleResolution(settingsCamera.id, parse(e.target.value), out)}
                       className="flex-1 rounded bg-neutral-900 border border-neutral-700 px-2 py-0.5 font-mono">
-                      <option value="">자동 (요청 해상도)</option>
+                      <option value="">{t('자동 (요청 해상도)')}</option>
                       {sizes.map((m) => (
                         <option key={`${m.w}x${m.h}`} value={`${m.w}x${m.h}`}>
-                          {m.w}×{m.h}{m.fps ? ` · 최대 ${m.fps}fps` : ''}
+                          {m.w}×{m.h}{m.fps ? t(' · 최대 {fps}fps', { fps: m.fps }) : ''}
                         </option>
                       ))}
                     </select>
                   </label>
                   <label className="flex items-center gap-2 text-neutral-300">
-                    <span className="w-24 shrink-0">출력 해상도</span>
+                    <span className="w-24 shrink-0">{t('출력 해상도')}</span>
                     <select value={key(out)} disabled={sizes.length === 0}
                       onChange={(e) => handleResolution(settingsCamera.id, cap, parse(e.target.value))}
                       className="flex-1 rounded bg-neutral-900 border border-neutral-700 px-2 py-0.5 font-mono">
-                      <option value="">원본 해상도</option>
+                      <option value="">{t('원본 해상도')}</option>
                       {sizes.map((m) => {
                         // 캡처보다 큰 출력은 확대다 — 화질이 늘지 않고 데이터만 커진다
                         const bigger = !!cap && m.w * m.h > cap[0] * cap[1]
                         return (
                           <option key={`${m.w}x${m.h}`} value={`${m.w}x${m.h}`} disabled={bigger}>
-                            {m.w}×{m.h}{bigger ? ' (캡처보다 큼)' : ''}
+                            {m.w}×{m.h}{bigger ? t(' (캡처보다 큼)') : ''}
                           </option>
                         )
                       })}
@@ -1054,13 +1055,14 @@ export default function CamerasPage() {
                   </label>
                   {sizes.length === 0 ? (
                     <p className="text-[10px] text-amber-400">
-                      장치가 지원 해상도를 알려주지 않습니다 — 데몬이 꺼져 있거나 장치가 연속 크기를 신고합니다.
+                      {t('장치가 지원 해상도를 알려주지 않습니다 — 데몬이 꺼져 있거나 장치가 연속 크기를 신고합니다.')}
                     </p>
                   ) : (
                     <p className="text-[10px] text-neutral-500">
-                      많은 카메라가 저해상도를 <b>센서 가운데를 잘라서</b> 만듭니다 — 낮은 캡처 해상도는 화각이 좁습니다.
-                      넓은 캡처(예: 1280×960)에 원하는 출력(예: 640×480)을 고르면 <b>화각은 넓게, 데이터셋 크기는 그대로</b>.
-                      비율이 다르면 가운데를 잘라 맞춥니다(늘이지 않습니다). 출력이 원본이면 받은 그대로 내보냅니다.
+                      {t.rich('많은 카메라가 저해상도를 {b} 만듭니다 — 낮은 캡처 해상도는 화각이 좁습니다. 넓은 캡처(예: 1280×960)에 원하는 출력(예: 640×480)을 고르면 {b_2}. 비율이 다르면 가운데를 잘라 맞춥니다(늘이지 않습니다). 출력이 원본이면 받은 그대로 내보냅니다.', {
+                        b: <b>{t('센서 가운데를 잘라서')}</b>,
+                        b_2: <b>{t('화각은 넓게, 데이터셋 크기는 그대로')}</b>,
+                      })}
                     </p>
                   )}
                 </div>
@@ -1072,71 +1074,79 @@ export default function CamerasPage() {
             {settingsCamera.stream_type !== 'depth' && (
               <div className="space-y-1.5 rounded border border-neutral-700 p-2">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-neutral-400">회색 카드 보정</span>
+                  <span className="text-xs text-neutral-400">{t('회색 카드 보정')}</span>
                   {aiming ? (
                     <span className="flex gap-1">
                       <button
                         onClick={() => { setAiming(false); setRoiReading(null) }}
                         disabled={calibrating}
                         className="px-2 py-1 text-xs rounded bg-neutral-700
-                                   hover:bg-neutral-600 disabled:opacity-50">취소</button>
+                                   hover:bg-neutral-600 disabled:opacity-50">{t('취소')}</button>
                       <button
                         onClick={() => calibrateGrayCard(settingsCamera.id)}
                         disabled={calibrating}
                         className="px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500
                                    disabled:bg-neutral-700 disabled:text-neutral-500 text-white">
-                        {calibrating ? '맞추는 중…' : '이 영역으로 맞추기'}
+                        {calibrating ? t('맞추는 중…') : t('이 영역으로 맞추기')}
                       </button>
                     </span>
                   ) : (
                     <button
                       onClick={() => startAiming(settingsCamera.id)}
                       className="px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white">
-                      보정 시작
+                      {t('보정 시작')}
                     </button>
                   )}
                 </div>
                 <label className="flex items-center gap-1.5 text-[10px] text-neutral-400 cursor-pointer"
-                       title="노출은 모션 블러와 fps 상한을 정합니다. 체크하면 지금 노출을 그대로 두고(자동 노출도 안 켭니다) 밝기를 gain 으로만 맞춥니다.">
+                       title={t('노출은 모션 블러와 fps 상한을 정합니다. 체크하면 지금 노출을 그대로 두고(자동 노출도 안 켭니다) 밝기를 gain 으로만 맞춥니다.')}>
                   <input type="checkbox" checked={gainOnly} onChange={toggleGainOnly}
                          disabled={calibrating} className="accent-blue-500" />
-                  노출 고정 — 밝기는 gain 으로만 보정
+                  {t('노출 고정 — 밝기는 gain 으로만 보정')}
                 </label>
                 {aiming ? (
                   <>
                     <p className="text-[10px] text-neutral-500">
-                      왼쪽 화면에서 <b>카드 위를 클릭·드래그</b>해 노란 상자를 옮기고,
-                      <b> 휠로 크기</b>를 맞추세요. 상자 안쪽만 계산에 씁니다.
+                      {t.rich('왼쪽 화면에서 {b}해 노란 상자를 옮기고,{b_2}를 맞추세요. 상자 안쪽만 계산에 씁니다.', {
+                        b: <b>{t('카드 위를 클릭·드래그')}</b>,
+                        b_2: <b>{' '}{t('휠로 크기')}</b>,
+                      })}
                     </p>
                     {roiReading && (
                       <p className={`text-[10px] tabular-nums ${roiReading.usable
                         ? 'text-neutral-400' : 'text-amber-400'}`}>
-                        지금 상자: 밝기 {roiReading.luma} · 색 치우침{' '}
-                        {roiReading.neutral_error_pct}% · 얼룩 {roiReading.spread_pct}%
-                        {!roiReading.usable && ` — ${roiReading.why}`}
+                        {t.rich('지금 상자: 밝기 {luma} · 색 치우침 {neutral_error_pct}% · 얼룩 {spread_pct}%{usable}', {
+                          luma: roiReading.luma,
+                          neutral_error_pct: roiReading.neutral_error_pct,
+                          spread_pct: roiReading.spread_pct,
+                          usable: !roiReading.usable && ` — ${roiReading.why}`,
+                        })}
                       </p>
                     )}
                   </>
                 ) : (
                   <p className="text-[10px] text-neutral-500">
-                    회색 카드를 화면에 두고 누르면 영역을 고르게 됩니다. 자동 노출·WB 를
-                    잠깐 켜 카드에 맞춘 뒤 <b>잠그고</b>, 밝기를 목표까지 보정합니다.
-                    값은 장치에만 올라갑니다 — 마음에 들면 [프로파일] 탭에서 캡처하세요.
+                    {t.rich('회색 카드를 화면에 두고 누르면 영역을 고르게 됩니다. 자동 노출·WB 를 잠깐 켜 카드에 맞춘 뒤 {b}, 밝기를 목표까지 보정합니다. 값은 장치에만 올라갑니다 — 마음에 들면 [프로파일] 탭에서 캡처하세요.', {
+                      b: <b>{t('잠그고')}</b>,
+                    })}
                   </p>
                 )}
                 {grayCard && (
                   <div className={`rounded px-2 py-1.5 text-[11px] ${grayCard.ok
                     ? 'bg-emerald-500/10 text-emerald-300'
                     : 'bg-amber-500/10 text-amber-300'}`}>
-                    <p className="font-medium">{grayCard.ok ? '맞음' : grayCard.verdict}</p>
+                    <p className="font-medium">{grayCard.ok ? t('맞음') : grayCard.verdict}</p>
                     <p className="mt-0.5 text-neutral-400 tabular-nums">
-                      밝기 {grayCard.before.luma} → <b>{grayCard.after.luma}</b>
-                      {' '}(목표 {grayCard.target}) · 색 치우침{' '}
-                      {grayCard.before.neutral_error_pct}% →{' '}
-                      <b>{grayCard.after.neutral_error_pct}%</b> · 노출{' '}
-                      {(grayCard.exposure_us / 1000).toFixed(1)}ms
+                      {t.rich('밝기 {luma} → {b} (목표 {target}) · 색 치우침 {neutral_error_pct}% → {b_2} · 노출 {exposure_us}ms', {
+                        luma: grayCard.before.luma,
+                        b: <b>{grayCard.after.luma}</b>,
+                        target: grayCard.target,
+                        neutral_error_pct: grayCard.before.neutral_error_pct,
+                        b_2: <b>{grayCard.after.neutral_error_pct}%</b>,
+                        exposure_us: (grayCard.exposure_us / 1000).toFixed(1),
+                      })}
                       {grayCard.gain != null && <> · gain {grayCard.gain}
-                        {grayCard.adjust === 'gain' && ' (노출 고정)'}</>}
+                        {grayCard.adjust === 'gain' && t(' (노출 고정)')}</>}
                       {grayCard.white_balance != null && <> · WB {grayCard.white_balance}K</>}
                     </p>
                     {/* ⚠ **결과를 본 직후가 저장이 가장 필요한 순간이다.** 이
@@ -1148,17 +1158,19 @@ export default function CamerasPage() {
                         문제였다. */}
                     <div className="mt-1 space-y-1 border-t border-current/20 pt-1">
                       <p className="text-[10px] text-amber-300">
-                        아직 <b>장치에만</b> 올라가 있습니다. 저장하지 않으면
-                        <b> 다음에 카메라를 열 때</b>(실시간 보기·녹화·추론)
-                        프로파일 값으로 되돌아갑니다.
+                        {t.rich('아직 {b} 올라가 있습니다. 저장하지 않으면{b_2}(실시간 보기·녹화·추론) 프로파일 값으로 되돌아갑니다.', {
+                          b: <b>{t('장치에만')}</b>,
+                          b_2: <b>{' '}{t('다음에 카메라를 열 때')}</b>,
+                        })}
                       </p>
                       {/* 저장 버튼이 여기 있던 적이 있다 — 프로파일 편집이 탭으로
                           생기면서 저장 경로가 둘이 됐고, 하나만 남긴다(탭).
                           캡처는 지금 장치값을 읽으므로 이 창을 닫아도 값은 남는다. */}
                       <p className="text-[10px] text-neutral-400">
-                        남기려면 이 창을 닫고 위쪽 <b>[프로파일] 탭에서 캡처</b>하세요 —
-                        지금 장치에 들어 있는 이 값이 그대로 담깁니다.
-                        {activeProfile && ` (활성 '${activeProfile}' 에 덮어쓰려면 같은 이름으로)`}
+                        {t.rich('남기려면 이 창을 닫고 위쪽 {b}하세요 — 지금 장치에 들어 있는 이 값이 그대로 담깁니다.{activeProfile}', {
+                          b: <b>{t('[프로파일] 탭에서 캡처')}</b>,
+                          activeProfile: activeProfile && t(' (활성 \'{activeProfile}\' 에 덮어쓰려면 같은 이름으로)', { activeProfile }),
+                        })}
                       </p>
                     </div>
                   </div>
@@ -1171,20 +1183,20 @@ export default function CamerasPage() {
                 넓게 잡은 값이라, 1m 안쪽 작업이면 절반을 버리는 셈이다. */}
             {settingsCamera.stream_type === 'depth' && (
               <div className="space-y-1.5">
-                <label className="text-xs text-neutral-400">깊이 범위</label>
+                <label className="text-xs text-neutral-400">{t('깊이 범위')}</label>
                 {/* ⚠ **끄는 동안에는 안 보낸다** (`onCommit`). 한 번이 장치 RPC 라
                     틱마다 보내면 그 자체가 부하고, 배타 가드(`require_idle`)도
                     매번 탄다. 놓는 순간 한 번만 반영된다.
                     ⚠ 두 손잡이는 서로의 한계다 — `far > near` 는 백엔드 규칙이라
                     끌어서 넘길 수 있게 두면 놓는 순간 거부당한다. */}
-                <ParamSlider label="가까운 쪽" unit="mm"
+                <ParamSlider label={t('가까운 쪽')} unit="mm"
                   value={depthDraft.near_mm}
                   min={0}
                   max={Math.max(0, depthDraft.far_mm - DEPTH_STEP)}
                   step={DEPTH_STEP}
                   onChange={(v) => setDepthDraft((d) => ({ ...d, near_mm: v }))}
                   onCommit={(v) => setDepthRange(settingsCamera.id, v, null)} />
-                <ParamSlider label="먼 쪽" unit="mm"
+                <ParamSlider label={t('먼 쪽')} unit="mm"
                   value={depthDraft.far_mm}
                   min={depthDraft.near_mm + DEPTH_STEP}
                   max={Math.max(DEPTH_SLIDER_MAX, depthDraft.far_mm)}
@@ -1195,16 +1207,20 @@ export default function CamerasPage() {
                     계산되는 걸 오래 못 알아챘다 — 아래 mm 는 이 값으로 환산된 것이다. */}
                 {settingsCamera.depth_units_m && settingsCamera.depth_units_m !== 0.001 && (
                   <p className="text-[10px] text-neutral-400">
-                    이 장치는 raw 1 단위 = {(settingsCamera.depth_units_m * 1000).toFixed(2)}mm
-                    입니다 (보통 1.00mm). 위 값은 <b>실제 거리</b>이고, 환산은 rsd 가 합니다.
+                    {t.rich('이 장치는 raw 1 단위 = {depth_units_m}mm 입니다 (보통 1.00mm). 위 값은 {b}이고, 환산은 rsd 가 합니다.', {
+                      depth_units_m: (settingsCamera.depth_units_m * 1000).toFixed(2),
+                      b: <b>{t('실제 거리')}</b>,
+                    })}
                   </p>
                 )}
                 <p className="text-[10px] text-neutral-500">
-                  폭 {Math.max(0, depthDraft.far_mm - depthDraft.near_mm)}mm →
-                  {' '}1단계 ≈ {((depthDraft.far_mm - depthDraft.near_mm) / 254).toFixed(1)}mm
+                  {t('폭 {value}mm → 1단계 ≈ {far_mm}mm', {
+                    value: Math.max(0, depthDraft.far_mm - depthDraft.near_mm),
+                    far_mm: ((depthDraft.far_mm - depthDraft.near_mm) / 254).toFixed(1),
+                  })}
                   {depthEnc && (depthDraft.near_mm !== depthEnc.near_mm
                     || depthDraft.far_mm !== depthEnc.far_mm) && (
-                    <span className="ml-1 text-amber-400">· 놓으면 반영됩니다</span>
+                    <span className="ml-1 text-amber-400">{t('· 놓으면 반영됩니다')}</span>
                   )}
                 </p>
                 {/* 배경 마스킹 — 경계가 위 `먼 쪽`과 같아서 여기 둔다.
@@ -1216,7 +1232,7 @@ export default function CamerasPage() {
                                                          { enabled: e.target.checked })}
                       className="mt-0.5 accent-blue-500" />
                     <span className="text-xs text-neutral-300">
-                      이 장치의 <b>컬러</b>에서 배경 지우기
+                      {t.rich('이 장치의 {b}에서 배경 지우기', { b: <b>{t('컬러')}</b> })}
                     </span>
                   </label>
 
@@ -1224,7 +1240,7 @@ export default function CamerasPage() {
                     <>
                       {/* 경계는 깊이 창과 **따로** 둘 수 있다 — 인코딩 창은 해상도를
                           위해 좁히고, 마스킹은 더 멀리까지 남기고 싶을 때가 있다. */}
-                      <ParamSlider label="이 거리보다 멀면 지움" unit="mm"
+                      <ParamSlider label={t('이 거리보다 멀면 지움')} unit="mm"
                         value={maskFar}
                         min={DEPTH_STEP}
                         max={Math.max(DEPTH_SLIDER_MAX, maskFar)}
@@ -1238,13 +1254,13 @@ export default function CamerasPage() {
                             settingsCamera.id, { keep_unknown: e.target.checked })}
                           className="mt-0.5 accent-blue-500" />
                         <span className="text-xs text-neutral-300">
-                          깊이를 못 읽은 곳은 남기기
-                          <span className="block text-[10px] text-neutral-500">
-                            깊이가 없다고 물체가 없는 건 아닙니다 — 이 카메라는 프레임의
-                            상당 부분을 못 읽을 수 있고, 지우면 <b>물체 한가운데가
-                            뚫립니다</b>. 깊이가 잘 잡히는 장면이면 꺼서 배경을 더
-                            깔끔하게 지울 수 있습니다.
-                          </span>
+                          {t.rich('깊이를 못 읽은 곳은 남기기{span}', {
+                            span: <span className="block text-[10px] text-neutral-500">
+                            {t.rich('깊이가 없다고 물체가 없는 건 아닙니다 — 이 카메라는 프레임의 상당 부분을 못 읽을 수 있고, 지우면 {b}. 깊이가 잘 잡히는 장면이면 꺼서 배경을 더 깔끔하게 지울 수 있습니다.', {
+                              b: <b>{t('물체 한가운데가 뚫립니다')}</b>,
+                            })}
+                          </span>,
+                          })}
                         </span>
                       </label>
                     </>
@@ -1252,10 +1268,9 @@ export default function CamerasPage() {
                 </div>
 
                 <p className="text-[10px] text-neutral-500">
-                  이 구간이 0~254 로 매핑됩니다(가까울수록 어둡게). 범위 밖은 잘리고,
-                  카메라가 못 읽은 픽셀은 255(가장 멂)입니다.
-                  <b className="text-amber-500"> 녹화한 데이터의 해석이 이 값에 달려 있습니다</b> —
-                  바꾸면 이전 데이터와 픽셀값의 뜻이 달라집니다.
+                  {t.rich('이 구간이 0~254 로 매핑됩니다(가까울수록 어둡게). 범위 밖은 잘리고, 카메라가 못 읽은 픽셀은 255(가장 멂)입니다.{b} — 바꾸면 이전 데이터와 픽셀값의 뜻이 달라집니다.', {
+                    b: <b className="text-amber-500">{' '}{t('녹화한 데이터의 해석이 이 값에 달려 있습니다')}</b>,
+                  })}
                 </p>
               </div>
             )}
@@ -1294,21 +1309,21 @@ export default function CamerasPage() {
             {/* 이미지 조정 (v4l2 컨트롤) */}
             <div className="border-t border-neutral-700 pt-3 space-y-1.5">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-neutral-400">이미지 조정</span>
+                <span className="text-xs text-neutral-400">{t('이미지 조정')}</span>
                 {controls.length > 0 && (
                   <button onClick={() => handleResetControls(settingsCamera.id)} disabled={busyId === settingsCamera.id}
                     className="px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-orange-600 text-neutral-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                    {busyId === settingsCamera.id ? '처리 중…' : '초기화'}
+                    {busyId === settingsCamera.id ? t('처리 중…') : t('초기화')}
                   </button>
                 )}
               </div>
               {controls.length === 0 ? (
-                <p className="text-xs text-neutral-500">지원되는 컨트롤이 없습니다</p>
+                <p className="text-xs text-neutral-500">{t('지원되는 컨트롤이 없습니다')}</p>
               ) : controls.map((ctrl) => {
                 const locked = ctrl.inactive || ctrl.readonly
                 return (
                   <div key={ctrl.name} className={`flex items-center gap-2 text-xs ${locked ? 'opacity-40' : ''}`}>
-                    <span className="text-neutral-400 w-28 shrink-0 truncate" title={ctrl.label + (locked ? ' (자동 모드에 의해 잠김)' : '')}>{ctrl.label}</span>
+                    <span className="text-neutral-400 w-28 shrink-0 truncate" title={ctrl.label + (locked ? t(' (자동 모드에 의해 잠김)') : '')}>{ctrl.label}</span>
                     {ctrl.type === 2 ? (
                       <input type="checkbox" checked={ctrl.value !== 0} disabled={locked}
                         onChange={(e) => handleControl(settingsCamera.id, ctrl.name, e.target.checked ? 1 : 0)}
