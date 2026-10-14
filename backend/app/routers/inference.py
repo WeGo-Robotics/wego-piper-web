@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from app.core.cli_mapping import checkpoint_dim_problem
 from app.services.process_manager import process_manager
 from app.services.model_scanner import get_model
 from app.services.robot_manager import robot_manager
@@ -76,6 +77,12 @@ async def validate_config(body: ValidateRequest):
 
     reqs = model.get("requirements", {})
     required_cameras = reqs.get("required_cameras", [])
+    # ⚠ **config 와 학습된 통계의 길이가 다르면 시작을 막는다.** 아래 관절 수 검사는 config 만
+    # 보므로 이 체크포인트를 "자동 패딩/트림" 경고로 통과시켰고, 추론은 시작한 뒤 정규화에서
+    # 매 프레임 죽었다 (실기 2026-10-14).
+    problem = checkpoint_dim_problem(model.get("path", ""))
+    if problem:
+        errors.append(problem)
     state_dim = reqs.get("state_dim", 0)
     action_dim = reqs.get("action_dim", 0)
 

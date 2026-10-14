@@ -6,7 +6,9 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-from app.core.cli_mapping import build_inference_args, build_grpc_client_args
+from app.core.cli_mapping import (
+    build_grpc_client_args, build_inference_args, checkpoint_dim_problem,
+)
 from app.core.config import settings
 from app.core.policies import takes_language
 from app.services.exclusivity import Activity, require_idle
@@ -305,9 +307,26 @@ class InferenceStartCustomRequest(BaseModel):
     args: list[str]  # 직접 편집된 CLI 인자 리스트
 
 
+def _checkpoint_flag_value(args: list[str]) -> str:
+    """직접 편집한 추론 인자에서 체크포인트 경로를 찾는다 (`--flag v` · `--flag=v` 둘 다)."""
+    flags = ("--policy-path", "--pretrained-path")
+    for i, a in enumerate(args):
+        for flag in flags:
+            if a == flag and i + 1 < len(args):
+                return args[i + 1]
+            if a.startswith(flag + "="):
+                return a.split("=", 1)[1]
+    return ""
+
+
 @router.post("/inference/start")
 async def start_inference(body: InferenceStartRequest):
     require_idle(Activity.INFERENCE)
+    # ⚠ **화면의 검증(`/inference/validate`)만 믿지 않는다.** 그건 화면이 부르는 것이라 API 로
+    #   직접 들어오면 안 거친다. 어긋난 체크포인트는 시작한 뒤 매 프레임 정규화에서 죽는다.
+    problem = checkpoint_dim_problem(body.checkpoint_path)
+    if problem:
+        raise HTTPException(400, problem)
     robot_type = body.robot_type or robot_manager.selected_type
     if not robot_type:
         raise HTTPException(400, "로봇이 선택되지 않았습니다. 로봇 페이지에서 먼저 선택하세요.")
@@ -377,6 +396,10 @@ async def start_inference_custom(body: InferenceStartCustomRequest):
     require_idle(Activity.INFERENCE)
     if not body.args:
         raise HTTPException(400, "CLI 인자가 비어있습니다")
+    # ⚠ 직접 편집한 인자도 같은 체크포인트를 돈다 — 위 `/inference/start` 와 같은 이유다.
+    problem = checkpoint_dim_problem(_checkpoint_flag_value(body.args))
+    if problem:
+        raise HTTPException(400, problem)
 
     # 추론 전 연결된 모든 카메라 해제 (wrapper가 카메라를 직접 열므로)
     release_all_cameras("inference")

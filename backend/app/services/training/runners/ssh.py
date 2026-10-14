@@ -53,6 +53,15 @@ __all__ = ["SSHRunner", "SSHTarget", "available"]
 # 원격 스크립트가 끝나면서 찍는 줄. 로그 스트림이 곧 상태 채널이 된다.
 _EXIT_MARK = "__PIPER_EXIT__"
 
+# 이어 학습 base 의 길이를 데이터셋에 맞추는 단계(`core/base_align.py`)를 감싸는 표식.
+# `restore()` 가 이 사이의 줄을 명령으로 오인하지 않게 한다.
+_ALIGN_BEGIN = "# piper-align-begin"
+_ALIGN_END = "# piper-align-end"
+_ALIGN_EOF = "PIPER_ALIGN_EOF"
+#: 이 단계는 `timeout` 이 감싸는 학습 명령 **밖**이다. 모델 다운로드가 걸려 멈추면 임대
+#: 시간만 간다 — 넘기면 base 를 그대로 쓰고 이유를 로그에 남긴다.
+_ALIGN_TIMEOUT_S = 1800
+
 # `has-session` 을 다시 물어보기까지의 최소 간격. 위 마커를 놓쳤을 때만 쓰인다.
 _RECHECK_S = 5.0
 
@@ -237,6 +246,51 @@ class SSHRunner:
 
     # ── 실행 ──
 
+    @staticmethod
+    def _align_prelude(cmd: list[str]) -> list[str]:
+        """이어 학습이면 base 의 state/action 길이를 데이터셋에 맞춘 사본을 원격에서 만든다.
+
+        ⚠ **원격은 로컬 함수를 못 부른다.** 로컬(`/training/start`)은 base 가 이 기계의
+        파일이라 `align_pretrained_to_dataset()` 로 사본을 만들지만, 임대 서버의 base 는
+        Hub 에서 받는 것이라 거기서 만들어야 한다. 안 맞추면 학습은 에러 없이 끝까지 가고
+        체크포인트가 state 6 / 통계 7 로 어긋나 저장돼 추론에서 죽는다 — 몇 시간(과금)
+        뒤에 아는 버그다 (실기 2026-10-14, 로컬에서 겪음).
+
+        ⚠ **`core/base_align.py` 를 원문 그대로 싣는다.** 그 파일이 표준 라이브러리만
+        쓰는 이유다. 판정을 두 벌로 두면 로컬과 원격이 갈린다.
+
+        ⚠ **실패해도 학습은 건다.** 어떤 이유로든 사본을 못 만들면 base 를 그대로 쓰되 이유를
+        **로그에 남긴다**(stderr → 학습 로그). 조용히 건너뛰면 어긋난 체크포인트로 알게 된다.
+
+        `--policy.path` 와 `--dataset.repo_id` 가 모두 있을 때만 끼운다 — 처음부터 학습이면
+        base 가 없다. 직접 편집한 인자·`train-on` 도 같은 `cmd` 를 지나므로 같이 덮인다.
+        """
+        from pathlib import Path
+
+        from app.core import base_align
+
+        def _arg(prefix: str) -> str:
+            return next((a[len(prefix):] for a in cmd if a.startswith(prefix)), "")
+
+        base, dataset = _arg("--policy.path="), _arg("--dataset.repo_id=")
+        if not (cmd and base and dataset):
+            return []
+        source = Path(base_align.__file__).read_text()
+        if _ALIGN_EOF in source:  # 헤레독 종결자가 본문에 있으면 스크립트가 잘린다
+            raise RuntimeError("base_align.py 에 heredoc 종결자가 들어 있습니다")
+        return [
+            _ALIGN_BEGIN,
+            f"PIPER_BASE={shlex.quote(base)}",
+            f'PIPER_POLICY_PATH="$(timeout {_ALIGN_TIMEOUT_S} {shlex.quote(cmd[0])} - '
+            f'"$PIPER_BASE" {shlex.quote(dataset)} "${{TMPDIR:-/tmp}}/piper_derived" '
+            f"<<'{_ALIGN_EOF}'",
+            source.rstrip("\n"),
+            _ALIGN_EOF,
+            ')"',
+            'PIPER_POLICY_PATH="${PIPER_POLICY_PATH:-$PIPER_BASE}"',
+            _ALIGN_END,
+        ]
+
     def _build_script(self, spec: TrainJobSpec) -> str:
         """원격에서 돌 셸 스크립트.
 
@@ -257,7 +311,14 @@ class SSHRunner:
         #
         #   ⚠ 종료 코드를 **삼키지 않는다.** `timeout` 이 죽이면 124 가 그대로 아래
         #   마커로 흘러, 화면이 "끝났다" 가 아니라 "시간 초과로 끊겼다" 를 말할 수 있다.
-        cmd = shlex.join(spec.cmd)
+        parts = [shlex.quote(a) for a in spec.cmd]
+        align = self._align_prelude(spec.cmd)
+        if align:
+            lines.extend(align)
+            # ⚠ 인용을 일부러 푼 자리다 — 위에서 정한 경로가 들어와야 한다
+            parts = ['"--policy.path=$PIPER_POLICY_PATH"' if a.startswith("--policy.path=") else q
+                     for a, q in zip(spec.cmd, parts)]
+        cmd = " ".join(parts)
         if spec.max_hours and spec.max_hours > 0:
             cmd = f"timeout {int(spec.max_hours * 3600)} {cmd}"
         lines.append(cmd)
@@ -414,14 +475,24 @@ class SSHRunner:
 
         cmd: list[str] = []
         total, out_dir = 0, ""
+        in_align = False
         try:
             r = _run(self.host, f"cat {shlex.quote(self._script)}")
             for line in (r.stdout or "").splitlines():
+                # base 길이 맞춤 단계는 명령이 아니다 — 본문(파이썬 소스)을 통째로 건너뛴다
+                if line.startswith(_ALIGN_BEGIN):
+                    in_align = True
+                    continue
+                if line.startswith(_ALIGN_END):
+                    in_align = False
+                    continue
+                if in_align:
+                    continue
                 if line.startswith("# piper-total-steps:"):
                     total = int(line.split(":", 1)[1].strip() or 0)
                 elif line.startswith("# piper-output-dir:"):
                     out_dir = line.split(":", 1)[1].strip()
-                elif not line.startswith(("#", "export ", "set ", "echo ")) and line.strip():
+                elif not line.startswith(("#", "export ", "set ", "echo ", "rm ")) and line.strip():
                     cmd = shlex.split(line)
         except Exception as exc:
             logger.warning("원격 스크립트를 읽지 못했습니다 (%s): %s", self.session, exc)

@@ -368,6 +368,73 @@ def apply_dim_overrides(pretrained_path: str, state_dim: int, action_dim: int) -
         return False
 
 
+def align_pretrained_to_dataset(pretrained_path: str, dataset_root: str) -> str:
+    """이어 학습의 base 와 데이터셋의 state/action 길이가 다르면 맞춘 **사본**의 경로를 돌려준다.
+
+    판정과 사본 만들기는 `base_align` 에 있다 — 원격 학습 스크립트가 그 파일을 그대로
+    실어 가서 **같은 판정**을 쓴다. 왜 사본인지(base 는 공유 캐시라 못 고친다), 어떤
+    정책이 대상인지는 그 파일의 머리말에 있다.
+
+    부작용이 있다(사본을 만든다). **학습 시작 경로에서만** 부르고 미리보기에서는 부르지
+    않는다. 사본은 같은 입력이면 같은 경로라 다시 만들어도 같다.
+    """
+    import json
+
+    from app.core import base_align
+    from app.core.hf_layout import resolve_info_json
+
+    src = Path(pretrained_path)
+    if not (pretrained_path and dataset_root and (src / "config.json").is_file()):
+        return pretrained_path
+    info_path = resolve_info_json(Path(dataset_root))
+    if info_path is None:
+        return pretrained_path
+    try:
+        info = json.loads(info_path.read_text())
+    except Exception:
+        return pretrained_path
+
+    path, note = base_align.align(src, info, settings.log_dir / "derived_pretrained")
+    if note:
+        logging.getLogger(__name__).info("%s ← %s", note, pretrained_path)
+    return path
+
+
+def checkpoint_dim_problem(path: str) -> str | None:
+    """이 체크포인트로 추론하면 **정규화에서 죽는지** 시작 전에 알아본다. 문제가 없으면 None.
+
+    config.json 의 길이와 **실제로 학습된** 정규화 통계의 길이를 비교한다. 이어 학습에서
+    base 와 데이터셋의 길이가 달랐던 체크포인트가 여기 걸린다 — config 는 base 의 6인데
+    통계는 데이터셋의 7이다. 추론 래퍼는 state 를 config 길이로 잘라 넣으므로 (6) 대 (7)
+    로 터지고, 그것도 시작한 뒤 매 프레임 반복해서 터진다 (실기 2026-10-14).
+
+    통계 텐서를 못 읽는 옛 체크포인트·존재하지 않는 경로는 **모른다고 하고 통과**시킨다 —
+    확인할 수 없는 것을 막으면 멀쩡한 모델이 못 돈다.
+    """
+    import json
+
+    if not path:
+        return None
+    root = Path(path)
+    config_path = root / "config.json"
+    if not config_path.is_file():
+        return None
+    try:
+        cfg = json.loads(config_path.read_text())
+    except Exception:
+        return None
+    stats = checkpoint_feature_dims(path)
+    for key, section in (("observation.state", "input_features"), ("action", "output_features")):
+        shape = ((cfg.get(section) or {}).get(key) or {}).get("shape") or []
+        have, trained = (shape[0] if len(shape) == 1 else 0), stats.get(key, 0)
+        if have and trained and have != trained:
+            return (f"체크포인트가 어긋나 있습니다 — config.json 의 {key} 는 {have} 인데 "
+                    f"학습된 정규화 통계는 {trained} 입니다. 이대로 추론하면 정규화에서 실패합니다. "
+                    f"base 와 데이터셋의 길이가 달랐던 이어 학습 결과입니다 — config.json 과 "
+                    f"policy_preprocessor.json 의 shape 를 학습된 길이에 맞춰 고치세요.")
+    return None
+
+
 # 비전 백본을 ImageNet 가중치로 시작해야 하는 정책.
 # LeRobot 기본값이 `None`(랜덤)이라 명시하지 않으면 조용히 맨바닥에서 시작한다.
 # ACT 는 자체 기본값이 이미 ImageNet 이라 빠져 있다.

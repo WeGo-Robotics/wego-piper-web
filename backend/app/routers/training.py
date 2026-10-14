@@ -7,7 +7,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.core.cli_mapping import apply_dim_overrides, build_train_args, resolve_rename_map
+from app.core.cli_mapping import (
+    align_pretrained_to_dataset, apply_dim_overrides, build_train_args, resolve_rename_map,
+)
 from app.services.dataset_scanner import find_dataset_path
 from app.core.config import settings
 from app.routers.presets import register_domain
@@ -313,6 +315,15 @@ async def start_training(body: TrainStartRequest):
     #   손으로 우회하던 것을 여기서 채운다.
     remote = getattr(train_manager.runner, "is_remote", False)
     add_local_dataset_root(params, remote)
+    # ⚠ **이어 학습 base 의 state/action 길이를 데이터셋에 맞춘다** (패딩하는 정책만).
+    #   안 맞추면 학습은 끝까지 가는데 체크포인트가 state 6 / 통계 7 로 어긋나 추론에서
+    #   죽는다 — 몇 시간 뒤에 아는 버그다. base 는 건드리지 않고 사본을 쓴다.
+    #   원격은 로컬 경로가 서버에 없어 대상이 아니다.
+    pretrained_from = params.get("pretrained_path", "")
+    if not remote and pretrained_from and params.get("dataset_root"):
+        params["pretrained_path"] = align_pretrained_to_dataset(
+            pretrained_from, params["dataset_root"])
+    pretrained_aligned = params.get("pretrained_path", "") != pretrained_from
     args = build_train_args(
         params, rename_map=rename_map,
         # ⚠ 로컬 인터프리터의 절대경로는 임대 서버에 **없다.** 이미지의 venv 는
@@ -361,7 +372,10 @@ async def start_training(body: TrainStartRequest):
         except Exception as exc:
             logger.warning("가상환경 기록 물려주기 실패 (%s): %s", body.output_dir, exc)
     return {"status": "started", "pid": train_manager.runner.pid, "args": args,
-            "notes_written": notes_written, "scene_inherited": scene_inherited}
+            "notes_written": notes_written, "scene_inherited": scene_inherited,
+            # 미리보기와 다른 `--policy.path` 가 돌았다는 사실을 숨기지 않는다
+            "pretrained_aligned": ({"from": pretrained_from, "to": params["pretrained_path"]}
+                                   if pretrained_aligned else None)}
 
 
 @router.post("/start-custom")
@@ -398,6 +412,19 @@ async def start_training_custom(body: TrainCustomRequest):
         if args and args[0] == settings.grpc_python:
             args[0] = settings.train_remote_python
             note = f"원격 실행이라 인터프리터를 {settings.train_remote_python} 로 바꿨습니다"
+    else:
+        # ⚠ `/start` 와 같은 맞춤을 **직접 편집한 인자에도** 건다 — 미리보기의 `--policy.path`
+        #   는 base 그대로라, 화면에서 만든 명령도 여기로 오면 같은 어긋남을 겪는다.
+        def _arg(prefix: str) -> str:
+            return next((a[len(prefix):] for a in args if a.startswith(prefix)), "")
+
+        base, root = _arg("--policy.path="), _arg("--dataset.root=")
+        aligned = align_pretrained_to_dataset(base, root) if base and root else base
+        if aligned != base:
+            args = [f"--policy.path={aligned}" if a.startswith("--policy.path=") else a
+                    for a in args]
+            note = (f"base 모델의 state/action 길이를 데이터셋에 맞춘 사본을 썼습니다 "
+                    f"(원본은 그대로): {aligned}")
 
     try:
         await train_manager.start(

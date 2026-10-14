@@ -5,6 +5,7 @@
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -159,6 +160,106 @@ def test_apply_dim_overrides_refuses_dims_that_differ_from_weights(fake_checkpoi
     assert apply_dim_overrides(str(fake_checkpoint), 14, 14) is True
     cfg = json.loads((fake_checkpoint / "config.json").read_text())
     assert cfg["input_features"]["observation.state"]["shape"] == [14]
+
+
+# ── 이어 학습 base 의 차원 맞춤 ──────────────────────────────────────────────
+
+
+def _hub_snapshot(tmp_path, *, state=6, action=6, padded=True):
+    """HF 캐시 모양 — `snapshots/<rev>/` 안 파일이 `blobs/` 로 가는 심볼릭 링크다."""
+    blobs = tmp_path / "models--lerobot--smolvla_base" / "blobs"
+    snap = tmp_path / "models--lerobot--smolvla_base" / "snapshots" / "c83c3163"
+    blobs.mkdir(parents=True)
+    snap.mkdir(parents=True)
+    cfg = {
+        "input_features": {"observation.state": {"type": "STATE", "shape": [state]}},
+        "output_features": {"action": {"type": "ACTION", "shape": [action]}},
+    }
+    if padded:
+        cfg.update(max_state_dim=32, max_action_dim=32)
+    files = {"config.json": json.dumps(cfg), "model.safetensors": "WEIGHTS",
+             "policy_preprocessor.json": "{}"}
+    for name, body in files.items():
+        (blobs / name).write_text(body)
+        (snap / name).symlink_to(blobs / name)
+    return snap, blobs
+
+
+def _dataset(tmp_path, state=7, action=7):
+    root = tmp_path / f"ds_{state}_{action}"
+    (root / "meta").mkdir(parents=True, exist_ok=True)
+    (root / "meta" / "info.json").write_text(json.dumps({"features": {
+        "observation.state": {"dtype": "float32", "shape": [state]},
+        "action": {"dtype": "float32", "shape": [action]},
+    }}))
+    return str(root)
+
+
+def test_align_makes_a_copy_and_leaves_the_base_alone(tmp_path, monkeypatch):
+    """실화(2026-10-14): `smolvla_base`(6)를 7축 데이터셋으로 이어 학습 → 체크포인트가
+    state 6 / 통계 7 로 저장돼 추론에서 `(6) must match (7)`. base 는 공유 캐시라 고치면
+    안 된다 — blob 이 바뀌면 6축 데이터셋으로 다음 학습을 걸 때 7 이 새어 나간다."""
+    from app.core.cli_mapping import align_pretrained_to_dataset, settings
+
+    monkeypatch.setattr(settings, "log_dir", tmp_path / "logs")
+    snap, blobs = _hub_snapshot(tmp_path)
+    before = (blobs / "config.json").read_text()
+
+    ds = _dataset(tmp_path, 7, 7)
+    out = align_pretrained_to_dataset(str(snap), ds)
+
+    assert out != str(snap)
+    assert out.startswith(str(tmp_path / "logs" / "derived_pretrained"))
+    assert "smolvla_base" in out and "s7a7" in out
+    cfg = json.loads((Path(out) / "config.json").read_text())
+    assert cfg["input_features"]["observation.state"]["shape"] == [7]
+    assert cfg["output_features"]["action"]["shape"] == [7]
+    assert cfg["max_state_dim"] == 32            # 나머지는 그대로
+    # 가중치·프로세서는 링크 — 복사하지 않는다
+    weights = Path(out) / "model.safetensors"
+    assert weights.is_symlink() and weights.read_text() == "WEIGHTS"
+    # base 는 한 글자도 안 바뀐다 (config.json 은 blob 링크)
+    assert (blobs / "config.json").read_text() == before
+    assert (snap / "config.json").is_symlink()
+    # 같은 입력이면 같은 경로 (다시 불러도 쌓이지 않는다)
+    assert align_pretrained_to_dataset(str(snap), ds) == out
+
+
+def test_align_ignores_policies_whose_weights_are_bound_to_dims(tmp_path, monkeypatch):
+    """ACT 는 입력을 패딩하지 않는다 — config 만 바꾸면 `load_state_dict` 에서 죽는다."""
+    from app.core.cli_mapping import align_pretrained_to_dataset, settings
+
+    monkeypatch.setattr(settings, "log_dir", tmp_path / "logs")
+    snap, _ = _hub_snapshot(tmp_path, padded=False)
+    assert align_pretrained_to_dataset(str(snap), _dataset(tmp_path, 7, 7)) == str(snap)
+    assert not (tmp_path / "logs").exists()
+
+
+def test_align_is_a_noop_when_dims_already_match(tmp_path, monkeypatch):
+    from app.core.cli_mapping import align_pretrained_to_dataset, settings
+
+    monkeypatch.setattr(settings, "log_dir", tmp_path / "logs")
+    snap, _ = _hub_snapshot(tmp_path, state=7, action=7)
+    assert align_pretrained_to_dataset(str(snap), _dataset(tmp_path, 7, 7)) == str(snap)
+    assert not (tmp_path / "logs").exists()
+
+
+def test_align_refuses_dims_the_model_cannot_pad(tmp_path, monkeypatch):
+    """데이터셋이 max_state_dim(32)보다 넓으면 맞추지 않는다 — 조용히 자르는 쪽보다 낫다."""
+    from app.core.cli_mapping import align_pretrained_to_dataset, settings
+
+    monkeypatch.setattr(settings, "log_dir", tmp_path / "logs")
+    snap, _ = _hub_snapshot(tmp_path)
+    assert align_pretrained_to_dataset(str(snap), _dataset(tmp_path, 40, 40)) == str(snap)
+
+
+def test_align_without_a_readable_dataset_does_nothing(tmp_path, monkeypatch):
+    from app.core.cli_mapping import align_pretrained_to_dataset, settings
+
+    monkeypatch.setattr(settings, "log_dir", tmp_path / "logs")
+    snap, _ = _hub_snapshot(tmp_path)
+    assert align_pretrained_to_dataset(str(snap), str(tmp_path / "missing")) == str(snap)
+    assert align_pretrained_to_dataset(str(snap), "") == str(snap)
 
 
 def test_pretrained_skips_policy_type():

@@ -612,6 +612,31 @@ export default function TrainingPage() {
                       ))}
                     </div>
                   )}
+                  {/* ⚠ base 와 데이터셋의 길이가 다르면 말해 준다. 아래 데이터셋 정보의 경고는
+                      데이터셋의 state 와 action 을 서로 비교할 뿐이라 이 경우를 못 본다 —
+                      SmolVLA 는 길이가 달라도 학습이 에러 없이 끝나고, 어긋난 체크포인트로
+                      추론에서야 알게 된다 (실기 2026-10-14). */}
+                  {(() => {
+                    const feats = datasets.find((d) => d.id === selectedDataset)?.features
+                    const dsState = feats?.['observation.state']?.shape?.[0]
+                    const dsAction = feats?.['action']?.shape?.[0]
+                    if (!dsState || !dsAction) return null
+                    if (dsState === r.state_dim && dsAction === r.action_dim) return null
+                    // 입력을 max_*_dim 으로 패딩하는 정책(smolvla·pi0 계열)이면 가중치가 길이에
+                    // 묶이지 않는다 — 백엔드가 시작 때 사본으로 맞춘다 (core/base_align.py).
+                    const pads = typeof m.config?.max_state_dim === 'number'
+                      && typeof m.config?.max_action_dim === 'number'
+                    const vars = { baseState: r.state_dim, baseAction: r.action_dim, dsState, dsAction }
+                    return pads ? (
+                      <p className="text-amber-400">
+                        {t('base 모델은 state {baseState} / action {baseAction} 이고 데이터셋은 state {dsState} / action {dsAction} 입니다. 이 정책은 입력을 패딩하므로 학습을 시작할 때 base 의 길이를 데이터셋에 맞춘 사본을 씁니다 (원본 base 는 그대로).', vars)}
+                      </p>
+                    ) : (
+                      <p className="text-red-400">
+                        {t('base 모델은 state {baseState} / action {baseAction} 이고 데이터셋은 state {dsState} / action {dsAction} 입니다. 이 정책은 가중치가 길이에 묶여 있어 이어 학습이 시작 직후 실패합니다 — 처음부터 학습하거나 길이가 같은 base 를 고르세요.', vars)}
+                      </p>
+                    )
+                  })()}
                   <div className="text-[10px] text-neutral-600 truncate">{m.path}</div>
                 </div>
               )
