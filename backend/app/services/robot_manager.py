@@ -198,7 +198,14 @@ def lost_arms() -> list[dict]:
 
 
 def get_usb_info() -> dict:
+    # 멈춘 USB 면 robotd 가 두 번 읽어 확정한다(1초) — 기본 타임아웃으로 충분하다
     return _call("usb_info", default={}) or {}
+
+
+def get_usb_stuck() -> dict:
+    """USB 가 **커널에서 멈췄는가**. robotd 가 `/proc` 으로 판정한다 (컨테이너는 호스트 프로세스를
+    못 본다). 짧은 타임아웃 — 감시 루프가 부르는 가벼운 조회다. 데몬이 없으면 빈 dict."""
+    return _call("usb_stuck", default={}, timeout=2) or {}
 
 
 def recover_usb_controllers(pci_addrs: list[str] | None = None) -> tuple[bool, str, list[str]]:

@@ -75,7 +75,7 @@ _METHODS = {
     "get_gripper_effort", "set_gripper_effort",
     "get_gripper_stroke", "set_gripper_stroke", "capture_gripper_end", "clear_gripper_end",
     "init_interface", "down_interface", "check_active", "unhealthy_reason", "sniff_ids",
-    "rename_interface", "recover_usb", "usb_info",
+    "rename_interface", "recover_usb", "usb_info", "usb_stuck",
     "lost",
 }
 

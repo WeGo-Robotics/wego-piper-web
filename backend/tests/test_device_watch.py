@@ -269,7 +269,12 @@ def test_message_text_comes_from_the_backend():
     assert "USB 연결을 확인하세요" in Path(W.__file__).read_text()
     page = (Path(W.__file__).resolve().parents[3]
             / "frontend/src/components/DeviceAlerts.tsx").read_text()
-    assert "USB" not in page.split("*/", 1)[-1], "화면이 문구를 직접 만들고 있다"
+    body = page.split("*/", 1)[-1]
+    # 화면이 "무엇을 하라"는 **문장**을 만들면 안 된다. 경보의 출처 이름(`t('USB')`)은 라벨이지
+    # 문장이 아니다 — 예전에는 "USB" 글자 자체를 막았지만, 커널에서 멈춘 USB 경보(`kind: 'usb'`)가
+    # 생기면서 그 라벨이 필요해졌다.
+    for sentence in ("USB 연결", "확인하세요", "끊겼습니다", "재부팅하세요"):
+        assert sentence not in body, f"화면이 문구를 직접 만들고 있다: {sentence!r}"
 
 
 # ── 데몬이 판정한 것을 먼저 쓴다 ────────────────────────────────────────────

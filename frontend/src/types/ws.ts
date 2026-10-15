@@ -61,13 +61,14 @@ export const LOCAL_JOB_ID = 'local'
 /** 장치가 사라졌다/돌아왔다. 문구는 **백엔드가 만든다** — 화면이 문장을 조립하면
  *  한쪽만 고쳐져 어긋난다 (`usb_warning` 과 같은 규칙). */
 export type DeviceAlert = {
-  kind: 'robot' | 'camera'
+  kind: 'robot' | 'camera' | 'usb'
   id: string
   name: string
   /** `device_gone` = 그 장치의 USB / `daemon_down` = 데몬이 내려갔다 /
    *  `all_gone` = 한꺼번에 전부 (데몬 또는 USB 컨트롤러 — 확인법이 다르다).
    *  안 가르면 데몬이 죽었을 때 USB 를 확인하러 가게 만든다. */
-  reason: 'device_gone' | 'daemon_down' | 'all_gone' | 'stalled'
+  /** `kernel_stuck` = USB 가 커널 안에서 멈췄다 — 프로그램으로는 못 풀고 **재부팅**이다. */
+  reason: 'device_gone' | 'daemon_down' | 'all_gone' | 'stalled' | 'kernel_stuck'
   text: string
 }
 

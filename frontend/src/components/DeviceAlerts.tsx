@@ -31,9 +31,11 @@ export default function DeviceAlerts() {
         id: `${PREFIX}${a.id}`,
         // `daemon_down`·`stalled` 는 사람이 고칠 수 있는 것이라 경고,
         // 장치가 없어진 것은 오류다. 판정은 백엔드가 `reason` 으로 준다.
-        level: a.reason === 'device_gone' ? 'error' : 'warn',
+        // 커널에서 멈춘 USB 는 오류다 — 사람이 할 수 있는 건 재부팅뿐이고, 다른 경보들은 그
+        // 증상이다.
+        level: a.reason === 'device_gone' || a.reason === 'kernel_stuck' ? 'error' : 'warn',
         text: a.text,
-        source: a.kind === 'robot' ? t('로봇') : t('카메라'),
+        source: a.kind === 'robot' ? t('로봇') : a.kind === 'usb' ? t('USB') : t('카메라'),
       })
     }
   }

@@ -171,7 +171,15 @@ function ParkingPanel({ iface }: { iface: string }) {
 }
 
 // ── USB 진단/복구 모달 ──
-type UsbInfo = { flat: string; tree: string; controllers: string[] }
+type UsbStuckTask = { pid: number; tid: number; comm: string; wchan: string }
+type UsbInfo = {
+  flat: string; tree: string; controllers: string[]
+  /** USB 가 **커널 안에서** 멈췄다 — 컨트롤러 복구로 안 풀리고 재부팅뿐이다. 판정·문장은 robotd 가 한다. */
+  kernel_stuck?: boolean
+  stuck?: UsbStuckTask[]
+  advice?: string | null
+  kernel_log?: string[]
+}
 
 function UsbInfoModal({ onClose }: { onClose: () => void }) {
   const t = useT()
@@ -218,12 +226,34 @@ function UsbInfoModal({ onClose }: { onClose: () => void }) {
               className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 disabled:opacity-50">
               {t('새로고침')}
             </button>
-            <button onClick={handleRecover} disabled={recovering}
-              className="px-3 py-1 text-xs rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-50 flex items-center gap-1">
+            {/* 커널에서 멈춘 USB 는 재바인딩으로 안 풀린다 — 누르면 그 요청까지 같은 곳에 걸려
+                robotd 가 멈춘다. 백엔드도 거절하지만 **누르게 두지 않는다.** */}
+            <button onClick={handleRecover} disabled={recovering || !!info?.kernel_stuck}
+              title={info?.kernel_stuck ? t('USB 가 커널에서 멈춰 있어 복구를 시도할 수 없습니다 — 재부팅하세요') : undefined}
+              className="px-3 py-1 text-xs rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1">
               {recovering ? <><Spinner />{' '}{t('복구 중...')}</> : t('USB 컨트롤러 복구')}
             </button>
           </div>
         </div>
+
+        {/* 가장 먼저, 가장 크게 — 아래 lsusb 가 "timed out" 만 보여주면 사람은 컨트롤러 복구를
+            누른다. 원인과 할 일(재부팅)을 직접 말한다. 문장은 판정한 쪽(robotd)이 만든다. */}
+        {info?.kernel_stuck && (
+          <div className="rounded-lg border border-red-500/60 bg-red-500/10 p-3 space-y-2" role="alert">
+            <div className="text-sm font-bold text-red-300">{t('컴퓨터를 재부팅하세요')}</div>
+            <p className="text-xs text-red-100 whitespace-pre-wrap">{info.advice}</p>
+            {info.stuck && info.stuck.length > 0 && (
+              <ul className="text-[11px] font-mono text-red-200/90 space-y-0.5">
+                {info.stuck.map((s) => (
+                  <li key={s.tid}>{s.comm} <span className="text-red-300/70">pid {s.pid}</span> · {s.wchan && s.wchan !== '0' ? s.wchan : t('(대기 지점 비공개)')}</li>
+                ))}
+              </ul>
+            )}
+            {info.kernel_log && info.kernel_log.length > 0 && (
+              <pre className="text-[10px] font-mono text-red-200/70 whitespace-pre-wrap max-h-24 overflow-y-auto">{info.kernel_log.join('\n')}</pre>
+            )}
+          </div>
+        )}
 
         {info?.controllers && info.controllers.length > 0 && (
           <div className="text-xs text-neutral-400">

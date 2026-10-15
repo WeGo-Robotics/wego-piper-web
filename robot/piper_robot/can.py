@@ -32,14 +32,36 @@ def _is_root() -> bool:
     return os.geteuid() == 0
 
 
-def _run_cmd(cmd: list[str], sudo: bool = False) -> tuple[int, str, str]:
+def _run_cmd(cmd: list[str], sudo: bool = False, timeout: float = 8,
+             input_text: str | None = None) -> tuple[int, str, str]:
+    """명령을 돌리고 `(returncode, stdout, stderr)`. **타임아웃 뒤에는 기다리지 않는다.**
+
+    ⚠ `subprocess.run(timeout=)` 은 시간이 지나면 죽이고 **`wait()` 로 끝나기를 기다린다.**
+    커널 안에서 멈춘 USB(`lsusb`·`tee unbind` 가 D 상태로 걸린다)에서는 SIGKILL 로도 안 끝나서,
+    이 함수를 부른 **robotd 의 RPC 스레드가 영영 안 돌아온다** — 안전 데몬이 진단 버튼 하나로
+    멈춘다. 그래서 죽이고 바로 돌아오며, 회수는 뒷전 스레드에 맡긴다.
+    """
+    import threading
+
     if sudo and not _is_root():
         cmd = ["sudo", "-n"] + cmd
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
-        return r.returncode, r.stdout.strip(), r.stderr.strip()
+        p = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE if input_text is not None else None,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     except Exception as exc:
         return -1, "", str(exc)
+    try:
+        out, err = p.communicate(input=input_text, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        threading.Thread(target=p.wait, daemon=True, name="reap-cmd").start()
+        return -1, "", f"Command {cmd!r} timed out after {timeout:g} seconds"
+    except Exception as exc:
+        p.kill()
+        threading.Thread(target=p.wait, daemon=True, name="reap-cmd").start()
+        return -1, "", str(exc)
+    return p.returncode, (out or "").strip(), (err or "").strip()
 
 
 def slot_to_can_name(slot: str) -> str:
@@ -382,13 +404,26 @@ XHCI_DRIVER_DIR = Path("/sys/bus/pci/drivers/xhci_hcd")
 
 
 def get_usb_info() -> dict:
-    """lsusb 출력(목록 + 트리)을 반환. root 권한 불필요."""
+    """lsusb 출력(목록 + 트리) + **USB 가 커널에서 멈췄는지**. root 권한 불필요.
+
+    멈춘 것을 **먼저** 본다. 멈춘 USB 에서는 `lsusb` 가 타임아웃(8초)까지 걸려 응답이 느려지고,
+    눌러 볼 때마다 멈춘 프로세스가 하나씩 쌓인다 — 그래서 멈춘 것으로 판정되면 돌리지 않는다.
+    """
+    from piper_robot import usbstuck
+
+    tasks = usbstuck.stuck_now()
+    rep = usbstuck.report(tasks, usbstuck.kernel_hints() if tasks else [])
+    if tasks:
+        skipped = "(건너뜀 — USB 가 커널에서 멈춰 있어 lsusb 가 응답하지 않습니다)"
+        return {"flat": skipped, "tree": skipped,
+                "controllers": list_xhci_controllers(), **rep}
     rc1, flat, err1 = _run_cmd(["lsusb"])
     rc2, tree, err2 = _run_cmd(["lsusb", "-t"])
     return {
         "flat": flat if rc1 == 0 else f"(lsusb 실패: {err1})",
         "tree": tree if rc2 == 0 else f"(lsusb -t 실패: {err2})",
         "controllers": list_xhci_controllers(),
+        **rep,
     }
 
 
@@ -411,12 +446,7 @@ def _sysfs_write(path: str, value: str) -> tuple[int, str, str]:
             return 0, "", ""
         except Exception as exc:
             return -1, "", str(exc)
-    cmd = ["sudo", "-n", "/usr/bin/tee", path]
-    try:
-        r = subprocess.run(cmd, input=value, capture_output=True, text=True, timeout=8)
-        return r.returncode, r.stdout.strip(), r.stderr.strip()
-    except Exception as exc:
-        return -1, "", str(exc)
+    return _run_cmd(["sudo", "-n", "/usr/bin/tee", path], input_text=value)
 
 
 def recover_usb_controllers(pci_addrs: list[str] | None = None) -> tuple[bool, str, list[str]]:
@@ -426,6 +456,15 @@ def recover_usb_controllers(pci_addrs: list[str] | None = None) -> tuple[bool, s
     pci_addrs 미지정 시 바인딩된 모든 xhci_hcd 컨트롤러 대상.
     반환: (성공여부, 메시지, 처리된 주소 목록)
     """
+    # ⚠ **커널에서 멈춘 USB 는 재바인딩으로 안 풀린다.** unbind 가 같은 mutex 에 걸려 그 쓰기가
+    # D 상태로 들어가고, 부른 쪽(robotd)의 RPC 스레드가 거기서 멈춘다 — 안전 데몬이다.
+    # 해법은 재부팅뿐이므로 시도하지 않고 그렇게 말한다.
+    from piper_robot import usbstuck
+
+    tasks = usbstuck.stuck_now()
+    if tasks:
+        return False, usbstuck.describe(tasks), []
+
     addrs = pci_addrs or list_xhci_controllers()
     if not addrs:
         return False, "xhci_hcd 컨트롤러를 찾을 수 없습니다", []

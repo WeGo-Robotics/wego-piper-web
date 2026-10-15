@@ -613,6 +613,20 @@ class RobotHub:
 
         return get_usb_info()
 
+    def usb_stuck(self) -> dict:
+        """USB 가 커널에서 멈췄는가 — **감시 루프용**. `/proc` 한 번 읽기라 가볍다.
+
+        두 번 읽어 확정하는 `usb_info` 와 달리 **이전 호출과 비교**한다(`StuckTracker`).
+        게이트웨이가 2초마다 부르므로 그 간격이 곧 "연속 관찰"이다 — 여기서 잠들지 않는다.
+        robotd 의 RPC 는 한 줄로 직렬이라 이 호출이 오래 걸리면 팔 제어 RPC 가 같이 밀린다.
+        """
+        from piper_robot import usbstuck
+
+        tracker = getattr(self, "_usb_tracker", None)
+        if tracker is None:
+            tracker = self._usb_tracker = usbstuck.StuckTracker()
+        return usbstuck.report(tracker.observe())
+
 
 def _up_directions(arm, now_norm: dict, joints: list[str]) -> dict[str, int]:
     """손목 관절마다 **어느 부호가 팔을 들어올리나**.

@@ -133,7 +133,7 @@ def _survey_cameras() -> tuple[set[str], set[str]]:
 
 @dataclass(frozen=True)
 class Alert:
-    kind: str        # "robot" | "camera"
+    kind: str        # "robot" | "camera" | "usb"
     ident: str       # iface 또는 cam_id
     name: str        # 사람이 알아볼 이름 (별칭·역할)
     reason: str      # "device_gone" | "daemon_down"
@@ -176,6 +176,16 @@ def _stalled(kind: str, ident: str, name: str) -> Alert:
                  f"{what} {name} 의 발행이 멈췄습니다 ({ident}). **장치는 꽂혀 있습니다** — "
                  "데몬이 스트림을 놓친 것이라 다시 연결하면 됩니다. "
                  "이 상태로 녹화·추론을 시작하면 시작하자마자 실패합니다.")
+
+
+def _usb_stuck(text: str) -> Alert:
+    """USB 가 커널 안에서 멈췄다 — **재부팅하라고 말한다.**
+
+    다른 경보("영상이 끊겼습니다", "발행이 멈췄습니다")는 이 상태의 **증상**이다. 그걸 보고
+    사람은 케이블을 확인하고 컨트롤러 복구를 누르는데, 풀리지 않고 복구 요청까지 멈춘다. 원인을
+    직접 말해야 한다. 문장은 판정한 쪽(robotd, `piper_robot.usbstuck.describe`)이 만든다.
+    """
+    return Alert("usb", "kernel", "USB", "kernel_stuck", text)
 
 
 def _daemon_down(kind: str, daemon: str) -> Alert:
@@ -279,6 +289,8 @@ class DeviceWatch:
 
     def _collect(self) -> list[Alert]:
         out: list[Alert] = []
+        # USB 가 커널에서 멈췄으면 **먼저** 말한다 — 아래 경보들은 그 증상이다.
+        out += self._usb()
         out += self._robots()
         out += self._cameras()
         # 조명 경보도 같은 목록에 합류한다 — add/clear 전이, WS 방송, 재연결 시
@@ -290,6 +302,32 @@ class DeviceWatch:
         except Exception as exc:
             logger.debug("조명 경보 합류 실패: %s", exc)
         return out
+
+    # 이 간격보다 자주 안 묻는다. robotd 의 RPC 는 한 줄로 직렬이라(팔 제어와 같은 길) 매 틱
+    # 부르면 그 길을 쓸데없이 점유한다. 연속 관찰이 목적이라 4초 간격이면 충분하다.
+    _USB_EVERY_S = 4.0
+
+    def _usb(self) -> list[Alert]:
+        import time
+
+        from app.services.robot_manager import get_usb_stuck, robotd_available
+
+        now = time.monotonic()
+        last = getattr(self, "_usb_checked", 0.0)
+        if now - last < self._USB_EVERY_S:
+            return list(getattr(self, "_usb_alerts", []))
+        self._usb_checked = now
+        alerts: list[Alert] = []
+        try:
+            # robotd 가 죽어 있으면 물어볼 곳이 없다 — 그건 다른 경보가 말한다
+            if robotd_available():
+                rep = get_usb_stuck()
+                if rep.get("kernel_stuck") and rep.get("advice"):
+                    alerts.append(_usb_stuck(str(rep["advice"])))
+        except Exception as exc:
+            logger.debug("USB 정지 조회 실패: %s", exc)
+        self._usb_alerts = alerts
+        return list(alerts)
 
     def _robots(self) -> list[Alert]:
         from app.services.robot_manager import (
