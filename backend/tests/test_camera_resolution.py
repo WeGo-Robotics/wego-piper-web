@@ -8,6 +8,7 @@ AR0234(Global Shutter) 카메라는 640×480 을 센서 가운데 1/3 을 **잘�
 rsd 의 "이미 반영한 요청" 비교가 캡처 때문에 깨지지 않는다 · 모드 목록은 장치가 말한 것.
 """
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -116,7 +117,10 @@ def test_both_daemons_expose_the_modes_verb_and_share_one_fit():
 # ── 장치에 직접 묻는다 ──
 
 
-@pytest.mark.skipif(not Path("/dev/video0").exists(), reason="V4L2 장치 없음")
+@pytest.mark.skipif(
+    not Path("/dev/video0").exists() or os.environ.get("PIPER_HW_TESTS") != "1",
+    reason="실제 카메라를 여는 테스트 — PIPER_HW_TESTS=1 로 명시적으로 켠다 "
+           "(교착된 uvcvideo 에서 pytest 가 영구 정지한 전례: conftest)")
 def test_v4l2_modes_come_from_the_driver():
     """OpenCV 는 모드를 모른다 — 드라이버 열거 ioctl 로 묻는다. 지어낸 목록은
     "목록에 있는데 안 열린다" 가 된다."""

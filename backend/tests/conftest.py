@@ -25,6 +25,25 @@ import pytest
 # 소유자는 **모듈 로드 때** 정해지므로 fixture 로는 늦다. import 전에 박는다.
 os.environ["PIPER_PROCESS_RUNNER"] = "local"
 
+# ⚠ **테스트는 사용자의 설정 디렉토리(`~/.config/piper-web`)를 절대 건드리면 안 된다.**
+#
+#   실제로 일어났다(2026-10-14): 카메라 이름 테스트가 `CameraManager` 를 만들어 저장하자
+#   **개발 기계의 `camera_session.json` 이 테스트 데이터로 덮였다** — RealSense 3 대의 등록이
+#   `/dev/video0` 한 줄로 바뀌었고, 게이트웨이를 재시작했다면 등록이 통째로 사라질 뻔했다.
+#   `CAMERA_SESSION_PATH` 는 클래스 정의 때 `settings.config_dir` 로 **굳으므로** 테스트마다
+#   경로를 패치하는 규율에 기대면 한 번 빠뜨리는 순간 사고가 난다. 로봇 세션·파킹 위치도 같은
+#   디렉토리다(robotd 도 같은 환경변수를 읽는다).
+#
+#   그래서 앱을 import 하기 **전에** 디렉토리 자체를 임시 위치로 돌린다 — 위
+#   `PIPER_PROCESS_RUNNER` 와 같은 이유로 fixture 로는 늦다. 자식 프로세스도 물려받는다.
+import atexit
+import shutil
+import tempfile
+
+_TEST_CONFIG_DIR = tempfile.mkdtemp(prefix="piper-test-config-")
+os.environ["PIPER_CONFIG_DIR"] = _TEST_CONFIG_DIR
+atexit.register(shutil.rmtree, _TEST_CONFIG_DIR, ignore_errors=True)
+
 # 운영은 0번을 쓴다. 번호만 바꾸면 키 공간이 완전히 갈린다.
 TEST_REDIS_DB = 15
 TEST_REDIS_URL = f"redis://127.0.0.1:6379/{TEST_REDIS_DB}"
@@ -123,3 +142,35 @@ def python_code_only(src: str) -> str:
             if not body:
                 body.append(ast.Pass())
     return ast.unparse(ast.fix_missing_locations(tree))
+
+
+@pytest.fixture(autouse=True)
+def tests_never_open_real_cameras(monkeypatch):
+    """**단위 테스트는 실제 `/dev/video*` 를 열지 않는다.** 열려면 `PIPER_HW_TESTS=1` 을 준다.
+
+    ⚠ 실제로 일어났다(2026-10-14): `test_v4l2_modes_come_from_the_driver` 가 이 기계의 모든
+    `/dev/video*`(RealSense 18 개 노드)를 열어 모드를 열거했다. 정상일 때는 통과했지만
+    `uvcvideo` 가 커널에서 교착된 뒤에는 **노드를 닫지 못하고 pytest 본체가 D 상태로 영구
+    정지**했다 — SIGKILL 로도 안 죽는다. 게다가 장치를 쥔 rsd 가 스트리밍 중인 UVC 노드에
+    열거 ioctl 을 던지는 일 자체가, D405 에서 알려진 hang 의 입구와 같은 종류다.
+
+    Python 이 여는 경로(`os.open`)만 막는다. OpenCV 등 C 라이브러리는 못 막으므로, 장치를
+    쓰는 테스트는 애초에 가짜를 써야 한다.
+    """
+    import os as _os
+
+    if _os.environ.get("PIPER_HW_TESTS") == "1":
+        yield
+        return
+    real_open = _os.open
+
+    def guarded(path, *args, **kwargs):
+        if isinstance(path, (str, bytes, _os.PathLike)) and str(
+                _os.fsdecode(path)).startswith("/dev/video"):
+            raise RuntimeError(
+                f"테스트가 실제 카메라 장치를 열려 했다: {path} — 가짜를 쓰거나 "
+                "PIPER_HW_TESTS=1 로 명시적으로 켜라 (conftest 의 이 가드 주석 참고)")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(_os, "open", guarded)
+    yield
