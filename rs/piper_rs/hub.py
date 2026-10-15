@@ -445,9 +445,14 @@ class _RSDevice:
 
         여기서 걸러내면 파이프라인을 다시 세워 세그먼트가 되살아난다.
         """
-        from piper_shm import segment_path
+        from piper_shm import segment_for_camera, segment_path
 
-        return all(segment_path(f"rs_{self.serial}_{s}").exists() for s in streams)
+        # ⚠ 규칙 이름(`rs_<시리얼>_<종류>`)을 직접 만들지 않는다 — 사용자가 이름을 붙인
+        #   스트림은 다른 이름으로 발행된다. 지정된 이름은 `segment_for_camera` 가 안다.
+        return all(
+            segment_path(segment_for_camera(make_id(self.serial, s))).exists()
+            for s in streams
+        )
 
     def _stop_pipeline(self, unlink_segments: bool = True,
                        device_gone: bool = False) -> None:
@@ -687,11 +692,15 @@ class _RSDevice:
                 self.lost_at = 0.0     # 파이프라인이 다시 섰다 — 스캔 없이 연결만 해도 해제
             return ok
 
-    def disconnect_stream(self, stream: str) -> None:
+    def disconnect_stream(self, stream: str, all_refs: bool = False) -> None:
         # 사용자가 일부러 닫는 것 — 사라진 게 아니므로 판정을 지운다
         self.lost_at = 0.0
         with self._op_lock:
-            if self._refcount.get(stream, 0) > 0:
+            if all_refs:
+                # 유휴 종료 — `connect` 가 부를 때마다 참조가 하나씩 늘어(재협상 등) 한 번의
+                # disconnect 로는 안 닫힌다. 쓰는 곳이 없어서 닫는 것이므로 전부 놓는다.
+                self._refcount[stream] = 0
+            elif self._refcount.get(stream, 0) > 0:
                 self._refcount[stream] -= 1
             active = {s for s, c in self._refcount.items() if c > 0}
             if not active:
@@ -754,7 +763,8 @@ class _RSDevice:
             from piper_shm import Subscriber, SegmentError, segment_for_camera
 
             try:
-                sub = Subscriber(segment_for_camera(f"rs:{self.serial}:{stream}"))
+                # 관찰자 — 데몬 자신이 "읽는 곳이 있나" 를 떠볼 때 자기 표지에 막히면 안 된다
+                sub = Subscriber(segment_for_camera(f"rs:{self.serial}:{stream}"), observer=True)
             except SegmentError:
                 pass
             else:
@@ -1136,6 +1146,8 @@ class RealSenseHub:
                     reading.luma, reading.neutral_error_pct)
         return {"ok": ok, "verdict": verdict, "target": target, "adjust": adjust,
                 "before": before.to_dict(), "after": reading.to_dict(),
+                # 못 맞췄을 때 **왜**인지(틴트 등). 맞았거나 해당 없으면 `None`
+                "hint": None if ok else gc.residual_hint(reading),
                 "exposure_us": round(exp_us), "gain": round(gain_now),
                 "white_balance": round(wb_now), "steps": steps,
                 "roi": list(roi) if roi else list(gc.center_roi(
@@ -1268,14 +1280,27 @@ class RealSenseHub:
             }
         return out
 
-    def disconnect(self, cam_id: str) -> None:
+    def disconnect(self, cam_id: str, all_refs: bool = False) -> None:
+        """`all_refs` — 참조를 전부 놓는다(유휴 종료). 기본은 하나만(사용자의 [연결 해제])."""
         parsed = parse_id(cam_id)
         if not parsed:
             return
         serial, stream = parsed
         dev = self._device(serial)
         if dev is not None:
-            dev.disconnect_stream(stream)
+            dev.disconnect_stream(stream, all_refs=bool(all_refs))
+
+    def set_idle(self, cam_id: str, seconds: int = 0) -> int:
+        """쓰는 곳이 없을 때 이 스트림을 자동으로 닫는 시간(초). 0 은 끔. 실제 값을 돌려준다."""
+        from piper_cam.idle import reaper
+
+        return reaper.set_idle(cam_id, seconds)
+
+    def hold(self, cam_id: str, seconds: int = 0) -> bool:
+        """이 스트림을 **그 시간 동안은** 유휴로 닫지 않는다 — 시작 요청이 소비자가 붙을 때까지."""
+        from piper_cam.idle import reaper
+
+        return reaper.hold(cam_id, seconds)
 
     def release_all(self) -> bool:
         """모든 디바이스의 활성 스트림을 강제 해제한다. 녹화/추론 등 외부
@@ -1329,6 +1354,16 @@ class RealSenseHub:
                 return False
             device.hardware_reset()
             return True
+
+    def set_stream(self, cam_id: str, name: str) -> str:
+        """이 스트림이 발행될 **세그먼트 이름**을 정한다 (사용자가 붙인 스트림 이름).
+
+        디바이스 하나가 color/depth/infrared 를 각자 다른 이름으로 낸다 — 이름은 스트림
+        (`rs:<시리얼>:<종류>`) 단위다. 연결 전에 불러도 되고, 발행 중이면 옮긴다.
+        """
+        from piper_rs.publish import rename
+
+        return rename(cam_id, name)
 
     def probe(self, cam_id: str) -> tuple[bool, str]:
         parsed = parse_id(cam_id)

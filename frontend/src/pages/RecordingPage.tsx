@@ -11,7 +11,9 @@ import CameraProfilePicker from '../components/CameraProfilePicker'
 import LightStrip from '../components/LightStrip'
 import RecordPreview from '../components/RecordPreview'
 import { twoColumns } from '../components/LayoutToggle'
-import { camOptionText, type ReadyCam } from '../types/camera'
+import { normalizeMapping } from '../types/camera'
+import { useCameraStreams } from '../hooks/useCameraStreams'
+import CameraStreamSelect, { IdleStreams } from '../components/CameraStreamPicker'
 import { useT } from '../i18n'
 
 type ReadyArm = { iface: string; role: string; side?: string | null }
@@ -57,7 +59,8 @@ export default function RecordingPage() {
   // 완료한 팔만 Leader 선택지에 얹는다. 고르면 teleop_type 이 so101_leader 가 된다
   // (플러그인 so101_leader_shm 이 정합 기준 관절 매칭을 LeRobot 안에서 돌린다).
   const [so101Leaders, setSo101Leaders] = useState<ReadyArm[]>([])
-  const [cameras, setCameras] = useState<ReadyCam[]>([])
+  // 카메라는 **스트림 이름**으로 부른다 — 등록되고 연결된 것만 고를 수 있다.
+  const { streams, loaded: streamsLoaded, connect: connectStreams, connecting } = useCameraStreams()
 
   // 설정
   // 모든 설정값을 localStorage에서 복원
@@ -173,6 +176,17 @@ export default function RecordingPage() {
     }, [refreshActivity, voiceEnabled]),
   })
 
+  // 저장돼 있던 매핑(옛 장치 id·옛 이름)을 현재 스트림 이름으로 맞춘다. 서버도 둘 다 받지만
+  // 화면은 이름으로 그려야 선택기가 "골라져 있음"을 보여준다.
+  useEffect(() => {
+    if (streamsLoaded) setCameraMapping((prev) => normalizeMapping(prev, streams))
+  }, [streamsLoaded, streams])
+
+  const connectIdle = async (deviceIds: string[]) => {
+    const failed = await connectStreams(deviceIds)
+    for (const f of failed) notify({ level: 'error', text: f.reason, source: t('카메라') })
+  }
+
   useEffect(() => {
     api.get<ReadyArm[]>('/robots/ready').then((all) => {
       setFollowers(all.filter(a => a.role === 'follower'))
@@ -184,7 +198,6 @@ export default function RecordingPage() {
         .map((sp) => ({ iface: sp.attached!.arm, role: 'leader',
                         side: (sp.attached!.side || null) as ReadyArm['side'] } as ReadyArm))))
       .catch(() => {})
-    api.get<ReadyCam[]>('/cameras/ready').then(setCameras).catch(() => {})
     api.get<{ username: string }>('/hub/whoami').then((r) => setHfUser(r.username || '')).catch(() => {})
     // ⚠ `status`(phase) 도 여기서 복원한다. WS 푸시는 **단계가 바뀔 때만** 오므로
     //   리셋 대기 중에 다른 페이지를 갔다 오면 다음 푸시가 올 계기가 없다 —
@@ -523,7 +536,7 @@ export default function RecordingPage() {
                   </>)}
             </div>
             {/* 카메라 */}
-            {cameras.length > 0 && (
+            {streams.length > 0 && (
               <div className="space-y-1 pt-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs text-neutral-400">{t('카메라 매핑')}</label>
@@ -548,6 +561,7 @@ export default function RecordingPage() {
                     }} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600/30 text-blue-400 hover:bg-blue-600 hover:text-white">{t('+ 추가')}</button>
                   </div>
                 </div>
+                <IdleStreams streams={streams} connecting={connecting} onConnect={connectIdle} />
                 {Object.entries(cameraMapping).map(([name, devId], idx) => (
                   <div key={idx} className="flex items-center gap-1.5 text-xs">
                     <input type="text" value={name}
@@ -560,14 +574,10 @@ export default function RecordingPage() {
                         setCliEdited(false)
                       }}
                       className="w-16 px-1.5 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 font-mono" />
-                    <select value={devId} onChange={e => { setCameraMapping(prev => ({ ...prev, [name]: e.target.value })); setCliEdited(false) }}
-                      className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100">
-                      <option value="">{t('없음')}</option>
-                      {cameras.map(c => {
-                        const usedBy = Object.entries(cameraMapping).find(([k, v]) => v === c.id && k !== name)
-                        return <option key={c.id} value={c.id} disabled={!!usedBy}>{camOptionText(c)}{usedBy ? ` — ${usedBy[0]}` : ''}</option>
-                      })}
-                    </select>
+                    <CameraStreamSelect value={devId} streams={streams} placeholder={t('없음')}
+                      onChange={(v) => { setCameraMapping(prev => ({ ...prev, [name]: v })); setCliEdited(false) }}
+                      takenBy={(st) => Object.entries(cameraMapping).find(([k, v]) => v === st && k !== name)?.[0] ?? ''}
+                      className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100" />
                     <button onClick={() => {
                       setCameraMapping(prev => {
                         const entries = Object.entries(prev).filter((_, i) => i !== idx)

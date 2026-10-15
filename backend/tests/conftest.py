@@ -145,6 +145,24 @@ def python_code_only(src: str) -> str:
 
 
 @pytest.fixture(autouse=True)
+def no_leftover_segment_names():
+    """**스트림 이름 지정은 프로세스 전역이다** — 한 테스트가 남기면 다음 테스트의
+    `segment_for_camera` 가 엉뚱한 이름을 돌려준다.
+
+    게이트웨이는 데몬이 확인해 준 이름을 `piper_shm` 에 든다(feature/stream-based-cameras.md).
+    그 상태는 테스트 사이를 새어 나가면 안 된다 — 앞뒤로 비운다.
+    """
+    try:
+        from piper_shm import clear_segment_names
+    except Exception:
+        yield
+        return
+    clear_segment_names()
+    yield
+    clear_segment_names()
+
+
+@pytest.fixture(autouse=True)
 def tests_never_open_real_cameras(monkeypatch):
     """**단위 테스트는 실제 `/dev/video*` 를 열지 않는다.** 열려면 `PIPER_HW_TESTS=1` 을 준다.
 

@@ -37,6 +37,26 @@ class CameraPrepareError(RuntimeError):
     """카메라를 준비하지 못했다. 라우터가 400 으로 바꾼다."""
 
 
+def normalize_mapping(camera_mapping: dict[str, str]) -> dict[str, str]:
+    """`{LeRobot 키: 스트림 이름 | 개명 이력 | 옛 장치 id}` → `{키: 장치 id}`.
+
+    소비자가 카메라를 **스트림 이름**으로 부르게 됐다(feature/stream-based-cameras.md).
+    아래 함수들은 장치 id 를 전제로 쓰여 있으므로, 입구에서 한 번 맞춘다 — 낡은 브라우저가
+    보낸 옛 장치 id 와 저장된 옛 이름도 같은 곳을 지난다.
+
+    못 찾는 값은 **그대로 둔다.** 여기서 지우면 "카메라를 안 골랐다"로 읽혀 엉뚱한 사유가
+    나온다 — 뒤따르는 함수가 "카메라를 찾을 수 없습니다: <값>" 으로 사람이 정한 값을 말한다.
+    """
+    out: dict[str, str] = {}
+    for key, value in (camera_mapping or {}).items():
+        if not value or value in camera_manager.cameras:
+            out[key] = value                 # 이미 장치 id 다 — 관리자의 키가 곧 id 다
+            continue
+        cam = camera_manager.resolve(value)
+        out[key] = cam.id if cam is not None else value
+    return out
+
+
 def build_cameras_json(
     camera_mapping: dict[str, str],
     *,
@@ -56,6 +76,7 @@ def build_cameras_json(
     """
     if not camera_mapping:
         return {}
+    camera_mapping = normalize_mapping(camera_mapping)
 
     if settings.camera_transport == "shm":
         # **키는 dict 키로, 세그먼트는 장치로.** 발행자는 매핑을 모른 채 항상 발행하므로
@@ -140,7 +161,7 @@ def _shm_dims(cam_id: str, width: int | None, height: int | None,
 
     w, h = width, height
     try:
-        sub = Subscriber(segment_for_camera(cam_id))
+        sub = Subscriber(segment_for_camera(cam_id), observer=True)
     except SegmentError:
         pass
     else:
@@ -166,6 +187,10 @@ def _shm_dims(cam_id: str, width: int | None, height: int | None,
         "fps": actual_fps or fps or 30,
     }
 
+
+# 시작 요청이 소비자가 붙을 때까지 카메라를 유휴로 닫지 않는 시간(초). 정책 로드가 수십 초
+# 걸리고, 그동안 읽는 곳이 없다. 이 시간이 지나도 안 붙으면 닫혀도 된다(시작이 실패한 것이다).
+START_HOLD_S = 300
 
 # 첫 프레임 대기 상한. 파이프라인 재시작 + RealSense 안정화(SETTLE_S)를 덮어야 한다.
 FIRST_FRAME_TIMEOUT_S = 10.0
@@ -199,7 +224,7 @@ def _wait_for_frame(cam_id: str, timeout_s: float = FIRST_FRAME_TIMEOUT_S,
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         try:
-            sub = Subscriber(name)
+            sub = Subscriber(name, observer=True)
         except SegmentError:
             time.sleep(0.05)
             continue
@@ -222,10 +247,12 @@ def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str,
 
     - `direct`: wrapper 가 장치를 직접 여니 **웹이 쥔 것을 해제**해야 한다
     - `shm`: 발행자가 장치를 **계속 쥐고** 세그먼트에 흘려야 wrapper 가 읽는다.
-      해제하면 프레임이 끊긴다
+      해제하면 프레임이 끊긴다. **연결 안 된 카메라는 열지 않고 거절한다** — 연결은
+      선택기의 [연결] 이 한다. 연결된 카메라의 해상도·fps 재협상만 여기서 한다.
 
     이 뒤바뀜이 shm 전환의 핵심이다 — "해제 춤"이 사라지는 대신 소유가 명확해진다.
     """
+    camera_mapping = normalize_mapping(camera_mapping)
     if settings.camera_transport != "shm":
         release_all_cameras(purpose)
         return
@@ -250,9 +277,18 @@ def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str,
         # 사용자가 겪은 그대로다: 뽑힌 채로 녹화를 시작하면 그냥 에러가 났다.
         if not cam.present:
             raise CameraPrepareError(
-                f"카메라 '{cam.label or cam.name}'({cam_id})가 연결돼 있지 않습니다. "
+                f"카메라 '{cam.stream or cam.name}'({cam_id})가 연결돼 있지 않습니다. "
                 "USB 를 확인하고 카메라 페이지에서 스캔하세요.")
         got = cam.running_profile()
+        # ⚠ **연결 안 된 카메라는 여기서 열지 않는다.** 선택기에서 비활성으로 보이는 것이고
+        # (feature/stream-based-cameras.md §5-3) 연결은 사람이 [연결] 로 한다 — 시작 요청이
+        # 몰래 장치를 여는 것은 "연결된 것만 쓴다" 는 규칙과 반대이고, 유휴 종료를 켠 카메라가
+        # 시작 때마다 조용히 되살아난다. 판정은 게이트웨이의 캐시(`cam.connected`)가 아니라
+        # **데몬이 말하는 값**이다 — 캐시는 2초 주기로 따라와서 방금 연결한 것을 놓칠 수 있다.
+        if not got.get("connected"):
+            raise CameraPrepareError(
+                f"카메라 '{cam.stream or cam.name}'({cam_id})가 연결되지 않았습니다. "
+                "선택기의 [연결] 이나 카메라 페이지에서 연결한 뒤 다시 시작하세요.")
         # 같은 요청을 이미 반영했으면 건드리지 않는다. 끊었다 붙이면 그 사이
         # 소비자가 프레임을 잃고, rsd 쪽은 refcount 만 늘어난다.
         # ⚠ 실행 중인 프로파일이 아니라 **요청**을 비교한다 — 장치가 못 내는 조합은
@@ -261,7 +297,7 @@ def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str,
         # 요청이 없으면(추론처럼 해상도를 안 따지는 경우) 지금 돌고 있는 무엇이든 좋다.
         # 여기서 want 까지 비교하면, 녹화가 남긴 요청 때문에 추론이 시작될 때마다
         # 쓸데없이 재연결한다.
-        satisfied = got.get("connected") and (not want or got.get("want") == want)
+        satisfied = not want or got.get("want") == want
         if not satisfied:
             ok, msg = cam.connect(width, height, fps)
             if not ok:
@@ -288,6 +324,9 @@ def prepare_cameras(camera_mapping: dict[str, str], *, purpose: str,
             )
         logger.info("shm 발행 중(%s): %s ← %s (%sx%s@%s)", purpose, name, cam_id,
                     got.get("width"), got.get("height"), got.get("fps"))
+        # ⚠ 유휴 종료를 켠 카메라는 **시작 요청이 소비자가 붙을 때까지** 붙잡아 둔다. 프로세스
+        # 기동 → 정책 로드 → 카메라 연결 사이에 수 초~수십 초가 있고 그동안 읽는 곳이 없다.
+        cam.hold(START_HOLD_S)
         # 장치가 요청을 못 맞췄으면 **말한다.** 조용히 낮춰 열면 녹화 루프가
         # 느린 카메라에 묶여 매 프레임 경고를 뱉는데, 원인이 어디인지 안 보인다.
         if want and [got.get("width"), got.get("height"), got.get("fps")] != want:
@@ -342,13 +381,17 @@ def camera_sidecar(camera_mapping: dict[str, str]) -> dict:
     깊이 인코딩 범위는 어디에도 없다.
     """
     out: dict = {"cameras": {}}
-    for name, cam_id in camera_mapping.items():
+    for name, cam_id in normalize_mapping(camera_mapping).items():
         if not cam_id:
             continue
         cam = camera_manager.cameras.get(cam_id)
         info = cam.running_profile() if cam else {}
         entry = {k: info.get(k) for k in ("width", "height", "fps") if info.get(k)}
         entry["id"] = cam_id
+        # 그때 이 카메라가 **무슨 이름이었나.** 개명하면 장치 id 만으로는 "어느 스트림이었나"를
+        # 알 수 없다 — 장치 id 는 재열거로도 바뀐다.
+        if cam is not None and cam.stream:
+            entry["stream"] = cam.stream
         if info.get("depth_encoding"):
             entry["depth_encoding"] = info["depth_encoding"]
         # ⚠ 배경이 지워진 데이터인지는 **프레임만 봐서는 못 가린다** — 어두운 배경과

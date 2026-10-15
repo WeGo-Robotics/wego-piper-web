@@ -18,7 +18,9 @@ import LightStrip from '../components/LightStrip'
 import TelemetryPanel, { type TelemetryData } from '../components/TelemetryPanel'
 import ManualControlPanel from '../components/ManualControlPanel'
 import { twoColumns } from '../components/LayoutToggle'
-import { camOptionText, type ReadyCam } from '../types/camera'
+import { normalizeMapping } from '../types/camera'
+import { useCameraStreams } from '../hooks/useCameraStreams'
+import CameraStreamSelect, { IdleStreams } from '../components/CameraStreamPicker'
 import { useT } from '../i18n'
 
 function CameraPreview({ cameraNames }: { cameraNames: string[] }) {
@@ -90,7 +92,8 @@ export default function InferencePage() {
   const [robotMode, setRobotMode] = useState<'single' | 'bimanual'>('single')
   const [leftFollower, setLeftFollower] = useState<string>('')
   const [rightFollower, setRightFollower] = useState<string>('')
-  const [readyCameras, setReadyCameras] = useState<ReadyCam[]>([])
+  // 카메라는 **스트림 이름**으로 부른다 — 등록되고 연결된 것만 고를 수 있다.
+  const { streams, loaded: streamsLoaded, connect: connectStreams, connecting } = useCameraStreams()
   const [models, setModels] = useState<Model[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
   const [cameraMapping, setCameraMapping] = useState<Record<string, string>>({})
@@ -221,7 +224,6 @@ export default function InferencePage() {
         setLeftFollower(v => v || followers.find(a => a.side === 'left')?.iface || '')
         setRightFollower(v => v || followers.find(a => a.side === 'right')?.iface || '')
       }).catch(() => {}),
-      api.get<ReadyCam[]>('/cameras/ready').then(setReadyCameras).catch(() => {}),
       api.get<Model[]>('/models').then(setModels).catch(() => {}),
       api.get<{ state: string; cameras?: string[] }>('/inference/status').then((s) => {
         setProcessState(s.state as ProcessState)
@@ -241,6 +243,17 @@ export default function InferencePage() {
   useEffect(() => {
     localStorage.setItem('piper_inference_params', JSON.stringify(params))
   }, [params])
+
+  // 저장돼 있던 매핑(옛 장치 id·옛 이름)을 현재 스트림 이름으로 맞춘다. 서버도 둘 다 받지만
+  // 화면은 이름으로 그려야 선택기가 "골라져 있음"을 보여준다.
+  useEffect(() => {
+    if (streamsLoaded) setCameraMapping((prev) => normalizeMapping(prev, streams))
+  }, [streamsLoaded, streams])
+
+  const connectIdle = async (deviceIds: string[]) => {
+    const failed = await connectStreams(deviceIds)
+    for (const f of failed) notify({ level: 'error', text: f.reason, source: t('카메라') })
+  }
 
   const selectedModelData = models.find((m) => m.id === selectedModel)
   /** 실행에 실을 체크포인트 경로. 서버 모드면 **서버 기준**, 아니면 로컬 모델 경로. */
@@ -505,18 +518,15 @@ export default function InferencePage() {
                 </div>
                 <div className="space-y-2">
                   <span className="text-xs text-neutral-400">{t('카메라 ({length}대):', { length: reqs.required_cameras.length })}</span>
+                  <IdleStreams streams={streams} connecting={connecting} onConnect={connectIdle} />
                   {reqs.required_cameras.map((cam) => (
                     <div key={cam.name} className="flex items-center gap-2 text-xs">
                       <span className="w-24 text-neutral-300 font-medium">{cam.name}{cam.model_name && cam.model_name !== cam.name ? <span className="text-neutral-500 text-[10px] ml-1">({cam.model_name})</span> : ''}</span>
                       <span className="text-neutral-500 w-20">{cam.width && cam.height ? `${cam.width}x${cam.height}` : ''}</span>
-                      <select value={cameraMapping[cam.name] ?? ''} onChange={(e) => setCameraMapping((prev) => ({ ...prev, [cam.name]: e.target.value }))}
-                        className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500">
-                        <option value="">{t('카메라 선택...')}</option>
-                        {readyCameras.map((c) => {
-                          const usedBy = Object.entries(cameraMapping).find(([k, v]) => v === c.id && k !== cam.name)
-                          return <option key={c.id} value={c.id} disabled={!!usedBy}>{camOptionText(c)}{usedBy ? t(' — {usedBy}에서 사용 중', { usedBy: usedBy[0] }) : ''}</option>
-                        })}
-                      </select>
+                      <CameraStreamSelect value={cameraMapping[cam.name] ?? ''} streams={streams}
+                        onChange={(v) => setCameraMapping((prev) => ({ ...prev, [cam.name]: v }))}
+                        takenBy={(st) => Object.entries(cameraMapping).find(([k, v]) => v === st && k !== cam.name)?.[0] ?? ''}
+                        className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
                       {cameraMapping[cam.name] ? <span className="text-green-400">✓</span> : <span className="text-neutral-500">-</span>}
                     </div>
                   ))}

@@ -322,6 +322,28 @@ class V4l2Hub:
         cam = self._cam(cam_id)
         return cam.probe() if cam else (False, f"Unknown camera: {cam_id}")
 
+    def set_idle(self, cam_id: str, seconds: int = 0) -> int:
+        """쓰는 곳이 없을 때 이 카메라를 자동으로 닫는 시간(초). 0 은 끔. 실제 값을 돌려준다."""
+        from piper_cam.idle import reaper
+
+        return reaper.set_idle(cam_id, seconds)
+
+    def hold(self, cam_id: str, seconds: int = 0) -> bool:
+        """이 카메라를 **그 시간 동안은** 유휴로 닫지 않는다 — 시작 요청이 소비자가 붙을 때까지."""
+        from piper_cam.idle import reaper
+
+        return reaper.hold(cam_id, seconds)
+
+    def set_stream(self, cam_id: str, name: str) -> str:
+        """이 카메라가 발행될 **세그먼트 이름**을 정한다 (사용자가 붙인 스트림 이름).
+
+        연결 전에 불러도 된다 — 다음 발행이 그 이름으로 나간다. 발행 중이면 새 이름으로
+        옮긴다. 돌려주는 값이 실제 이름이다 (feature/stream-based-cameras.md §5-4).
+        """
+        from piper_cam import publish
+
+        return publish.rename(cam_id, name)
+
     def list_controls(self, cam_id: str) -> list[dict]:
         return v4l2.v4l2_list_controls(cam_id)
 
@@ -541,6 +563,8 @@ class V4l2Hub:
         frame = cam.get_frame()
         return {"ok": ok, "verdict": verdict, "target": target, "adjust": adjust,
                 "before": before.to_dict(), "after": reading.to_dict(),
+                # 못 맞췄을 때 **왜**인지(틴트 등). 맞았거나 해당 없으면 `None`
+                "hint": None if ok else gc.residual_hint(reading),
                 "exposure_us": round(exp_us), "gain": round(gain_now),
                 "white_balance": round(wb_now), "steps": steps, "skipped": skipped,
                 "roi": list(roi) if roi else list(gc.center_roi(

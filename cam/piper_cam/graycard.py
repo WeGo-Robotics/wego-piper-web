@@ -37,6 +37,8 @@ TARGET_LUMA = 118.0
 # 이 안이면 맞은 것으로 본다. 카드 인쇄 편차와 센서 잡음이 이 정도 된다.
 LUMA_TOLERANCE = 8.0
 NEUTRAL_TOLERANCE_PCT = 2.0
+# R 과 B 가 이만큼 안에서 같으면 **색온도(WB) 노브가 할 일은 끝난 것**이다.
+BALANCE_TOLERANCE_PCT = 1.0
 
 # 판정을 믿을 수 없게 만드는 것들
 _CLIP_LOW, _CLIP_HIGH = 4, 251      # 포화되면 진짜 밝기를 모른다
@@ -63,6 +65,30 @@ class GrayCardReading:
         if mean <= 0:
             return 100.0
         return max(abs(c - mean) for c in (self.b, self.g, self.r)) / mean * 100.0
+
+    @property
+    def balance_error_pct(self) -> float:
+        """R 과 B 가 얼마나 다른가(%). **white_balance 노브가 움직일 수 있는 유일한 축**이다.
+
+        색온도 설정은 B/R 비만 바꾼다 — G 는 못 건드린다. 그래서 `neutral_error_pct`(R·G·B 셋
+        모두)는 이 값이 0 이어도 남을 수 있다: 아래 `tint_pct`.
+        """
+        rb = (self.r + self.b) / 2.0
+        if rb <= 0:
+            return 100.0
+        return abs(self.b - self.r) / rb * 100.0
+
+    @property
+    def tint_pct(self) -> float:
+        """G 가 R·B 평균보다 얼마나 높은가(%, 부호 있음). `+` 는 초록 쪽, `-` 는 자홍 쪽.
+
+        **색온도 노브로는 못 고치는 치우침이다.** 형광등·일부 LED 는 초록/자홍 틴트가 있어 R·B 를
+        아무리 맞춰도 G 가 남는다. 이 센서들의 컨트롤에는 틴트(G 이득)가 없다.
+        """
+        rb = (self.r + self.b) / 2.0
+        if rb <= 0:
+            return 0.0
+        return (self.g - rb) / rb * 100.0
 
     @property
     def usable(self) -> tuple[bool, str]:
@@ -98,9 +124,46 @@ class GrayCardReading:
         return {"b": round(self.b, 1), "g": round(self.g, 1), "r": round(self.r, 1),
                 "luma": round(self.luma, 1),
                 "neutral_error_pct": round(self.neutral_error_pct, 2),
+                "balance_error_pct": round(self.balance_error_pct, 2),
+                "tint_pct": round(self.tint_pct, 2),
                 "clipped_pct": round(self.clipped_pct, 1),
                 "spread_pct": round(self.spread_pct, 1),
                 "pixels": self.pixels, "usable": ok, "why": why}
+
+
+def residual_hint(reading: GrayCardReading) -> str | None:
+    """보정이 끝났는데 색 치우침이 남았을 때 **왜 못 맞췄는지**를 말한다. 해당 없으면 `None`.
+
+    ⚠ 이 말이 없으면 사람은 "동작 안 하네"로 읽는다 — 화면에는 `색 치우침 3.4%` 한 줄만 뜨고,
+    눌러도 눌러도 같은 숫자가 나오는데 이유도 처방도 없었다. 실제로 그렇게 보고됐다
+    (2026-10-14: 세 카메라 모두 3~5% 에서 서 있었고, 색온도를 바꿔도 안 변했다).
+
+    조건은 둘이다: ① 판정이 색 치우침 때문에 실패했고 ② **R·B 는 이미 맞았다**. 그러면 남은
+    것은 G 이고, 색온도 노브로는 닿지 않는다. R·B 가 아직 안 맞았다면 그건 노브가 할 일이 남은
+    것이므로(반복 횟수 부족 등) 틴트 탓이라고 말하지 않는다.
+    """
+    ok, _ = reading.usable
+    if not ok or reading.neutral_error_pct <= NEUTRAL_TOLERANCE_PCT:
+        return None
+    if reading.balance_error_pct > BALANCE_TOLERANCE_PCT:
+        return None
+    balance = f"{reading.balance_error_pct:.1f}"
+    tint = f"{abs(reading.tint_pct):.1f}"
+    # ⚠ 방향을 **인자로 끼우지 않고 문장을 둘로 나눈다.** 인자 값(`초록 쪽`)은 번역되지 않아
+    #   영어 문장 속에 한국어 단어가 섞인다 (feature/i18n.md — 백엔드 문장의 인자 값은 안 옮긴다).
+    if reading.tint_pct > 0:
+        return (
+            f"R·B 균형은 맞았습니다(차이 {balance}%). 남은 색 치우침은 G 가 R·B 보다 {tint}% 높기"
+            "(초록 쪽) 때문입니다 — 색온도(WB) 하나로는 못 고치는 조명의 틴트입니다(형광등·일부 LED "
+            "에서 흔합니다). 조명을 바꾸거나, 이대로 프로파일로 저장해 쓰세요: 조명이 같으면 이 값은 "
+            "그대로 재현됩니다."
+        )
+    return (
+        f"R·B 균형은 맞았습니다(차이 {balance}%). 남은 색 치우침은 G 가 R·B 보다 {tint}% 낮기"
+        "(자홍 쪽) 때문입니다 — 색온도(WB) 하나로는 못 고치는 조명의 틴트입니다(형광등·일부 LED "
+        "에서 흔합니다). 조명을 바꾸거나, 이대로 프로파일로 저장해 쓰세요: 조명이 같으면 이 값은 "
+        "그대로 재현됩니다."
+    )
 
 
 def center_roi(shape, frac: float = 0.3) -> tuple[int, int, int, int]:

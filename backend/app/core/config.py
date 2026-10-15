@@ -139,15 +139,17 @@ class Settings(BaseSettings):
 
     # 카메라 전송 방식 (refactor/camera-transport.md).
     #
-    #   "direct" — wrapper 가 v4l2/RealSense 를 **직접 연다** (지금까지의 방식).
+    #   "shm"    — 발행자가 장치를 독점하고 wrapper 는 `/dev/shm` 에서 픽셀만 읽는다.
+    #              해제 춤이 사라지고 JPEG 이중압축도 없다. **기본값.**
+    #   "direct" — wrapper 가 v4l2/RealSense 를 **직접 연다** (옛 방식, 폴백).
     #              그래서 추론 전에 웹이 쥔 카메라를 해제해야 하고,
     #              컨테이너는 privileged + /dev 마운트가 필요하다.
-    #   "shm"    — 발행자가 장치를 독점하고 wrapper 는 `/dev/shm` 에서 픽셀만 읽는다.
-    #              해제 춤이 사라지고 JPEG 이중압축도 없다.
     #
-    # 기본값이 "direct" 인 이유: **실기로 fps·지연을 비교한 뒤에 바꾼다.**
-    # 되돌리기가 이 값 하나로 끝나야 한다.
-    camera_transport: str = "direct"
+    # 기본값이 "shm" 인 이유: 실기로 추론·녹화가 shm 경로로 도는 것을 확인했고
+    # (refactor/camera-transport.md), 스트림 이름 기준 카메라
+    # (feature/stream-based-cameras.md)가 shm 을 전제한다. 배포(.env·compose)는 이미 shm 이다.
+    # 되돌리기는 이 값 하나다.
+    camera_transport: str = "shm"
 
     # 로봇 전송 방식 (refactor/robot-transport.md). 카메라와 **같은 모양의 스위치**다.
     #

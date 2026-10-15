@@ -423,11 +423,11 @@ def test_the_profile_reapplies_on_every_connect():
     — 프로파일이 한다"). 연결은 활성 프로파일의 컨트롤을 함께 넘긴다.
 
     문제는 그게 아니라 **말해주지 않은 것**이었다: 보정으로 좋은 값을 얻고
-    [실시간 보기] 를 누르면 그 버튼이 `connect` 를 부르고, 프로파일 값이 다시
+    카메라를 다시 열면(그때는 [실시간 보기] 버튼이 `connect` 를 불렀다) 프로파일 값이 다시
     걸려 "다시 어두워진다". 실측(D435, 프리셋 '주간 사무실'):
 
         보정 후     exposure = 8000
-        실시간 보기 exposure = 93     ← 프리셋 값
+        다시 연결   exposure = 93     ← 프리셋 값
     """
     from pathlib import Path
 
@@ -437,14 +437,20 @@ def test_the_profile_reapplies_on_every_connect():
     assert "_active_controls(self)" in body, "연결이 프로파일을 안 건다 — 설계가 바뀌었다"
 
 
-def test_the_live_button_connects_first():
-    """[실시간 보기] 가 `connect` 를 부르는 것이 위 경로의 방아쇠다."""
+def test_reviving_a_stopped_camera_is_the_trigger_and_pauses_for_the_modal():
+    """멈춘 카메라를 다시 여는 `connect` 가 위 경로의 방아쇠다 — 예전엔 [실시간 보기] 버튼이었고
+    지금은 페이지가 스스로 부른다.
+
+    그래서 **설정 모달이 열려 있는 동안은 쉰다**: 사람이 만지는 중인 장치 값(보정 직후, 아직
+    프로파일에 없다)을 자동 연결이 덮으면 보정이 영문 모르게 사라진다.
+    """
     from pathlib import Path
 
-    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages"
-            / "CamerasPage.tsx").read_text()
-    live = page.split("t('중단') : t('실시간 보기')", 1)[0][-1200:]
-    assert "/cameras/connect" in live
+    root = Path(__file__).resolve().parents[2] / "frontend" / "src"
+    hook = (root / "hooks" / "useCameraLive.ts").read_text()
+    assert "/cameras/connect" in hook.split("export function useReviveStopped", 1)[1]
+    page = (root / "pages" / "CamerasPage.tsx").read_text()
+    assert "!settingsCam" in page.split("useReviveStopped(", 1)[1].split(")", 1)[0]
 
 
 def test_the_result_box_says_it_is_not_saved():
@@ -456,7 +462,7 @@ def test_the_result_box_says_it_is_not_saved():
             / "CamerasPage.tsx").read_text()
     box = page.split("{grayCard && (", 1)[1].split("</div>", 1)[0]
     assert "장치에만" in box, "결과 상자가 임시값임을 말하지 않는다"
-    assert "실시간 보기" in box, "무엇이 되돌리는지 말하지 않는다"
+    assert "다시 연결" in box, "무엇이 되돌리는지 말하지 않는다"
 
 
 def test_the_modal_saves_nothing_and_points_to_the_profile_tab():
@@ -573,3 +579,59 @@ def test_a_neutral_card_leaves_wb_alone():
     """맞아 있는 것을 흔들면 보정이 수렴하지 않는다."""
     neutral = G.measure(card(118))
     assert abs(G.white_balance_for(neutral, 4600) - 4600) < 20
+
+
+# ── 못 맞춘 이유를 말한다 (2026-10-14: "회색 카드 보정이 동작 안 하네") ─────────────
+
+def _reading(r, g, b, luma=118.0, **kw):
+    from piper_cam import graycard as gc
+
+    return gc.GrayCardReading(b=b, g=g, r=r, luma=luma, clipped_pct=kw.get("clipped", 0.0),
+                              spread_pct=kw.get("spread", 3.0), pixels=kw.get("pixels", 5000))
+
+
+def test_white_balance_cannot_move_green_so_balance_and_tint_are_measured_apart():
+    """색온도 노브는 B/R 비만 바꾼다. `neutral_error_pct`(R·G·B 셋 모두)는 R=B 여도 G 때문에 남는다."""
+    r = _reading(r=118.0, g=124.0, b=118.0)
+    assert r.balance_error_pct == 0.0
+    assert round(r.tint_pct, 1) == 5.1
+    # 실제로 로그에 찍히던 3% 대의 바닥이 정확히 이 모양이다
+    assert 3.0 <= r.neutral_error_pct <= 3.5
+
+
+def test_the_hint_says_why_when_only_green_is_left():
+    from piper_cam import graycard as gc
+
+    hint = gc.residual_hint(_reading(r=118.0, g=124.0, b=118.0))
+    assert hint and "R·B 균형은 맞았습니다" in hint
+    assert "초록 쪽" in hint and "5.1%" in hint
+    assert "색온도" in hint and "프로파일" in hint, "무엇을 하라는 말이 있어야 한다"
+
+    magenta = gc.residual_hint(_reading(r=118.0, g=112.0, b=118.0))
+    assert magenta and "자홍 쪽" in magenta
+
+
+def test_no_hint_when_red_and_blue_are_still_off():
+    """노브가 할 일이 남았다 — 그걸 틴트 탓이라고 말하면 거짓이다."""
+    from piper_cam import graycard as gc
+
+    assert gc.residual_hint(_reading(r=130.0, g=118.0, b=108.0)) is None
+
+
+def test_no_hint_when_it_already_passed_or_the_reading_is_unusable():
+    from piper_cam import graycard as gc
+
+    assert gc.residual_hint(_reading(r=118.0, g=118.5, b=118.0)) is None       # 맞음
+    assert gc.residual_hint(_reading(r=118.0, g=124.0, b=118.0, spread=40.0)) is None  # 못 믿을 측정
+
+
+def test_both_daemons_put_the_hint_in_the_report():
+    """RealSense 와 웹캠 보정이 같은 말을 한다 — 한쪽만 말하면 USB 웹캠에서 다시 "동작 안 함"이다."""
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    for rel in ("rs/piper_rs/hub.py", "cam/piper_cam/hub.py"):
+        src = (repo / rel).read_text()
+        assert '"hint": None if ok else gc.residual_hint(reading)' in src, rel
+    page = (repo / "frontend/src/pages/CamerasPage.tsx").read_text()
+    assert "grayCard.hint" in page, "화면이 이유를 안 보여준다"

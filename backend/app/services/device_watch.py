@@ -117,7 +117,7 @@ def _survey_cameras() -> tuple[set[str], set[str]]:
     fresh, stale = set(), set()
     for name in list_segments():
         try:
-            sub = Subscriber(name)
+            sub = Subscriber(name, observer=True)
         except Exception:
             continue
         try:
@@ -393,6 +393,14 @@ class DeviceWatch:
         from app.services.realsense_manager import realsense_hub, rs_available
         from app.services.v4l2_client import v4l2_hub
 
+        # 데몬이 유휴로 닫은 카메라는 "끊긴" 것이 아니다 — 사람이 켠 옵션의 결과다. 먼저
+        # `connected` 를 내려 아래 판정이 "쓰고 있는 것"에서 빼게 한다(세그먼트가 사라진 걸
+        # 사고로 읽지 않는다).
+        try:
+            camera_manager.sync_idle_stops()
+        except Exception as exc:
+            logger.debug("유휴 종료 반영 실패: %s", exc)
+
         all_cams = camera_manager.cameras
         # ⚠ **쓰고 있는 것만 본다.** 스캔 probe 가 남긴 썸네일 세그먼트는 태어날 때부터
         # 멈춰 있어서, 안 거르면 스캔만 눌러도 "발행이 멈췄다"가 뜬다.
@@ -446,7 +454,9 @@ class DeviceWatch:
 
         def _kind(seg: str) -> str:
             cam = cams.get(id_of.get(seg, ""))
-            return cam.cam_type if cam else ("realsense" if seg.startswith("rs_") else "opencv")
+            # ⚠ 이름 모양(`rs_` 접두사)으로 종류를 추측하지 않는다 — 이름은 사용자가 정한다.
+            #   위에서 `stopped` 를 **관리자가 아는 세그먼트**로 걸렀으므로 여기 오는 건 늘 안다.
+            return cam.cam_type if cam else "opencv"
 
         out: list[Alert] = []
         by_type = {"realsense": rs_available(), "opencv": v4l2_hub.available()}

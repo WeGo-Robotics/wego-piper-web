@@ -107,8 +107,13 @@ async def validate_config(body: ValidateRequest):
         errors.append(f"액션 차원 불일치: 모델={action_dim}, 로봇={robot_joints}")
 
     # 4) 카메라 매핑 검증
+    # 값은 스트림 이름이거나(새 화면) 옛 장치 id 다(낡은 번들·저장된 값) — 장치 id 로 맞춘 뒤
+    # 같은 검사를 한다. 못 찾는 값은 그대로 두므로 아래에서 "등록되지 않았습니다" 로 나온다.
+    from app.services.camera_config import normalize_mapping
+
+    camera_mapping = normalize_mapping(body.camera_mapping)
     required_names = {c["name"] for c in required_cameras}
-    mapped_names = set(body.camera_mapping.keys())
+    mapped_names = set(camera_mapping.keys())
 
     # 매핑되지 않은 카메라
     missing = required_names - mapped_names
@@ -122,7 +127,7 @@ async def validate_config(body: ValidateRequest):
 
     # 매핑된 카메라가 등록(ready)되어 있는지
     ready_cam_ids = {c["id"] for c in camera_manager.get_ready_cameras()}
-    for cam_name, cam_id in body.camera_mapping.items():
+    for cam_name, cam_id in camera_mapping.items():
         if cam_name not in required_names:
             continue
         if cam_id not in ready_cam_ids:
@@ -130,7 +135,7 @@ async def validate_config(body: ValidateRequest):
 
     # 5) 해상도 경고
     for req_cam in required_cameras:
-        cam_id = body.camera_mapping.get(req_cam["name"])
+        cam_id = camera_mapping.get(req_cam["name"])
         if not cam_id:
             continue
         cam = camera_manager.cameras.get(cam_id)

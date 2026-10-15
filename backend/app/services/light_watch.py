@@ -113,10 +113,12 @@ class LightWatch:
         task = self._task_active()
         for cam in cams.values():
             seg = segment_for_camera(cam.id)
-            if seg.endswith("_depth"):
+            # ⚠ 이름 모양(`_depth` 접미사)으로 깊이를 가리지 않는다 — 이름은 사용자가 정한다.
+            #   종류는 장치가 말하는 `stream_type` 이다.
+            if getattr(cam, "stream_type", "") == "depth":
                 continue           # 깊이에 밝기 감시는 무의미하다 (문서 §4)
             try:
-                sub = Subscriber(seg)
+                sub = Subscriber(seg, observer=True)
             except Exception:
                 continue           # 아직 발행 전 — 발행 멈춤 판정은 device_watch 몫
             try:

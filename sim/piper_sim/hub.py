@@ -150,6 +150,22 @@ class SimHub:
     def cam_disconnect(self, cam_id): return self.cameras.disconnect(cam_id)
     def cam_release_all(self): return self.cameras.release_all()
     def cam_probe(self, cam_id): return self.cameras.probe(cam_id)
+
+    def cam_set_idle(self, cam_id, seconds=0):
+        from piper_cam.idle import reaper
+
+        return reaper.set_idle(cam_id, seconds)
+
+    def cam_hold(self, cam_id, seconds=0):
+        from piper_cam.idle import reaper
+
+        return reaper.hold(cam_id, seconds)
+
+    def cam_set_stream(self, cam_id, name):
+        """사용자가 붙인 스트림 이름으로 발행한다 (camerad 의 `set_stream` 과 같은 동사)."""
+        from piper_cam import publish
+
+        return publish.rename(cam_id, name)
     def cam_list_controls(self, cam_id): return self.cameras.list_controls(cam_id)
     def cam_set_control(self, cam_id, name, value): return self.cameras.set_control(cam_id, name, value)
     def cam_apply_controls(self, cam_id, wanted): return self.cameras.apply_controls(cam_id, wanted)

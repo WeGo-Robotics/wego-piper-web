@@ -182,6 +182,19 @@ def light_name(key: str) -> str:
     return key[len(LIGHT_PREFIX) + 1:]
 
 
+# ── 카메라 유휴 종료 기록 ────────────────────────────────────────────────────
+#
+# 데몬이 "읽는 곳이 없어서" 카메라를 닫으면 **그 사실**을 여기 남긴다. 게이트웨이는 장치가
+# 안 열려 있다는 것만 알고 *왜*는 모른다 — 선택기가 "유휴로 종료됨"이라고 말하려면 이 기록이
+# 필요하다. 사람이 다시 연결하면 데몬이 지운다. TTL 은 안전망(데몬이 죽어 못 지운 경우).
+CAM_IDLE_PREFIX: Final = _k("cam", "idle")
+CAM_IDLE_TTL_S: Final = 7 * 24 * 3600
+
+
+def cam_idle_key(cam_id: str) -> str:
+    return f"{CAM_IDLE_PREFIX}:{cam_id}"
+
+
 # yolod 자기소개 — 어떤 모델·설정으로 돌고 있나 (프로세스당 하나, 카메라별 아님).
 # ⚠ VISION_PREFIX 아래 두면 `detection_names()` 스캔에 "meta" 카메라로 잡힌다 —
 # 접두사를 분리한다. yolod 가 루프마다 갱신하고 TTL 이 죽은 데몬의 낡은 정보를 지운다.

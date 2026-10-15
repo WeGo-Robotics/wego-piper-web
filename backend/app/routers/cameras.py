@@ -2,7 +2,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -30,6 +30,23 @@ def _guard_device_access() -> None:
     owner = _camera_owner()
     if owner:
         raise HTTPException(409, f"{owner} 실행 중에는 카메라 디바이스에 접근할 수 없습니다")
+
+
+def _guard_stream_move(cam_id: str) -> None:
+    """이름을 바꾸거나 등록을 해제하면 **발행 중인 세그먼트가 옮겨진다.**
+
+    수집·추론이 그 세그먼트를 열고 있으면 옛 이름을 문 채 얼어붙은 화면을 본다 —
+    `Subscriber.orphaned` 가 말하듯 에러도 안 난다. 도는 동안은 막는다. (읽는 쪽이 자기
+    존재를 알리는 방식이 생기면 "이 카메라를 읽는 곳이 있는가"로 좁힐 수 있다 —
+    feature/stream-based-cameras.md §5-5.)
+
+    연결 안 된 카메라는 옮길 세그먼트가 없으므로 막지 않는다.
+    """
+    cam = camera_manager.cameras.get(cam_id)
+    owner = _camera_owner()
+    if cam is not None and cam.connected and owner:
+        raise HTTPException(
+            409, f"{owner} 실행 중에는 연결된 카메라의 이름을 바꾸거나 등록을 해제할 수 없습니다")
 
 
 @router.post("/clear")
@@ -117,14 +134,19 @@ async def update_config(body: CameraConfigRequest):
 
 class CameraRegisterRequest(BaseModel):
     id: str
-    # 사람이 붙이는 별칭 — "탑뷰", "손목". 화면에서 어느 카메라인지 알아보는 용도다.
-    # LeRobot 카메라 키(`observation.images.<키>`)와는 별개다 — 아래 /label 참고.
+    # 스트림 이름 — 수집·추론이 이 카메라를 부르는 이름. 영문·숫자·`_`·`-`, 유일.
+    # 비우면 기본 이름(`장치명_N`)을 받는다.
+    name: str | None = None
+    # ⚠ 옛 필드(별칭). 스트림 이름으로 합쳐졌다 — 낡은 번들이 이 이름으로 보내도
+    # 같은 뜻이다. `name` 이 있으면 `name` 이 이긴다.
     label: str | None = None
 
 
 @router.post("/register")
 async def register_camera(body: CameraRegisterRequest):
-    ok, why = camera_manager.register_camera(body.id, body.label)
+    _guard_stream_move(body.id)
+    ok, why = camera_manager.register_camera(
+        body.id, body.name if body.name is not None else body.label)
     if not ok:
         # ⚠ 데몬이 말해 준 사유를 그대로 올린다. 고정 문구로 덮으면 현장에서 화면이
         #   아무 단서도 못 준다 — 장치를 못 여는 이유는 매번 다르다.
@@ -134,6 +156,41 @@ async def register_camera(body: CameraRegisterRequest):
     return cam.to_dict() if cam else {"status": "registered"}
 
 
+class CameraRenameRequest(BaseModel):
+    id: str
+    name: str
+
+
+def _rename(cam_id: str, name: str) -> dict:
+    """개명. 사유를 상태 코드로 옮긴다 — 404 없음 · 400 규칙 위반 · 409 이름 충돌."""
+    from app.services.camera_streams import StreamNameConflict, StreamNameError
+
+    _guard_stream_move(cam_id)
+    try:
+        found = camera_manager.rename_stream(cam_id, name)
+    except StreamNameConflict as exc:
+        raise HTTPException(409, str(exc))
+    except StreamNameError as exc:
+        raise HTTPException(400, str(exc))
+    if not found:
+        raise HTTPException(404, "카메라를 찾을 수 없습니다")
+    camera_manager.save_session()
+    cam = camera_manager.cameras.get(cam_id)
+    return cam.to_dict() if cam else {"status": "ok"}
+
+
+@router.post("/rename")
+async def rename_camera(body: CameraRenameRequest):
+    """스트림 이름 변경. 등록 후에도 고칠 수 있어야 한다.
+
+    ⚠ **데이터셋 피처 이름은 안 바뀐다.** `observation.images.<키>` 의 키는
+    녹화·추론 페이지에서 정하고 학습된 정책이 그 키에 묶여 있다. 여기서 바꾸는 것은
+    `{키: 이름}` 매핑의 오른쪽이라, 이미 구운 데이터셋이나 정책에 영향을 주지 않는다.
+    옛 이름은 개명 이력으로 남아 같은 카메라로 해석된다.
+    """
+    return _rename(body.id, body.name)
+
+
 class CameraLabelRequest(BaseModel):
     id: str
     label: str
@@ -141,17 +198,32 @@ class CameraLabelRequest(BaseModel):
 
 @router.post("/label")
 async def set_camera_label(body: CameraLabelRequest):
-    """별칭만 변경. 등록 후에도 고칠 수 있어야 한다.
+    """⚠ 옛 경로 — 별칭이 스트림 이름으로 합쳐졌다. `/rename` 과 같다.
 
-    ⚠ **데이터셋 피처 이름은 안 바뀐다.** `observation.images.<키>` 의 키는
-    녹화·추론 페이지에서 정하고 학습된 정책이 그 키에 묶여 있다. 여기서 바꾸는 것은
-    화면에 보이는 이름뿐이라, 이미 구운 데이터셋이나 정책에 영향을 주지 않는다.
+    낡은 번들을 든 브라우저가 부르므로 한 릴리스 남긴다(이 저장소에서 vite 가 낡은
+    번들을 서빙한 일이 실제로 있었다). 비어 있는 값은 **이름을 지우지 않고** 거절한다 —
+    예전에는 빈 별칭이 "별칭 없음"이었지만 이제 등록된 카메라는 이름이 항상 있다.
     """
-    if not camera_manager.set_label(body.id, body.label):
-        raise HTTPException(404, "카메라를 찾을 수 없습니다")
-    camera_manager.save_session()
-    cam = camera_manager.cameras.get(body.id)
-    return cam.to_dict() if cam else {"status": "ok"}
+    return _rename(body.id, body.label)
+
+
+@router.get("/streams")
+async def list_streams():
+    """등록된 카메라의 스트림 디렉토리 — 선택기가 "보이되 비활성"을 판단하는 재료.
+
+    `selectable` 이 참인 것(등록 + 연결됨)만 고를 수 있다. 연결 안 된 것·USB 빠진 것도
+    목록에는 있고 `state`/`reason` 이 이유를 말한다. 미등록은 스트림이 아니라 없다.
+    `notices` 는 시작할 때 이름이 바뀐 사실(옛 별칭을 못 쓸 때) — 사람이 지울 때까지 남는다.
+    """
+    loop = asyncio.get_event_loop()
+    streams = await loop.run_in_executor(_executor, camera_manager.streams)
+    return {"streams": streams, "notices": camera_manager.notices()}
+
+
+@router.post("/notices/clear")
+async def clear_notices():
+    camera_manager.clear_notices()
+    return {"status": "cleared"}
 
 
 class LightAlarmRequest(BaseModel):
@@ -177,6 +249,37 @@ async def set_light_alarm(body: LightAlarmRequest):
     cam.light_alarm = bool(body.enabled)
     camera_manager.save_session()
     return cam.to_dict()
+
+
+class IdleStopRequest(BaseModel):
+    id: str
+    # 0 = 끔. 아니면 읽는 곳이 이만큼(초) 없을 때 데몬이 이 카메라를 닫는다.
+    seconds: int
+
+
+@router.post("/idle-stop")
+async def set_idle_stop(body: IdleStopRequest):
+    """유휴 자동 종료 — 읽는 곳(수집·추론·미리보기)이 없으면 일정 시간 뒤 카메라를 닫는다.
+
+    ⚠ **끄는 것이 기본이다.** 켜면 닫힌 카메라는 선택기에서 [연결] 로 다시 켠다 — 수집·추론
+    시작이 몰래 다시 열지 않는다. 범위 밖 값은 고쳐 쓰지 않고 거절한다.
+
+    데몬이 옛 코드면 이 동사를 모르므로 **저장은 되지만 닫히지 않는다** — 응답의 `warning`
+    이 그걸 말한다(데몬 재시작이 필요하다).
+    """
+    try:
+        found, saved, pushed = camera_manager.set_idle_stop(body.id, body.seconds)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if not found:
+        raise HTTPException(404, "카메라를 찾을 수 없습니다")
+    camera_manager.save_session()
+    cam = camera_manager.cameras.get(body.id)
+    out = cam.to_dict() if cam else {"status": "ok"}
+    if saved and cam is not None and cam.connected and not pushed:
+        out["warning"] = ("카메라 데몬이 이 설정을 받지 못했습니다 — 저장은 됐지만 닫히지 않습니다. "
+                          "데몬이 옛 코드일 수 있으니 서비스에서 재시작하세요")
+    return out
 
 
 class ResolutionRequest(BaseModel):
@@ -237,20 +340,27 @@ async def set_resolution(body: ResolutionRequest):
 
 @router.post("/unregister")
 async def unregister_camera(body: CameraIdRequest):
+    _guard_stream_move(body.id)
     if not camera_manager.unregister_camera(body.id):
         raise HTTPException(400, "Unknown camera")
     camera_manager.save_session()
     return {"status": "unregistered"}
 
 
+# ⚠ **이 둘은 이벤트 루프에서 직접 부르면 안 된다.** `to_dict()` 가 카메라마다 데몬에 RPC 를
+# 던진다(`running_profile` — 배경 마스킹·깊이 인코딩). rsd 가 보정·연결·스캔처럼 긴 일을 하는 동안은
+# 그 RPC 가 20초 타임아웃까지 걸리고, 동기 호출이면 **그동안 게이트웨이 전체가 선다.**
+# 2026-10-14 실측: `rsd 응답 없음 (info)` 뒤에 `heartbeat 간격 20.14s (유실 10214건)` — E-stop
+# heartbeat 가 20초 끊겼다. 화면이 3초마다 이걸 부르므로 rsd 가 한 번 느려지면 매번 그렇게 된다.
+# 스레드로 돌리면 루프는 산다 — 느린 것은 이 요청뿐이다.
 @router.get("/ready")
 async def get_ready_cameras():
-    return camera_manager.get_ready_cameras()
+    return await asyncio.to_thread(camera_manager.get_ready_cameras)
 
 
 @router.get("/current")
 async def get_current():
-    return camera_manager.get_current()
+    return await asyncio.to_thread(camera_manager.get_current)
 
 
 @router.get("/light")
@@ -424,6 +534,33 @@ async def reset_controls(body: CameraIdRequest):
             _executor, camera_manager.set_control, body.id, ctrl["name"], ctrl["default"]
         )
     return await loop.run_in_executor(_executor, camera_manager.get_controls, body.id)
+
+
+# 한 번에 받는 카메라 수 상한 — 인코딩이 카메라 수만큼 는다. 등록된 카메라가 이보다 많으면
+# 400 으로 말한다(조용히 자르면 어떤 카드는 영영 안 뜬다).
+MAX_LIVE_CAMERAS = 24
+
+
+@router.get("/live")
+async def live_frames(ids: list[str] = Query(default=[]), fps: float = 10.0):
+    """등록된 카메라들의 프레임을 **한 연결로** 밀어준다 (조각마다 `X-Camera` 헤더).
+
+    카메라 페이지가 카드마다 `/stream` 을 물면 카메라 수만큼 연결을 쥐고, 브라우저의
+    오리진당 연결(6)을 다 쓰면 E-stop 요청이 나가지 못한다 — `mjpeg.multiplex` 주석.
+
+    세그먼트가 없는(정지·유휴 종료) 카메라는 조용히 빈 채로 두고, 되살아나면 같은 연결로 흐른다.
+    """
+    from app.services import mjpeg
+    from app.services.shm_snapshot import following_reader
+
+    wanted = list(dict.fromkeys(i for i in ids if i))     # 순서를 지키며 중복 제거
+    if len(wanted) > MAX_LIVE_CAMERAS:
+        raise HTTPException(400, f"한 번에 {MAX_LIVE_CAMERAS}대까지 볼 수 있습니다")
+    # 상한을 둔다 — 0 에 가까우면 쉬지 않고 돌고, 너무 크면 인코딩만 늘고 화면은 그대로다
+    fps = min(max(fps, 1.0), 30.0)
+    # 카드에서 이름을 바꾸면 세그먼트가 옮겨진다 — 연결이 오래 열려 있으므로 따라가야 한다
+    readers = {i: following_reader(i) for i in wanted}
+    return mjpeg.multiplex(readers, label="cameras/live", fps=fps)
 
 
 # path 라우트는 반드시 고정 경로 뒤에 배치

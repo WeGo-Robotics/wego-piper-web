@@ -205,10 +205,15 @@ def test_gateway_never_unlinks_daemon_segments():
     }
     assert "sweep_stale_segments" not in main_calls, "기동 시 데몬 세그먼트를 쓸어버린다"
 
-    # 데몬은 **자기 접두사만** 치운다 — 남의 것을 지우면 그쪽이 깨진다
-    for daemon, prefix in (("rsd.py", "rs_"), ("camerad.py", "dev_")):
+    # 데몬은 **죽은 발행자의 것만** 치운다 — 남의 것을 지우면 그쪽이 깨진다.
+    # 이름이 사용자 몫이라 접두사로는 소유를 모른다 → 헤더의 발행자 pid 로 가른다.
+    # 접두사는 pid 가 없는 **옛 세그먼트**에만 쓴다.
+    for daemon, prefix in (("rsd.py", "rs_"), ("camerad.py", "dev_"), ("simd.py", "sim_")):
         d = (repo / "daemons" / daemon).read_text()
-        assert f'startswith("{prefix}")' in d, f"{daemon} 이 자기 것만 치우지 않는다"
+        assert "dead_segments" in d and f'legacy_prefix="{prefix}"' in d, (
+            f"{daemon} 이 죽은 발행자의 것만 치우지 않는다")
+        # 접두사로 **직접** 가르는 줄이 남아 있으면 안 된다 — 이름은 사용자가 정한다
+        assert f'if n.startswith("{prefix}")' not in d, f"{daemon} 이 아직 접두사로 소유를 가른다"
 
 
 def test_shm_config_carries_real_dimensions():

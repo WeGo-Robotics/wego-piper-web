@@ -1,16 +1,20 @@
-"""카메라 별칭 — "탑뷰"인지 "손목"인지 화면에서 바로 알아보기 위한 이름.
+"""카메라 이름 — 옛 별칭(`label`)이 **스트림 이름**으로 합쳐졌다.
 
-## 별칭은 LeRobot 카메라 키가 **아니다**
+규칙·기본 이름·유일성·마이그레이션은 `test_camera_streams.py` 가 본다. 여기는
+**별칭이 있던 자리**(표시명·드롭다운·등록 사유)가 새 이름으로 계속 돌아가는지 본다.
+
+## 이름은 LeRobot 카메라 키가 **아니다**
 
 데이터셋 피처는 `observation.images.<키>` 로 굳고 정책도 그 키로 학습된다.
-별칭이 곧 키가 되면 카메라 이름을 고치는 순간 **이미 학습된 정책이 안 열린다.**
-그래서 별칭은 표시 전용이고, 키는 녹화·추론 페이지에서 따로 정한다.
-대신 그 드롭다운이 별칭을 보여줘서 고르는 순간에 알 수 있게 한다.
+이름이 곧 키가 되면 카메라 이름을 고치는 순간 **이미 학습된 정책이 안 열린다.**
+그래서 이름은 `{키: 이름}` 매핑의 오른쪽에만 있다. 키는 녹화·추론 페이지에서 따로 정한다.
 """
 
 import json
 import re
 from pathlib import Path
+
+import pytest
 
 from app.services.camera_manager import CameraInfo, CameraManager
 
@@ -21,70 +25,45 @@ def _cam(**kw) -> CameraInfo:
     return CameraInfo(id=kw.pop("id", "/dev/video0"), name=kw.pop("name", "HD Webcam"), **kw)
 
 
-def test_display_name_prefers_label():
-    assert _cam(label="탑뷰").to_dict()["display_name"] == "탑뷰"
+def test_display_name_prefers_the_stream_name():
+    assert _cam(stream="top").to_dict()["display_name"] == "top"
 
 
 def test_display_name_falls_back_to_hardware_name():
-    """별칭이 없으면 하드웨어 이름. 각 화면이 `label || name` 을 따로 적으면 규칙이 갈린다."""
+    """등록 전에는 이름이 없으니 하드웨어 이름. 각 화면이 `stream || name` 을 따로 적으면 규칙이 갈린다."""
     assert _cam().to_dict()["display_name"] == "HD Webcam"
-    assert _cam(label="  ").to_dict()["label"] == "  "   # 저장은 그대로 (설정 시 strip)
 
 
-def test_register_accepts_a_label():
+def test_label_is_a_read_only_alias_of_the_stream_name():
+    """`cam.label or cam.name` 으로 표시명을 만들던 호출부가 그대로 돈다. 쓰기는 막는다 —
+    대입이 되면 이름 규칙·유일성 검사를 우회한다."""
+    cam = _cam(stream="wrist")
+    assert cam.label == "wrist"
+    assert cam.to_dict()["label"] == cam.to_dict()["stream"] == "wrist"
+    with pytest.raises(AttributeError):
+        cam.label = "x"
+
+
+def test_register_accepts_a_name():
     m = CameraManager()
     cam = _cam(id="rs:1:color")
     cam.connected = True                      # connect 우회
     m.cameras[cam.id] = cam
 
-    assert m.register_camera("rs:1:color", "  탑뷰  ")[0] is True
-    assert cam.label == "탑뷰", "앞뒤 공백을 안 다듬었다"
+    assert m.register_camera("rs:1:color", "  Top_View  ")[0] is True
+    assert cam.stream == "Top_View", "앞뒤 공백을 안 다듬었다"
     assert cam.ready is True
 
 
-def test_register_without_label_keeps_existing():
-    """이름을 안 주고 재등록했다고 기존 별칭이 지워지면 안 된다."""
+def test_register_without_a_name_keeps_the_existing_one():
+    """이름을 안 주고 재등록했다고 사람이 정한 이름이 기본값으로 돌아가면 안 된다."""
     m = CameraManager()
-    cam = _cam(id="rs:1:color", label="손목")
+    cam = _cam(id="rs:1:color", stream="wrist")
     cam.connected = True
     m.cameras[cam.id] = cam
 
-    m.register_camera("rs:1:color")           # label=None
-    assert cam.label == "손목"
-
-
-def test_set_label_can_clear():
-    m = CameraManager()
-    cam = _cam(label="탑뷰")
-    m.cameras[cam.id] = cam
-
-    assert m.set_label(cam.id, "") is True
-    assert cam.label == ""
-    assert cam.to_dict()["display_name"] == "HD Webcam"
-
-
-def test_set_label_unknown_camera():
-    assert CameraManager().set_label("/dev/nope", "x") is False
-
-
-def test_label_survives_session_roundtrip(tmp_path, monkeypatch):
-    """카메라를 옮겨 달 때까지 이름이 유지돼야 한다 — 재시작마다 다시 붙이면 안 쓴다."""
-    m = CameraManager()
-    cam = _cam(id="rs:1:color", label="탑뷰", cam_type="realsense")
-    cam.ready = True
-    m.cameras[cam.id] = cam
-
-    path = tmp_path / "camera_session.json"
-    monkeypatch.setattr(CameraManager, "CAMERA_SESSION_PATH", path)
-    m.save_session()
-    assert json.loads(path.read_text())[0]["label"] == "탑뷰"
-
-    # 새 매니저가 스캔했다고 치고 복원
-    m2 = CameraManager()
-    fresh = _cam(id="rs:1:color", cam_type="realsense")
-    monkeypatch.setattr(CameraManager, "scan", lambda self: m2.cameras.update({fresh.id: fresh}))
-    assert m2.restore_session() is True
-    assert m2.cameras["rs:1:color"].label == "탑뷰"
+    m.register_camera("rs:1:color")           # name=None
+    assert cam.stream == "wrist"
 
 
 def test_label_is_not_the_lerobot_camera_key():
@@ -99,14 +78,26 @@ def test_label_is_not_the_lerobot_camera_key():
     assert list(built) == ["top"]
 
 
-def test_dropdowns_show_the_label():
-    """드롭다운이 별칭을 안 보여주면 이 기능의 목적(고를 때 알아보기)이 사라진다."""
-    shared = (_REPO / "frontend" / "src" / "types" / "camera.ts").read_text()
-    assert "camOptionText" in shared and "c.label" in shared
+def test_dropdowns_show_the_stream_name_and_use_the_shared_picker():
+    """드롭다운이 이름을 안 보여주면 이 기능의 목적(고를 때 알아보기)이 사라진다.
+    수집·추론이 **같은 선택기**를 써야 한 쪽만 규칙이 갈리지 않는다."""
+    types = (_REPO / "frontend" / "src" / "types" / "camera.ts").read_text()
+    assert "streamOptionText" in types and "s.stream" in types
+
+    picker = (_REPO / "frontend" / "src" / "components" / "CameraStreamPicker.tsx").read_text()
+    assert "disabled" in picker and "s.selectable" in picker, "연결 안 된 것을 비활성으로 두지 않는다"
 
     for page in ("RecordingPage", "InferencePage"):
         src = (_REPO / "frontend" / "src" / "pages" / f"{page}.tsx").read_text()
-        assert "camOptionText" in src, f"{page} 가 별칭을 안 보여준다"
+        assert "CameraStreamSelect" in src, f"{page} 가 공용 선택기를 안 쓴다"
+        assert "IdleStreams" in src, f"{page} 에 연결 안 된 카메라를 연결할 자리가 없다"
+        assert "/cameras/ready" not in src, f"{page} 가 아직 장치 목록으로 고른다"
+
+
+def test_encoder_probe_still_lists_devices_by_the_shared_type():
+    """인코더 프로브는 장치 id 로 카메라를 고른다(프레임을 직접 읽는 도구) — 옛 드롭다운 유지."""
+    shared = (_REPO / "frontend" / "src" / "types" / "camera.ts").read_text()
+    assert "camOptionText" in shared and "c.stream" in shared
 
 
 def test_ready_cam_type_is_declared_once():
@@ -136,9 +127,11 @@ def _fake_cam(cam_id: str, why: str):
     """connect 가 **사유와 함께** 실패하는 카메라. camerad 가 그렇게 답한다."""
     class _C:
         id = cam_id
+        name = "HD Webcam"
         connected = False
         ready = False
-        label = ""
+        stream = ""
+        aliases: list = []
 
         def connect(self):
             return False, why

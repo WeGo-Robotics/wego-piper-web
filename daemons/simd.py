@@ -34,7 +34,11 @@ _METHODS = {"scan", "attach", "release", "release_all", "estop", "info", "lost",
             # 카메라 — camerad 어휘에 cam_ 접두사
             "cam_scan", "cam_connect", "cam_disconnect", "cam_release_all", "cam_probe",
             "cam_list_controls", "cam_set_control", "cam_apply_controls",
-            "cam_last_apply_report", "cam_info", "cam_lost"}
+            "cam_last_apply_report", "cam_info", "cam_lost",
+            # 사용자가 붙인 스트림 이름으로 발행한다 (feature/stream-based-cameras.md)
+            "cam_set_stream",
+            # 쓰는 곳이 없으면 일정 시간 뒤 닫는다 (유휴 자동 종료)
+            "cam_set_idle", "cam_hold"}
 
 
 def owns_segment(name: str) -> bool:
@@ -53,7 +57,10 @@ def serve(bus: Bus, hub: SimHub) -> None:
     global _running
     logger.info("시뮬 데몬 시작")
     last_beat = 0.0
+    from piper_cam.idle import tick_daemon
+
     while _running:
+        tick_daemon(bus, hub.cam_disconnect)       # 읽는 곳이 없는 카메라를 닫는다
         now = time.monotonic()
         if now - last_beat > C.DAEMON_ALIVE_TTL_MS / 3000:
             try:
@@ -97,11 +104,13 @@ def main() -> int:
     hub = SimHub()
     try:
         from piper_shm import arm as A
-        from piper_shm import list_segments as cam_segments, unlink as cam_unlink
+        from piper_shm import dead_segments as cam_dead, unlink as cam_unlink
         stale = [n for n in A.list_segments() if owns_segment(n)]
         for n in stale:
             A.unlink(n)
-        stale_cam = [n for n in cam_segments() if n.startswith("sim_")]
+        # 카메라 세그먼트는 이름이 사용자 몫이다 — 발행자 pid 로 죽은 것만 치운다.
+        # pid 가 없는 옛 세그먼트만 옛 규칙 접두사(`sim_`)로 가른다.
+        stale_cam = cam_dead(legacy_prefix="sim_")
         for n in stale_cam:
             cam_unlink(n)
         stale += stale_cam

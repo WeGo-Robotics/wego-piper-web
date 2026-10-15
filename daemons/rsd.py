@@ -56,6 +56,10 @@ _METHODS = {
     "probe", "hardware_reset", "list_controls", "set_control",
     "info", "set_depth_encoding", "set_background_mask", "calibrate_gray_card", "measure_gray_card",
     "apply_controls", "last_apply_report", "lost", "intrinsics", "modes",
+    # 사용자가 붙인 스트림 이름으로 발행한다 (feature/stream-based-cameras.md)
+    "set_stream",
+    # 쓰는 곳이 없으면 일정 시간 뒤 닫는다 — 카메라별 옵션 (유휴 자동 종료)
+    "set_idle", "hold",
 }
 
 
@@ -88,7 +92,16 @@ def serve(bus: Bus, hub: RealSenseHub) -> None:
     stop = threading.Event()
     threading.Thread(target=heartbeat, args=(bus, C.RSD, stop),
                      daemon=True, name="rsd-beat").start()
+    from piper_cam.idle import tick_daemon
+
+    def _idle_stop(cam_id: str) -> None:
+        # 참조를 **전부** 놓는다 — `connect` 가 부를 때마다 하나씩 늘어 한 번으로는 안 닫힌다
+        hub.disconnect(cam_id, True)
+
     while _running:
+        # 읽는 곳이 없는 스트림을 닫는다. `continue` 들보다 **앞**이다 — 요청이 없을 때가
+        # 정확히 닫을 때다.
+        tick_daemon(bus, _idle_stop)
         try:
             req = bus.rpc_next_request(C.RSD, timeout=1)
         except Exception as exc:
@@ -139,11 +152,13 @@ def main() -> int:
     # 스캔을 먼저 불러서 가려져 있던 순서 의존이다.
     # ⚠ 지난 프로세스가 죽으면 `/dev/shm` 세그먼트가 남는다. 치우지 않으면 소비자가
     # 발행자 없는 세그먼트를 열어 **멈춘 화면**을 본다.
-    # **자기 것만** 치운다 — 다른 데몬이 발행 중인 것을 지우면 그쪽이 깨진다.
+    # **죽은 발행자의 것만** 치운다 — 다른 데몬이 발행 중인 것을 지우면 그쪽이 깨진다.
+    # 이름이 사용자 몫이라 접두사(`rs_`)로는 누구 것인지 모른다 — 헤더의 발행자 pid 로 본다.
+    # pid 가 없는 옛 세그먼트만 옛 규칙 접두사로 가른다.
     try:
-        from piper_shm import list_segments, unlink
+        from piper_shm import dead_segments, unlink
 
-        stale = [n for n in list_segments() if n.startswith("rs_")]
+        stale = dead_segments(legacy_prefix="rs_")
         for name in stale:
             unlink(name)
         if stale:

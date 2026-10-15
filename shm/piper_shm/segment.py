@@ -42,6 +42,15 @@ HEADER_SIZE = 64
 _HEADER_FMT = "<IIIIIIIQQQ"     # magic ver w h ch dtype n_slots slot_bytes write_seq wall_ns
 assert struct.calcsize(_HEADER_FMT) <= HEADER_SIZE
 
+# **발행자 pid** — 헤더 끝의 빈 칸(52~56)이다. 앞부분 포맷은 그대로라 옛 리더도 그대로 읽는다
+# (그래서 VERSION 을 올리지 않았다). 옛 발행자가 만든 세그먼트는 이 칸이 0 이다.
+#
+# 이름이 사용자 몫이 된 뒤로 **접두사로는 누구 것인지 알 수 없다**(`dev_`·`rs_` 규칙이 사라졌다).
+# 시작할 때 "죽은 발행자의 잔재"를 치우는 근거가 이 pid 다 (`dead_segments`).
+_PID_OFF = struct.calcsize(_HEADER_FMT)
+_PID_FMT = "<I"
+assert _PID_OFF + struct.calcsize(_PID_FMT) <= HEADER_SIZE
+
 # 슬롯 수. 3이면 30fps 라이터(33ms)에 1080p 복사(0.25ms)가 겹칠 일이 사실상 없다.
 DEFAULT_SLOTS = 3
 
@@ -50,21 +59,70 @@ DTYPE_UINT8 = 1
 _DTYPE_ITEMSIZE = {DTYPE_UINT8: 1}
 
 
-def segment_for_camera(cam_id: str) -> str:
-    """카메라 장치 id → 세그먼트 이름.
-
-    ⚠ **LeRobot 카메라 키(`top`)가 아니라 장치 기준이다.**
-    발행자(camerad/rsd)는 어떤 실행에 어떤 키로 쓰일지 모른 채 **항상** 발행한다.
-    키를 이름으로 쓰면 발행자가 매핑을 알아야 하고, 매핑이 바뀔 때마다
-    세그먼트를 다시 만들어야 한다 — 데몬 모델과 맞지 않는다.
-
-    소비자는 `{"top": {"type": "shm", "segment": "rs_250122070363_color"}}` 처럼
-    **키는 dict 키로, 세그먼트는 장치로** 지정한다.
+def rule_segment_name(cam_id: str) -> str:
+    """장치 id → **규칙** 이름. 이름 지정(`set_segment_name`)을 보지 않는다.
 
         rs:250122070363:color  →  rs_250122070363_color
         /dev/video0            →  dev_video0
+
+    이름이 지정되지 않은 카메라(스캔 중인 미등록 장치, 옛 게이트웨이가 연결한 카메라)가
+    발행되는 이름이다.
     """
     return cam_id.replace(":", "_").replace("/", "_").strip("_")
+
+
+# 카메라 id → 세그먼트 이름. **프로세스마다 따로** 있다 — 게이트웨이는 데몬이 확인해 준
+# 이름을, 데몬은 게이트웨이가 정해 준 이름을 든다.
+_NAME_OVERRIDES: dict[str, str] = {}
+
+
+def set_segment_name(cam_id: str, name: str) -> None:
+    """이 카메라가 발행되는(또는 발행될) 세그먼트 이름을 정한다.
+
+    같은 프로세스의 다른 카메라가 이미 그 이름이면 `ValueError` — 한 세그먼트에는 라이터가
+    하나여야 한다(단일 라이터 seqlock). 두 발행자가 같은 이름에 쓰면 `write_seq` 가 깨져
+    리더가 찢어진 프레임을 본다.
+    """
+    for other, taken in _NAME_OVERRIDES.items():
+        if other != cam_id and taken == name:
+            raise ValueError(f"세그먼트 이름 '{name}' 은(는) 다른 카메라({other})가 쓰고 있습니다")
+    _NAME_OVERRIDES[cam_id] = name
+
+
+def clear_segment_name(cam_id: str) -> None:
+    """이름 지정을 푼다 — 규칙 이름으로 돌아간다."""
+    _NAME_OVERRIDES.pop(cam_id, None)
+
+
+def clear_segment_names() -> None:
+    _NAME_OVERRIDES.clear()
+
+
+def segment_overrides() -> dict[str, str]:
+    return dict(_NAME_OVERRIDES)
+
+
+def segment_for_camera(cam_id: str) -> str:
+    """카메라 장치 id → 세그먼트 이름.
+
+    ⚠ **LeRobot 카메라 키(`top`)가 아니라 장치 기준이다.** 발행자(camerad/rsd)는 어떤
+    실행에 어떤 키로 쓰일지 모른 채 **항상** 발행한다. 키를 이름으로 쓰면 발행자가 매핑을
+    알아야 하고, 매핑이 바뀔 때마다 세그먼트를 다시 만들어야 한다 — 데몬 모델과 맞지 않는다.
+
+    이름은 두 층이다:
+
+    1. **지정된 이름** — 사용자가 카메라에 붙인 스트림 이름(`top`). 게이트웨이가 데몬에
+       정해 주고(`set_segment_name`), 데몬이 그 이름으로 발행한 것을 확인하면 게이트웨이도
+       같은 이름을 든다. 그래서 이 함수를 부르는 모든 곳이 **고칠 것 없이** 맞는 이름을 본다.
+    2. **규칙 이름** — 지정이 없으면 장치 id 에서 규칙으로(`rule_segment_name`).
+
+    소비자는 `{"top": {"type": "shm", "segment": "<이 함수의 값>"}}` 처럼
+    **키는 dict 키로, 세그먼트는 장치로** 지정한다.
+
+    이미 세그먼트 이름인 값을 넣으면 그대로 돌아온다(멱등) — 이름 규칙이 `:`·`/` 와
+    앞뒤 `_` 를 막으므로 규칙이 건드릴 글자가 없다.
+    """
+    return _NAME_OVERRIDES.get(cam_id) or rule_segment_name(cam_id)
 
 
 def segment_path(name: str) -> Path:
@@ -107,10 +165,13 @@ class Layout:
     def total_bytes(self) -> int:
         return HEADER_SIZE + self.slot_bytes * self.n_slots
 
-    def pack_header(self, write_seq: int = 0, wall_ns: int = 0) -> bytes:
-        return struct.pack(
-            _HEADER_FMT, MAGIC, VERSION, self.width, self.height, self.channels,
-            self.dtype, self.n_slots, self.slot_bytes, write_seq, wall_ns,
+    def pack_header(self, write_seq: int = 0, wall_ns: int = 0, pid: int = 0) -> bytes:
+        return (
+            struct.pack(
+                _HEADER_FMT, MAGIC, VERSION, self.width, self.height, self.channels,
+                self.dtype, self.n_slots, self.slot_bytes, write_seq, wall_ns,
+            )
+            + struct.pack(_PID_FMT, pid)
         ).ljust(HEADER_SIZE, b"\0")
 
 
@@ -146,7 +207,7 @@ def create(name: str, layout: Layout) -> tuple[int, mmap.mmap]:
     except Exception:
         os.close(fd)
         raise
-    buf[:HEADER_SIZE] = layout.pack_header()
+    buf[:HEADER_SIZE] = layout.pack_header(pid=os.getpid())
     return fd, buf
 
 
@@ -179,3 +240,86 @@ def unlink(name: str) -> bool:
         return False
     except OSError:
         return False
+
+
+def has_readers(name: str) -> bool:
+    """이 세그먼트를 **소비자로** 열어 둔 곳이 있는가 (`Subscriber(observer=False)`).
+
+    읽는 쪽은 `PROT_READ` 로 매핑만 할 뿐 자기 존재를 알리지 않는다 — 그래서 소비자가 열 때
+    세그먼트 파일에 `flock(LOCK_SH)` 를 건다. 여기서 `LOCK_EX|LOCK_NB` 로 **떠본다**: 막히면 누군가
+    잡고 있는 것이다. 커널이 프로세스가 죽으면 락을 풀므로 하트비트도 카운터도 필요 없다.
+
+    ⚠ **데이터 경로의 락이 아니다.** 프레임을 쓰고 읽는 것은 여전히 락 없는 seqlock 이다 —
+    발행자는 이 표지를 기다리지 않고, 읽기도 막지 않는다. 이건 "누가 붙어 있나" 를 주기적으로
+    확인하는 용도뿐이다.
+
+    모르면 `True`(있다) — 닫지 않는 쪽이 안전하다. 세그먼트가 없으면 `False`.
+    """
+    import fcntl
+
+    try:
+        fd = os.open(segment_path(name), os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        except OSError:
+            return True
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
+
+
+def owner_pid(name: str) -> int:
+    """세그먼트를 만든 발행자의 pid. 모르면 0 (옛 발행자가 만들었거나 읽을 수 없다)."""
+    try:
+        with open(segment_path(name), "rb") as f:
+            head = f.read(_PID_OFF + struct.calcsize(_PID_FMT))
+        if len(head) < _PID_OFF + struct.calcsize(_PID_FMT):
+            return 0
+        return struct.unpack_from(_PID_FMT, head, _PID_OFF)[0]
+    except OSError:
+        return 0
+
+
+def pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True            # 다른 사용자의 프로세스 — 살아 있다
+    except OSError:
+        return False
+    return True
+
+
+def dead_segments(legacy_prefix: str | None = None) -> list[str]:
+    """**발행자가 죽은** 세그먼트 이름들 — 시작할 때 치울 잔재.
+
+    예전에는 데몬이 "내 접두사(`dev_`·`rs_`)로 시작하는 것"을 치웠다. 이름이 사용자 몫이 된
+    뒤로는 접두사가 소유를 말해 주지 못한다. 그래서 **헤더의 발행자 pid** 로 본다:
+
+    - pid 가 있고 **살아 있으면** 남의 것이다 — 건드리지 않는다(다른 데몬이 발행 중이다).
+    - pid 가 있고 **죽었으면** 잔재다 — 소비자가 열면 **멈춘 화면**을 본다.
+    - pid 가 없으면(0, 옛 발행자) 소유를 알 수 없다. `legacy_prefix` 로 시작하는 것만
+      잔재로 본다 — 옛 규칙 이름이다. 접두사가 없으면 안 건드린다.
+
+    ⚠ pid 재사용으로 죽은 발행자의 pid 를 무관한 프로세스가 물려받으면 잔재로 안 잡힌다.
+    드문 일이고, 그 세그먼트는 `wall_ns` 가 멈춰 있어 감시가 "멈췄다"로 말해 준다.
+    """
+    out = []
+    for name in list_segments():
+        pid = owner_pid(name)
+        if pid:
+            if not pid_alive(pid):
+                out.append(name)
+        elif legacy_prefix and name.startswith(legacy_prefix):
+            out.append(name)
+    return out

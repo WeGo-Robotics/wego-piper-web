@@ -80,22 +80,46 @@ def test_a_vanished_segment_does_not_end_the_stream():
         "다시 열지 않는다"
 
 
-def test_the_live_view_uses_the_stream_and_the_rest_does_not():
-    """카드마다 연결을 물면 목록만 열어도 카메라 수만큼 연결이 열린다.
-
-    한 장짜리는 "설정을 바꿨으니 다시 보여줘" 자리에 그대로 필요하다.
+def test_the_still_preview_is_only_for_the_modal_and_unregistered_cards():
+    """등록된 카드는 상시 화면(`LiveCameraFrame`)이다 — 한 장짜리 `previewSrc` 는 "설정을 바꿨으니
+    다시 보여줘" 자리(설정 모달·미등록 카드)에 남는다. 카드마다 스트림을 물면 안 된다:
+    브라우저 연결(6)을 다 쓰면 E-stop 요청이 나가지 못한다.
     """
     src = (_SRC / "pages" / "CamerasPage.tsx").read_text()
     body = src.split("const previewSrc", 1)[1].split("\n  const ", 1)[0]
-    assert "liveIds.has(id)" in body, "실시간 여부로 안 가른다"
-    assert "/stream" in body and "/preview?t=" in body, "둘 중 하나가 없다"
+    assert "/preview?t=" in body
+    assert "/stream" not in body, "카드마다 스트림을 문다"
+    assert "liveIds" not in src, "실시간 보기 토글이 남아 있다"
+    assert "handleProbe" not in src, "업데이트 버튼의 흔적이 남아 있다"
 
 
-def test_the_live_view_has_no_refresh_timer():
-    """⚠ 주기적으로 `src` 를 건드리면 그때마다 연결이 끊겼다 붙어 **오히려 끊긴다.**"""
-    src = (_SRC / "pages" / "CamerasPage.tsx").read_text()
-    body = src.split("if (liveIds.size === 0) return", 1)[1].split("}, [liveIds])", 1)[0]
-    assert "setInterval" not in body, "실시간 보기가 아직 타이머로 돈다"
+def test_the_live_frame_is_never_given_a_src_or_a_refresh_timer():
+    """⚠ `src` 를 주면 부모가 다시 그려질 때(3초 폴링마다) React 가 그 값으로 되돌려 쓴다 —
+    상시 화면이 한 장짜리로 깜빡인다. 프레임은 훅이 `<img>` 에 직접 건다.
+    """
+    comp = (_SRC / "components" / "LiveCameraFrame.tsx").read_text()
+    tag = comp.split("<img", 1)[1].split("/>", 1)[0]
+    assert "src=" not in tag, "React 가 src 를 되돌려 쓴다"
+    hook = (_SRC / "hooks" / "useCameraLive.ts").read_text()
+    live = hook.split("export function useLiveFrames", 1)[1].split("// ── 멈춰 있으면", 1)[0]
+    assert "setInterval" not in live, "상시 화면이 타이머로 돈다 — 스트림이 밀어준다"
+    assert "/api/cameras/live" in live
+
+
+def test_a_stopped_camera_is_revived_not_left_for_a_button():
+    """⚠ 손으로 누르던 `실시간 보기` 가 사라졌다 — 멈춘 카메라는 페이지가 스스로 다시 연다.
+
+    다만 쉬지 않고 두드리지 않는다(멈춘 장치를 반복해서 여는 것이 D405 가 D-state 로 물리는 대표
+    경로였다): 시도 사이가 늘고, 횟수에 상한이 있다.
+    """
+    hook = (_SRC / "hooks" / "useCameraLive.ts").read_text()
+    body = hook.split("export function useReviveStopped", 1)[1]
+    assert "/cameras/connect" in body
+    assert "REVIVE_WAIT_MS" in body and "REVIVE_WAIT_MS.length" in body, "시도 횟수 상한이 없다"
+    page = (_SRC / "pages" / "CamerasPage.tsx").read_text()
+    assert "useReviveStopped(" in page
+    # 설정 모달에서 사람이 만지는 중인 장치 값을 연결이 프로파일로 덮으면 안 된다
+    assert "!settingsCam" in page.split("useReviveStopped(", 1)[1].split(")", 1)[0]
 
 
 def test_the_recording_preview_streams_too():
@@ -153,3 +177,117 @@ def test_the_endpoint_does_not_refuse_while_the_publisher_is_down():
     src = (Path(__file__).resolve().parents[1] / "app" / "routers" / "cameras.py").read_text()
     body = src.split("async def preview_stream", 1)[1].split("\n@router", 1)[0]
     assert "404" not in body, "세그먼트가 없다고 스트림을 거절한다"
+
+
+# ── 한 연결에 여러 카메라 (카메라 페이지) ──
+
+
+def _parts(raw: bytes) -> list[tuple[str, bytes]]:
+    """`X-Camera` 헤더와 본문을 가른 결과 — 프론트의 파서가 하는 일과 같다."""
+    from urllib.parse import unquote
+
+    out = []
+    for chunk in raw.split(b"--piperframe\r\n")[1:]:
+        head, _, body = chunk.partition(b"\r\n\r\n")
+        fields = dict(line.split(": ", 1) for line in head.decode().split("\r\n"))
+        n = int(fields["Content-Length"])
+        out.append((unquote(fields["X-Camera"]), body[:n]))
+    return out
+
+
+def test_one_connection_carries_every_camera_and_names_each_part():
+    """카드마다 스트림을 물면 브라우저 연결(6)을 다 쓰고 E-stop 요청이 큐에 선다."""
+    readers = {
+        "/dev/video0": iter([b"\xff\xd8a"]).__next__,
+        "rs:123:color": iter([b"\xff\xd8b"]).__next__,
+    }
+
+    def wrap(fn):
+        def _f():
+            try:
+                return fn()
+            except StopIteration:
+                return None
+        return _f
+
+    gen = mjpeg._pump_mux({k: wrap(v) for k, v in readers.items()}, fps=200, label="t")
+    got = asyncio.run(_collect(gen, 2))
+    parts = _parts(b"".join(got))
+    assert dict(parts) == {"/dev/video0": b"\xff\xd8a", "rs:123:color": b"\xff\xd8b"}
+
+
+def test_a_camera_without_a_frame_is_skipped_not_fatal():
+    """정지·유휴 종료된 카메라가 섞여 있는 것이 정상이다 — 나머지는 계속 흐른다."""
+    calls = {"n": 0}
+
+    def alive():
+        calls["n"] += 1
+        return b"\xff\xd8x" if calls["n"] == 1 else None
+
+    gen = mjpeg._pump_mux({"stopped": lambda: None, "alive": alive}, fps=200, label="t")
+    parts = _parts(b"".join(asyncio.run(_collect(gen, 1))))
+    assert parts == [("alive", b"\xff\xd8x")]
+
+
+def test_one_broken_reader_does_not_take_the_others_down():
+    def broken():
+        raise RuntimeError("segment gone")
+
+    gen = mjpeg._pump_mux({"bad": broken, "ok": lambda: b"\xff\xd8y"}, fps=200, label="t")
+    parts = _parts(b"".join(asyncio.run(_collect(gen, 1))))
+    assert parts == [("ok", b"\xff\xd8y")]
+
+
+def test_multiplex_counts_as_one_stream_and_honours_the_cap():
+    import app.services.mjpeg as m
+
+    m._open = m.MAX_STREAMS
+    try:
+        assert m.multiplex({"a": lambda: None}, label="t").status_code == 503
+    finally:
+        m._open = 0
+
+
+def test_the_live_reader_follows_a_rename(monkeypatch):
+    """⚠ 카드에서 이름을 바꾸면 데몬이 세그먼트를 새 이름으로 옮긴다. 이름을 만들 때 한 번만 풀면
+    상시 화면이 옛 이름을 문 채 **영영 빈 채로** 남는다 — 에러도 안 난다."""
+    import piper_shm
+    from app.services import shm_snapshot
+
+    names = {"rs:1:color": "rs_1_color"}
+    opened = []
+
+    def fake_reader(cam_id, quality=80):
+        seg = names[cam_id]
+        opened.append(seg)
+        return lambda: f"frame-from-{seg}".encode()
+
+    monkeypatch.setattr(piper_shm, "segment_for_camera", lambda c: names[c])
+    monkeypatch.setattr(shm_snapshot, "segment_reader", fake_reader)
+
+    read = shm_snapshot.following_reader("rs:1:color")
+    assert read() == b"frame-from-rs_1_color"
+    assert read() == b"frame-from-rs_1_color" and opened == ["rs_1_color"], "이름이 그대로인데 다시 연다"
+    names["rs:1:color"] = "right"             # 개명 — 데몬이 세그먼트를 옮겼다
+    assert read() == b"frame-from-right"
+    assert opened == ["rs_1_color", "right"]
+
+
+def test_the_cameras_page_does_not_open_one_stream_per_card():
+    """⚠ 되돌리기 쉬운 회귀다 — 카드에 `/stream` 을 다시 걸면 카메라 6대에서 정지 버튼이 막힌다."""
+    page = (_SRC / "pages" / "CamerasPage.tsx").read_text()
+    ready_card = page.split("{/* 등록됨 */}", 1)[1].split("{/* 미연결 카메라", 1)[0]
+    assert "/stream" not in ready_card
+    assert "LiveCameraFrame" in ready_card
+
+
+def test_live_endpoint_refuses_more_cameras_than_it_will_encode():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.routers.cameras import MAX_LIVE_CAMERAS
+
+    with TestClient(app) as c:
+        ids = "&".join(f"ids=/dev/video{i}" for i in range(MAX_LIVE_CAMERAS + 1))
+        r = c.get(f"/api/cameras/live?{ids}")
+    assert r.status_code == 400

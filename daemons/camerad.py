@@ -45,6 +45,10 @@ _METHODS = {
     "scan", "connect", "disconnect", "release_all", "modes",
     "probe", "list_controls", "set_control", "info",
     "apply_controls", "last_apply_report", "lost",
+    # 사용자가 붙인 스트림 이름으로 발행한다 (feature/stream-based-cameras.md)
+    "set_stream",
+    # 쓰는 곳이 없으면 일정 시간 뒤 닫는다 — 카메라별 옵션 (유휴 자동 종료)
+    "set_idle", "hold",
     # 회색 카드 — rsd 와 같은 동사. USB 웹캠으로 눌러 보니 여기 없어서 "Not a RealSense id" 였다
     "measure_gray_card", "calibrate_gray_card",
 }
@@ -54,7 +58,12 @@ def serve(bus: Bus, hub: V4l2Hub) -> None:
     global _running
     logger.info("v4l2 데몬 시작")
     last_beat = 0.0
+    from piper_cam.idle import tick_daemon
+
     while _running:
+        # 읽는 곳이 없는 카메라를 닫는다 — 루프는 요청이 없어도 1초마다 돈다(`timeout=1`).
+        # ⚠ `continue` 들보다 **앞**에 둔다. 요청이 없을 때가 정확히 닫을 때다.
+        tick_daemon(bus, hub.disconnect)
         now = time.monotonic()
         if now - last_beat > C.DAEMON_ALIVE_TTL_MS / 3000:
             try:
@@ -110,11 +119,13 @@ def main() -> int:
     # ⚠ 기동 시 한 번 스캔한다 — 안 하면 `connect` 가 장치를 못 찾는다 (rsd 에서 겪었다)
     # ⚠ 지난 프로세스가 죽으면 `/dev/shm` 세그먼트가 남는다. 치우지 않으면 소비자가
     # 발행자 없는 세그먼트를 열어 **멈춘 화면**을 본다.
-    # **자기 것만** 치운다 — 다른 데몬이 발행 중인 것을 지우면 그쪽이 깨진다.
+    # **죽은 발행자의 것만** 치운다 — 다른 데몬이 발행 중인 것을 지우면 그쪽이 깨진다.
+    # 이름이 사용자 몫이라 접두사(`dev_`)로는 누구 것인지 모른다 — 헤더의 발행자 pid 로 본다.
+    # pid 가 없는 옛 세그먼트만 옛 규칙 접두사로 가른다.
     try:
-        from piper_shm import list_segments, unlink
+        from piper_shm import dead_segments, unlink
 
-        stale = [n for n in list_segments() if n.startswith("dev_")]
+        stale = dead_segments(legacy_prefix="dev_")
         for name in stale:
             unlink(name)
         if stale:

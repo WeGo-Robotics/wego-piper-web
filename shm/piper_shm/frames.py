@@ -107,15 +107,45 @@ class Publisher:
                 S.unlink(self.name)
 
 
+def _take_lease(fd: int) -> bool:
+    """공유 락을 건다. 못 걸어도 읽기는 계속 된다 — 표지일 뿐이다.
+
+    발행자가 "읽는 곳이 있나" 를 떠보는 순간(`LOCK_EX`)과 겹치면 잠깐 막힌다 — 마이크로초라
+    몇 번 다시 해 본다. 락을 못 쓰는 파일시스템이면 포기한다(그때는 유휴 종료만 못 한다).
+    """
+    import fcntl
+
+    for _ in range(50):
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            time.sleep(0.001)
+        except OSError:
+            return False
+    return False
+
+
 class Subscriber:
     """세그먼트에서 최신 프레임을 읽는다. LeRobot 플러그인이 쓴다."""
 
-    def __init__(self, name: str, max_retries: int = 8) -> None:
+    def __init__(self, name: str, max_retries: int = 8, observer: bool = False) -> None:
+        """`observer=True` 는 **잠깐 들여다보는** 읽기다 — 표지를 걸지 않는다.
+
+        기본(소비자)은 세그먼트 파일에 공유 락(`flock(LOCK_SH)`)을 걸어 "읽는 곳이 있다"를
+        발행자에게 알린다(유휴 자동 종료가 이걸 본다). 상시 도는 감시·스냅샷·존재 확인이
+        소비자로 잡히면 **영원히 안 닫히므로** 그쪽은 `observer=True` 로 연다.
+
+        기본이 소비자인 이유: 방향이 안전하다. 감시자가 표지를 걸어도 "안 닫힐 뿐"이지만,
+        소비자가 표지를 빠뜨리면 **수집 도중 스트림이 닫힌다.**
+        """
         self.name = name
         self.max_retries = max_retries
         self._fd, self._buf, self.layout = S.open_ro(name)
         self._last_seq = 0
         self.retries = 0        # 진단용 — 비정상적으로 높으면 라이터가 너무 빠르다
+        self.observer = observer
+        self.leased = False if observer else _take_lease(self._fd)
 
     @property
     def shape(self) -> tuple[int, int, int]:

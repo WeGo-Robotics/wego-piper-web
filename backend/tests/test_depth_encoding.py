@@ -106,6 +106,9 @@ def test_sidecar_carries_what_the_frames_cannot_tell():
     from app.services.camera_manager import camera_manager
 
     class _Cam:
+        stream = ""          # 실제 `CameraInfo` 처럼 — 사이드카가 이름을 함께 적는다
+        aliases: list = []
+
         def running_profile(self):
             return {"width": 848, "height": 480, "fps": 30,
                     "depth_encoding": {"near_mm": 300, "far_mm": 700, "mode": "gray_linear"}}

@@ -153,6 +153,27 @@ class RealSenseHub:
     def probe(self, cam_id: str) -> tuple[bool, str]:
         return _pair(self._call("probe", cam_id, timeout=30), "probe 실패")
 
+    def set_idle(self, cam_id: str, seconds: int) -> int | None:
+        """쓰는 곳이 없을 때 이 카메라를 자동으로 닫는 시간(초)을 데몬에 알린다. 0 은 끔.
+
+        돌려주는 값이 **데몬이 받아들인 값**이다(하한이 있다). `None` 은 못 알렸다 — 데몬이
+        없거나 옛 코드라 이 동사를 모른다. 그 데몬은 유휴 종료를 못 하므로 화면이 말해야 한다.
+        """
+        r = self._call("set_idle", cam_id, int(seconds), timeout=10)
+        return r if isinstance(r, int) and not isinstance(r, bool) else None
+
+    def hold(self, cam_id: str, seconds: int) -> bool:
+        """이 카메라를 `seconds` 동안은 유휴로 닫지 않게 한다 — 시작 요청이 소비자가 붙을 때까지."""
+        return bool(self._call("hold", cam_id, int(seconds), default=False, timeout=10))
+
+    def set_stream(self, cam_id: str, name: str) -> str | None:
+        """데몬에 이 스트림의 세그먼트 이름을 정해 준다. 돌려주는 값이 **실제로 쓰는 이름**이다.
+
+        `None` 은 못 정했다 — 데몬이 없거나 옛 코드라 이 동사를 모른다(규칙 이름으로 발행).
+        """
+        r = self._call("set_stream", cam_id, name, timeout=10)
+        return r if isinstance(r, str) and r else None
+
     def list_controls(self, cam_id: str) -> list[dict]:
         return self._call("list_controls", cam_id, default=[]) or []
 
@@ -163,7 +184,7 @@ class RealSenseHub:
 
     def has_frame(self, cam_id: str) -> bool:
         try:
-            sub = Subscriber(segment_for_camera(cam_id))
+            sub = Subscriber(segment_for_camera(cam_id), observer=True)
         except SegmentError:
             return False
         try:

@@ -316,7 +316,7 @@ def _watch_over(monkeypatch, cams, frame_of):
     monkeypatch.setattr(piper_shm, "segment_for_camera", lambda cid: cid, raising=False)
 
     class _Sub:
-        def __init__(self, seg):
+        def __init__(self, seg, **kw):          # observer=True 가 온다
             self.seg = seg
 
         def read(self):

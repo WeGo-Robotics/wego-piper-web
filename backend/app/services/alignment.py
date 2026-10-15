@@ -69,7 +69,7 @@ def _frame(cam_id: str):
     """이 카메라의 최신 프레임. shm 에서 읽는다 — 장치를 안 만진다."""
     from piper_shm import Subscriber, segment_for_camera
 
-    sub = Subscriber(segment_for_camera(cam_id))
+    sub = Subscriber(segment_for_camera(cam_id), observer=True)
     try:
         got = sub.read()
     finally:

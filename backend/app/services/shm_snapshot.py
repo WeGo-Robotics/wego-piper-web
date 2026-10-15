@@ -72,12 +72,36 @@ def segment_reader(name: str, quality: int = 80):
     return _next
 
 
+def following_reader(cam_id: str, quality: int = 80):
+    """`segment_reader` 인데 **카메라의 세그먼트 이름이 바뀌면 따라간다.**
+
+    `segment_reader` 는 이름을 만들 때 한 번 푼다. 연결이 몇 초면 그걸로 되지만 카메라 페이지의
+    상시 화면은 오래 열려 있다 — 그 사이 카드에서 이름을 바꾸면(데몬이 세그먼트를 새 이름으로
+    옮긴다) 옛 이름을 문 채 **영영 빈 화면**이 된다. 에러도 안 난다(`Subscriber.orphaned`).
+    데몬이 늦게 떠서 규칙 이름으로 시작한 카메라가 나중에 이름을 받는 경우도 같다.
+
+    이름 풀이는 딕셔너리 조회라 매 주기 해도 공짜다.
+    """
+    from piper_shm import segment_for_camera
+
+    state: dict = {"seg": None, "read": None}
+
+    def _next() -> bytes | None:
+        seg = segment_for_camera(cam_id)
+        if seg != state["seg"]:
+            # 새 이름으로 다시 연다 — 옛 리더는 놓는다(읽는 곳 표지도 같이 풀린다)
+            state["seg"], state["read"] = seg, segment_reader(cam_id, quality)
+        return state["read"]()
+
+    return _next
+
+
 def segment_jpeg(name: str, quality: int = 80) -> bytes | None:
     """세그먼트 최신 프레임 → JPEG. 세그먼트/프레임이 없으면 None."""
     from piper_shm import SegmentError, Subscriber, segment_for_camera
 
     try:
-        sub = Subscriber(segment_for_camera(name))
+        sub = Subscriber(segment_for_camera(name), observer=True)
     except SegmentError:
         return None
     try:

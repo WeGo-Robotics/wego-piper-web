@@ -34,7 +34,7 @@ def test_a_bgr_frame_encodes_to_a_yellow_jpeg(tmp_path, monkeypatch):
     import sys, types
     fake = types.ModuleType("piper_shm")
     fake.SegmentError = RuntimeError
-    fake.Subscriber = lambda name: FakeSub()
+    fake.Subscriber = lambda name, **kw: FakeSub()
     fake.segment_for_camera = lambda name: name
     monkeypatch.setitem(sys.modules, "piper_shm", fake)
 

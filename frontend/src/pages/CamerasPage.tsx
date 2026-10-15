@@ -5,6 +5,8 @@ import { useSystemMessage } from '../components/SystemMessages'
 import ParamSlider from '../components/ParamSlider'
 import RoiPicker, { centerRoi, toBox } from '../components/RoiPicker'
 import type { Roi } from '../components/RoiPicker'
+import LiveCameraFrame from '../components/LiveCameraFrame'
+import { isStopped, useLiveFrames, useReviveStopped } from '../hooks/useCameraLive'
 import { api } from '../services/api'
 import { useT } from '../i18n'
 
@@ -39,9 +41,9 @@ type CamInfo = {
   id: string; name: string; usb_port?: string; cam_type: string
   /** 백엔드가 판정해서 준다 — 화면이 임계값을 따로 적으면 한쪽만 고쳐져 어긋난다. */
   usb_warning?: string | null
-  /** 사람이 붙인 별칭("탑뷰"). LeRobot 카메라 키와는 별개 — 화면 표시용이다. */
-  label?: string
-  /** `label || name`. 각 화면이 따로 계산하지 않도록 백엔드가 준다. */
+  /** 스트림 이름 — 사용자가 붙이는 이름(영문). 등록할 때 정해진다. LeRobot 카메라 키와는 별개다. */
+  stream?: string
+  /** `stream || name`. 각 화면이 따로 계산하지 않도록 백엔드가 준다. */
   display_name?: string
   connected: boolean; ready: boolean; has_preview: boolean
   /** 마지막 스캔에서 데몬이 이 장치를 봤는가. `connected` 와 다른 사실이다 —
@@ -56,6 +58,8 @@ type CamInfo = {
   stream_type?: string
   /** 이 카메라의 조명 경보를 낼 것인가. ⚠ 끄는 것은 **경보뿐** — 측정·발행은 계속한다. */
   light_alarm?: boolean
+  /** 유휴 자동 종료(초). 0 = 끔. 읽는 곳(수집·추론·미리보기)이 이만큼 없으면 데몬이 닫는다. */
+  idle_stop_s?: number
   /** 캡처 해상도 [w, h] — 장치를 이 크기로 연다. null 이면 요청 해상도 그대로 */
   capture?: number[] | null
   /** 출력 해상도 [w, h] — 이 크기로 줄여 발행한다. null 이면 원본 해상도 */
@@ -91,9 +95,15 @@ function unitHint(ctrl: CamControl): string | undefined {
 type GrayCardReading = {
   luma: number; neutral_error_pct: number; clipped_pct: number
   spread_pct: number; usable: boolean; why: string
+  /** R·B 가 얼마나 다른가 — 색온도(WB) 노브가 움직일 수 있는 유일한 축. 옛 응답에는 없다. */
+  balance_error_pct?: number
+  /** G 가 R·B 보다 얼마나 높은가(부호 있음) — 색온도로는 못 고친다. 옛 응답에는 없다. */
+  tint_pct?: number
 }
 type GrayCardReport = {
   ok: boolean; verdict: string; target: number
+  /** 못 맞췄을 때 **왜**인지(조명의 틴트 등). 문장은 잰 쪽(데몬)이 만든다. 옛 응답에는 없다. */
+  hint?: string | null
   before: GrayCardReading; after: GrayCardReading
   exposure_us: number
   /** 최종 gain·WB 와 움직인 손잡이 — 옛 rsd 응답에는 없다. */
@@ -125,8 +135,12 @@ export default function CamerasPage() {
   const [cams, setCams] = useState<CamInfo[]>([])
   const [scanning, setScanning] = useState(false)
   const [connectingId, setConnectingId] = useState<string | null>(null)
-  // 미등록 카드에서 입력 중인 별칭 (등록 버튼을 누를 때 함께 보낸다)
+  // 미등록 카드에서 입력 중인 이름 (등록 버튼을 누를 때 함께 보낸다). 비우면 기본 이름.
   const [labelDraft, setLabelDraft] = useState<Record<string, string>>({})
+  // 개명이 거절되면 입력란을 서버 값으로 되돌려야 한다 — 키를 바꿔 다시 그린다.
+  const [renameTick, setRenameTick] = useState(0)
+  // 시작할 때 이름이 바뀐 사실(옛 별칭을 못 쓸 때). 사람이 지울 때까지 남는다.
+  const [notices, setNotices] = useState<string[]>([])
   // 설정은 **모달로 띄운다.** 카드 안에서 펼치면 그리드 행 높이가 늘어나
   // 같은 줄의 다른 카드까지 함께 커진다.
   const [settingsCam, setSettingsCam] = useState<string | null>(null)
@@ -292,7 +306,6 @@ export default function CamerasPage() {
   // 프리뷰 캐시버스팅 타임스탬프 — 카메라별로 따로 관리해야 한 카메라 동작이
   // 다른 타일까지 새로고침시키지 않는다.
   const [previewTs, setPreviewTs] = useState<Record<string, number>>({})
-  const [liveIds, setLiveIds] = useState<Set<string>>(new Set())
   const [controlsCam, setControlsCam] = useState<string | null>(null)
   const [controls, setControls] = useState<CamControl[]>([])
   // 디바이스 작업(초기화/업데이트)이 진행 중인 카메라 — 같은 디바이스에 동시 요청을
@@ -300,16 +313,29 @@ export default function CamerasPage() {
   const [busyId, setBusyId] = useState<string | null>(null)
 
   /**
-   * 프리뷰 `src`. **실시간 보기 중이면 스트림, 아니면 한 장.**
+   * 한 장짜리 프리뷰 `src` — **설정 모달과 미등록 카드**가 쓴다.
    *
-   * ⚠ 전부 스트림으로 돌리지 않는다 — 카드마다 연결을 하나씩 물면 목록만 열어도
-   *   연결이 카메라 수만큼 열린다. 한 장짜리는 "설정을 바꿨으니 다시 보여줘"
-   *   같은 자리에 그대로 필요하다(`bumpPreview`).
+   * 등록된 카드는 이걸 쓰지 않는다. 그쪽은 들어오자마자 shm 에서 읽는 상시 화면
+   * (`LiveCameraFrame`)이다. 한 장짜리는 "설정을 바꿨으니 다시 보여줘"(`bumpPreview`) 같은
+   * 자리에 그대로 필요하다.
    */
   const previewSrc = (id: string) =>
-    liveIds.has(id)
-      ? `/api/cameras/${encodeURIComponent(id)}/stream`
-      : `/api/cameras/${encodeURIComponent(id)}/preview?t=${previewTs[id] ?? 0}`
+    `/api/cameras/${encodeURIComponent(id)}/preview?t=${previewTs[id] ?? 0}`
+
+  // 등록된 카메라는 페이지에 들어오면 바로 shm 에서 읽어 보여 준다. 연결 하나로 전부 받는다 —
+  // 카드마다 스트림을 물면 브라우저 연결(6)을 다 써서 E-stop 요청이 나가지 못한다.
+  const live = useLiveFrames(
+    cams.filter((c) => c.ready && c.present !== false).map((c) => c.id))
+  // 시간 초과(유휴 종료·프레임 끊김)로 멈춰 있으면 바로 다시 연다.
+  // 쉬는 때: ① 하드웨어 리셋 중 — 리셋이 일부러 장치를 내리는 동안 되살리면 서로 싸운다.
+  // ② 설정 모달이 열려 있을 때 — 연결은 프로파일 컨트롤을 다시 걸어서, 사람이 만지는 중인
+  //    장치 값(회색 카드 보정 등, 아직 프로파일에 저장 안 됨)을 덮어쓴다.
+  const refreshCams = useCallback(() => {
+    api.get<{ cameras: CamInfo[] }>('/cameras/current')
+      .then((r) => { if (r.cameras) setCams(r.cameras) })
+      .catch(() => {})
+  }, [])
+  const revive = useReviveStopped(cams, !busyId && !settingsCam, refreshCams)
 
   // 지정한 카메라들의 프리뷰만 새로고침 (캐시버스팅 타임스탬프 갱신)
   const bumpPreview = (ids: string[]) => {
@@ -331,6 +357,10 @@ export default function CamerasPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false))
+    // 시작할 때 이름이 바뀐 사실 — 브라우저가 없던 때 일어난 일이라 파일에 남아 있다.
+    api.get<{ notices?: string[] }>('/cameras/streams')
+      .then((r) => setNotices(r.notices ?? []))
+      .catch(() => {})
   }, [])
 
   // ⚠ **목록을 주기적으로 다시 받는다.** 예전에는 마운트 때 한 번뿐이라, 다른 탭에서
@@ -364,16 +394,6 @@ export default function CamerasPage() {
     return () => clearInterval(id)
   }, [])
 
-  // 프리뷰 자동 갱신 (실시간 보기 중인 카메라)
-  useEffect(() => {
-    if (liveIds.size === 0) return
-    // ⚠ 실시간 보기에는 타이머가 없다. 스트림이 밀어주므로 필요 없고, 주기적으로
-    //   `src` 를 건드리면 그때마다 연결이 끊겼다 다시 붙어 **오히려 끊긴다.**
-    //   발행자가 사라졌다 돌아오는 경우는 서버 쪽 `segment_reader` 가 다시 붙는다.
-    bumpPreview([...liveIds])
-    return () => {}
-  }, [liveIds])
-
   // 모달은 Esc 로도 닫힌다
   useEffect(() => {
     if (!settingsCam) { setDepthEnc(null); setDepthDraft(DEPTH_DEFAULT); return }
@@ -394,9 +414,6 @@ export default function CamerasPage() {
 
   // 설정 모달이 열려 있는 동안 프리뷰를 갱신한다 — 밝기·노출·회전을 만지면서
   // 결과를 못 보면 설정 자체가 의미가 없다.
-  //
-  // `liveIds` 에 넣지 않는 이유: 그건 카드의 "실시간 보기/중단" 버튼 상태를 겸해서,
-  // 모달을 열었다고 카드가 "중단"으로 바뀌면 사용자가 헷갈린다.
   useEffect(() => {
     if (!settingsCam) return
     const id = setInterval(() => bumpPreview([settingsCam]), 200)
@@ -431,8 +448,8 @@ export default function CamerasPage() {
   const handleRegister = async (id: string) => {
     setConnectingId(id)
     try {
-      const label = (labelDraft[id] ?? '').trim()
-      const updated = await api.post<CamInfo>('/cameras/register', { id, label })
+      const name = (labelDraft[id] ?? '').trim()
+      const updated = await api.post<CamInfo>('/cameras/register', { id, name })
       setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
     } catch (e) {
       // ⚠ 서버가 말한 사유를 그대로 보여준다. 고정 문구로 덮으면 현장에서 카메라가
@@ -443,12 +460,24 @@ export default function CamerasPage() {
     finally { setConnectingId(null) }
   }
 
-  // 등록 후에도 별칭을 고칠 수 있다 — 카메라를 옮겨 달면 탑뷰가 손목이 된다.
-  const handleLabel = async (id: string, label: string) => {
+  // 등록 후에도 이름을 고칠 수 있다 — 카메라를 옮겨 달면 top 이 wrist 가 된다.
+  // ⚠ 규칙(영문·숫자·_·-, 유일)의 판정은 **서버 한 곳**이다. 거절되면 서버가 말한 사유를
+  //   그대로 보여준다 — 예전에는 표시 이름일 뿐이라 실패를 삼켰지만 이제는 이 이름으로
+  //   수집·추론이 카메라를 부른다. 조용히 안 바뀌면 사람이 모른다.
+  const handleRename = async (id: string, name: string) => {
     try {
-      const updated = await api.post<CamInfo>('/cameras/label', { id, label })
+      const updated = await api.post<CamInfo>('/cameras/rename', { id, name })
       setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
-    } catch { /* 표시 이름일 뿐이라 실패해도 조용히 둔다 */ }
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : t('이름을 바꾸지 못했습니다'))
+      setRenameTick((n) => n + 1)
+    }
+  }
+  const clearNotices = async () => {
+    try {
+      await api.post('/cameras/notices/clear', {})
+      setNotices([])
+    } catch { /* 안내일 뿐 — 못 지워도 화면은 계속 쓴다 */ }
   }
   // 조명 경보를 카메라별로 끈다 (사용자 요청 2026-09-18: 손목에서 너무 자주 뜬다).
   // ⚠ 끄는 것은 **경보뿐**이다 — 측정·발행은 계속하므로 수집·추론 화면의 실시간 표시는
@@ -458,6 +487,17 @@ export default function CamerasPage() {
       const updated = await api.post<CamInfo>('/cameras/light-alarm', { id, enabled })
       setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
     } catch (e) { notifyError(e instanceof Error ? e.message : t('조명 경보 설정 실패')) }
+  }
+  // 유휴 자동 종료. 끄는 것이 기본이다 — 켜면 닫힌 카메라를 선택기에서 [연결] 로 다시 켠다.
+  // ⚠ 범위·하한의 판정은 서버 한 곳이다. 데몬이 옛 코드면 저장은 되지만 닫히지 않는데,
+  //   서버가 `warning` 으로 말해 주므로 그대로 보여준다.
+  const handleIdleStop = async (id: string, seconds: number) => {
+    try {
+      const updated = await api.post<CamInfo & { warning?: string }>(
+        '/cameras/idle-stop', { id, seconds })
+      setCams((prev) => prev.map((c) => (c.id === id ? updated : c)))
+      if (updated.warning) notify({ level: 'warn', text: updated.warning, source: t('카메라') })
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('유휴 종료 설정 실패')) }
   }
   const settingsCamId = settingsCam   // 설정 창이 연 카메라 id (상태값)
   useEffect(() => {
@@ -529,8 +569,7 @@ export default function CamerasPage() {
     if (busyId) return
     if (!await askConfirm(t('카메라를 하드웨어 리셋합니다.\n수 초간 사라졌다 다시 나타납니다. 계속할까요?'))) return
     setBusyId(camId)
-    // 실시간 보기/컨트롤 패널 정리 (리셋 중 프리뷰는 무의미)
-    setLiveIds((prev) => { const next = new Set(prev); next.delete(camId); return next })
+    // 컨트롤 패널 정리 (리셋 중 프리뷰는 무의미)
     if (controlsCam === camId) { setControlsCam(null); setControls([]) }
     try {
       await api.post('/cameras/reset-device', { id: camId })
@@ -555,16 +594,6 @@ export default function CamerasPage() {
         {busyId === cam.id ? <Spinner className="inline" /> : t('리셋')}
       </button>
     ) : null
-
-  const handleProbe = async (camId: string) => {
-    if (busyId) return
-    setBusyId(camId)
-    try {
-      await api.post('/cameras/probe', { id: camId })
-      bumpPreview([camId])
-    } catch {}
-    finally { setBusyId(null) }
-  }
 
   const handleControl = async (camId: string, name: string, value: number) => {
     setControls((prev) => prev.map((c) => c.name === name ? { ...c, value } : c))
@@ -648,6 +677,21 @@ export default function CamerasPage() {
 
       {tab === 'devices' && (<>
 
+      {/* 시작할 때 카메라 이름이 바뀌었다 — 옛 별칭(한글 등)을 영문 이름으로 쓸 수 없어서다.
+          사람이 정한 값이 조용히 바뀌면 안 되므로 지울 때까지 남긴다. */}
+      {notices.length > 0 && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 space-y-1">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-amber-300">{t('카메라 이름이 바뀌었습니다')}</h2>
+            <button onClick={clearNotices}
+              className="ml-auto px-2 py-0.5 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-200">
+              {t('확인')}
+            </button>
+          </div>
+          {notices.map((n) => <p key={n} className="text-xs text-amber-100/90">{n}</p>)}
+        </div>
+      )}
+
       {/* ⚠ 사라진 등록 카메라 — **맨 위**에 둔다. 이걸 모르고 녹화를 시작하면
           시작하자마자 실패하는데, 화면 아래쪽에 있으면 아무도 안 본다. */}
       {absent.length > 0 && (
@@ -681,53 +725,62 @@ export default function CamerasPage() {
           <h2 className="text-sm font-semibold text-green-400">{t('사용 가능 ({length})', { length: ready.length })}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {ready.map((cam) => {
-              const isLive = liveIds.has(cam.id)
+              const stopped = isStopped(cam)
+              const reviving = revive.connecting(cam.id)
+              const why = revive.failure(cam.id)
               return (
                 <div key={cam.id} className="rounded-lg border border-green-500/30 bg-green-500/5 overflow-hidden hover:border-green-500/60 transition-colors">
                   {/* ⚠ **없는 카메라는 그리지 않는다.** 세그먼트에 마지막 프레임이
                       남아 있으면 뽑힌 카메라가 **정상처럼 보인다** — 실제로 그랬다.
                       영상이 있다는 것과 장치가 있다는 것은 다른 사실이다. */}
-                  {/* ⚠ 장치가 없거나 **영상이 끊긴** 카메라는 그리지 않는다.
-                      세그먼트에 마지막 프레임이 남아 있어서, 안 가리면 뽑힌 카메라가
-                      정상처럼 보인다 — 실제로 그렇게 보였다. */}
-                  {cam.present === false || (cam.connected && cam.streaming === false) ? (
+                  {/* 멈춘 카메라(유휴 종료·프레임 시간 초과)는 `useReviveStopped` 가 바로 다시 연다 —
+                      그동안은 마지막 프레임 대신 "여는 중"을 보인다. 못 열면 사유와 `다시 연결`. */}
+                  {cam.present === false ? (
                     <div className="w-full aspect-[4/3] bg-neutral-900 flex flex-col items-center justify-center gap-1 text-center px-3">
                       <span className="text-2xl text-red-400">✕</span>
-                      <span className="text-xs text-red-300">
-                        {cam.present === false ? t('연결 안 됨') : t('영상 끊김')}
-                      </span>
-                      <span className="text-[10px] text-neutral-500">
-                        {cam.present === false
-                          ? t('USB 를 확인하고 스캔하세요')
-                          : t('프레임이 오지 않습니다 — 상단 메시지를 확인하세요')}
-                      </span>
+                      <span className="text-xs text-red-300">{t('연결 안 됨')}</span>
+                      <span className="text-[10px] text-neutral-500">{t('USB 를 확인하고 스캔하세요')}</span>
+                    </div>
+                  ) : stopped && why ? (
+                    <div className="w-full aspect-[4/3] bg-neutral-900 flex flex-col items-center justify-center gap-1 text-center px-3">
+                      <span className="text-2xl text-red-400">✕</span>
+                      <span className="text-xs text-red-300">{reviving ? t('다시 연결 중...') : t('영상 끊김')}</span>
+                      <span className="text-[10px] text-neutral-500 break-words max-w-full line-clamp-3">{why}</span>
+                      <button onClick={() => revive.retry(cam.id)} disabled={reviving}
+                        className="mt-1 py-1 px-3 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                        {t('다시 연결')}
+                      </button>
+                    </div>
+                  ) : stopped ? (
+                    <div className="w-full aspect-[4/3] bg-neutral-900 flex flex-col items-center justify-center gap-2 text-center px-3 text-neutral-400">
+                      <Spinner />
+                      <span className="text-xs">{t('다시 연결 중...')}</span>
                     </div>
                   ) : (
-                  <img
-                    src={previewSrc(cam.id)}
-                    alt={cam.name}
-                    className="w-full aspect-[4/3] object-cover bg-neutral-900"
-                    onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.2' }}
-                    onLoad={(e) => { (e.target as HTMLImageElement).style.opacity = '1' }}
-                  />
+                    <LiveCameraFrame
+                      id={cam.id}
+                      alt={cam.name}
+                      attach={live.attach}
+                      className="w-full aspect-[4/3] object-cover bg-neutral-900"
+                    />
                   )}
                   <div className="p-3 space-y-2">
                     <div className="flex items-center gap-2">
                       <span className="text-green-400 text-sm">✓</span>
-                      {/* 별칭이 주인공 — 카메라를 옮겨 달면 여기서 바로 고친다.
+                      {/* 이름이 주인공 — 카메라를 옮겨 달면 여기서 바로 고친다.
                           blur 에 저장해 타이핑 중 요청이 쏟아지지 않게 한다. */}
                       <input
                         type="text"
-                        defaultValue={cam.label ?? ''}
-                        key={cam.label ?? ''}
+                        defaultValue={cam.stream ?? ''}
+                        key={`${cam.stream ?? ''}-${renameTick}`}
                         onBlur={(e) => {
                           const v = e.target.value.trim()
-                          if (v !== (cam.label ?? '')) handleLabel(cam.id, v)
+                          if (v !== (cam.stream ?? '')) handleRename(cam.id, v)
                         }}
                         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                         placeholder={t('이름 없음')}
-                        title={t('표시 이름 — 데이터셋 피처 이름은 바뀌지 않습니다')}
-                        className="flex-1 min-w-0 px-1.5 py-0.5 text-sm rounded bg-transparent border border-transparent hover:border-neutral-700 focus:bg-neutral-900 focus:border-blue-500 text-neutral-100 placeholder:text-neutral-600 focus:outline-none" />
+                        title={t('스트림 이름 — 수집·추론이 이 이름으로 카메라를 부릅니다 (영문·숫자·_·-). 데이터셋 피처 이름은 바뀌지 않습니다')}
+                        className="flex-1 min-w-0 px-1.5 py-0.5 text-sm font-mono rounded bg-transparent border border-transparent hover:border-neutral-700 focus:bg-neutral-900 focus:border-blue-500 text-neutral-100 placeholder:text-neutral-600 focus:outline-none" />
                       {cam.usb_port && <span className="font-mono text-[10px] text-neutral-500" title={t('USB 포트')}>{cam.usb_port}</span>}
                       {cam.usb_warning && <UsbWarning reason={cam.usb_warning} />}
                     </div>
@@ -739,28 +792,6 @@ export default function CamerasPage() {
                     </div>
                     <ExposureReadout light={light[cam.id]} mode={metering} />
                     <div className="flex gap-1.5">
-                      <button onClick={() => handleProbe(cam.id)} disabled={busyId === cam.id}
-                        className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                        {busyId === cam.id ? <><Spinner className="inline" />{' '}{t('처리 중')}</> : t('업데이트')}
-                      </button>
-                      <button onClick={async () => {
-                        if (isLive) {
-                          setLiveIds((prev) => { const next = new Set(prev); next.delete(cam.id); return next })
-                          await api.post('/cameras/disconnect', { id: cam.id })
-                          setCams((prev) => prev.map((c) => c.id === cam.id ? { ...c, connected: false } : c))
-                        } else {
-                          // 연결 후 실시간 보기 시작
-                          try {
-                            const updated = await api.post<CamInfo>('/cameras/connect', { id: cam.id })
-                            setCams((prev) => prev.map((c) => c.id === cam.id ? updated : c))
-                            setLiveIds((prev) => new Set(prev).add(cam.id))
-                            bumpPreview([cam.id])
-                          } catch { notifyError(t('카메라 연결 실패')) }
-                        }
-                      }}
-                        className={`flex-1 py-1 text-xs rounded transition-colors ${isLive ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white'}`}>
-                        {isLive ? t('중단') : t('실시간 보기')}
-                      </button>
                       <button onClick={() => openSettings(cam.id)}
                         className="flex-1 py-1 text-xs rounded bg-neutral-700 hover:bg-yellow-600 text-neutral-300 hover:text-white transition-colors">
                         {t('설정')}
@@ -813,13 +844,13 @@ export default function CamerasPage() {
                   <p className="text-xs text-neutral-400">{cam.name}
                     {cam.config.width && <span className="ml-2">{cam.config.width}x{cam.config.height}</span>}
                   </p>
-                  {/* 별칭 — 등록할 때 함께 보낸다. 나중에 카드에서 고칠 수도 있다. */}
+                  {/* 이름 — 등록할 때 함께 보낸다. 비우면 기본 이름(장치명_N). 나중에 고칠 수도 있다. */}
                   <input
                     type="text"
                     value={labelDraft[cam.id] ?? ''}
                     onChange={(e) => setLabelDraft((prev) => ({ ...prev, [cam.id]: e.target.value }))}
                     onKeyDown={(e) => { if (e.key === 'Enter') handleRegister(cam.id) }}
-                    placeholder={t('이름 (예: 탑뷰, 손목)')}
+                    placeholder={t('이름 (영문, 예: top, wrist) — 비우면 자동')}
                     className="w-full px-2 py-1 text-xs rounded bg-neutral-900 border border-neutral-700 text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-blue-500" />
                   <div className="flex gap-1.5">
                     <button onClick={() => handleRegister(cam.id)} disabled={connectingId === cam.id}
@@ -917,7 +948,7 @@ export default function CamerasPage() {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 className="text-lg font-bold truncate">
-                  {settingsCamera.label || settingsCamera.name}
+                  {settingsCamera.stream || settingsCamera.name}
                 </h2>
                 <p className="font-mono text-[11px] text-neutral-500 truncate">{settingsCamera.id}</p>
               </div>
@@ -974,20 +1005,43 @@ export default function CamerasPage() {
 
             {/* 오른쪽 열 — 항목이 길어지면 여기만 스크롤한다 */}
             <div className="space-y-4 min-h-0 overflow-y-auto pr-1">
-            {/* 이름 — 등록 여부와 무관하게 여기서 고칠 수 있다 */}
+            {/* 스트림 이름 — 등록된 카메라만. 이름은 등록할 때 정해지고(미등록 카드에서 입력),
+                미등록 카메라는 수집·추론이 부를 이름이 아직 없다. */}
+            {settingsCamera.ready && (
             <div className="space-y-1">
-              <span className="text-xs text-neutral-400">{t('이름')}</span>
-              <input type="text" defaultValue={settingsCamera.label ?? ''} key={`label-${settingsCamera.id}`}
+              <span className="text-xs text-neutral-400">{t('스트림 이름')}</span>
+              <input type="text" defaultValue={settingsCamera.stream ?? ''}
+                key={`name-${settingsCamera.id}-${settingsCamera.stream ?? ''}-${renameTick}`}
                 onBlur={(e) => {
                   const v = e.target.value.trim()
-                  if (v !== (settingsCamera.label ?? '')) handleLabel(settingsCamera.id, v)
+                  if (v !== (settingsCamera.stream ?? '')) handleRename(settingsCamera.id, v)
                 }}
-                placeholder={t('예: 탑뷰, 손목')}
-                className="w-full px-2 py-1.5 text-sm rounded bg-neutral-900 border border-neutral-700 text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-blue-500" />
+                placeholder={t('예: top, wrist')}
+                className="w-full px-2 py-1.5 text-sm font-mono rounded bg-neutral-900 border border-neutral-700 text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-blue-500" />
               <p className="text-[10px] text-neutral-500">
-                {t('화면에서 알아보기 위한 이름입니다. 데이터셋 피처 이름은 바뀌지 않습니다.')}
+                {t('수집·추론이 이 이름으로 카메라를 부릅니다. 영문·숫자·_·- 만 쓸 수 있고 다른 카메라와 겹치면 안 됩니다. 데이터셋 피처 이름은 바뀌지 않습니다.')}
               </p>
             </div>
+            )}
+
+            {/* 유휴 자동 종료 — 등록된 카메라만. 읽는 곳이 없으면 일정 시간 뒤 카메라를 닫는다. */}
+            {settingsCamera.ready && (
+            <div className="space-y-1">
+              <span className="text-xs text-neutral-400">{t('유휴 자동 종료')}</span>
+              <select value={settingsCamera.idle_stop_s ?? 0}
+                onChange={(e) => handleIdleStop(settingsCamera.id, Number(e.target.value))}
+                className="w-full px-2 py-1.5 text-sm rounded bg-neutral-900 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500">
+                <option value={0}>{t('끔')}</option>
+                {[60, 300, 600, 1800].map((s) => (
+                  <option key={s} value={s}>{t('{minutes}분 동안 안 쓰면 닫기', { minutes: s / 60 })}</option>
+                ))}
+                <option value={3600}>{t('1시간 동안 안 쓰면 닫기')}</option>
+              </select>
+              <p className="text-[10px] text-neutral-500">
+                {t('수집·추론·미리보기가 이 카메라를 읽지 않으면 설정한 시간 뒤 카메라를 닫습니다(USB 대역폭·발열 절약). 닫힌 카메라는 수집·추론 화면의 [연결] 로 다시 켭니다.')}
+              </p>
+            </div>
+            )}
 
             {/* 조명 경보 — 컬러 스트림에만. 깊이에는 밝기 감시가 무의미하다(문서 §4) */}
             {settingsCamera.stream_type !== 'depth' && (
@@ -1136,6 +1190,11 @@ export default function CamerasPage() {
                     ? 'bg-emerald-500/10 text-emerald-300'
                     : 'bg-amber-500/10 text-amber-300'}`}>
                     <p className="font-medium">{grayCard.ok ? t('맞음') : grayCard.verdict}</p>
+                    {/* 못 맞춘 **이유**. 이게 없으면 같은 숫자만 반복해서 보이고 사람은 "동작 안
+                        한다"고 읽는다 — 색온도로 못 고치는 틴트는 몇 번을 눌러도 그대로다. */}
+                    {!grayCard.ok && grayCard.hint && (
+                      <p className="mt-0.5 text-[10px] leading-relaxed text-amber-200/90">{grayCard.hint}</p>
+                    )}
                     <p className="mt-0.5 text-neutral-400 tabular-nums">
                       {t.rich('밝기 {luma} → {b} (목표 {target}) · 색 치우침 {neutral_error_pct}% → {b_2} · 노출 {exposure_us}ms', {
                         luma: grayCard.before.luma,
@@ -1151,14 +1210,15 @@ export default function CamerasPage() {
                     </p>
                     {/* ⚠ **결과를 본 직후가 저장이 가장 필요한 순간이다.** 이
                         안내는 보정 **전** 문단에만 있었고, 조준을 시작하면
-                        사라졌다. 그래서 좋은 값을 얻고도 [실시간 보기] 를 누르는
-                        순간 프로파일 값으로 덮여 "다시 어두워진다"로 보고됐다.
+                        사라졌다. 그래서 좋은 값을 얻고도 카메라를 다시 여는(예전엔
+                        [실시간 보기]) 순간 프로파일 값으로 덮여 "다시 어두워진다"로
+                        보고됐다.
                         연결할 때 프로파일을 다시 거는 것은 의도된 동작이다
                         (feature/gray-card-calibration.md §4) — 말해주지 않은 것이
                         문제였다. */}
                     <div className="mt-1 space-y-1 border-t border-current/20 pt-1">
                       <p className="text-[10px] text-amber-300">
-                        {t.rich('아직 {b} 올라가 있습니다. 저장하지 않으면{b_2}(실시간 보기·녹화·추론) 프로파일 값으로 되돌아갑니다.', {
+                        {t.rich('아직 {b} 올라가 있습니다. 저장하지 않으면{b_2}(다시 연결·녹화·추론) 프로파일 값으로 되돌아갑니다.', {
                           b: <b>{t('장치에만')}</b>,
                           b_2: <b>{' '}{t('다음에 카메라를 열 때')}</b>,
                         })}

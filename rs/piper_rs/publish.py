@@ -57,6 +57,32 @@ def stop(cam_id: str, unlink_segment: bool = True) -> None:
         pub.close(unlink=unlink_segment)
 
 
+def rename(cam_id: str, name: str) -> str:
+    """이 카메라의 세그먼트 이름을 `name` 으로 정한다. 돌려주는 값은 **실제로 쓰는 이름**이다.
+
+    게이트웨이가 사용자가 붙인 스트림 이름을 정해 준다. 데몬은 "이번 실행의 LeRobot 키"는
+    여전히 모른다 — 카메라당 이름 하나만 안다.
+
+    - 발행 중이면 **옛 세그먼트를 닫고 지운다**. 다음 프레임이 새 이름으로 만든다. 옛 이름을
+      물고 있던 소비자는 `orphaned` 로 알게 된다(그래서 게이트웨이가 쓰는 중에는 개명을 막는다).
+    - 발행 중이 아니어도 옛(규칙) 이름의 **잔재를 지운다.** 스캔 썸네일이 남긴 정지 화면이
+      이 카메라가 이름을 받은 뒤에도 영원히 남는 것을 막는다.
+    - 같은 이름을 다른 카메라가 쓰고 있으면 `ValueError` (단일 라이터).
+    """
+    from piper_shm import segment_for_camera, set_segment_name
+
+    old = segment_for_camera(cam_id)
+    if name == old:
+        return old
+    set_segment_name(cam_id, name)          # 충돌이면 여기서 ValueError — 아무것도 안 바뀐 채
+    pub = _pubs.pop(old, None)
+    if pub is not None:
+        pub.close()
+    else:
+        unlink(old)
+    return name
+
+
 def stop_all() -> None:
     """⚠ 세그먼트를 남기면 소비자가 **멈춘 화면**을 본다 — 종료 시 반드시 부른다."""
     for name, pub in list(_pubs.items()):
