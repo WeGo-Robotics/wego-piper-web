@@ -113,9 +113,10 @@ class EncoderProbeManager:
         image_key: str = "",
         tap: str = "siglip",
         device: str = "cuda",
+        pad: str = "pad",
     ) -> ProbeSession:
         """이미지 한 장 — `run_many` 의 특수한 경우."""
-        result = self.run_many([image_bytes], policy_type, checkpoint, image_key, tap, device)[0]
+        result = self.run_many([image_bytes], policy_type, checkpoint, image_key, tap, device, pad)[0]
         if isinstance(result, str):
             raise RuntimeError(result)
         return result
@@ -128,6 +129,7 @@ class EncoderProbeManager:
         image_key: str = "",
         tap: str = "siglip",
         device: str = "cuda",
+        pad: str = "pad",
     ) -> list[ProbeSession | str]:
         """subprocess **하나**로 여러 장을 인코딩한다 (블로킹).
 
@@ -153,6 +155,7 @@ class EncoderProbeManager:
             "--policy-type", policy_type,
             "--device", device,
             "--tap", tap,
+            "--pad", pad if pad in ("pad", "crop") else "pad",
             "--image", *[str(o / "source.jpg") for o in outs],
             "--out", *[str(o) for o in outs],
         ]
@@ -206,6 +209,23 @@ def _l2norm(x: np.ndarray) -> np.ndarray:
     return x / (np.linalg.norm(x, axis=-1, keepdims=True) + 1e-8)
 
 
+def _mean_dir(ref: ProbeSession) -> np.ndarray:
+    """기준 이미지 유효 패치(L2 정규화)의 평균 방향.
+
+    CLIP 계열 특징은 모든 패치가 공유하는 **큰 공통 성분**(anisotropy)이 있어 원본 코사인이
+    전반적으로 높게 나온다. 이걸 빼야 "서로 다른 것끼리 얼마나 비슷한가"가 보인다. 기준을 한
+    이미지(ref)에서 잡는 이유는 PCA 와 같다 — 이미지마다 따로 빼면 이미지 사이 비교가
+    성립하지 않는다.
+    """
+    return _l2norm(ref.features())[ref.valid_mask()].mean(axis=0)
+
+
+def _directions(feat: np.ndarray, mu: np.ndarray | None) -> np.ndarray:
+    """L2 정규화(+선택적으로 평균 제거 후 다시 정규화)한 방향."""
+    x = _l2norm(feat)
+    return _l2norm(x - mu) if mu is not None else x
+
+
 def pca_rgb(target: ProbeSession, ref: ProbeSession) -> dict:
     """ref 의 유효 패치로 PCA 기저를 잡아 target 에 적용하고 RGB 로 매핑한다.
 
@@ -233,13 +253,18 @@ def pca_rgb(target: ProbeSession, ref: ProbeSession) -> dict:
     }
 
 
-def cosine_map(target: ProbeSession, ref: ProbeSession, patch: int) -> dict:
-    """ref 의 patch 번째 토큰과 target 전체 토큰의 코사인 유사도."""
+def cosine_map(target: ProbeSession, ref: ProbeSession, patch: int, center: bool = False) -> dict:
+    """ref 의 patch 번째 토큰과 target 전체 토큰의 코사인 유사도.
+
+    `center` 면 **ref 유효 패치의 평균 방향을 뺀 뒤** 비교한다(`_mean_dir`). 원본 코사인이
+    "배경도 사과와 비슷하다"로 나오는데 평균을 빼면 사라진다면 그건 특징이 아니라 공통 성분이다.
+    """
     ref_feat = ref.features()
     if not 0 <= patch < ref_feat.shape[0]:
         raise ValueError(f"패치 인덱스 범위를 벗어났습니다: {patch}")
-    query = _l2norm(ref_feat[patch])
-    values = _l2norm(target.features()) @ query
+    mu = _mean_dir(ref) if center else None
+    query = _directions(ref_feat[patch], mu)
+    values = _directions(target.features(), mu) @ query
     mask = target.valid_mask()
     valid = values[mask]
     out = {
@@ -247,19 +272,23 @@ def cosine_map(target: ProbeSession, ref: ProbeSession, patch: int) -> dict:
         "min": round(float(valid.min()), 4),
         "max": round(float(valid.max()), 4),
         "mean": round(float(valid.mean()), 4),
+        "centered": bool(center),
     }
     if target is ref:
         out.update(_locality(target, values, patch, mask))
     return out
 
 
-def patch_matrix(sessions: list[ProbeSession | None], patch: int) -> dict:
+def patch_matrix(sessions: list[ProbeSession | None], patch: int, center: bool = False) -> dict:
     """여러 이미지의 **같은 패치 위치** 특징끼리 코사인 유사도 행렬.
 
     "조명·위치를 바꿔 찍은 장면들에서 그 자리 특징이 얼마나 같게 나오나"를 표 하나로
     본다. 패치 번호가 격자를 벗어나거나 패딩에 걸린 이미지, 차원이 다른 이미지, 만료된
     세션(None)은 행·열이 비어(null) 나온다 — 한 장 때문에 표 전체가 실패하지 않는다.
     """
+    # 평균은 **첫 번째 살아 있는 세션**에서 잡는다 — 모두에게 같은 값을 빼야 비교가 성립한다
+    ref = next((s for s in sessions if s is not None), None)
+    mu = _mean_dir(ref) if (center and ref is not None) else None
     vecs: list[np.ndarray | None] = []
     for sess in sessions:
         if sess is None:
@@ -269,7 +298,10 @@ def patch_matrix(sessions: list[ProbeSession | None], patch: int) -> dict:
         if not 0 <= patch < feat.shape[0] or not sess.valid_mask()[patch]:
             vecs.append(None)
             continue
-        vecs.append(_l2norm(feat[patch]))
+        if mu is not None and mu.shape[0] != feat.shape[1]:
+            vecs.append(None)               # 차원이 다른 세션은 아래에서 어차피 빠진다
+            continue
+        vecs.append(_directions(feat[patch], mu))
 
     dim = next((v.shape[0] for v in vecs if v is not None), None)
     vecs = [v if v is not None and v.shape[0] == dim else None for v in vecs]
@@ -288,6 +320,7 @@ def patch_matrix(sessions: list[ProbeSession | None], patch: int) -> dict:
                 off_diag.append(v)
     return {
         "patch": patch,
+        "centered": bool(center),
         "valid": [v is not None for v in vecs],
         "matrix": matrix,
         "mean": round(float(np.mean(off_diag)), 4) if off_diag else None,
@@ -331,10 +364,50 @@ def feature_stats(sess: ProbeSession) -> dict:
     }
 
 
-def kmeans_labels(target: ProbeSession, k: int, seed: int = 0) -> dict:
-    """유효 패치를 코사인 기준 k개로 군집화. 패딩 패치는 -1."""
+def norm_map(sess: ProbeSession) -> dict:
+    """패치별 **원본 L2 노름** 지도. 기준은 유효 패치의 중앙값이다(값은 그 배수).
+
+    ⚠ PCA·코사인은 L2 정규화 뒤라 크기 정보가 없다 — high-norm 토큰(레지스터형 아티팩트)은
+    여기서만 보인다. `feature_stats` 의 "아웃라이어 비율"은 최대/중앙값 **하나**라 몇 개가
+    어디에 있는지 모른다. 이 지도가 그 둘을 준다.
+
+    **패딩 토큰도 포함한다.** 모델은 패딩을 attention 에 넣는다 — 균일한 토큰은 전역 정보를
+    담는 자리로 재활용되기 쉽다. 통계(`feature_stats`)가 빼는 바로 그 토큰들이다.
+    """
+    feat = sess.features()
+    norms = np.linalg.norm(feat, axis=1)
+    mask = sess.valid_mask()
+    valid = norms[mask]
+    median = float(np.median(valid)) or 1.0
+    gw = sess.meta["grid_w"]
+    top = int(np.argmax(np.where(mask, norms, -np.inf)))
+    pad = norms[~mask]
+    return {
+        "values": [round(float(v) / median, 3) for v in norms],
+        "median": round(median, 2),
+        "max": round(float(valid.max()), 2),
+        "max_ratio": round(float(valid.max()) / median, 2),
+        "max_at": [top // gw, top % gw],
+        "n_valid": int(valid.size),
+        "over2": int((valid > 2 * median).sum()),
+        "over3": int((valid > 3 * median).sum()),
+        "padding": {
+            "n": int(pad.size),
+            "median_ratio": round(float(np.median(pad)) / median, 2) if pad.size else None,
+            "max_ratio": round(float(pad.max()) / median, 2) if pad.size else None,
+        },
+    }
+
+
+def kmeans_labels(target: ProbeSession, k: int, seed: int = 0, center: bool = False) -> dict:
+    """유효 패치를 코사인 기준 k개로 군집화. 패딩 패치는 -1.
+
+    `center` 면 평균 방향을 뺀 뒤 묶는다 — 공통 성분이 군집을 가리지 않는다.
+    """
     mask = target.valid_mask()
     x = _l2norm(target.features()[mask])
+    if center:
+        x = _l2norm(x - x.mean(axis=0))
     n = x.shape[0]
     k = max(2, min(int(k), 12, n))
 
@@ -362,7 +435,7 @@ def kmeans_labels(target: ProbeSession, k: int, seed: int = 0) -> dict:
 
     out = np.full(mask.shape[0], -1, dtype=np.int32)
     out[mask] = labels
-    return {"labels": out.tolist(), "k": k}
+    return {"labels": out.tolist(), "k": k, "centered": bool(center)}
 
 
 encoder_probe_manager = EncoderProbeManager()

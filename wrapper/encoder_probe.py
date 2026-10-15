@@ -54,6 +54,27 @@ def _log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
+def layer_index(tap: str, n_layers: int) -> int | None:
+    """`layer_50` → 인코더 깊이의 50% 지점(1..n_layers). 층 탭이 아니면 `None`.
+
+    층 수를 코드에 박지 않고 **비율**로 받는다 — SigLIP base 는 12 층이고 so400m 은 27 층이라,
+    "6번 층"이라고 적으면 백본이 바뀔 때 뜻이 달라진다.
+    """
+    if not tap.startswith("layer_"):
+        return None
+    try:
+        pct = int(tap.split("_", 1)[1])
+    except ValueError:
+        return None
+    return max(1, min(int(n_layers), round(n_layers * pct / 100)))
+
+
+def center_square(h: int, w: int) -> tuple[int, int, int]:
+    """가운데 정사각형 `(y0, x0, side)`. 패딩을 없애려는 실험용이다."""
+    side = min(h, w)
+    return (h - side) // 2, (w - side) // 2, side
+
+
 def _load_image(path: str) -> np.ndarray:
     import cv2
 
@@ -172,17 +193,36 @@ def load_smolvla(args):
     encoder_stats = _encoder_weight_stats(vision_model)
 
     def encode(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, dict]:
-        h, w = rgb.shape[:2]
-        x = torch.from_numpy(rgb.copy()).permute(2, 0, 1).float().div(255.0).unsqueeze(0)
+        # ⚠ `--pad crop` 은 **SmolVLA 가 실제로 하는 것이 아니다.** 4:3 사진은 늘 위쪽이 패딩으로
+        # 채워지는데(25% 가 균일한 검은 토큰), 그 토큰이 전역 정보를 담는 자리가 되는지를 가르려는
+        # 실험이다. 가운데 정사각형을 잘라 넣으면 패딩이 없고 위치 임베딩은 그대로다.
+        src, crop = rgb, None
+        if args.pad == "crop":
+            y0, x0, side = center_square(*rgb.shape[:2])
+            src, crop = rgb[y0:y0 + side, x0:x0 + side], [x0, y0, side]
+        h, w = src.shape[:2]
+        x = torch.from_numpy(src.copy()).permute(2, 0, 1).float().div(255.0).unsqueeze(0)
         # SmolVLAPolicy.prepare_images 와 동일: 종횡비 유지 리사이즈 + 위/왼쪽 패딩 + [-1,1]
         padded = resize_with_pad(x, size[0], size[1], pad_value=0)
         model_view = (padded[0].permute(1, 2, 0).numpy() * 255).astype(np.uint8)
 
         t0 = time.monotonic()
+        layer_idx = n_layers = None
         with torch.inference_mode():
-            hidden = vision_model(pixel_values=(padded * 2.0 - 1.0).to(device)).last_hidden_state
-            if args.tap == "connector":
-                hidden = connector(hidden)
+            want_layers = args.tap.startswith("layer_")
+            out = vision_model(pixel_values=(padded * 2.0 - 1.0).to(device),
+                               output_hidden_states=want_layers)
+            if want_layers:
+                # hidden_states = (임베딩, 1층 출력, …, N층 출력). **마지막 LayerNorm 전**이다 —
+                # `last_hidden_state` 와 크기 분포가 다르다(LN 이 norm 을 평탄하게 만든다).
+                hs = out.hidden_states
+                n_layers = len(hs) - 1
+                layer_idx = layer_index(args.tap, n_layers)
+                hidden = hs[layer_idx]
+            else:
+                hidden = out.last_hidden_state
+                if args.tap == "connector":
+                    hidden = connector(hidden)
         feat = hidden[0].float().cpu().numpy()
         elapsed = (time.monotonic() - t0) * 1000
 
@@ -211,6 +251,11 @@ def load_smolvla(args):
             "elapsed_ms": round(elapsed, 1),
             "device": device,
             "image_keys": [],
+            # 어떤 조건에서 뽑았나 — 화면이 서로 다른 조건의 결과를 섞어 비교하지 않게 한다
+            "pad_mode": args.pad,
+            "crop": crop,
+            "layer_index": layer_idx,
+            "n_layers": n_layers,
         }
         return feat, model_view, meta
 
@@ -359,6 +404,9 @@ def main() -> None:
     # 안다. 그래서 빈 값으로 받고 아래에서 스펙의 `default: true` tap 으로 채운다.
     p.add_argument("--tap", default="", choices=[""] + tap_keys(),
                    help="추출 지점. 비우면 정책 스펙의 기본 tap (policies/<type>.yaml)")
+    # SmolVLA 만 뜻이 있다(ACT 는 리사이즈·패딩이 없다) — 다른 정책은 무시한다
+    p.add_argument("--pad", default="pad", choices=["pad", "crop"],
+                   help="pad: SmolVLA 그대로(위/왼쪽 패딩) · crop: 가운데 정사각형(패딩 없음, 실험)")
     p.add_argument("--out", required=True, nargs="+", help="출력 디렉터리 (--image 와 같은 개수)")
     p.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
     args = p.parse_args()
@@ -406,6 +454,7 @@ def main() -> None:
             "total_ms": round(load_ms + (time.monotonic() - t0) * 1000, 1),
         })
         meta.setdefault("image_key", args.image_key)
+        meta.setdefault("pad_mode", "pad")
 
         np.save(out / "features.npy", feat.astype(np.float32))
         _save_jpg(out / "input.jpg", view)

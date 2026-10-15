@@ -139,6 +139,9 @@ class ProbeSpec(_Strict):
     taps: list[Tap] = Field(default_factory=list)
     # 카메라별 정규화 통계를 고를 수 있어야 하는가 (ACT). 정책별 **사실**이다.
     image_key_select: bool = False
+    # 입력 패딩 유무를 비교할 수 있는가. 비정방 입력을 정사각으로 맞춰 **패딩을 넣는**
+    # 정책(SmolVLA)만 뜻이 있다 — 정책별 사실이다.
+    pad_modes: bool = False
     note: str = ""
 
 

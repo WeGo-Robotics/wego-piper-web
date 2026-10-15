@@ -48,6 +48,8 @@ export type PolicyUi = {
     taps: { key: string; label: string; default: boolean }[]
     /** 카메라별 정규화 통계를 고를 수 있어야 하는가 (ACT). */
     image_key_select: boolean
+    /** 입력 패딩 유무를 비교할 수 있는가 (SmolVLA — 비정방 입력에 패딩을 넣는다). */
+    pad_modes: boolean
     note: string
   }
 }
@@ -56,7 +58,7 @@ const EMPTY: PolicyUi = {
   type: '',
   scratch_note: '',
   train: { defaults: {}, fields: [], warnings: [], requires_features: [] },
-  encoder_probe: { base_label: '', taps: [], image_key_select: false, note: '' },
+  encoder_probe: { base_label: '', taps: [], image_key_select: false, pad_modes: false, note: '' },
 }
 
 export function usePolicyUi(policyType: string) {

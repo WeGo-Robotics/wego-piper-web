@@ -24,6 +24,7 @@ from app.services.encoder_probe import (
     cosine_map,
     encoder_probe_manager,
     kmeans_labels,
+    norm_map,
     patch_matrix,
     pca_rgb,
 )
@@ -81,6 +82,7 @@ class EncodeRequest(BaseModel):
     checkpoint_path: str = ""
     image_key: str = ""
     tap: str = "siglip"
+    pad: str = "pad"  # pad: SmolVLA 그대로 · crop: 가운데 정사각형(패딩 없음, 실험)
     device: str = ""  # 비우면 GPU 사용 여부를 자동 판단
 
 
@@ -93,7 +95,7 @@ def _decode_upload(raw: str) -> bytes:
 
 
 async def _run_batch(images: list[bytes], policy_type: str, checkpoint: str, image_key: str,
-                     tap: str, device: str) -> tuple[list, str, str]:
+                     tap: str, device: str, pad: str = "pad") -> tuple[list, str, str]:
     """줄 세우기 + 락 + 실행. (결과 목록, gpu_busy, device_note) 를 돌려준다."""
     if policy_type not in SUPPORTED:
         raise HTTPException(400, f"지원하지 않는 정책: {policy_type}")
@@ -108,7 +110,7 @@ async def _run_batch(images: list[bytes], policy_type: str, checkpoint: str, ima
         async with _run_lock:
             results = await asyncio.to_thread(
                 encoder_probe_manager.run_many,
-                images, policy_type, checkpoint, image_key, tap, chosen,
+                images, policy_type, checkpoint, image_key, tap, chosen, pad,
             )
     except RuntimeError as exc:
         raise HTTPException(500, str(exc))
@@ -138,7 +140,8 @@ async def encode(body: EncodeRequest):
         raise HTTPException(400, f"알 수 없는 소스: {body.source}")
 
     results, busy, note = await _run_batch(
-        [image], body.policy_type, body.checkpoint_path, body.image_key, body.tap, body.device)
+        [image], body.policy_type, body.checkpoint_path, body.image_key, body.tap, body.device,
+        body.pad)
     sess = results[0]
     if isinstance(sess, str):
         raise HTTPException(500, sess)
@@ -152,6 +155,7 @@ class EncodeBatchRequest(BaseModel):
     checkpoint_path: str = ""
     image_key: str = ""
     tap: str = "siglip"
+    pad: str = "pad"
     device: str = ""
 
 
@@ -170,7 +174,8 @@ async def encode_batch(body: EncodeBatchRequest):
     images = [_decode_upload(raw) for raw in body.images]
 
     results, busy, note = await _run_batch(
-        images, body.policy_type, body.checkpoint_path, body.image_key, body.tap, body.device)
+        images, body.policy_type, body.checkpoint_path, body.image_key, body.tap, body.device,
+        body.pad)
     return {
         "results": [
             {"error": r} if isinstance(r, str) else {"sid": r.sid, "meta": r.meta}
@@ -199,7 +204,7 @@ def _ref(sid: str, ref: str | None):
 
 
 @router.get("/patch_matrix")
-async def patch_matrix_route(patch: int, sids: str):
+async def patch_matrix_route(patch: int, sids: str, center: bool = False):
     """`sids`(쉼표 구분) 이미지들의 같은 패치 위치 특징끼리 코사인 행렬.
 
     만료된 세션은 404 가 아니라 빈 행·열이다 — 여러 장 중 하나가 밀려났다고
@@ -211,7 +216,7 @@ async def patch_matrix_route(patch: int, sids: str):
     if len(ids) > MAX_SESSIONS:
         raise HTTPException(400, f"한 번에 {MAX_SESSIONS}장까지 비교할 수 있습니다")
     sessions = [encoder_probe_manager.get(x) for x in ids]
-    out = patch_matrix(sessions, patch)
+    out = patch_matrix(sessions, patch, center)
     out["sids"] = ids
     return out
 
@@ -241,17 +246,23 @@ async def pca(sid: str, ref: str | None = None):
 
 
 @router.get("/{sid}/similarity")
-async def similarity(sid: str, patch: int, ref: str | None = None):
+async def similarity(sid: str, patch: int, ref: str | None = None, center: bool = False):
     target, reference = _ref(sid, ref)
     try:
-        return cosine_map(target, reference, patch)
+        return cosine_map(target, reference, patch, center)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
 
 @router.get("/{sid}/kmeans")
-async def kmeans(sid: str, k: int = 6):
-    return kmeans_labels(_session(sid), k)
+async def kmeans(sid: str, k: int = 6, center: bool = False):
+    return kmeans_labels(_session(sid), k, center=center)
+
+
+@router.get("/{sid}/norms")
+async def norms(sid: str):
+    """패치별 원본 노름(유효 패치 중앙값의 배수) + 패딩 토큰 통계."""
+    return norm_map(_session(sid))
 
 
 @router.delete("/{sid}")

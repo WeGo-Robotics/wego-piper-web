@@ -59,8 +59,15 @@ encoder_probe:
   base_label: "베이스 SigLIP (체크포인트 없이)"
   taps:
     - { key: siglip,    label: "비전 타워 출력 (32x32)", default: true }
+    # 층 탭은 **깊이의 비율**이다(백본마다 층 수가 다르다). 마지막 LayerNorm 전의 값이라
+    # 크기 분포가 최종 출력과 다르다 — 국소성이 층마다 어떻게 변하는지 보려는 용도다.
+    - { key: layer_75,  label: "비전 타워 75% 깊이 (LN 전, 32x32)" }
+    - { key: layer_50,  label: "비전 타워 50% 깊이 (LN 전, 32x32)" }
+    - { key: layer_25,  label: "비전 타워 25% 깊이 (LN 전, 32x32)" }
     - { key: connector, label: "VLM 입력 토큰 (8x8)" }
   image_key_select: false
+  # 4:3 사진은 512x512 로 맞추며 위쪽 25% 가 검은 패딩이 된다 — 패딩 유무를 비교할 수 있다
+  pad_modes: true
   # 체크포인트를 안 골랐을 때만 뜻이 있는 안내다 — 화면이 그 판단을 한다.
   note: |
     SmolVLA는 freeze_vision_encoder=true면 학습 중 비전 인코더가 바뀌지 않습니다.

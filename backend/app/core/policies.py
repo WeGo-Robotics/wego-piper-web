@@ -154,7 +154,7 @@ def ui_spec(policy_type: str) -> dict:
         return {"type": policy_type, "scratch_note": "",
                 "train": {"defaults": {}, "fields": [], "warnings": [], "requires_features": []},
                 "encoder_probe": {"base_label": "", "taps": [],
-                                  "image_key_select": False, "note": ""}}
+                                  "image_key_select": False, "pad_modes": False, "note": ""}}
     t = spec.train
     return {
         "type": policy_type,
@@ -191,6 +191,7 @@ def ui_spec(policy_type: str) -> dict:
             "taps": [{"key": t_.key, "label": t_.label, "default": t_.default}
                      for t_ in spec.encoder_probe.taps],
             "image_key_select": spec.encoder_probe.image_key_select,
+            "pad_modes": spec.encoder_probe.pad_modes,
             "note": spec.encoder_probe.note,
         },
     }

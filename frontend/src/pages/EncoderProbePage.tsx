@@ -8,7 +8,7 @@ import { useT } from '../i18n'
 // ⚠ 정책 이름을 유니언으로 박지 않는다 — 모델이 늘 때마다 여기도 늘어난다.
 // 어떤 정책이 프로브 되는지는 `policies/*.yaml` (capabilities.encoder_probe) 이 정한다.
 type PolicyType = string
-type ViewKind = 'input' | 'pca' | 'sim' | 'kmeans'
+type ViewKind = 'input' | 'pca' | 'sim' | 'kmeans' | 'norm'
 
 type EncoderModel = { id: string; path: string; policy_type: PolicyType; modified?: string; cameras: string[] }
 
@@ -24,6 +24,10 @@ type Meta = {
   patch_px_model: number; patch_px_orig_x: number; patch_px_orig_y: number
   encoder_source: string
   encoder_stats: { random_init?: boolean; pretrained_backbone_weights?: string | null; q_proj_std?: number }
+  /** 어떤 조건에서 뽑았나. 서로 다른 조건의 결과를 섞어 비교하지 않으려고 남긴다. */
+  pad_mode?: string
+  layer_index?: number | null
+  n_layers?: number | null
   feature_stats?: { norm_median: number; norm_max: number; norm_outlier_ratio: number }
   elapsed_ms: number; total_ms: number; device: string
 }
@@ -192,11 +196,12 @@ function ProbeCanvas({ slot, overlay, alpha, showGrid, smooth, selected, onPick 
 // ── 슬롯 카드 ─────────────────────────────────────────────────────────────────
 
 /** 인코딩 결과가 지금 설정과 다른 모델/탭에서 나온 것인가. 섞어 비교하면 서버가 400 을 낸다. */
-function isStale(img: SlotImage, cur: { policyType: string; checkpoint: string; tap: string; imageKey: string }): boolean {
+function isStale(img: SlotImage, cur: { policyType: string; checkpoint: string; tap: string; imageKey: string; pad: string }): boolean {
   const m = img.result?.meta
   if (!m) return false
   return m.policy_type !== cur.policyType || (m.checkpoint || '') !== cur.checkpoint
     || m.tap !== cur.tap || (cur.imageKey !== '' && m.image_key !== cur.imageKey)
+    || (m.pad_mode || 'pad') !== cur.pad
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {
@@ -397,6 +402,12 @@ export default function EncoderProbePage() {
     }
   }, [probe])
   const [device, setDevice] = useState('')
+  // 패딩 유무 비교(SmolVLA 만). `crop` 은 가운데 정사각형 — 패딩 토큰이 없을 때 배경이 어떻게
+  // 달라지는지 보는 실험이다. 스펙이 `pad_modes` 를 켠 정책에서만 보인다.
+  const [padMode, setPadMode] = useState<'pad' | 'crop'>('pad')
+  const effectivePad = probe.pad_modes ? padMode : 'pad'
+  // 평균 중심화 — 클릭 유사도·k-means 에 적용된다(PCA 는 정의상 이미 중심화한다)
+  const [center, setCenter] = useState(false)
 
   // 처음엔 A 하나. "+ 슬롯 추가" 로 아래에 붙는다.
   const nextId = useRef(1)
@@ -438,7 +449,7 @@ export default function EncoderProbePage() {
     setOverlays({})
   }, [policyType])
 
-  const cur = { policyType, checkpoint, tap, imageKey }
+  const cur = { policyType, checkpoint, tap, imageKey, pad: effectivePad }
   const stale = (img: SlotImage) => isStale(img, cur)
 
   const addSlot = () => {
@@ -484,6 +495,7 @@ export default function EncoderProbePage() {
           checkpoint_path: checkpoint,
           image_key: imageKey,
           tap,
+          pad: effectivePad,
           device,
           images: targets.map((t) => t.src),
         })
@@ -510,7 +522,7 @@ export default function EncoderProbePage() {
       patchEntry(slotId, { busy: false })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries, policyType, checkpoint, imageKey, tap, device, patchEntry])
+  }, [entries, policyType, checkpoint, imageKey, tap, device, effectivePad, patchEntry])
 
   // 인코딩된 이미지 전부(슬롯 경계 없이). 기준(ref)은 첫 번째 — PCA 기저와 유사도
   // 질의를 하나로 맞춰야 여러 장의 색이 같은 의미를 갖는다.
@@ -527,6 +539,29 @@ export default function EncoderProbePage() {
       const meta = slot.meta
       const n = meta.n_patches
       const data: PixelBuffer = new Uint8ClampedArray(new ArrayBuffer(n * 4))
+
+      if (view === 'norm') {
+        const res = await api.get<{
+          values: number[]; median: number; max: number; max_ratio: number; max_at: [number, number]
+          n_valid: number; over2: number; over3: number
+          padding: { n: number; median_ratio: number | null; max_ratio: number | null }
+        }>(`/encoder/${slot.sid}/norms`)
+        // 중앙값의 1배 = 옅은 색, 3배 이상 = 가장 진한 색. **패딩 패치도 그린다** — 모델은 패딩을
+        // attention 에 넣고, 균일한 토큰은 전역 정보를 담는 자리로 재활용되기 쉽다.
+        for (let i = 0; i < n; i++) {
+          const f = Math.max(0, Math.min(1, (res.values[i] - 1) / 2))
+          const [r, g, b] = seqColor(f)
+          data.set([r, g, b, 70 + f * 185], i * 4)
+        }
+        const pad = res.padding.n > 0
+          ? t(' · 패딩 {n}개: 중앙값 {median}배, 최대 {max}배', {
+            n: String(res.padding.n), median: String(res.padding.median_ratio), max: String(res.padding.max_ratio) })
+          : ''
+        return [slot.sid, { data, info: t('노름 중앙값 {median} · 최대 {max_ratio}배 (행 {row}, 열 {col}) · 2배 초과 {over2}개 · 3배 초과 {over3}개 / 유효 {n_valid}개{pad}', {
+          median: String(res.median), max_ratio: String(res.max_ratio),
+          row: String(res.max_at[0]), col: String(res.max_at[1]),
+          over2: String(res.over2), over3: String(res.over3), n_valid: String(res.n_valid), pad }) }]
+      }
 
       if (view === 'pca') {
         const res = await api.get<{ rgb: number[][]; explained: number[] }>(
@@ -545,7 +580,7 @@ export default function EncoderProbePage() {
         const res = await api.get<{
           values: number[]; min: number; max: number; mean: number
           locality?: number; locality_baseline?: number; locality_ratio?: number
-        }>(`/encoder/${slot.sid}/similarity?patch=${selected.patch}&ref=${selected.sid}`)
+        }>(`/encoder/${slot.sid}/similarity?patch=${selected.patch}&ref=${selected.sid}&center=${center ? 1 : 0}`)
         const span = res.max - res.min || 1
         for (let i = 0; i < n; i++) {
           if (!isValidPatch(meta, i)) continue
@@ -559,7 +594,7 @@ export default function EncoderProbePage() {
         return [slot.sid, { data, info: t('코사인 {min}~{max} · 평균 {mean}{loc}', { min: res.min.toFixed(2), max: res.max.toFixed(2), mean: res.mean.toFixed(2), loc }) }]
       }
 
-      const res = await api.get<{ labels: number[]; k: number }>(`/encoder/${slot.sid}/kmeans?k=${k}`)
+      const res = await api.get<{ labels: number[]; k: number }>(`/encoder/${slot.sid}/kmeans?k=${k}&center=${center ? 1 : 0}`)
       for (let i = 0; i < n; i++) {
         const label = res.labels[i]
         if (label < 0 || !isValidPatch(meta, i)) continue
@@ -579,19 +614,19 @@ export default function EncoderProbePage() {
       .then((pairs) => { if (alive) setOverlays(Object.fromEntries(pairs)) })
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, sidKey, selected, k, isolate])
+  }, [view, sidKey, selected, k, isolate, center])
 
   // 기준 패치가 정해지면 모든 이미지의 **그 자리** 특징끼리 한 번에 비교한다.
   useEffect(() => {
     if (view !== 'sim' || !selected || filled.length === 0) { setMatrix(null); return }
     let alive = true
     const sids = filled.map((s) => s.sid)
-    api.get<PatchMatrix>(`/encoder/patch_matrix?patch=${selected.patch}&sids=${sids.join(',')}`)
+    api.get<PatchMatrix>(`/encoder/patch_matrix?patch=${selected.patch}&sids=${sids.join(',')}&center=${center ? 1 : 0}`)
       .then((m) => { if (alive) setMatrix(m) })
       .catch(() => { if (alive) setMatrix(null) })
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, sidKey, selected?.patch])
+  }, [view, sidKey, selected?.patch, center])
 
   // 표 머리글용 짧은 이름: 슬롯 글자 + 슬롯 안 순번 (A1, A2, B1 …)
   const imageTag = new Map<string, { tag: string; name: string }>()
@@ -610,6 +645,7 @@ export default function EncoderProbePage() {
     { key: 'sim', label: t('클릭 유사도'), hint: t('패치를 클릭하면 모든 이미지에서 그 특징과의 코사인 유사도') },
     { key: 'pca', label: 'PCA → RGB', hint: t('패치 특징을 3차원으로 줄여 색으로 표시 (기저는 첫 이미지 기준)') },
     { key: 'kmeans', label: 'k-means', hint: t('패치를 군집화해 장면이 어떻게 갈리는지 확인') },
+    { key: 'norm', label: t('노름 맵'), hint: t('패치별 특징 크기(유효 패치 중앙값의 배수). 크기가 유독 큰 토큰(high-norm)과 패딩 토큰의 크기를 본다 — PCA·유사도는 방향만 남겨 이걸 못 본다') },
   ]
 
   return (
@@ -662,6 +698,20 @@ export default function EncoderProbePage() {
               <select value={tap} onChange={(e) => setTap(e.target.value)}
                 className="px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-xs text-neutral-100">
                 {probe.taps.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+              </select>
+            </div>
+          )}
+
+          {/* 패딩 유무 — 4:3 사진은 512x512 로 맞추며 위쪽 25% 가 검은 패딩 토큰이 된다.
+              그 토큰이 배경 특징에 영향을 주는지 가르는 실험이다(정사각 크롭 = 패딩 없음). */}
+          {probe.pad_modes && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-neutral-400">{t('입력 패딩')}</span>
+              <select value={padMode} onChange={(e) => setPadMode(e.target.value as 'pad' | 'crop')}
+                title={t('crop 은 SmolVLA 가 실제로 하는 것이 아닙니다 — 가운데 정사각형을 잘라 패딩 없이 넣어, 패딩 토큰의 영향을 가르는 실험입니다(양옆 내용은 잘립니다).')}
+                className="px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-xs text-neutral-100">
+                <option value="pad">{t('SmolVLA 그대로 (위쪽 패딩)')}</option>
+                <option value="crop">{t('정사각 중앙 크롭 (패딩 없음, 실험)')}</option>
               </select>
             </div>
           )}
@@ -739,6 +789,14 @@ export default function EncoderProbePage() {
                 className="accent-blue-500" />
               <span className="text-neutral-400">{t('보간')}</span>
             </label>
+            {(view === 'sim' || view === 'kmeans') && (
+              <label className="flex items-center gap-1.5 cursor-pointer"
+                title={t('모든 패치가 공유하는 평균 방향을 뺀 뒤 비교합니다. CLIP 계열은 이 공통 성분 때문에 원본 코사인이 전반적으로 높게 나옵니다 — 빼면 사라지는 유사도는 특징이 아니라 공통 성분입니다.')}>
+                <input type="checkbox" checked={center} onChange={(e) => setCenter(e.target.checked)}
+                  className="accent-blue-500" />
+                <span className="text-neutral-400">{t('평균 중심화')}</span>
+              </label>
+            )}
             {view === 'kmeans' && (
               <label className="flex items-center gap-1.5">
                 <span className="text-neutral-400">k</span>
@@ -757,6 +815,14 @@ export default function EncoderProbePage() {
                 style={{ background: `linear-gradient(to right, rgb(${SEQ_STOPS[0].join(',')}), rgb(${SEQ_STOPS[1].join(',')}), rgb(${SEQ_STOPS[2].join(',')}))` }} />
               <span className="text-[10px] text-neutral-500">{t('높음')}</span>
               {!selected && <span className="text-[11px] text-yellow-500 ml-2">{t('아무 이미지에서나 패치를 클릭하세요 — 모든 이미지에 유사도가 그려집니다')}</span>}
+            </div>
+          )}
+          {view === 'norm' && (
+            <div className="flex items-center gap-2 max-w-xs">
+              <span className="text-[10px] text-neutral-500">{t('중앙값')}</span>
+              <div className="flex-1 h-2 rounded"
+                style={{ background: `linear-gradient(to right, rgb(${SEQ_STOPS[0].join(',')}), rgb(${SEQ_STOPS[1].join(',')}), rgb(${SEQ_STOPS[2].join(',')}))` }} />
+              <span className="text-[10px] text-neutral-500">{t('3배 이상')}</span>
             </div>
           )}
           {view === 'sim' && selected && matrix && matrix.sids.length > 1 && (() => {
