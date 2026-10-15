@@ -29,7 +29,9 @@ export default function Layout() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-neutral-900 text-neutral-100">
+    // `data-app-shell` — index.css 가 이 표지가 있을 때만 문서 스크롤을 막는다(확장 프로그램이
+    // `body` 에 붙인 요소가 문서를 늘려 스크롤바가 하나 더 생기던 일).
+    <div data-app-shell className="h-screen flex flex-col bg-neutral-900 text-neutral-100">
       <StatusBar />
       <div className="flex flex-1 min-h-0">
         <Sidebar collapsed={collapsed} onToggle={toggle} />

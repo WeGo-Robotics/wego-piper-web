@@ -1,1 +1,13 @@
 @import "tailwindcss";
+
+/* 앱 셸(`Layout`)은 뷰포트에 고정된 틀이고 스크롤은 `main` 하나다. 그런데 문서(`html`)도
+   스크롤될 수 있어서, `body` 에 위치 지정된(absolute) 요소가 붙으면 — 브라우저 확장 프로그램이
+   주입하는 아이콘·오버레이가 흔하다 — 문서가 그 요소의 자리까지 늘어나 **스크롤바가 하나 더
+   생긴다.** 실측(2026-10-15): `body` 의 세 번째 자식으로 24px 짜리 absolute `div`(SVG 아이콘)가
+   y=2284 에 붙어 문서가 뷰포트의 2배가 됐다.
+
+   셸이 있을 때만 막는다 — 조종 창(`TeleopWindowPage`)처럼 `Layout` 밖에 사는 페이지는 문서
+   스크롤에 기대므로 건드리지 않는다. */
+html:has([data-app-shell]) {
+  overflow: hidden;
+}
