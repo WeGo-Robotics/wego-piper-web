@@ -18,6 +18,10 @@ from app.services.camera_config import (
 )
 from app.services.model_scanner import scan_models, get_model, delete_model
 from app.services.robot_config import ArmPrepareError, prepare_arms, resolve_robot_type
+
+# 정책을 올릴 장치. `mps` 는 Apple GPU 다 — 이 기계(Linux 컨테이너)에는 없으므로
+# **서버(gRPC) 모드에서 맥에 띄운 정책 서버를 쓸 때만** 뜻이 있다(`_build_args_for` 가 막는다).
+InferenceDevice = Literal["cuda", "cpu", "mps"]
 from app.services.param_bridge import param_bridge
 from app.services import inference_state
 from app.services.process_manager import process_manager
@@ -145,6 +149,11 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
     # 그래서 입력한 적 없는 옛 문장이 CLI 미리보기와 wrapper 로그에 떴다.
     # 감추는 것과 안 보내는 것은 다르고, **판정은 여기 한 곳**이다 —
     # 화면이 따로 판단하면 프리셋·CLI 직접 편집 같은 다른 경로가 새어 나간다.
+    # ⚠ **mps 는 서버 모드에서만.** 로컬 wrapper 는 이 기계(Linux)에서 돌아 Apple GPU 가 없다.
+    # 미리보기와 실행이 이 함수를 같이 타므로 여기서 한 번 막으면 두 경로가 다 막힌다.
+    if body.device == "mps" and body.inference_mode != "server":
+        raise HTTPException(400, "MPS(Apple GPU)는 서버 모드에서만 쓸 수 있습니다 — 맥에서 정책 서버를 띄우고 서버 주소를 넣으세요")
+
     user_params = dict(body.params)
     if not takes_language(body.policy_type):
         user_params.pop("task", None)
@@ -260,7 +269,7 @@ class InferenceStartRequest(BaseModel):
     inference_mode: str = "local"  # "local" | "server"
     # 정책을 올릴 장치. 로컬은 wrapper `--device`, 서버는 `--policy-device` 로 간다.
     # 기본은 예전 그대로 cuda — GPU 가 없는 기계에서는 사람이 cpu 를 고른다.
-    device: Literal["cuda", "cpu"] = "cuda"
+    device: InferenceDevice = "cuda"
     server_address: str = "127.0.0.1:8088"
     policy_type: str = "act"
     actions_per_chunk: int = 100
@@ -278,7 +287,7 @@ class InferencePreviewRequest(BaseModel):
     robot_ports: list[str] = []
     camera_mapping: dict[str, str] = {}
     inference_mode: str = "local"
-    device: Literal["cuda", "cpu"] = "cuda"
+    device: InferenceDevice = "cuda"
     server_address: str = "127.0.0.1:8088"
     policy_type: str = "act"
     aggregate_fn: str = "weighted_average"
