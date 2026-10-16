@@ -78,6 +78,10 @@ function CollapsibleCard({ title, storageKey, defaultOpen = true, children }: {
 }
 
 type ReadyArm = { iface: string; role: string; side?: string | null; config: Record<string, unknown> }
+// 백엔드 `InferenceDevice` 와 같은 값. 저장된 값이 이 셋이 아니면 예전 기본(cuda)으로 읽는다
+type InferenceDevice = 'cuda' | 'cpu' | 'mps'
+const parseInferenceDevice = (v: string | null): InferenceDevice =>
+  v === 'cpu' || v === 'mps' ? v : 'cuda'
 type ValidationResult = { valid: boolean; errors: string[]; warnings: string[]; robot_joints?: number }
 
 // 관절 수와 정책 목록은 백엔드에서 온다 —
@@ -106,8 +110,12 @@ export default function InferencePage() {
   const [cliEdited, setCliEdited] = useState(false)
   const [inferenceMode, setInferenceMode] = useState<'local' | 'server'>('local')
   // 정책을 올릴 장치. 기계마다 다른 값이라 프리셋(params)에 넣지 않고 따로 기억한다.
-  const [device, setDevice] = useState<'cuda' | 'cpu'>(() =>
-    localStorage.getItem('piper_inference_device') === 'cpu' ? 'cpu' : 'cuda')
+  // mps(Apple GPU)는 맥에 띄운 정책 서버용이라 서버 모드에서만 고를 수 있다. 화면은 로컬 모드로
+  // 열리므로 저장된 mps 는 cuda 로 시작하고(GPU 가 없으면 아래에서 cpu), 서버 모드를 고를 때 되살린다
+  const [device, setDevice] = useState<InferenceDevice>(() => {
+    const saved = parseInferenceDevice(localStorage.getItem('piper_inference_device'))
+    return saved === 'mps' ? 'cuda' : saved
+  })
   // 이 기계에서 CUDA 를 쓸 수 있나. null = 아직/모름(막지 않는다). 한 번만 묻는다 — 폴링 없음
   const [cudaAvailable, setCudaAvailable] = useState<boolean | null>(null)
   useEffect(() => {
@@ -540,13 +548,23 @@ export default function InferencePage() {
               <div className="flex gap-4 text-sm">
                 <label className="flex items-center gap-1.5 cursor-pointer">
                   <input type="radio" name="mode" value="local" checked={inferenceMode === 'local'}
-                    onChange={() => { setInferenceMode('local'); setCliEdited(false) }}
+                    onChange={() => {
+                      setInferenceMode('local')
+                      // mps 는 이 기계에 없다 — cuda 로 내리고(GPU 가 없으면 위 효과가 cpu 로) 저장은 그대로 둔다
+                      if (device === 'mps') setDevice('cuda')
+                      setCliEdited(false)
+                    }}
                     className="accent-blue-500" />
                   {t('로컬 (wrapper)')}
                 </label>
                 <label className="flex items-center gap-1.5 cursor-pointer">
                   <input type="radio" name="mode" value="server" checked={inferenceMode === 'server'}
-                    onChange={() => { setInferenceMode('server'); setCliEdited(false) }}
+                    onChange={() => {
+                      setInferenceMode('server')
+                      // 로컬 모드가 cuda 로 내려 둔 mps 를 되살린다. 그 밖의 값은 예전처럼 건드리지 않는다
+                      if (parseInferenceDevice(localStorage.getItem('piper_inference_device')) === 'mps') setDevice('mps')
+                      setCliEdited(false)
+                    }}
                     className="accent-blue-500" />
                   {t('서버 (gRPC)')}
                 </label>
@@ -556,7 +574,7 @@ export default function InferencePage() {
                 <span className="text-neutral-400 w-20">{t('장치')}</span>
                 <select value={device}
                   onChange={(e) => {
-                    const v = e.target.value === 'cpu' ? 'cpu' : 'cuda'
+                    const v = parseInferenceDevice(e.target.value)
                     setDevice(v)
                     localStorage.setItem('piper_inference_device', v)
                     setCliEdited(false)
@@ -566,8 +584,16 @@ export default function InferencePage() {
                     CUDA (GPU){noLocalGpu ? t(' — 이 기계에서 GPU 를 찾지 못했습니다') : ''}
                   </option>
                   <option value="cpu">CPU</option>
+                  <option value="mps" disabled={inferenceMode === 'local'}>
+                    MPS (Apple GPU){inferenceMode === 'local' ? t(' — 서버 모드에서 맥 정책 서버를 쓸 때만') : ''}
+                  </option>
                 </select>
               </div>
+              {device === 'mps' && (
+                <p className="text-[10px] text-amber-400">
+                  {t('MPS 는 맥에서 직접 띄운 정책 서버(wrapper/start_policy_server.py)가 정책을 올릴 장치입니다. 이 기계의 장치가 아닙니다.')}
+                </p>
+              )}
               {device === 'cpu' && (
                 <p className="text-[10px] text-amber-400">
                   {t.rich('CPU 추론은 느립니다 — ACT 는 카메라 2대 기준 청크당 수백 ms 이상 걸립니다. 청크 단위로만 쓰고 {b}(스텝마다 추론해 따라가지 못합니다). 끊기면 refill 임계를 30~40% 로 올리세요.', {

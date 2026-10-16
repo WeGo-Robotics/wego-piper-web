@@ -5,7 +5,10 @@
 
 여기서 지키는 것: 기본은 **예전 그대로 cuda**(GPU 있는 기계의 명령이 한 글자도 안 바뀐다) ·
 cpu 를 고르면 로컬은 `--device cpu`, 서버는 `--policy-device cpu` · cpu 에서는 AMP 를 켜지 않는다 ·
-cuda/cpu 밖의 값은 거절 · **미리보기와 실행이 같은 조립기를 타서 화면의 명령이 거짓이 되지 않는다**.
+cuda/cpu/mps 밖의 값은 거절 · **미리보기와 실행이 같은 조립기를 타서 화면의 명령이 거짓이 되지 않는다**.
+
+mps(Apple GPU)는 맥에 띄운 정책 서버용이다 — 서버 모드에서만 받고, 로컬 모드(이 Linux 기계의
+wrapper)에서는 조립기가 400 으로 막는다.
 """
 
 import pytest
@@ -48,12 +51,34 @@ def test_server_mode_default_stays_cuda():
     assert _value(_args(mode="server"), "--policy-device") == "cuda"
 
 
-def test_only_cuda_or_cpu_is_accepted():
+def test_only_cuda_cpu_or_mps_is_accepted():
     from app.routers.models import InferencePreviewRequest, InferenceStartRequest
 
     for model in (InferencePreviewRequest, InferenceStartRequest):
+        for ok in ("cuda", "cpu", "mps"):
+            assert model(checkpoint_path="/m", device=ok).device == ok
         with pytest.raises(ValidationError):
             model(checkpoint_path="/m", device="tpu")
+
+
+# ── mps: 맥에 띄운 정책 서버 ──
+
+
+def test_mps_in_server_mode_goes_to_the_policy_device_flag():
+    args = _args("mps", mode="server")
+    assert _value(args, "--policy-device") == "mps"
+    assert "--use-amp" not in args
+
+
+def test_mps_in_local_mode_is_refused_for_preview_and_start_alike():
+    """로컬 wrapper 는 이 기계(Linux)에서 돈다 — Apple GPU 가 없다. 조립기 한 곳에서 막으므로
+    미리보기도 실행도 같은 400 이다(화면이 막아도 CLI 직접 편집·프리셋 같은 길이 있다)."""
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as e:
+        _args("mps", mode="local")
+    assert e.value.status_code == 400
+    assert "서버 모드" in e.value.detail
 
 
 def test_the_start_request_carries_the_choice_too():
