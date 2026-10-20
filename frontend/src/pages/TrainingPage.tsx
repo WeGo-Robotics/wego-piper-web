@@ -885,7 +885,13 @@ export default function TrainingPage() {
                     className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
                     <option value="cuda">CUDA (GPU)</option>
                     <option value="cpu">CPU</option>
+                    <option value="mps">MPS (Apple GPU)</option>
                   </select>
+                  {device === 'mps' && (
+                    <p className="mt-1 text-[10px] text-amber-400">
+                      {t('MPS 는 학습이 맥에서 돌 때(SSH 학습 대상이 맥)만 쓸 수 있습니다. 이 기계에서 학습하면 시작하지 못합니다.')}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs text-neutral-400">{t('Output Dir (비우면 자동)')}</label>
