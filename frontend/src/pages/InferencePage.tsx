@@ -18,32 +18,57 @@ import LightStrip from '../components/LightStrip'
 import TelemetryPanel, { type TelemetryData } from '../components/TelemetryPanel'
 import ManualControlPanel from '../components/ManualControlPanel'
 import { twoColumns } from '../components/LayoutToggle'
-import { normalizeMapping } from '../types/camera'
+import { findStream, normalizeMapping, type StreamInfo } from '../types/camera'
 import { useCameraStreams } from '../hooks/useCameraStreams'
+import { useLiveFrames } from '../hooks/useCameraLive'
+import LiveCameraFrame from '../components/LiveCameraFrame'
 import CameraStreamSelect, { IdleStreams } from '../components/CameraStreamPicker'
 import { useT } from '../i18n'
 
-function CameraPreview({ cameraNames }: { cameraNames: string[] }) {
+/**
+ * 카메라 프리뷰. 모델 카메라 키(`cameraNames`)를 매핑이 가리키는 장치로 풀어 카메라 페이지와
+ * 같은 경로(`/api/cameras/live`, shm → 한 연결)로 받는다.
+ *
+ * ⚠ wrapper 가 20스텝마다 덮어쓰는 JPEG(`/api/inference/camera/{name}`)는 제어 FPS/20 장/초
+ *   (FPS 20 이면 1장)라 화면이 끊겨 보인다. 장치로 못 푸는 키(매핑이 없다 · 스트림 목록을 못
+ *   받았다)만 그 파일을 500ms 마다 다시 읽는다.
+ */
+function CameraPreview({ cameraNames, cameraMapping, streams }: {
+  cameraNames: string[]
+  cameraMapping: Record<string, string>
+  streams: StreamInfo[]
+}) {
   const t = useT()
+  const cards = cameraNames.map((name) => ({
+    name, deviceId: findStream(cameraMapping[name] ?? '', streams)?.device_id,
+  }))
+  const live = useLiveFrames(cards.flatMap((c) => (c.deviceId ? [c.deviceId] : [])))
+  const polling = cards.some((c) => !c.deviceId)
   const [ts, setTs] = useState(0)
   useEffect(() => {
+    if (!polling) return
     const id = setInterval(() => setTs(Date.now()), 500)
     return () => clearInterval(id)
-  }, [])
+  }, [polling])
   if (cameraNames.length === 0) return null
+  const frameClass = 'rounded border border-neutral-700 w-full aspect-[4/3] object-cover bg-neutral-900'
   return (
     <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
       <span className="text-sm font-semibold">{t('카메라')}</span>
       <div className="grid grid-cols-3 gap-3">
-        {cameraNames.map((name) => (
+        {cards.map(({ name, deviceId }) => (
           <div key={name}>
-            <img
-              src={`/api/inference/camera/${name}?t=${ts}`}
-              alt={name}
-              className="rounded border border-neutral-700 w-full aspect-[4/3] object-cover bg-neutral-900"
-              onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.3' }}
-              onLoad={(e) => { (e.target as HTMLImageElement).style.opacity = '1' }}
-            />
+            {deviceId ? (
+              <LiveCameraFrame id={deviceId} alt={name} attach={live.attach} className={frameClass} />
+            ) : (
+              <img
+                src={`/api/inference/camera/${name}?t=${ts}`}
+                alt={name}
+                className={frameClass}
+                onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.3' }}
+                onLoad={(e) => { (e.target as HTMLImageElement).style.opacity = '1' }}
+              />
+            )}
             <span className="text-xs text-neutral-400">{name}</span>
           </div>
         ))}
@@ -777,7 +802,11 @@ export default function InferencePage() {
       </div>
 
       {/* 카메라 프리뷰 */}
-      <CameraPreview cameraNames={reqs?.required_cameras.map((c) => c.name) ?? (activeCameras.length > 0 ? activeCameras : Object.keys(cameraMapping))} />
+      <CameraPreview
+        cameraNames={reqs?.required_cameras.map((c) => c.name) ?? (activeCameras.length > 0 ? activeCameras : Object.keys(cameraMapping))}
+        cameraMapping={cameraMapping}
+        streams={streams}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {/* 1열: Task + 실행 속도 */}
