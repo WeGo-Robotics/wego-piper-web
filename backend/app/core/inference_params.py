@@ -99,7 +99,7 @@ PARAM_SPEC: dict[str, ParamSpec] = {
     },
     "refill_threshold_pct": {
         "label": "재추론 트리거 (큐 잔량 ≤ %, 0=소진 시)", "kind": "number", "default": 20,
-        "min": 0, "max": 100, "step": 5,
+        "min": 0, "max": 100, "step": 1,
         "realtime": True, "send_at_start": True, "group": "진동 감소",
     },
     # ── RTC (flow-matching 정책 전용) ──

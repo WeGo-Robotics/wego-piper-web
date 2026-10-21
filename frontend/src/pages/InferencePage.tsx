@@ -864,7 +864,7 @@ export default function InferencePage() {
               onChange={(v) => handleParamChange('interpolation_steps', v)} />
             <ParamSlider label={t('받는 액션 청크 크기 (0=모델 전체)')} value={params.use_chunk_size ?? 0} {...rangeOf('use_chunk_size', { min: 0, max: 200, step: 5 })}
               onChange={(v) => handleParamChange('use_chunk_size', v)} />
-            <ParamSlider label={t('재추론 트리거 (큐 잔량 ≤ %, 0=소진 시)')} value={params.refill_threshold_pct ?? 20} {...rangeOf('refill_threshold_pct', { min: 0, max: 100, step: 5 })}
+            <ParamSlider label={t('재추론 트리거 (큐 잔량 ≤ %, 0=소진 시)')} value={params.refill_threshold_pct ?? 20} {...rangeOf('refill_threshold_pct', { min: 0, max: 100, step: 1 })}
               onChange={(v) => handleParamChange('refill_threshold_pct', v)} />
           </CollapsibleCard>
           {isRtc(activePolicy) && (
