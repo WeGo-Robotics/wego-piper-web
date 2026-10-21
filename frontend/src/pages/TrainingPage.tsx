@@ -18,7 +18,7 @@ import TrainingMetrics, { type MetricsData, type HistoryData } from '../componen
 import { useT, fmt } from '../i18n'
 
 type Dataset = { id: string; path: string; total_episodes: number; total_frames: number; fps: number | null; features: Record<string, { shape?: number[]; dtype?: string; names?: string[] }> }
-type Model = { id: string; path: string; policy_type?: string; is_policy?: boolean; config?: Record<string, unknown>; requirements?: { required_cameras: { name: string; model_name?: string }[]; state_dim: number; action_dim: number } }
+type Model = { id: string; path: string; notes?: { name?: string; description?: string }; policy_type?: string; is_policy?: boolean; config?: Record<string, unknown>; requirements?: { required_cameras: { name: string; model_name?: string }[]; state_dim: number; action_dim: number } }
 type Checkpoint = { name: string; step: number; size_kb: number; path: string }
 
 // 정책 목록은 백엔드 core/policies.py 하나에서 온다 (usePolicies)
@@ -326,6 +326,18 @@ export default function TrainingPage() {
       setModels(await api.get<Model[]>('/models'))
     } catch { /* 실패 사유는 Hub 페이지에서 확인한다 */ }
     finally { setFetchingBase(false) }
+  }
+
+  // Fine-tune 모델의 제목·설명 (사이드카). 둘 다 비어 있으면 가져올 것이 없다.
+  const baseModel = models.find((m) => m.path === pretrainedPath)
+  const baseNotes = baseModel?.notes?.name || baseModel?.notes?.description ? baseModel.notes : undefined
+  const importBaseNotes = async () => {
+    if (!baseModel || !baseNotes) return
+    // 적어 둔 것을 말없이 덮지 않는다. ⚠ window.confirm 금지 — heartbeat 를 막는다(askConfirm 은 논블로킹).
+    if ((title || description)
+      && !await askConfirm(t('입력해 둔 제목·설명을 "{id}" 모델의 것으로 바꿉니다. 계속할까요?', { id: baseModel.id }))) return
+    setTitle(baseNotes.name ?? '')
+    setDescription(baseNotes.description ?? '')
   }
 
   // 정책 변경 시 권장 기본값 + config 필드 리셋
@@ -641,6 +653,33 @@ export default function TrainingPage() {
                 </div>
               )
             })()}
+            {/* 가중치 제목·설명 — 시작이 성공하면 output_dir/piper_notes.json 사이드카로 남는다.
+                Fine-tune 모델을 골랐으면 그 모델의 제목·설명을 가져올 수 있다 — 자동으로
+                채우지 않는다(이어 학습한 결과는 다른 가중치라 같은 이름을 물려받으면 헷갈린다). */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-xs text-neutral-400">{t('가중치 제목 (선택)')}</label>
+                {baseNotes && (
+                  <button type="button" onClick={importBaseNotes}
+                    title={t('{id} 의 제목·설명을 아래 칸에 채웁니다', { id: baseModel?.id ?? '' })}
+                    className="px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white transition-colors">
+                    {t('Fine-tune 모델에서 가져오기')}
+                  </button>
+                )}
+              </div>
+              <input type="text" value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder={t('사람이 읽는 이름 — 모델 목록에 경로 대신 보입니다')}
+                className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+              <label className="block text-xs text-neutral-400">
+                {t('가중치 설명 (선택)')}{!outputDir && (title || description) &&
+                  <span className="ml-2 text-amber-400">{t('— Output Dir 이 비어 있으면 저장할 자리를 몰라 남기지 못합니다')}</span>}
+              </label>
+              <textarea value={description} rows={2}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder={t('어떤 데이터·조건·의도로 학습했는지 — 시작할 때 output_dir 옆에 남고, 모델 페이지에서 고칠 수 있습니다')}
+                className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+            </div>
             <div className="space-y-1">
               <label className="text-xs text-neutral-400">{t('Policy Repo ID (Hub 업로드용)')}</label>
               {/* ⚠ 비워 두면 `--policy.push_to_hub=false` 가 붙어 로컬에만 남는다.
@@ -891,23 +930,6 @@ export default function TrainingPage() {
                   <label className="text-xs text-neutral-400">{t('Output Dir (비우면 자동)')}</label>
                   <input type="text" value={outputDir}
                     onChange={(e) => { setOutputDir(e.target.value); setCliEdited(false) }}
-                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
-                </div>
-                <div>
-                  <label className="text-xs text-neutral-400">{t('가중치 제목 (선택)')}</label>
-                  <input type="text" value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder={t('사람이 읽는 이름 — 모델 목록에 경로 대신 보입니다')}
-                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
-                </div>
-                <div className="col-span-2">
-                  <label className="text-xs text-neutral-400">
-                    {t('가중치 설명 (선택)')}{!outputDir && (title || description) &&
-                      <span className="ml-2 text-amber-400">{t('— Output Dir 이 비어 있으면 저장할 자리를 몰라 남기지 못합니다')}</span>}
-                  </label>
-                  <textarea value={description} rows={2}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder={t('어떤 데이터·조건·의도로 학습했는지 — 시작할 때 output_dir 옆에 남고, 모델 페이지에서 고칠 수 있습니다')}
                     className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
                 </div>
                 <div className="col-span-2">
