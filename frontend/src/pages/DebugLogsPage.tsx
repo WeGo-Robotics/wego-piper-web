@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import PlotlyChart, { type Series } from '../components/PlotlyChart'
 import { twoColumns } from '../components/LayoutToggle'
 import { useT, fmt } from '../i18n'
+import WeightCheckpoints, { type Sample } from '../components/WeightCheckpoints'
+import WeightOfflineEval from '../components/WeightOfflineEval'
+import { useWevalJob } from '../components/useWevalJob'
 
 type RunSummary = {
   id: string
@@ -37,9 +40,41 @@ const DEFAULT_PARAMS: FilterParams = {
   lowpass_alpha: 0.5, max_velocity: 180, max_gripper_velocity: 300, max_jerk: 0, interpolation_steps: 0, fps: 20,
 }
 
+type Tab = 'logs' | 'ckpt' | 'offline'
+
+function loadSample(): Sample {
+  try {
+    const v = JSON.parse(localStorage.getItem('weval-sample') ?? '')
+    if (v && Number.isInteger(v.n) && Number.isInteger(v.stride)) return v
+  } catch { /* 처음이거나 사생활 모드 */ }
+  return { n: 10, stride: 5 }
+}
+
 export default function DebugLogsPage() {
   const t = useT()
-  const { confirm: askConfirm } = useSystemMessage()
+  const { confirm: askConfirm, notify } = useSystemMessage()
+
+  // 탭: 추론 기록(실기에서 정책이 본 것) | 체크포인트 | 오프라인 평가(데이터에서 정책이 낸 것)
+  // — feature/weight-analyzer.md §2. 가중치 분석 상태는 여기 둬서 탭을 오가도 남는다.
+  const [tab, setTab] = useState<Tab>(() => {
+    const v = localStorage.getItem('debug-tab')
+    return v === 'ckpt' || v === 'offline' ? v : 'logs'
+  })
+  const switchTab = (v: Tab) => {
+    setTab(v)
+    try { localStorage.setItem('debug-tab', v) } catch { /* 사생활 모드 */ }
+  }
+  const [wRun, setWRun] = useState('')
+  const [wCkpt, setWCkpt] = useState('')
+  const [wKey, setWKey] = useState<string | null>(null)
+  const [sample, setSampleState] = useState<Sample>(loadSample)
+  const setSample = (v: Sample) => {
+    setSampleState(v)
+    try { localStorage.setItem('weval-sample', JSON.stringify(v)) } catch { /* 사생활 모드 */ }
+  }
+  const onJobError = useCallback(
+    (text: string) => notify({ level: 'error', text, source: t('가중치 평가') }), [notify, t])
+  const weval = useWevalJob(onJobError)
   const [runs, setRuns] = useState<RunSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<string | null>(null)
@@ -151,17 +186,49 @@ export default function DebugLogsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">{t('추론 분석')}</h1>
-          <p className="mt-1 text-xs text-neutral-400">{t('추론에서 "디버그 모드"를 켜고 돌린 런 — 프레임·관절 궤적·액션 청크·필터 시뮬레이션')}</p>
+          <div className="flex items-center gap-4">
+            <h1 className="text-2xl font-bold">{t('추론 분석')}</h1>
+            <div className="flex gap-0.5 rounded-lg bg-neutral-900/60 p-0.5 ring-1 ring-neutral-700/60">
+              {([['logs', t('추론 기록')], ['ckpt', t('체크포인트')], ['offline', t('오프라인 평가')]] as const).map(([k, label]) => (
+                <button key={k} onClick={() => switchTab(k)}
+                        className={`px-3 py-1.5 rounded text-sm transition-colors ${
+                          tab === k ? 'bg-neutral-700 text-white shadow-sm' : 'text-neutral-400 hover:text-white'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {tab === 'logs' && (
+            <p className="mt-1 text-xs text-neutral-400">{t('추론에서 "디버그 모드"를 켜고 돌린 런 — 프레임·관절 궤적·액션 청크·필터 시뮬레이션')}</p>
+          )}
         </div>
-        <button onClick={fetchRuns} className="shrink-0 px-3 py-1.5 text-sm rounded bg-neutral-700 hover:bg-neutral-600 transition-colors">
-          {t('새로고침')}
-        </button>
+        {tab === 'logs' && (
+          <button onClick={fetchRuns} className="shrink-0 px-3 py-1.5 text-sm rounded bg-neutral-700 hover:bg-neutral-600 transition-colors">
+            {t('새로고침')}
+          </button>
+        )}
       </div>
+
+      {tab === 'ckpt' && (
+        <WeightCheckpoints
+          run={wRun} setRun={setWRun} sample={sample} setSample={setSample}
+          job={weval.status} version={weval.version}
+          onStart={(req) => void weval.start(req)} onEnqueue={weval.enqueue} onStop={() => void weval.stop()}
+          onOpen={(ckpt, key) => { setWCkpt(ckpt); setWKey(key); switchTab('offline') }}
+        />
+      )}
+      {tab === 'offline' && (
+        <WeightOfflineEval
+          run={wRun} setRun={setWRun} checkpoint={wCkpt} setCheckpoint={setWCkpt}
+          resultKey={wKey} setResultKey={setWKey} sample={sample}
+          job={weval.status} version={weval.version} onStart={(req) => void weval.start(req)}
+        />
+      )}
 
       {/* 2열 — 최소 폭 고정(수집·학습·추론과 같은 헬퍼). 우측이 `1fr` 이면 한 번 그려진
           Plotly SVG 의 픽셀 폭과 긴 mono 모델 경로가 min-content 가 되어 열을 밀고, 넘친
           쪽(버튼·셀렉트·그래프 오른쪽)이 잘려 사라진다. */}
+      {tab === 'logs' && (
       <div {...twoColumns([1, 4], [200, 520], 16)}>
         {/* 좌: 런 목록 (컴팩트 사이드바) */}
         <div className="rounded-lg border border-neutral-700 bg-neutral-800 overflow-hidden self-start divide-y divide-neutral-700/50">
@@ -334,6 +401,7 @@ export default function DebugLogsPage() {
           )}
         </div>
       </div>
+      )}
     </div>
   )
 }

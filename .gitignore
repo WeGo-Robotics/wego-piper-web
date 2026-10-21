@@ -41,6 +41,8 @@ Thumbs.db
 backend/outputs/
 # 디버그 캡처 — 추론 debug_mode 산출물(658MB). eval_logs 는 추적 중이라 제외하지 않는다.
 backend/data/debug/
+# 가중치 분석 결과 캐시 — 체크포인트·데이터셋마다 다시 만들 수 있다 (feature/weight-analyzer.md)
+backend/data/weight_eval/
 rs/*.egg-info/
 cam/*.egg-info/
 shm/*.egg-info/

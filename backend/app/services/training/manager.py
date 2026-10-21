@@ -8,6 +8,7 @@
 `SystemdRunner`(데몬 분리) 를 나란히 붙일 수 있다.
 """
 
+import json
 import logging
 from collections.abc import Callable
 
@@ -174,7 +175,28 @@ class TrainManager:
         # 곡선도 함께 남긴다. 1000스텝당 1점이라 100K 학습이 100점 — 부담이 없다.
         if self.tracker.history.steps:
             record.history = self.tracker.history.to_dict()
+            self._save_history(record.history)
         self.registry.put(record)
+
+    def _save_history(self, history: dict) -> None:
+        """곡선을 **실행 폴더에도** 쓴다 — 레지스트리 레코드는 다음 학습을 시작하면 지워진다.
+
+        가중치 분석의 체크포인트 개요가 지난 학습의 곡선을 여기서 읽는다
+        (feature/weight-analyzer.md §3). 원격 학습이면 이 기계에 폴더가 없으니 건너뛴다.
+        """
+        from pathlib import Path
+
+        from app.services.weight_eval import TRAIN_METRICS_FILE
+
+        out = Path(self.output_dir) if self.output_dir else None
+        if out is None or not out.is_dir():
+            return
+        try:
+            tmp = out / (TRAIN_METRICS_FILE + ".tmp")
+            tmp.write_text(json.dumps(history))
+            tmp.replace(out / TRAIN_METRICS_FILE)
+        except OSError as exc:
+            logger.warning("학습 곡선 저장 실패 (%s): %s", out, exc)
 
     # ── 실행 ──
 

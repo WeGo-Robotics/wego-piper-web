@@ -27,7 +27,7 @@ from app.routers import (
     eval_log, external, health, hub, inference, logs, models, orchestrator, params, phase,
     policies, policy_server, presets, recording, robots, system, training, vision,
     ws, yolo_train,
-    web_leader, sim_scenes, sim_assets, sim_demo,
+    web_leader, sim_scenes, sim_assets, sim_demo, weval,
 )
 
 # 라우터 목록 — 등록 누락을 구조적으로 막는다.
@@ -40,7 +40,7 @@ ROUTERS = [
     robots, cameras, logs, debug_logs, training, recording, policy_server, system,
     encoder, activity, policies, presets, phase, devices, vision, yolo_train,
     orchestrator, external, alignment, cloud, auth,
-    web_leader, sim_scenes, sim_assets, sim_demo,
+    web_leader, sim_scenes, sim_assets, sim_demo, weval,
 ]
 from app.services.estop_bridge import estop_bridge
 from app.services.param_bridge import param_bridge
@@ -184,6 +184,12 @@ async def lifespan(app: FastAPI):
             logger.info("Dataset jobs reattached: %s", ", ".join(restored_jobs))
     except Exception as e:
         logger.warning("Dataset job restore failed: %s", e)
+    try:
+        from app.services import weight_eval
+        if weight_eval.restore():
+            logger.info("Weight eval reattached")
+    except Exception as e:
+        logger.warning("Weight eval restore failed: %s", e)
     # 장치 사라짐 감시. **주기적으로 장치를 열거하지 않는다** — `/dev/shm` 을
     # 훑어 발행이 끊겼는지만 본다(세그먼트 = 임대권). RPC 도 안 타므로 2초 주기가 싸다.
     watch_task = asyncio.create_task(_watch_devices())

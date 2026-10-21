@@ -40,6 +40,8 @@ class Activity(str, enum.Enum):
     ORCHESTRATOR = "orchestrator"
     # YOLO 커스텀 학습 (feature/yolo-training.md 3단계) — GPU 를 크게 쓴다.
     YOLO_TRAIN = "yolo_train"
+    # 체크포인트 오프라인 평가 (feature/weight-analyzer.md) — 정책을 GPU 에 올려 데이터셋을 돈다.
+    WEIGHT_EVAL = "weight_eval"
     # 아래 셋은 "시작하는 활동"이 아니라 자원 접근이다. 남을 막지 않고 조회만 한다.
     ENCODER_PROBE = "encoder_probe"
     CAMERA_ACCESS = "camera_access"
@@ -65,6 +67,7 @@ LABELS: dict[Activity, str] = {
     #   특정 검출 모델 이름을 화면에 박지 않는다: 구현은 갈아끼울 수 있어야 하고,
     #   라이선스가 그 교체를 강제할 수도 있다. 열거자 이름(YOLO_TRAIN)은 내부라 둔다.
     Activity.YOLO_TRAIN: "검출 학습",
+    Activity.WEIGHT_EVAL: "가중치 평가",
     Activity.ENCODER_PROBE: "인코더 프로브",
     Activity.CAMERA_ACCESS: "카메라 접근",
     Activity.SCENE_SWAP: "가상환경 교체",
@@ -79,12 +82,12 @@ LABELS: dict[Activity, str] = {
 BLOCKED_BY: dict[Activity, list[Activity]] = {
     # 카메라 + CAN + GPU 를 전부 점유한다
     Activity.INFERENCE: [Activity.TRAINING, Activity.RECORDING, Activity.DATASET_EDIT,
-                         Activity.YOLO_TRAIN, Activity.TELEOP],
+                         Activity.YOLO_TRAIN, Activity.TELEOP, Activity.WEIGHT_EVAL],
     Activity.RECORDING: [Activity.TRAINING, Activity.INFERENCE, Activity.DATASET_EDIT,
                          Activity.ORCHESTRATOR, Activity.TELEOP],
     # GPU. 정책 서버도 GPU에 정책을 올리므로 학습과 배타다.
     Activity.TRAINING: [Activity.INFERENCE, Activity.RECORDING, Activity.POLICY_SERVER,
-                        Activity.ORCHESTRATOR, Activity.YOLO_TRAIN],
+                        Activity.ORCHESTRATOR, Activity.YOLO_TRAIN, Activity.WEIGHT_EVAL],
     Activity.POLICY_SERVER: [Activity.TRAINING],
     # 데이터셋 파일을 다시 쓴다. 녹화가 같은 디스크에 기록 중이면 피한다.
     Activity.DATASET_EDIT: [Activity.INFERENCE, Activity.RECORDING, Activity.ORCHESTRATOR],
@@ -99,7 +102,10 @@ BLOCKED_BY: dict[Activity, list[Activity]] = {
                             Activity.TELEOP],
     # GPU 만 쓴다 (카메라·CAN·데이터셋 파일과 무관). VLA 학습·추론과 배타,
     # 정책 서버(~1GB 상주)와는 공존 가능 — nano/small 학습은 4~6GB 다.
-    Activity.YOLO_TRAIN: [Activity.TRAINING, Activity.INFERENCE],
+    Activity.YOLO_TRAIN: [Activity.TRAINING, Activity.INFERENCE, Activity.WEIGHT_EVAL],
+    # GPU 만 쓴다 — 로봇·카메라·데이터셋 파일과 무관(데이터셋은 읽기만). 수 분짜리라 추론을
+    # 시작하려면 멈춰야 하지만, 팔을 안 움직이므로 E-stop 대상은 아니다.
+    Activity.WEIGHT_EVAL: [Activity.TRAINING, Activity.INFERENCE, Activity.YOLO_TRAIN],
     # ── 아래는 자원 접근 (막히기만 하고 남을 막지 않는다) ──
     # GPU 경합 시 409가 아니라 CPU 폴백. blocked_reason() 으로만 쓴다.
     Activity.ENCODER_PROBE: [Activity.TRAINING, Activity.INFERENCE],
@@ -143,7 +149,14 @@ STATE_PROVIDERS: dict[Activity, Callable[[], bool]] = {
     Activity.TELEOP: lambda: teleop_session.is_running,
     Activity.ORCHESTRATOR: lambda: _orchestrator().is_running,
     Activity.YOLO_TRAIN: lambda: _busy(_yolo_train_pm().state),
+    Activity.WEIGHT_EVAL: lambda: _busy(_weval_pm().state),
 }
+
+
+def _weval_pm():
+    # 지연 import — yolo_train_pm 과 같은 이유 (make_process → settings)
+    from app.services.weight_eval import weval_pm
+    return weval_pm
 
 
 def _yolo_train_pm():
