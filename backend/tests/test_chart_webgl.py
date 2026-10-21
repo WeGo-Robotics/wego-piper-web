@@ -123,3 +123,20 @@ def test_the_chart_list_is_built_once():
     page = _EPISODES.read_text()
     assert page.count("const charts = useMemo") == 1
     assert "chartCount" not in page, "개수를 따로 센다"
+
+
+_POS = Path(__file__).resolve().parents[2] / "frontend" / "src" / "components"
+
+
+def test_pos_charts_give_the_plot_div_its_height():
+    """⚠ **회귀** — POS분석의 커버리지·관절별 분포가 창 크기를 한 번 바꾸면 **높이 0** 이 됐다.
+
+    `responsive` 는 리사이즈 때 레이아웃 height 를 지우고 안쪽 상자를 부모의 100% 로 바꾼다.
+    높이 없는 div 의 100% 는 0 이라, 카드는 표만 남고 그림은 아래 카드 위로 넘쳐 그려졌다
+    (실측 480px → 0px). 에피소드 뷰어 그래프가 자리를 미리 잡는 것과 같은 병이다.
+    레이아웃 height 만이 아니라 **그래프 div 에도** 같은 높이를 준다.
+    """
+    cov = (_POS / "PosCoverage.tsx").read_text()
+    assert "style={{ width: '100%', height }}" in cov, "커버리지 그래프 div 에 높이가 없다"
+    pos = (_POS / "PosAnalysis.tsx").read_text()
+    assert "style={{ width: '100%', height: stripHeight }}" in pos, "관절별 분포 div 에 높이가 없다"

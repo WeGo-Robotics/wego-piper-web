@@ -116,6 +116,29 @@ class Signals:
         return len(self.speed)
 
 
+def gripper_columns(width: int) -> list[int]:
+    """그리퍼 채널 위치들.
+
+    양팔(bi_piper)은 14축(팔당 7, 그리퍼가 7의 배수-1 위치)이다.
+    예전에는 (T,14) 를 받아도 조용히 앞 6축만 보고 left_gripper 를 그리퍼로
+    읽었다 — 소리 없이 왼팔만 분석하는 셈이었다 (feature/bimanual.md 체크리스트의
+    "7 하드코딩 잔재"가 바로 이 자리다).
+    """
+    if width >= 14 and width % 7 == 0:
+        return [7 * i + 6 for i in range(width // 7)]
+    return [GRIPPER_IDX]
+
+
+def main_gripper(state: np.ndarray) -> int:
+    """주 팔의 그리퍼 채널 — **더 활동적인 그리퍼**(에피소드 안 표준편차가 큰 쪽).
+
+    FSM 은 단일 pick 시퀀스 모델이다 — 양팔이면 이 그리퍼 하나로 페이즈를 낸다.
+    양팔 동시 파지의 페이즈 모델은 다음 단계 문제다. 파지 자세 추출(`grasps`)도
+    **같은 팔**을 봐야 라벨과 자세가 같은 팔 이야기가 된다 — 그래서 함수로 뺐다.
+    """
+    return max(gripper_columns(state.shape[1]), key=lambda i: float(np.std(state[:, i])))
+
+
 def compute_signals(state: np.ndarray, action: np.ndarray, params: Params) -> Signals:
     """(T, 7) state/action 에서 신호를 뽑는다.
 
@@ -128,24 +151,15 @@ def compute_signals(state: np.ndarray, action: np.ndarray, params: Params) -> Si
     if state.ndim != 2 or state.shape[1] <= GRIPPER_IDX:
         raise ValueError(f"state 형태가 (T,7+) 이어야 한다: {state.shape}")
 
-    # 팔 수 판정 — 양팔(bi_piper)은 14축(팔당 7, 그리퍼가 7의 배수-1 위치)이다.
-    # 예전에는 (T,14) 를 받아도 조용히 앞 6축만 보고 left_gripper 를 그리퍼로
-    # 읽었다 — 소리 없이 왼팔만 분석하는 셈이었다 (feature/bimanual.md 체크리스트의
-    # "7 하드코딩 잔재"가 바로 이 자리다).
     width = state.shape[1]
-    if width >= 14 and width % 7 == 0:
-        grip_idxs = [7 * i + 6 for i in range(width // 7)]
-    else:
-        grip_idxs = [GRIPPER_IDX]
+    grip_idxs = gripper_columns(width)
     joint_cols = [i for i in range(width) if i not in grip_idxs]
 
     joints = state[:, joint_cols]
     d = np.diff(joints, axis=0, prepend=joints[:1])
     speed = np.linalg.norm(d, axis=1) * params.fps
 
-    # FSM 은 단일 pick 시퀀스 모델이다 — 양팔이면 **더 활동적인 그리퍼**(주 팔)
-    # 기준으로 신호를 뽑는다. 양팔 동시 파지의 페이즈 모델은 다음 단계 문제다.
-    g_idx = max(grip_idxs, key=lambda i: float(np.std(state[:, i])))
+    g_idx = main_gripper(state)
     g_state = state[:, g_idx]
     g_cmd = action[:, g_idx]
     gap = g_cmd - g_state

@@ -109,6 +109,42 @@ async def get_summary(dataset_id: str):
     return PL.summary(data)
 
 
+# 데이터셋 경로 → (파일 서명, 결과). 데이터셋 하나에 parquet 전체를 훑으므로
+# 탭을 오갈 때마다 다시 읽지 않는다. 라벨을 고치거나 재분석하면 서명이 바뀐다.
+_grasp_cache: dict[str, tuple[tuple, dict]] = {}
+
+
+def _grasp_signature(ds_path) -> tuple:
+    labels_path, _ = PL.sidecar_paths(ds_path)
+    files = [labels_path, *sorted((ds_path / "data").rglob("*.parquet"))]
+    return tuple((str(f), f.stat().st_mtime_ns) for f in files if f.exists())
+
+
+@router.get("/{dataset_id:path}/grasps")
+async def get_grasps(dataset_id: str):
+    """파지 순간마다 관절값·말단 위치·스틱 마디 (에피소드 → POS분석 탭).
+
+    정의와 좌표는 `piper_phase.grasps` 머리말, 화면은 feature/episode-analyzer.md.
+
+    ⚠ 라벨이 없어도 404 가 아니라 `labeled: false` 다. 여러 데이터셋을 한꺼번에
+    부르는 화면이 "분석 전" 과 진짜 오류를 갈라야 하는데, 오류 문구는 번역되어
+    오므로 그걸로 분기할 수 없다 (CLAUDE.md 다국어).
+    """
+    from piper_phase import grasps as PG
+
+    ds = _dataset(dataset_id)
+    sig = await asyncio.to_thread(_grasp_signature, ds)
+    hit = _grasp_cache.get(str(ds))
+    if hit and hit[0] == sig:
+        return hit[1]
+    # parquet 를 훑는 일이라 이벤트 루프에서 돌리지 않는다
+    data = await asyncio.to_thread(PG.extract, ds)
+    if data is None:
+        return {"labeled": False, "events": []}
+    _grasp_cache[str(ds)] = (sig, data)
+    return data
+
+
 class EpisodeLabels(BaseModel):
     segments: list[list[int]]          # [[start, end(포함), phase], ...]
     reviewed: bool = True

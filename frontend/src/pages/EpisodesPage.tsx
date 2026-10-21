@@ -25,6 +25,7 @@ import SplitHandle, { useMediaQuery, useSplit } from '../components/SplitPane'
 import { useSystemMessage } from '../components/SystemMessages'
 import PlotlyChart from '../components/PlotlyChart'
 import type { Series } from '../components/PlotlyChart'
+import PosAnalysis from '../components/PosAnalysis'
 import type { BakedInfo, Dataset, DatasetDetail } from '../types/models'
 import { tb, useT } from '../i18n'
 
@@ -133,6 +134,18 @@ export default function EpisodesPage() {
   const { notify, confirm: askConfirm } = useSystemMessage()
   const notifyError = (text: string) => notify({ level: 'error', text, source: t('에피소드') })
 
+  // 탭: 뷰어(한 에피소드를 자세히) | POS분석(여러 데이터셋의 파지 순간을 모아서,
+  // feature/episode-analyzer.md). 상태는 이 컴포넌트에 남으므로 탭을 오가도 뷰어의
+  // 데이터셋·에피소드는 그대로다.
+  const [tab, setTab] = useState<'viewer' | 'pos'>(
+    () => (localStorage.getItem('episodes-tab') === 'pos' ? 'pos' : 'viewer'))
+  const tabRef = useRef(tab)
+  tabRef.current = tab
+  const switchTab = (next: 'viewer' | 'pos') => {
+    setTab(next)
+    setPlaying(false)
+    localStorage.setItem('episodes-tab', next)
+  }
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [dsId, setDsId] = useState<string>('')
   const [detail, setDetail] = useState<DatasetDetail | null>(null)
@@ -327,7 +340,10 @@ export default function EpisodesPage() {
     await loadPhase(id)
   }, [loadPhase]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const selectEpisode = useCallback(async (id: string, index: number) => {
+  // ⚠ 시작 프레임은 **에피소드와 같은 렌더에** 넣는다 (POS분석의 [뷰어에서 열기]).
+  //   고른 뒤에 따로 setFrame 하면 그 사이 비디오가 0 으로 seek 할 수 있고, 그 프레임
+  //   콜백(onPresented)이 뒤늦게 와서 덮어쓴다. 같은 렌더면 frameRef 가 처음부터 맞다.
+  const selectEpisode = useCallback(async (id: string, index: number, startFrame = 0) => {
     // 편집 중이면 버리기 전에 묻는다 — 수작업이 조용히 날아가면 안 된다
     if (draftRef.current
         && !(await askConfirm(t('편집 중인 구간이 저장되지 않았습니다. 버리고 이동할까요?'), { danger: true }))) {
@@ -337,13 +353,20 @@ export default function EpisodesPage() {
     setSelectedSeg(null)
     setUndoStack([])
     setEp(index)
-    setFrame(0)
+    setFrame(startFrame)
     setPlaying(false)
     setVideoError(null)
     setCacheMissing(false)
     setPreview(null)
     setSignals(await api.get<Signals>(`/phase/${id}/signals/${index}`).catch(() => null))
   }, [askConfirm, t])
+
+  /** POS분석에서 고른 파지 순간을 뷰어로 연다 — 그 데이터셋·에피소드·프레임. */
+  const openInViewer = useCallback(async (id: string, index: number, f: number) => {
+    switchTab('viewer')
+    if (id !== dsId) await selectDataset(id)
+    await selectEpisode(id, index, f)
+  }, [dsId, selectDataset, selectEpisode])
 
   // ── 파생 상태 ──
 
@@ -731,6 +754,8 @@ export default function EpisodesPage() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // 뷰어 단축키다 — POS분석 탭에서 Space·J/K 가 안 보이는 재생을 움직이면 안 된다
+      if (tabRef.current !== 'viewer') return
       const t = e.target as HTMLElement
       if (t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return
       // range(스크러버)만 전역 단축키를 허용 — 숫자/텍스트 입력은 타이핑이 우선이다
@@ -840,7 +865,20 @@ export default function EpisodesPage() {
           같다: "지금 무엇을 보고 있나"는 제목의 일부지 왼쪽 목록의 첫 줄이 아니다. */}
       <div className="flex items-center gap-4">
         <h1 className="text-2xl font-bold">{t('에피소드')}</h1>
-        <select
+        <div className="flex gap-0.5 rounded-lg bg-neutral-900/60 p-0.5 ring-1 ring-neutral-700/60">
+          {([['viewer', t('뷰어')], ['pos', t('POS분석')]] as const).map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => switchTab(k)}
+              className={`px-3 py-1.5 rounded text-sm transition-colors ${
+                tab === k ? 'bg-neutral-700 text-white shadow-sm' : 'text-neutral-400 hover:text-white'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {/* POS분석은 데이터셋을 여러 개 고른다 — 그 목록은 탭 안 왼쪽에 있다 */}
+        {tab === 'viewer' && <select
           value={dsId}
           onChange={(e) => void selectDataset(e.target.value)}
           className="min-w-[18rem] rounded bg-neutral-800 border border-neutral-700 px-2 py-1 text-sm"
@@ -849,9 +887,12 @@ export default function EpisodesPage() {
           {datasets.map((d) => (
             <option key={d.id} value={d.id}>{d.id} ({d.total_episodes}){d.baked ? t(' · 구운 사본') : ''}</option>
           ))}
-        </select>
+        </select>}
       </div>
 
+      {tab === 'pos' ? (
+        <PosAnalysis datasets={datasets} onOpen={(id, index, f) => void openInViewer(id, index, f)} />
+      ) : (
       <div className="flex gap-4 items-start">
       {/* 에피소드 리스트 */}
       <aside className="w-72 shrink-0 space-y-3">
@@ -1462,6 +1503,7 @@ export default function EpisodesPage() {
         )}
       </main>
       </div>
+      )}
     </div>
   )
 }
