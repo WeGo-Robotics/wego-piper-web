@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__NAME__</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: #171717; color: #e5e5e5; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 16px; border-bottom: 1px solid #333; }
+  h1 { font-size: 1.1rem; margin: 0; }
+  main { padding: 16px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+  .card { background: #262626; border: 1px solid #404040; border-radius: 8px; padding: 12px; }
+  .k { font-size: .75rem; color: #a3a3a3; } .v { font-family: ui-monospace, monospace; font-size: 1.1rem; }
+  /* ⚠ E-stop — 새 창에는 메인 창의 E-stop 이 없다. 자기 화면은 이 버튼을 갖는다 (feature/plugins.md §8-2). */
+  #estop { margin-left: auto; background: #b91c1c; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; font-weight: 700; cursor: pointer; }
+  #estop:hover { background: #dc2626; }
+  #state { font-size: .8rem; color: #a3a3a3; }
+</style>
+<header>
+  <h1>__NAME__</h1>
+  <span id="state">…</span>
+  <button id="estop" title="긴급 정지 — /api/estop/trigger">E-STOP</button>
+</header>
+<main id="kv"></main>
+<script>
+  // 플러그인 이름은 주소에서 — /plugins/<name>/ui/
+  const name = location.pathname.split('/')[2]
+  const kv = document.getElementById('kv'), st = document.getElementById('state')
+  async function tick() {
+    try {
+      const r = await fetch(`/api/plugins/${name}`)            // 같은 출처 — 세션 쿠키가 그대로 간다
+      const d = await r.json()
+      st.textContent = `${d.state}${d.pid ? ' · pid ' + d.pid : ''}`
+      const rows = Object.entries(d.kv || {}).filter(([k]) => !['ts', 'uptime_s'].includes(k))
+      kv.innerHTML = rows.map(([k, v]) =>
+        `<div class="card"><div class="k">${k}</div><div class="v">${typeof v === 'object' ? JSON.stringify(v) : v}</div></div>`).join('')
+        || '<div class="k">상태가 아직 없다</div>'
+    } catch { st.textContent = '게이트웨이에 닿지 않는다' }
+  }
+  document.getElementById('estop').onclick = () => fetch('/api/estop/trigger', { method: 'POST' })
+  tick(); setInterval(tick, 1000)
+</script>
+</html>

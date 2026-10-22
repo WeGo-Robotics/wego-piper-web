@@ -1,0 +1,18 @@
+# 자기 화면(서버) 실례 — `ui: server`. 게이트웨이가 준 소켓에 FastAPI 를 띄우면 `/plugins/ui-demo/ui/` 로 프록시된다 (feature/plugins.md §8-2)
+name: ui-demo
+version: 0.1.0
+title: "자기 화면 데모 (서버)"
+description: "플러그인이 띄운 HTTP·WebSocket 서버가 게이트웨이 뒤로 프록시되는 것을 보여 준다. 포트를 고르지 않는다"
+entry: main.py
+python: system
+ui: server
+
+config:
+  - { key: interval_s, kind: number, default: 1, min: 0.1, max: 60, step: 0.1, label: "주기(초)" }
+
+permissions:
+  - activity.read
+
+outputs:
+  state:
+    - { key: ticks, label: "횟수" }

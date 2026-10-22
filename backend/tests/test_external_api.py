@@ -30,6 +30,11 @@ class FakePM:
     def set_state_callback(self, cb):
         pass
 
+    @property
+    def is_running(self):
+        from app.services.process_manager import ProcessState
+        return self.state in (ProcessState.RUNNING, ProcessState.STARTING)
+
     def set_log_callback(self, cb):
         pass
 

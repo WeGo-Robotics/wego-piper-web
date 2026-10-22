@@ -129,6 +129,12 @@ class Plugin:
         if jpeg:
             self.bus.put_preview(name, jpeg)
 
+    def serve_ui(self, app) -> None:
+        """`ui: server` — ASGI 앱을 게이트웨이가 준 소켓에 띄운다(데몬 스레드). 터미널이면 127.0.0.1:8765."""
+        from piper_plugin.ui import serve_ui
+
+        serve_ui(app, self.env.ui_socket or None)
+
     def state(self, **kv) -> None:
         """화면에 보일 상태 KV. 누적된다 — 바뀐 키만 넘겨도 된다."""
         self._state.update(kv)

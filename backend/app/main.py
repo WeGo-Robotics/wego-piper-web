@@ -26,7 +26,7 @@ from app.routers import (
     activity, alignment, auth, cameras, cloud, datasets, debug_logs, devices, encoder, estop,
     eval_log, external, health, hub, inference, logs, models, params, phase,
     policies, policy_server, presets, recording, robots, system, training, vision,
-    ws, detector_train, plugins,
+    ws, detector_train, plugins, plugin_ui,
     web_leader, sim_scenes, sim_assets, sim_demo, weval,
 )
 
@@ -39,7 +39,7 @@ ROUTERS = [
     health, ws, estop, params, models, datasets, hub, inference, eval_log,
     robots, cameras, logs, debug_logs, training, recording, policy_server, system,
     encoder, activity, policies, presets, phase, devices, vision, detector_train,
-    plugins, external, alignment, cloud, auth,
+    plugins, plugin_ui, external, alignment, cloud, auth,
     web_leader, sim_scenes, sim_assets, sim_demo, weval,
 ]
 from app.services.estop_bridge import estop_bridge

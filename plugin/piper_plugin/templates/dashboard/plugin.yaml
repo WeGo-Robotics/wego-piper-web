@@ -1,0 +1,18 @@
+# __NAME__ — 자기 화면(정적) 틀. `ui/` 폴더를 게이트웨이가 `/plugins/__NAME__/ui/` 에 서빙한다 (feature/plugins.md §8-2)
+name: __NAME__
+version: 0.1.0
+title: "__NAME__"
+description: "상태 KV 를 자기 화면으로 보여 주는 틀 — E-stop 버튼이 기본으로 들어 있다"
+entry: main.py
+python: system
+ui: ui/
+
+config:
+  - { key: interval_s, kind: number, default: 1, min: 0.1, max: 60, step: 0.1, label: "주기(초)" }
+
+permissions:
+  - activity.read
+
+outputs:
+  state:
+    - { key: ticks, label: "횟수" }

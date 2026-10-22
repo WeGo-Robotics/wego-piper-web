@@ -126,6 +126,8 @@ class PluginRegistry:
         self._log_cb: Callable[[str, str], None] | None = None
         self._state_cb: Callable[[str, ProcessState], None] | None = None
         self._logs: dict[str, deque[str]] = {}
+        # 시작 중인 플러그인 — 그 사이의 `idle` 전이는 소유자의 상태 조회가 튄 것이다 (아래 `_on_state`)
+        self._starting: set[str] = set()
 
     # ── 디렉토리 ──
 
@@ -137,6 +139,10 @@ class PluginRegistry:
         d = settings.plugins_dir / ".runtime" / name
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    def ui_socket(self, name: str) -> Path:
+        """`ui: server` 플러그인이 HTTP 서버를 띄우는 유닉스 소켓 (feature/plugins.md §8-2)."""
+        return self.runtime_dir(name) / "ui.sock"
 
     def scan(self) -> list[PluginInfo]:
         out: dict[str, PluginInfo] = {}
@@ -186,6 +192,13 @@ class PluginRegistry:
         return list(self._logs.get(name, ()))[-n:]
 
     def _on_state(self, name: str, state: ProcessState) -> None:
+        # ⚠ 유닛 소유자(`SystemdProcess`)는 상태를 **읽을 때마다 systemd 에 묻고**, 유닛이 뜨는
+        #   사이에 묻히면 `inactive` 를 보고 idle 콜백을 쏜다. 그걸 그대로 믿고 실행 기록·토큰을
+        #   지웠더니 **플러그인이 뜨자마자 토큰이 죽어 첫 호출부터 401** 이었다(실기 2026-10-22).
+        #   시작이 끝나기 전의 idle 은 무시하고, 끝난 뒤의 idle 만 "멈췄다" 로 읽는다.
+        if _idle(state) and name in self._starting:
+            logger.debug("플러그인 %s 시작 중 idle 전이 무시 (%s)", name, state.value)
+            return
         if _idle(state):
             run = self._runs.pop(name, None)
             if run:
@@ -292,20 +305,37 @@ class PluginRegistry:
             "PIPER_API_TOKEN": token,
             "PIPER_PLUGIN_RUN_ID": run_id,
         }
+        if m.ui == "server":
+            sock = self.ui_socket(name)
+            sock.unlink(missing_ok=True)          # 지난 실행이 남긴 소켓 파일 — 있으면 프록시가 "켜져 있다" 고 착각한다
+            env["PIPER_PLUGIN_UI_SOCKET"] = str(sock)
         cmd = [python, "-u", str(info.dir / m.entry)]
 
         pm = self.owner(name)
+        # 토큰은 **프로세스가 뜨기 전에** 유효해야 한다 — 첫 호출이 환경을 읽는 즉시 온다
         self._grants[token] = Grant(name=name, scopes=frozenset(m.permissions))
         self._runs[name] = Run(token=token, config=config, cameras=cameras, gpu=m.resources.gpu,
                                run_id=run_id, mission=m.mission)
         self._seen.add(name)
+        self._starting.add(name)
         try:
             await pm.start(cmd, env_extra=env)
         except Exception as e:
             self._grants.pop(token, None)
             self._runs.pop(name, None)
             raise HTTPException(500, f"플러그인 시작 실패: {e}")
-        self._on_state(name, pm.state)
+        finally:
+            self._starting.discard(name)
+        if not pm.is_running:
+            # 정말 바로 죽었다(entry 가 즉사 등) — 그때는 기록을 지우는 게 맞다
+            self._on_state(name, pm.state)
+        else:
+            try:
+                from app.services.estop_bridge import estop_bridge
+
+                estop_bridge.sync_activities()
+            except Exception as e:
+                logger.debug("플러그인 활동 동기화 실패: %s", e)
         return self.status(name)
 
     async def stop(self, name: str) -> dict:

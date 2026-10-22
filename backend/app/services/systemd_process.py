@@ -106,7 +106,9 @@ class SystemdProcess:
         """
         if self._state in (ProcessState.RUNNING, ProcessState.STARTING):
             active = _systemctl("is-active", self.unit).stdout.strip()
-            if active != "active":
+            # `activating` 은 뜨는 중이다 — 끝난 것으로 읽으면 소비자가 실행 기록을 지운다
+            # (플러그인 토큰이 시작 직후 폐기된 사고, feature/plugins.md §6)
+            if active not in ("active", "activating"):
                 # `failed` 는 에러, 그 밖(inactive)은 정상 종료로 본다
                 self._set_state(ProcessState.ERROR if active == "failed"
                                 else ProcessState.IDLE)

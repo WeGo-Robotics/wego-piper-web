@@ -26,6 +26,11 @@ export default defineConfig({
         target: 'ws://localhost:8000',
         ws: true,
       },
+      // 플러그인 자기 화면 (feature/plugins.md §8-2) — `/plugins/<name>/ui/…` 만 백엔드로, WS 포함
+      '^/plugins/[^/]+/ui(/|$)': {
+        target: 'http://localhost:8000',
+        ws: true,
+      },
     },
   },
 })

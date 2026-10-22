@@ -53,7 +53,7 @@ plugins/<name>/
 ## 검증 순서 — 전부 터미널
 
 ```bash
-piper-plugin new  plugins/my-thing --template loop|mission|detector   # 틀
+piper-plugin new  plugins/my-thing --template loop|mission|detector|dashboard   # 틀 (dashboard = 정적 자기 화면 + E-stop 버튼)
 piper-plugin check plugins/my-thing [--api http://127.0.0.1:8000]      # 매니페스트·entry·권한 범위
 piper-plugin run  plugins/my-thing --camera watch=<스트림> \
     --api http://127.0.0.1:8000 [--config '{"conf":0.4}'] [--dry-run] # 게이트웨이가 켤 때와 같은 진입점
@@ -75,3 +75,4 @@ curl -X POST localhost:8000/api/plugins/my-thing/start -H 'content-type: applica
 | `zone-guard/` | 1층 | ROI 침입 → 일시정지/E-stop, 비면 재개 |
 | `recycling/` | 2층 | 검출 → LLM 판단 → task → 저널. `MissionPlugin` 의 참고 구현. 외부 API 미션 타입 `recycling` |
 | `detector/` | 1층 | 카메라 여러 대를 한 모델로 훑는 검출기. 검출 페이지의 뒷단. 둘 이상 돌리려면 폴더를 다른 이름으로 복사 |
+| `ui-demo/` | 1층 | `ui: server` — 자기 FastAPI 서버(HTTP·WS)를 소켓에 띄워 게이트웨이 뒤로 프록시. 포트를 고르지 않는다 |

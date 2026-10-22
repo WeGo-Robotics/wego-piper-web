@@ -12,6 +12,7 @@
 | `PIPER_API_TOKEN` | 이번 실행의 범위 토큰 — 끝나면 죽는다 |
 | `PIPER_REDIS_URL` | 버스 (`injected_env` 가 모든 자식에게 준다) |
 | `PIPER_PLUGIN_RUN_ID` | (미션) 저널 id — 외부 API 의 미션 id 와 같다 |
+| `PIPER_PLUGIN_UI_SOCKET` | (`ui: server`) 자기 화면 HTTP 서버를 띄울 유닉스 소켓 |
 
 터미널에서 `python -m piper_plugin run <폴더>` 로 돌릴 때는 같은 변수를 그 명령이 채운다.
 """
@@ -37,6 +38,8 @@ class Env:
     redis_url: str | None = None
     #: 이번 실행의 저널 id — 게이트웨이가 정해 준다(미션 조회가 이 id 로 온다). 없으면 플러그인이 만든다
     run_id: str = ""
+    #: `ui: server` — 자기 화면 HTTP 서버를 띄울 유닉스 소켓. 없으면 터미널 실행(개발 포트)
+    ui_socket: str = ""
 
     @classmethod
     def from_environ(cls, environ: dict | None = None) -> "Env":
@@ -53,6 +56,7 @@ class Env:
             heartbeat=e.get("PIPER_PLUGIN_HEARTBEAT") == "1",
             redis_url=e.get("PIPER_REDIS_URL"),
             run_id=e.get("PIPER_PLUGIN_RUN_ID") or "",
+            ui_socket=e.get("PIPER_PLUGIN_UI_SOCKET") or "",
         )
 
     def to_environ(self) -> dict[str, str]:
@@ -71,6 +75,8 @@ class Env:
             out["PIPER_REDIS_URL"] = self.redis_url
         if self.run_id:
             out["PIPER_PLUGIN_RUN_ID"] = self.run_id
+        if self.ui_socket:
+            out["PIPER_PLUGIN_UI_SOCKET"] = self.ui_socket
         return out
 
 
