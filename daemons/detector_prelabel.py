@@ -72,7 +72,7 @@ def main() -> None:
         print(json.dumps({"labeled": 0, "boxes": 0, "no_match": 0, "targets": 0}))
         return
 
-    from detector_loader import load_detector
+    from piper_plugin.detector import load_detector
 
     model = load_detector(args.model)
     labeled = boxes_total = no_match = 0

@@ -379,7 +379,6 @@
   "decide 예외: {e}": "decide raised: {e}",
   "decide(ctx) 를 구현하라": "Implement decide(ctx)",
   "depth_units 가 양수여야 합니다: {units_m}": "depth_units must be positive: {units_m}",
-  "detector_loader 를 찾을 수 없다 — PIPER_DAEMONS_DIR 를 주거나 저장소 안에서 돌려라": "detector_loader not found — set PIPER_DAEMONS_DIR or run inside the repository",
   "entry 가 없다: {entry}": "entry is missing: {entry}",
   "far_mm 이 near_mm 보다 커야 합니다: {enc}": "far_mm must be greater than near_mm: {enc}",
   "far_mm 이 양수여야 합니다: {far_mm}": "far_mm must be positive: {far_mm}",

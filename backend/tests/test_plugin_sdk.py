@@ -348,5 +348,10 @@ def test_bundled_examples_are_valid(name):
 
 
 def test_bundled_examples_do_not_import_agpl_detectors():
+    """⚠ **낱말이 아니라 import 를 본다** — 번들은 왜 그걸 안 쓰는지 docstring 에 적는다."""
+    import re
+
     for p in (REPO / "plugins").rglob("*.py"):
-        assert "ultralytics" not in p.read_text(), f"{p} 가 AGPL 검출기를 import 한다"
+        src = p.read_text()
+        assert not re.search(r"^\s*(import ultralytics|from ultralytics)", src, re.M), \
+            f"{p} 가 AGPL 검출기를 import 한다"

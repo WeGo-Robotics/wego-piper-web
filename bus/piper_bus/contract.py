@@ -195,12 +195,22 @@ def cam_idle_key(cam_id: str) -> str:
     return f"{CAM_IDLE_PREFIX}:{cam_id}"
 
 
-# detectord 자기소개 — 어떤 모델·설정으로 돌고 있나 (프로세스당 하나, 카메라별 아님).
-# ⚠ VISION_PREFIX 아래 두면 `detection_names()` 스캔에 "meta" 카메라로 잡힌다 —
-# 접두사를 분리한다. detectord 가 루프마다 갱신하고 TTL 이 죽은 데몬의 낡은 정보를 지운다.
-DETECTOR_META: Final = _k("detector", "meta")
-# 루프마다 갱신되는데, --fps 하한(0.1)이면 루프가 10초다 — 그보다 여유 있게.
-DETECTOR_META_TTL_MS: Final = 15_000
+# 검출 발행자 자기소개 — 어떤 모델·설정으로 돌고 있나. **발행자별** 키다
+# (feature/plugins.md §13-3): 검출기가 여럿 동시에 돌 수 있어 프로세스당 하나이던 옛 키
+# (`piper:detector:meta`)는 서로 덮어썼다. VISION_PREFIX 아래 두면 `detection_names()`
+# 스캔에 잡히므로 접두사를 분리한다. 발행자가 루프마다 갱신하고 TTL 이 죽은 것의 낡은
+# 정보를 지운다 — fps 하한(0.1)이면 루프가 10초라 그보다 여유 있게.
+VISION_META_PREFIX: Final = _k("vision_meta")
+VISION_META_PATTERN: Final = f"{VISION_META_PREFIX}:*"
+VISION_META_TTL_MS: Final = 15_000
+
+
+def vision_meta_key(publisher: str) -> str:
+    return f"{VISION_META_PREFIX}:{publisher}"
+
+
+def vision_meta_name(key: str) -> str:
+    return key[len(VISION_META_PREFIX) + 1:]
 
 # ── 플러그인 상태 (plugin → 게이트웨이 화면, feature/plugins.md §7) ──────────
 #

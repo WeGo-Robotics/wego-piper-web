@@ -117,6 +117,11 @@ class Plugin:
         self.bus.put_detections(name, payload)
         return payload
 
+    def publish_meta(self, meta: dict) -> None:
+        """검출 발행자 자기소개 — 버스 `piper:vision_meta:<플러그인 이름>` (feature/plugins.md §13-3).
+        루프마다 불러 TTL 을 갱신한다. 화면이 "어느 검출기가 무슨 모델로 도나"를 여기서 읽는다."""
+        self.bus.put_vision_meta(self.name, meta)
+
     def publish_preview(self, name: str, frame_bgr, quality: int = 80) -> None:
         from piper_plugin.image import encode_bgr
 

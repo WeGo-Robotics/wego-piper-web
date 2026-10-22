@@ -316,18 +316,19 @@ class Bus:
         raw = self.r.lpop(C.plugin_cmd_key(name))
         return json.loads(raw) if raw else None
 
-    def put_detector_meta(self, meta: dict) -> None:
-        """detectord 자기소개(모델·설정). 루프마다 갱신 — TTL 이 stale 판정을 대신한다."""
-        self.r.set(C.DETECTOR_META, json.dumps(meta), px=C.DETECTOR_META_TTL_MS)
+    def put_vision_meta(self, publisher: str, meta: dict) -> None:
+        """검출 발행자 자기소개(모델·설정). 발행자별 키 — 루프마다 갱신, TTL 이 stale 판정을 대신한다."""
+        self.r.set(C.vision_meta_key(publisher), json.dumps({**meta, "publisher": publisher}),
+                   px=C.VISION_META_TTL_MS)
 
-    def get_detector_meta(self) -> dict | None:
-        raw = self.r.get(C.DETECTOR_META)
-        if raw is None:
-            return None
-        try:
-            return json.loads(raw)
-        except (TypeError, ValueError):
-            return None
+    def get_vision_meta(self, publisher: str) -> dict | None:
+        raw = self.r.get(C.vision_meta_key(publisher))
+        return json.loads(raw) if raw else None
+
+    def vision_meta_names(self) -> list[str]:
+        """살아 있는 검출 발행자 이름들."""
+        return sorted(C.vision_meta_name(k) for k in self.r.scan_iter(match=C.VISION_META_PATTERN))
+
 
     # ── 학습 job 레지스트리 ──
 

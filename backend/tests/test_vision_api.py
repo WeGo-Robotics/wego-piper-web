@@ -182,15 +182,14 @@ def test_resolve_refuses_anything_not_offered(client, monkeypatch, tmp_path):
 
 def test_status_says_why_the_daemon_died(client, monkeypatch):
     """⚠ **유닛이 `--collect` 로 뜨므로 실패한 종료도 흔적 없이 사라진다.**
-    `is-active` 는 `inactive` 로 답하고 상태는 정상 종료로 읽혀, 화면에는
-    "꺼졌다"만 남았다 — 모델 이름이 틀렸는지 GPU 가 없는지 알 길이 없었다.
-    실제로 `.pt` 이름을 넘겨 검출이 즉사했을 때 아무 사유도 안 보였다.
+    화면에는 "꺼졌다"만 남았다 — 모델 이름이 틀렸는지 GPU 가 없는지 알 길이 없었다.
+    실제로 `.pt` 이름을 넘겨 검출이 즉사했을 때 아무 사유도 안 보였다. 검출기가 플러그인이
+    된 뒤에도 같은 자리에서 같은 말을 한다.
     """
     from app.routers import vision
 
-    monkeypatch.setattr(vision._detectord_pm, "recent_log",
-                        lambda lines=20: ["ValueError: ultra_nano.pt: 지원하지 않습니다"],
-                        raising=False)
+    monkeypatch.setattr(vision._plugins, "status", lambda name: {
+        "state": "error", "pid": None, "log_tail": ["ValueError: ultra_nano.pt: 지원하지 않습니다"]})
     body = client.get("/api/vision/status").json()
     assert body["log"], "죽은 이유가 안 보인다"
     assert "ValueError" in body["log"][-1]
@@ -200,8 +199,7 @@ def test_status_is_quiet_while_running(client, monkeypatch):
     """도는 중에는 사유를 안 붙인다 — 정상 로그를 에러처럼 보이게 하면 안 된다."""
     from app.routers import vision
 
-    monkeypatch.setattr(type(vision._detectord_pm), "is_running",
-                        property(lambda self: True), raising=False)
-    monkeypatch.setattr(vision._detectord_pm, "recent_log",
-                        lambda lines=20: ["평범한 진행 로그"], raising=False)
-    assert "log" not in client.get("/api/vision/status").json()
+    monkeypatch.setattr(vision._plugins, "status", lambda name: {
+        "state": "running", "pid": 1, "log_tail": ["평범한 진행 로그"]})
+    body = client.get("/api/vision/status").json()
+    assert "log" not in body and "publishers" in body

@@ -73,5 +73,5 @@ curl -X POST localhost:8000/api/plugins/my-thing/start -H 'content-type: applica
 | `hello/` | 없음(SDK 미사용) | 환경변수·토큰·상태 KV 의 최소 배선 |
 | `detect-and-start/` | 1층 | 검출기 안에 두고, 보이면 추론 시작·사라지면 정지 |
 | `zone-guard/` | 1층 | ROI 침입 → 일시정지/E-stop, 비면 재개 |
-| `recycling/` (3단계) | 2층 | 검출 → LLM 판단 → task → 저널. `MissionPlugin` 의 참고 구현 |
-| `detector/` (3b단계) | 1층 | 모델 여러 개 × 카메라 여러 대, 검출 페이지의 뒷단 |
+| `recycling/` | 2층 | 검출 → LLM 판단 → task → 저널. `MissionPlugin` 의 참고 구현. 외부 API 미션 타입 `recycling` |
+| `detector/` | 1층 | 카메라 여러 대를 한 모델로 훑는 검출기. 검출 페이지의 뒷단. 둘 이상 돌리려면 폴더를 다른 이름으로 복사 |

@@ -1,8 +1,9 @@
 """검출 · LLM 판단 테스트 API — 분리수거 파이프라인의 앞 두 칸을 화면에서 굴린다.
 
-detectord 는 정책 서버와 같은 "필요할 때 켜는 유닛"이다 — `make_process` 가 소유자를
-정하므로 게이트웨이를 재시작해도 산다. 판단은 [llm_client](../services/llm_client.py)
-를 **직접 호출**한다 (자기 HTTP 호출 금지 — episode-orchestrator §2 와 같은 규칙).
+검출기는 번들 플러그인 `detector` 다 (feature/plugins.md §13). 여기의 start·stop·status 는
+그 위의 **호환층**이고, 새 호출자는 `/api/plugins/detector/*` 를 쓴다. 판단은
+[llm_client](../services/llm_client.py) 를 **직접 호출**한다 (게이트웨이 안에서는 자기 HTTP
+호출 금지). 플러그인은 별도 프로세스라 `POST /judge` 로 REST 를 탄다.
 """
 
 import json
@@ -19,22 +20,22 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.services import llm_client
 from app.services.llm_client import LLMJudgeError
-from app.services.systemd_process import make_process
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/vision", tags=["vision"])
 
-# detectord 소유자 — 유닛이면 게이트웨이 재시작에도 산다 (기동 재부착은 사소해서 생략:
-# 테스트 도구라 화면에서 다시 켜면 그만이고, 유닛 자체는 계속 돈다)
-_detectord_pm = make_process("piper-detectord")
+# 검출기는 번들 플러그인 `detector` 다 (feature/plugins.md §13). 아래 start·stop·status 는
+# **한 릴리스 동안의 호환층** — 검출 페이지·ext API·검출 학습의 "이 장면 캡처"가 이 세 경로를
+# 부른다. 새 호출자는 `/api/plugins/detector/*` 를 쓴다.
+from app.services.plugins import registry as _plugins  # noqa: E402
 
-_DETECTORD_SCRIPT = Path(__file__).resolve().parents[3] / "daemons" / "detectord.py"
+DETECTOR_PLUGIN = "detector"
 
-# 규칙·슬롯의 정본은 오케스트레이터 서비스 — 테스트 페이지와 루프가 같은 판단을 쓴다
+# 규칙·슬롯의 정본은 `services/judge_schema.py` — 테스트 페이지와 `recycling` 플러그인이 같은 판단을 쓴다
 from app.services.judge_schema import DEFAULT_RULES, JudgeSlots, slots_model  # noqa: E402,F401
 
 
-# ── detectord 제어 ──
+# ── 검출기 제어 (플러그인 `detector` 위의 호환층) ──
 
 # 시작 UI 에 보여줄 표준 검출 모델 (COCO 80 클래스). 로컬에 없어도 목록에 나온다 —
 # ultralytics 가 없는 가중치를 첫 로드 때 자동 다운로드하므로 전부 쓸 수 있고,
@@ -194,45 +195,45 @@ class StartRequest(BaseModel):
 
 @router.post("/start")
 async def start_detectord(body: StartRequest):
+    """검출기 시작 — 플러그인 `detector` 를 이 인자로 켠다. 응답 모양은 예전과 같다."""
     if not body.cams:
         raise HTTPException(400, "구독할 카메라가 없습니다")
-    args = [settings.grpc_python, "-u", str(_DETECTORD_SCRIPT)]
-    for alias, cam_id in body.cams.items():
-        args += ["--cam", f"{alias}={cam_id}"]
-    args += ["--model", _resolve_model(body.model),
-             "--fps", str(body.fps), "--conf", str(body.conf),
-             "--imgsz", str(body.imgsz)]
-    await _detectord_pm.start(args)
+    config = {
+        "cams": ", ".join(f"{alias}={cam_id}" for alias, cam_id in body.cams.items()),
+        "model": _resolve_model(body.model), "fps": body.fps, "conf": body.conf, "imgsz": body.imgsz,
+    }
+    await _plugins.start(DETECTOR_PLUGIN, config, {})
     return {"status": "started", "cams": body.cams}
 
 
 @router.post("/stop")
 async def stop_detectord():
-    await _detectord_pm.stop()
+    await _plugins.stop(DETECTOR_PLUGIN)
     return {"status": "stopped"}
 
 
 @router.get("/status")
 async def detectord_status():
+    """검출기 상태 — 예전 모양(`state`·`pid`·`cams`·`model`·`log`) + `publishers`(발행자별 자기소개).
+
+    `model` 은 플러그인 `detector` 의 자기소개다. 프로세스는 도는데 아직 None 이면 모델 로드 중이다.
+    ⚠ **죽었으면 왜 죽었는지 같이 준다**(`log`) — 모델 이름이 틀렸는지 GPU 가 없는지 알 길이
+    없었던 사고의 재발 방지. `publishers` 는 검출기가 여럿일 때 화면이 가르는 재료다(§13-3).
+    """
     from piper_bus.client import Bus
 
     try:
         bus = Bus()
         names = bus.detection_names()
-        meta = bus.get_detector_meta()
+        publishers = {n: bus.get_vision_meta(n) for n in bus.vision_meta_names()}
     except Exception:
-        names, meta = [], None
-    # model: detectord 가 버스에 발행하는 자기소개 (모델·디바이스·클래스 수 등).
-    # 프로세스는 도는데 아직 None 이면 모델 로드 중이라는 뜻이다.
-    # ⚠ **죽었으면 왜 죽었는지 같이 준다.** 유닛이 `--collect` 로 뜨므로 실패한
-    #   종료도 흔적 없이 사라지고, 화면에는 "꺼졌다"만 남는다 — 모델 이름이
-    #   틀렸는지 GPU 가 없는지 사용자가 알 길이 없었다. 저널 꼬리가 유일한 단서다.
-    state = _detectord_pm.state
-    out = {"state": state.value, "pid": _detectord_pm.pid, "cams": names, "model": meta}
-    if not _detectord_pm.is_running:
-        tail = _detectord_pm.recent_log()
-        if tail:
-            out["log"] = tail[-20:]
+        names, publishers = [], {}
+    st = _plugins.status(DETECTOR_PLUGIN)
+    out = {"state": st["state"], "pid": st["pid"], "cams": names,
+           "model": publishers.get(DETECTOR_PLUGIN), "publishers": publishers}
+    tail = st.get("log_tail") or []
+    if st["state"] not in ("running", "starting") and tail:
+        out["log"] = tail[-20:]
     return out
 
 
@@ -250,7 +251,7 @@ async def get_detections():
 
 @router.get("/preview/{name}")
 async def get_annotated_preview(name: str):
-    """detectord 의 어노테이트 프리뷰 (버스 `det_<name>` 키)."""
+    """검출기의 어노테이트 프리뷰 (버스 `det_<name>` 키)."""
     from piper_bus.client import Bus
 
     data = Bus().get_preview(f"det_{name}")

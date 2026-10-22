@@ -28,6 +28,15 @@
 - 게이트웨이가 재시작되면 남아 있던 플러그인 유닛을 정지시킨다 — 수동으로 다시 켠다
 - 번들 예제 `plugins/hello` — SDK 없이 환경변수만 읽는 최소 플러그인
 
+**플러그인 3b단계 — 검출 데몬이 플러그인으로 바뀌었다** ([feature/plugins.md §13](feature/plugins.md))
+- `daemons/detectord.py` 와 `detector_loader.py` 가 없어졌다. 검출기는 번들 플러그인 `detector`(`plugins/detector`),
+  모델 로더는 SDK `piper_plugin.detector`(RT-DETR, Apache). 사전 라벨도 거기서 연다
+- 검출기 자기소개가 **발행자별** 버스 키(`piper:vision_meta:<이름>`)가 됐다 — 검출기 둘이 동시에 돌 수 있다
+  (`detector` 폴더를 다른 이름으로 복사해 설치). `GET /api/vision/status` 에 `publishers` 가 더해졌다
+- `/api/vision/start·stop·status` 는 한 릴리스 동안 호환층 — 검출 페이지·외부 API·"이 장면 캡처"가 그대로 된다.
+  새 호출자는 `/api/plugins/detector/*`
+- 바뀌어 보이는 것: 검출기는 플러그인이라 **학습 중에는 시작이 409**(GPU 배타)이고, 브라우저를 닫으면 선다(E-stop 대상)
+
 **플러그인 3단계 — 오케스트레이터가 플러그인으로 바뀌었다** ([feature/plugins.md §12](feature/plugins.md))
 - ⚠ `services/orchestrator.py`·`/api/orchestrator/*`·WS `orchestrator` 이벤트·활동 "에피소드 루프"·비전 페이지의
   분리수거 루프 패널이 **없어졌다.** 분리수거 루프는 번들 플러그인 `recycling`(`MissionPlugin`)이다 — 같은 단계

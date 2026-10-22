@@ -1,0 +1,36 @@
+# 검출기 — 검출 데몬(detectord)의 플러그인판 (feature/plugins.md §13). 검출 페이지의 뒷단.
+#
+# 카메라 슬롯이 고정이 아니다: 검출 데몬이 `--cam alias=stream` 을 몇 개든 받았듯이, `cams` 설정에
+# `alias=stream` 을 쉼표로 적는다(비우면 매니페스트 `cameras` 슬롯을 쓴다). 검출 이름(버스 키)이 alias 다.
+# 검출기를 **둘 이상** 동시에 돌리려면 이 폴더를 다른 이름으로 복사해 설치한다 — 발행자 이름이 다르면
+# 버스에서 충돌하지 않는다(§13-2).
+name: detector
+version: 0.2.0
+title: "검출기"
+description: "카메라 스트림을 모델로 훑어 검출·어노테이트 프리뷰를 버스에 올린다"
+entry: main.py
+python: system
+ui: /detector
+
+cameras:
+  - { key: top, label: "카메라", required: false }
+
+config:
+  - { key: cams, kind: text, default: "", label: "카메라 alias=stream, 쉼표 (비우면 위 슬롯)" }
+  - { key: model, kind: text, default: "PekingU/rtdetr_v2_r18vd", label: "모델 (HF id 또는 커스텀 가중치 경로)" }
+  - { key: conf, kind: number, default: 0.25, min: 0.05, max: 1, step: 0.05, label: "신뢰도" }
+  - { key: fps, kind: number, default: 5, min: 0.1, max: 30, step: 0.5, label: "검출 주기(fps)" }
+  - { key: imgsz, kind: number, default: 640, min: 160, max: 1920, step: 32, label: "입력 크기" }
+  - { key: device, kind: select, default: "cuda:0", options: ["cuda:0", "cpu"], label: "장치" }
+  - { key: preview, kind: bool, default: true, label: "어노테이트 프리뷰 발행" }
+
+permissions: []
+
+resources:
+  gpu: true
+  heartbeat: false
+
+outputs:
+  state:
+    - { key: det_fps, label: "검출 fps" }
+    - { key: cams, label: "카메라" }

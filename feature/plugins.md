@@ -1,6 +1,6 @@
 # 플러그인 — 사람이 쓴 파이썬 스크립트를 웹에서 켜고 끈다
 
-> 상태: **◐ 0·1·2·3단계 ☑ (2026-10-22).** 기획 확정 2026-10-16.
+> 상태: **◐ 0·1·2·3·3b단계 ☑ (2026-10-22).** 기획 확정 2026-10-16.
 > 1단계: `services/plugins.py`·`core/plugin_scopes.py`·`routers/plugins.py`(`/api/plugins/*`), authgate 의
 > Bearer 분기, `Activity.PLUGIN`·`PLUGIN_GPU`, 번들 `plugins/hello`.
 > 2단계: SDK [`plugin/piper_plugin`](../plugin/piper_plugin/)(`Plugin`·`MissionPlugin`·`Decision`·`robot`·`camera`·
@@ -9,7 +9,10 @@
 > `GET /api/models/inference/policy`, 명령 큐(`commands` → `on_command`).
 > 3단계 ☑: 번들 `plugins/recycling`(`MissionPlugin`), `services/orchestrator.py`·라우터·WS 타입·`Activity.ORCHESTRATOR`·
 > VisionPage 루프 패널 삭제, 판단 스키마는 `services/judge_schema.py` 로, `/api/vision/judge` 가 `skills` 를 받음,
-> 저널 `GET /api/plugins/{name}/runs`, ext API `missions` 가 플러그인 위에서 그대로 돈다(§12-2). **다음: 3b(검출기 이관).** 요청: "카메라 스트림을 받아 개체 검출도 하고 REST API 로
+> 저널 `GET /api/plugins/{name}/runs`, ext API `missions` 가 플러그인 위에서 그대로 돈다(§12-2).
+> 3b단계 ☑: 번들 `plugins/detector`, 로더가 `piper_plugin.detector` 로, 버스 메타가 발행자별
+> (`piper:vision_meta:<publisher>`), `/api/vision/start·stop·status` 는 플러그인 위의 호환층(`publishers` 추가),
+> `daemons/detectord.py`·`detector_loader.py` 삭제. **다음: 4단계(플러그인 페이지).** 요청: "카메라 스트림을 받아 개체 검출도 하고 REST API 로
 > 추론도 시작할 수 있는 파이썬 스크립트를 플러그인 형태로 만들어 웹 UI 에서 실행."
 > 이 문서는 그 요청을 **범용 플러그인 계층**으로 넓힌 설계다. 열린 질문 다섯은 §10 에
 > 결정으로 닫혔고, 플러그인 자체 화면(대시보드·입력·설정 페이지)의 **서빙 포트는 게이트웨이와 같은

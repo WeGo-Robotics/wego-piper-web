@@ -10,8 +10,12 @@ from pathlib import Path
 
 import pytest
 
-_DAEMONS = Path(__file__).resolve().parents[2] / "daemons"
+_REPO = Path(__file__).resolve().parents[2]
+_DAEMONS = _REPO / "daemons"
 sys.path.insert(0, str(_DAEMONS))
+# 검출 데몬은 플러그인이 됐고 로더는 SDK 로 들어갔다 (feature/plugins.md §13-4)
+_DETECTOR_MAIN = _REPO / "plugins" / "detector" / "main.py"
+_LOADER = _REPO / "plugin" / "piper_plugin" / "detector.py"
 
 
 def _catalog():
@@ -45,7 +49,7 @@ def test_the_loader_does_not_touch_ultralytics():
 
     # ⚠ docstring 까지 걷어낸다 — 이 파일은 **왜** ultralytics 를 버렸는지
     #   설명하느라 그 낱말을 여러 번 쓴다. 설명문을 코드로 세면 안 된다.
-    src = python_code_only((_DAEMONS / "detector_loader.py").read_text())
+    src = python_code_only(_LOADER.read_text())
     # ⚠ **낱말이 아니라 import 를 본다.** 이 파일은 `.pt` 를 거절하면서 그 이유를
     #   사용자에게 말하느라 "ultralytics" 를 **메시지 안에** 쓴다. 낱말로 세면
     #   친절한 에러 문구가 검사를 실패시킨다.
@@ -57,7 +61,7 @@ def test_the_loader_does_not_touch_ultralytics():
 def test_the_loader_refuses_ultralytics_weights():
     """⚠ 조용히 무시하면 "왜 내 가중치가 안 먹지"로 돌아온다. `.pt` 는 열 수
     없다고 **말해야** 한다 — 그 형식을 열려면 AGPL 라이브러리가 필요하다."""
-    from detector_loader import load_detector
+    from piper_plugin.detector import load_detector
 
     with pytest.raises(ValueError, match="ultralytics"):
         load_detector("ultra_nano.pt")
@@ -73,13 +77,13 @@ def test_unverified_numbers_are_left_blank():
     assert all(m["size_mb"] for m in cat), "실측한 용량은 있어야 한다"
 
 
-@pytest.mark.parametrize("daemon", ["detectord.py", "detector_prelabel.py", "detector_traind.py"])
+@pytest.mark.parametrize("daemon", [_DETECTOR_MAIN, _DAEMONS / "detector_prelabel.py", _DAEMONS / "detector_traind.py"])
 def test_all_three_daemons_share_the_loader(daemon):
     """한 곳만 고치면 데모에서는 되는데 학습에서는 안 되는 식으로 갈린다."""
     from conftest import python_code_only
 
-    src = python_code_only((_DAEMONS / daemon).read_text())
-    assert "load_detector" in src or "rtdetr_train" in src, f"{daemon} 이 공용 조각을 안 쓴다"
+    src = python_code_only(daemon.read_text())
+    assert "load_detector" in src or "rtdetr_train" in src or "self.detector(" in src, f"{daemon} 이 공용 조각을 안 쓴다"
     assert "ultralytics" not in src, f"{daemon} 이 아직 ultralytics 를 쓴다"
 
 
@@ -167,12 +171,12 @@ def test_predict_returns_a_list_like_ultralytics():
     """
     import inspect
 
-    from detector_loader import RTDetr
+    from piper_plugin.detector import RTDetr
 
     src = inspect.getsource(RTDetr.predict)
     assert "return [" in src, "리스트로 안 돌려준다"
-    for daemon in ("detectord.py", "detector_prelabel.py"):
-        body = (_DAEMONS / daemon).read_text()
+    for daemon in (_DETECTOR_MAIN, _DAEMONS / "detector_prelabel.py"):
+        body = daemon.read_text()
         if "model.predict(" in body:
             assert ")[0]" in body, f"{daemon} 의 호출 형태가 바뀌었다 — 어댑터도 같이 봐야 한다"
 
@@ -191,12 +195,12 @@ def test_the_adapter_covers_everything_the_daemons_use():
     import re
 
     from conftest import python_code_only
-    from detector_loader import RTDetr, _Result
+    from piper_plugin.detector import RTDetr, _Result
 
     used_model, used_result = set(), set()
     # 페이로드·자기소개(`model_meta`)는 SDK 로 옮겨 갔다 (feature/plugins.md §13-3) — 호출부가 셋이다
-    sources = [_DAEMONS / "detectord.py", _DAEMONS / "detector_prelabel.py",
-               _DAEMONS.parent / "plugin" / "piper_plugin" / "detections.py"]
+    sources = [_DETECTOR_MAIN, _DAEMONS / "detector_prelabel.py",
+               _REPO / "plugin" / "piper_plugin" / "detections.py"]
     for path in sources:
         # ⚠ **주석·docstring 을 걷어내고 본다.** 이 파일들은 "예전에는
         #   `model.info()` 에서 읽었다" 같은 설명을 남기는데, 그걸 요구로 세면
@@ -210,7 +214,7 @@ def test_the_adapter_covers_everything_the_daemons_use():
     # ⚠ **인스턴스 속성까지 센다.** `names`·`task` 는 `__init__` 에서 붙으므로
     #   클래스만 보면 "없다"고 나온다. 모델을 실제로 만들면 가중치를 받게 되므로
     #   (테스트에서 네트워크를 쓸 수는 없다) 소스에서 `self.X =` 를 읽는다.
-    loader_src = (_DAEMONS / "detector_loader.py").read_text()
+    loader_src = _LOADER.read_text()
     provided = set(dir(RTDetr)) | set(re.findall(r"self\.([a-zA-Z_]+)[ ,)]*=", loader_src))
 
     # ⚠ 정규식이 아무것도 못 찾으면 빈 집합이라 **무조건 통과한다.** 호출 형태가
@@ -244,7 +248,7 @@ def test_the_colour_contract_holds_end_to_end(tmp_path):
     """
     import numpy as np
 
-    from detector_loader import as_rgb_bgr
+    from piper_plugin.detector import as_rgb_bgr
 
     # 노란 물체 한 장을 **BGR** 로 (detectord 가 넘기는 방식)
     yellow_bgr = np.zeros((4, 4, 3), np.uint8)
@@ -263,7 +267,7 @@ def test_the_colour_contract_holds_end_to_end(tmp_path):
     assert bgr2[0, 0].tolist() == [0, 255, 255], "파일 경로에서 BGR 로 안 바꿨다"
 
     # `plot()` 은 들고 있는 것을 **그대로** 낸다
-    from detector_loader import _Result
+    from piper_plugin.detector import _Result
 
     class _Empty:
         xyxy = conf = property(lambda s: None)
@@ -286,11 +290,11 @@ def test_the_daemon_and_the_adapter_agree_on_what_a_frame_is():
     """
     from conftest import python_code_only
 
-    detectord = python_code_only((_DAEMONS / "detectord.py").read_text())
+    detectord = python_code_only(_DETECTOR_MAIN.read_text())
     call = detectord.split("model.predict(", 1)[0][-400:]
     assert "[..., ::-1]" not in call, "데몬이 다시 뒤집기 시작했다 — 어댑터와 갈린다"
 
-    loader = python_code_only((_DAEMONS / "detector_loader.py").read_text())
+    loader = python_code_only(_LOADER.read_text())
     assert "def as_rgb_bgr" in loader, "색 규약이 다시 흩어졌다"
     plot = loader.split("def plot", 1)[1].split("\n    def ", 1)[0]
     assert "::-1" not in plot, "plot() 이 또 뒤집는다 — 프리뷰 색이 뒤집힌다"
