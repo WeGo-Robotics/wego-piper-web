@@ -20,7 +20,8 @@ def test_teleop_is_an_estop_target():
 
 def test_teleop_and_the_arm_movers_block_each_other():
     """같은 팔을 둘이 밀면 안 된다."""
-    for other in (ex.Activity.INFERENCE, ex.Activity.RECORDING, ex.Activity.ORCHESTRATOR):
+    # 에피소드 루프는 플러그인이 됐다 — 추론을 통해서만 팔을 움직이므로 추론의 배타가 그것을 덮는다
+    for other in (ex.Activity.INFERENCE, ex.Activity.RECORDING):
         assert other in ex.BLOCKED_BY[ex.Activity.TELEOP], f"{other} 를 안 막는다"
         assert ex.Activity.TELEOP in ex.BLOCKED_BY[other], f"{other} 가 teleop 을 안 막는다"
 

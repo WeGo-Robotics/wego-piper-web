@@ -188,17 +188,17 @@ export default function EpisodesPage() {
   const [analyzing, setAnalyzing] = useState(false)
   const [baking, setBaking] = useState(false)
 
-  // ── YOLO 학습 데이터셋으로 캡처 (feature/yolo-training.md 뷰어 훅) ──
+  // ── 검출 학습 데이터셋으로 캡처 (feature/detector-training.md 뷰어 훅) ──
   // 동영상 모드 = canvas 캡처 (캐시 불필요, 출처에 재생 시각 t)
   // 프레임 모드 = 캐시 파일 복사 (정확한 프레임 번호)
-  const [yoloDatasets, setYoloDatasets] = useState<string[]>([])
-  const [yoloTarget, setYoloTarget] = useState('')
+  const [detectorDatasets, setDetectorDatasets] = useState<string[]>([])
+  const [detectorTarget, setDetectorTarget] = useState('')
 
   useEffect(() => {
-    api.get<{ datasets: { name: string }[] }>('/yolo/datasets')
+    api.get<{ datasets: { name: string }[] }>('/detector/datasets')
       .then((r) => {
-        setYoloDatasets(r.datasets.map((d) => d.name))
-        setYoloTarget((cur) => cur || (r.datasets[0]?.name ?? ''))
+        setDetectorDatasets(r.datasets.map((d) => d.name))
+        setDetectorTarget((cur) => cur || (r.datasets[0]?.name ?? ''))
       })
       .catch(() => {})
   }, [])
@@ -468,9 +468,9 @@ export default function EpisodesPage() {
   const frameRef = useRef(frame)
   frameRef.current = frame
 
-  /** 보고 있는 그 장면을 YOLO 데이터셋으로 — 모드에 따라 canvas / 캐시 복사. */
-  const captureToYolo = async (cam: string) => {
-    if (!yoloTarget || ep == null) return
+  /** 보고 있는 그 장면을 검출 데이터셋으로 — 모드에 따라 canvas / 캐시 복사. */
+  const captureToDetector = async (cam: string) => {
+    if (!detectorTarget || ep == null) return
     try {
       if (videoActive) {
         const v = videoRefs.current[cam]
@@ -486,7 +486,7 @@ export default function EpisodesPage() {
         const q = new URLSearchParams({
           type: 'episode', dataset: dsId, episode: String(ep), cam, t: sec.toFixed(3),
         })
-        const res = await fetch(`/api/yolo/datasets/${yoloTarget}/images?${q}`, {
+        const res = await fetch(`/api/detector/datasets/${detectorTarget}/images?${q}`, {
           method: 'POST', body: blob,
         })
         if (!res.ok) {
@@ -495,11 +495,11 @@ export default function EpisodesPage() {
         }
       } else {
         // 프레임 캐시 모드 — 서버가 캐시 파일을 복사한다 (정확한 프레임 번호)
-        await api.post(`/yolo/datasets/${yoloTarget}/import-episode`, {
+        await api.post(`/detector/datasets/${detectorTarget}/import-episode`, {
           dataset_id: dsId, episode: ep, cam, indices: [frame],
         })
       }
-      notify({ level: 'info', text: t('{cam} → {yoloTarget} 데이터셋으로 캡처', { cam, yoloTarget }), source: t('에피소드') })
+      notify({ level: 'info', text: t('{cam} → {detectorTarget} 데이터셋으로 캡처', { cam, detectorTarget }), source: t('에피소드') })
     } catch (e) {
       notifyError(e instanceof Error ? e.message : t('캡처 실패'))
     }
@@ -1186,9 +1186,9 @@ export default function EpisodesPage() {
                   <figcaption className="text-xs text-neutral-500 mt-1 flex items-center gap-2">
                     {cam}
                     {ep != null && <FrameLight dsId={dsId} ep={ep} cam={cam} frame={frame} />}
-                    {yoloTarget && (
-                      <button onClick={() => void captureToYolo(cam)}
-                        title={t('이 장면을 {yoloTarget} 검출 데이터셋으로 캡처', { yoloTarget })}
+                    {detectorTarget && (
+                      <button onClick={() => void captureToDetector(cam)}
+                        title={t('이 장면을 {detectorTarget} 검출 데이터셋으로 캡처', { detectorTarget })}
                         className="px-1.5 rounded bg-neutral-800 hover:bg-green-700 text-neutral-400 hover:text-white">
                         📸
                       </button>
@@ -1260,11 +1260,11 @@ export default function EpisodesPage() {
                   {t('✏ 편집')}
                 </button>
               )}
-              {yoloDatasets.length > 0 && (
+              {detectorDatasets.length > 0 && (
                 <label className="ml-auto text-xs text-neutral-500">{t('캡처 →')}
-                  <select value={yoloTarget} onChange={(e) => setYoloTarget(e.target.value)}
+                  <select value={detectorTarget} onChange={(e) => setDetectorTarget(e.target.value)}
                     className="ml-1 rounded bg-neutral-900 border border-neutral-700 px-1.5 py-0.5 text-neutral-300">
-                    {yoloDatasets.map((d) => <option key={d} value={d}>{d}</option>)}
+                    {detectorDatasets.map((d) => <option key={d} value={d}>{d}</option>)}
                   </select>
                 </label>
               )}
@@ -1272,7 +1272,7 @@ export default function EpisodesPage() {
                 <button
                   onClick={() => { setPlaying(false); setViewMode((m) => (m === 'video' ? 'frames' : 'video')) }}
                   className={`px-2 py-0.5 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-400 hover:text-white ${
-                    yoloDatasets.length > 0 ? '' : 'ml-auto'}`}
+                    detectorDatasets.length > 0 ? '' : 'ml-auto'}`}
                   title={t('동영상 = 캐시 없이 즉시 재생 / 프레임 캐시 = 프레임 단위 정밀')}
                 >
                   {videoActive ? t('프레임 캐시로 보기') : t('동영상으로 보기')}

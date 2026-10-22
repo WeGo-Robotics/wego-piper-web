@@ -52,7 +52,7 @@ C4 3계층 다이어그램: [docs/architecture-c4.drawio](docs/architecture-c4.d
                                             ├→ subprocess.Popen  → LeRobot CLI (process_manager.py)
                                             ├→ Redis 버스        → 파라미터·녹화제어 (param_bridge.py → wrapper/)
                                             ├→ stdout 파싱       → WebSocket 로그 (ws.py)
-                                            └→ systemd-run/SSH   → 학습·정책서버·yolod
+                                            └→ systemd-run/SSH   → 학습·정책서버·detectord
 
 호스트 상시 유닛 (게이트웨이와 별도 프로세스, Restart=always)
    piper-estopd    heartbeat 감시 → 타임아웃 시 버스의 활동 PID 를 직접 SIGKILL
@@ -85,7 +85,7 @@ C4 3계층 다이어그램: [docs/architecture-c4.drawio](docs/architecture-c4.d
 | 카메라 분배 | v4l2loopback + GStreamer |
 | 키 입력 주입 | evdev UInput |
 | 추론 스무딩 | RTC (flow-matching) / Temporal Ensemble (ACT) |
-| 비전·판단 | YOLO(ultralytics, `piper-yolod` 유닛) + LLM 구조화 출력(`llm_client` — Anthropic API 또는 로컬 Ollama/vLLM) |
+| 비전·판단 | 검출기(RT-DETR · transformers, `piper-detectord` 유닛) + LLM 구조화 출력(`llm_client` — Anthropic API 또는 로컬 Ollama/vLLM) |
 
 ## API 엔드포인트
 
@@ -114,8 +114,8 @@ C4 3계층 다이어그램: [docs/architecture-c4.drawio](docs/architecture-c4.d
 | `/api/phase/*` | 작업 단계(phase) 분석·라벨·신호 (분류기 자체는 `python -m piper_phase` 로 단독 실행 가능) |
 | `GET /api/datasets/{id}/episodes/{ep}/frames/{cam}/{i}` | 디코딩 캐시 프레임 (에피소드 뷰어) |
 | `GET /api/datasets/{id}/videos/{cam}/{chunk}/{file}` | chunk mp4 Range 서빙 (뷰어 동영상 모드) |
-| `/api/vision/*` | YOLO 검출(yolod 제어·검출·프리뷰·모델 카탈로그) + LLM 판단 테스트 |
-| `/api/yolo/*` | YOLO 학습 데이터셋 — 캡처·라벨·커스텀 가중치 학습 ([feature/yolo-training.md](feature/yolo-training.md)) |
+| `/api/vision/*` | 검출(detectord 제어·검출·프리뷰·모델 카탈로그) + LLM 판단 테스트 |
+| `/api/detector/*` | 검출 학습 데이터셋 — 캡처·라벨·커스텀 가중치 학습 ([feature/detector-training.md](feature/detector-training.md)) |
 
 ## 인증
 

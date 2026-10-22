@@ -1,0 +1,738 @@
+/**
+ * 검출 학습 — 캡처→라벨→학습→가중치 루프의 작업대 (feature/detector-training.md).
+ *
+ * 1단계: 캡처(라이브 세그먼트·에피소드 가져오기) + 갤러리.
+ * 라벨·학습 탭은 2·3단계에서 붙는다.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { api } from '../services/api'
+import { useSystemMessage } from '../components/SystemMessages'
+import DetectorLabeler from '../components/DetectorLabeler'
+import { tb, useT } from '../i18n'
+
+type DetectorDs = { name: string; classes: string[]; images: number; labeled: number }
+type ImgSource = {
+  type: string; cam?: string; dataset?: string; episode?: number; frame?: number; t?: number
+}
+type ImgEntry = { file: string; labeled: boolean; source: ImgSource | null }
+type LrDataset = { id: string; total_episodes: number; fps: number; features: Record<string, unknown> }
+type TrainInfo = {
+  state: string; dataset: string; run_name: string; base_model: string
+  epochs: number; imgsz: number; train?: number; val?: number
+  weight?: string; map50?: number; map50_95?: number; error?: string
+}
+type TrainStatus = {
+  state: string
+  pid: number | null
+  info: TrainInfo | null
+  progress: { epoch: number; box_loss: number; map50: number; map50_95: number }[]
+}
+
+const shortId = (s: string) => (s.length > 24 ? `${s.slice(0, 6)}…${s.slice(-10)}` : s)
+
+/** 출처 배지 텍스트 — 갤러리에서 "어디서 온 장면인가"를 한 눈에 */
+const sourceBadge = (s: ImgSource | null) => {
+  if (!s) return '?'
+  if (s.type === 'live') return `live ${s.cam ? shortId(s.cam) : ''}`
+  if (s.type === 'episode') {
+    const at = s.frame != null ? `#${s.frame}` : s.t != null ? `${s.t.toFixed(1)}s` : ''
+    return `ep${s.episode} ${s.cam ?? ''} ${at}`
+  }
+  return s.type
+}
+
+/** 학습 최소 조건 — 서버(`detector_train.py`)의 400 과 같은 값이다. */
+const MIN_LABELED = 4
+
+export default function DetectorTrainPage() {
+  const t = useT()
+  const { notify } = useSystemMessage()
+  const notifyError = (text: string) => notify({ level: 'error', text, source: t('검출 학습') })
+
+  // ── 데이터셋 ──
+  const [datasets, setDatasets] = useState<DetectorDs[]>([])
+  const [current, setCurrent] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newClasses, setNewClasses] = useState('')
+
+  const refreshDatasets = useCallback(async (pick?: string) => {
+    try {
+      const r = await api.get<{ datasets: DetectorDs[] }>('/detector/datasets')
+      setDatasets(r.datasets)
+      setCurrent((cur) => pick ?? (r.datasets.some((d) => d.name === cur) ? cur : (r.datasets[0]?.name ?? '')))
+    } catch { /* 다음 기회에 */ }
+  }, [])
+
+  useEffect(() => { void refreshDatasets() }, [refreshDatasets])
+
+  const handleCreate = async () => {
+    const classes = newClasses.split(',').map((s) => s.trim()).filter(Boolean)
+    try {
+      await api.post('/detector/datasets', { name: newName.trim(), classes })
+      setCreating(false); setNewName(''); setNewClasses('')
+      await refreshDatasets(newName.trim())
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('생성 실패')) }
+  }
+
+  // 클래스 추가 — 추가만 된다 (삭제·순서 변경은 기존 라벨 txt 의 id 를 깬다)
+  const [addingCls, setAddingCls] = useState(false)
+  const [newCls, setNewCls] = useState('')
+
+  const handleAddClasses = async () => {
+    const classes = newCls.split(',').map((s) => s.trim()).filter(Boolean)
+    if (classes.length === 0) { setAddingCls(false); return }
+    try {
+      await api.post(`/detector/datasets/${current}/classes`, { classes })
+      setAddingCls(false); setNewCls('')
+      await refreshDatasets(current)
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('클래스 추가 실패')) }
+  }
+
+  const handleDeleteDataset = async () => {
+    try {
+      await api.delete(`/detector/datasets/${current}`)
+      await refreshDatasets()
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('삭제 실패')) }
+  }
+
+  // ── 탭 ── (라이브와 에피소드는 다른 작업이라 화면도 나눈다)
+  const [tab, setTab] = useState<'live' | 'episode' | 'label' | 'train' | 'gallery'>('live')
+
+  // ── 갤러리 ──
+  const [images, setImages] = useState<ImgEntry[]>([])
+  const labeledCount = images.filter((i) => i.labeled).length
+  const refreshImages = useCallback(async () => {
+    if (!current) { setImages([]); return }
+    try {
+      const r = await api.get<{ images: ImgEntry[] }>(`/detector/datasets/${current}/images`)
+      setImages(r.images)
+    } catch { setImages([]) }
+  }, [current])
+
+  useEffect(() => { void refreshImages() }, [refreshImages, tab])
+
+  // ── 라이브 캡처 ──
+  const [segments, setSegments] = useState<string[]>([])
+  const [tick, setTick] = useState(0)
+  const [auto, setAuto] = useState<Set<string>>(new Set())
+  const [intervalS, setIntervalS] = useState(5)
+  const [captured, setCaptured] = useState<Record<string, number>>({}) // 세션 캡처 수
+
+  useEffect(() => {
+    if (tab !== 'live') return
+    api.get<{ segments: string[] }>('/vision/segments').then((r) => setSegments(r.segments)).catch(() => {})
+    const t = setInterval(() => setTick((x) => x + 1), 1000)
+    return () => clearInterval(t)
+  }, [tab])
+
+  const captureLive = useCallback(async (cam: string) => {
+    if (!current) { notifyError(t('먼저 데이터셋을 만드세요')); return }
+    try {
+      await api.post(`/detector/datasets/${current}/capture`, { cam })
+      setCaptured((c) => ({ ...c, [cam]: (c[cam] ?? 0) + 1 }))
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('캡처 실패')) }
+    // eslint 상: notifyError 는 안정적이지 않지만 여기선 무해
+  }, [current])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 자동 캡처 — 체크된 세그먼트를 intervalS 마다
+  useEffect(() => {
+    if (tab !== 'live' || auto.size === 0) return
+    const t = setInterval(() => { auto.forEach((cam) => void captureLive(cam)) }, intervalS * 1000)
+    return () => clearInterval(t)
+  }, [tab, auto, intervalS, captureLive])
+
+  // ── 에피소드 가져오기 ──
+  const [lrList, setLrList] = useState<LrDataset[]>([])
+  const [lrId, setLrId] = useState('')
+  const [episode, setEpisode] = useState(0)
+  const [cam, setCam] = useState('')
+  const [stride, setStride] = useState(30)
+  const [importing, setImporting] = useState(false)
+  // 뷰어는 chunk mp4 를 그대로 튼다 — 디코딩 캐시가 필요 없다.
+  // 에피소드 경계(chunk/file/from/to)는 상세 응답의 episodes 레코드에서
+  const [lrEpisodes, setLrEpisodes] = useState<Record<string, number>[]>([])
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [epCaptured, setEpCaptured] = useState(0)
+
+  useEffect(() => {
+    if (tab !== 'episode') return
+    api.get<LrDataset[]>('/datasets').then((list) => {
+      setLrList(list)
+      if (!lrId && list.length > 0) setLrId(list[0].id)
+    }).catch(() => {})
+  }, [tab])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (tab !== 'episode' || !lrId) return
+    api.get<{ episodes: Record<string, number>[] }>(`/datasets/${encodeURIComponent(lrId)}`)
+      .then((d) => setLrEpisodes(d.episodes ?? []))
+      .catch(() => setLrEpisodes([]))
+  }, [tab, lrId])
+
+  const lrDs = lrList.find((d) => d.id === lrId)
+  const lrCams = useMemo(() =>
+    Object.keys(lrDs?.features ?? {})
+      .filter((k) => k.startsWith('observation.images.'))
+      .map((k) => k.replace('observation.images.', '')),
+    [lrDs])
+
+  useEffect(() => {
+    if (lrCams.length > 0 && !lrCams.includes(cam)) setCam(lrCams[0])
+  }, [lrCams, cam])
+
+  const epRec = lrEpisodes.find((e) => (e.episode_index ?? e.index) === episode)
+  const vKey = `videos/observation.images.${cam}/`
+  const vm = epRec && epRec[`${vKey}chunk_index`] != null ? {
+    chunk: epRec[`${vKey}chunk_index`], file: epRec[`${vKey}file_index`],
+    from: epRec[`${vKey}from_timestamp`], to: epRec[`${vKey}to_timestamp`],
+  } : null
+  const videoUrl = vm && lrId && cam
+    ? `/api/datasets/${encodeURIComponent(lrId)}/videos/${cam}/${vm.chunk}/${vm.file}`
+    : null
+
+  const importEpisode = async (indices?: number[]) => {
+    if (!current) { notifyError(t('먼저 데이터셋을 만드세요')); return }
+    setImporting(true)
+    try {
+      const r = await api.post<{ added: number; total_frames: number; method: string }>(
+        `/detector/datasets/${current}/import-episode`,
+        { dataset_id: lrId, episode, cam, stride, indices })
+      notify({
+        level: 'info', source: t('검출 학습'),
+        text: t('{added}장 가져옴 (전체 {total_frames}프레임, {stride}간격{method})', { added: r.added, total_frames: r.total_frames, stride, method: r.method === 'video' ? t(', mp4 직접 추출') : '' }),
+      })
+      await refreshDatasets(current)
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('가져오기 실패')) }
+    finally { setImporting(false) }
+  }
+
+  /** 재생 중인 그 장면을 canvas 로 떠서 업로드 — EpisodesPage 훅과 같은 방식 */
+  const captureEpFrame = async () => {
+    const v = videoRef.current
+    if (!current) { notifyError(t('먼저 데이터셋을 만드세요')); return }
+    if (!v || v.readyState < 2 || !vm) { notifyError(t('비디오가 아직 준비되지 않았습니다')); return }
+    try {
+      const canvas = document.createElement('canvas')
+      canvas.width = v.videoWidth
+      canvas.height = v.videoHeight
+      canvas.getContext('2d')!.drawImage(v, 0, 0)
+      const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9))
+      if (!blob) throw new Error(t('canvas 캡처 실패'))
+      const sec = Math.max(0, v.currentTime - vm.from)
+      const q = new URLSearchParams({
+        type: 'episode', dataset: lrId, episode: String(episode), cam, t: sec.toFixed(3),
+      })
+      const res = await fetch(`/api/detector/datasets/${current}/images?${q}`, { method: 'POST', body: blob })
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => null))?.detail
+        throw new Error(tb(detail) ?? `${res.status}`)
+      }
+      setEpCaptured((n) => n + 1)
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('캡처 실패')) }
+  }
+
+  // ── 라벨 탭 ──
+  // 파일 목록은 탭 진입·필터 변경 때 **스냅샷**한다 — 라벨을 저장할 때마다
+  // "미라벨만" 목록이 줄어들며 인덱스가 튀는 걸 막는다.
+  const [labelFilter, setLabelFilter] = useState<'all' | 'unlabeled'>('all')
+  const [labelFiles, setLabelFiles] = useState<string[]>([])
+  const [labelIdx, setLabelIdx] = useState(0)
+
+  const snapshotLabelFiles = useCallback((filter: 'all' | 'unlabeled', startFile?: string) => {
+    const files = images.filter((i) => filter === 'all' || !i.labeled).map((i) => i.file)
+    setLabelFiles(files)
+    const at = startFile ? files.indexOf(startFile) : -1
+    setLabelIdx(at >= 0 ? at : 0)
+  }, [images])
+
+  const openLabeler = (startFile?: string) => {
+    // 특정 이미지에서 열 때는 필터를 전체로 — 라벨된 이미지도 다시 볼 수 있어야 한다
+    const filter = startFile ? 'all' : labelFilter
+    setLabelFilter(filter)
+    snapshotLabelFiles(filter, startFile)
+    setTab('label')
+  }
+
+  const onLabelSaved = (file: string, labeled: boolean) => {
+    setImages((imgs) => imgs.map((i) => (i.file === file ? { ...i, labeled } : i)))
+  }
+
+  // ── 사전 라벨 ──
+  const [plModel, setPlModel] = useState('PekingU/rtdetr_v2_r18vd')
+  const [plModels, setPlModels] = useState<string[]>([])
+  const [plConf, setPlConf] = useState(0.25)
+  const [plBusy, setPlBusy] = useState(false)
+
+  useEffect(() => {
+    if (tab !== 'label') return
+    api.get<{ models: { file: string }[] }>('/vision/models')
+      .then((r) => setPlModels(r.models.map((m) => m.file)))
+      .catch(() => {})
+  }, [tab])
+
+  const runPrelabel = async () => {
+    setPlBusy(true)
+    try {
+      const r = await api.post<{ labeled: number; boxes: number; no_match: number; targets: number }>(
+        `/detector/datasets/${current}/prelabel`, { model: plModel, conf: plConf })
+      notify({
+        level: 'info', source: t('검출 학습'),
+        text: t('사전 라벨: {targets}장 중 {labeled}장에 박스 {boxes}개{no_match}', { targets: r.targets, labeled: r.labeled, boxes: r.boxes, no_match: (r.no_match > 0 ? t(' (이름 불일치로 버린 박스 {no_match}개)', { no_match: r.no_match }) : '') }),
+      })
+      await refreshImages()
+      snapshotLabelFiles(labelFilter)
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('사전 라벨 실패')) }
+    finally { setPlBusy(false) }
+  }
+
+  // ── 학습 탭 ──
+  const [trainStatus, setTrainStatus] = useState<TrainStatus | null>(null)
+  const [trBase, setTrBase] = useState('PekingU/rtdetr_v2_r18vd')
+  const [trEpochs, setTrEpochs] = useState(50)
+  const [trImgsz, setTrImgsz] = useState(640)
+  const [trBusy, setTrBusy] = useState(false)
+
+  const trainRunning = trainStatus?.state === 'running' || trainStatus?.state === 'starting'
+
+  useEffect(() => {
+    if (tab !== 'train') return
+    let alive = true
+    const poll = () =>
+      api.get<TrainStatus>('/detector/train/status').then((r) => { if (alive) setTrainStatus(r) }).catch(() => {})
+    void poll()
+    const t = setInterval(() => void poll(), 2000)
+    // 학습 탭도 사전 라벨용 모델 목록을 쓴다 (base 선택)
+    api.get<{ models: { file: string }[] }>('/vision/models')
+      .then((r) => setPlModels(r.models.map((m) => m.file)))
+      .catch(() => {})
+    return () => { alive = false; clearInterval(t) }
+  }, [tab])
+
+  const startTrain = async () => {
+    setTrBusy(true)
+    try {
+      await api.post('/detector/train', {
+        dataset: current, base_model: trBase, epochs: trEpochs, imgsz: trImgsz,
+      })
+      notify({ level: 'info', text: t('학습 시작: {current} ({trBase}, {trEpochs}에폭)', { current, trBase, trEpochs }), source: t('검출 학습') })
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('학습 시작 실패')) }
+    finally { setTrBusy(false) }
+  }
+
+  const stopTrain = async () => {
+    setTrBusy(true)
+    try { await api.post('/detector/train/stop') } catch (e) {
+      notifyError(e instanceof Error ? e.message : t('정지 실패'))
+    } finally { setTrBusy(false) }
+  }
+
+  const deleteImage = async (file: string) => {
+    try {
+      await api.delete(`/detector/datasets/${current}/images/${file}`)
+      setImages((imgs) => imgs.filter((i) => i.file !== file))
+    } catch (e) { notifyError(e instanceof Error ? e.message : t('삭제 실패')) }
+  }
+
+  const ds = datasets.find((d) => d.name === current)
+
+  return (
+    <div className="space-y-4">
+      {/* ── 데이터셋 선택/생성 ── */}
+      <header className="flex items-center gap-3 flex-wrap">
+        <h1 className="text-2xl font-bold">{t('검출 학습')}</h1>
+        <select value={current} onChange={(e) => setCurrent(e.target.value)}
+          className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1 text-sm">
+          {datasets.length === 0 && <option value="">{t('데이터셋 없음')}</option>}
+          {datasets.map((d) => (
+            <option key={d.name} value={d.name}>{d.name} ({d.labeled}/{d.images})</option>
+          ))}
+        </select>
+        <button onClick={() => setCreating((c) => !c)}
+          className="px-2 py-1 text-sm rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300">
+          {t('＋ 새 데이터셋')}
+        </button>
+        {ds && (
+          <>
+            <span className="text-xs text-neutral-500">
+              {t('클래스: {classes}', { classes: ds.classes.join(', ') })}
+            </span>
+            {addingCls ? (
+              <span className="flex items-center gap-1 text-xs">
+                <input value={newCls} onChange={(e) => setNewCls(e.target.value)} autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void handleAddClasses()
+                    if (e.key === 'Escape') { setAddingCls(false); setNewCls('') }
+                  }}
+                  placeholder={t('추가할 클래스 (콤마 구분)')}
+                  className="w-48 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
+                <button onClick={() => void handleAddClasses()}
+                  className="px-2 py-1 rounded bg-green-700 hover:bg-green-600 text-white">{t('추가')}</button>
+              </span>
+            ) : (
+              <button onClick={() => setAddingCls(true)}
+                title={t('클래스는 추가만 됩니다 — 삭제·순서 변경은 기존 라벨을 깨뜨립니다')}
+                className="text-xs text-neutral-500 hover:text-white">{t('＋ 클래스')}</button>
+            )}
+            <button onClick={() => void handleDeleteDataset()}
+              className="text-sm text-neutral-600 hover:text-red-400">{t('삭제')}</button>
+          </>
+        )}
+      </header>
+
+      {creating && (
+        <div className="flex items-center gap-2 flex-wrap rounded-lg border border-neutral-700 bg-neutral-800 p-3 text-sm">
+          <input value={newName} onChange={(e) => setNewName(e.target.value)}
+            placeholder={t('이름 (영숫자/_/-)')}
+            className="w-44 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
+          <input value={newClasses} onChange={(e) => setNewClasses(e.target.value)}
+            placeholder={t('클래스 (콤마 구분: pet_bottle, can, ...)')}
+            className="flex-1 min-w-60 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
+          <button onClick={() => void handleCreate()}
+            className="px-3 py-1 rounded bg-green-700 hover:bg-green-600 text-white">{t('생성')}</button>
+        </div>
+      )}
+
+      {/* 대상 데이터셋이 없으면 아래 기능 전부가 갈 곳이 없다 — 탭을 감춘다 */}
+      {!ds ? (
+        <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-12 text-center text-sm text-neutral-500">
+          {t.rich('데이터셋이 없습니다 — 위의 {b}으로 만들고 시작하세요', {
+            b: <b className="text-neutral-300">{t('＋ 새 데이터셋')}</b>,
+          })}
+          <div className="mt-2 text-xs text-neutral-600">
+            {t('캡처·라벨·학습·갤러리는 모두 대상 데이터셋 안에서 동작합니다')}
+          </div>
+        </div>
+      ) : (
+        <>
+      {/* ── 탭 ── */}
+      <div className="flex gap-1 border-b border-neutral-700 text-sm">
+        {([
+          ['live', t('라이브 캡처')],
+          ['episode', t('에피소드 캡처')],
+          ['label', t('라벨 ({length}/{length_2})', { length: images.filter((i) => i.labeled).length, length_2: images.length })],
+          ['train', t('학습')],
+          ['gallery', t('갤러리 ({length})', { length: images.length })],
+        ] as const).map(([k, label]) => (
+          <button key={k}
+            onClick={() => { if (k === 'label') openLabeler(); else setTab(k) }}
+            className={`px-4 py-2 -mb-px border-b-2 ${
+              tab === k ? 'border-blue-500 text-white' : 'border-transparent text-neutral-500 hover:text-neutral-300'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'live' && (
+          <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
+            <div className="flex items-center gap-3">
+              <h2 className="font-semibold">{t('라이브 캡처')}</h2>
+              <label className="text-xs text-neutral-400 ml-auto">{t('자동 간격')}
+                <select value={intervalS} onChange={(e) => setIntervalS(Number(e.target.value))}
+                  className="ml-1 rounded bg-neutral-900 border border-neutral-700 px-1 py-0.5">
+                  {[2, 5, 10, 30].map((v) => <option key={v} value={v}>{t('{v}초', { v })}</option>)}
+                </select>
+              </label>
+            </div>
+            {segments.length === 0 ? (
+              <div className="text-sm text-neutral-500">{t('살아 있는 카메라 세그먼트가 없습니다')}</div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {segments.map((s) => (
+                  <div key={s} className="rounded-lg overflow-hidden border border-neutral-700">
+                    <img src={`/api/vision/segments/${encodeURIComponent(s)}/snapshot?t=${tick}`}
+                      alt={s} className="w-full aspect-video object-cover bg-black"
+                      onError={(e) => { e.currentTarget.style.opacity = '0.25' }}
+                      onLoad={(e) => { e.currentTarget.style.opacity = '1' }} />
+                    <div className="flex items-center gap-2 px-2 py-1.5 bg-neutral-900 text-xs">
+                      <span className="font-mono text-neutral-400 truncate flex-1">{shortId(s)}</span>
+                      {captured[s] != null && <span className="text-green-400">+{captured[s]}</span>}
+                      <label className="flex items-center gap-1 text-neutral-500">
+                        <input type="checkbox" checked={auto.has(s)}
+                          onChange={(e) => {
+                            const next = new Set(auto)
+                            if (e.target.checked) next.add(s); else next.delete(s)
+                            setAuto(next)
+                          }} />{t('자동')}
+                      </label>
+                      <button onClick={() => void captureLive(s)}
+                        className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-green-600 text-neutral-200">
+                        {t('📸 캡처')}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+      )}
+
+      {tab === 'episode' && (
+          <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
+            <h2 className="font-semibold">{t('에피소드에서 가져오기')}</h2>
+            <div className="flex items-center gap-3 flex-wrap text-sm">
+              <select value={lrId} onChange={(e) => { setLrId(e.target.value); setEpisode(0) }}
+                className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1 max-w-72">
+                {lrList.map((d) => <option key={d.id} value={d.id}>{d.id} ({d.total_episodes}ep)</option>)}
+              </select>
+              <label className="text-neutral-400">ep
+                <input type="number" min={0} max={(lrDs?.total_episodes ?? 1) - 1} value={episode}
+                  onChange={(e) => setEpisode(Number(e.target.value))}
+                  className="ml-1 w-16 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
+              </label>
+              <select value={cam} onChange={(e) => setCam(e.target.value)}
+                className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1">
+                {lrCams.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <label className="text-neutral-400">{t('간격')}
+                <input type="number" min={1} value={stride}
+                  onChange={(e) => setStride(Number(e.target.value))}
+                  className="ml-1 w-16 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
+                <span className="ml-1 text-xs text-neutral-600">{t('프레임 ({fps}fps)', { fps: lrDs?.fps ?? 30 })}</span>
+              </label>
+              <button onClick={() => void importEpisode()} disabled={importing || !lrId}
+                title={t('캐시가 있으면 파일 복사, 없으면 mp4 에서 직접 추출 — 캐시 생성 불필요')}
+                className="px-3 py-1 rounded bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-50">
+                {importing ? t('가져오는 중…') : t('일괄 가져오기')}
+              </button>
+            </div>
+
+            {/* 동영상 재생 + 낱장 캡처 — chunk mp4 그대로, 디코딩 캐시 불필요 */}
+            {videoUrl ? (
+              <div className="space-y-2 max-w-2xl">
+                <video ref={videoRef} src={videoUrl} controls muted playsInline preload="metadata"
+                  className="w-full rounded border border-neutral-700 bg-black"
+                  onLoadedMetadata={(e) => { if (vm) e.currentTarget.currentTime = vm.from }} />
+                <div className="flex items-center gap-3 text-sm">
+                  <button onClick={() => void captureEpFrame()}
+                    className="px-3 py-1 rounded bg-neutral-700 hover:bg-green-600 text-neutral-200">
+                    {t('📸 이 장면 캡처')}
+                  </button>
+                  {epCaptured > 0 && <span className="text-green-400 text-xs">+{epCaptured}</span>}
+                  {vm && (
+                    <span className="text-xs text-neutral-600">
+                      {t('에피소드 구간 {from}~{to}s — 재생·탐색하다가 원하는 장면에서 캡처', { from: vm.from.toFixed(1), to: vm.to.toFixed(1) })}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              lrId && <div className="text-sm text-neutral-500">{t('에피소드 메타 로드 중… (또는 이 카메라의 비디오 없음)')}</div>
+            )}
+          </section>
+      )}
+
+      {tab === 'label' && ds && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 flex-wrap text-sm">
+            <select value={labelFilter}
+              onChange={(e) => {
+                const f = e.target.value as 'all' | 'unlabeled'
+                setLabelFilter(f)
+                snapshotLabelFiles(f)
+              }}
+              className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1">
+              <option value="all">{t('전체')}</option>
+              <option value="unlabeled">{t('미라벨만')}</option>
+            </select>
+            <div className="flex items-center gap-2 ml-auto text-xs text-neutral-400">
+              {t('사전 라벨:')}
+              <select value={plModel} onChange={(e) => setPlModel(e.target.value)}
+                className="rounded bg-neutral-900 border border-neutral-700 px-2 py-1">
+                {!plModels.includes(plModel) && <option value={plModel}>{plModel}</option>}
+                {plModels.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <label>conf
+                <input type="number" step="0.05" min="0" max="1" value={plConf}
+                  onChange={(e) => setPlConf(Number(e.target.value))}
+                  className="ml-1 w-16 rounded bg-neutral-900 border border-neutral-700 px-1.5 py-1" />
+              </label>
+              <button onClick={() => void runPrelabel()} disabled={plBusy}
+                title={t('미라벨 이미지 전체를 모델로 훑어 초안 박스를 채운다 — 모델 클래스 이름이 데이터셋 클래스와 일치할 때만')}
+                className="px-2.5 py-1 rounded bg-blue-800 hover:bg-blue-700 text-white disabled:opacity-50">
+                {plBusy ? t('실행 중… (모델 로드 수 초)') : t('미라벨 일괄 사전 라벨')}
+              </button>
+            </div>
+          </div>
+
+          <DetectorLabeler dataset={current} classes={ds.classes} files={labelFiles} index={labelIdx}
+            onNavigate={setLabelIdx} onSaved={onLabelSaved} onError={notifyError} />
+
+          {/* 필름스트립 */}
+          {labelFiles.length > 0 && (
+            <div className="flex gap-1.5 overflow-x-auto pb-1">
+              {labelFiles.map((f, i) => {
+                const labeled = images.find((im) => im.file === f)?.labeled
+                return (
+                  <button key={f} onClick={() => setLabelIdx(i)}
+                    className={`relative shrink-0 w-24 rounded overflow-hidden border ${
+                      i === labelIdx ? 'border-blue-500' : 'border-neutral-700 opacity-60 hover:opacity-100'}`}>
+                    <img src={`/api/detector/datasets/${current}/images/${f}`} alt=""
+                      loading="lazy" className="w-full aspect-video object-cover bg-black" />
+                    {labeled && <span className="absolute top-0.5 left-0.5 w-2 h-2 rounded-full bg-green-500" />}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'train' && (
+        <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-4">
+          <div className="flex items-center gap-3">
+            <h2 className="font-semibold">{t('커스텀 가중치 학습')}</h2>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${
+              trainRunning ? 'bg-green-900/70 text-green-300' : 'bg-neutral-700 text-neutral-500'}`}>
+              {trainStatus?.state ?? '…'}
+            </span>
+            {trainRunning && (
+              <button onClick={() => void stopTrain()} disabled={trBusy}
+                className="ml-auto px-3 py-1 text-sm rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white disabled:opacity-50">
+                {t('정지')}
+              </button>
+            )}
+          </div>
+
+          {!trainRunning && (
+            <div className="flex items-center gap-4 flex-wrap text-sm">
+              <label className="text-neutral-400">{t.rich('데이터셋{span}{span_2}', { span: <span className="ml-1 text-neutral-200">{current || '—'}</span>, span_2: <span className="ml-1 text-xs text-neutral-600">
+                  {t('(라벨')}{' '}{images.filter((i) => i.labeled).length}{t('장)')}
+                </span> })}
+              </label>
+              <label className="text-neutral-400">{t('베이스')}
+                <select value={trBase} onChange={(e) => setTrBase(e.target.value)}
+                  className="ml-1 rounded bg-neutral-900 border border-neutral-700 px-2 py-1">
+                  {!plModels.includes(trBase) && <option value={trBase}>{trBase}</option>}
+                  {plModels.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </label>
+              <label className="text-neutral-400">{t('에폭')}
+                <input type="number" min={1} max={1000} value={trEpochs}
+                  onChange={(e) => setTrEpochs(Number(e.target.value))}
+                  className="ml-1 w-20 rounded bg-neutral-900 border border-neutral-700 px-2 py-1" />
+              </label>
+              <label className="text-neutral-400">imgsz
+                <select value={trImgsz} onChange={(e) => setTrImgsz(Number(e.target.value))}
+                  className="ml-1 rounded bg-neutral-900 border border-neutral-700 px-2 py-1">
+                  {[320, 480, 640, 960].map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </label>
+              {/* ⚠ 최소 조건은 **라벨된 이미지 4장**이다(상자 수가 아니다) — train/val 로 나누려면
+                  양쪽에 이미지가 있어야 한다. 버튼만 잠그고 이유를 안 말하면 사람은 베이스나
+                  에폭을 바꿔 보다가 포기한다(사용자 보고 2026-09-29: "2장에 라벨 4개, 버튼이 안 켜진다"). */}
+              <button onClick={() => void startTrain()}
+                disabled={trBusy || !current || labeledCount < MIN_LABELED}
+                title={labeledCount < MIN_LABELED
+                  ? t('라벨된 이미지가 {labeledCount}장입니다 — 최소 {MIN_LABELED}장 필요 (상자 수가 아니라 이미지 수)', { labeledCount, MIN_LABELED }) : undefined}
+                className="px-4 py-1.5 rounded bg-green-700 hover:bg-green-600 text-white disabled:opacity-40">
+                {trBusy ? t('시작 중…') : t('▶ 학습 시작')}
+              </button>
+              {labeledCount < MIN_LABELED && (
+                <span className="text-xs text-amber-400">
+                  {t('라벨된 이미지 {labeledCount}/{MIN_LABELED}장 — 상자가 있는 이미지를 {MIN_LABELED_2}장 더 만드세요', {
+                    labeledCount,
+                    MIN_LABELED,
+                    MIN_LABELED_2: MIN_LABELED - labeledCount,
+                  })}
+                </span>
+              )}
+              <span className="text-xs text-neutral-600 basis-full">
+                {t('이전 커스텀 가중치를 베이스로 고르면 이어서 파인튜닝. val 분할은 출처(에피소드) 단위 — 완료되면 데모 페이지 모델 목록에 자동 등장')}
+              </span>
+            </div>
+          )}
+
+          {/* 진행 — 스크립트 상태 파일 + results.csv */}
+          {trainStatus?.info && (
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center gap-3 flex-wrap text-neutral-400">
+                <span className="font-mono text-neutral-300">{trainStatus.info.dataset}</span>
+                <span>{t('{base_model} · {epochs}에폭 · {imgsz}px', { base_model: trainStatus.info.base_model, epochs: trainStatus.info.epochs, imgsz: trainStatus.info.imgsz })}</span>
+                {trainStatus.info.train != null && (
+                  <span className="text-xs">train {trainStatus.info.train} / val {trainStatus.info.val}</span>
+                )}
+              </div>
+
+              {trainRunning && (() => {
+                const last = trainStatus.progress[trainStatus.progress.length - 1]
+                const pct = last ? Math.round((last.epoch / trainStatus.info!.epochs) * 100) : 0
+                return (
+                  <div className="space-y-1">
+                    <div className="h-2 rounded bg-neutral-700 overflow-hidden">
+                      <div className="h-full bg-blue-600 transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                    <div className="text-xs text-neutral-500 tabular-nums">
+                      {last
+                        ? t('에폭 {epoch}/{epochs} · box_loss {box_loss} · mAP50 {map50}', { epoch: last.epoch, epochs: trainStatus.info.epochs, box_loss: last.box_loss, map50: last.map50 })
+                        : t('첫 에폭 준비 중… (모델 로드·캐시 생성)')}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {trainStatus.info.state === 'done' && !trainRunning && (
+                <div className="rounded border border-green-800 bg-green-950/40 p-3 space-y-2">
+                  <div>{t.rich('✅ 완료 — {b}', { b: <b className="font-mono">{trainStatus.info.weight}</b> })}</div>
+                  <div className="text-xs text-neutral-400">
+                    mAP50 {trainStatus.info.map50} · mAP50-95 {trainStatus.info.map50_95}
+                  </div>
+                  {trainStatus.info.weight && (
+                    <Link to={`/detector?model=${encodeURIComponent(trainStatus.info.weight)}`}
+                      className="inline-block px-3 py-1 text-sm rounded bg-green-700 hover:bg-green-600 text-white">
+                      {t('▶ 데모에서 이 가중치로 열기')}
+                    </Link>
+                  )}
+                </div>
+              )}
+              {trainStatus.info.state === 'failed' && !trainRunning && (
+                <div className="rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-300">
+                  {t.rich('학습 실패: {error}', { error: trainStatus.info.error })}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {tab === 'gallery' && (
+        <section className="space-y-3">
+          <div className="text-sm text-neutral-400">
+            {t('{length}장 · 라벨', { length: images.length })}{' '}{images.filter((i) => i.labeled).length}{t('장')}
+            <button onClick={() => void refreshImages()}
+              className="ml-3 text-neutral-500 hover:text-white">{t('새로고침')}</button>
+          </div>
+          {images.length === 0 ? (
+            <div className="text-sm text-neutral-500 py-10 text-center">
+              {t('이미지가 없습니다 — 캡처 탭에서 모으세요')}
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-2">
+              {images.map((img) => (
+                <div key={img.file} className="relative group rounded overflow-hidden border border-neutral-700">
+                  <img src={`/api/detector/datasets/${current}/images/${img.file}`} alt=""
+                    loading="lazy" onClick={() => openLabeler(img.file)}
+                    className="w-full aspect-video object-cover bg-black cursor-pointer"
+                    title={t('클릭해서 라벨 편집')} />
+                  <div className="absolute bottom-0 inset-x-0 px-1.5 py-0.5 bg-black/60 text-[10px] text-neutral-300 truncate">
+                    {sourceBadge(img.source)}
+                  </div>
+                  {img.labeled && (
+                    <span className="absolute top-1 left-1 w-2 h-2 rounded-full bg-green-500" title={t('라벨됨')} />
+                  )}
+                  <button onClick={() => void deleteImage(img.file)}
+                    className="absolute top-1 right-1 w-5 h-5 rounded bg-black/60 text-neutral-400 hover:text-red-400 opacity-0 group-hover:opacity-100 text-xs">
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+        </>
+      )}
+    </div>
+  )
+}

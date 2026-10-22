@@ -125,8 +125,17 @@ class EstopBridge:
         try:
             any_running = False
             for activity in _TRACKED:
+                if activity is Activity.PLUGIN:
+                    continue          # 아래에서 플러그인마다 따로 올린다
                 pid = _pid_of(activity)
                 self._bus.set_activity_pid(activity.value, pid)
+                any_running = any_running or pid is not None
+            # 플러그인은 여럿이라 키가 `plugin:<name>` 이다. estopd 는 키를 가리지 않고
+            # 버스의 PID 를 전부 죽이므로 데몬은 모른 채로 된다 (feature/plugins.md §3-7).
+            from app.services.plugins import registry as _plugins
+
+            for key, pid in _plugins.estop_pids().items():
+                self._bus.set_activity_pid(key, pid)
                 any_running = any_running or pid is not None
             # 로봇을 움직이는 게 하나도 없으면 감시를 끈다 (오탐 방지)
             self._bus.set_armed(any_running)

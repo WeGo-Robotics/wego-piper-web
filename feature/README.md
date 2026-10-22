@@ -11,7 +11,7 @@
 | 외부 학습 서버 (Vast.ai) | 임대 GPU 조달·파기·왕복 전송·비용 가드·도우미 — cloud-training 5~8 구체화 | 검증된 SSH 러너·레지스트리 위에 **프로바이더 층만 얹는다** — 러너 신규 없음. ☐ 09-14 작업 분해 W0~W5 (컨테이너에 ssh 가 없다는 전제 추가) | [vast-training.md](vast-training.md) |
 | 파라미터 프리셋 | 추론·학습 설정을 이름 붙여 저장·재사용 | 추론 부분이 **#1 단계 2(PARAM_SPEC)에 의존** | [parameter-presets.md](parameter-presets.md) |
 | 데모 시나리오 격차 | [데모 시나리오](../PiPER_AI_데모_시나리오_정리.md) 수행에 필요한 공통 격차 4개(뎁스 경로·에피소드 루프·센서 입력·양팔 수집) 분석 | camerad 없이 가능한 지름길과 미룰 것을 구분 | [demo-scenario-gaps.md](demo-scenario-gaps.md) |
-| 에피소드 오케스트레이터 | 스냅샷→판단→실행→리셋 루프. 스텝은 Python, 시퀀스는 YAML 스펙 (ComfyUI 방식, Lua 기각) | 지금은 백엔드 서비스, Redis 이후 버스 클라이언트로 — 프로토콜은 불변 | [episode-orchestrator.md](episode-orchestrator.md) |
+| ~~에피소드 오케스트레이터~~ | ⛔ **폐기 → [플러그인](plugins.md) §12 로 대체** (2026-10-20). 1단계 루프는 번들 플러그인 `recycling` 으로, 2단계(YAML 스텝)는 만들지 않는다 | 외부 API `missions` 표면은 그대로, 구현만 플러그인 위로 | [episode-orchestrator.md](episode-orchestrator.md) |
 | 텔레오퍼레이션 | 리더암 릴레이 · 관절 조그 · **엔드포인트(SDK 온보드 IK)** 셋을 한 화면에. 조그는 [manual-control](manual-control.md) 재사용 | shm 명령 경로가 이미 있어 조그는 소비자 하나. 엔드포인트만 `filter_goal` 이 안 걸려 별도 제한이 필요 | [teleoperation.md](teleoperation.md) |
 | 수동 조작 + 중력 보상 | 추론 없이 웹 조그(있는 shm 경로에 소비자만 추가) + MIT 모드 중력 보상 드래그 → 손으로 끌며 녹화(단팔 데이터 수집) | 조그는 robotd(3b-5) 완성으로 **지금 가능**. 중력 보상은 **트랙 E(URDF) 의존** — URDF 수혜자가 둘이 된다 | [manual-control.md](manual-control.md) |
 | 양팔(bimanual) | G4 구현 — 양팔 조립을 wrapper 즉석 코드에서 LeRobot bi 클래스로 내려 녹화·로컬/gRPC 추론·파킹이 한 구현 공유. 핸드오버(우선순위 2)의 블로커 해소 | robotd/shm 이 팔 단위라 **안 겹침** — bi 클래스는 지금 가능, 실질 전제는 하드웨어(팔 4대 + udev) | [bimanual.md](bimanual.md) |
@@ -31,6 +31,7 @@
 | 현장 배포·운영 검토 | 대회·일반 사용자 환경 일곱 항목 — 공유 Vast 계정 · Windows/Mac · 부팅 실패 안내 · 오프라인(USB·로컬 서버) 설치 · 바탕화면 아이콘 · Colab · CI 설치 검증 후 릴리스. 항목마다 지금·조사·권고·규모 | 코드 변경은 작다 — 대부분 배포 스크립트·unitd·프론트 관문 층. 릴리스 절차만 게이트가 하나 는다 | [field-deployment.md](field-deployment.md) |
 | 다국어 | 화면 언어 선택(ko·en 시작, **파일 하나 = 언어 하나**). 키는 한국어 원문, 백엔드 문장은 키의 모양으로 맞춘다 | 프론트 + 도구 뿐, 백엔드·데몬 무수정 — **언어를 바꿔도 새로고침하지 않는다**(E-stop heartbeat) | [i18n.md](i18n.md) |
 | 스트림 기준 카메라 | 등록한 카메라는 **사용자가 이름 붙이는 shm 스트림**(영문, 기본 장치명+번호, 별칭과 통합)으로 받아간다. 연결된 것만 선택, 스캔은 직접 열어 사진만, 유휴 자동 종료 옵션 | 게이트웨이 레지스트리 + 데몬 세 곳(이름 수신·발행자 pid·probe) + 선택기. wrapper·플러그인 무수정. ◐ 기본 전송 shm·레지스트리·개명·별칭 통합·선택기·데몬 이름 발행·유휴 종료 ☑, 스캔 썸네일(실기 선행) ☐ | [stream-based-cameras.md](stream-based-cameras.md) |
+| 플러그인 | 사용자 파이썬 스크립트를 **폴더(매니페스트+main.py)** 로 얹어 웹에서 켜고 끈다. 카메라는 shm, 검출·상태는 버스, 추론 시작은 REST(실행마다 발급하는 범위 토큰, `*` 허용). 자기 화면은 **같은 포트로 프록시 + iframe** — heartbeat 가 브라우저 탭에 살기 때문 | detectord 와 같은 자리(`make_process`)라 데몬·전송·포트 신규 없음. E-stop 대상, 재부착 없음(수동 재시작). **오케스트레이터와 detectord 를 흡수한다**(분리수거 루프 = 번들 `recycling`, 검출기 = 번들 `detector` — 검출기 동시 여러 개가 이걸로 된다). 프론트는 페이지 하나 + 프록시 블록. ☐ 기획 확정 | [plugins.md](plugins.md) |
 | 가중치 분석기 | 추론 분석 화면의 탭 — 체크포인트 개요(손실·오프라인 오차·실기 성공을 step 축 하나에), 데이터셋 에피소드 open-loop 평가(페이즈별 오차), 학습 프레임을 복제 도장으로 고친 장면의 반응 | LeRobot 을 부르는 스크립트 하나(`wrapper/offline_eval.py`) + 작업 유닛. GPU 배타에 한 줄. ◐ 1단계 진행 | [weight-analyzer.md](weight-analyzer.md) |
 | 에피소드 분석기 | 에피소드 화면 **POS분석** 탭 — 여러 데이터셋의 파지 순간(GRASP 시작)을 말단 3D + 마디별 색 스틱 + 관절별 분포로. 점 → 뷰어 그 프레임 | 페이즈 사이드카·FK 를 **읽기만** 한다 — 새 검출기·데몬 없음. ◐ 1단계 ☑ | [episode-analyzer.md](episode-analyzer.md) |
 

@@ -10,7 +10,7 @@ camerad 와 같은 계약·같은 어휘. 다른 점:
   `piper_cam.controls` 의 자동 모드 순서 규칙(AUTO_SWITCHES)·단위(CONTROL_UNITS)가
   그 이름을 보므로, 프로파일 적용·회색카드·조명 감시가 시뮬에서 그대로 시험된다.
   노출×게인 = 밝기 배율, 색온도 = 채널 게인, brightness = 오프셋.
-- **세그먼트는 BGR** 이다 (yolod 가 RGB 로 오독했던 사고의 재발 방지 — 소비자 규약).
+- **세그먼트는 BGR** 이다 (detectord 가 RGB 로 오독했던 사고의 재발 방지 — 소비자 규약).
 """
 
 import logging

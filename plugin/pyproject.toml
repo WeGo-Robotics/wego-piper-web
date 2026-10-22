@@ -1,0 +1,20 @@
+[project]
+name = "piper_plugin"
+version = "0.1.0"
+description = "PIPER 플러그인 SDK — 카메라(shm)·버스·게이트웨이 REST 를 감싼 작은 계약 (feature/plugins.md §7)"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = ["piper_bus", "piper_shm", "numpy", "pyyaml", "pydantic>=2"]
+
+[project.scripts]
+piper-plugin = "piper_plugin.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["piper_plugin*"]
+
+[tool.setuptools.package-data]
+piper_plugin = ["templates/*/*", "templates/*/*/*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

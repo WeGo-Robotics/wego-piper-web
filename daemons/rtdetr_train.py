@@ -7,11 +7,11 @@ Apache-2.0 이고 `transformers` 에 구현이 있으므로, 학습 루프만 �
 
 ## 계약
 
-`yolo_traind` 가 넘기는 것: 이미지 파일 목록(train/val), 클래스 이름, 하이퍼파라미터.
+`detector_traind` 가 넘기는 것: 이미지 파일 목록(train/val), 클래스 이름, 하이퍼파라미터.
 돌려주는 것: 지표 dict. 가중치는 `out_dir` 에 **HF 형식 디렉토리**로 저장한다 —
 `.pt` 단일 파일이 아니다(그 형식은 ultralytics 것이다).
 
-⚠ **라벨 형식은 그대로 YOLO txt(`cls cx cy w h`, 정규화)다.** 그건 ultralytics
+⚠ **라벨 형식은 그대로 txt 박스 라벨(`cls cx cy w h`, 정규화)다.** 그건 ultralytics
 코드가 아니라 사실상의 표준 텍스트 형식이라 바꿀 이유가 없다 — 이미 라벨해 둔
 데이터셋을 버리게 된다.
 """
@@ -24,7 +24,7 @@ import torch
 
 
 def _read_label(txt: Path, w: int, h: int) -> list[dict]:
-    """YOLO 정규화 `cls cx cy w h` → COCO 절대 `[x, y, w, h]`.
+    """정규화 `cls cx cy w h` → COCO 절대 `[x, y, w, h]`.
 
     ⚠ 중심좌표→좌상단 변환과 정규화 해제를 한 곳에서 한다. 두 군데로 나뉘면
     한쪽만 고쳐서 상자가 통째로 어긋나는데, 숫자만 보고는 알아채기 어렵다.

@@ -16,10 +16,10 @@ def encode_bgr(frame, quality: int = 80) -> bytes | None:
     예전에 이 인코딩이 세 벌로 복사돼 있었고 한 벌만 채널을 뒤집어서 노란 물체가
     파랗게 나왔다. 스트림이 네 번째 사본이 되면 안 된다.
     """
-    import cv2
+    # 구현은 SDK 에 하나다 — 플러그인도 같은 함수로 내보낸다 (feature/plugins.md §7)
+    from piper_plugin.image import encode_bgr as _encode
 
-    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
-    return buf.tobytes() if ok else None
+    return _encode(frame, quality)
 
 
 def segment_reader(name: str, quality: int = 80):
@@ -111,7 +111,7 @@ def segment_jpeg(name: str, quality: int = 80) -> bytes | None:
         # ⚠ 여기서 `frame[:, :, ::-1]` 로 채널을 뒤집었었다 — "세그먼트는 RGB" 라는
         #   주석과 함께. **세그먼트는 BGR 이다.** rsd 는 `to_bgr` 를 거친 프레임을,
         #   camerad 는 OpenCV 프레임을 그대로 발행한다. 그래서 이 경로로 나가는
-        #   화면만 노란 물체가 파랗게 나왔다(비전 페이지, YOLO 캡처). 같은
+        #   화면만 노란 물체가 파랗게 나왔다(비전 페이지, 검출 캡처). 같은
         #   세그먼트를 읽는 다른 두 곳은 안 뒤집는데 여기만 달랐다.
         return encode_bgr(got[0], quality)
     except Exception as exc:

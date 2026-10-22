@@ -58,7 +58,7 @@ def test_start_requires_cameras(client):
 
 def test_status_shape(client):
     r = client.get("/api/vision/status").json()
-    # model 은 yolod 자기소개 (없으면 None) — 데모 화면이 모델 세부 정보를 그린다
+    # model 은 detectord 자기소개 (없으면 None) — 데모 화면이 모델 세부 정보를 그린다
     assert {"state", "pid", "cams", "model"} <= r.keys()
 
 
@@ -103,7 +103,7 @@ def test_custom_model_list_resolve_delete(client, monkeypatch, tmp_path):
     from app.core.config import settings as cfg
     from app.routers import vision
 
-    monkeypatch.setattr(cfg, "yolo_models_dir", tmp_path)
+    monkeypatch.setattr(cfg, "detector_models_dir", tmp_path)
     d = tmp_path / "best-0831"
     d.mkdir()
     (d / "model.safetensors").write_bytes(b"weights-bytes")
@@ -129,7 +129,7 @@ def test_a_half_finished_run_is_not_offered(client, monkeypatch, tmp_path):
     from app.core.config import settings as cfg
     from app.routers import vision
 
-    monkeypatch.setattr(cfg, "yolo_models_dir", tmp_path)
+    monkeypatch.setattr(cfg, "detector_models_dir", tmp_path)
     half = tmp_path / "killed-0831"
     half.mkdir()
     (half / "model.safetensors").write_bytes(b"w")      # piper_meta.json 없음
@@ -151,7 +151,7 @@ def test_custom_model_meta_enriches_catalog(client, monkeypatch, tmp_path):
 
     from app.core.config import settings as cfg
 
-    monkeypatch.setattr(cfg, "yolo_models_dir", tmp_path)
+    monkeypatch.setattr(cfg, "detector_models_dir", tmp_path)
     d = tmp_path / "recycle-0820"
     d.mkdir()
     (d / "piper_meta.json").write_text(_json.dumps({
@@ -174,8 +174,8 @@ def test_resolve_refuses_anything_not_offered(client, monkeypatch, tmp_path):
     from app.core.config import settings as cfg
     from app.routers import vision
 
-    monkeypatch.setattr(cfg, "yolo_models_dir", tmp_path)
-    for bad in ("../../etc/passwd", "/etc/passwd", "yolo11n.pt", "aeiou"):
+    monkeypatch.setattr(cfg, "detector_models_dir", tmp_path)
+    for bad in ("../../etc/passwd", "/etc/passwd", "ultra_nano.pt", "aeiou"):
         with pytest.raises(Exception):
             vision._resolve_model(bad)
 
@@ -188,8 +188,8 @@ def test_status_says_why_the_daemon_died(client, monkeypatch):
     """
     from app.routers import vision
 
-    monkeypatch.setattr(vision._yolod_pm, "recent_log",
-                        lambda lines=20: ["ValueError: yolo11n.pt: 지원하지 않습니다"],
+    monkeypatch.setattr(vision._detectord_pm, "recent_log",
+                        lambda lines=20: ["ValueError: ultra_nano.pt: 지원하지 않습니다"],
                         raising=False)
     body = client.get("/api/vision/status").json()
     assert body["log"], "죽은 이유가 안 보인다"
@@ -200,8 +200,8 @@ def test_status_is_quiet_while_running(client, monkeypatch):
     """도는 중에는 사유를 안 붙인다 — 정상 로그를 에러처럼 보이게 하면 안 된다."""
     from app.routers import vision
 
-    monkeypatch.setattr(type(vision._yolod_pm), "is_running",
+    monkeypatch.setattr(type(vision._detectord_pm), "is_running",
                         property(lambda self: True), raising=False)
-    monkeypatch.setattr(vision._yolod_pm, "recent_log",
+    monkeypatch.setattr(vision._detectord_pm, "recent_log",
                         lambda lines=20: ["평범한 진행 로그"], raising=False)
     assert "log" not in client.get("/api/vision/status").json()

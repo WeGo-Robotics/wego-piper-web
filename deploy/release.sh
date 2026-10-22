@@ -113,6 +113,7 @@ while read -r f; do
   case "$f" in
     bus/*)   need_backend=1; need_wheels=1; WHEEL_PKGS+=(bus) ;;
     shm/*)   need_backend=1; need_wheels=1; WHEEL_PKGS+=(shm) ;;
+    plugin/*) need_backend=1; need_wheels=1; WHEEL_PKGS+=(plugin) ;;
     robot/*) need_backend=1; need_wheels=1; WHEEL_PKGS+=(robot) ;;
     cam/*)   need_wheels=1; WHEEL_PKGS+=(cam) ;;   # 호스트 전용 — 이미지엔 없다
     rs/*)    need_wheels=1; WHEEL_PKGS+=(rs)  ;;

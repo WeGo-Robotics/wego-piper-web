@@ -13,7 +13,7 @@
 
 ## 왜 어댑터인가
 
-`yolod`·`yolo_prelabel` 이 ultralytics 의 모양(`model.predict(...) → result.boxes
+`detectord`·`detector_prelabel` 이 ultralytics 의 모양(`model.predict(...) → result.boxes
 .xyxy/.conf/.cls`, `result.names`)에 맞춰 쓰여 있다. 그 모양을 그대로 흉내 내면
 호출부를 안 고쳐도 된다 — 검출기를 갈아끼우는 일에 데몬 로직까지 건드리면
 회귀 위험만 커진다.
@@ -34,7 +34,7 @@ class _Boxes:
 def as_rgb_bgr(image):
     """입력 한 장 → (모델에 넣을 **RGB**, 그림에 쓸 **BGR**).
 
-    ⚠ **numpy 는 BGR 이다.** ultralytics 의 numpy 입력 규약이고, `yolod` 가 shm
+    ⚠ **numpy 는 BGR 이다.** ultralytics 의 numpy 입력 규약이고, `detectord` 가 shm
     세그먼트를 변환 없이 그대로 넘긴다("세그먼트는 BGR" — rsd 는 to_bgr 를 거치고
     camerad 는 OpenCV 프레임 그대로다). 파일 경로는 PIL 이 RGB 로 연다.
 
@@ -137,8 +137,8 @@ class RTDetr:
         torch = self._torch
         if device and device != self.device:
             self.to(device)
-        # ⚠ 호출부가 **넘기는 것이 두 가지다.** `yolod` 는 numpy 프레임을,
-        #   `yolo_prelabel` 은 **파일 경로 문자열**을 준다. ultralytics 는 둘 다
+        # ⚠ 호출부가 **넘기는 것이 두 가지다.** `detectord` 는 numpy 프레임을,
+        #   `detector_prelabel` 은 **파일 경로 문자열**을 준다. ultralytics 는 둘 다
         #   받았으므로 여기서도 둘 다 받는다.
         # 색 규약은 한 곳에 있다 — numpy 는 BGR, 파일은 RGB (as_rgb_bgr 참고).
         # 음수 stride 도 거기서 삼킨다(`torch.from_numpy` 가 거부한다).

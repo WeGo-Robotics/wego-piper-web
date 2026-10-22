@@ -22,6 +22,7 @@ FROM piper-web-base:${BASE_TAG}
 # 세그먼트를 읽고 같은 큐로 말해야 하므로 계약 패키지는 여기에도 들어간다.
 COPY bus/ /tmp/pkg/bus/
 COPY shm/ /tmp/pkg/shm/
+COPY plugin/ /tmp/pkg/plugin/
 COPY robot/ /tmp/pkg/robot/
 COPY phase/ /tmp/pkg/phase/
 # act_aux: 배포명 `lerobot_policy_act_aux` — lerobot-train 이 접두사로 자동 import 한다 (feature/act-aux.md §2)
@@ -43,7 +44,7 @@ COPY cam/ /tmp/pkg/cam/
 # ⚠ `--no-deps` 라 mujoco 는 안 딸려 온다. `scene_spec` 은 mujoco 없이 import 된다
 #   (굽는 함수 안에서만 늦게 import). 게이트웨이는 세계를 굽지 않는다 — 그건 simd 의 일이다.
 COPY sim/ /tmp/pkg/sim/
-RUN pip install --no-deps /tmp/pkg/bus /tmp/pkg/shm /tmp/pkg/robot /tmp/pkg/phase /tmp/pkg/act_aux \
+RUN pip install --no-deps /tmp/pkg/bus /tmp/pkg/shm /tmp/pkg/plugin /tmp/pkg/robot /tmp/pkg/phase /tmp/pkg/act_aux \
         /tmp/pkg/so101 /tmp/pkg/cam /tmp/pkg/sim \
     && pip install redis \
     && rm -rf /tmp/pkg
@@ -135,12 +136,13 @@ ENV PIPER_VERSION=${PIPER_VERSION}
 
 # 두 python 진입점 모두 이 venv 를 가리키게 함 (compose 에서 override 가능)
 ENV PIPER_LOCAL_PYTHON=/opt/venv/bin/python \
-    PIPER_GRPC_PYTHON=/opt/venv/bin/python
+    PIPER_GRPC_PYTHON=/opt/venv/bin/python \
+    PIPER_PLUGINS_DIR=/data/plugins
 
 WORKDIR /app/backend
 EXPOSE 8000
 
 # /data 는 런타임 마운트라 빌드 시 mkdir 해봐야 가려진다. 기동 직전에 만든다.
 # subprocess/ZMQ 상태가 인메모리라 단일 워커 고정, --reload 없음
-CMD ["sh", "-c", "mkdir -p /data/hf /data/outputs/train /data/logs /data/config && \
+CMD ["sh", "-c", "mkdir -p /data/hf /data/outputs/train /data/logs /data/config /data/plugins && \
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

@@ -7,6 +7,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/Layout'
 import { SystemMessageProvider } from './components/SystemMessages'
 import { layoutPages, standalonePages } from './config/pages'
+import { legacyRoutes, LegacyRedirect } from './config/legacyRoutes'
 import type { PageEntry } from './config/pages'
 import PageLoading from './components/PageLoading'
 import { initI18n } from './i18n'
@@ -38,6 +39,10 @@ function mount() {
       <BrowserRouter>
         <Routes>
           <Route element={<Layout />}>
+            {/* 옛 경로 — 한 릴리스 동안 새 경로로 보낸다 (config/legacyRoutes.tsx) */}
+            {legacyRoutes.map((r) => (
+              <Route key={r.from} path={r.from.slice(1)} element={<LegacyRedirect to={r.to} />} />
+            ))}
             {layoutPages.map((page) =>
               page.path === '/' ? (
                 <Route key={page.path} index element={renderPage(page)} />

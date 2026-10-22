@@ -116,7 +116,7 @@
         <mxCell id="psrv" value="&lt;b&gt;piper-policysrv&lt;/b&gt;&lt;br&gt;&lt;i&gt;[gRPC 유닛]&lt;/i&gt;&lt;br&gt;&lt;br&gt;정책을 GPU 에 올려 두고 지연을 줄인다" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
           <mxGeometry x="662" y="476" width="172" height="148" as="geometry" />
         </mxCell>
-        <mxCell id="yolod" value="&lt;b&gt;piper-yolod&lt;/b&gt;&lt;br&gt;&lt;i&gt;[유닛 · 필요할 때]&lt;/i&gt;&lt;br&gt;&lt;br&gt;shm 을 훑어 검출을 버스에 발행" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
+        <mxCell id="detectord" value="&lt;b&gt;piper-detectord&lt;/b&gt;&lt;br&gt;&lt;i&gt;[유닛 · 필요할 때]&lt;/i&gt;&lt;br&gt;&lt;br&gt;shm 을 훑어 검출을 버스에 발행" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=#2E6295;fontColor=#FFFFFF;fontSize=11;arcSize=12;" vertex="1" parent="1">
           <mxGeometry x="854" y="476" width="166" height="148" as="geometry" />
         </mxCell>
         <mxCell id="b-oll" value="호스트 — 장치를 안 여는 상시 유닛" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;dashPattern=8 6;fillColor=none;strokeColor=#8A8A8A;fontColor=#6B6B6B;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=2;arcSize=6;" vertex="1" parent="1">
@@ -188,7 +188,7 @@
         <mxCell id="e17" value="유닛 제어" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="gw" target="psrv">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e18" value="유닛 제어" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="gw" target="yolod">
+        <mxCell id="e18" value="유닛 제어" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="gw" target="detectord">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e19" value="검색·업로드·다운로드" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="gw" target="e-hub">
@@ -212,7 +212,7 @@
         <mxCell id="e25" value="체크포인트" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="train" target="data">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e26" value="구독" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="yolod" target="shm">
+        <mxCell id="e26" value="구독" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="detectord" target="shm">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e27" value="heartbeat 감시" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;endArrow=blockThin;endFill=1;strokeColor=#8A8A8A;fontColor=#4D4D4D;labelBackgroundColor=#FFFFFF;jettySize=auto;" edge="1" parent="1" source="estopd" target="bus">
@@ -272,7 +272,7 @@
         <mxCell id="rdata669" value="&lt;b&gt;datasets.py · hub.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;저장소 — 로컬/Hub, 로그인" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
           <mxGeometry x="669" y="170" width="185" height="82" as="geometry" />
         </mxCell>
-        <mxCell id="rvisi864" value="&lt;b&gt;vision.py · yolo_train.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;검출·판단, 커스텀 학습" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
+        <mxCell id="rvisi864" value="&lt;b&gt;vision.py · detector_train.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;검출·판단, 커스텀 학습" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">
           <mxGeometry x="864" y="170" width="185" height="82" as="geometry" />
         </mxCell>
         <mxCell id="rphas1059" value="&lt;b&gt;phase.py&lt;/b&gt;&lt;br&gt;&lt;br&gt;작업 단계 분석·라벨" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#85BBF0;strokeColor=#5D82A8;fontColor=#000000;fontSize=11;arcSize=12;" vertex="1" parent="1">

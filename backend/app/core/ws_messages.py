@@ -40,7 +40,6 @@ PS_LOG: Final = "ps_log"
 PS_STATE: Final = "ps_state"
 
 # ── 에피소드 오케스트레이터 (스텝 전이·회차 완료 — 파이프라인 뷰의 재료) ──
-ORCHESTRATOR: Final = "orchestrator"
 
 # ── Hub 업로드 ──
 UPLOAD_LOG: Final = "upload_log"
@@ -80,7 +79,6 @@ ALL: Final[frozenset[str]] = frozenset({
     TRAIN_LOG, TRAIN_STATE, TRAIN_METRICS, JOB_LIST,
     RECORD_LOG, RECORD_STATE, RECORD_STATUS,
     PS_LOG, PS_STATE,
-    ORCHESTRATOR,
     UPLOAD_LOG, UPLOAD_STATE,
     DEVICE_ALERT,
     ROBOT_LOAD_ALERT,

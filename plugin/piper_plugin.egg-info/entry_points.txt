@@ -1,0 +1,2 @@
+[console_scripts]
+piper-plugin = piper_plugin.__main__:main

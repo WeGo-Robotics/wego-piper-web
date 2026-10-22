@@ -181,9 +181,9 @@ ACT 손실은 정규화 액션 L1(수렴 후 0.05~0.3) + `kl_weight=10`×KLD. 7�
 
 ---
 
-### 3.4 confidence — YOLO 의 conf 와 같은 것, 그리고 그보다 나은 것
+### 3.4 confidence — 검출기의 conf 와 같은 것, 그리고 그보다 나은 것
 
-YOLO 의 confidence(objectness × class prob)처럼 stage 헤드도 `softmax.max()` 를 `stage_p` 로 낸다.
+검출기의 confidence(objectness × class prob)처럼 stage 헤드도 `softmax.max()` 를 `stage_p` 로 낸다.
 둘 다 **보정되지 않은** 확률이다 — CE 가 확률을 1.0 으로 밀어붙이므로 학습에 없던 장면
 (조명·물체 위치 이탈)에서도 0.95 를 낸다. "0.91 이니 믿자" 는 성립하지 않는다.
 바닐라 ACT 는 이런 값이 아예 없다 (VAE 분산은 학습 전용, 추론 땐 latent=0).
@@ -192,7 +192,7 @@ YOLO 의 confidence(objectness × class prob)처럼 stage 헤드도 `softmax.max
 
 | 키 | 계산 | 뜻 | 비용 |
 |---|---|---|---|
-| `stage_p` | `max(p)` | YOLO conf 상당 | 0 |
+| `stage_p` | `max(p)` | 검출기 conf 상당 | 0 |
 | `margin` | `p[top1] − p[top2]` | 두 단계 **사이**에서 애매함. 임계치엔 `stage_p` 보다 낫다 | 0 |
 | `entropy` | `−Σ p log p` | 어느 단계로도 안 보임 | 0 |
 | `mc_std` | 헤드만 N회 dropout 켜고 재실행, top1 확률의 표준편차 | 모델이 **모르는 장면**(epistemic). softmax 가 못 잡는 OOD 를 잡는다. 인코더는 1회, 헤드는 2층이라 N=20 도 공짜 | `mc_samples>0` 일 때만 |

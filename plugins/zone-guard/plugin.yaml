@@ -1,0 +1,35 @@
+# 작업 영역에 사람이 들어오면 추론을 멈춘다 (feature/plugins.md §3-11)
+name: zone-guard
+version: 0.1.0
+title: "작업 영역 감시"
+description: "지정 클래스(기본 person)가 ROI 안에 연속으로 보이면 추론을 일시정지하거나 E-stop 한다"
+entry: main.py
+python: system
+
+cameras:
+  - { key: watch, label: "감시 카메라", required: true }
+
+config:
+  - { key: model, kind: text, default: "PekingU/rtdetr_v2_r18vd", label: "검출 모델 (HF id)" }
+  - { key: device, kind: select, default: "cuda:0", options: ["cuda:0", "cpu"], label: "검출 장치" }
+  - { key: target_class, kind: text, default: "person", label: "대상 클래스" }
+  - { key: roi, kind: text, default: "0.0,0.0,1.0,1.0", label: "ROI x1,y1,x2,y2 (0~1)" }
+  - { key: min_frames, kind: number, default: 3, min: 1, max: 60, label: "연속 프레임" }
+  - { key: conf, kind: number, default: 0.4, min: 0.05, max: 1, step: 0.05, label: "신뢰도" }
+  - { key: action, kind: select, default: "pause", options: ["pause", "estop"], label: "동작" }
+  - { key: resume_after_s, kind: number, default: 3, min: 0, max: 60, label: "비면 몇 초 뒤 재개 (pause 만)" }
+  - { key: fps, kind: number, default: 5, min: 0.5, max: 30, step: 0.5, label: "검출 주기(fps)" }
+
+permissions:
+  - params.write
+  - activity.read
+
+resources:
+  gpu: true
+  heartbeat: false
+
+outputs:
+  previews: ["det_zone-guard"]
+  state:
+    - { key: phase, label: "단계" }
+    - { key: intruders, label: "ROI 안 개체" }

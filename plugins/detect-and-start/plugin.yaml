@@ -1,0 +1,38 @@
+# 요청 그 자체 — "물체가 보이면 추론을 시작하고, 사라지면 끈다" (feature/plugins.md §3-11, §7)
+name: detect-and-start
+version: 0.1.0
+title: "물체가 보이면 추론 시작"
+description: "지정 클래스가 연속으로 보이면 체크포인트로 추론을 켜고, 사라지면 끈다"
+entry: main.py
+python: system
+
+cameras:
+  - { key: watch, label: "감시 카메라", required: true }
+
+config:
+  - { key: model, kind: text, default: "PekingU/rtdetr_v2_r18vd", label: "검출 모델 (HF id)" }
+  - { key: device, kind: select, default: "cuda:0", options: ["cuda:0", "cpu"], label: "검출 장치" }
+  - { key: target_class, kind: text, default: "bottle", label: "대상 클래스" }
+  - { key: min_frames, kind: number, default: 5, min: 1, max: 60, label: "연속 프레임" }
+  - { key: conf, kind: number, default: 0.5, min: 0.05, max: 1, step: 0.05, label: "신뢰도" }
+  - { key: checkpoint, kind: model, label: "체크포인트 (경로)" }
+  - { key: policy_type, kind: text, default: "act", label: "정책 종류" }
+  - { key: task, kind: text, default: "", label: "지시문 (언어 정책일 때)" }
+  - { key: auto_stop, kind: bool, default: true, label: "사라지면 정지" }
+  - { key: fps, kind: number, default: 5, min: 0.5, max: 30, step: 0.5, label: "검출 주기(fps)" }
+
+permissions:
+  - inference.start
+  - inference.stop
+  - activity.read
+
+resources:
+  gpu: true
+  heartbeat: false
+
+outputs:
+  detections: ["detect-and-start"]
+  previews: ["det_detect-and-start"]
+  state:
+    - { key: phase, label: "단계" }
+    - { key: seen, label: "연속 검출" }

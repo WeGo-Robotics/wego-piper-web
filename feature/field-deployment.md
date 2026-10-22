@@ -208,7 +208,7 @@ B 는 A 가 막힐 때(참가자가 계정을 못 만드는 사정). C 는 하�
 | 2절 venv 바깥 의존, **필수**: `redis` `pyrealsense2` `numpy` `opencv-python-headless` `piper_sdk==0.6.1` `python-can==4.6.1` | **PyPI** | **경고만 하고 넘어간다** → 카메라·팔이 통째로 안 된다. 증상은 나중에 "camerad 가 안 뜬다"·"piper_sdk not installed" 로 |
 | 2절 선택: `mujoco` `feetech-servo-sdk` | PyPI | simd·so101d 를 못 켠다 |
 | ollama 바이너리 + `qwen2.5:7b`(≈4.7GB) | ollama.com — 지금도 손 설치([체크리스트 5절](../deploy/RELEASE-CHECKLIST.md)) | 판단 LLM 없음(선택) |
-| HF 데이터셋·모델, YOLO 가중치 | 필요할 때 내려받음 | 해당 기능만 |
+| HF 데이터셋·모델, 검출 가중치 | 필요할 때 내려받음 | 해당 기능만 |
 
 덤으로 걸리는 것 둘. ⚠ LAN 레지스트리로 받아도 매니페스트의 `registry=` 는 **주 레지스트리
 (GHCR)** 라 `apply.sh` 가 frontend 를 GHCR 에서 받으려 한다 — 지금은 `PIPER_REGISTRY=piper-build:5000`

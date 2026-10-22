@@ -53,7 +53,7 @@
 필요한 것은 백엔드에 얹는 상태기계 하나:
 
 ```
-스냅샷 → 판단(argmax / YOLO→LLM) → 지시문 확정(task 변경) → 실행 → 종료 판정 → 리셋 → 반복
+스냅샷 → 판단(argmax / 검출→LLM) → 지시문 확정(task 변경) → 실행 → 종료 판정 → 리셋 → 반복
 ```
 
 구성 요소가 전부 REST/ZMQ로 이미 노출돼 있어(task·pause·reset) **wrapper 대수술이 아니다.**
@@ -118,7 +118,7 @@
 | 3 | 바코드 제시 | G2(재시도 루프) G3(스캐너 리스너) | — | 소~중 |
 | 4 | 트레이 키팅 | 없음 | 데이터 수집 문제일 뿐 | — |
 | 5 | 언어 픽앤플레이스 | 거의 없음 | 녹화가 데이터셋당 `single_task` 하나 ([cli_mapping.py:314](../backend/app/core/cli_mapping.py#L314)) — 에피소드별 지시문은 사후 편집뿐. eval에 task 미기록(G3) | 소 |
-| 6 | 분리수거 YOLO→LLM→VLA | G2 G3(스냅샷) | LLM 규칙 스토어 + 템플릿 슬롯 조립 + 파이프라인 뷰 UI. **YOLO 라이브 스트림만은 camerad 이후** (아래 §3) | 중 |
+| 6 | 분리수거 검출→LLM→VLA | G2 G3(스냅샷) | LLM 규칙 스토어 + 템플릿 슬롯 조립 + 파이프라인 뷰 UI. **검출기 라이브 스트림만은 camerad 이후** (아래 §3) | 중 |
 | 장기 | 스킬 라이브러리+플래너 | G2 | 세션 내 정책 교체: `SendPolicyInstructions`가 부팅 1회만 호출됨 ([grpc_wrapper.py:329-338](../wrapper/grpc_wrapper.py#L329-L338)) → ZMQ 명령으로 재호출하게 하면 서버의 `same_model` 캐시([start_policy_server.py:103-118](../wrapper/start_policy_server.py#L103-L118))를 그대로 써서 재시작 없이 전환. **스킬 체이닝은 gRPC 모드가 유일한 현실적 토대** | 장기 |
 | 상시 | 자동 리셋 | G2 G3(종료 판정) | 리셋 재료는 §0 참고 — 루프만 없다 | G2에 포함 |
 
@@ -135,7 +135,7 @@
 - **RGB 노출 고정** — camera-profiles 전체는 후순위 유지, 노출 고정 한 가지만 팝콘에 선행
 
 **미룰 것 1개:**
-- **YOLO 라이브 프레임 접근.** 진짜 벽은 exclusivity 표가 아니라 **카메라 독점**이다 —
+- **검출기 라이브 프레임 접근.** 진짜 벽은 exclusivity 표가 아니라 **카메라 독점**이다 —
   표는 `BLOCKED_BY[새활동] = []` 한 줄로 열리지만 ([exclusivity.py:58-76](../backend/app/services/exclusivity.py#L58-L76)),
   추론 subprocess가 카메라를 독점하고 백엔드가 같은 D405를 열면 uvcvideo D-state로 죽는다
   ([exclusivity.py:71-75](../backend/app/services/exclusivity.py#L71-L75) 주석, [models.py:284](../backend/app/routers/models.py#L284)의 `_release_all_cameras()`).

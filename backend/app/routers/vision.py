@@ -1,6 +1,6 @@
-"""YOLO 검출 · LLM 판단 테스트 API — 분리수거 파이프라인의 앞 두 칸을 화면에서 굴린다.
+"""검출 · LLM 판단 테스트 API — 분리수거 파이프라인의 앞 두 칸을 화면에서 굴린다.
 
-yolod 는 정책 서버와 같은 "필요할 때 켜는 유닛"이다 — `make_process` 가 소유자를
+detectord 는 정책 서버와 같은 "필요할 때 켜는 유닛"이다 — `make_process` 가 소유자를
 정하므로 게이트웨이를 재시작해도 산다. 판단은 [llm_client](../services/llm_client.py)
 를 **직접 호출**한다 (자기 HTTP 호출 금지 — episode-orchestrator §2 와 같은 규칙).
 """
@@ -24,17 +24,17 @@ from app.services.systemd_process import make_process
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/vision", tags=["vision"])
 
-# yolod 소유자 — 유닛이면 게이트웨이 재시작에도 산다 (기동 재부착은 사소해서 생략:
+# detectord 소유자 — 유닛이면 게이트웨이 재시작에도 산다 (기동 재부착은 사소해서 생략:
 # 테스트 도구라 화면에서 다시 켜면 그만이고, 유닛 자체는 계속 돈다)
-_yolod_pm = make_process("piper-yolod")
+_detectord_pm = make_process("piper-detectord")
 
-_YOLOD_SCRIPT = Path(__file__).resolve().parents[3] / "daemons" / "yolod.py"
+_DETECTORD_SCRIPT = Path(__file__).resolve().parents[3] / "daemons" / "detectord.py"
 
 # 규칙·슬롯의 정본은 오케스트레이터 서비스 — 테스트 페이지와 루프가 같은 판단을 쓴다
-from app.services.orchestrator import DEFAULT_RULES, JudgeSlots  # noqa: E402
+from app.services.judge_schema import DEFAULT_RULES, JudgeSlots, slots_model  # noqa: E402,F401
 
 
-# ── yolod 제어 ──
+# ── detectord 제어 ──
 
 # 시작 UI 에 보여줄 표준 검출 모델 (COCO 80 클래스). 로컬에 없어도 목록에 나온다 —
 # ultralytics 가 없는 가중치를 첫 로드 때 자동 다운로드하므로 전부 쓸 수 있고,
@@ -91,7 +91,7 @@ def _custom_models() -> list[dict]:
     고르고 나서야 이상하다는 걸 안다. 메타는 **완료 시점에만** 쓰이므로 그 존재가
     곧 "끝까지 돈 학습"의 표시다.
     """
-    d = settings.yolo_models_dir
+    d = settings.detector_models_dir
     if not d.is_dir():
         return []
     out = []
@@ -131,14 +131,14 @@ def _resolve_model(name: str) -> str:
     """
     if name in _STANDARD_FILES:
         return name
-    p = settings.yolo_models_dir / Path(name).name
+    p = settings.detector_models_dir / Path(name).name
     if p.is_dir() and (p / "piper_meta.json").is_file():
         return str(p)
     raise HTTPException(400, f"모르는 모델입니다: {name}")
 
 
 @router.get("/models")
-async def list_yolo_models():
+async def list_detector_models():
     """표준 카탈로그 + 업로드된 커스텀 가중치 (시작 UI 의 선택지)."""
     return {
         "models": [
@@ -149,11 +149,11 @@ async def list_yolo_models():
 
 
 @router.delete("/models/{name}")
-async def delete_yolo_model(name: str):
+async def delete_detector_model(name: str):
     """커스텀 가중치 삭제. 표준 카탈로그는 대상이 아니다 (어차피 여기 없다)."""
     # ⚠ 이제 디렉토리다. `Path(name).name` 으로 경로 성분을 먼저 자른다 —
     #   그게 없으면 `../..` 같은 이름으로 남의 디렉토리를 지울 수 있다.
-    p = settings.yolo_models_dir / Path(name).name
+    p = settings.detector_models_dir / Path(name).name
     if not p.is_dir():
         raise HTTPException(404, "그런 커스텀 모델이 없습니다")
     shutil.rmtree(p)
@@ -162,7 +162,7 @@ async def delete_yolo_model(name: str):
 
 @router.get("/segments")
 async def list_camera_segments():
-    """살아 있는 카메라 세그먼트 — yolod 가 구독할 수 있는 것들."""
+    """살아 있는 카메라 세그먼트 — detectord 가 구독할 수 있는 것들."""
     from piper_shm import list_segments
 
     return {"segments": list_segments()}
@@ -172,8 +172,8 @@ async def list_camera_segments():
 async def segment_snapshot(name: str):
     """세그먼트의 최신 프레임 JPEG — 시작 UI 가 "이 카메라가 뭘 보나"를 보여준다.
 
-    yolod 를 켜기 전이라 어노테이트 프리뷰(버스)가 없을 때 쓴다.
-    YOLO 학습 캡처(yolo_train 라우터)와 같은 읽기를 쓴다.
+    detectord 를 켜기 전이라 어노테이트 프리뷰(버스)가 없을 때 쓴다.
+    검출 학습 캡처(detector_train 라우터)와 같은 읽기를 쓴다.
     """
     from app.services.shm_snapshot import segment_jpeg
 
@@ -193,44 +193,44 @@ class StartRequest(BaseModel):
 
 
 @router.post("/start")
-async def start_yolod(body: StartRequest):
+async def start_detectord(body: StartRequest):
     if not body.cams:
         raise HTTPException(400, "구독할 카메라가 없습니다")
-    args = [settings.grpc_python, "-u", str(_YOLOD_SCRIPT)]
+    args = [settings.grpc_python, "-u", str(_DETECTORD_SCRIPT)]
     for alias, cam_id in body.cams.items():
         args += ["--cam", f"{alias}={cam_id}"]
     args += ["--model", _resolve_model(body.model),
              "--fps", str(body.fps), "--conf", str(body.conf),
              "--imgsz", str(body.imgsz)]
-    await _yolod_pm.start(args)
+    await _detectord_pm.start(args)
     return {"status": "started", "cams": body.cams}
 
 
 @router.post("/stop")
-async def stop_yolod():
-    await _yolod_pm.stop()
+async def stop_detectord():
+    await _detectord_pm.stop()
     return {"status": "stopped"}
 
 
 @router.get("/status")
-async def yolod_status():
+async def detectord_status():
     from piper_bus.client import Bus
 
     try:
         bus = Bus()
         names = bus.detection_names()
-        meta = bus.get_yolo_meta()
+        meta = bus.get_detector_meta()
     except Exception:
         names, meta = [], None
-    # model: yolod 가 버스에 발행하는 자기소개 (모델·디바이스·클래스 수 등).
+    # model: detectord 가 버스에 발행하는 자기소개 (모델·디바이스·클래스 수 등).
     # 프로세스는 도는데 아직 None 이면 모델 로드 중이라는 뜻이다.
     # ⚠ **죽었으면 왜 죽었는지 같이 준다.** 유닛이 `--collect` 로 뜨므로 실패한
     #   종료도 흔적 없이 사라지고, 화면에는 "꺼졌다"만 남는다 — 모델 이름이
     #   틀렸는지 GPU 가 없는지 사용자가 알 길이 없었다. 저널 꼬리가 유일한 단서다.
-    state = _yolod_pm.state
-    out = {"state": state.value, "pid": _yolod_pm.pid, "cams": names, "model": meta}
-    if not _yolod_pm.is_running:
-        tail = _yolod_pm.recent_log()
+    state = _detectord_pm.state
+    out = {"state": state.value, "pid": _detectord_pm.pid, "cams": names, "model": meta}
+    if not _detectord_pm.is_running:
+        tail = _detectord_pm.recent_log()
         if tail:
             out["log"] = tail[-20:]
     return out
@@ -250,12 +250,12 @@ async def get_detections():
 
 @router.get("/preview/{name}")
 async def get_annotated_preview(name: str):
-    """yolod 의 어노테이트 프리뷰 (버스 `yolo_<name>` 키)."""
+    """detectord 의 어노테이트 프리뷰 (버스 `det_<name>` 키)."""
     from piper_bus.client import Bus
 
-    data = Bus().get_preview(f"yolo_{name}")
+    data = Bus().get_preview(f"det_{name}")
     if data is None:
-        raise HTTPException(404, "프리뷰 없음 — yolod 가 돌고 있습니까?")
+        raise HTTPException(404, "프리뷰 없음 — 검출기가 돌고 있습니까?")
     return Response(content=data, media_type="image/jpeg")
 
 
@@ -278,6 +278,9 @@ class JudgeRequest(BaseModel):
     provider: str | None = None    # 기본: 설정 (openai_compat/Ollama)
     model: str | None = None
     timeout_s: float = 60.0
+    # `{스킬 이름: 체크포인트}` — 있으면 슬롯에 `skill` 이 더해지고 LLM 이 고를 수 있는 값이 그 이름들이다
+    # (언어를 안 읽는 정책용, feature/plugins.md §12-1). 플러그인 `recycling` 이 쓴다.
+    skills: dict[str, str] = {}
 
 
 @router.post("/judge")
@@ -285,7 +288,7 @@ async def run_judge(body: JudgeRequest):
     t0 = time.monotonic()
     try:
         slots = await llm_client.judge(
-            body.system, body.user, JudgeSlots,
+            body.system, body.user, slots_model(body.skills),
             timeout_s=body.timeout_s, provider=body.provider, model=body.model,
         )
     except LLMJudgeError as e:

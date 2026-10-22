@@ -1,0 +1,20 @@
+# 가장 작은 플러그인 — SDK 없이 환경변수만 읽는다 (feature/plugins.md §3-4).
+# 레지스트리·토큰·E-stop 배선의 스모크 테스트이자, "스크립트가 그대로 플러그인이 된다"의 실례.
+name: hello
+version: 0.1.0
+title: "인사 — 플러그인 배선 확인"
+description: "주기마다 게이트웨이 활동을 읽어 버스에 상태를 올린다. 카메라도 GPU 도 안 쓴다."
+entry: main.py
+python: system
+
+config:
+  - { key: interval_s, kind: number, default: 2, min: 0.5, max: 60, step: 0.5, label: "주기(초)" }
+  - { key: greeting, kind: text, default: "안녕", label: "인사말" }
+
+permissions:
+  - activity.read
+
+outputs:
+  state:
+    - { key: ticks, label: "횟수" }
+    - { key: activities, label: "도는 활동" }

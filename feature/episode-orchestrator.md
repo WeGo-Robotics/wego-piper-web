@@ -1,7 +1,13 @@
 # 에피소드 오케스트레이터 — 스냅샷→판단→실행→리셋 루프
 
+> ⛔ **폐기 — 플러그인으로 대체 (2026-10-20 결정).** 1단계 구현은 번들 플러그인 `recycling`
+> 으로 이관하고 `services/orchestrator.py`·라우터·WS 타입·배타 활동을 지운다. 2단계(스텝
+> 레지스트리 + YAML)는 만들지 않는다 — 미션 수준 루프는 **플러그인**이 유일한 길이다.
+> 이관 표와 외부 API 호환은 [plugins.md §12](plugins.md). 이 문서는 원칙(스텝은 Python,
+> 전 구간 E-stop 취소, 저널)과 거절한 대안(§6 Lua 등)의 근거로 남긴다.
+
 > **◐ 입력 칸들은 준비 완료, 몸통은 미착수.** §1 스텝 표의 두 "신규" 칸이 채워졌다:
-> "YOLO subprocess" 는 [yolod](../daemons/yolod.md) 상주 유닛 + 버스 최신값
+> "검출 subprocess" 는 [detectord](../daemons/detectord.md) 상주 유닛 + 버스 최신값
 > (`bus.get_detections()`, 페이로드의 `text` 가 곧 판단 프롬프트 재료)로,
 > "외부 HTTP (LLM)" 는 [llm_client.judge()](../backend/app/services/llm_client.py)
 > (스키마 검증 슬롯, 이 머신 기본 = 로컬 Ollama qwen2.5:7b)로. `/vision` 테스트
@@ -20,7 +26,7 @@
 > 남은 것: §5 의 2단계(스텝 레지스트리 + YAML 스펙)부터.
 
 [demo-scenario-gaps.md](demo-scenario-gaps.md)의 **G2**를 구현하는 설계.
-팝콘 데모(Phase 1~2)·분리수거(YOLO→LLM→VLA)·자동 리셋(무인 연속 시연)·장기 플래너가
+팝콘 데모(Phase 1~2)·분리수거(검출→LLM→VLA)·자동 리셋(무인 연속 시연)·장기 플래너가
 전부 이 하나의 몸통을 공유한다.
 
 > 설계 원칙: **스텝은 Python, 시퀀스는 데이터.**
@@ -33,7 +39,7 @@
 
 ```
 스냅샷(1회 Python 호출)
-  → 판단(argmax 계산 or YOLO subprocess + LLM HTTP)
+  → 판단(argmax 계산 or 검출 subprocess + LLM HTTP)
   → 지시문 확정(ZMQ task 변경)
   → 실행(종료 조건까지 대기)
   → 판정(로드셀/스캐너 이벤트 or 타임아웃)
@@ -135,8 +141,8 @@ on_failure: {retry: 1, then: reset}
 
 | 배선 | 내용 |
 |---|---|
-| WS 이벤트 | 스텝 전이마다 발행 → 3.1.1 "파이프라인 뷰"(YOLO 박스 → LLM 명령문 → VLA 실행)가 이 이벤트의 시각화. [refactor #12](../refactor/12-ws-message-contract.md) WS 계약에 `orchestrator` 타입으로 합류 |
-| 저널링 | 에피소드마다 각 스텝의 `ctx` 입출력을 JSONL로 기록 → "실패 원인 3분됨"(YOLO/LLM/VLA) 교육 콘텐츠가 자동으로 쌓임. [eval_log](../backend/app/routers/eval_log.py)의 상위호환 |
+| WS 이벤트 | 스텝 전이마다 발행 → 3.1.1 "파이프라인 뷰"(검출 박스 → LLM 명령문 → VLA 실행)가 이 이벤트의 시각화. [refactor #12](../refactor/12-ws-message-contract.md) WS 계약에 `orchestrator` 타입으로 합류 |
+| 저널링 | 에피소드마다 각 스텝의 `ctx` 입출력을 JSONL로 기록 → "실패 원인 3분됨"(검출/LLM/VLA) 교육 콘텐츠가 자동으로 쌓임. [eval_log](../backend/app/routers/eval_log.py)의 상위호환 |
 | 배타 가드 | [exclusivity.py](../backend/app/services/exclusivity.py)에 `Activity.ORCHESTRATOR` 등록. **루프 안에서는 프로세스 재시작 대신 ZMQ reset으로 회차를 돌린다** — `require_idle`이 STOPPING도 실행 중으로 보므로([exclusivity.py:86](../backend/app/services/exclusivity.py#L86)) 재시작 방식은 회차마다 파킹+CAN+카메라 재연결 수 초를 문다 |
 | 리셋 | 이미 완성된 경로 재사용: `POST /api/params/reset` → [lerobot_wrapper.py:608-639](../wrapper/lerobot_wrapper.py#L608-L639) (큐 초기화 → 2단계 파킹 → 재개) |
 
@@ -147,7 +153,7 @@ on_failure: {retry: 1, then: reset}
 | 단계 | 내용 | 이걸로 되는 것 |
 |---|---|---|
 | 1 | 백엔드 안의 `EpisodeOrchestrator` 서비스 — async 상태기계, 스텝 5~6개 하드코딩으로 시작 | 팝콘 Phase 1, 자동 리셋(30분 무인) |
-| 2 | 스텝 레지스트리 + YAML 시나리오 스펙 분리 | 분리수거(YOLO→LLM), 바코드 재시도 — 스펙 추가로 해결 |
+| 2 | 스텝 레지스트리 + YAML 시나리오 스펙 분리 | 분리수거(검출→LLM), 바코드 재시도 — 스펙 추가로 해결 |
 | 3 | 구조 개편 후: 오케스트레이터는 Redis 버스의 클라이언트 하나가 됨 ([daemon-split](../refactor/daemon-split.md)) | 스텝 구현체가 직접 호출 → 버스 명령으로 바뀔 뿐, **프로토콜과 스펙은 그대로** |
 | 4 | LLM 플래너 = 스펙을 생성하는 스텝. 스킬 메타데이터(전제/사후 조건)를 스펙 스키마에 포함 | 시나리오 문서 5장. "인터페이스 통일"이 이 시점에 이미 끝나 있음 |
 

@@ -36,10 +36,15 @@ class Activity(str, enum.Enum):
     DATASET_EDIT = "dataset_edit"
     UPLOAD = "upload"
     TELEOP = "teleop"
-    # 에피소드 루프 (분리수거 등). 추론 **위에서** 돈다 — 추론과는 배타가 아니다.
-    ORCHESTRATOR = "orchestrator"
-    # YOLO 커스텀 학습 (feature/yolo-training.md 3단계) — GPU 를 크게 쓴다.
-    YOLO_TRAIN = "yolo_train"
+    # 검출기 커스텀 학습 (feature/detector-training.md 3단계) — GPU 를 크게 쓴다.
+    DETECTOR_TRAIN = "detector_train"
+    # 플러그인 (feature/plugins.md). 기본은 아무것도 막지 않고 아무것도 못 막는다 —
+    # 팔은 추론을 통해서만 닿고, 그 배타는 추론이 진다. **E-stop 대상이다**(§3-7).
+    PLUGIN = "plugin"
+    # 그중 `resources.gpu` 를 선언한 것. 학습과 배타 — 둘 다 GPU 를 크게 쓴다.
+    # 플러그인끼리는 경고만(§3-8). 활동을 둘로 나눈 이유: 배타는 활동 단위의 표인데
+    # GPU 사용은 플러그인마다 다르다 — "GPU 를 쥔 플러그인이 있다"가 하나의 상태다.
+    PLUGIN_GPU = "plugin_gpu"
     # 체크포인트 오프라인 평가 (feature/weight-analyzer.md) — 정책을 GPU 에 올려 데이터셋을 돈다.
     WEIGHT_EVAL = "weight_eval"
     # 아래 셋은 "시작하는 활동"이 아니라 자원 접근이다. 남을 막지 않고 조회만 한다.
@@ -61,12 +66,13 @@ LABELS: dict[Activity, str] = {
     Activity.DATASET_EDIT: "데이터셋 편집",
     Activity.UPLOAD: "업로드/캐시 작업",
     Activity.TELEOP: "수동 조작",
-    Activity.ORCHESTRATOR: "에피소드 루프",
     # ⚠ 화면에 나가는 문구다 — 상태바와 409 메시지가 **이 문자열을 그대로** 쓴다
     #   (test_page_registry.py 가 프론트에 자기 사전을 못 두게 막는다).
     #   특정 검출 모델 이름을 화면에 박지 않는다: 구현은 갈아끼울 수 있어야 하고,
-    #   라이선스가 그 교체를 강제할 수도 있다. 열거자 이름(YOLO_TRAIN)은 내부라 둔다.
-    Activity.YOLO_TRAIN: "검출 학습",
+    #   라이선스가 그 교체를 강제할 수도 있다. 열거자 이름(DETECTOR_TRAIN)은 내부라 둔다.
+    Activity.DETECTOR_TRAIN: "검출 학습",
+    Activity.PLUGIN: "플러그인",
+    Activity.PLUGIN_GPU: "GPU 플러그인",
     Activity.WEIGHT_EVAL: "가중치 평가",
     Activity.ENCODER_PROBE: "인코더 프로브",
     Activity.CAMERA_ACCESS: "카메라 접근",
@@ -82,30 +88,31 @@ LABELS: dict[Activity, str] = {
 BLOCKED_BY: dict[Activity, list[Activity]] = {
     # 카메라 + CAN + GPU 를 전부 점유한다
     Activity.INFERENCE: [Activity.TRAINING, Activity.RECORDING, Activity.DATASET_EDIT,
-                         Activity.YOLO_TRAIN, Activity.TELEOP, Activity.WEIGHT_EVAL],
+                         Activity.DETECTOR_TRAIN, Activity.TELEOP, Activity.WEIGHT_EVAL],
     Activity.RECORDING: [Activity.TRAINING, Activity.INFERENCE, Activity.DATASET_EDIT,
-                         Activity.ORCHESTRATOR, Activity.TELEOP],
+                         Activity.TELEOP],
     # GPU. 정책 서버도 GPU에 정책을 올리므로 학습과 배타다.
     Activity.TRAINING: [Activity.INFERENCE, Activity.RECORDING, Activity.POLICY_SERVER,
-                        Activity.ORCHESTRATOR, Activity.YOLO_TRAIN, Activity.WEIGHT_EVAL],
+                        Activity.DETECTOR_TRAIN, Activity.WEIGHT_EVAL,
+                        Activity.PLUGIN_GPU],
     Activity.POLICY_SERVER: [Activity.TRAINING],
     # 데이터셋 파일을 다시 쓴다. 녹화가 같은 디스크에 기록 중이면 피한다.
-    Activity.DATASET_EDIT: [Activity.INFERENCE, Activity.RECORDING, Activity.ORCHESTRATOR],
+    Activity.DATASET_EDIT: [Activity.INFERENCE, Activity.RECORDING],
     # 네트워크/디스크만 쓴다. 아무것도 막지 않고 아무것도 막지 못한다.
     Activity.UPLOAD: [],
-    # 팔을 직접 민다 — 같은 팔을 둘이 밀면 안 된다. 학습·YOLO 학습은 GPU 만
+    # 팔을 직접 민다 — 같은 팔을 둘이 밀면 안 된다. 학습·검출 학습은 GPU 만
     # 쓰므로 막지 않는다.
-    Activity.TELEOP: [Activity.INFERENCE, Activity.RECORDING, Activity.ORCHESTRATOR],
-    # 추론 위에서 도는 자동화 계층 — 추론과 공존이 설계다.
-    # 팔을 새 일로 보내는 루프이므로 녹화·학습·편집과는 서로 막는다.
-    Activity.ORCHESTRATOR: [Activity.TRAINING, Activity.RECORDING, Activity.DATASET_EDIT,
-                            Activity.TELEOP],
+    Activity.TELEOP: [Activity.INFERENCE, Activity.RECORDING],
     # GPU 만 쓴다 (카메라·CAN·데이터셋 파일과 무관). VLA 학습·추론과 배타,
     # 정책 서버(~1GB 상주)와는 공존 가능 — nano/small 학습은 4~6GB 다.
-    Activity.YOLO_TRAIN: [Activity.TRAINING, Activity.INFERENCE, Activity.WEIGHT_EVAL],
+    Activity.DETECTOR_TRAIN: [Activity.TRAINING, Activity.INFERENCE, Activity.WEIGHT_EVAL],
     # GPU 만 쓴다 — 로봇·카메라·데이터셋 파일과 무관(데이터셋은 읽기만). 수 분짜리라 추론을
     # 시작하려면 멈춰야 하지만, 팔을 안 움직이므로 E-stop 대상은 아니다.
-    Activity.WEIGHT_EVAL: [Activity.TRAINING, Activity.INFERENCE, Activity.YOLO_TRAIN],
+    Activity.WEIGHT_EVAL: [Activity.TRAINING, Activity.INFERENCE, Activity.DETECTOR_TRAIN],
+    # 플러그인 자체는 자원을 안 쥔다 — 팔은 추론을 통해, GPU 는 PLUGIN_GPU 로 따로 센다.
+    Activity.PLUGIN: [],
+    # GPU 를 쓴다고 선언한 플러그인. VLA 학습과 배타(OOM), 그 외와는 공존·경고만.
+    Activity.PLUGIN_GPU: [Activity.TRAINING],
     # ── 아래는 자원 접근 (막히기만 하고 남을 막지 않는다) ──
     # GPU 경합 시 409가 아니라 CPU 폴백. blocked_reason() 으로만 쓴다.
     Activity.ENCODER_PROBE: [Activity.TRAINING, Activity.INFERENCE],
@@ -116,15 +123,14 @@ BLOCKED_BY: dict[Activity, list[Activity]] = {
     # ⚠ 가상환경 교체는 **모델을 다시 컴파일하고 MjData 를 새로 만든다** — 물체가 사라지고
     #   생기고 팔이 잠깐 멈춘다. 에피소드 한가운데 그러면 그 에피소드는 절반이 A 세계,
     #   절반이 B 세계라 **못 쓴다**(관측이 바뀐 것을 라벨은 모른다). 추론·루프도 같다.
-    Activity.SCENE_SWAP: [Activity.RECORDING, Activity.INFERENCE, Activity.ORCHESTRATOR,
-                          Activity.TELEOP],
+    Activity.SCENE_SWAP: [Activity.RECORDING, Activity.INFERENCE, Activity.TELEOP],
     # ⚠ 교체와 달리 **조종(TELEOP)은 안 막는다.** 관측을 먹는 셋만 막는다:
     #   에피소드 한가운데 화각이 바뀌면 그 에피소드는 앞뒤가 다른 세계이고, 추론은 한 겹
     #   더 나쁘다(정책이 **학습한 적 없는 화각**을 받고 그대로 팔을 움직인다).
     #   반면 카메라가 올라가는 것은 **팔에 아무 일도 안 한다** — 물체가 사라지고 생기는
     #   교체와 여기서 갈린다. 막을 이유 없는 것을 같이 막으면 사람이 납득을 못 하고,
     #   납득 못 하는 규칙은 결국 우회된다 (feature/sim-topview-height.md §6).
-    Activity.CAMERA_MOVE: [Activity.RECORDING, Activity.INFERENCE, Activity.ORCHESTRATOR],
+    Activity.CAMERA_MOVE: [Activity.RECORDING, Activity.INFERENCE],
 }
 
 
@@ -147,34 +153,36 @@ STATE_PROVIDERS: dict[Activity, Callable[[], bool]] = {
     Activity.DATASET_EDIT: lambda: _busy(dataset_jobs.edit_pm.state),
     Activity.UPLOAD: lambda: _busy(dataset_jobs.upload_pm.state),
     Activity.TELEOP: lambda: teleop_session.is_running,
-    Activity.ORCHESTRATOR: lambda: _orchestrator().is_running,
-    Activity.YOLO_TRAIN: lambda: _busy(_yolo_train_pm().state),
+    Activity.DETECTOR_TRAIN: lambda: _busy(_detector_train_pm().state),
+    Activity.PLUGIN: lambda: _plugins().any_running(),
+    Activity.PLUGIN_GPU: lambda: _plugins().any_running(gpu_only=True),
     Activity.WEIGHT_EVAL: lambda: _busy(_weval_pm().state),
 }
 
 
 def _weval_pm():
-    # 지연 import — yolo_train_pm 과 같은 이유 (make_process → settings)
+    # 지연 import — detector_train_pm 과 같은 이유 (make_process → settings)
     from app.services.weight_eval import weval_pm
     return weval_pm
 
 
-def _yolo_train_pm():
-    # 지연 import — yolo_train_manager 가 make_process(→settings)를 물고 있어
+def _detector_train_pm():
+    # 지연 import — detector_train_manager 가 make_process(→settings)를 물고 있어
     # 모듈 로드 순서에 얽히지 않게 한다 (orchestrator 와 같은 이유)
-    from app.services.yolo_train_manager import yolo_train_pm
-    return yolo_train_pm
+    from app.services.detector_train_manager import detector_train_pm
+    return detector_train_pm
 
 
-def _orchestrator():
-    # 지연 import — orchestrator 가 process_manager 등을 물고 있어 기동 순서 순환 방지
-    from app.services.orchestrator import orchestrator
-    return orchestrator
+def _plugins():
+    # 지연 import — plugins 가 make_process(→settings)·exclusivity 를 물고 있다
+    from app.services.plugins import registry
+    return registry
+
 
 # E-stop 이 정지시키는 활동 — 로봇을 물리적으로 움직이는 것 전부.
 # 녹화도 텔레오퍼레이션으로 팔을 움직이므로 포함한다 (이전에는 추론만 죽였다).
 ESTOP_TARGETS: list[Activity] = [Activity.INFERENCE, Activity.RECORDING,
-                                 Activity.TELEOP]
+                                 Activity.TELEOP, Activity.PLUGIN]
 
 # E-stop 은 graceful stop 이 아니라 즉시 kill 이다.
 STOPPERS: dict[Activity, Callable[[], Awaitable[None]]] = {
@@ -184,6 +192,8 @@ STOPPERS: dict[Activity, Callable[[], Awaitable[None]]] = {
     #   팔을 쥔 robotd 가 E-stop 알림을 **직접 듣고** 끊는다.
     # 조그든 릴레이든 세션 하나다 — 무엇이 돌든 그걸 닫는다.
     Activity.TELEOP: lambda: _stop_teleop(),
+    # 플러그인은 추론을 통해 팔을 움직이므로 같이 선다 (feature/plugins.md §3-7) — 전부 kill
+    Activity.PLUGIN: lambda: _plugins().kill_all(),
 }
 
 

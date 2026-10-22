@@ -421,6 +421,20 @@ async def start_inference_custom(body: InferenceStartCustomRequest):
     return {"status": "started", "pid": process_manager.pid, "args": body.args}
 
 
+@router.get("/inference/policy")
+async def inference_policy():
+    """지금 도는 정책 — 플러그인(MissionPlugin)이 "판단이 로봇에 닿는가"를 묻는 길 (feature/plugins.md §12-1).
+
+    ACT 는 task 를 안 읽는다. 모르면 `takes_language: null` — 소비자는 낙관하지 않는다.
+    """
+    cur = inference_state.get()
+    if cur is None:
+        return {"running": False, "type": None, "takes_language": None, "checkpoint_path": None}
+    return {"running": True, "type": cur.policy_type or None,
+            "takes_language": takes_language(cur.policy_type) if cur.policy_type else None,
+            "checkpoint_path": cur.checkpoint_path or None}
+
+
 @router.post("/inference/stop")
 async def stop_inference():
     await process_manager.stop()

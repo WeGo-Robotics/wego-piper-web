@@ -117,7 +117,6 @@ export type WsMessage =
   | { type: 'ps_log'; data: string }
   | { type: 'ps_state'; data: ProcessState }
   // 에피소드 오케스트레이터 (스텝 전이·회차 완료)
-  | { type: 'orchestrator'; data: Record<string, unknown> }
   // Hub 업로드
   | { type: 'upload_log'; data: string }
   | { type: 'upload_state'; data: ProcessState }

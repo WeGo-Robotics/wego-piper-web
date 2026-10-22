@@ -1,0 +1,46 @@
+# 분리수거 루프 — 오케스트레이터 1단계의 플러그인판 (feature/plugins.md §12). `MissionPlugin` 의 참고 구현.
+name: recycling
+version: 0.2.0
+title: "분리수거 루프"
+description: "검출 → LLM 판단 → task → 대기 → 기록 → 리셋. 외부 API 의 미션 타입 `recycling` 이 이것이다"
+entry: main.py
+python: system
+mission: true
+
+# 카메라는 직접 읽지 않는다 — 검출기(`/api/vision/start` 또는 detector 플러그인)가 올린 검출을 버스에서 읽는다
+cameras: []
+
+config:
+  # 공통 항목(max_episodes·episode_timeout_s·settle_s·dry_run·skills)은 MissionPlugin 이 자동으로 더한다.
+  # max_episodes 기본 0(무한) 대신 10 — 오케스트레이터 1단계와 같은 기본.
+  - { key: max_episodes, kind: number, default: 10, min: 0, max: 200, label: "회차 수 (0 = 무한)" }
+  - { key: episode_timeout_s, kind: number, default: 40, min: 1, max: 600, label: "실행 대기(초) — 완료 판정이 올 때까지의 대용" }
+  - { key: cams, kind: text, default: "", label: "읽을 검출 이름 (쉼표, 비우면 전부)" }
+  - { key: freshness_s, kind: number, default: 3, min: 0.5, max: 30, step: 0.5, label: "검출 신선도 한계(초)" }
+  - { key: rules, kind: text, multiline: true, default: "", label: "판단 규칙 (비우면 게이트웨이 기본)" }
+  - { key: task_template, kind: text, default: "pick up the {target} and put it in the {destination}", label: "지시문 틀" }
+  - { key: reset_wait_s, kind: number, default: 10, min: 0, max: 120, label: "리셋 대기(초)" }
+  - { key: provider, kind: text, default: "", label: "LLM 프로바이더 (비우면 설정)" }
+  - { key: model, kind: text, default: "", label: "LLM 모델 (비우면 설정)" }
+
+permissions:
+  - activity.read
+  - inference.read
+  - inference.start      # 스킬(체크포인트 교체)일 때만 쓴다
+  - inference.stop
+  - params.write
+  - vision.read
+  - vision.judge
+  - eval.write
+
+commands: [skip]
+
+resources:
+  gpu: false
+  heartbeat: false        # 무인 운용이면 true — 브라우저 없이도 추론이 선다/산다 (feature/plugins.md §3-7)
+
+outputs:
+  state:
+    - { key: phase, label: "단계" }
+    - { key: episode, label: "회차" }
+    - { key: decision, label: "판단" }

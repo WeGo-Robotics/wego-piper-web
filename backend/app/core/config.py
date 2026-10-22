@@ -82,12 +82,15 @@ class Settings(BaseSettings):
     robot_config_path: Path = Path.home() / "piper_config.json"
     # 앱이 생성하는 로그/기록 (eval_logs, debug)
     log_dir: Path = _BACKEND_DIR / "data"
-    # 사용자가 업로드한 커스텀 YOLO 가중치 (.pt). HF 캐시(models_dir)와 별개 —
+    # 사용자가 업로드한 커스텀 검출 가중치 (.pt). HF 캐시(models_dir)와 별개 —
     # 저긴 허브 구조라 흩어진 .pt 를 스캔할 곳이 못 된다.
-    yolo_models_dir: Path = _BACKEND_DIR / "data" / "yolo_models"
-    # YOLO 학습용 이미지 데이터셋 (feature/yolo-training.md). LeRobot 데이터셋
+    detector_models_dir: Path = _BACKEND_DIR / "data" / "detector_models"
+    # 검출 학습용 이미지 데이터셋 (feature/detector-training.md). LeRobot 데이터셋
     # (datasets_dir)과 완전히 다른 물건이라 섞지 않는다.
-    yolo_datasets_dir: Path = _BACKEND_DIR / "data" / "yolo_datasets"
+    detector_datasets_dir: Path = _BACKEND_DIR / "data" / "detector_datasets"
+    # 사용자가 설치한 플러그인 폴더 (feature/plugins.md). 저장소의 번들 예제(`<repo>/plugins/`)는
+    # 레지스트리가 함께 읽는다. 실행 중 설정·venv 는 이 아래 `.runtime/<name>/` 에.
+    plugins_dir: Path = _BACKEND_DIR / "data" / "plugins"
 
     # 사람이 만든 시뮬 장면 (feature/sim-scene-editor.md). config_dir 아래인 이유:
     # 카메라 프로파일·프리셋과 같은 성격(사람이 쓴 작은 JSON)이고, 컨테이너에서 그 경로가

@@ -48,6 +48,17 @@ def _open(scope) -> bool:
     return any(path.startswith(p) for p in OPEN_PREFIXES)
 
 
+def _bearer(scope) -> str | None:
+    """`Authorization: Bearer <토큰>`. 플러그인 실행 토큰만 여기로 온다 — 외부 API 는 열린
+    접두사라 이 함수에 닿기 전에 통과한다."""
+    for k, v in scope.get("headers", []):
+        if k == b"authorization":
+            kind, _, token = v.decode("latin-1").strip().partition(" ")
+            if kind.lower() == "bearer" and token:
+                return token.strip()
+    return None
+
+
 def _cookie(scope) -> str | None:
     """세션 쿠키. 헤더를 직접 뒤진다 — `Request` 를 만들면 본문 수신까지 얽힌다."""
     for k, v in scope.get("headers", []):
@@ -72,6 +83,17 @@ async def _deny(scope, send) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
+async def _forbid(scope, send, detail: str) -> None:
+    if scope["type"] == "websocket":
+        await send({"type": "websocket.close", "code": 1008})
+        return
+    body = json.dumps({"detail": detail}).encode()
+    await send({"type": "http.response.start", "status": 403,
+                "headers": [(b"content-type", b"application/json"),
+                            (b"content-length", str(len(body)).encode())]})
+    await send({"type": "http.response.body", "body": body})
+
+
 class AuthGate:
     """세션이 없으면 401(HTTP) · 1008(WS). 비밀번호가 없으면 **아무것도 안 한다.**"""
 
@@ -79,7 +101,39 @@ class AuthGate:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] not in ("http", "websocket") or _open(scope):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        # 플러그인 실행 토큰 (feature/plugins.md §5). 로그인이 꺼져 있어도 **범위는 건다** —
+        # 매니페스트가 선언한 권한이 곧 플러그인이 할 수 있는 일의 전부여야 하고, 그게
+        # 로그인 설정에 따라 달라지면 권한 화면이 거짓말이 된다.
+        token = _bearer(scope)
+        if token is not None:
+            from app.core import plugin_scopes
+            from app.services.plugins import registry
+
+            path = scope.get("path", "")
+            # `/api/auth/*` 는 열린 접두사지만 **토큰을 든 플러그인에게는 닫혀 있다** —
+            # 비밀번호를 바꾸거나 로그인을 끄는 것은 사람의 행위다 (`*` 라도).
+            if any(path.startswith(p) for p in plugin_scopes.NEVER_PREFIXES):
+                await _forbid(scope, send, "플러그인은 로그인 설정을 만질 수 없습니다")
+                return
+            if _open(scope):
+                await self.app(scope, receive, send)
+                return
+            grant = registry.grant_for(token)
+            if grant is None:
+                await _deny(scope, send)
+                return
+            if not plugin_scopes.allows(grant.scopes, scope.get("method", "GET"), scope.get("path", "")):
+                await _forbid(scope, send,
+                              f"플러그인 '{grant.name}' 의 권한 밖입니다 — plugin.yaml 의 permissions 에 범위를 더하세요")
+                return
+            scope["piper_plugin"] = grant.name
+            await self.app(scope, receive, send)
+            return
+
+        if _open(scope):
             await self.app(scope, receive, send)
             return
         from app.services import auth

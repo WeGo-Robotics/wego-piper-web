@@ -10,7 +10,7 @@
 
 수집·추론이 카메라를 **장치 id**(`/dev/video0`, `rs:250122070363:color`)로 지정하고,
 소비 직전에 `segment_for_camera()` 가 그걸 세그먼트 이름으로 바꾼다. 같은 저장소의 다른
-소비자(YOLO·스냅샷·조명 감시)는 이미 **스트림 이름**으로 말한다. 수집·추론만 어휘가 다르다.
+소비자(검출·스냅샷·조명 감시)는 이미 **스트림 이름**으로 말한다. 수집·추론만 어휘가 다르다.
 
 그리고 그 이름은 장치 id 의 문자열 변환이라 `/dev/videoN` 이 재열거되면 같이 바뀐다 —
 저장된 매핑이 조용히 다른 카메라를 가리킨다.
@@ -25,7 +25,7 @@
 | 준비 | `prepare_cameras` 가 장치 id 로 허브에 **connect** (안 열려 있으면 연다) | [camera_config.py](../backend/app/services/camera_config.py) |
 | 등록 | `register_camera` = 자동 connect + `ready` | [camera_manager.py](../backend/app/services/camera_manager.py) |
 | 스캔 | 미등록 카메라를 `probe` — 데몬이 열어 한 장 **발행**하고 닫는다. 세그먼트가 **정지 화면으로 남는다** | [hub.py](../cam/piper_cam/hub.py) `probe` |
-| 이미 스트림 기준 | `/api/vision/segments`, yolod, yolo 학습, 스냅샷 | [vision.py](../backend/app/routers/vision.py) |
+| 이미 스트림 기준 | `/api/vision/segments`, detectord, 검출 학습, 스냅샷 | [vision.py](../backend/app/routers/vision.py) |
 | 이름 추론 | 접두사 `dev_`·`rs_`·`sim_`, 접미사 `_depth` 로 종류·소유를 **이름에서 읽는다** | §6 목록 |
 
 ## 3. 확정한 결정
@@ -44,7 +44,7 @@
 ## 4. 원칙
 
 - **세그먼트가 있다 ⇔ 등록된 카메라가 연결돼 있다.** 미등록 장치는 세그먼트를 갖지 않는다.
-- **데이터 플레인**(수집·추론·YOLO·스냅샷)은 스트림 이름으로 말한다.
+- **데이터 플레인**(수집·추론·검출·스냅샷)은 스트림 이름으로 말한다.
   **관리 플레인**(카메라 페이지·프로파일·컨트롤·리셋)은 장치 id 를 그대로 쓴다.
 - 소비자는 이름 규칙을 직접 계산하지 않는다 — **스트림 디렉토리에 조회한다.**
 
@@ -143,7 +143,7 @@
   "안 닫힐" 뿐이다.
   - 감시자(빠짐): `device_watch._survey_cameras`, `light_watch.sample`, `has_frame`,
     `_is_fresh`, `_wait_for_frame`, `_shm_dims`. 전부 몇 초마다 열었다 닫는다.
-  - 소비자(붙음): `PiperShmCamera`, yolod, 카메라 페이지 프리뷰 스트림, 정렬·캡처.
+  - 소비자(붙음): `PiperShmCamera`, detectord, 카메라 페이지 프리뷰 스트림, 정렬·캡처.
 - **판정은 데몬이 한다.** 카메라별 `idle_stop_s`(0 = 끔, **기본 끔**)를 connect 때 받고, 소비자가
   없어진 지 그만큼 지나면 그 카메라를 닫는다. 게이트웨이가 죽어도 동작한다(크래시 격리).
 - **시작 요청이 스트림을 붙잡는다.** `prepare_cameras` 끝 → subprocess 기동 → 정책 로드 →
@@ -239,7 +239,7 @@ pid 기반 정리 · 세그먼트 개명 RPC · **`probe` 가 JPEG 를 돌려주
   `LOCK_EX|LOCK_NB` 로 떠본다(`piper_shm.has_readers`). 커널이 죽은 프로세스의 락을 풀어
   하트비트가 없다. **데이터 경로의 락이 아니다** — 프레임 읽기·쓰기는 그대로 락 없는 seqlock.
 - **관찰자**: 상시 도는 감시·스냅샷·존재 확인 열두 곳은 `Subscriber(observer=True)` 로 표지를
-  안 건다. 소비자는 셋뿐(LeRobot 플러그인·yolod·MJPEG 미리보기) — **테스트가 목록을 못 박는다.**
+  안 건다. 소비자는 셋뿐(LeRobot 플러그인·detectord·MJPEG 미리보기) — **테스트가 목록을 못 박는다.**
   기본이 소비자인 이유는 방향이다: 감시자가 표지를 걸면 "안 닫힐 뿐"이고, 소비자가 빠뜨리면
   수집 도중 닫힌다.
 - **판단은 데몬이 한다**(`piper_cam.idle.IdleReaper`, 세 데몬의 루프). 게이트웨이가 죽어도 돈다.

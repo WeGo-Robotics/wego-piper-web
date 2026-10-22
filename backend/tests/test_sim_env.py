@@ -160,7 +160,7 @@ def test_sim_controls_use_v4l2_names_so_profiles_and_lighting_apply():
 
 def test_emulation_scales_brightness_and_shifts_color_and_publishes_bgr():
     """노출×게인 = 밝기 배율, 색온도 = 채널 게인 (순수 함수). 그리고 세그먼트는
-    **BGR** — yolod 가 RGB 로 오독해 채널을 뒤집었던 사고의 소비자 규약."""
+    **BGR** — detectord 가 RGB 로 오독해 채널을 뒤집었던 사고의 소비자 규약."""
     import numpy as np
     from piper_sim.cameras import emulate
 

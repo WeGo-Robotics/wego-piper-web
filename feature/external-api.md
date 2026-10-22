@@ -5,7 +5,11 @@
 
 > **◐ v1 구현됨** — [routers/external.py](../backend/app/routers/external.py).
 > 미션(분리수거 루프) 제출·조회·취소, 시스템 상태, heartbeat, E-stop,
-> yolod 제어, 검출 조회. 인증은 `PIPER_API_TOKEN` Bearer.
+> detectord 제어, 검출 조회. 인증은 `PIPER_API_TOKEN` Bearer.
+>
+> **☑ 미션 = 플러그인 (2026-10-22 구현):** 오케스트레이터는 삭제됐고 `type` 이 플러그인 이름,
+> 본문이 그 설정이다(`mission: true` 플러그인만, 동시 1개). 표면은 v1 그대로, `status.orchestrator`
+> 는 한 릴리스 동안 `null`, 대신 `status.plugins`·`status.mission` — [plugins.md §12-2](plugins.md).
 
 ---
 
@@ -53,10 +57,10 @@
 | `GET` | `/api/ext/v1/missions` | 미션 이력 (저널 파일 목록, 최신 먼저) |
 | `GET` | `/api/ext/v1/missions/{id}` | 진행 중이면 라이브 상태, 끝났으면 저널에서 회차 기록 |
 | `POST` | `/api/ext/v1/missions/{id}/cancel` | 진행 중 미션 중단 |
-| `GET` | `/api/ext/v1/status` | 종합 상태 — 실행 중 활동·E-stop·오케스트레이터·yolod·검출 카메라 |
-| `GET` | `/api/ext/v1/detections` | 살아 있는 검출 (yolod 페이로드 그대로 — `text` 포함) |
-| `POST` | `/api/ext/v1/vision/start` | yolod 기동 (`{"cams": {...}, "model", "conf"}`) |
-| `POST` | `/api/ext/v1/vision/stop` | yolod 정지 |
+| `GET` | `/api/ext/v1/status` | 종합 상태 — 실행 중 활동·E-stop·오케스트레이터·detectord·검출 카메라 |
+| `GET` | `/api/ext/v1/detections` | 살아 있는 검출 (detectord 페이로드 그대로 — `text` 포함) |
+| `POST` | `/api/ext/v1/vision/start` | detectord 기동 (`{"cams": {...}, "model", "conf"}`) |
+| `POST` | `/api/ext/v1/vision/stop` | detectord 정지 |
 | `POST` | `/api/ext/v1/heartbeat` | 데드맨 생존 신호 — **미션 중 의무** |
 | `POST` | `/api/ext/v1/estop` | 긴급 정지 |
 

@@ -43,7 +43,7 @@ PLURAL_CATEGORIES = {"zero", "one", "two", "few", "many", "other"}
 
 # 화면에 나갈 수 있는 문장을 만드는 곳. 로그·CLI 도움말만 있는 곳은 뺀다.
 PY_ROOTS = [
-    "backend/app", "daemons", "bus", "cam", "robot", "rs", "sim", "so101", "phase",
+    "backend/app", "daemons", "bus", "cam", "robot", "rs", "sim", "so101", "phase", "plugin",
 ]
 PY_SKIP_PARTS = {"tests", "__pycache__", "egg-info", "node_modules"}
 # 로그 줄은 화면에 안 나간다 (프로세스 로그 스트림은 번역하지 않는다)

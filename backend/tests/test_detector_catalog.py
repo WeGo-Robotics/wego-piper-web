@@ -2,7 +2,7 @@
 
 카탈로그는 화면의 선택지이고, 로더는 그 선택을 실제로 여는 코드다. **둘이
 갈리면 고를 수는 있는데 시작만 하면 죽는 항목이 생긴다** — RT-DETR 를 넣으면서
-정확히 그럴 뻔했다: `YOLO()` 는 RT-DETR 가중치를 못 연다.
+정확히 그럴 뻔했다: ultralytics 로더 는 RT-DETR 가중치를 못 연다.
 """
 
 import sys
@@ -21,11 +21,11 @@ def _catalog():
 
 
 def test_the_catalog_offers_only_rtdetr():
-    """⚠ **ultralytics 는 AGPL-3.0 이다.** 목록에 YOLO 계열이 하나라도 남으면,
+    """⚠ **ultralytics 는 AGPL-3.0 이다.** 목록에 AGPL 계열이 하나라도 남으면,
     그걸 고르는 순간 AGPL 라이브러리가 필요해진다 — 라이선스를 정리한 의미가
     사라진다. 그래서 "RT-DETR 이 있다"가 아니라 **"그것뿐이다"** 를 본다."""
     fams = {m["family"] for m in _catalog()}
-    assert fams and all("RT-DETR" in f for f in fams), f"YOLO 계열이 남아 있다: {fams}"
+    assert fams and all("RT-DETR" in f for f in fams), f"AGPL 계열이 남아 있다: {fams}"
     for m in _catalog():
         assert not m["file"].endswith(".pt"), f"{m['file']} 은 ultralytics 형식이다"
 
@@ -60,7 +60,7 @@ def test_the_loader_refuses_ultralytics_weights():
     from detector_loader import load_detector
 
     with pytest.raises(ValueError, match="ultralytics"):
-        load_detector("yolo11n.pt")
+        load_detector("ultra_nano.pt")
 
 
 def test_unverified_numbers_are_left_blank():
@@ -73,7 +73,7 @@ def test_unverified_numbers_are_left_blank():
     assert all(m["size_mb"] for m in cat), "실측한 용량은 있어야 한다"
 
 
-@pytest.mark.parametrize("daemon", ["yolod.py", "yolo_prelabel.py", "yolo_traind.py"])
+@pytest.mark.parametrize("daemon", ["detectord.py", "detector_prelabel.py", "detector_traind.py"])
 def test_all_three_daemons_share_the_loader(daemon):
     """한 곳만 고치면 데모에서는 되는데 학습에서는 안 되는 식으로 갈린다."""
     from conftest import python_code_only
@@ -86,7 +86,7 @@ def test_all_three_daemons_share_the_loader(daemon):
 # ── 기본 선택은 이미 받아둔 가중치로 (화면) ──────────────────────────────────
 
 _DEMO = (Path(__file__).resolve().parents[2] / "frontend" / "src"
-         / "pages" / "YoloDemoPage.tsx")
+         / "pages" / "DetectorDemoPage.tsx")
 
 
 def test_the_list_still_shows_models_that_need_downloading():
@@ -115,7 +115,7 @@ def test_an_explicit_choice_is_not_overridden():
 
 
 def test_deleting_the_selected_model_falls_back_to_a_local_one():
-    """⚠ **회귀** — 삭제 뒤 'yolo11n.pt' 를 박아 넣었다. 그 파일이 이 기기에
+    """⚠ **회귀** — 삭제 뒤 'ultra_nano.pt' 를 박아 넣었다. 그 파일이 이 기기에
     없으면 선택이 곧장 '받아야 하는 모델' 로 옮겨 앉는다."""
     src = _DEMO.read_text()
     body = src.split("const handleDeleteModel", 1)[1].split("\n  const ", 1)[0]
@@ -136,10 +136,10 @@ def test_runtime_detection_artifacts_are_ignored():
     import subprocess
 
     samples = [
-        "backend/data/yolo_models/best.pt",
-        "backend/data/yolo_models/best.json",      # 학습 지표 곁 파일
-        "backend/data/yolo_datasets/s/images/a.jpg",
-        "backend/data/yolo_datasets/s/labels/a.txt",
+        "backend/data/detector_models/best.pt",
+        "backend/data/detector_models/best.json",      # 학습 지표 곁 파일
+        "backend/data/detector_datasets/s/images/a.jpg",
+        "backend/data/detector_datasets/s/labels/a.txt",
     ]
     for rel in samples:
         r = subprocess.run(["git", "check-ignore", "-q", rel],
@@ -151,8 +151,8 @@ def test_the_directories_themselves_survive():
     """디렉토리가 사라지면 첫 실행이 mkdir 부터 해야 한다 — `.gitkeep` 을 남긴다."""
     import subprocess
 
-    for rel in ("backend/data/yolo_models/.gitkeep",
-                "backend/data/yolo_datasets/.gitkeep"):
+    for rel in ("backend/data/detector_models/.gitkeep",
+                "backend/data/detector_datasets/.gitkeep"):
         assert (_REPO / rel).exists(), f"{rel} 이 없다"
         r = subprocess.run(["git", "check-ignore", "-q", rel],
                            cwd=_REPO, capture_output=True)
@@ -171,7 +171,7 @@ def test_predict_returns_a_list_like_ultralytics():
 
     src = inspect.getsource(RTDetr.predict)
     assert "return [" in src, "리스트로 안 돌려준다"
-    for daemon in ("yolod.py", "yolo_prelabel.py"):
+    for daemon in ("detectord.py", "detector_prelabel.py"):
         body = (_DAEMONS / daemon).read_text()
         if "model.predict(" in body:
             assert ")[0]" in body, f"{daemon} 의 호출 형태가 바뀌었다 — 어댑터도 같이 봐야 한다"
@@ -194,11 +194,14 @@ def test_the_adapter_covers_everything_the_daemons_use():
     from detector_loader import RTDetr, _Result
 
     used_model, used_result = set(), set()
-    for daemon in ("yolod.py", "yolo_prelabel.py"):
+    # 페이로드·자기소개(`model_meta`)는 SDK 로 옮겨 갔다 (feature/plugins.md §13-3) — 호출부가 셋이다
+    sources = [_DAEMONS / "detectord.py", _DAEMONS / "detector_prelabel.py",
+               _DAEMONS.parent / "plugin" / "piper_plugin" / "detections.py"]
+    for path in sources:
         # ⚠ **주석·docstring 을 걷어내고 본다.** 이 파일들은 "예전에는
         #   `model.info()` 에서 읽었다" 같은 설명을 남기는데, 그걸 요구로 세면
         #   이미 없앤 것을 도로 만들라고 한다.
-        src = python_code_only((_DAEMONS / daemon).read_text())
+        src = python_code_only(path.read_text())
         used_model |= set(re.findall(r"\bmodel\.([a-zA-Z_]+)", src))
         used_model |= set(re.findall(r"getattr\(model, *['\"]([a-zA-Z_]+)", src))
         used_result |= set(re.findall(r"\bresult\.([a-zA-Z_]+)", src))
@@ -225,7 +228,7 @@ def test_the_adapter_covers_everything_the_daemons_use():
 def test_the_colour_contract_holds_end_to_end(tmp_path):
     """⚠ **실기 사고(2026-09-29)**: 검출 데모에서 노란 통이 파랗게 나왔다.
 
-    두 파일의 전제가 어긋나 있었다. `yolod` 는 "세그먼트는 **BGR**"로 바뀌어 프레임을
+    두 파일의 전제가 어긋나 있었다. `detectord` 는 "세그먼트는 **BGR**"로 바뀌어 프레임을
     그대로 넘기는데, 어댑터는 옛 전제("받는 것은 RGB")에 멈춰 `plot()` 에서 한 번 더
     뒤집었다 — 그래서 `cv2.imencode` 가 RGB 를 BGR 로 적었다.
 
@@ -243,7 +246,7 @@ def test_the_colour_contract_holds_end_to_end(tmp_path):
 
     from detector_loader import as_rgb_bgr
 
-    # 노란 물체 한 장을 **BGR** 로 (yolod 가 넘기는 방식)
+    # 노란 물체 한 장을 **BGR** 로 (detectord 가 넘기는 방식)
     yellow_bgr = np.zeros((4, 4, 3), np.uint8)
     yellow_bgr[..., 1:] = 255                      # B=0 G=255 R=255
     rgb, bgr = as_rgb_bgr(yellow_bgr)
@@ -278,13 +281,13 @@ def test_the_daemon_and_the_adapter_agree_on_what_a_frame_is():
     """⚠ 색 사고의 **진짜 원인은 두 파일의 전제가 갈린 것**이다. 한쪽만 고치면
     다음에 또 갈린다 — 그래서 양쪽 소스를 같이 본다.
 
-    `yolod` 는 세그먼트를 **안 뒤집고** 넘겨야 하고(BGR), 어댑터는 numpy 입력을
+    `detectord` 는 세그먼트를 **안 뒤집고** 넘겨야 하고(BGR), 어댑터는 numpy 입력을
     **BGR 로 받아** 모델에만 RGB 를 준다.
     """
     from conftest import python_code_only
 
-    yolod = python_code_only((_DAEMONS / "yolod.py").read_text())
-    call = yolod.split("model.predict(", 1)[0][-400:]
+    detectord = python_code_only((_DAEMONS / "detectord.py").read_text())
+    call = detectord.split("model.predict(", 1)[0][-400:]
     assert "[..., ::-1]" not in call, "데몬이 다시 뒤집기 시작했다 — 어댑터와 갈린다"
 
     loader = python_code_only((_DAEMONS / "detector_loader.py").read_text())

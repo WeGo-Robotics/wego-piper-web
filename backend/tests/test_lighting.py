@@ -30,7 +30,7 @@ def _run(judge: Judge, seq: list[dict], dt: float = 2.0) -> list[list[dict]]:
 
 def test_the_input_is_bgr_and_the_color_sign_proves_it():
     """⚠ **세그먼트는 BGR 이다** (rsd 는 to_bgr 후 발행, camerad 는 OpenCV 그대로 —
-    yolod 의 "RGB" 주석이 틀린 것이다). R/B 가 뒤집히면 색 변화의 **방향**이
+    detectord 의 "RGB" 주석이 틀린 것이다). R/B 가 뒤집히면 색 변화의 **방향**이
     뒤집혀 "붉어졌다"가 "푸르러졌다"로 나온다. 붉은 프레임으로 부호를 못 박는다."""
     red = features(_frame(b=10, g=10, r=200))
     assert red["log_rg"] > 1.0, "붉은 프레임인데 R/G 가 안 크다 — 채널이 뒤집혔다"

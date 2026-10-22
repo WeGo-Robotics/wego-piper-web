@@ -226,7 +226,7 @@ def episode_meta(dataset_id: str, episode: int) -> tuple[Path, dict, dict] | Non
     """(데이터셋 경로, info.json meta, 에피소드 레코드) — 상세 응답의 부분집합.
 
     `get_dataset` 은 `_dir_size`(전체 트리 순회)까지 계산한다 — 에피소드 하나의
-    비디오 위치(chunk/file/timestamp)만 필요한 호출자(YOLO 캡처의 비디오 폴백)용
+    비디오 위치(chunk/file/timestamp)만 필요한 호출자(검출 캡처의 비디오 폴백)용
     가벼운 경로다. 못 찾으면 None.
     """
     result = _find_dataset_dir(dataset_id)

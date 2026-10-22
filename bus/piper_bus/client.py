@@ -254,7 +254,7 @@ class Bus:
         keys = list(self.r.scan_iter(match=C.PREVIEW_PATTERN))
         return int(self.r.delete(*keys)) if keys else 0
 
-    # ── 시각 검출 (yolod → 소비자) ──
+    # ── 시각 검출 (detectord → 소비자) ──
 
     def put_detections(self, name: str, payload: dict) -> None:
         """최신 검출로 덮어쓴다. TTL 이 stale 판정의 안전망이다 (계약 주석 참고)."""
@@ -296,12 +296,32 @@ class Bus:
             C.light_name(k) for k in self.r.scan_iter(match=C.LIGHT_PATTERN)
         )
 
-    def put_yolo_meta(self, meta: dict) -> None:
-        """yolod 자기소개(모델·설정). 루프마다 갱신 — TTL 이 stale 판정을 대신한다."""
-        self.r.set(C.YOLO_META, json.dumps(meta), px=C.YOLO_META_TTL_MS)
+    # ── 플러그인 상태 (plugin → 화면) ──
 
-    def get_yolo_meta(self) -> dict | None:
-        raw = self.r.get(C.YOLO_META)
+    def put_plugin_state(self, name: str, state: dict) -> None:
+        """플러그인 자기 상태 KV. 루프마다 갱신 — TTL 이 stale 판정을 대신한다."""
+        self.r.set(C.plugin_state_key(name), json.dumps(state), px=C.PLUGIN_STATE_TTL_MS)
+
+    def get_plugin_state(self, name: str) -> dict | None:
+        raw = self.r.get(C.plugin_state_key(name))
+        return json.loads(raw) if raw else None
+
+    def push_plugin_command(self, name: str, command: dict) -> None:
+        key = C.plugin_cmd_key(name)
+        self.r.rpush(key, json.dumps(command))
+        self.r.pexpire(key, C.PLUGIN_CMD_TTL_MS)
+
+    def pop_plugin_command(self, name: str) -> dict | None:
+        """논블로킹 — 없으면 None. 플러그인 루프가 매 바퀴 비운다."""
+        raw = self.r.lpop(C.plugin_cmd_key(name))
+        return json.loads(raw) if raw else None
+
+    def put_detector_meta(self, meta: dict) -> None:
+        """detectord 자기소개(모델·설정). 루프마다 갱신 — TTL 이 stale 판정을 대신한다."""
+        self.r.set(C.DETECTOR_META, json.dumps(meta), px=C.DETECTOR_META_TTL_MS)
+
+    def get_detector_meta(self) -> dict | None:
+        raw = self.r.get(C.DETECTOR_META)
         if raw is None:
             return None
         try:

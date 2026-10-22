@@ -4,7 +4,7 @@
 # 바이너리는 저장소 밖 %h/tools/bin/ollama (사용자 공간 설치, root 불필요) —
 # 없는 머신에서는 Condition 으로 조용히 건너뛴다 (.120 등).
 #
-# GPU 공존 실측 (5090): 정책 서버 + yolod + qwen2.5:7b ≈ 12GB/32GB.
+# GPU 공존 실측 (5090): 정책 서버 + detectord + qwen2.5:7b ≈ 12GB/32GB.
 # 모델은 %h/tools/ollama-models 에 있다. 판단 기본 모델은 backend/.env 의
 # PIPER_LLM_MODEL 이 정한다 — 7b 미만은 판단 오류가 실측됐다 (3b 탈락).
 #

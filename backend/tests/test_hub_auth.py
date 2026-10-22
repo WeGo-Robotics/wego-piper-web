@@ -100,7 +100,7 @@ def _whoami(monkeypatch, result):
 def leave_training_idle():
     """⚠ **이 파일은 학습 시작을 실제로 두드린다.** 인자가 가짜라 곧 실패하지만,
     그 사이 `train_manager` 가 켜진 상태로 남는다 — 그러면 **뒤에 오는 테스트가
-    409(배타 모드)** 를 받는다. 실제로 `test_yolo_train_api` 가 그렇게 깨졌고,
+    409(배타 모드)** 를 받는다. 실제로 `test_detector_train_api` 가 그렇게 깨졌고,
     단독으로는 통과해서 원인을 찾는 데 시간이 걸렸다.
     """
     yield

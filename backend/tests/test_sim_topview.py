@@ -172,8 +172,8 @@ def test_moving_the_camera_is_refused_while_the_observation_is_being_consumed():
     from app.services import exclusivity as X
 
     blockers = set(X.BLOCKED_BY[X.Activity.CAMERA_MOVE])
-    assert {X.Activity.RECORDING, X.Activity.INFERENCE,
-            X.Activity.ORCHESTRATOR} <= blockers, "관측을 먹는 활동을 안 막는다"
+    # 에피소드 루프는 플러그인이 됐다 — 팔은 추론을 통해서만 닿으므로 추론이 그 배타를 진다 (plugins §12-1)
+    assert {X.Activity.RECORDING, X.Activity.INFERENCE} <= blockers, "관측을 먹는 활동을 안 막는다"
     assert X.Activity.CAMERA_MOVE in X.LABELS, "409 문구를 만들 라벨이 없다"
     assert X.Activity.CAMERA_MOVE not in X.STATE_PROVIDERS, \
         "카메라 높이 변경은 순간 동작이다 — 남을 막는 활동이 아니다"

@@ -333,8 +333,7 @@ def test_the_world_is_not_swapped_out_from_under_a_recording(store, monkeypatch)
     monkeypatch.setattr(sim, "call_strict", lambda m, *a, **k: pushed.append(a) or {})
     store.save("mine", {"objects": [CUBE]})
 
-    for act in (X.Activity.RECORDING, X.Activity.INFERENCE, X.Activity.ORCHESTRATOR,
-                X.Activity.TELEOP):
+    for act in (X.Activity.RECORDING, X.Activity.INFERENCE, X.Activity.TELEOP):
         monkeypatch.setitem(X.STATE_PROVIDERS, act, lambda: True)
         with pytest.raises(store.SceneStoreError, match="가상환경을 바꿀 수 없습니다"):
             store.apply("mine")

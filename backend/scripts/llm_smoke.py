@@ -21,7 +21,7 @@ from app.core.config import settings
 from app.services import llm_client
 from app.services.llm_client import judge
 
-RULES = """너는 로봇 팔의 분리수거 판단기다. YOLO 검출 목록을 보고 다음에 집을 물체
+RULES = """너는 로봇 팔의 분리수거 판단기다. 검출 목록을 보고 다음에 집을 물체
 하나와 목적지 통을 정한다.
 
 규칙:

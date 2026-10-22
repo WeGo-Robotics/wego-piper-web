@@ -176,7 +176,7 @@ def test_it_refuses_while_the_arm_is_already_moving(monkeypatch):
     부하가 측정에도 섞인다.
 
     ⚠ **앱을 띄우지 않는다.** `TestClient` 로 기동하면 그 기동이 매니저 상태를
-    남겨 **뒤따르는 다른 파일의 테스트가 깨졌다** (카메라 프로파일·YOLO 셋).
+    남겨 **뒤따르는 다른 파일의 테스트가 깨졌다** (카메라 프로파일·검출 셋).
     가드는 라우터 함수를 직접 불러도 그대로 도므로 앱이 필요 없다.
     """
     import asyncio

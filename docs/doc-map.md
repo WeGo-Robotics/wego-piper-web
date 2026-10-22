@@ -68,7 +68,7 @@
 | 시기 | 문서 |
 |---|---|
 | 9월 (14개) | `gateway-auth`(미커밋) `vast-training` `so101-flipped` `readme-rewrite` `lighting-watch` `web-leader` `sim-scene-editor` `sim-env` `gray-card-calibration` `version-update` `so101d` `services` `act-delta` `joint-diagnostics` `alignment-check` `hf-account` `cloud-training` `camera-profiles` `act-aux` |
-| 8월에서 멈춤 (15개) | `teleoperation` `episode-orchestrator` `service-restart` `depth-background-mask` `yolo-training` `llm-integration` `external-api` `episode-editor` `bimanual` `01-phase-annotation` `layout-redesign` `policy-ui-spec` `parameter-presets` `manual-control` `demo-scenario-gaps` |
+| 8월에서 멈춤 (15개) | `teleoperation` `episode-orchestrator` `service-restart` `depth-background-mask` `detector-training` `llm-integration` `external-api` `episode-editor` `bimanual` `01-phase-annotation` `layout-redesign` `policy-ui-spec` `parameter-presets` `manual-control` `demo-scenario-gaps` |
 
 ⚠ **8월 = 낡음이 아니다.** 끝나서 안 건드리는 것과 방치된 것이 섞여 있고, 그 둘을 가르는
 표시가 문서에 없다. 그게 §3-1 이다.
@@ -98,7 +98,7 @@
 | # | 문제 | 근거 |
 |---|---|---|
 | 3-1 | **문서가 자기 상태를 안 말한다** — 기획인지, 끝난 것인지, 지금 사실인지 | 위 분류를 조사자가 새로 매겨야 했다 |
-| 3-2 | **`feature/README` 인덱스가 22/34** | 빠진 12: `act-delta` `alignment-check` `episode-editor` `external-api` `gateway-auth` `hf-account` `joint-diagnostics` `readme-rewrite` `services` `version-update` `web-leader` `yolo-training` |
+| 3-2 | **`feature/README` 인덱스가 22/34** | 빠진 12: `act-delta` `alignment-check` `episode-editor` `external-api` `gateway-auth` `hf-account` `joint-diagnostics` `readme-rewrite` `services` `version-update` `web-leader` `detector-training` |
 | 3-3 | **`refactor/` 14개가 끝난 일** | 제목에 `☑ 완료`, 최종 수정 전부 2026-08 |
 | 3-4 | **`.rules/` 2개가 고아** | 아무 문서·코드도 안 가리킨다. `plan-inference-ui.md` 는 **2026-04-04** |
 | 3-5 | **이름 규칙이 갈린다** | `vibration_reduction.md`(snake) · `PiPER_AI_데모_시나리오_정리.md`(한글·루트) · `feature/01-phase-annotation.md`(feature 중 유일한 번호) |

@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: piper_plugin
+Version: 0.1.0
+Summary: PIPER 플러그인 SDK — 카메라(shm)·버스·게이트웨이 REST 를 감싼 작은 계약 (feature/plugins.md §7)
+License-Expression: Apache-2.0
+Requires-Python: >=3.10
+Requires-Dist: piper_bus
+Requires-Dist: piper_shm
+Requires-Dist: numpy
+Requires-Dist: pyyaml
+Requires-Dist: pydantic>=2

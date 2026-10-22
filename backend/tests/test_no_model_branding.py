@@ -1,84 +1,93 @@
-"""화면에 특정 검출 모델의 이름을 쓰지 않는다.
+"""특정 검출 모델의 이름을 **저장소 어디에도** 쓰지 않는다 (feature/plugins.md §14).
 
 구현이 무엇이든 갈아끼울 수 있어야 하고, **라이선스가 그 교체를 강제할 수도
-있다** — 지금 쓰는 `ultralytics` 는 AGPL-3.0 이고 RT-DETR 같은 대안은 Apache-2.0
-이다. 화면 문구에 모델 이름이 박혀 있으면 교체할 때마다 문구를 다시 훑어야 한다.
+있다** — `ultralytics` 는 AGPL-3.0 이고 지금 쓰는 RT-DETR 은 Apache-2.0 이다.
+검출기는 이미 바뀌었는데 이름이 남아 있었다. 예전에는 화면 문구만 막았다 —
+이제 범위는 **트리 전체**다: 파일·모듈·API 경로·설정 키·데이터 디렉토리·유닛 이름·
+버스 키·문서·주석.
 
-⚠ **범위는 화면 문구뿐이다.** 모듈·데몬·API 경로·열거자 이름은 내부라 그대로
-둔다. 이름을 가린다고 라이선스 의무가 사라지지도 않는다 — 의존성은 그대로다.
+예외(허용 목록)는 셋이다:
+- `CHANGELOG.md` — 이력은 다시 쓰지 않는다
+- `feature/plugins.md` — 개명 표가 옛 이름을 적는다 (무엇에서 무엇으로)
+- **삭제 예정** 파일 — 옛 경로 리다이렉트·옛 디렉토리 이관. 한 릴리스 뒤 지운다.
+  이 파일들은 본문에 "삭제 예정" 이라고 적어야 한다 — 그래야 지울 때 찾는다
+- 이 테스트 자신 (금지 단어를 정규식으로 든다)
 """
 
+from __future__ import annotations
+
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
 
-_SRC = Path(__file__).resolve().parents[2] / "frontend" / "src"
-
-_PAGES = ["config/pages.ts", "pages/VisionPage.tsx", "pages/YoloDemoPage.tsx",
-          "pages/YoloTrainPage.tsx", "pages/EpisodesPage.tsx"]
-
-# 화면 문구는 **전부 한글**이다. 경로(`/yolo-demo`)·컴포넌트(`YoloDemoPage`)·
-# 변수(`yoloTarget`)는 ASCII 뿐이라, 한글이 있는 줄만 보면 내부 이름은 저절로
-# 빠진다 — 이번 범위의 경계가 마침 거기다.
-_HANGUL = re.compile(r"[가-힣]")
-# 화면에 안 나오는 식별자: 템플릿 안 `${x}`, 번역 문장의 자리표시자 `{x}`, 그리고
-# `t('…', { cam, yoloTarget })` 의 **인자 객체**(변수 이름이다)
-_INTERP = re.compile(r"\$\{[^}]*\}|\{[A-Za-z_]\w*\}|,\s*\{[^{}]*\}(?=\s*\))")
+ROOT = Path(__file__).resolve().parents[2]
 _BRAND = re.compile(r"yolo", re.IGNORECASE)
 
+_HISTORY = {"CHANGELOG.md", "feature/plugins.md", "backend/tests/test_no_model_branding.py"}
+_SCHEDULED_FOR_REMOVAL = {
+    "frontend/src/config/legacyRoutes.tsx",
+    "backend/app/services/legacy_paths.py",
+    "backend/tests/test_legacy_paths.py",
+}
+_SKIP_PREFIX = ("backend/data/", "frontend/dist/", "frontend/node_modules/")
 
-# 주석은 화면에 안 나온다 — 줄 **끝**에 붙은 것까지 걷어내야 한다.
-# (`// 구버전 yolod` 같은 설명이 자꾸 걸렸다. 이 저장소에서 반복된 함정이라
-#  `conftest.code_only` 도 같은 이유로 있다.)
-_TRAILING = re.compile(r"//.*$|\{/\*.*?\*/\}")
+
+def _repo_files() -> list[str]:
+    """git 이 아는 파일 + 아직 안 올린 파일. 무시 목록(캐시·빌드·venv)은 빠진다."""
+    def ls(*extra: str) -> list[str]:
+        out = subprocess.run(["git", "-c", "core.quotepath=off", "ls-files", *extra],
+                             cwd=ROOT, capture_output=True, text=True, check=True).stdout
+        return [l for l in out.splitlines() if l]
+    return sorted(set(ls()) | set(ls("--others", "--exclude-standard")))
 
 
-def _visible(src: str) -> list[str]:
-    out = []
-    for line in src.splitlines():
-        s = line.strip()
-        if s.startswith(("*", "//", "/**")):
+def _text(rel: str) -> str | None:
+    p = ROOT / rel
+    if not p.is_file():
+        return None
+    data = p.read_bytes()
+    if b"\0" in data[:4096]:
+        return None                       # 바이너리(pdf·png·…)
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def test_the_tree_is_free_of_the_model_name():
+    hits: list[str] = []
+    for rel in _repo_files():
+        if rel in _HISTORY or rel in _SCHEDULED_FOR_REMOVAL or rel.startswith(_SKIP_PREFIX):
             continue
-        s = _TRAILING.sub("", s)
-        if _HANGUL.search(s):
-            out.append(s)
-    return out
+        if _BRAND.search(rel):
+            hits.append(f"{rel}  (파일 이름)")
+            continue
+        src = _text(rel)
+        if src is None:
+            continue
+        for i, line in enumerate(src.splitlines(), 1):
+            if _BRAND.search(line):
+                hits.append(f"{rel}:{i}: {line.strip()[:100]}")
+    assert not hits, "모델 이름이 남아 있다 (feature/plugins.md §14-1 의 새 이름으로):\n" + "\n".join(hits)
 
 
-@pytest.mark.parametrize("rel", _PAGES)
-def test_no_model_name_in_what_the_user_reads(rel):
-    """제목·라벨·알림 문구에 모델 이름이 없어야 한다.
-
-    데몬 이름(`yolod`)이 토스트로 나가는 것도 화면 문구다 — '검출기'로 부른다.
-    """
-    bad = [ln for ln in _visible((_SRC / rel).read_text())
-           if _BRAND.search(_INTERP.sub("", ln))]
-    assert not bad, f"{rel} 화면 문구에 모델 이름이 남아 있다: {bad}"
-
-
-def test_the_sidebar_group_is_model_neutral():
-    """묶음 이름은 사이드바에 그대로 뜬다."""
-    src = (_SRC / "config" / "pages.ts").read_text()
-    groups = src.split("PAGE_GROUPS = [", 1)[1].split("]", 1)[0]
-    assert not _BRAND.search(groups), f"묶음 이름에 모델 이름이 있다: {groups}"
+@pytest.mark.parametrize("rel", sorted(_SCHEDULED_FOR_REMOVAL))
+def test_legacy_files_say_they_are_temporary(rel):
+    """옛 이름을 적을 수 있는 파일은 **스스로 삭제 예정이라고 말해야** 한다."""
+    src = _text(rel)
+    assert src is not None, f"{rel} 이 없다 — 허용 목록에서도 지워라"
+    assert "삭제 예정" in src, f"{rel} 에 '삭제 예정' 표시가 없다"
 
 
 def test_the_activity_label_is_model_neutral():
-    """⚠ 상태바와 409 메시지가 **이 문자열을 그대로** 쓴다 — 화면 문구다
-    (test_page_registry.py 가 프론트에 자기 사전을 못 두게 막고 있다)."""
+    """⚠ 상태바와 409 메시지가 **이 문자열을 그대로** 쓴다 — 화면 문구다."""
     from app.services.exclusivity import Activity, LABELS
 
-    label = LABELS[Activity.YOLO_TRAIN]
+    label = LABELS[Activity.DETECTOR_TRAIN]
     assert not _BRAND.search(label), f"활동 라벨에 모델 이름이 있다: {label}"
-
-
-def test_the_internal_identifier_is_left_alone():
-    """열거자 값은 **내부**다. 여기까지 바꾸면 저장된 프리셋·상태가 깨진다 —
-    이번 범위는 사람이 읽는 문구뿐이다."""
-    from app.services.exclusivity import Activity
-
-    assert Activity.YOLO_TRAIN.value == "yolo_train", "내부 식별자를 건드렸다"
+    assert Activity.DETECTOR_TRAIN.value == "detector_train"
 
 
 def test_the_model_catalogue_still_names_the_real_files():
@@ -86,12 +95,9 @@ def test_the_model_catalogue_still_names_the_real_files():
 
     우리 제품 문구에서 브랜드를 빼는 것과, 제3자 산출물의 식별자를 숨기는 것은
     다르다. 후자는 사용자가 무엇을 내려받는지도, 그 라이선스가 무엇인지도 알 수
-    없게 만든다.
+    없게 만든다. 카탈로그 항목은 **배포자/모델 id**(`PekingU/rtdetr_v2_r18vd`)다.
     """
     from app.routers.vision import _DETECTOR_CATALOG as cat
 
-    # ⚠ 예전에는 `.pt` 파일명이 식별자였다. 이제는 **배포자/모델 id** 다
-    #   (`PekingU/rtdetr_v2_r18vd`). 오히려 더 정확하다 — 어느 배포본을 받는지가
-    #   드러나야 라이선스를 알 수 있고, 그게 이 검사의 원래 목적이다.
     assert cat, "카탈로그가 비었다"
     assert all("/" in m["file"] for m in cat), "어느 배포본인지 알 수 없다"

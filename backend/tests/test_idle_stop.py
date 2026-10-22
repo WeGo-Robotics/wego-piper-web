@@ -484,14 +484,14 @@ def test_prepare_holds_a_camera_that_has_the_option(monkeypatch):
 
 def test_only_long_lived_readers_are_consumers():
     """상시 도는 감시·스냅샷·존재 확인은 전부 관찰자여야 한다 — 하나라도 소비자로 열면 그
-    카메라는 영원히 안 닫힌다. 소비자는 셋뿐이다: LeRobot 플러그인(수집·추론), yolod, MJPEG 미리보기."""
+    카메라는 영원히 안 닫힌다. 소비자는 셋뿐이다: LeRobot 플러그인(수집·추론), detectord, MJPEG 미리보기."""
     import re
     from pathlib import Path
 
     repo = Path(__file__).resolve().parents[2]
     allowed_consumers = {
         "vendor/lerobot_camera_pipershm/lerobot_camera_pipershm/pipershmcamera.py",
-        "daemons/yolod.py",
+        "daemons/detectord.py",
         "backend/app/services/shm_snapshot.py",           # segment_reader (MJPEG)
     }
     offenders = []

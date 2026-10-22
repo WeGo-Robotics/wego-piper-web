@@ -12,8 +12,8 @@ import CloudPage from '../pages/CloudPage'
 import HubPage from '../pages/HubPage'
 import PolicyServerPage from '../pages/PolicyServerPage'
 import VisionPage from '../pages/VisionPage'
-import YoloDemoPage from '../pages/YoloDemoPage'
-import YoloTrainPage from '../pages/YoloTrainPage'
+import DetectorDemoPage from '../pages/DetectorDemoPage'
+import DetectorTrainPage from '../pages/DetectorTrainPage'
 import EncoderProbePage from '../pages/EncoderProbePage'
 import LogsPage from '../pages/LogsPage'
 import SettingsPage from '../pages/SettingsPage'
@@ -155,19 +155,19 @@ export const pages: PageEntry[] = [
 
   // ── 객체 검출 (인식: 데모 → 커스텀 학습) ──
   {
-    path: '/yolo-demo',
+    path: '/detector',
     label: msg('검출 데모'),
     description: msg('시연용 대형 검출 뷰'),
-    component: YoloDemoPage,
+    component: DetectorDemoPage,
     nav: true,
     group: msg('객체 검출'),
     icon: '🎯',
   },
   {
-    path: '/yolo-train',
+    path: '/detector-train',
     label: msg('검출 학습'),
     description: msg('이미지 캡처·라벨링·커스텀 가중치 학습'),
-    component: YoloTrainPage,
+    component: DetectorTrainPage,
     nav: true,
     group: msg('객체 검출'),
     icon: '🏷',

@@ -1,0 +1,77 @@
+# 플러그인 — 폴더 하나로 로봇에 얹는 파이썬
+
+사람도 코딩 에이전트(Claude Code 등)도 이 파일을 읽고 플러그인을 쓴다. 설계 전체는
+[feature/plugins.md](../feature/plugins.md). 여기는 **계약 요약 · 하지 말 것 · 검증 순서**다.
+
+## 계약 — 한 장
+
+```
+plugins/<name>/
+  plugin.yaml      이름·설정 항목·카메라 슬롯·권한·자원     (모양: piper_plugin/manifest.py)
+  main.py          entry. SDK 를 써도, 환경변수만 읽어도 된다 (plugins/hello 가 후자)
+  requirements.txt (선택) python: venv 일 때 깐다
+```
+
+게이트웨이가 프로세스를 띄우며 **환경변수**를 준다: `PIPER_PLUGIN_NAME` · `PIPER_PLUGIN_DIR` ·
+`PIPER_PLUGIN_RUNTIME_DIR` · `PIPER_PLUGIN_CONFIG`(JSON) · `PIPER_PLUGIN_CAMERAS`(JSON) ·
+`PIPER_API_BASE` · `PIPER_API_TOKEN`(이번 실행의 범위 토큰) · `PIPER_REDIS_URL`.
+
+| 하고 싶은 것 | SDK | 뒤에서 |
+|---|---|---|
+| 카메라 프레임 | `self.camera("slot").read_new()` → `(frame BGR, seq, ns)` | `/dev/shm` 세그먼트 구독. 카메라를 열지 않는다 |
+| 검출 모델 | `self.detector(model)` → `.predict(frame, conf=…)[0]` | RT-DETR(Apache). ultralytics(.pt) 는 **거절** |
+| 검출 결과 올리기 | `self.publish_detections(name, shape, result)` | 버스 `piper:vision:<name>` — 화면·다른 플러그인이 읽는다 |
+| 그림 올리기 | `self.publish_preview(name, frame)` | `/api/vision/preview/<name>` |
+| 상태 보이기 | `self.state(phase="…", fps=…)` | 버스 KV, 화면 카드 |
+| 다른 검출기 읽기 | `self.detections(name, fresh_s=1.0)` | `.objects` `.count(label)` `.text` |
+| 추론 시작·정지 | `self.robot.start_inference(ckpt, self.camera_mapping())` / `.stop_inference()` | REST, 권한 `inference.start`/`inference.stop` |
+| 지시문(task) | `self.robot.set_task("…")` | 권한 `params.write`. 언어 정책만 읽는다 |
+| 일시정지·재개·리셋 | `self.robot.pause()` `.resume()` `.reset()` | 권한 `params.write` |
+| LLM 판단 | `self.judge(user_text, system=rules)` → 슬롯 dict | 권한 `vision.judge` |
+| 평가 기록 | `self.robot.eval_log(success=…)` | 권한 `eval.write` |
+| 긍급 정지·박동 | `self.robot.estop()` / `resources.heartbeat: true` | 열린 경로, 권한 불필요 |
+| 기다리기 | `self.sleep(s)` | 정지 신호에 바로 깬다 — `time.sleep` 대신 |
+| 끝내기 | `self.stop("사유")` | `teardown()` 이 불린다 |
+
+세 층: `Plugin.loop()`(뭐든) · `MissionPlugin`(관찰→판단→실행→완료→기록→리셋, 훅만 채운다) ·
+`self.robot.*`(원시 연산). 미션의 공통 설정 `max_episodes`·`episode_timeout_s`·`settle_s`·`dry_run` 은
+자동으로 붙는다.
+
+권한 범위 이름의 정본은 `GET /api/plugins/scopes` (코드: `backend/app/core/plugin_scopes.py`).
+범위 밖 호출은 **403** 이고 본문 `detail` 이 무엇을 더해야 하는지 말한다. `"*"` 도 `/api/auth/*` 는 못 간다.
+
+## 하지 말 것
+
+- **장치를 직접 열지 않는다.** `/dev/video*`·CAN·RealSense 는 호스트 데몬이 독점한다. 카메라는 세그먼트로만.
+- **팔을 직접 움직이지 않는다.** shm 명령 세그먼트·CAN 에 쓰지 않는다. 추론(REST)을 통해서만.
+- **`/api/auth/*` 를 부르지 않는다.** 토큰이 `*` 라도 403 이다.
+- **블로킹 대기를 쓰지 않는다.** `time.sleep` 대신 `self.sleep` — SIGTERM 에 바로 멈춰야 E-stop 뒤처리가 깨끗하다.
+- **특정 검출 모델의 브랜드 이름을 쓰지 않는다** (파일·식별자·문구 전부 — `backend/tests/test_no_model_branding.py` 가 트리 전체를 막는다). 대체어는 `detector`.
+- **ultralytics 를 번들 플러그인에 넣지 않는다** (AGPL). 사용자 플러그인은 사용자 몫이다.
+- 화면 문구(`title`·`label`·`description`·로그)는 **한국어 원문**으로 쓴다 — 화면이 번역한다.
+
+## 검증 순서 — 전부 터미널
+
+```bash
+piper-plugin new  plugins/my-thing --template loop|mission|detector   # 틀
+piper-plugin check plugins/my-thing [--api http://127.0.0.1:8000]      # 매니페스트·entry·권한 범위
+piper-plugin run  plugins/my-thing --camera watch=<스트림> \
+    --api http://127.0.0.1:8000 [--config '{"conf":0.4}'] [--dry-run] # 게이트웨이가 켤 때와 같은 진입점
+curl -X POST localhost:8000/api/plugins/my-thing/start -H 'content-type: application/json' \
+    -d '{"config":{},"cameras":{"watch":"<스트림>"}}'                   # 게이트웨이에서 (설치돼 있어야)
+```
+
+- 살아 있는 스트림 이름: `GET /api/vision/segments`. 검출 결과 확인: `GET /api/vision/detections`.
+- `run` 에 `--api` 가 없으면 `self.api`/`self.robot` 호출은 `ApiUnavailable` — 카메라·버스·모델만 시험하는 모드다.
+- 미션은 `--dry-run` 으로 로봇 없이 루프만 돌려 저널(`.runtime/runs/*.jsonl`)을 본다.
+- 테스트는 `backend/tests/test_plugin_sdk.py`·`test_plugins.py` 가 기준이다 — 예제 매니페스트는 전부 거기서 읽힌다.
+
+## 번들 예제
+
+| 폴더 | 층 | 보여 주는 것 |
+|---|---|---|
+| `hello/` | 없음(SDK 미사용) | 환경변수·토큰·상태 KV 의 최소 배선 |
+| `detect-and-start/` | 1층 | 검출기 안에 두고, 보이면 추론 시작·사라지면 정지 |
+| `zone-guard/` | 1층 | ROI 침입 → 일시정지/E-stop, 비면 재개 |
+| `recycling/` (3단계) | 2층 | 검출 → LLM 판단 → task → 저널. `MissionPlugin` 의 참고 구현 |
+| `detector/` (3b단계) | 1층 | 모델 여러 개 × 카메라 여러 대, 검출 페이지의 뒷단 |

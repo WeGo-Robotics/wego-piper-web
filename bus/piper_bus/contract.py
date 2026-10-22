@@ -142,11 +142,11 @@ def preview_name(key: str) -> str:
     return key[len(PREVIEW_PREFIX) + 1:]
 
 
-# ── 시각 검출 (yolod → 오케스트레이터/게이트웨이) ────────────────────────────
+# ── 시각 검출 (detectord → 오케스트레이터/게이트웨이) ────────────────────────────
 #
 # 프리뷰와 같은 이유로 큐가 아니다: 최신 장면 하나만 의미가 있다. 카메라별 키에
 # JSON 페이로드를 덮어쓰고 TTL 로 만료시킨다. 소비자(판단 스텝)는 payload 의
-# `ts` 로 신선도를 한 번 더 판단한다 — TTL 은 "yolod 가 죽었는데 낡은 검출로
+# `ts` 로 신선도를 한 번 더 판단한다 — TTL 은 "detectord 가 죽었는데 낡은 검출로
 # 판단하는" 사고만 막는 안전망이다.
 VISION_PREFIX: Final = _k("vision")
 VISION_PATTERN: Final = f"{VISION_PREFIX}:*"
@@ -195,12 +195,33 @@ def cam_idle_key(cam_id: str) -> str:
     return f"{CAM_IDLE_PREFIX}:{cam_id}"
 
 
-# yolod 자기소개 — 어떤 모델·설정으로 돌고 있나 (프로세스당 하나, 카메라별 아님).
+# detectord 자기소개 — 어떤 모델·설정으로 돌고 있나 (프로세스당 하나, 카메라별 아님).
 # ⚠ VISION_PREFIX 아래 두면 `detection_names()` 스캔에 "meta" 카메라로 잡힌다 —
-# 접두사를 분리한다. yolod 가 루프마다 갱신하고 TTL 이 죽은 데몬의 낡은 정보를 지운다.
-YOLO_META: Final = _k("yolo", "meta")
+# 접두사를 분리한다. detectord 가 루프마다 갱신하고 TTL 이 죽은 데몬의 낡은 정보를 지운다.
+DETECTOR_META: Final = _k("detector", "meta")
 # 루프마다 갱신되는데, --fps 하한(0.1)이면 루프가 10초다 — 그보다 여유 있게.
-YOLO_META_TTL_MS: Final = 15_000
+DETECTOR_META_TTL_MS: Final = 15_000
+
+# ── 플러그인 상태 (plugin → 게이트웨이 화면, feature/plugins.md §7) ──────────
+#
+# 플러그인이 루프마다 갱신하는 자기 상태 KV(`phase`·fps·…). 최신값 하나만 의미가
+# 있으므로 큐가 아니고, TTL 이 죽은 플러그인의 낡은 값을 지운다.
+PLUGIN_STATE_PREFIX: Final = _k("plugin", "state")
+PLUGIN_STATE_TTL_MS: Final = 15_000
+
+
+def plugin_state_key(name: str) -> str:
+    return f"{PLUGIN_STATE_PREFIX}:{name}"
+
+
+# 화면·ext API 의 버튼 → 플러그인 `on_command`. 큐다(눌린 순서대로 전부 전달). 플러그인이
+# 죽어 있으면 쌓이기만 하므로 TTL 로 지운다 — 다음에 켠 플러그인이 옛 버튼을 받으면 안 된다.
+PLUGIN_CMD_PREFIX: Final = _k("plugin", "cmd")
+PLUGIN_CMD_TTL_MS: Final = 30_000
+
+
+def plugin_cmd_key(name: str) -> str:
+    return f"{PLUGIN_CMD_PREFIX}:{name}"
 
 
 # ── 학습 job 레지스트리 ──────────────────────────────────────────────────────

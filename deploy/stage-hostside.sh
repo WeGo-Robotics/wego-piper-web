@@ -31,7 +31,7 @@ rm -rf "$OUT"; mkdir -p "$OUT/wheels" "$OUT/udev"
 #   (feature/version-update.md §2). 저장소는 안 건드린다 — 굽는 사본만 바꾼다.
 STAMP="${PIPER_VERSION#v}"
 TMPB="$(mktemp -d)"; trap 'rm -rf "$TMPB"' EXIT
-for p in bus shm robot cam rs so101 sim; do
+for p in bus shm plugin robot cam rs so101 sim; do
   rm -rf "$TMPB/$p"; cp -r "./$p" "$TMPB/$p"; rm -rf "$TMPB/$p/build" "$TMPB/$p"/*.egg-info
   if [ -n "$STAMP" ]; then
     sed -i "s/^version = \"[^\"]*\"/version = \"$STAMP\"/" "$TMPB/$p/pyproject.toml"

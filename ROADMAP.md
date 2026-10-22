@@ -72,8 +72,8 @@ camerad 는 `/dev/videoN`, robotd 는 `/sys/class/net/can0`, rsd 는
 적용 지점은 데몬 `connect()` 한 곳이다. D405 로 확인 — 컨트롤을 전부 기본값으로
 되돌린 뒤 **연결만 했는데** 노출·화이트밸런스가 복원됐다.
 
-**분리수거 파이프라인이 한 몸이 됐다 (YOLO→LLM→VLA).**
-[yolod](daemons/yolod.py)(shm→GPU→버스, 상주 유닛)와 [llm_client](backend/app/services/llm_client.py)
+**분리수거 파이프라인이 한 몸이 됐다 (검출→LLM→VLA).**
+[detectord](daemons/detectord.py)(shm→GPU→버스, 상주 유닛)와 [llm_client](backend/app/services/llm_client.py)
 (Claude/로컬 이중 프로바이더 — 이 머신 기본은 Ollama qwen2.5:7b, **7b 미만은 판단이
 틀리는 것을 실측**) 위에 [오케스트레이터 1단계](backend/app/services/orchestrator.py)가
 섰다: 검출→판단→task 주입→대기→리셋의 취소 가능한 async 상태기계, 회차별 JSONL 저널,
@@ -82,7 +82,7 @@ E-stop·추론 사망 0.5초 감지. **실버스+실LLM 드라이런 3회차 완
 코드가 아니라 조명·병·캔과 배포된 정책이다.
 
 **외부에서 조종할 수 있다 — [`/api/ext/v1`](feature/external-api.md).**
-미션 수준 API 다: 미션(분리수거 루프) 제출·감시·취소, 종합 상태, yolod 제어.
+미션 수준 API 다: 미션(분리수거 루프) 제출·감시·취소, 종합 상태, detectord 제어.
 장치 수준은 일부러 안 열었다 — 준비는 로컬 운영자 몫이고 전제가 안 되면 409 다.
 **안전 계약은 외부로 이전된다**: 브라우저가 하던 heartbeat 를 외부 클라이언트가
 보내야 하고, 안 보내면 estopd 가 2.5초 안에 세운다. `PIPER_API_TOKEN` 미설정이면
@@ -126,7 +126,7 @@ action·`left_top`/`right_hand` 관측 키를 확인했다. **함정 하나**: �
 | [cloud-training](feature/cloud-training.md) 5~12 | ☐ | 데이터 전송 · 체크포인트 회수 · 비용 가드 |
 | 원격 추론 (.120 → .42) | ◐ | gRPC 경로 ☑ (루프백으로 790스텝) / **기계 간**은 .120 카메라가 모자라 대기 |
 | [bimanual](feature/bimanual.md) 수집·학습·추론 | ◐ | 소프트웨어 전 구간 ☑ — bi 클래스 4개(WeGo repo + shm) · 녹화/추론 복수화 · 좌/우 등록(side) · grpc 즉석 조립 삭제. **실기는 팔 4대 + udev 4이름 대기** (§7 체크리스트) |
-| 분리수거 파이프라인 + [오케스트레이터](feature/episode-orchestrator.md) | ◐ | yolod·llm_client·`/vision`·루프 1단계 ☑ (드라이런 3회차 완주) / **실물 데모**(조명·물체·정책 배포) ☐ · 2단계(YAML 스펙) ☐ |
+| 분리수거 파이프라인 + ~~오케스트레이터~~ → [플러그인](feature/plugins.md) | ◐ | detectord·llm_client·`/vision`·루프 1단계 ☑ (드라이런 3회차 완주) / **오케스트레이터는 폐기** — 루프는 번들 플러그인 `recycling` 으로 이관(plugins §12), 2단계(YAML 스펙)는 만들지 않는다 / **실물 데모** ☐ |
 | [외부 제어 API](feature/external-api.md) `/api/ext/v1` | ☑ | 미션·상태·heartbeat·E-stop·vision. 다음 후보: 녹화·학습 미션 타입, SSE |
 | [episode-editor](feature/episode-editor.md) 1~4 | ☑ | 뷰어·수동 분석·타임라인 편집 + **삭제·task 이관(사이드카 재매핑 — 실데이터 검증)**. 덤: 편집 CLI 가 `--repo-id` 로 애초에 죽고 있던 것 발견·수정. 남은 것: 5(굽기 UI) |
 
@@ -134,7 +134,7 @@ action·`left_top`/`right_hand` 관측 키를 확인했다. **함정 하나**: �
 
 0. **분리수거 실물 데모** — 코드는 다 섰다. 조명 + 병·캔 배치 + 정책 배포 상태에서
    `/vision` 의 루프를 드라이런 해제로 돌리는 것뿐이다. 저널이 회차별 실패 원인
-   (YOLO/LLM/VLA)을 그대로 남긴다
+   (검출/LLM/VLA)을 그대로 남긴다
 1. **깊이맵을 실제 정책 입력으로** — 인코딩·메타 기록·범위 조절은 ☑ 다
    (`rs/piper_rs/depth.py`, `meta/piper_cameras.json`, 카메라 설정 모달).
    남은 것은 **녹화 → 학습 → 추론을 한 바퀴 돌려 fps 를 재는 것** — 인코더 입력이
@@ -158,7 +158,7 @@ action·`left_top`/`right_hand` 관측 키를 확인했다. **함정 하나**: �
 | ~~데몬 넷을 유닛으로~~ | ☑ `deploy/install-daemons.sh`. 수동 실행은 **죽어도 아무도 모른다** — robotd 가 조용히 죽어 추론이 세그먼트 없다고 죽은 적이 있다 |
 | [udev 규칙 적용](deploy/udev/99-piper-can.rules) + 로봇 재등록 | `can0`/`can1` 이 포트를 바꿔 꽂으면 **뒤바뀐다**. 실제로 겪었고, 등록이 살아 있었으면 leader 팔에 follower 명령이 갔을 것이다 |
 | joint3 캘리브레이션 결정 | raw 2103 인데 범위 최대가 0 — 지금 녹화하는 데이터에서 상단이 잘린다. 넓히면 기존 데이터셋·모델과 어긋난다 |
-| 분리수거 실물 준비 | 조명 + 병·캔 배치 (지금 장면은 어두워서 YOLO 검출 0) — 위 "바로 이어서 할 것" 0번의 전제 |
+| 분리수거 실물 준비 | 조명 + 병·캔 배치 (지금 장면은 어두워서 검출 0) — 위 "바로 이어서 할 것" 0번의 전제 |
 | 양팔 하드웨어 | 팔 2쌍 추가(CAN 어댑터 4개 — **xHCI 컨트롤러 분산 필수**, 통째 사망 이력) + udev 규칙 4이름 확장. 소프트웨어는 대기 중 ([bimanual §7](feature/bimanual.md)) |
 
 [refactor/](refactor/) 13개 + 구조 개편 5문서, [feature/](feature/) 3개를 한 순서로 놓는다.
@@ -394,14 +394,14 @@ daemon-split 6의 systemd 유닛화는 그 이음매에 **`SystemdRunner`를 하
 | ~~camera-profiles~~ | ☑ **완료** — 컨트롤 값 저장(`presets` domain=camera) · v4l2 안정 키 · 자동 모드 순서. 적용은 데몬 `connect()` 한 곳. D405 로 확인(되돌린 뒤 연결만으로 복원) |
 | **phase-annotation 6~8** | 굽기 · 학습 · 추론 경로. ~~4~5(편집 UI)~~ 는 [episode-editor](feature/episode-editor.md) 로 ☑ — 분류기는 `python -m piper_phase` 단독 실행 |
 | **[episode-editor](feature/episode-editor.md) 1~4** | ☑ **완료** — `/episodes` 뷰어 · 수동 분석 · 타임라인 편집 · **삭제/task 이관(사이드카 재매핑, wrapper/edit_dataset.py)**. 남은 것: 5(굽기 UI) |
-| **분리수거 파이프라인 (YOLO→LLM→VLA)** | 앞 두 칸 ☑ — [yolod](daemons/yolod.py)(shm→버스, 유닛) · [llm_client](backend/app/services/llm_client.py)(Claude/로컬 이중 프로바이더, **이 머신 기본 = Ollama qwen2.5:7b, 7b 미만 판단 오류 실측**) · `/vision` 테스트 페이지. 몸통 1단계도 ☑ — [orchestrator.py](backend/app/services/orchestrator.py) 분리수거 최소 루프(검출→판단→task→대기→리셋, 판정은 타임아웃). 남은 것: 오케스트레이터 2단계(YAML 스펙) · G3 판정 · 실물 데모 |
+| **분리수거 파이프라인 (검출→LLM→VLA)** | 앞 두 칸 ☑ — [detectord](daemons/detectord.py)(shm→버스, 유닛) · [llm_client](backend/app/services/llm_client.py)(Claude/로컬 이중 프로바이더, **이 머신 기본 = Ollama qwen2.5:7b, 7b 미만 판단 오류 실측**) · `/vision` 테스트 페이지. 몸통 1단계도 ☑ — [orchestrator.py](backend/app/services/orchestrator.py) 분리수거 최소 루프(검출→판단→task→대기→리셋, 판정은 타임아웃). **오케스트레이터는 폐기** — 몸통은 [플러그인](feature/plugins.md) §12 의 번들 `recycling` 으로 이관. 남은 것: 플러그인 1~3단계 · G3 판정 · 실물 데모 |
 | **cloud-training 5~12** | 데이터 전송 · 체크포인트 회수 · 비용 가드 · 유료 프로바이더 |
 | **[robotd-safety](refactor/robotd-safety.md)** | **별도 트랙.** URDF 확보라는 독립 선결 조건. robotd(3b-5)가 서면 언제든 |
 | **[manual-control](feature/manual-control.md)** | 웹 조그(1)·MIT 스파이크(2)는 robotd 위에서 **지금 가능**, 병렬 트랙. 중력 보상(3~4)은 **트랙 E(URDF) 의존**, 키네스테틱 녹화(5)는 그 뒤 |
 | **[bimanual](feature/bimanual.md)** | ◐ **1~3단계 구현** — bi 클래스 4개(WeGo repo + shm 파생)로 녹화·추론·파킹 단일화, 예고대로 robotd 변경 0. 실기만 하드웨어 대기(팔 4대 + udev 4개 확장) |
 | ~~[policy-ui-spec](feature/policy-ui-spec.md)~~ | ☑ **완료** — 정책 하나 추가에 손댈 곳이 **6군데 → 0**. 게이트웨이·wrapper·프론트가 같은 YAML 을 읽는다 |
 | **[layout-redesign](feature/layout-redesign.md)** | 좌측 세로 내비 + 상단 상태바. **지금 가능** — 프론트 껍데기 + 요약 API 하나뿐이고 페이지 내용은 안 건드린다. 1단계만으로 메뉴 한계가 풀린다 |
-| ~~[llm-integration](feature/llm-integration.md) 1·3~~ | ☑ **완료** — `judge()` 계약 + Anthropic·로컬(vLLM/Ollama) 이중 프로바이더 + 호출별 오버라이드. 남은 것: 2(규칙 프리셋 합류) · 4(플래너) — episode-orchestrator 뒤 |
+| ~~[llm-integration](feature/llm-integration.md) 1·3~~ | ☑ **완료** — `judge()` 계약 + Anthropic·로컬(vLLM/Ollama) 이중 프로바이더 + 호출별 오버라이드. 남은 것: 2(규칙 프리셋 합류). **4(플래너)는 폐기** — 코딩 에이전트가 플러그인을 짠다(plugins §7-2) — 판단 호출자는 이제 플러그인(`POST /api/vision/judge`), [plugins](feature/plugins.md) §12 |
 | 자체 Hub 서버 | 여기까지 온 뒤 판단 |
 
 ---

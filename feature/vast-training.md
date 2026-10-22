@@ -862,7 +862,7 @@ Model pushed to https://huggingface.co/wego-hansu/w0-dryrun-throwaway ✓   (푸
 `ssh.py:242` `self._start_log_stream()` → `self._start_log_stream(from_start=True)`.
 `start()` 가 `: > {log}` 로 로그를 비우므로 이전 실행분이 섞이지 않는다(부작용 없음).
 
-⚠ **`settings.grpc_python` 을 `.env` 로 덮는 우회는 쓰지 마라** — 정책서버·yolod·래퍼·녹화·
+⚠ **`settings.grpc_python` 을 `.env` 로 덮는 우회는 쓰지 마라** — 정책서버·detectord·래퍼·녹화·
 편집 등 **7곳이 같은 값을 쓴다**. 대신 원격에 래퍼를 심는다(11-1 ②).
 
 W1 으로 넘길 진짜 수정 넷:

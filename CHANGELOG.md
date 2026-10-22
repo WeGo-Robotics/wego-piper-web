@@ -9,6 +9,48 @@
 
 ---
 
+## 미배포
+
+**검출기 이름 — `yolo` 라는 단어가 저장소에서 사라졌다** ([feature/plugins.md §14](feature/plugins.md))
+- 검출기는 라이선스 때문에 RT-DETR 로 바뀐 지 오래고 이름만 남아 있었다. 파일·모듈·API 경로·설정 키·데이터
+  디렉토리·유닛·버스 키·문서를 `detector` 로 바꿨다. 화면 문구만 막던 테스트가 트리 전체를 본다
+- 바뀐 것: 화면 `/yolo-demo`→`/detector`, `/yolo-train`→`/detector-train`(옛 주소는 한 릴리스 동안 넘어간다),
+  API `/api/yolo/*`→`/api/detector/*`, 데이터 `data/yolo_models`→`detector_models`·`yolo_datasets`→`detector_datasets`
+  (기동 때 한 번 옮긴다 — 커스텀 가중치·캡처가 그대로 보인다), 유닛 `piper-yolod`→`piper-detectord`·
+  `piper-yolotrain`→`piper-detector-train`, 설정 `PIPER_YOLO_*_DIR`→`PIPER_DETECTOR_*_DIR`
+- 라벨 txt 형식(`cls cx cy w h`, 정규화)은 그대로다 — 이름만 "txt 박스 라벨" 로 부른다
+
+**플러그인 1단계 — 폴더 하나로 얹는 사용자 스크립트를 게이트웨이가 켜고 끈다** ([feature/plugins.md](feature/plugins.md))
+- `GET/POST /api/plugins/*` — 목록·시작·정지·설정 저장·로컬 폴더 설치·삭제. 화면은 아직 없다(4단계), `curl` 과 외부 UI 가 부른다
+- 플러그인은 `plugin.yaml` 의 `permissions` 범위 안에서만 `/api/*` 를 부를 수 있다 — 실행마다 발급하는 토큰을
+  `PIPER_API_TOKEN` 으로 받고, 범위 밖은 403, 끝나면 토큰도 죽는다. `"*"` 도 `/api/auth/*` 는 못 간다
+- 플러그인은 E-stop 대상이다(heartbeat 가 끊기면 추론·녹화와 같이 선다). `resources.gpu: true` 면 학습과 배타
+- 게이트웨이가 재시작되면 남아 있던 플러그인 유닛을 정지시킨다 — 수동으로 다시 켠다
+- 번들 예제 `plugins/hello` — SDK 없이 환경변수만 읽는 최소 플러그인
+
+**플러그인 3단계 — 오케스트레이터가 플러그인으로 바뀌었다** ([feature/plugins.md §12](feature/plugins.md))
+- ⚠ `services/orchestrator.py`·`/api/orchestrator/*`·WS `orchestrator` 이벤트·활동 "에피소드 루프"·비전 페이지의
+  분리수거 루프 패널이 **없어졌다.** 분리수거 루프는 번들 플러그인 `recycling`(`MissionPlugin`)이다 — 같은 단계
+  (검출→판단→task→대기→기록→리셋), 같은 가드(정책이 task 를 읽는가·E-stop·추론 사망), 저널은
+  `GET /api/plugins/recycling/runs`
+- 외부 API 는 깨지지 않는다: `POST /api/ext/v1/missions {"type": <플러그인>, ...설정}` — `type` 이 플러그인 이름,
+  `mission: true` 플러그인만, 동시 1개. `GET /missions/{id}` 는 돌면 플러그인 상태, 끝나면 저널. `status.orchestrator`
+  는 한 릴리스 동안 `null`, 대신 `plugins`·`mission`
+- `POST /api/vision/judge` 가 `skills` 를 받는다 — 언어를 안 읽는 정책(ACT)용 스킬 슬롯
+- 비전 페이지의 분리수거 루프는 플러그인 페이지(4단계)에서 다시 나타난다. 그 전까지는 `curl`·외부 API
+
+**플러그인 2단계 — SDK `piper_plugin`** ([feature/plugins.md §7](feature/plugins.md), [plugins/README.md](plugins/README.md))
+- 세 층: `Plugin.loop()` · `MissionPlugin`(관찰→판단→실행→완료→기록→리셋, 훅만 채운다, JSONL 저널, 시작 전
+  "정책이 task 를 읽는가" 검사) · `self.robot.*`(추론 시작·정지·task·일시정지·판단 LLM·평가 기록). 카메라는 shm,
+  검출·프리뷰·상태는 버스
+- `piper-plugin new|check|run` — 틀 만들기(loop·mission·detector), 매니페스트 검사(줄 번호), 게이트웨이가 켤
+  때와 같은 진입점으로 터미널 실행(`--dry-run`)
+- 번들 예제 `detect-and-start`(물체가 보이면 추론 시작·사라지면 정지), `zone-guard`(ROI 침입 → 일시정지/E-stop)
+- 검출 페이로드·프롬프트 한 줄·JPEG 인코딩이 SDK 한 곳으로 — 검출 데몬과 게이트웨이가 같은 함수를 쓴다.
+  페이로드에 `publisher`·`model` 이 더해졌다(발행자가 여럿일 때 화면이 가른다)
+- `GET /api/models/inference/policy`(지금 도는 정책이 task 를 읽는가), `POST /api/plugins/{name}/command`
+  (매니페스트 `commands` 버튼 → 플러그인 `on_command`)
+
 ## v0.5.19 — 2026-10-20
 
 **카메라 — 장치 id 가 아니라 사용자가 붙인 이름(shm 스트림)으로 지정한다** ([feature/stream-based-cameras.md](feature/stream-based-cameras.md))

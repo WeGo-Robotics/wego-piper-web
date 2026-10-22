@@ -24,9 +24,9 @@ logging.getLogger("uvicorn.access").addFilter(_QuietAccessFilter())
 # uvicorn.access 필터가 라우터 import 보다 먼저 붙어야 한다.
 from app.routers import (
     activity, alignment, auth, cameras, cloud, datasets, debug_logs, devices, encoder, estop,
-    eval_log, external, health, hub, inference, logs, models, orchestrator, params, phase,
+    eval_log, external, health, hub, inference, logs, models, params, phase,
     policies, policy_server, presets, recording, robots, system, training, vision,
-    ws, yolo_train,
+    ws, detector_train, plugins,
     web_leader, sim_scenes, sim_assets, sim_demo, weval,
 )
 
@@ -38,8 +38,8 @@ from app.routers import (
 ROUTERS = [
     health, ws, estop, params, models, datasets, hub, inference, eval_log,
     robots, cameras, logs, debug_logs, training, recording, policy_server, system,
-    encoder, activity, policies, presets, phase, devices, vision, yolo_train,
-    orchestrator, external, alignment, cloud, auth,
+    encoder, activity, policies, presets, phase, devices, vision, detector_train,
+    plugins, external, alignment, cloud, auth,
     web_leader, sim_scenes, sim_assets, sim_demo, weval,
 ]
 from app.services.estop_bridge import estop_bridge
@@ -110,6 +110,13 @@ async def lifespan(app: FastAPI):
     # 소비자는 못 여는 상태가 된다 (실제로 그랬다).
     # 고아 세그먼트는 각 데몬이 기동할 때 자기 것을 치운다.
     estop_bridge.connect()
+    # 지난 게이트웨이가 띄운 플러그인은 토큰이 죽었다 — 정지시키고 사람이 다시 켠다 (feature/plugins.md §3-9)
+    try:
+        from app.services.plugins import registry as _plugins
+
+        _plugins.cleanup_orphans()
+    except Exception as e:
+        logger.warning("플러그인 고아 정리 실패: %s", e)
     estop_bridge.sync_activities()
     await param_bridge.connect()
     # 프리셋 이관 (이전 형식 → presets/robot/). 한 번만 동작한다.
@@ -117,6 +124,14 @@ async def lifespan(app: FastAPI):
         robot_manager.migrate_legacy_presets()
     except Exception as e:
         logger.warning("Preset migration failed: %s", e)
+    # 검출 데이터 디렉토리 이관 (옛 이름 → `detector_*`, feature/plugins.md §14-2). 한 번만.
+    try:
+        from app.services.legacy_paths import migrate_legacy_dirs
+
+        migrate_legacy_dirs({"detector_models": settings.detector_models_dir,
+                             "detector_datasets": settings.detector_datasets_dir})
+    except Exception as e:
+        logger.warning("검출 데이터 디렉토리 이관 실패: %s", e)
 
     # ⚠ **깔린 데몬이 이번 릴리스와 맞는지 기동 때 한 번 본다** (릴리스 규칙 R4).
     #   판정이 버전 카드에만 있으면 화면을 연 사람만 안다 — 2026-09-15 NUC 은 wheel 이

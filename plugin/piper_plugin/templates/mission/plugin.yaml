@@ -1,0 +1,28 @@
+# __NAME__ — 2층 미션 틀. 관찰→판단→실행→완료→기록→리셋 (feature/plugins.md §7-1)
+name: __NAME__
+version: 0.1.0
+title: "__NAME__"
+description: "검출을 보고 판단해 언어 정책에 task 를 준다"
+entry: main.py
+python: system
+mission: true
+
+cameras:
+  - { key: top, label: "탑뷰", required: true }
+
+config:
+  # 공통 항목(max_episodes·episode_timeout_s·settle_s·dry_run)은 MissionPlugin 이 자동으로 더한다
+  - { key: detections_name, kind: text, default: "top", label: "검출 이름 (버스)" }
+  - { key: rules, kind: text, multiline: true, default: "너는 로봇 팔의 판단기다. 검출 목록을 보고 다음에 집을 물체와 목적지를 고른다.", label: "판단 규칙" }
+
+permissions:
+  - activity.read
+  - inference.read
+  - params.write
+  - vision.read
+  - vision.judge
+  - eval.write
+
+commands: [skip]
+
+resources: { gpu: false, heartbeat: false }

@@ -3,7 +3,7 @@
 외부 시스템이 이 로봇으로 **미션 수준** 프로젝트를 수행하는 창구다.
 장치 수준을 열지 않는다 — 준비(정책 배포·장치)는 로컬 운영자 몫이고,
 외부는 미션 제출·감시·중단만 한다. 내부 서비스를 직접 호출한다
-(자기 HTTP 호출 금지 — episode-orchestrator §2 와 같은 규칙).
+(자기 HTTP 호출 금지 — 게이트웨이 안의 규칙).
 
 안전 계약: **외부 호출자가 곧 운영자다.** 브라우저가 하던 heartbeat 를
 외부 클라이언트가 보내야 하고, 안 보내면 estopd 가 2.5초 안에 세운다.
@@ -18,13 +18,13 @@ import re
 import secrets
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel, ConfigDict
 
 from app.core.config import settings
 from app.routers import vision as vision_api
 from app.services import exclusivity
 from app.services.estop_bridge import estop_bridge
-from app.services.exclusivity import Activity, require_idle
-from app.services.orchestrator import OrchestratorConfig, orchestrator
+from app.services.plugins import registry
 
 logger = logging.getLogger(__name__)
 
@@ -45,80 +45,70 @@ router = APIRouter(
 _MISSION_ID = re.compile(r"^run_\d{8}_\d{6}$")
 
 
-# ── 미션 ──
+# ── 미션 = 플러그인 (feature/plugins.md §12-2) ──
+#
+# v1 표면은 그대로다. `type` 이 플러그인 이름이고 나머지 본문이 그 플러그인의 설정이다.
+# 미션 타입 추가 = 플러그인 설치. 동시 1개 제한은 `mission: true` 플러그인에만 건다.
 
 
-class MissionRequest(OrchestratorConfig):
-    """v1 미션 = 분리수거 루프 설정 그대로. 타입 필드만 얹는다 —
-    오케스트레이터 2단계(YAML 시나리오 스펙)가 오면 타입이 스펙 종류가 된다."""
-
+class MissionRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
     type: str = "recycling"
+    cameras: dict[str, str] = {}
 
 
 @router.post("/missions")
 async def start_mission(body: MissionRequest):
-    if body.type != "recycling":
-        raise HTTPException(400, f"모르는 미션 타입: {body.type} (v1 은 recycling 뿐)")
-    require_idle(Activity.ORCHESTRATOR)
     try:
-        await orchestrator.start(OrchestratorConfig(**body.model_dump(exclude={"type"})))
-    except RuntimeError as e:
-        raise HTTPException(409, str(e))
-    assert orchestrator.journal_path is not None
-    mid = orchestrator.journal_path.stem
-    logger.info("외부 미션 시작: %s (%d회)", mid, body.max_episodes)
-    return {"id": mid, "type": body.type, "max_episodes": body.max_episodes}
+        info = registry.get(body.type)
+    except HTTPException:
+        raise HTTPException(400, f"모르는 미션 타입: {body.type} — 설치된 플러그인 이름이어야 합니다")
+    if info.manifest is None:
+        raise HTTPException(400, f"플러그인 '{body.type}' 의 매니페스트가 깨져 있습니다: {info.error}")
+    if not info.manifest.mission:
+        raise HTTPException(400, f"'{body.type}' 은 미션 플러그인이 아닙니다 (plugin.yaml 의 mission: true)")
+    live = registry.live_mission()
+    if live:
+        raise HTTPException(409, f"미션이 이미 돌고 있습니다: {live}")
+    config = {k: v for k, v in body.model_dump().items() if k not in ("type", "cameras")}
+    status = await registry.start(body.type, config, body.cameras)
+    logger.info("외부 미션 시작: %s (%s)", status.get("run_id"), body.type)
+    return {"id": status.get("run_id"), "type": body.type, "plugin": body.type,
+            "max_episodes": config.get("max_episodes")}
 
 
 @router.get("/missions")
 async def list_missions():
-    """미션 이력 — 저널 파일 목록, 최신 먼저."""
-    journal_dir = settings.log_dir / "orchestrator"
-    live = orchestrator.journal_path.stem if orchestrator.is_running and orchestrator.journal_path else None
-    items = []
-    if journal_dir.is_dir():
-        for p in sorted(journal_dir.glob("run_*.jsonl"), reverse=True):
-            items.append({
-                "id": p.stem,
-                "live": p.stem == live,
-                "bytes": p.stat().st_size,
-                "mtime": p.stat().st_mtime,
-            })
-    return {"missions": items}
+    """미션 이력 — 저널 목록, 최신 먼저 (플러그인 전부)."""
+    return {"missions": registry.runs()}
 
 
-def _journal_file(mission_id: str):
+def _check_id(mission_id: str) -> None:
     if not _MISSION_ID.fullmatch(mission_id):
         raise HTTPException(400, "잘못된 미션 id")
-    return settings.log_dir / "orchestrator" / f"{mission_id}.jsonl"
 
 
 @router.get("/missions/{mission_id}")
 async def mission_status(mission_id: str):
-    """진행 중이면 라이브 상태, 끝났으면 저널의 회차 기록."""
-    path = _journal_file(mission_id)
-    if (orchestrator.is_running and orchestrator.journal_path
-            and orchestrator.journal_path.stem == mission_id):
-        return {"id": mission_id, "live": True, **orchestrator.status()}
-    if not path.is_file():
+    """진행 중이면 라이브 상태(플러그인 상태 KV), 끝났으면 저널의 회차 기록."""
+    _check_id(mission_id)
+    live = registry.find_live_run(mission_id)
+    if live:
+        return {"id": mission_id, "live": True, "plugin": live, **registry.status(live)}
+    found = registry.run_events(mission_id)
+    if found is None:
         raise HTTPException(404, "그런 미션이 없습니다")
-    events = []
-    for line in path.read_text().splitlines():
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:      # 강제 종료로 잘린 마지막 줄
-            pass
-    return {"id": mission_id, "live": False, "events": events}
+    return {"id": mission_id, "live": False, "plugin": found[0], "events": found[1]}
 
 
 @router.post("/missions/{mission_id}/cancel")
 async def cancel_mission(mission_id: str):
-    _journal_file(mission_id)  # id 형식 검증
-    if not (orchestrator.is_running and orchestrator.journal_path
-            and orchestrator.journal_path.stem == mission_id):
+    _check_id(mission_id)
+    live = registry.find_live_run(mission_id)
+    if not live:
         raise HTTPException(409, "그 미션은 실행 중이 아닙니다")
-    await orchestrator.stop()
-    return {"id": mission_id, "status": "cancelled"}
+    await registry.stop(live)
+    return {"id": mission_id, "status": "cancelled", "plugin": live}
 
 
 # ── 상태 ──
@@ -130,8 +120,12 @@ async def system_status():
     return {
         "activities": exclusivity.snapshot(),
         "estop": estop_bridge.status(),
-        "orchestrator": orchestrator.status(),
-        "vision": await vision_api.yolod_status(),
+        # 미션은 플러그인이다 (feature/plugins.md §12-2). `orchestrator` 키는 한 릴리스 동안 null 로 남긴다 —
+        # 낡은 클라이언트가 키를 읽다 죽지 않게.
+        "plugins": [registry.status(n) for n, _pid in registry.running().items()],
+        "mission": registry.live_mission(),
+        "orchestrator": None,
+        "vision": await vision_api.detectord_status(),
     }
 
 
@@ -145,12 +139,12 @@ async def detections():
 
 @router.post("/vision/start")
 async def vision_start(body: vision_api.StartRequest):
-    return await vision_api.start_yolod(body)
+    return await vision_api.start_detectord(body)
 
 
 @router.post("/vision/stop")
 async def vision_stop():
-    return await vision_api.stop_yolod()
+    return await vision_api.stop_detectord()
 
 
 # ── 안전 — 미션 중 heartbeat 는 의무다 ──

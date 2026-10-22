@@ -274,7 +274,7 @@ def test_a_mesh_object_is_rejected_without_a_real_asset_id(mesh_on):
 
 def test_the_upload_takes_a_raw_body_and_hands_back_the_real_reason(store, mesh_on):
     """⚠ multipart 는 `python-multipart` 의존성을 끌고 온다 — 이 저장소는 같은 이유로 이미
-    raw 바디를 쓴다(YOLO 이미지·가중치). 창구를 둘로 만들 이유가 없다."""
+    raw 바디를 쓴다(검출 이미지·가중치). 창구를 둘로 만들 이유가 없다."""
     from app.main import app
 
     with TestClient(app) as c:

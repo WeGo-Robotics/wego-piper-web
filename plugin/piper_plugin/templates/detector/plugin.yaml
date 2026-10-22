@@ -1,0 +1,27 @@
+# __NAME__ — 검출기 틀. 카메라 한 대 → 검출·프리뷰 발행 (feature/plugins.md §13)
+name: __NAME__
+version: 0.1.0
+title: "__NAME__"
+description: "모델 하나로 카메라를 훑어 검출을 버스에 올린다"
+entry: main.py
+python: system
+
+cameras:
+  - { key: cam, label: "카메라", required: true }
+
+config:
+  - { key: model, kind: text, default: "PekingU/rtdetr_v2_r18vd", label: "모델 (HF id)" }
+  - { key: conf, kind: number, default: 0.25, min: 0.05, max: 1, step: 0.05, label: "신뢰도" }
+  - { key: fps, kind: number, default: 5, min: 0.1, max: 30, step: 0.5, label: "검출 주기(fps)" }
+  - { key: imgsz, kind: number, default: 640, min: 160, max: 1920, step: 32, label: "입력 크기" }
+  - { key: device, kind: select, default: "cuda:0", options: ["cuda:0", "cpu"], label: "장치" }
+
+permissions: []
+
+resources: { gpu: true, heartbeat: false }
+
+outputs:
+  detections: ["__NAME__"]
+  previews: ["det___NAME__"]
+  state:
+    - { key: det_fps, label: "검출 fps" }
