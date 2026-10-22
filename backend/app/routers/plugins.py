@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core import plugin_scopes
@@ -113,6 +113,16 @@ async def install_plugin(body: InstallRequest):
     info = registry.install_from_path(Path(body.path))
     if info.manifest is None:
         raise HTTPException(400, info.error or "매니페스트 오류")
+    return info.to_dict()
+
+
+@router.post("/install/zip")
+async def install_zip(request: Request):
+    """zip 업로드(raw body) 설치 — 화면의 파일 선택이 여기로 온다. git URL 은 받지 않는다 (§3-2)."""
+    data = await request.body()
+    if not data:
+        raise HTTPException(400, "본문이 비어 있습니다")
+    info = registry.install_from_zip(data)
     return info.to_dict()
 
 

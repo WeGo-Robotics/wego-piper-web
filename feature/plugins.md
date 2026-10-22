@@ -1,6 +1,6 @@
 # 플러그인 — 사람이 쓴 파이썬 스크립트를 웹에서 켜고 끈다
 
-> 상태: **◐ 0·1·2·3·3b단계 ☑ (2026-10-22).** 기획 확정 2026-10-16.
+> 상태: **◐ 0·1·2·3·3b·4단계 ☑ (2026-10-22).** 기획 확정 2026-10-16.
 > 1단계: `services/plugins.py`·`core/plugin_scopes.py`·`routers/plugins.py`(`/api/plugins/*`), authgate 의
 > Bearer 분기, `Activity.PLUGIN`·`PLUGIN_GPU`, 번들 `plugins/hello`.
 > 2단계: SDK [`plugin/piper_plugin`](../plugin/piper_plugin/)(`Plugin`·`MissionPlugin`·`Decision`·`robot`·`camera`·
@@ -12,7 +12,11 @@
 > 저널 `GET /api/plugins/{name}/runs`, ext API `missions` 가 플러그인 위에서 그대로 돈다(§12-2).
 > 3b단계 ☑: 번들 `plugins/detector`, 로더가 `piper_plugin.detector` 로, 버스 메타가 발행자별
 > (`piper:vision_meta:<publisher>`), `/api/vision/start·stop·status` 는 플러그인 위의 호환층(`publishers` 추가),
-> `daemons/detectord.py`·`detector_loader.py` 삭제. **다음: 4단계(플러그인 페이지).** 요청: "카메라 스트림을 받아 개체 검출도 하고 REST API 로
+> `daemons/detectord.py`·`detector_loader.py` 삭제.
+> 4단계 ☑: `/plugins` 목록(카드·zip/폴더 설치·GPU 경고) + `/plugins/:name` 상세(제목 옆 탭 설정·출력·로그,
+> 시작·정지·재시작·명령 버튼·"UI 보기" 새 창), `PluginConfigForm`(SpecFields + text/select/model/dataset/camera),
+> WS `plugin_log`·`plugin_state`, `POST /api/plugins/install/zip`, 상태바 활동 `plugin`·`plugin_gpu`.
+> **다음: 5단계(자기 화면 — 정적 서빙·소켓 프록시).** 요청: "카메라 스트림을 받아 개체 검출도 하고 REST API 로
 > 추론도 시작할 수 있는 파이썬 스크립트를 플러그인 형태로 만들어 웹 UI 에서 실행."
 > 이 문서는 그 요청을 **범용 플러그인 계층**으로 넓힌 설계다. 열린 질문 다섯은 §10 에
 > 결정으로 닫혔고, 플러그인 자체 화면(대시보드·입력·설정 페이지)의 **서빙 포트는 게이트웨이와 같은

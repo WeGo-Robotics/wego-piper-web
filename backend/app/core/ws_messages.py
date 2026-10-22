@@ -37,6 +37,9 @@ RECORD_STATUS: Final = "record_status"
 
 # ── 정책 서버 ──
 PS_LOG: Final = "ps_log"
+# 플러그인 (feature/plugins.md §8-1) — 어느 플러그인 것인지 `name` 이 붙는다
+PLUGIN_LOG: Final = "plugin_log"
+PLUGIN_STATE: Final = "plugin_state"
 PS_STATE: Final = "ps_state"
 
 # ── 에피소드 오케스트레이터 (스텝 전이·회차 완료 — 파이프라인 뷰의 재료) ──
@@ -79,6 +82,7 @@ ALL: Final[frozenset[str]] = frozenset({
     TRAIN_LOG, TRAIN_STATE, TRAIN_METRICS, JOB_LIST,
     RECORD_LOG, RECORD_STATE, RECORD_STATUS,
     PS_LOG, PS_STATE,
+    PLUGIN_LOG, PLUGIN_STATE,
     UPLOAD_LOG, UPLOAD_STATE,
     DEVICE_ALERT,
     ROBOT_LOAD_ALERT,

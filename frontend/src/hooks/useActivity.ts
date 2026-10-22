@@ -19,6 +19,8 @@ export type ActivityName =
   | 'policy_server'
   | 'dataset_edit'
   | 'upload'
+  | 'plugin'
+  | 'plugin_gpu'
 
 type ActivitySnapshot = {
   running: ActivityName[]

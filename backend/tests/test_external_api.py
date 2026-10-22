@@ -30,6 +30,9 @@ class FakePM:
     def set_state_callback(self, cb):
         pass
 
+    def set_log_callback(self, cb):
+        pass
+
     async def start(self, cmd, env_extra=None):
         from app.services.process_manager import ProcessState
         self.cmd, self.env, self.state, self.pid = cmd, env_extra, ProcessState.RUNNING, 777

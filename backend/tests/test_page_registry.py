@@ -114,7 +114,7 @@ def test_inference_analysis_lives_next_to_inference_inside_the_shell():
     assert '"추론 분석"에서 확인' in (_SRC / "pages" / "InferencePage.tsx").read_text()
 
 
-@pytest.mark.parametrize("page", ["LogsPage.tsx", "CloudPage.tsx"])
+@pytest.mark.parametrize("page", ["LogsPage.tsx", "CloudPage.tsx", "PluginDetailPage.tsx"])
 def test_in_page_tabs_sit_right_beside_the_title(page):
     """⚠ **규칙(사용자, 2026-09-11): 페이지 안의 탭은 항상 페이지 제목 옆에 둔다.**
 

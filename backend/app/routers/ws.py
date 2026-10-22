@@ -227,6 +227,22 @@ def _setup_callbacks() -> None:
     policy_server_manager.pm.set_log_callback(on_ps_log)
     policy_server_manager.pm.set_state_callback(on_ps_state)
 
+    # ── 플러그인 콜백 (feature/plugins.md §8-1) ──
+    from app.services.plugins import registry as _plugins
+
+    def on_plugin_log(name: str, line: str) -> None:
+        asyncio.run_coroutine_threadsafe(
+            broadcast({"type": M.PLUGIN_LOG, "name": name, "data": line}), loop
+        )
+
+    def on_plugin_state(name: str, state: ProcessState) -> None:
+        asyncio.run_coroutine_threadsafe(
+            broadcast({"type": M.PLUGIN_STATE, "name": name, "data": state.value}), loop
+        )
+
+    _plugins.set_log_callback(on_plugin_log)
+    _plugins.set_state_callback(on_plugin_state)
+
     # ── 데이터셋 업로드 콜백 ──
     from app.routers.datasets import _upload_pm
 

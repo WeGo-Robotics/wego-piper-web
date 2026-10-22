@@ -18,12 +18,17 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import secrets
 import shutil
 import subprocess
+import tempfile
 import time
+import zipfile
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -117,6 +122,10 @@ class PluginRegistry:
         self._runs: dict[str, Run] = {}
         # 이 세션에서 한 번이라도 띄운 이름 — 멈춘 뒤 버스의 활동 PID 를 지우려면 알아야 한다
         self._seen: set[str] = set()
+        # 화면(WS)으로 흘릴 로그·상태 — ws.py 가 꽂는다. 도는 동안의 로그 꼬리도 들고 있다
+        self._log_cb: Callable[[str, str], None] | None = None
+        self._state_cb: Callable[[str, ProcessState], None] | None = None
+        self._logs: dict[str, deque[str]] = {}
 
     # ── 디렉토리 ──
 
@@ -155,14 +164,37 @@ class PluginRegistry:
 
             pm = make_process(f"{UNIT_PREFIX}{name}")
             pm.set_state_callback(lambda st, n=name: self._on_state(n, st))
+            pm.set_log_callback(lambda line, n=name: self._on_log(n, line))
             self._owners[name] = pm
         return pm
+
+    def set_log_callback(self, cb: Callable[[str, str], None] | None) -> None:
+        self._log_cb = cb
+
+    def set_state_callback(self, cb: Callable[[str, ProcessState], None] | None) -> None:
+        self._state_cb = cb
+
+    def _on_log(self, name: str, line: str) -> None:
+        self._logs.setdefault(name, deque(maxlen=300)).append(line)
+        if self._log_cb:
+            try:
+                self._log_cb(name, line)
+            except Exception as e:
+                logger.debug("플러그인 로그 콜백 실패: %s", e)
+
+    def recent_logs(self, name: str, n: int = 50) -> list[str]:
+        return list(self._logs.get(name, ()))[-n:]
 
     def _on_state(self, name: str, state: ProcessState) -> None:
         if _idle(state):
             run = self._runs.pop(name, None)
             if run:
                 self._grants.pop(run.token, None)
+        if self._state_cb:
+            try:
+                self._state_cb(name, state)
+            except Exception as e:
+                logger.debug("플러그인 상태 콜백 실패: %s", e)
         try:
             from app.services.estop_bridge import estop_bridge
 
@@ -323,8 +355,12 @@ class PluginRegistry:
         out: dict = {"name": name, "state": state.value, "pid": pm.pid if pm and not _idle(state) else None,
                      "started_at": run.started_at if run else None, "run_id": run.run_id if run else None,
                      "config": run.config if run else None, "cameras": run.cameras if run else None}
+        # 로그 꼬리: 도는 중에는 우리 링버퍼(WS 로 흘린 것과 같은 줄), 멈췄으면 소유자가 쥔 마지막 줄
+        # (죽은 이유가 거기 있다 — 유닛은 `--collect` 라 journald 밖에 흔적이 없다)
         if pm is not None and _idle(state):
-            out["log_tail"] = pm.recent_log(20)
+            out["log_tail"] = pm.recent_log(20) or self.recent_logs(name, 20)
+        elif pm is not None:
+            out["log_tail"] = self.recent_logs(name, 50)
         # 플러그인이 올린 상태 KV(`phase`·`episode`·…). 이름이 `live` 가 아닌 이유: 외부 API 의
         # 미션 응답이 `live`(돌고 있나) 를 따로 쓴다 — 같은 키가 덮어쓰는 사고가 실제로 났다
         try:
@@ -401,6 +437,48 @@ class PluginRegistry:
         settings.plugins_dir.mkdir(parents=True, exist_ok=True)
         shutil.copytree(src, dst, ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv", ".runtime"))
         return read_manifest(dst)
+
+    def install_from_zip(self, data: bytes) -> PluginInfo:
+        """zip 한 장 → 설치. 루트에 `plugin.yaml` 이 있거나, 폴더 하나가 그걸 품고 있어야 한다.
+
+        경로 조작(`../`, 절대 경로)이 든 항목은 거절한다 — 압축 파일은 사용자 입력이다.
+        """
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(data))
+        except zipfile.BadZipFile:
+            raise HTTPException(400, "zip 파일이 아닙니다")
+        names = [n for n in zf.namelist() if not n.endswith("/")]
+        for n in names:
+            parts = Path(n).parts
+            if Path(n).is_absolute() or ".." in parts:
+                raise HTTPException(400, f"zip 안에 허용되지 않는 경로가 있습니다: {n}")
+        tops = {Path(n).parts[0] for n in names}
+        with tempfile.TemporaryDirectory(prefix="piper-plugin-zip-") as tmp:
+            zf.extractall(tmp)
+            root = Path(tmp)
+            if (root / MANIFEST).is_file():
+                src = root
+            elif len(tops) == 1 and (root / next(iter(tops)) / MANIFEST).is_file():
+                src = root / next(iter(tops))
+            else:
+                raise HTTPException(400, f"zip 루트(또는 폴더 하나 안)에 {MANIFEST} 이 있어야 합니다")
+            # zip 안 폴더 이름은 아무것이든 될 수 있다 — 매니페스트의 `name` 으로 설치한다.
+            # 그래서 폴더 이름 검사(`load_manifest`)를 거치지 않고 이름만 먼저 읽는다
+            import yaml
+
+            try:
+                raw = yaml.safe_load((src / MANIFEST).read_text(encoding="utf-8")) or {}
+                name = Manifest(**raw).name if isinstance(raw, dict) else None
+            except Exception as e:
+                raise HTTPException(400, f"{MANIFEST}: {e}")
+            if not name:
+                raise HTTPException(400, f"{MANIFEST} 에 name 이 없습니다")
+            # ⚠ 스테이징은 **압축을 푼 곳 바깥**에 둔다 — 평평한 zip 이면 `src` 가 루트라 그 안에
+            #   만들면 copytree 가 자기 자신을 끝없이 복사한다(RecursionError, 테스트에서 났다)
+            with tempfile.TemporaryDirectory(prefix="piper-plugin-stage-") as stage_root:
+                staged = Path(stage_root) / name
+                shutil.copytree(src, staged, ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv", ".runtime"))
+                return self.install_from_path(staged)
 
     def remove(self, name: str) -> None:
         info = self.get(name)

@@ -13,6 +13,8 @@ import HubPage from '../pages/HubPage'
 import PolicyServerPage from '../pages/PolicyServerPage'
 import VisionPage from '../pages/VisionPage'
 import DetectorDemoPage from '../pages/DetectorDemoPage'
+import PluginsPage from '../pages/PluginsPage'
+import PluginDetailPage from '../pages/PluginDetailPage'
 import DetectorTrainPage from '../pages/DetectorTrainPage'
 import EncoderProbePage from '../pages/EncoderProbePage'
 import LogsPage from '../pages/LogsPage'
@@ -185,6 +187,19 @@ export const pages: PageEntry[] = [
     icon: '👁',
     card: true,
   },
+
+  // 플러그인 — 폴더 하나로 얹는 사용자 파이썬 (feature/plugins.md §8-1). 목록 하나 + 플러그인별 상세
+  {
+    path: '/plugins',
+    label: msg('플러그인'),
+    description: msg('카메라·검출·추론을 엮는 파이썬 플러그인을 켜고 끈다'),
+    component: PluginsPage,
+    nav: true,
+    group: msg('통합'),
+    icon: '🧩',
+    card: true,
+  },
+  { path: '/plugins/:name', label: msg('플러그인'), component: PluginDetailPage, nav: false },
 
   // ── 시스템 ──
   { path: '/logs', label: msg('로그'), component: LogsPage, nav: true, group: msg('시스템'), icon: '📄' },

@@ -28,6 +28,15 @@
 - 게이트웨이가 재시작되면 남아 있던 플러그인 유닛을 정지시킨다 — 수동으로 다시 켠다
 - 번들 예제 `plugins/hello` — SDK 없이 환경변수만 읽는 최소 플러그인
 
+**플러그인 4단계 — 화면** ([feature/plugins.md §8-1](feature/plugins.md))
+- 사이드바 **통합 → 플러그인**: 카드 목록(상태·권한 배지·GPU/미션 표시·상태 KV 두 값·시작/정지·열기·UI 보기),
+  설치는 zip 업로드 또는 이 기계의 폴더 경로. GPU 플러그인이 둘 이상 돌면 경고만 한다
+- 상세 `/plugins/<이름>`: 제목 옆 탭 **설정**(매니페스트 폼 — 카메라 슬롯은 스트림 선택기, 모델·데이터셋은
+  기존 목록, 도는 중 읽기 전용, 저장값은 다음 시작에 재사용) · **출력**(상태 KV·프리뷰·검출·미션 저널) ·
+  **로그**(WS 스트림). 명령 버튼(`commands`)은 머리줄에, "UI 보기" 는 새 창
+- 분리수거 루프는 이 화면의 `recycling` 카드에서 켠다 — 비전 페이지에서 사라진 자리가 여기다
+- 상태바의 "도는 활동"에 플러그인이 보인다
+
 **플러그인 3b단계 — 검출 데몬이 플러그인으로 바뀌었다** ([feature/plugins.md §13](feature/plugins.md))
 - `daemons/detectord.py` 와 `detector_loader.py` 가 없어졌다. 검출기는 번들 플러그인 `detector`(`plugins/detector`),
   모델 로더는 SDK `piper_plugin.detector`(RT-DETR, Apache). 사전 라벨도 거기서 연다

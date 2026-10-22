@@ -50,6 +50,9 @@ class FakePM:
     def set_state_callback(self, cb):
         self._cb = cb
 
+    def set_log_callback(self, cb):
+        self._log_cb = cb
+
     async def start(self, cmd, env_extra=None):
         self.cmd, self.env = cmd, env_extra
         self.state, self.pid = ProcessState.RUNNING, 4242
@@ -286,3 +289,59 @@ def test_bundled_hello_manifest_is_valid():
     assert info.manifest is not None, info.error
     assert info.bundled and info.manifest.permissions == ["activity.read"]
     assert plugin_scopes.allows(frozenset(info.manifest.permissions), "GET", "/api/activity")
+
+
+# ── 4단계 — 화면이 쓰는 것: zip 설치, 로그·상태 콜백 ─────────────────────────
+
+
+def _zip_bytes(entries: dict[str, str]) -> bytes:
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, body in entries.items():
+            zf.writestr(name, body)
+    return buf.getvalue()
+
+
+def test_install_from_zip_with_a_top_folder_or_flat_root(reg):
+    from app.core.config import settings
+
+    manifest = GOOD.format(name="zipped", gpu="false")
+    info = reg.install_from_zip(_zip_bytes({"anything/plugin.yaml": manifest, "anything/main.py": "x"}))
+    assert info.manifest and info.dir == settings.plugins_dir / "zipped"      # zip 폴더 이름이 아니라 매니페스트 이름
+    reg.remove("zipped")
+    info = reg.install_from_zip(_zip_bytes({"plugin.yaml": manifest, "main.py": "x"}))
+    assert info.manifest and info.name == "zipped"
+
+
+def test_install_from_zip_rejects_traversal_and_garbage(reg):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as e:
+        reg.install_from_zip(_zip_bytes({"../evil/plugin.yaml": "name: evil\n", "../evil/main.py": ""}))
+    assert e.value.status_code == 400 and "경로" in e.value.detail
+    with pytest.raises(HTTPException) as e:
+        reg.install_from_zip(b"not a zip")
+    assert e.value.status_code == 400
+    with pytest.raises(HTTPException) as e:
+        reg.install_from_zip(_zip_bytes({"a/readme.md": "", "b/readme.md": ""}))
+    assert e.value.status_code == 400 and "plugin.yaml" in e.value.detail
+
+
+def test_log_and_state_callbacks_reach_the_screen(reg):
+    """WS 가 꽂는 콜백 — 어느 플러그인 것인지 이름이 붙고, 도는 중 로그 꼬리는 상태에도 실린다."""
+    from app.core.config import settings
+
+    _make(settings.plugins_dir, "p1")
+    got_logs, got_states = [], []
+    reg.set_log_callback(lambda n, line: got_logs.append((n, line)))
+    reg.set_state_callback(lambda n, st: got_states.append((n, st.value)))
+    asyncio.run(reg.start("p1", {}, {"watch": "top"}))
+    pm = reg._fakes["piper-plugin-p1"]
+    pm._cb(pm.state)                      # 소유자가 상태 변화를 알린 것처럼
+    reg._on_log("p1", "hello from plugin")
+    assert ("p1", "hello from plugin") in got_logs
+    assert ("p1", "running") in got_states
+    assert reg.status("p1")["log_tail"] == ["hello from plugin"]

@@ -115,6 +115,8 @@ export type WsMessage =
   | { type: 'record_status'; data: RecordStatusData }
   // 정책 서버
   | { type: 'ps_log'; data: string }
+  | { type: 'plugin_log'; name: string; data: string }
+  | { type: 'plugin_state'; name: string; data: string }
   | { type: 'ps_state'; data: ProcessState }
   // 에피소드 오케스트레이터 (스텝 전이·회차 완료)
   // Hub 업로드
