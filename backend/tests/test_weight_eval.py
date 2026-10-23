@@ -109,7 +109,7 @@ def idle(monkeypatch):
 
 def test_weight_eval_and_gpu_jobs_block_each_other(idle):
     """GPU 를 쓰는 셋과 서로 막는다 — 한쪽만 막으면 OOM 이 난다 (CLAUDE.md GPU 경합)."""
-    for other in (Activity.TRAINING, Activity.INFERENCE, Activity.YOLO_TRAIN):
+    for other in (Activity.TRAINING, Activity.INFERENCE, Activity.DETECTOR_TRAIN):
         idle.clear()
         idle.add(other)
         assert other in ex.blocking(Activity.WEIGHT_EVAL)
@@ -135,3 +135,52 @@ def test_training_curve_is_saved_to_the_run_folder(tmp_path):
 
 def test_unknown_run_is_404():
     assert TestClient(app).get("/api/weval/run", params={"run": "nope/none"}).status_code == 404
+
+
+# ── 프레임 꺼내기 (장면 편집기 · 엔코더 프로브의 바탕, W6) ──
+
+def _fake_frames(monkeypatch, store):
+    """스크립트 대신 받은 인자를 기록하고 meta.json 만 쓴다 — LeRobot 없이 경로·검증만 본다."""
+    seen = {}
+
+    def run(cmd, out):
+        seen["cmd"] = cmd
+        eps = cmd[cmd.index("--episodes") + 1: cmd.index("--frames")]
+        frs = cmd[cmd.index("--frames") + 1: cmd.index("--out")]
+        items = [{"episode": int(e), "frame": int(f), "dir": f"e{e}_f{f}"} for e in eps for f in frs]
+        for it in items:
+            (out / it["dir"]).mkdir()
+            (out / it["dir"] / "top.png").write_bytes(b"png")
+        meta = {"mode": "frames", "cameras": ["top"], "items": items, "task": "t"}
+        (out / "meta.json").write_text(json.dumps(meta))
+        return meta
+
+    monkeypatch.setattr(WE, "_run_blocking", run)
+    monkeypatch.setattr(WE, "resolve_dataset", lambda _id: store)
+    return seen
+
+
+def test_frames_accepts_one_or_many(store, monkeypatch):
+    """장면 편집기는 한 장(episode/frame), 엔코더 프로브는 여러 장(episodes/frames 조합)을 부른다."""
+    seen = _fake_frames(monkeypatch, store)
+    c = TestClient(app)
+
+    one = c.post("/api/weval/frames", json={"dataset": "org/ds", "episode": 2, "frame": 30}).json()
+    assert [it["dir"] for it in one["items"]] == ["e2_f30"]
+    png = c.get(f"/api/weval/frames/{one['sid']}/e2_f30/top.png")
+    assert png.status_code == 200 and png.content == b"png"
+
+    many = c.post("/api/weval/frames", json={"dataset": "org/ds", "episodes": [0, 3, 3], "frames": [0, 60]}).json()
+    assert [it["dir"] for it in many["items"]] == ["e0_f0", "e0_f60", "e3_f0", "e3_f60"], "중복은 한 번만"
+    assert seen["cmd"][seen["cmd"].index("--episodes") + 1: seen["cmd"].index("--frames")] == ["0", "3"]
+
+
+def test_frames_refuses_too_many_and_path_tricks(store, monkeypatch):
+    _fake_frames(monkeypatch, store)
+    c = TestClient(app)
+    r = c.post("/api/weval/frames", json={"dataset": "org/ds", "episodes": list(range(10)), "frames": list(range(10))})
+    assert r.status_code == 400, "100장은 한도(48) 밖"
+    assert c.post("/api/weval/frames", json={"dataset": "org/ds"}).status_code == 400, "고른 것이 없다"
+    for bad in ("../x", ".hidden"):
+        with pytest.raises(LookupError):
+            WE.frame_png("abc", bad, "top")

@@ -3,6 +3,8 @@ import { api } from '../services/api'
 import { usePolicies } from '../hooks/usePolicies'
 import { usePolicyUi } from '../hooks/usePolicyUi'
 import { type ReadyCam } from '../types/camera'
+import type { Dataset } from '../types/models'
+import EpisodeFramePicker from '../components/EpisodeFramePicker'
 import { useT } from '../i18n'
 
 // ⚠ 정책 이름을 유니언으로 박지 않는다 — 모델이 늘 때마다 여기도 늘어난다.
@@ -215,10 +217,11 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 
 // 슬롯 하나가 카드 하나: 소스(캡처/파일 **추가**) → 이미지 격자 → 일괄 인코딩.
 // 뷰 종류·불투명도·k 같은 공통 설정은 페이지가 쥐고 props 로 내려온다.
-function SlotCard({ entry, cameras, blocked, removable, pendingCount, overlays, view, alpha, showGrid, smooth, selected, stale,
+function SlotCard({ entry, cameras, datasets, blocked, removable, pendingCount, overlays, view, alpha, showGrid, smooth, selected, stale,
   onAddImages, onRemoveImage, onEncode, onRemove, onPick }: {
   entry: SlotEntry
   cameras: ReadyCam[]
+  datasets: Dataset[]
   blocked: boolean  // 다른 슬롯이 인코딩 중 — 서버는 한 번에 하나만 처리한다
   removable: boolean
   pendingCount: number  // 아직 인코딩 안 됐거나 설정이 바뀐 이미지 수
@@ -239,6 +242,8 @@ function SlotCard({ entry, cameras, blocked, removable, pendingCount, overlays, 
   const { label, images, busy, error } = entry
   const [cameraId, setCameraId] = useState('')
   const [capError, setCapError] = useState('')
+  // 세 번째 소스 — 학습 데이터의 에피소드 프레임 (feature/weight-analyzer.md W6)
+  const [showEpisode, setShowEpisode] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -300,6 +305,10 @@ function SlotCard({ entry, cameras, blocked, removable, pendingCount, overlays, 
         </button>
         <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
           onChange={(e) => { void pickFiles(e.target.files); e.target.value = '' }} />
+        <button onClick={() => setShowEpisode((v) => !v)} disabled={busy}
+          className={`px-2 py-1 rounded text-xs disabled:opacity-40 ${showEpisode ? 'bg-neutral-600' : 'bg-neutral-700 hover:bg-neutral-600'}`}>
+          {t('에피소드 프레임 추가')}
+        </button>
         <span className="flex-1" />
         <button onClick={onEncode} disabled={busy || blocked || pendingCount === 0}
           title={pendingCount === 0 ? t('인코딩할 이미지가 없습니다') : t('모델을 한 번만 로드해 한꺼번에 처리합니다')}
@@ -307,11 +316,14 @@ function SlotCard({ entry, cameras, blocked, removable, pendingCount, overlays, 
           {t('인코딩 ({pendingCount}장)', { pendingCount })}
         </button>
       </div>
+      {showEpisode && (
+        <EpisodeFramePicker datasets={datasets} room={Math.max(0, 24 - images.length)} onAdd={onAddImages} />
+      )}
       {(error || capError) && <p className="text-[11px] text-red-400">{error || capError}</p>}
 
       {images.length === 0 ? (
         <p className="text-xs text-neutral-600">
-          {t('이미지가 없습니다. 카메라를 캡처하거나 파일을 여러 장 골라 넣은 뒤 한꺼번에 인코딩하세요.')}
+          {t('이미지가 없습니다. 카메라를 캡처하거나, 파일이나 에피소드 프레임을 여러 장 넣은 뒤 한꺼번에 인코딩하세요.')}
         </p>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -382,6 +394,7 @@ export default function EncoderProbePage() {
   const t = useT()
   const [models, setModels] = useState<EncoderModel[]>([])
   const [cameras, setCameras] = useState<ReadyCam[]>([])
+  const [datasets, setDatasets] = useState<Dataset[]>([])
   const [policyType, setPolicyType] = useState<PolicyType>('smolvla')
   const [checkpoint, setCheckpoint] = useState('')
   const [imageKey, setImageKey] = useState('')
@@ -433,6 +446,7 @@ export default function EncoderProbePage() {
   useEffect(() => {
     api.get<EncoderModel[]>('/encoder/models').then(setModels).catch(() => setModels([]))
     api.get<ReadyCam[]>('/cameras/ready').then(setCameras).catch(() => setCameras([]))
+    api.get<Dataset[]>('/datasets').then(setDatasets).catch(() => setDatasets([]))
   }, [])
 
   const candidates = models.filter((m) => m.policy_type === policyType)
@@ -914,7 +928,7 @@ export default function EncoderProbePage() {
 
       {/* 슬롯 카드 — 세로로 쌓이고, 아래 버튼으로 추가 */}
       {entries.map((entry) => (
-        <SlotCard key={entry.id} entry={entry} cameras={cameras}
+        <SlotCard key={entry.id} entry={entry} cameras={cameras} datasets={datasets}
           blocked={anyBusy && !entry.busy} removable={entries.length > 1}
           pendingCount={entry.images.filter((i) => !i.result || stale(i)).length}
           overlays={overlays} view={view} alpha={alpha} showGrid={showGrid} smooth={smooth}

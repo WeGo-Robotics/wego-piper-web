@@ -98,6 +98,14 @@ export type Reaction = {
   tip_distance?: Record<string, { mean_mm: number; max_mm: number; end_mm: number }>
 }
 
+/** `/weval/frames` — 에피소드 × 프레임마다 폴더 하나(`dir`), 그 안에 카메라별 PNG */
+export type FramesResponse = {
+  sid: string
+  cameras: string[]
+  task: string
+  items: { episode: number; frame: number; dir: string | null; error?: string }[]
+}
+
 /** 평가 표본 — 체크포인트끼리 견주려면 **같은** 에피소드여야 한다. 고르게 N개를 뽑는다. */
 export function sampleEpisodes(all: number[], n: number): number[] {
   const sorted = [...all].sort((a, b) => a - b)

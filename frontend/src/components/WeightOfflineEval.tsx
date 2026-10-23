@@ -14,7 +14,7 @@ import { api } from '../services/api'
 import { useT } from '../i18n'
 import { PHASE_COLORS } from '../config/phases'
 import type { Dataset, DatasetDetail } from '../types/models'
-import type { EpisodeSeries, JobInfo, JobStatus, Reaction, RunDetail, RunItem, Summary } from './weightTypes'
+import type { EpisodeSeries, FramesResponse, JobInfo, JobStatus, Reaction, RunDetail, RunItem, Summary } from './weightTypes'
 import { sampleEpisodes, stepLabel } from './weightTypes'
 import type { JobRequest } from './useWevalJob'
 import type { Sample } from './WeightCheckpoints'
@@ -331,7 +331,7 @@ function ReactionPanel({ checkpoint, dataset, episode, frame, setFrame, fromChar
 }) {
   const t = useT()
   const [ep, setEp] = useState<number>(episode ?? 0)
-  const [frames, setFrames] = useState<{ sid: string; cameras: string[]; task: string } | null>(null)
+  const [frames, setFrames] = useState<FramesResponse | null>(null)
   const [cam, setCam] = useState('')
   const [edits, setEdits] = useState<Record<string, string | null>>({})
   const [intent, setIntent] = useState<'background' | 'target'>('background')
@@ -344,7 +344,7 @@ function ReactionPanel({ checkpoint, dataset, episode, frame, setFrame, fromChar
   const loadFrames = async () => {
     setBusy('frames'); setError(''); setResult(null); setEdits({})
     try {
-      const r = await api.post<{ sid: string; cameras: string[]; task: string }>(
+      const r = await api.post<FramesResponse>(
         '/weval/frames', { dataset, episode: ep, frame }, { timeoutMs: 300_000 })
       setFrames(r)
       setCam(r.cameras[0] ?? '')
@@ -442,7 +442,7 @@ function ReactionPanel({ checkpoint, dataset, episode, frame, setFrame, fromChar
           </div>
           {cam && (
             <div className="max-w-3xl">
-              <SceneEditor key={`${frames.sid}-${cam}`} src={`/api/weval/frames/${frames.sid}/${cam}.png`}
+              <SceneEditor key={`${frames.sid}-${cam}`} src={`/api/weval/frames/${frames.sid}/${frames.items[0]?.dir}/${cam}.png`}
                            onChange={(url) => setEdits((e) => ({ ...e, [cam]: url }))} />
             </div>
           )}

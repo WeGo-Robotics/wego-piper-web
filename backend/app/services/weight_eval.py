@@ -385,22 +385,37 @@ def _run_blocking(cmd: list[str], out: Path) -> dict:
     return json.loads((out / "meta.json").read_text())
 
 
-async def frames(dataset: str, episode: int, frame: int) -> dict:
+# 한 번에 꺼낼 수 있는 프레임 수 — 엔코더 프로브가 한 번에 24장까지 인코딩한다(넉넉히 두 배)
+MAX_FRAME_ITEMS = 48
+
+
+async def frames(dataset: str, episodes: list[int], frames_: list[int]) -> dict:
+    """에피소드 × 프레임의 카메라 이미지 — 장면 편집기·엔코더 프로브의 바탕."""
     ds = resolve_dataset(dataset)
+    episodes = list(dict.fromkeys(int(e) for e in episodes))
+    frames_ = list(dict.fromkeys(int(f) for f in frames_))
+    if not episodes or not frames_:
+        raise ValueError("에피소드와 프레임을 하나 이상 고르세요")
+    if len(episodes) * len(frames_) > MAX_FRAME_ITEMS:
+        raise ValueError(f"한 번에 {MAX_FRAME_ITEMS}장까지 꺼낼 수 있습니다 "
+                         f"({len(episodes)}에피소드 × {len(frames_)}프레임)")
     sid = uuid.uuid4().hex[:12]
     out = root() / "frames" / sid
     out.mkdir(parents=True)
     cmd = [_python(), "-u", SCRIPT, "--mode", "frames", "--repo-id", dataset, "--root", str(ds),
-           "--episode", str(episode), "--frame", str(frame), "--out", str(out)]
+           "--episodes", *[str(e) for e in episodes], "--frames", *[str(f) for f in frames_],
+           "--out", str(out)]
     async with _blocking_lock:
         meta = await asyncio.to_thread(_run_blocking, cmd, out)
     _prune(root() / "frames", keep=40)
     return {"sid": sid, **meta}
 
 
-def frame_png(sid: str, camera: str) -> Path:
-    p = root() / "frames" / sid / f"{camera}.png"
-    if "/" in sid or "/" in camera or not p.is_file():
+def frame_png(sid: str, item: str, camera: str) -> Path:
+    if any("/" in x or x.startswith(".") for x in (sid, item, camera)):
+        raise LookupError("프레임 이미지가 없습니다")
+    p = root() / "frames" / sid / item / f"{camera}.png"
+    if not p.is_file():
         raise LookupError("프레임 이미지가 없습니다")
     return p
 

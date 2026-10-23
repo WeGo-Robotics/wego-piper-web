@@ -6,7 +6,7 @@
               첫 동작과 청크 전체를 녹화 행동과 비교한다 → result.parquet
     reaction  한 프레임을 원본·편집 두 벌로 넣어 두 예측 청크를 낸다 → reaction.json
               (편집 이미지가 없으면 원본 한 벌만)
-    frames    한 프레임의 카메라 이미지를 PNG 로 → 장면 편집기의 바탕 (정책 불필요)
+    frames    에피소드×프레임의 카메라 이미지를 PNG 로 → 장면 편집기·엔코더 프로브의 바탕 (정책 불필요)
 
 LeRobot 을 직접 부르는 자리다 — 엔코더 프로브와 같은 이유로 백엔드가 아니라 여기 있다.
 정책 로드·전처리·`predict_action_chunk`·후처리는 **추론 wrapper(lerobot_wrapper.py)와
@@ -206,31 +206,46 @@ def run_reaction(args, out: Path) -> None:
 
 
 def run_frames(args, out: Path) -> None:
-    """한 프레임의 카메라 이미지를 PNG 로 — 장면 편집기의 바탕.
+    """프레임들의 카메라 이미지를 PNG 로 — 장면 편집기·엔코더 프로브의 바탕.
+
+    에피소드 × 프레임 조합마다 `e{에피소드}_f{프레임}/{카메라}.png`. 데이터셋을 여는 것이 비싸서
+    (수 초) 여러 장을 **한 번에** 꺼낸다 — 엔코더 프로브는 보통 여러 장을 견준다.
 
     ⚠ **평가와 같은 디코더**에서 꺼낸다. 브라우저 `<video>` 에서 캡처하면 한 프레임 어긋나거나
     색이 미세하게 달라, 원본과 편집본의 차이에 편집 말고 다른 것이 섞인다.
     """
     from PIL import Image
 
-    ds = open_dataset(args.repo_id, args.root, [args.episode])
+    episodes = args.episodes or [args.episode]
+    frames = args.frames or [args.frame]
+    ds = open_dataset(args.repo_id, args.root, sorted(set(episodes)))
     cols = ds.hf_dataset.select_columns(["episode_index", "frame_index"]).with_format("numpy")
-    hit = np.flatnonzero((np.asarray(cols["episode_index"]) == args.episode)
-                         & (np.asarray(cols["frame_index"]) == args.frame))
-    if len(hit) == 0:
-        raise ValueError(f"에피소드 {args.episode} 에 프레임 {args.frame} 이 없습니다")
-    item = ds[int(hit[0])]
-    cams = []
-    for key, val in item.items():
-        if not key.startswith("observation.images."):
-            continue
-        cam = key.split("observation.images.", 1)[1]
-        img = (val.permute(1, 2, 0).clamp(0, 1).numpy() * 255).round().astype(np.uint8)
-        Image.fromarray(img).save(out / f"{cam}.png")
-        cams.append(cam)
-    _write(out / "meta.json", {"mode": "frames", "cameras": sorted(cams),
-                               "episode": args.episode, "frame": args.frame,
-                               "task": item.get("task", "")})
+    index = {(int(e), int(f)): i for i, (e, f) in
+             enumerate(zip(np.asarray(cols["episode_index"]), np.asarray(cols["frame_index"])))}
+
+    items, cams, task = [], set(), ""
+    for ep in episodes:
+        for fr in frames:
+            i = index.get((ep, fr))
+            if i is None:
+                items.append({"episode": ep, "frame": fr, "dir": None,
+                              "error": f"에피소드 {ep} 에 프레임 {fr} 이 없습니다"})
+                continue
+            item = ds[i]
+            task = task or item.get("task", "")
+            d = out / f"e{ep}_f{fr}"
+            d.mkdir(exist_ok=True)
+            for key, val in item.items():
+                if not key.startswith("observation.images."):
+                    continue
+                cam = key.split("observation.images.", 1)[1]
+                img = (val.permute(1, 2, 0).clamp(0, 1).numpy() * 255).round().astype(np.uint8)
+                Image.fromarray(img).save(d / f"{cam}.png")
+                cams.add(cam)
+            items.append({"episode": ep, "frame": fr, "dir": d.name})
+    if not any(it["dir"] for it in items):
+        raise ValueError(items[0]["error"] if items else "꺼낼 프레임이 없습니다")
+    _write(out / "meta.json", {"mode": "frames", "cameras": sorted(cams), "items": items, "task": task})
 
 
 def main() -> int:
@@ -243,6 +258,7 @@ def main() -> int:
     ap.add_argument("--stride", type=int, default=3)
     ap.add_argument("--episode", type=int, default=0)
     ap.add_argument("--frame", type=int, default=0)
+    ap.add_argument("--frames", type=int, nargs="*", default=[], help="frames 모드: 여러 프레임 (--episodes 와 조합)")
     ap.add_argument("--edit", nargs="*", help="카메라=편집이미지경로 (reaction)")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--out", required=True)

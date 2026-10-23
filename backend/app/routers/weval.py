@@ -87,25 +87,32 @@ async def result_episode(key: str, episode: int):
 
 class FramesRequest(BaseModel):
     dataset: str
-    episode: int
-    frame: int
+    # 하나만이면 episode/frame, 여러 장이면 episodes/frames (조합 전부)
+    episode: int | None = None
+    frame: int | None = None
+    episodes: list[int] = []
+    frames: list[int] = []
 
 
 @router.post("/frames")
 async def frames(body: FramesRequest):
-    """한 프레임의 카메라 이미지 — 장면 편집기의 바탕. 평가와 같은 디코더에서 꺼낸다."""
+    """에피소드 × 프레임의 카메라 이미지 — 장면 편집기·엔코더 프로브의 바탕. 평가와 같은 디코더에서 꺼낸다."""
+    episodes = body.episodes or ([body.episode] if body.episode is not None else [])
+    frames_ = body.frames or ([body.frame] if body.frame is not None else [])
     try:
-        return await WE.frames(body.dataset, body.episode, body.frame)
+        return await WE.frames(body.dataset, episodes, frames_)
     except LookupError as exc:
         _404(exc)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     except RuntimeError as exc:
         raise HTTPException(500, str(exc))
 
 
-@router.get("/frames/{sid}/{camera}.png")
-async def frame_png(sid: str, camera: str):
+@router.get("/frames/{sid}/{item}/{camera}.png")
+async def frame_png(sid: str, item: str, camera: str):
     try:
-        return FileResponse(WE.frame_png(sid, camera), media_type="image/png")
+        return FileResponse(WE.frame_png(sid, item, camera), media_type="image/png")
     except LookupError as exc:
         _404(exc)
 
