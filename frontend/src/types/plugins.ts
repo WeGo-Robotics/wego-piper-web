@@ -50,6 +50,17 @@ export type PluginStatus = {
   /** 플러그인이 버스에 올린 상태 KV (`phase`·fps·…). 없으면 아직 안 올렸거나 죽었다 */
   kv: Record<string, unknown> | null
   log_tail?: string[]
+  /** 유닛 소유자인가 — 자원 제한(`resources.memory`·`cpu`)이 실제로 걸리는 것은 유닛뿐이다 */
+  limits_applied?: boolean
+}
+
+/** `GET /api/plugins/{name}/deps` — `python: venv | venv-isolated` 의 의존 상태 */
+export type PluginDeps = {
+  python: 'system' | 'venv' | 'venv-isolated'
+  venv_ready: boolean
+  requirements: boolean
+  installing: boolean
+  log_tail: string[]
 }
 
 export type PluginInfo = PluginStatus & {

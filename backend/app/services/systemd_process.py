@@ -163,7 +163,10 @@ class SystemdProcess:
 
     # ── 실행 ──
 
-    async def start(self, cmd: list[str], env_extra: dict[str, str] | None = None) -> None:
+    async def start(self, cmd: list[str], env_extra: dict[str, str] | None = None,
+                    properties: dict[str, str] | None = None) -> None:
+        """`properties` 는 유닛 속성(`MemoryMax=2G`, `CPUQuota=200%` …) — 플러그인 `resources` 가 쓴다
+        (feature/plugins.md §6). 자식 프로세스 폴백에는 없는 레버라 호출자가 그 사실을 말한다."""
         ok, why = available()
         if not ok:
             raise RuntimeError(f"systemd 러너를 쓸 수 없습니다: {why}")
@@ -177,6 +180,8 @@ class SystemdProcess:
             #   `--scope` 를 쓰면 호출자의 cgroup 에 들어가 함께 죽는다.
             "--collect",
         ]
+        for k, v in (properties or {}).items():
+            argv.append(f"--property={k}={v}")
         # ⚠ **`--setenv` 는 `systemd-run` 인자다 — `--` 앞에 와야 한다.**
         # `cmd`(실행할 명령)에 쌓으면 학습 스크립트가 받아 파싱하다 죽는다:
         #   `lerobot_train.py: error: unrecognized arguments: --setenv=...`

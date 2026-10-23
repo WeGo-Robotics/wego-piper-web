@@ -1,6 +1,6 @@
 # 플러그인 — 사람이 쓴 파이썬 스크립트를 웹에서 켜고 끈다
 
-> 상태: **☑ 0~5단계 구현 (2026-10-22).** 남은 것: 6단계(venv 의존·자원 제한·ext API 플러그인 제어), 7단계(후보). 기획 확정 2026-10-16.
+> 상태: **☑ 0~6단계 구현 (2026-10-23).** 남은 것: 7단계(후보 — 플러그인 간 입출력). 기획 확정 2026-10-16.
 > 1단계: `services/plugins.py`·`core/plugin_scopes.py`·`routers/plugins.py`(`/api/plugins/*`), authgate 의
 > Bearer 분기, `Activity.PLUGIN`·`PLUGIN_GPU`, 번들 `plugins/hello`.
 > 2단계: SDK [`plugin/piper_plugin`](../plugin/piper_plugin/)(`Plugin`·`MissionPlugin`·`Decision`·`robot`·`camera`·
@@ -19,7 +19,10 @@
 > 5단계 ☑: `routers/plugin_ui.py` — `ui: ui/` 정적 서빙(SPA 폴백·경로 조작 거절), `ui: server` 유닉스 소켓
 > 프록시(HTTP·WebSocket, `X-Forwarded-Prefix`·`X-Piper-Plugin`, 꺼져 있으면 안내 페이지), `ui: /경로` 는 리다이렉트.
 > SDK `serve_ui(app)`·`PIPER_PLUGIN_UI_SOCKET`, 템플릿 `dashboard`(정적 + E-stop 버튼), 번들 `ui-demo`(FastAPI·WS),
-> nginx·Vite `^/plugins/[^/]+/ui(/|$)` 블록. 실기: `hello`·`detector`(검출·프리뷰·발행자 메타) 를 새 게이트웨이에서 확인. 요청: "카메라 스트림을 받아 개체 검출도 하고 REST API 로
+> nginx·Vite `^/plugins/[^/]+/ui(/|$)` 블록. 실기: `hello`·`detector`(검출·프리뷰·발행자 메타) 를 새 게이트웨이에서 확인.
+> 6단계 ☑: `python: venv | venv-isolated` 의존 설치(`POST /api/plugins/{name}/deps` — 별도 유닛, `.deps-ok` 표지,
+> 설치 전 시작은 409), `resources.memory`·`cpu` → 유닛 속성 `MemoryMax`·`CPUQuota`(자식 폴백은 `limits_applied: false`),
+> ext API `GET /api/ext/v1/plugins`, `POST /plugins/{name}/start|stop`(저장값 위에 본문). 요청: "카메라 스트림을 받아 개체 검출도 하고 REST API 로
 > 추론도 시작할 수 있는 파이썬 스크립트를 플러그인 형태로 만들어 웹 UI 에서 실행."
 > 이 문서는 그 요청을 **범용 플러그인 계층**으로 넓힌 설계다. 열린 질문 다섯은 §10 에
 > 결정으로 닫혔고, 플러그인 자체 화면(대시보드·입력·설정 페이지)의 **서빙 포트는 게이트웨이와 같은

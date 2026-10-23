@@ -207,3 +207,20 @@ def test_estop_reaches_bridge(client, authed, monkeypatch):
     monkeypatch.setattr(ext_mod.estop_bridge, "trigger_manual", fake_trigger)
     r = client.post("/api/ext/v1/estop", headers=AUTH)
     assert r.status_code == 200 and r.json()["stopped"] == ["inference"]
+
+
+# ── 플러그인 직접 제어 (6단계) ──
+
+
+def test_external_can_start_and_stop_a_plain_plugin_with_saved_config(client, authed):
+    _install_mission(authed, "helper", mission=False)
+    registry.save_config("helper", {"max_episodes": 3}, {})
+    r = client.get("/api/ext/v1/plugins", headers=AUTH)
+    assert r.status_code == 200 and any(p["name"] == "helper" and p["mission"] is False for p in r.json()["plugins"])
+    r = client.post("/api/ext/v1/plugins/helper/start", headers=AUTH, json={"config": {"extra": 1}})
+    assert r.status_code == 200 and r.json()["state"] == "running"
+    cfg = json.loads(registry._owners["helper"].env["PIPER_PLUGIN_CONFIG"])
+    assert cfg["max_episodes"] == 3 and cfg["extra"] == 1          # 저장값 위에 본문
+    assert client.get("/api/ext/v1/plugins/helper", headers=AUTH).json()["state"] == "running"
+    assert client.post("/api/ext/v1/plugins/helper/stop", headers=AUTH).json()["state"] == "idle"
+    assert client.post("/api/ext/v1/plugins/nope/start", headers=AUTH, json={}).status_code == 404

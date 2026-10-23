@@ -7,7 +7,7 @@ import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import LogViewer from '../components/LogViewer'
 import PluginConfigForm from '../components/PluginConfigForm'
 import { openPluginUi, PluginStateDot, ScopeBadges } from '../components/PluginBits'
-import { isRunning, type PluginConfigValues, type PluginInfo, type PluginRun } from '../types/plugins'
+import { isRunning, type PluginConfigValues, type PluginDeps, type PluginInfo, type PluginRun } from '../types/plugins'
 
 const TABS = [
   { id: 'config', label: '설정' },
@@ -37,6 +37,7 @@ export default function PluginDetailPage() {
   const [tick, setTick] = useState(0)
   const [detections, setDetections] = useState<Record<string, DetPayload>>({})
   const [runs, setRuns] = useState<PluginRun[]>([])
+  const [deps, setDeps] = useState<PluginDeps | null>(null)
 
   const fail = (text: string) => notify({ level: 'error', text, source: t('플러그인') })
 
@@ -50,6 +51,7 @@ export default function PluginDetailPage() {
         setDetections(Object.fromEntries(Object.entries(all).filter(([k, v]) => r.manifest!.outputs.detections.includes(k) || v?.publisher === name)))
       }
       if (r.manifest?.mission) setRuns((await api.get<{ runs: PluginRun[] }>(`/plugins/${name}/runs`)).runs)
+      if (r.manifest && r.manifest.python !== 'system') setDeps(await api.get<PluginDeps>(`/plugins/${name}/deps`))
     } catch (e) {
       if (!info) fail(e instanceof Error ? e.message : t('불러오기 실패'))
     }
@@ -111,6 +113,10 @@ export default function PluginDetailPage() {
     if (!(await ask(t('플러그인 {name} 을 지울까? 폴더와 저장된 설정이 사라진다', { name }), { danger: true }))) return
     try { await api.delete(`/plugins/${name}`); navigate('/plugins') }
     catch (e) { fail(e instanceof Error ? e.message : t('삭제 실패')) }
+  }
+  const installDeps = async () => {
+    try { setDeps(await api.post<PluginDeps>(`/plugins/${name}/deps`)); setTab('log') }
+    catch (e) { fail(e instanceof Error ? e.message : t('의존 설치 실패')) }
   }
   const command = async (cmd: string) => {
     try { await api.post(`/plugins/${name}/command`, { name: cmd, args: {} }) }
@@ -184,6 +190,30 @@ export default function PluginDetailPage() {
             onChange={(k, v) => { setConfig((c) => ({ ...c, [k]: v })); setDirty(true) }}
             onCameraChange={(slot, stream) => { setCameras((c) => ({ ...c, [slot]: stream })); setDirty(true) }} />
           {m.config.length === 0 && m.cameras.length === 0 && <p className="text-xs text-neutral-500">{t('설정 항목이 없다')}</p>}
+          {m.python !== 'system' && (
+            <div className="rounded border border-neutral-700 bg-neutral-900/60 p-3 text-sm space-y-2">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="font-mono text-xs text-neutral-400">python: {m.python}</span>
+                <span className={`text-xs ${deps?.venv_ready ? 'text-green-300' : 'text-amber-300'}`}>
+                  {deps?.installing ? t('의존 설치 중…') : deps?.venv_ready ? t('의존 준비됨') : t('의존 설치가 필요하다 — 시작이 거부된다')}
+                </span>
+                {deps && !deps.requirements && <span className="text-xs text-neutral-500">{t('requirements.txt 없음 — venv 만 만든다')}</span>}
+                <button onClick={() => void installDeps()} disabled={running || !!deps?.installing}
+                  className="ml-auto px-3 py-1 text-sm rounded bg-neutral-700 hover:bg-blue-600 text-neutral-200 disabled:opacity-50">
+                  {deps?.venv_ready ? t('의존 다시 설치') : t('의존 설치')}
+                </button>
+              </div>
+              {m.python === 'venv-isolated' && (
+                <p className="text-xs text-neutral-500">{t('venv-isolated 는 게이트웨이 패키지를 상속하지 않는다 — torch 까지 다시 깐다 (수 GB, 수 분)')}</p>
+              )}
+              {!!m.resources.memory || !!m.resources.cpu ? (
+                <p className="text-xs text-neutral-500">
+                  {t('자원 제한')}: {m.resources.memory ? `MemoryMax=${m.resources.memory} ` : ''}{m.resources.cpu ? `CPUQuota=${m.resources.cpu}` : ''}
+                  {info?.limits_applied === false && ` — ${t('자식 프로세스 폴백에서는 걸리지 않는다')}`}
+                </p>
+              ) : null}
+            </div>
+          )}
           {!running && (
             <div className="flex gap-2">
               <button onClick={() => void save().catch((e) => fail(e instanceof Error ? e.message : t('저장 실패')))} disabled={!dirty}

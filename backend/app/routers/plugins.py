@@ -100,6 +100,24 @@ async def send_command(name: str, body: CommandRequest):
     return {"status": "queued", "name": body.name}
 
 
+@router.get("/{name}/deps")
+async def plugin_deps(name: str):
+    """의존 상태 (`python: venv | venv-isolated`) — venv 가 준비됐나, 설치 중인가, 로그 꼬리."""
+    return registry.deps(name)
+
+
+@router.post("/{name}/deps")
+async def install_deps(name: str):
+    """venv 를 만들고 requirements.txt 를 깐다 — 별도 프로세스, 로그는 플러그인 로그 채널(WS)로."""
+    return await registry.install_deps(name)
+
+
+@router.delete("/{name}/deps")
+async def remove_deps(name: str):
+    registry.remove_deps(name)
+    return {"status": "removed"}
+
+
 @router.put("/{name}/config")
 async def save_config(name: str, body: ConfigRequest):
     registry.get(name)

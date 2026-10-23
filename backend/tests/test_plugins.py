@@ -350,3 +350,80 @@ def test_log_and_state_callbacks_reach_the_screen(reg):
     assert ("p1", "hello from plugin") in got_logs
     assert ("p1", "running") in got_states
     assert reg.status("p1")["log_tail"] == ["hello from plugin"]
+
+
+# ── 6단계 — venv 의존, 자원 제한 ──────────────────────────────────────────────
+
+
+class FakeUnitPM(FakePM):
+    """유닛 소유자 흉내 — `unit` 이 있으면 레지스트리가 자원 제한 속성을 넘긴다."""
+    unit = "piper-plugin-x"
+
+    async def start(self, cmd, env_extra=None, properties=None):
+        self.props = properties
+        await super().start(cmd, env_extra)
+
+
+def test_venv_plugin_refuses_to_start_until_deps_are_installed(reg):
+    from fastapi import HTTPException
+
+    from app.core.config import settings
+
+    body = GOOD.format(name="v", gpu="false").replace("permissions:", "python: venv\npermissions:")
+    d = _make(settings.plugins_dir, "v", body=body)
+    (d / "requirements.txt").write_text("somepkg==1.0\n")
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(reg.start("v", {}, {"watch": "top"}))
+    assert e.value.status_code == 409 and "의존 설치" in e.value.detail
+    assert reg.deps("v") == {"python": "venv", "venv_ready": False, "requirements": True, "installing": False, "log_tail": []}
+
+    asyncio.run(reg.install_deps("v"))
+    dpm = reg._fakes["piper-plugin-deps-v"]
+    script = dpm.cmd[-1]
+    assert dpm.cmd[:2] == ["bash", "-c"]
+    assert "-m venv --system-site-packages" in script and "requirements.txt" in script and ".deps-ok" in script
+    # 설치 로그는 플러그인 로그 채널에도 흐른다 (화면의 로그 탭)
+    dpm._log_cb("Collecting somepkg")
+    assert "[deps] Collecting somepkg" in reg.recent_logs("v")
+    # 끝난 것처럼: 표지 + python
+    venv = reg.venv_dir("v")
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin" / "python").write_text("")
+    (venv / ".deps-ok").touch()
+    dpm.state = ProcessState.IDLE
+    assert reg.deps("v")["venv_ready"] is True
+    asyncio.run(reg.start("v", {}, {"watch": "top"}))
+    assert reg._fakes["piper-plugin-v"].cmd[0] == str(venv / "bin" / "python")
+
+
+def test_isolated_venv_does_not_inherit_site_packages(reg):
+    from app.core.config import settings
+
+    body = GOOD.format(name="iso", gpu="false").replace("permissions:", "python: venv-isolated\npermissions:")
+    _make(settings.plugins_dir, "iso", body=body)
+    asyncio.run(reg.install_deps("iso"))
+    assert "--system-site-packages" not in reg._fakes["piper-plugin-deps-iso"].cmd[-1]
+
+
+def test_system_python_has_no_deps_step(reg):
+    from fastapi import HTTPException
+
+    from app.core.config import settings
+
+    _make(settings.plugins_dir, "sys1")
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(reg.install_deps("sys1"))
+    assert e.value.status_code == 400
+
+
+def test_resource_limits_go_to_the_unit_owner_only(reg, monkeypatch):
+    from app.core.config import settings
+
+    body = GOOD.format(name="lim", gpu="false").replace("resources: { gpu: false }",
+                                                          'resources: { gpu: false, memory: "2G", cpu: "150%" }')
+    _make(settings.plugins_dir, "lim", body=body)
+    unit_pm = FakeUnitPM()
+    monkeypatch.setattr("app.services.systemd_process.make_process", lambda unit: unit_pm)
+    asyncio.run(reg.start("lim", {}, {"watch": "top"}))
+    assert unit_pm.props == {"MemoryMax": "2G", "CPUQuota": "150%"}
+    assert reg.status("lim")["limits_applied"] is True

@@ -111,6 +111,45 @@ async def cancel_mission(mission_id: str):
     return {"id": mission_id, "status": "cancelled", "plugin": live}
 
 
+# ── 플러그인 (feature/plugins.md §9 6단계) — 미션이 아닌 플러그인도 외부가 켠다 ──
+
+
+class PluginStartRequest(BaseModel):
+    config: dict = {}
+    cameras: dict[str, str] = {}
+
+
+@router.get("/plugins")
+async def ext_list_plugins():
+    out = []
+    for info in registry.scan():
+        d = registry.status(info.name)
+        d["title"] = info.manifest.title if info.manifest else info.name
+        d["error"] = info.error
+        d["mission"] = bool(info.manifest and info.manifest.mission)
+        out.append(d)
+    return {"plugins": out}
+
+
+@router.get("/plugins/{name}")
+async def ext_plugin(name: str):
+    registry.get(name)
+    return registry.status(name)
+
+
+@router.post("/plugins/{name}/start")
+async def ext_plugin_start(name: str, body: PluginStartRequest):
+    """플러그인 시작. 저장된 설정 위에 본문을 덮는다 — 비우면 화면에서 저장한 값으로 돈다."""
+    saved = registry.saved_config(name)
+    return await registry.start(name, {**saved["config"], **body.config}, {**saved["cameras"], **body.cameras})
+
+
+@router.post("/plugins/{name}/stop")
+async def ext_plugin_stop(name: str):
+    registry.get(name)
+    return await registry.stop(name)
+
+
 # ── 상태 ──
 
 

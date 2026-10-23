@@ -28,6 +28,14 @@
 - 게이트웨이가 재시작되면 남아 있던 플러그인 유닛을 정지시킨다 — 수동으로 다시 켠다
 - 번들 예제 `plugins/hello` — SDK 없이 환경변수만 읽는 최소 플러그인
 
+**플러그인 6단계 — 의존·자원·외부 제어** ([feature/plugins.md §6](feature/plugins.md))
+- `python: venv` / `venv-isolated` 플러그인은 상세의 [의존 설치]로 venv 를 만들고 `requirements.txt` 를 깐다 — 별도
+  프로세스, 로그는 로그 탭으로. 설치 전 시작은 409. `venv` 는 게이트웨이 패키지(torch 등)를 상속, `venv-isolated` 는
+  상속 없음(충돌하는 의존용, 수 GB)
+- `resources.memory`·`cpu` 가 유닛 속성(`MemoryMax`·`CPUQuota`)으로 걸린다. 자식 프로세스 폴백에서는 못 걸고 화면이 말한다
+- 외부 API: `GET /api/ext/v1/plugins`, `POST /api/ext/v1/plugins/{name}/start|stop` — 미션이 아닌 플러그인도 외부가
+  켠다(저장된 설정 위에 본문을 덮는다)
+
 **플러그인 5단계 — 자기 화면** ([feature/plugins.md §8-2](feature/plugins.md))
 - 플러그인이 자기 대시보드·입력·설정 화면을 가질 수 있다. 주소는 언제나 `/plugins/<이름>/ui/` — 게이트웨이와 같은
   포트, 로그인 관문 뒤. "UI 보기" 버튼이 새 창으로 연다(메인 창의 heartbeat·E-stop 이 산다)

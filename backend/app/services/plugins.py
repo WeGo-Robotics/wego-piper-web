@@ -118,6 +118,7 @@ def _idle(state: ProcessState) -> bool:
 class PluginRegistry:
     def __init__(self) -> None:
         self._owners: dict[str, object] = {}
+        self._deps_owners: dict[str, object] = {}
         self._grants: dict[str, Grant] = {}
         self._runs: dict[str, Run] = {}
         # 이 세션에서 한 번이라도 띄운 이름 — 멈춘 뒤 버스의 활동 PID 를 지우려면 알아야 한다
@@ -250,13 +251,93 @@ class PluginRegistry:
 
     # ── 시작·정지 ──
 
+    # ── 파이썬 환경 (`python: venv | venv-isolated`, feature/plugins.md §6) ──
+
+    def venv_dir(self, name: str) -> Path:
+        return self.runtime_dir(name) / "venv"
+
+    def deps(self, name: str, m: Manifest | None = None) -> dict:
+        """의존 상태 — 화면의 [의존 설치] 버튼 재료."""
+        info = self.get(name) if m is None else None
+        m = m or (info.manifest if info else None)
+        venv = self.venv_dir(name)
+        req = None
+        try:
+            d = self.get(name).dir
+            req = (d / "requirements.txt").is_file()
+        except HTTPException:
+            pass
+        pm = self._deps_owners.get(name)
+        return {
+            "python": m.python if m else "system",
+            "venv_ready": (venv / ".deps-ok").is_file() and (venv / "bin" / "python").is_file(),
+            "requirements": bool(req),
+            "installing": bool(pm and not _idle(pm.state)),
+            "log_tail": self.recent_logs(f"{name}#deps", 30),
+        }
+
     def _python_for(self, m: Manifest, name: str) -> str:
         if m.python == "system":
             return settings.grpc_python
-        venv_py = self.runtime_dir(name) / "venv" / "bin" / "python"
-        if venv_py.is_file():
+        venv_py = self.venv_dir(name) / "bin" / "python"
+        if venv_py.is_file() and (self.venv_dir(name) / ".deps-ok").is_file():
             return str(venv_py)
-        raise HTTPException(400, f"`python: {m.python}` 은 의존 설치가 먼저입니다 (아직 지원하지 않는다 — 6단계)")
+        raise HTTPException(409, f"`python: {m.python}` 은 의존 설치가 먼저입니다 — 상세의 [의존 설치]")
+
+    async def install_deps(self, name: str) -> dict:
+        """venv 를 만들고 `requirements.txt` 를 깐다 — 별도 프로세스(유닛)로, 로그는 플러그인 로그 채널로 흐른다.
+
+        `venv` 는 `--system-site-packages`(torch·transformers 는 상속, 고유 의존만 추가),
+        `venv-isolated` 는 상속 없음(게이트웨이의 것과 충돌하는 의존 — 수 GB 와 시간을 먹는다).
+        끝에 `.deps-ok` 표지를 쓴다 — 중간에 죽은 venv 를 다 된 것으로 읽지 않는다.
+        """
+        info = self.get(name)
+        if info.manifest is None:
+            raise HTTPException(400, f"매니페스트가 깨져 있습니다: {info.error}")
+        m = info.manifest
+        if m.python == "system":
+            raise HTTPException(400, "`python: system` 은 의존을 따로 깔지 않습니다 (게이트웨이 파이썬을 쓴다)")
+        if self.is_running(name):
+            raise HTTPException(409, "도는 중에는 의존을 바꿀 수 없습니다 — 먼저 정지하세요")
+        pm = self._deps_owner(name)
+        if not _idle(pm.state):
+            raise HTTPException(409, "이미 설치 중입니다")
+        venv = self.venv_dir(name)
+        (venv / ".deps-ok").unlink(missing_ok=True)
+        req = info.dir / "requirements.txt"
+        flag = "" if m.python == "venv-isolated" else "--system-site-packages"
+        steps = [f"{settings.grpc_python} -m venv {flag} {venv}", f"{venv}/bin/pip install -q -U pip"]
+        if req.is_file():
+            steps.append(f"{venv}/bin/pip install -r {req}")
+        else:
+            steps.append("echo 'no requirements.txt - venv only'")   # 셸 로그 — 화면 문구가 아니다
+        steps.append(f"touch {venv}/.deps-ok && echo 'deps installed'")
+        await pm.start(["bash", "-c", " && ".join(steps)])
+        return self.deps(name, m)
+
+    def _deps_owner(self, name: str):
+        pm = self._deps_owners.get(name)
+        if pm is None:
+            from app.services.systemd_process import make_process
+
+            pm = make_process(f"{UNIT_PREFIX}deps-{name}")
+            # 설치 로그는 두 채널로 — 의존 패널의 꼬리(`<name>#deps`)와 플러그인 로그 탭(WS)
+            pm.set_log_callback(lambda line, n=name: (self._on_log(f"{n}#deps", line), self._on_log(n, f"[deps] {line}")))
+            self._deps_owners[name] = pm
+        return pm
+
+    def remove_deps(self, name: str) -> None:
+        if self.is_running(name):
+            raise HTTPException(409, "도는 중에는 의존을 지울 수 없습니다")
+        shutil.rmtree(self.venv_dir(name), ignore_errors=True)
+
+    def _limits(self, m: Manifest) -> dict[str, str]:
+        props = {}
+        if m.resources.memory:
+            props["MemoryMax"] = m.resources.memory
+        if m.resources.cpu:
+            props["CPUQuota"] = m.resources.cpu
+        return props
 
     def _check_cameras(self, m: Manifest, cameras: dict[str, str]) -> None:
         from piper_shm import list_segments
@@ -318,8 +399,14 @@ class PluginRegistry:
                                run_id=run_id, mission=m.mission)
         self._seen.add(name)
         self._starting.add(name)
+        limits = self._limits(m)
         try:
-            await pm.start(cmd, env_extra=env)
+            if limits and hasattr(pm, "unit"):           # 유닛 소유자만 자원 제한을 걸 수 있다
+                await pm.start(cmd, env_extra=env, properties=limits)
+            else:
+                if limits:
+                    logger.warning("플러그인 %s 의 자원 제한(%s)은 자식 프로세스 폴백에서는 걸리지 않습니다", name, limits)
+                await pm.start(cmd, env_extra=env)
         except Exception as e:
             self._grants.pop(token, None)
             self._runs.pop(name, None)
@@ -383,6 +470,7 @@ class PluginRegistry:
         state = pm.state if pm else ProcessState.IDLE
         run = self._runs.get(name)
         out: dict = {"name": name, "state": state.value, "pid": pm.pid if pm and not _idle(state) else None,
+                     "limits_applied": bool(pm is not None and hasattr(pm, "unit")),
                      "started_at": run.started_at if run else None, "run_id": run.run_id if run else None,
                      "config": run.config if run else None, "cameras": run.cameras if run else None}
         # 로그 꼬리: 도는 중에는 우리 링버퍼(WS 로 흘린 것과 같은 줄), 멈췄으면 소유자가 쥔 마지막 줄
