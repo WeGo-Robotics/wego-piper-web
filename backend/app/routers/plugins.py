@@ -37,6 +37,10 @@ class CommandRequest(BaseModel):
     args: dict = {}
 
 
+class InstanceRequest(BaseModel):
+    label: str
+
+
 @router.get("")
 async def list_plugins():
     out = []
@@ -44,8 +48,16 @@ async def list_plugins():
         d = info.to_dict()
         d.update(registry.status(info.name))
         d["saved"] = registry.saved_config(info.name)
+        # 인스턴스 (feature/plugins.md §7-4) — 기본 인스턴스가 첫 줄, 라벨 인스턴스가 그 뒤
+        d["instances"] = [registry.status(iid) for iid in registry.instances(info.name)]
         out.append(d)
     return {"plugins": out, "dirs": [str(p) for p, _ in registry.dirs()]}
+
+
+@router.post("/{name}/instances")
+async def create_instance(name: str, body: InstanceRequest):
+    """인스턴스 추가 — `multi_instance: true` 플러그인만. 기본 인스턴스의 설정을 출발점으로 복사한다."""
+    return registry.create_instance(name, body.label)
 
 
 @router.get("/scopes")

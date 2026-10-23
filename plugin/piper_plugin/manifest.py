@@ -79,6 +79,8 @@ class Manifest(BaseModel):
     outputs: Outputs = Field(default_factory=Outputs)
     commands: list[str] = []
     mission: bool = False
+    #: 같은 폴더를 여러 인스턴스(`<name>:<label>`)로 띄울 수 있다 — 검출기·카메라별 감시 (feature/plugins.md §7-4)
+    multi_instance: bool = False
 
     @field_validator("name")
     @classmethod

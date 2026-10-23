@@ -462,3 +462,71 @@ def test_bundled_size_grader_declares_its_wiring():
     assert info.manifest is not None, info.error
     assert [s.key for s in info.manifest.inputs] == ["det"] and info.manifest.inputs[0].source == "top"
     assert info.manifest.outputs.topics == ["grades"]
+
+
+# ── 8단계 — 멀티 인스턴스 (§7-4) ─────────────────────────────────────────────
+
+
+def test_instances_run_side_by_side_with_their_own_token_env_and_estop_key(reg):
+    from fastapi import HTTPException
+
+    from app.core.config import settings
+
+    body = GOOD.format(name="det", gpu="false").replace("permissions:", "multi_instance: true\npermissions:")
+    _make(settings.plugins_dir, "det", body=body)
+    reg.create_instance("det", "cam2")
+    assert reg.instances("det") == ["det", "det:cam2"]
+    asyncio.run(reg.start("det", {"conf": 0.3}, {"watch": "top"}))
+    asyncio.run(reg.start("det:cam2", {"conf": 0.7}, {"watch": "top"}))
+    a, b = reg._fakes["piper-plugin-det"], reg._fakes["piper-plugin-det:cam2"]
+    assert a.env["PIPER_PLUGIN_NAME"] == "det" and b.env["PIPER_PLUGIN_NAME"] == "det:cam2"
+    assert b.env["PIPER_PLUGIN_BASE_NAME"] == "det" and b.env["PIPER_PLUGIN_INSTANCE"] == "cam2"
+    assert b.cmd[-1].endswith("det/main.py")                                   # 같은 코드
+    assert a.env["PIPER_API_TOKEN"] != b.env["PIPER_API_TOKEN"]
+    assert reg.grant_for(b.env["PIPER_API_TOKEN"]).name == "det:cam2"
+    assert reg.estop_pids() == {"plugin:det": 4242, "plugin:det:cam2": 4242}
+    st = reg.status("det:cam2")
+    assert st["plugin"] == "det" and st["instance"] == "cam2" and st["config"]["conf"] == 0.7
+    assert reg.status("det")["instance"] is None
+    # 인스턴스는 도는 중에 못 지운다, 멈추면 런타임만 지우고 코드는 남는다
+    with pytest.raises(HTTPException) as e:
+        reg.remove("det:cam2")
+    assert e.value.status_code == 409
+    asyncio.run(reg.stop("det:cam2"))
+    reg.remove("det:cam2")
+    assert reg.instances("det") == ["det"] and (settings.plugins_dir / "det" / "main.py").exists()
+
+
+def test_instances_need_the_manifest_flag_and_a_valid_label(reg):
+    from fastapi import HTTPException
+
+    from app.core.config import settings
+
+    _make(settings.plugins_dir, "single")
+    with pytest.raises(HTTPException) as e:
+        reg.create_instance("single", "b")
+    assert e.value.status_code == 400 and "multi_instance" in e.value.detail
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(reg.start("single:b", {}, {"watch": "top"}))
+    assert e.value.status_code == 400
+    body = GOOD.format(name="multi", gpu="false").replace("permissions:", "multi_instance: true\npermissions:")
+    _make(settings.plugins_dir, "multi", body=body)
+    with pytest.raises(HTTPException) as e:
+        reg.create_instance("multi", "bad label!")
+    assert e.value.status_code == 400
+    reg.create_instance("multi", "x")
+    with pytest.raises(HTTPException) as e:
+        reg.create_instance("multi", "x")
+    assert e.value.status_code == 409
+
+
+def test_instance_inherits_the_default_instance_settings_and_shares_the_venv(reg):
+    from app.core.config import settings
+
+    body = GOOD.format(name="vm", gpu="false").replace("permissions:", "multi_instance: true\npython: venv\npermissions:")
+    _make(settings.plugins_dir, "vm", body=body)
+    reg.save_config("vm", {"conf": 0.9}, {"watch": "top"})
+    reg.create_instance("vm", "two")
+    assert reg.saved_config("vm:two")["config"]["conf"] == 0.9
+    assert reg.venv_dir("vm:two") == reg.venv_dir("vm")
+    assert reg.deps("vm:two")["python"] == "venv"

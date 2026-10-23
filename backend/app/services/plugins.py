@@ -44,6 +44,25 @@ REPO = Path(__file__).resolve().parents[3]
 BUNDLED_DIR = REPO / "plugins"
 UNIT_PREFIX = "piper-plugin-"
 
+# ── 인스턴스 (feature/plugins.md §7-4) ──
+#
+# 인스턴스 id 는 `<폴더 이름>` (기본 인스턴스) 또는 `<폴더 이름>:<라벨>`. 소유자·토큰·실행 기록·런타임
+# 디렉토리·버스 키·유닛 이름이 전부 이 id 를 쓴다 — 기본 인스턴스의 id 가 폴더 이름 그대로라
+# 인스턴스를 모르던 호출자(호환층·외부 API)는 그대로 돈다. systemd 유닛 이름에 `:` 는 허용 문자다.
+import re as _re
+
+INSTANCE_RE = _re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,19}$")
+
+
+def split_instance(iid: str) -> tuple[str, str]:
+    """`detector:cam2` → (`detector`, `cam2`), `detector` → (`detector`, ``)."""
+    base, _, label = iid.partition(":")
+    return base, label
+
+
+def instance_id(base: str, label: str) -> str:
+    return f"{base}:{label}" if label else base
+
 
 # ── 매니페스트 — 모양은 SDK 가 정본이다 (`piper_plugin.manifest`, `piper-plugin check` 와 같은 모델) ──
 
@@ -158,10 +177,42 @@ class PluginRegistry:
         return list(out.values())
 
     def get(self, name: str) -> PluginInfo:
+        """플러그인 정보 — 인스턴스 id(`detector:cam2`)를 줘도 그 폴더의 정보다."""
+        base, _ = split_instance(name)
         for info in self.scan():
-            if info.name == name:
+            if info.name == base:
                 return info
-        raise HTTPException(404, f"플러그인이 없습니다: {name}")
+        raise HTTPException(404, f"플러그인이 없습니다: {base}")
+
+    def instances(self, base: str) -> list[str]:
+        """이 폴더의 인스턴스 id 들 — 기본 인스턴스가 먼저, 그 뒤 라벨 순. 저장 설정·런타임 디렉토리·소유자에서 모은다."""
+        labels: set[str] = set()
+        root = settings.plugins_dir / ".runtime"
+        if root.is_dir():
+            for d in root.iterdir():
+                b, label = split_instance(d.name)
+                if b == base and label:
+                    labels.add(label)
+        for iid in list(self._owners) + list(self._runs):
+            b, label = split_instance(iid)
+            if b == base and label:
+                labels.add(label)
+        return [base] + [instance_id(base, l) for l in sorted(labels)]
+
+    def create_instance(self, base: str, label: str) -> dict:
+        info = self.get(base)
+        if info.manifest is None:
+            raise HTTPException(400, f"매니페스트가 깨져 있습니다: {info.error}")
+        if not info.manifest.multi_instance:
+            raise HTTPException(400, f"'{base}' 은 인스턴스를 여럿 띄울 수 없습니다 (plugin.yaml 의 multi_instance: true)")
+        if not INSTANCE_RE.match(label or ""):
+            raise HTTPException(400, "인스턴스 라벨은 영문자·숫자·_·- 만, 첫 글자는 영숫자, 1~20자")
+        iid = instance_id(base, label)
+        if iid in self.instances(base):
+            raise HTTPException(409, f"이미 있는 인스턴스입니다: {iid}")
+        saved = self.saved_config(base)             # 기본 인스턴스의 설정을 출발점으로
+        self.save_config(iid, saved["config"], saved["cameras"], saved.get("inputs"))
+        return self.status(iid)
 
     # ── 소유자 ──
 
@@ -295,7 +346,8 @@ class PluginRegistry:
     # ── 파이썬 환경 (`python: venv | venv-isolated`, feature/plugins.md §6) ──
 
     def venv_dir(self, name: str) -> Path:
-        return self.runtime_dir(name) / "venv"
+        # venv 는 **폴더(코드)에 딸린 것**이라 인스턴스가 아니라 기본 이름 아래 하나다
+        return self.runtime_dir(split_instance(name)[0]) / "venv"
 
     def deps(self, name: str, m: Manifest | None = None) -> dict:
         """의존 상태 — 화면의 [의존 설치] 버튼 재료."""
@@ -308,13 +360,13 @@ class PluginRegistry:
             req = (d / "requirements.txt").is_file()
         except HTTPException:
             pass
-        pm = self._deps_owners.get(name)
+        pm = self._deps_owners.get(split_instance(name)[0])
         return {
             "python": m.python if m else "system",
             "venv_ready": (venv / ".deps-ok").is_file() and (venv / "bin" / "python").is_file(),
             "requirements": bool(req),
             "installing": bool(pm and not _idle(pm.state)),
-            "log_tail": self.recent_logs(f"{name}#deps", 30),
+            "log_tail": self.recent_logs(f"{split_instance(name)[0]}#deps", 30),
         }
 
     def _python_for(self, m: Manifest, name: str) -> str:
@@ -332,13 +384,14 @@ class PluginRegistry:
         `venv-isolated` 는 상속 없음(게이트웨이의 것과 충돌하는 의존 — 수 GB 와 시간을 먹는다).
         끝에 `.deps-ok` 표지를 쓴다 — 중간에 죽은 venv 를 다 된 것으로 읽지 않는다.
         """
+        name = split_instance(name)[0]
         info = self.get(name)
         if info.manifest is None:
             raise HTTPException(400, f"매니페스트가 깨져 있습니다: {info.error}")
         m = info.manifest
         if m.python == "system":
             raise HTTPException(400, "`python: system` 은 의존을 따로 깔지 않습니다 (게이트웨이 파이썬을 쓴다)")
-        if self.is_running(name):
+        if any(self.is_running(i) for i in self.instances(name)):
             raise HTTPException(409, "도는 중에는 의존을 바꿀 수 없습니다 — 먼저 정지하세요")
         pm = self._deps_owner(name)
         if not _idle(pm.state):
@@ -368,7 +421,8 @@ class PluginRegistry:
         return pm
 
     def remove_deps(self, name: str) -> None:
-        if self.is_running(name):
+        name = split_instance(name)[0]
+        if any(self.is_running(i) for i in self.instances(name)):
             raise HTTPException(409, "도는 중에는 의존을 지울 수 없습니다")
         shutil.rmtree(self.venv_dir(name), ignore_errors=True)
 
@@ -395,17 +449,31 @@ class PluginRegistry:
 
     async def start(self, name: str, config: dict | None = None,
                     cameras: dict[str, str] | None = None, inputs: dict[str, str] | None = None) -> dict:
-        info = self.get(name)
+        base, label = split_instance(name)
+        info = self.get(base)
         if info.manifest is None:
             raise HTTPException(400, f"매니페스트가 깨져 있습니다: {info.error}")
         m = info.manifest
+        if label and not m.multi_instance:
+            raise HTTPException(400, f"'{base}' 은 인스턴스를 여럿 띄울 수 없습니다 (plugin.yaml 의 multi_instance: true)")
+        if label and not INSTANCE_RE.match(label):
+            raise HTTPException(400, "인스턴스 라벨은 영문자·숫자·_·- 만, 첫 글자는 영숫자, 1~20자")
         if self.is_running(name):
             raise HTTPException(409, f"플러그인 '{name}' 은 이미 돌고 있습니다")
 
         from app.services import exclusivity
 
         if m.resources.gpu:
-            exclusivity.require_idle(exclusivity.Activity.PLUGIN_GPU)
+            # ⚠ `require_idle(PLUGIN_GPU)` 를 쓰면 **GPU 플러그인이 하나 돌고 있다는 것만으로** 둘째가
+            #   막힌다(활동이 자기 자신에게 막히는 규칙). GPU 플러그인끼리는 경고만 하기로 했다(§3-8) —
+            #   막는 것은 학습처럼 **다른** 활동이 쥐고 있을 때뿐이다.
+            blockers = [a for a in exclusivity.blocking(exclusivity.Activity.PLUGIN_GPU)
+                        if a is not exclusivity.Activity.PLUGIN_GPU]
+            if blockers:
+                names = ", ".join(exclusivity.LABELS[a] for a in blockers)
+                raise HTTPException(409, f"{names} 중에는 GPU 플러그인을 시작할 수 없습니다")
+            if self.any_running(gpu_only=True):
+                logger.warning("GPU 플러그인이 이미 돌고 있는데 %s 를 더 켠다 — 메모리를 다툴 수 있다 (막지 않는다)", name)
 
         config = {**m.defaults(), **(config or {})}
         cameras = dict(cameras or {})
@@ -414,14 +482,16 @@ class PluginRegistry:
         missing = [s.key for s in m.inputs if s.required and not inputs.get(s.key)]
         if missing:
             raise HTTPException(400, f"입력을 고르지 않았습니다: {missing}")
-        python = self._python_for(m, name)
+        python = self._python_for(m, base)
         self.save_config(name, config, cameras, inputs)
 
         token = secrets.token_urlsafe(32)
         # 저널 id 는 게이트웨이가 정한다 — 외부 API 가 미션을 이 id 로 조회하므로 시작 응답에 실려야 한다
         run_id = time.strftime("run_%Y%m%d_%H%M%S")
         env = {
-            "PIPER_PLUGIN_NAME": name,
+            "PIPER_PLUGIN_NAME": name,                     # 인스턴스 id — SDK 의 self.name, 버스 키
+            "PIPER_PLUGIN_BASE_NAME": base,
+            "PIPER_PLUGIN_INSTANCE": label,
             "PIPER_PLUGIN_DIR": str(info.dir),
             "PIPER_PLUGIN_RUNTIME_DIR": str(self.runtime_dir(name)),
             "PIPER_PLUGIN_CONFIG": json.dumps(config, ensure_ascii=False),
@@ -515,7 +585,9 @@ class PluginRegistry:
         pm = self._owners.get(name)
         state = pm.state if pm else ProcessState.IDLE
         run = self._runs.get(name)
-        out: dict = {"name": name, "state": state.value, "pid": pm.pid if pm and not _idle(state) else None,
+        base, label = split_instance(name)
+        out: dict = {"name": name, "plugin": base, "instance": label or None,
+                     "state": state.value, "pid": pm.pid if pm and not _idle(state) else None,
                      "limits_applied": bool(pm is not None and hasattr(pm, "unit")),
                      "started_at": run.started_at if run else None, "run_id": run.run_id if run else None,
                      "config": run.config if run else None, "cameras": run.cameras if run else None,
@@ -553,12 +625,13 @@ class PluginRegistry:
         if not root.is_dir():
             return out
         for d in sorted(root.iterdir()):
-            if name and d.name != name:
+            if name and d.name != name and split_instance(d.name)[0] != name:
                 continue
+            base, label = split_instance(d.name)
             for p in (d / "runs").glob("run_*.jsonl") if (d / "runs").is_dir() else []:
                 st = p.stat()
-                out.append({"id": p.stem, "plugin": d.name, "bytes": st.st_size, "mtime": st.st_mtime,
-                            "live": self._live_run(d.name) == p.stem})
+                out.append({"id": p.stem, "plugin": d.name, "base": base, "instance": label or None,
+                            "bytes": st.st_size, "mtime": st.st_mtime, "live": self._live_run(d.name) == p.stem})
         out.sort(key=lambda r: r["id"], reverse=True)
         return out
 
@@ -654,14 +727,23 @@ class PluginRegistry:
                 return self.install_from_path(staged)
 
     def remove(self, name: str) -> None:
-        info = self.get(name)
+        base, label = split_instance(name)
+        info = self.get(base)
+        if label:
+            # 인스턴스만 지운다 — 코드(폴더)는 기본 인스턴스의 것이다
+            if self.is_running(name):
+                raise HTTPException(409, "도는 중에는 지울 수 없습니다 — 먼저 정지하세요")
+            shutil.rmtree(settings.plugins_dir / ".runtime" / name, ignore_errors=True)
+            self._owners.pop(name, None)
+            return
         if info.bundled:
             raise HTTPException(400, "번들 플러그인은 지울 수 없습니다")
-        if self.is_running(name):
+        if any(self.is_running(i) for i in self.instances(base)):
             raise HTTPException(409, "도는 중에는 지울 수 없습니다 — 먼저 정지하세요")
         shutil.rmtree(info.dir)
-        shutil.rmtree(settings.plugins_dir / ".runtime" / name, ignore_errors=True)
-        self._owners.pop(name, None)
+        for iid in self.instances(base):
+            shutil.rmtree(settings.plugins_dir / ".runtime" / iid, ignore_errors=True)
+            self._owners.pop(iid, None)
 
     # ── 기동 시 고아 정리 ──
 

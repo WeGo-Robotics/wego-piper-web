@@ -5,6 +5,7 @@ title: "작업 영역 감시"
 description: "지정 클래스(기본 person)가 ROI 안에 연속으로 보이면 추론을 일시정지하거나 E-stop 한다"
 entry: main.py
 python: system
+multi_instance: true      # 카메라마다 하나 — `detector:cam2` 처럼 인스턴스를 더한다 (feature/plugins.md §7-4)
 
 cameras:
   - { key: watch, label: "감시 카메라", required: true }

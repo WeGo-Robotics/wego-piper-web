@@ -2,8 +2,8 @@
 #
 # 카메라 슬롯이 고정이 아니다: 검출 데몬이 `--cam alias=stream` 을 몇 개든 받았듯이, `cams` 설정에
 # `alias=stream` 을 쉼표로 적는다(비우면 매니페스트 `cameras` 슬롯을 쓴다). 검출 이름(버스 키)이 alias 다.
-# 검출기를 **둘 이상** 동시에 돌리려면 이 폴더를 다른 이름으로 복사해 설치한다 — 발행자 이름이 다르면
-# 버스에서 충돌하지 않는다(§13-2).
+# 검출기를 **둘 이상** 동시에 돌리려면 인스턴스를 더한다(`detector:cam2`) — 발행자 이름이 인스턴스 id 라
+# 버스에서 충돌하지 않는다(§7-4).
 name: detector
 version: 0.2.0
 title: "검출기"
@@ -11,6 +11,7 @@ description: "카메라 스트림을 모델로 훑어 검출·어노테이트 �
 entry: main.py
 python: system
 ui: /detector
+multi_instance: true      # 카메라마다 하나 — `detector:cam2` 처럼 인스턴스를 더한다 (feature/plugins.md §7-4)
 
 cameras:
   - { key: top, label: "카메라", required: false }

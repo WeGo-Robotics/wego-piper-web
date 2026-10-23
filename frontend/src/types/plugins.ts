@@ -36,6 +36,8 @@ export type PluginManifest = {
   outputs: { previews: string[]; detections: string[]; topics: string[]; state: { key: string; label?: string; unit?: string }[] }
   commands: string[]
   mission: boolean
+  /** 같은 폴더를 여러 인스턴스(`name:label`)로 — 검출기·카메라별 감시 (§7-4) */
+  multi_instance?: boolean
 }
 
 export type PluginScopeDesc = { scope: string; rules: string[][] }
@@ -43,7 +45,10 @@ export type PluginScopeDesc = { scope: string; rules: string[][] }
 export type PluginConfigValues = Record<string, number | boolean | string>
 
 export type PluginStatus = {
+  /** 인스턴스 id — 기본 인스턴스는 폴더 이름, 추가 인스턴스는 `name:label` */
   name: string
+  plugin?: string
+  instance?: string | null
   state: string
   pid: number | null
   started_at: number | null
@@ -76,6 +81,8 @@ export type PluginInfo = PluginStatus & {
   manifest?: PluginManifest
   scopes?: PluginScopeDesc[]
   saved: { config: PluginConfigValues; cameras: Record<string, string>; inputs?: Record<string, string> }
+  /** 기본 인스턴스가 첫 줄 */
+  instances?: PluginStatus[]
 }
 
 /** `GET /api/plugins/topics` — 살아 있는 소스 */

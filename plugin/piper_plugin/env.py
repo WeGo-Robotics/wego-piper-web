@@ -2,7 +2,8 @@
 
 | 변수 | 뜻 |
 |---|---|
-| `PIPER_PLUGIN_NAME` | 플러그인 이름 (= 폴더 이름 = 유닛 이름의 꼬리) |
+| `PIPER_PLUGIN_NAME` | 인스턴스 id — 기본 인스턴스는 폴더 이름(`detector`), 추가 인스턴스는 `detector:cam2`. 버스 키·유닛 이름이 이것이다 |
+| `PIPER_PLUGIN_BASE_NAME` · `PIPER_PLUGIN_INSTANCE` | 폴더 이름과 인스턴스 라벨(기본 인스턴스는 빈 문자열) |
 | `PIPER_PLUGIN_DIR` | 플러그인 폴더 |
 | `PIPER_PLUGIN_RUNTIME_DIR` | 설정·저널·venv 가 사는 곳 (`<plugins_dir>/.runtime/<name>`) |
 | `PIPER_PLUGIN_CONFIG` | 설정 JSON — 매니페스트 기본값이 채워져 온다 |
@@ -29,8 +30,11 @@ from pathlib import Path
 @dataclass
 class Env:
     name: str
-    dir: Path
-    runtime_dir: Path
+    #: 인스턴스일 때 폴더 이름(`detector`). `name` 은 인스턴스 id(`detector:cam2`) — 버스 키·유닛이 그 이름을 쓴다
+    base_name: str = ""
+    instance: str = ""
+    dir: Path = Path(".")
+    runtime_dir: Path = Path(".runtime")
     config: dict = field(default_factory=dict)
     cameras: dict[str, str] = field(default_factory=dict)
     #: `{입력 키: 소스 이름}` — 매니페스트 `inputs` 의 슬롯에 고른 검출 이름·토픽 (§7-3)
@@ -51,7 +55,9 @@ class Env:
         d = Path(e.get("PIPER_PLUGIN_DIR") or Path.cwd())
         rt = Path(e.get("PIPER_PLUGIN_RUNTIME_DIR") or (d / ".runtime"))
         return cls(
-            name=name, dir=d, runtime_dir=rt,
+            name=name, base_name=e.get("PIPER_PLUGIN_BASE_NAME") or name.split(":", 1)[0],
+            instance=e.get("PIPER_PLUGIN_INSTANCE") or (name.split(":", 1)[1] if ":" in name else ""),
+            dir=d, runtime_dir=rt,
             config=_json(e.get("PIPER_PLUGIN_CONFIG")),
             cameras=_json(e.get("PIPER_PLUGIN_CAMERAS")),
             inputs=_json(e.get("PIPER_PLUGIN_INPUTS")),
@@ -67,6 +73,8 @@ class Env:
         """`from_environ` 의 역 — `python -m piper_plugin run` 이 쓴다."""
         out = {
             "PIPER_PLUGIN_NAME": self.name,
+            "PIPER_PLUGIN_BASE_NAME": self.base_name or self.name.split(":", 1)[0],
+            "PIPER_PLUGIN_INSTANCE": self.instance,
             "PIPER_PLUGIN_DIR": str(self.dir),
             "PIPER_PLUGIN_RUNTIME_DIR": str(self.runtime_dir),
             "PIPER_PLUGIN_CONFIG": json.dumps(self.config, ensure_ascii=False),

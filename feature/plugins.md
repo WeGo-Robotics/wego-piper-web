@@ -1,6 +1,6 @@
 # 플러그인 — 사람이 쓴 파이썬 스크립트를 웹에서 켜고 끈다
 
-> 상태: **☑ 0~7단계 구현 (2026-10-23).** 기획의 모든 단계가 들어갔다. 기획 확정 2026-10-16.
+> 상태: **☑ 0~8단계 구현 (2026-10-23).** 8단계(멀티 인스턴스)는 7단계 뒤 요청으로 더해졌다. 기획 확정 2026-10-16.
 > 1단계: `services/plugins.py`·`core/plugin_scopes.py`·`routers/plugins.py`(`/api/plugins/*`), authgate 의
 > Bearer 분기, `Activity.PLUGIN`·`PLUGIN_GPU`, 번들 `plugins/hello`.
 > 2단계: SDK [`plugin/piper_plugin`](../plugin/piper_plugin/)(`Plugin`·`MissionPlugin`·`Decision`·`robot`·`camera`·
@@ -25,7 +25,10 @@
 > ext API `GET /api/ext/v1/plugins`, `POST /plugins/{name}/start|stop`(저장값 위에 본문).
 > 7단계 ☑: 플러그인 간 입출력(§7-3) — 매니페스트 `inputs`(검출·토픽 슬롯)·`outputs.topics`, 버스 토픽
 > `piper:plugin:topic:<이름>`(최신값·seq·TTL), SDK `publish`·`latest`·`input`·`input_detections`, 상세의 입력 선택기
-> (살아 있는 소스, `GET /api/plugins/topics`)·토픽 출력, `inputs_live` 경고(막지 않는다), 번들 `size-grader`. 요청: "카메라 스트림을 받아 개체 검출도 하고 REST API 로
+> (살아 있는 소스, `GET /api/plugins/topics`)·토픽 출력, `inputs_live` 경고(막지 않는다), 번들 `size-grader`.
+> 8단계 ☑: 멀티 인스턴스(§7-4) — 인스턴스 id `<폴더>:<라벨>`, 매니페스트 `multi_instance: true`,
+> `POST /api/plugins/{name}/instances`, 목록 카드의 인스턴스 줄, 상세의 인스턴스 삭제. 소유자·토큰·런타임·버스 키·유닛이
+> 전부 인스턴스 id 를 쓰고 기본 인스턴스 id = 폴더 이름이라 옛 호출자는 그대로 돈다. 요청: "카메라 스트림을 받아 개체 검출도 하고 REST API 로
 > 추론도 시작할 수 있는 파이썬 스크립트를 플러그인 형태로 만들어 웹 UI 에서 실행."
 > 이 문서는 그 요청을 **범용 플러그인 계층**으로 넓힌 설계다. 열린 질문 다섯은 §10 에
 > 결정으로 닫혔고, 플러그인 자체 화면(대시보드·입력·설정 페이지)의 **서빙 포트는 게이트웨이와 같은
@@ -363,6 +366,24 @@ class AppleSorter(MissionPlugin):
 토픽 `grades` 로 올린다. 사과 분류기의 "등급" 칸을 가장 작게 흉내 낸 것이고, 미션 플러그인은
 `self.latest("grades")` 로 그걸 읽어 `Decision` 을 낸다.
 
+### 7-4. 멀티 인스턴스 — 같은 코드를 카메라마다 하나씩
+
+검출기·영역 감시처럼 **같은 코드를 입력만 바꿔 여럿** 돌려야 하는 플러그인이 있다. 폴더 복사는
+코드를 두 벌로 만들어 한쪽만 고쳐지는 길이라 거절하고, **인스턴스**를 둔다.
+
+| 항목 | 설계 |
+|---|---|
+| id | `<폴더 이름>` 이 기본 인스턴스, `<폴더 이름>:<라벨>` 이 추가 인스턴스(라벨은 영숫자·`_`·`-`, 20자) |
+| 켜는 법 | 매니페스트 `multi_instance: true`. 목록 카드에 인스턴스 줄이 생기고 "+ 인스턴스" 로 더한다(`POST /api/plugins/{name}/instances`). 미션(`mission: true`)은 동시 1개라 끄는 것이 맞다 |
+| 무엇이 인스턴스별인가 | 소유자(유닛 `piper-plugin-detector:cam2`)·토큰·실행 기록·저장 설정·런타임 디렉토리(`.runtime/detector:cam2`)·버스 키(상태 KV·발행자 메타·토픽·E-stop 활동 `plugin:detector:cam2`) |
+| 무엇이 공유인가 | 코드(폴더)·venv(의존은 코드에 딸린 것)·매니페스트 |
+| SDK | `self.name` 이 인스턴스 id 다 — 버스 키가 자동으로 갈린다. 폴더 이름·라벨은 `self.env.base_name`·`self.env.instance` |
+| 새 인스턴스의 출발점 | 기본 인스턴스의 저장 설정을 복사한다 — 카메라만 바꾸는 것이 보통이라서 |
+| 호환 | 기본 인스턴스 id = 폴더 이름이라 `/api/vision/*` 호환층·외부 API·플러그인 상세 주소는 안 바뀐다 |
+
+검출 이름(`piper:vision:<alias>`)과 프리뷰 이름은 사용자가 설정에 적는 값이라 인스턴스마다 다르게
+적어야 한다 — 같으면 서로 덮어쓴다. 화면이 발행자(인스턴스 id)를 함께 보여 주므로 눈에는 띈다.
+
 ### 7-2. 코딩 에이전트가 첫 사용자다
 
 루프를 사람이 손으로 짜는 것보다 로컬 코딩 에이전트(Claude Code 등)에게 "이 `recycling` 을 사과
@@ -623,7 +644,7 @@ yolod 는 단일 유닛이다 — `make_process("piper-yolod")` 하나, 프로�
 | 모양 | 어떻게 | 언제 |
 |---|---|---|
 | **한 프로세스에 모델 여러 개** | 번들 `detector` 의 설정이 **목록**이다: `detectors: [{name, model, cams, conf, fps, imgsz}, ...]`. `loop()` 가 차례로 돈다. CUDA 컨텍스트를 공유해 GPU 메모리가 가장 적다 | 한 앱이 쓰는 검출기 묶음 (사과 찾기 + 등급) |
-| **프로세스 여러 개** | 플러그인 여럿 — `detector` 외에 사용자 플러그인이 자기 모델을 올린다, 또는 `detector` 폴더를 다른 이름으로 복사해 둔다 | 서로 독립이어야 할 때(하나가 죽어도 남은 것이 돈다). 프로세스마다 CUDA 컨텍스트 수백 MB 가 더 든다 — 경고만(§3-8) |
+| **프로세스 여러 개** | `detector` 의 **인스턴스**(`detector:cam2`, §7-4) 또는 자기 모델을 올리는 다른 플러그인 | 서로 독립이어야 할 때(하나가 죽어도 남은 것이 돈다). 프로세스마다 CUDA 컨텍스트 수백 MB 가 더 든다 — 경고만(§3-8) |
 
 ### 13-3. 바뀌는 계약 — 하나
 

@@ -35,6 +35,8 @@ plugins/<name>/
 | 기다리기 | `self.sleep(s)` | 정지 신호에 바로 깬다 — `time.sleep` 대신 |
 | 끝내기 | `self.stop("사유")` | `teardown()` 이 불린다 |
 
+`multi_instance: true` 면 같은 코드를 인스턴스(`<name>:<label>`)로 여럿 띄운다 — `self.name` 이 인스턴스 id 라 버스 키가 자동으로 갈린다.
+
 세 층: `Plugin.loop()`(뭐든) · `MissionPlugin`(관찰→판단→실행→완료→기록→리셋, 훅만 채운다) ·
 `self.robot.*`(원시 연산). 미션의 공통 설정 `max_episodes`·`episode_timeout_s`·`settle_s`·`dry_run` 은
 자동으로 붙는다.
@@ -76,6 +78,6 @@ curl -X POST localhost:8000/api/plugins/my-thing/start -H 'content-type: applica
 | `detect-and-start/` | 1층 | 검출기 안에 두고, 보이면 추론 시작·사라지면 정지 |
 | `zone-guard/` | 1층 | ROI 침입 → 일시정지/E-stop, 비면 재개 |
 | `recycling/` | 2층 | 검출 → LLM 판단 → task → 저널. `MissionPlugin` 의 참고 구현. 외부 API 미션 타입 `recycling` |
-| `detector/` | 1층 | 카메라 여러 대를 한 모델로 훑는 검출기. 검출 페이지의 뒷단. 둘 이상 돌리려면 폴더를 다른 이름으로 복사 |
+| `detector/` | 1층 | 카메라 여러 대를 한 모델로 훑는 검출기. 검출 페이지의 뒷단. 둘 이상은 인스턴스(`detector:cam2`) |
 | `ui-demo/` | 1층 | `ui: server` — 자기 FastAPI 서버(HTTP·WS)를 소켓에 띄워 게이트웨이 뒤로 프록시. 포트를 고르지 않는다 |
 | `size-grader/` | 1층 | `detector` 의 검출을 **입력 슬롯**으로 받아 크기 등급을 토픽 `grades` 로 — 플러그인 배선의 실례 |

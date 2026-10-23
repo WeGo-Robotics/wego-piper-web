@@ -122,7 +122,10 @@ export default function PluginDetailPage() {
   }
   const restart = async () => { await stop(); await start() }
   const remove = async () => {
-    if (!(await ask(t('플러그인 {name} 을 지울까? 폴더와 저장된 설정이 사라진다', { name }), { danger: true }))) return
+    const q = info?.instance
+      ? t('인스턴스 {name} 을 지울까? 저장된 설정이 사라진다 (코드는 남는다)', { name })
+      : t('플러그인 {name} 을 지울까? 폴더와 저장된 설정이 사라진다', { name })
+    if (!(await ask(q, { danger: true }))) return
     try { await api.delete(`/plugins/${name}`); navigate('/plugins') }
     catch (e) { fail(e instanceof Error ? e.message : t('삭제 실패')) }
   }
@@ -142,7 +145,7 @@ export default function PluginDetailPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <h1 className="text-2xl font-bold">{m?.title || name}</h1>
+        <h1 className="text-2xl font-bold">{m?.title || name}{info?.instance ? <span className="ml-2 font-mono text-lg text-neutral-400">: {info.instance}</span> : null}</h1>
         {TABS.map((tb) => (
           <button key={tb.id} onClick={() => setTab(tb.id)}
             className={`-mb-px border-b-2 px-3 py-1.5 text-sm transition-colors ${
@@ -188,8 +191,8 @@ export default function PluginDetailPage() {
           {m.mission && <span className="px-1.5 py-0.5 rounded bg-indigo-900/60 text-indigo-300">{t('미션')}</span>}
           <ScopeBadges permissions={m.permissions} />
           {info?.state === 'error' && <span className="text-red-400">{t('마지막 실행이 실패했다 — 로그 탭을 보라')}</span>}
-          {!info?.bundled && !running && (
-            <button onClick={() => void remove()} className="ml-auto text-neutral-600 hover:text-red-400">{t('삭제')}</button>
+          {(info?.instance || !info?.bundled) && !running && (
+            <button onClick={() => void remove()} className="ml-auto text-neutral-600 hover:text-red-400">{info?.instance ? t('인스턴스 삭제') : t('삭제')}</button>
           )}
         </div>
       )}

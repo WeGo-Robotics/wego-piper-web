@@ -20,6 +20,7 @@ export default function PluginsPage() {
   const [dirs, setDirs] = useState<string[]>([])
   const [busy, setBusy] = useState<string | null>(null)
   const [installPath, setInstallPath] = useState('')
+  const [newLabel, setNewLabel] = useState<Record<string, string>>({})
   const fileRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
@@ -40,11 +41,30 @@ export default function PluginsPage() {
     setBusy(p.name)
     try {
       if (isRunning(p.state)) await api.post(`/plugins/${p.name}/stop`)
-      else await api.post(`/plugins/${p.name}/start`, { config: p.saved.config, cameras: p.saved.cameras }, { timeoutMs: 60000 })
+      else await api.post(`/plugins/${p.name}/start`, { config: p.saved.config, cameras: p.saved.cameras, inputs: p.saved.inputs ?? {} }, { timeoutMs: 60000 })
       await load()
     } catch (e) {
       fail(e instanceof Error ? e.message : t('실패'))
     } finally { setBusy(null) }
+  }
+
+  /** 인스턴스 줄의 시작/정지 — 저장된 설정으로 (상세에서 고친다) */
+  const toggleInstance = async (iid: string, running: boolean) => {
+    setBusy(iid)
+    try {
+      if (running) await api.post(`/plugins/${iid}/stop`)
+      else await api.post(`/plugins/${iid}/start`, {}, { timeoutMs: 60000 })
+      await load()
+    } catch (e) { fail(e instanceof Error ? e.message : t('실패')) } finally { setBusy(null) }
+  }
+
+  const addInstance = async (base: string) => {
+    const label = (newLabel[base] ?? '').trim()
+    if (!label) return
+    try {
+      await api.post(`/plugins/${base}/instances`, { label })
+      setNewLabel((m) => ({ ...m, [base]: '' })); await load()
+    } catch (e) { fail(e instanceof Error ? e.message : t('인스턴스 추가 실패')) }
   }
 
   const installFromPath = async () => {
@@ -131,6 +151,34 @@ export default function PluginsPage() {
                 {kvPreview.length > 0 && (
                   <div className="text-xs text-neutral-300 flex gap-3 flex-wrap">
                     {kvPreview.map(([k, v]) => <span key={String(k)}><span className="text-neutral-500">{k}</span> {String(v)}</span>)}
+                  </div>
+                )}
+                {m?.multi_instance && (
+                  <div className="rounded border border-neutral-700/70 divide-y divide-neutral-700/50 text-xs">
+                    {(p.instances ?? []).map((inst) => {
+                      const r = isRunning(inst.state)
+                      return (
+                        <div key={inst.name} className="flex items-center gap-2 px-2 py-1">
+                          <PluginStateDot state={inst.state} />
+                          <Link to={`/plugins/${inst.name}`} className="font-mono text-neutral-200 hover:text-blue-300 truncate">
+                            {inst.instance ?? t('기본')}
+                          </Link>
+                          <span className="text-neutral-600 truncate">{inst.kv?.phase ? String(inst.kv.phase) : inst.state}</span>
+                          <button onClick={() => void toggleInstance(inst.name, r)} disabled={busy !== null}
+                            className={`ml-auto px-2 py-0.5 rounded text-white disabled:opacity-50 ${r ? 'bg-neutral-700 hover:bg-red-600' : 'bg-neutral-700 hover:bg-green-600'}`}>
+                            {r ? t('정지') : t('시작')}
+                          </button>
+                        </div>
+                      )
+                    })}
+                    <div className="flex items-center gap-2 px-2 py-1">
+                      <input type="text" value={newLabel[p.name] ?? ''} placeholder={t('새 인스턴스 라벨 (예: cam2)')}
+                        onChange={(e) => setNewLabel((mm) => ({ ...mm, [p.name]: e.target.value }))}
+                        onKeyDown={(e) => { if (e.key === 'Enter') void addInstance(p.name) }}
+                        className="flex-1 px-2 py-0.5 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 font-mono" />
+                      <button onClick={() => void addInstance(p.name)} disabled={!(newLabel[p.name] ?? '').trim()}
+                        className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-blue-600 text-neutral-200 disabled:opacity-50">+ {t('인스턴스')}</button>
+                    </div>
                   </div>
                 )}
                 <div className="flex items-center gap-2 pt-1">

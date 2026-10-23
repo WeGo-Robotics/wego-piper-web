@@ -407,3 +407,12 @@ def test_topic_bus_roundtrip():
     finally:
         from piper_bus import contract as C
         bus.r.delete(C.plugin_topic_key("t_test"))
+
+
+def test_env_knows_its_instance():
+    e = Env.from_environ({"PIPER_PLUGIN_NAME": "detector:cam2"})
+    assert (e.base_name, e.instance) == ("detector", "cam2")
+    e = Env.from_environ({"PIPER_PLUGIN_NAME": "detector"})
+    assert (e.base_name, e.instance) == ("detector", "")
+    e2 = Env.from_environ(Env(name="d:x", base_name="d", instance="x", dir=Path("."), runtime_dir=Path(".")).to_environ())
+    assert e2.base_name == "d" and e2.instance == "x" and e2.name == "d:x"
