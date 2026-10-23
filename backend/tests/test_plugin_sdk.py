@@ -355,3 +355,55 @@ def test_bundled_examples_do_not_import_agpl_detectors():
         src = p.read_text()
         assert not re.search(r"^\s*(import ultralytics|from ultralytics)", src, re.M), \
             f"{p} 가 AGPL 검출기를 import 한다"
+
+
+# ── 플러그인 간 입출력 (§7-3) ───────────────────────────────────────────────────
+
+
+class TopicBus(FakeBus):
+    def __init__(self):
+        super().__init__()
+        self.topics = {}
+
+    def put_topic(self, topic, data, publisher="", ttl_ms=None):
+        seq = (self.topics[topic]["seq"] + 1) if topic in self.topics else 1
+        self.topics[topic] = {"topic": topic, "publisher": publisher, "seq": seq, "ts": 1000.0, "data": data}
+        return self.topics[topic]
+
+    def get_topic(self, topic):
+        return self.topics.get(topic)
+
+
+def test_publish_and_latest_go_through_the_input_mapping(tmp_path):
+    from piper_plugin import Topic
+
+    env = _env(tmp_path)
+    env.inputs = {"grades_in": "grades"}
+    p = Plugin(env)
+    bus = TopicBus()
+    p._bus = bus
+    p.publish("grades", {"counts": {"large": 1}})
+    p.publish("grades", {"counts": {"large": 2}})
+    tp = p.latest("grades_in")                       # 슬롯 키로 읽으면 매핑을 거친다
+    assert isinstance(tp, Topic) and tp.seq == 2 and tp.publisher == "t" and tp.data["counts"]["large"] == 2
+    assert p.latest("nothing") is None
+    assert p.input("grades_in") == "grades" and p.input("unmapped") == "unmapped"
+
+
+def test_topic_bus_roundtrip():
+    from piper_bus.client import Bus
+
+    try:
+        bus = Bus()
+        bus.r.ping()
+    except Exception:
+        pytest.skip("redis 없음")
+    try:
+        a = bus.put_topic("t_test", {"x": 1}, publisher="p1")
+        b = bus.put_topic("t_test", {"x": 2}, publisher="p1")
+        assert (a["seq"], b["seq"]) == (1, 2)
+        got = bus.get_topic("t_test")
+        assert got["data"] == {"x": 2} and got["publisher"] == "p1" and "t_test" in bus.topic_names()
+    finally:
+        from piper_bus import contract as C
+        bus.r.delete(C.plugin_topic_key("t_test"))

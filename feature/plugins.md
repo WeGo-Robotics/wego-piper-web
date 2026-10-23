@@ -1,6 +1,6 @@
 # 플러그인 — 사람이 쓴 파이썬 스크립트를 웹에서 켜고 끈다
 
-> 상태: **☑ 0~6단계 구현 (2026-10-23).** 남은 것: 7단계(후보 — 플러그인 간 입출력). 기획 확정 2026-10-16.
+> 상태: **☑ 0~7단계 구현 (2026-10-23).** 기획의 모든 단계가 들어갔다. 기획 확정 2026-10-16.
 > 1단계: `services/plugins.py`·`core/plugin_scopes.py`·`routers/plugins.py`(`/api/plugins/*`), authgate 의
 > Bearer 분기, `Activity.PLUGIN`·`PLUGIN_GPU`, 번들 `plugins/hello`.
 > 2단계: SDK [`plugin/piper_plugin`](../plugin/piper_plugin/)(`Plugin`·`MissionPlugin`·`Decision`·`robot`·`camera`·
@@ -22,7 +22,10 @@
 > nginx·Vite `^/plugins/[^/]+/ui(/|$)` 블록. 실기: `hello`·`detector`(검출·프리뷰·발행자 메타) 를 새 게이트웨이에서 확인.
 > 6단계 ☑: `python: venv | venv-isolated` 의존 설치(`POST /api/plugins/{name}/deps` — 별도 유닛, `.deps-ok` 표지,
 > 설치 전 시작은 409), `resources.memory`·`cpu` → 유닛 속성 `MemoryMax`·`CPUQuota`(자식 폴백은 `limits_applied: false`),
-> ext API `GET /api/ext/v1/plugins`, `POST /plugins/{name}/start|stop`(저장값 위에 본문). 요청: "카메라 스트림을 받아 개체 검출도 하고 REST API 로
+> ext API `GET /api/ext/v1/plugins`, `POST /plugins/{name}/start|stop`(저장값 위에 본문).
+> 7단계 ☑: 플러그인 간 입출력(§7-3) — 매니페스트 `inputs`(검출·토픽 슬롯)·`outputs.topics`, 버스 토픽
+> `piper:plugin:topic:<이름>`(최신값·seq·TTL), SDK `publish`·`latest`·`input`·`input_detections`, 상세의 입력 선택기
+> (살아 있는 소스, `GET /api/plugins/topics`)·토픽 출력, `inputs_live` 경고(막지 않는다), 번들 `size-grader`. 요청: "카메라 스트림을 받아 개체 검출도 하고 REST API 로
 > 추론도 시작할 수 있는 파이썬 스크립트를 플러그인 형태로 만들어 웹 UI 에서 실행."
 > 이 문서는 그 요청을 **범용 플러그인 계층**으로 넓힌 설계다. 열린 질문 다섯은 §10 에
 > 결정으로 닫혔고, 플러그인 자체 화면(대시보드·입력·설정 페이지)의 **서빙 포트는 게이트웨이와 같은
@@ -335,6 +338,30 @@ class AppleSorter(MissionPlugin):
 **스캐폴드**: `python -m piper_plugin new apple-sorter --template mission|loop|detector` 가
 매니페스트·`main.py`·테스트 틀을 만든다. `python -m piper_plugin check <폴더>` 가 매니페스트·권한
 범위·카메라 키·금지 단어를 검사한다.
+
+### 7-3. 플러그인 간 입출력 — 검출기 → 분류기 → 미션
+
+플러그인을 **이어 붙이는** 길이 셋이다. 전부 버스의 "최신값 + TTL" 철학이고, 큐도 RPC 도 없다.
+
+| 길 | 발행 | 소비 | 쓰는 때 |
+|---|---|---|---|
+| 검출 `piper:vision:<이름>` | `publish_detections(name, …)` | `input_detections("슬롯")` / `detections(name)` | 검출기의 출력 (화면도 같은 키를 그린다) |
+| 토픽 `piper:plugin:topic:<이름>` | `publish("grades", data)` | `latest("슬롯")` → `Topic(data, seq, publisher, ts)` | 임의 구조의 결과 — 등급·자세·판정 |
+| 상태 KV `piper:plugin:state:<이름>` | `state(**kv)` | (화면용) | 사람이 보는 숫자 |
+
+**매니페스트가 배선을 선언한다.** `inputs: [{key, kind: detections|topic, source, required}]` 와
+`outputs.topics: [...]`. 시작할 때 화면의 입력 선택기가 **지금 살아 있는** 검출 이름·토픽
+(`GET /api/plugins/topics`, 발행자 표시) 중에서 고르고, 고른 것이 `PIPER_PLUGIN_INPUTS` 로 간다.
+코드는 `self.input("슬롯")` 으로 풀어 쓰므로 소스가 바뀌어도 코드는 그대로다 — 카메라 슬롯과 같은
+생각이다.
+
+**막지 않고 말한다.** 입력 소스가 지금 죽어 있어도 시작은 된다(검출기를 뒤에 켤 수 있다). 상태의
+`inputs_live` 가 슬롯마다 참·거짓을 주고 화면이 "그 출력을 내는 플러그인을 켜라" 고 쓴다.
+필수 슬롯에 기본도 선택도 없을 때만 400 이다.
+
+번들 `size-grader` 가 실례다: `detector` 의 검출을 입력으로 받아 bbox 크기로 대·중·소를 매기고
+토픽 `grades` 로 올린다. 사과 분류기의 "등급" 칸을 가장 작게 흉내 낸 것이고, 미션 플러그인은
+`self.latest("grades")` 로 그걸 읽어 `Decision` 을 낸다.
 
 ### 7-2. 코딩 에이전트가 첫 사용자다
 

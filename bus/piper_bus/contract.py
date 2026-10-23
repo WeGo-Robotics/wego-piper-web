@@ -234,6 +234,24 @@ def plugin_cmd_key(name: str) -> str:
     return f"{PLUGIN_CMD_PREFIX}:{name}"
 
 
+# ── 플러그인 토픽 — 플러그인 간 입출력 (feature/plugins.md §7-3, 7단계) ──────────
+#
+# 검출(`piper:vision:*`)이 아닌 **임의 구조의 결과**(등급·자세·판정 …)를 다음 플러그인에
+# 넘기는 길. 최신값 하나 + 발행 카운터(`seq`) + TTL — 검출과 같은 철학이다: 큐가 아니고,
+# 죽은 발행자의 낡은 값은 TTL 이 지운다. 소비자는 `seq` 가 바뀌었는지로 "새 것"을 안다.
+PLUGIN_TOPIC_PREFIX: Final = _k("plugin", "topic")
+PLUGIN_TOPIC_PATTERN: Final = f"{PLUGIN_TOPIC_PREFIX}:*"
+PLUGIN_TOPIC_TTL_MS: Final = 15_000
+
+
+def plugin_topic_key(topic: str) -> str:
+    return f"{PLUGIN_TOPIC_PREFIX}:{topic}"
+
+
+def plugin_topic_name(key: str) -> str:
+    return key[len(PLUGIN_TOPIC_PREFIX) + 1:]
+
+
 # ── 학습 job 레지스트리 ──────────────────────────────────────────────────────
 #
 # 해시: {job_id: JobRecord JSON}. 로컬 job 도 여기 들어간다 (`job_id="local"`) —

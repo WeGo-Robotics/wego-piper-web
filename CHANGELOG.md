@@ -28,6 +28,14 @@
 - 게이트웨이가 재시작되면 남아 있던 플러그인 유닛을 정지시킨다 — 수동으로 다시 켠다
 - 번들 예제 `plugins/hello` — SDK 없이 환경변수만 읽는 최소 플러그인
 
+**플러그인 7단계 — 플러그인 간 입출력** ([feature/plugins.md §7-3](feature/plugins.md))
+- 플러그인을 이어 붙인다: 검출기 → 분류기 → 미션. 매니페스트 `inputs`(검출·토픽 슬롯)와 `outputs.topics` 가 배선을
+  선언하고, 상세의 설정 탭이 **지금 살아 있는** 검출 이름·토픽 중에서 입력을 고른다. 소스가 죽어 있어도 막지 않고
+  "그 출력을 내는 플러그인을 켜라" 고 말한다
+- SDK: `self.publish(topic, data)` / `self.latest("슬롯")` / `self.input("슬롯")` / `self.input_detections("슬롯")`.
+  버스 키 `piper:plugin:topic:<이름>`(최신값·seq·TTL). `GET /api/plugins/topics`, `/topics/{topic}`
+- 번들 `size-grader` — 검출을 받아 bbox 크기로 대·중·소를 매기고 토픽 `grades` 로 올린다
+
 **플러그인 6단계 — 의존·자원·외부 제어** ([feature/plugins.md §6](feature/plugins.md))
 - `python: venv` / `venv-isolated` 플러그인은 상세의 [의존 설치]로 venv 를 만들고 `requirements.txt` 를 깐다 — 별도
   프로세스, 로그는 로그 탭으로. 설치 전 시작은 409. `venv` 는 게이트웨이 패키지(torch 등)를 상속, `venv-isolated` 는

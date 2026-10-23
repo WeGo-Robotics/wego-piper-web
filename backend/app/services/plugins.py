@@ -108,6 +108,7 @@ class Run:
     gpu: bool
     run_id: str = ""
     mission: bool = False
+    inputs: dict[str, str] = field(default_factory=dict)
     started_at: float = field(default_factory=time.time)
 
 
@@ -237,17 +238,57 @@ class PluginRegistry:
 
     def saved_config(self, name: str) -> dict:
         p = self.runtime_dir(name) / "config.json"
+        empty = {"config": {}, "cameras": {}, "inputs": {}}
         if not p.is_file():
-            return {"config": {}, "cameras": {}}
+            return empty
         try:
             d = json.loads(p.read_text())
-            return {"config": d.get("config", {}), "cameras": d.get("cameras", {})}
+            return {"config": d.get("config", {}), "cameras": d.get("cameras", {}), "inputs": d.get("inputs", {})}
         except (OSError, ValueError):
-            return {"config": {}, "cameras": {}}
+            return empty
 
-    def save_config(self, name: str, config: dict, cameras: dict[str, str]) -> None:
+    def save_config(self, name: str, config: dict, cameras: dict[str, str], inputs: dict[str, str] | None = None) -> None:
         (self.runtime_dir(name) / "config.json").write_text(
-            json.dumps({"config": config, "cameras": cameras}, ensure_ascii=False, indent=2))
+            json.dumps({"config": config, "cameras": cameras, "inputs": inputs or {}}, ensure_ascii=False, indent=2))
+
+    # ── 플러그인 간 입출력 (feature/plugins.md §7-3) ──
+
+    def sources(self) -> dict:
+        """지금 살아 있는 소스 — 검출 이름(발행자 포함)과 토픽. 입력 슬롯 선택기의 재료."""
+        try:
+            from piper_bus.client import Bus
+
+            bus = Bus()
+            dets = {}
+            for n in bus.detection_names():
+                d = bus.get_detections(n) or {}
+                dets[n] = {"publisher": d.get("publisher"), "ts": d.get("ts")}
+            topics = {}
+            for n in bus.topic_names():
+                tp = bus.get_topic(n) or {}
+                topics[n] = {"publisher": tp.get("publisher"), "ts": tp.get("ts"), "seq": tp.get("seq")}
+            return {"detections": dets, "topics": topics}
+        except Exception:
+            return {"detections": {}, "topics": {}}
+
+    def resolve_inputs(self, m: Manifest, inputs: dict[str, str] | None) -> dict[str, str]:
+        """고른 소스 위에 매니페스트 기본 `source` 를 채운다."""
+        out = {}
+        for slot in m.inputs:
+            v = (inputs or {}).get(slot.key) or slot.source
+            if v:
+                out[slot.key] = v
+        return out
+
+    def inputs_live(self, m: Manifest, inputs: dict[str, str]) -> dict[str, bool]:
+        """입력마다 소스가 지금 살아 있나 — 막지 않고 **말만** 한다(§3-8 과 같은 태도)."""
+        src = self.sources()
+        out = {}
+        for slot in m.inputs:
+            v = inputs.get(slot.key)
+            pool = src["detections"] if slot.kind == "detections" else src["topics"]
+            out[slot.key] = bool(v) and v in pool
+        return out
 
     # ── 시작·정지 ──
 
@@ -353,7 +394,7 @@ class PluginRegistry:
                 raise HTTPException(409, f"카메라 '{stream}' 이 연결돼 있지 않습니다")
 
     async def start(self, name: str, config: dict | None = None,
-                    cameras: dict[str, str] | None = None) -> dict:
+                    cameras: dict[str, str] | None = None, inputs: dict[str, str] | None = None) -> dict:
         info = self.get(name)
         if info.manifest is None:
             raise HTTPException(400, f"매니페스트가 깨져 있습니다: {info.error}")
@@ -369,8 +410,12 @@ class PluginRegistry:
         config = {**m.defaults(), **(config or {})}
         cameras = dict(cameras or {})
         self._check_cameras(m, cameras)
+        inputs = self.resolve_inputs(m, inputs)
+        missing = [s.key for s in m.inputs if s.required and not inputs.get(s.key)]
+        if missing:
+            raise HTTPException(400, f"입력을 고르지 않았습니다: {missing}")
         python = self._python_for(m, name)
-        self.save_config(name, config, cameras)
+        self.save_config(name, config, cameras, inputs)
 
         token = secrets.token_urlsafe(32)
         # 저널 id 는 게이트웨이가 정한다 — 외부 API 가 미션을 이 id 로 조회하므로 시작 응답에 실려야 한다
@@ -381,6 +426,7 @@ class PluginRegistry:
             "PIPER_PLUGIN_RUNTIME_DIR": str(self.runtime_dir(name)),
             "PIPER_PLUGIN_CONFIG": json.dumps(config, ensure_ascii=False),
             "PIPER_PLUGIN_CAMERAS": json.dumps(cameras),
+            "PIPER_PLUGIN_INPUTS": json.dumps(inputs),
             "PIPER_PLUGIN_HEARTBEAT": "1" if m.resources.heartbeat else "0",
             "PIPER_API_BASE": f"http://127.0.0.1:{settings.port}",
             "PIPER_API_TOKEN": token,
@@ -396,7 +442,7 @@ class PluginRegistry:
         # 토큰은 **프로세스가 뜨기 전에** 유효해야 한다 — 첫 호출이 환경을 읽는 즉시 온다
         self._grants[token] = Grant(name=name, scopes=frozenset(m.permissions))
         self._runs[name] = Run(token=token, config=config, cameras=cameras, gpu=m.resources.gpu,
-                               run_id=run_id, mission=m.mission)
+                               run_id=run_id, mission=m.mission, inputs=inputs)
         self._seen.add(name)
         self._starting.add(name)
         limits = self._limits(m)
@@ -472,7 +518,16 @@ class PluginRegistry:
         out: dict = {"name": name, "state": state.value, "pid": pm.pid if pm and not _idle(state) else None,
                      "limits_applied": bool(pm is not None and hasattr(pm, "unit")),
                      "started_at": run.started_at if run else None, "run_id": run.run_id if run else None,
-                     "config": run.config if run else None, "cameras": run.cameras if run else None}
+                     "config": run.config if run else None, "cameras": run.cameras if run else None,
+                     "inputs": run.inputs if run else None}
+        # 입력 소스가 살아 있나 — 도는 중이면 지금 쓰는 입력, 아니면 저장된 입력 기준
+        try:
+            info = self.get(name)
+            if info.manifest and info.manifest.inputs:
+                chosen = run.inputs if run else self.resolve_inputs(info.manifest, self.saved_config(name).get("inputs"))
+                out["inputs_live"] = self.inputs_live(info.manifest, chosen)
+        except HTTPException:
+            pass
         # 로그 꼬리: 도는 중에는 우리 링버퍼(WS 로 흘린 것과 같은 줄), 멈췄으면 소유자가 쥔 마지막 줄
         # (죽은 이유가 거기 있다 — 유닛은 `--collect` 라 journald 밖에 흔적이 없다)
         if pm is not None and _idle(state):

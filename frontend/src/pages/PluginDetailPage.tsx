@@ -7,7 +7,7 @@ import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import LogViewer from '../components/LogViewer'
 import PluginConfigForm from '../components/PluginConfigForm'
 import { openPluginUi, PluginStateDot, ScopeBadges } from '../components/PluginBits'
-import { isRunning, type PluginConfigValues, type PluginDeps, type PluginInfo, type PluginRun } from '../types/plugins'
+import { isRunning, type PluginConfigValues, type PluginDeps, type PluginInfo, type PluginRun, type PluginTopic } from '../types/plugins'
 
 const TABS = [
   { id: 'config', label: '설정' },
@@ -31,6 +31,8 @@ export default function PluginDetailPage() {
   const [tab, setTab] = useState<TabId>('output')
   const [config, setConfig] = useState<PluginConfigValues>({})
   const [cameras, setCameras] = useState<Record<string, string>>({})
+  const [inputs, setInputs] = useState<Record<string, string>>({})
+  const [topics, setTopics] = useState<Record<string, PluginTopic>>({})
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState(false)
   const [logs, setLogs] = useState<string[]>([])
@@ -51,6 +53,13 @@ export default function PluginDetailPage() {
         setDetections(Object.fromEntries(Object.entries(all).filter(([k, v]) => r.manifest!.outputs.detections.includes(k) || v?.publisher === name)))
       }
       if (r.manifest?.mission) setRuns((await api.get<{ runs: PluginRun[] }>(`/plugins/${name}/runs`)).runs)
+      if (r.manifest?.outputs.topics.length) {
+        const got: Record<string, PluginTopic> = {}
+        for (const tp of r.manifest.outputs.topics) {
+          try { got[tp] = await api.get<PluginTopic>(`/plugins/topics/${tp}`) } catch { /* 아직 없다 */ }
+        }
+        setTopics(got)
+      }
       if (r.manifest && r.manifest.python !== 'system') setDeps(await api.get<PluginDeps>(`/plugins/${name}/deps`))
     } catch (e) {
       if (!info) fail(e instanceof Error ? e.message : t('불러오기 실패'))
@@ -70,6 +79,9 @@ export default function PluginDetailPage() {
     for (const f of info.manifest?.config ?? []) if (f.default !== undefined && f.default !== null) defaults[f.key] = f.default
     setConfig({ ...defaults, ...(info.saved?.config ?? {}) })
     setCameras(info.saved?.cameras ?? {})
+    const inDefaults: Record<string, string> = {}
+    for (const s of info.manifest?.inputs ?? []) if (s.source) inDefaults[s.key] = s.source
+    setInputs({ ...inDefaults, ...(info.saved?.inputs ?? {}) })
     if (info.log_tail && logs.length === 0) setLogs(info.log_tail)
   }, [info, dirty]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -91,7 +103,7 @@ export default function PluginDetailPage() {
   const m = info?.manifest
 
   const save = async () => {
-    await api.put(`/plugins/${name}/config`, { config, cameras })
+    await api.put(`/plugins/${name}/config`, { config, cameras, inputs })
     setDirty(false)
   }
   const start = async () => {
@@ -99,7 +111,7 @@ export default function PluginDetailPage() {
     try {
       if (dirty) await save()
       setLogs([])
-      await api.post(`/plugins/${name}/start`, { config, cameras }, { timeoutMs: 60000 })
+      await api.post(`/plugins/${name}/start`, { config, cameras, inputs }, { timeoutMs: 60000 })
       setTab('output'); await load()
     } catch (e) { fail(e instanceof Error ? e.message : t('시작 실패')) } finally { setBusy(false) }
   }
@@ -186,9 +198,13 @@ export default function PluginDetailPage() {
       {tab === 'config' && m && (
         <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
           {running && <p className="text-xs text-amber-300">{t('도는 중에는 읽기 전용이다 — 바꾸려면 정지한 뒤 고치고 다시 시작하라')}</p>}
-          <PluginConfigForm fields={m.config} cameraSlots={m.cameras} values={config} cameras={cameras} disabled={running}
+          <PluginConfigForm fields={m.config} cameraSlots={m.cameras} inputSlots={m.inputs} values={config} cameras={cameras} inputs={inputs} disabled={running}
             onChange={(k, v) => { setConfig((c) => ({ ...c, [k]: v })); setDirty(true) }}
-            onCameraChange={(slot, stream) => { setCameras((c) => ({ ...c, [slot]: stream })); setDirty(true) }} />
+            onCameraChange={(slot, stream) => { setCameras((c) => ({ ...c, [slot]: stream })); setDirty(true) }}
+            onInputChange={(slot, source) => { setInputs((c) => ({ ...c, [slot]: source })); setDirty(true) }} />
+          {info?.inputs_live && Object.values(info.inputs_live).some((v) => !v) && (
+            <p className="text-xs text-amber-300">{t('입력 소스가 지금 살아 있지 않다 — 그 출력을 내는 플러그인(검출기 등)을 먼저 켜라. 막지는 않는다')}</p>
+          )}
           {m.config.length === 0 && m.cameras.length === 0 && <p className="text-xs text-neutral-500">{t('설정 항목이 없다')}</p>}
           {m.python !== 'system' && (
             <div className="rounded border border-neutral-700 bg-neutral-900/60 p-3 text-sm space-y-2">
@@ -267,6 +283,22 @@ export default function PluginDetailPage() {
               )}
             </div>
           )}
+          {m.outputs.topics.length > 0 && (
+            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
+              <h2 className="text-sm font-semibold text-neutral-300 mb-2">{t('토픽 출력')}</h2>
+              <ul className="text-xs space-y-1">
+                {m.outputs.topics.map((tp) => {
+                  const v = topics[tp]
+                  return (
+                    <li key={tp} className="flex gap-3 items-start">
+                      <span className="font-mono text-neutral-400 shrink-0">{tp}{v ? ` #${v.seq}` : ''}</span>
+                      <span className="font-mono text-neutral-300 truncate">{v ? JSON.stringify(v.data) : t('아직 없다')}</span>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )}
           {m.mission && (
             <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
               <h2 className="text-sm font-semibold text-neutral-300 mb-2">{t('회차 저널')}</h2>
@@ -283,7 +315,7 @@ export default function PluginDetailPage() {
               )}
             </div>
           )}
-          {stateRows.length === 0 && m.outputs.previews.length === 0 && m.outputs.detections.length === 0 && !m.mission && extraKv.length === 0 && (
+          {stateRows.length === 0 && m.outputs.previews.length === 0 && m.outputs.detections.length === 0 && m.outputs.topics.length === 0 && !m.mission && extraKv.length === 0 && (
             <p className="text-xs text-neutral-500">{t('이 플러그인은 화면에 보일 출력을 선언하지 않았다 (plugin.yaml 의 outputs)')}</p>
           )}
         </section>

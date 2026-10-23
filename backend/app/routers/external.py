@@ -117,6 +117,7 @@ async def cancel_mission(mission_id: str):
 class PluginStartRequest(BaseModel):
     config: dict = {}
     cameras: dict[str, str] = {}
+    inputs: dict[str, str] = {}
 
 
 @router.get("/plugins")
@@ -141,7 +142,8 @@ async def ext_plugin(name: str):
 async def ext_plugin_start(name: str, body: PluginStartRequest):
     """플러그인 시작. 저장된 설정 위에 본문을 덮는다 — 비우면 화면에서 저장한 값으로 돈다."""
     saved = registry.saved_config(name)
-    return await registry.start(name, {**saved["config"], **body.config}, {**saved["cameras"], **body.cameras})
+    return await registry.start(name, {**saved["config"], **body.config}, {**saved["cameras"], **body.cameras},
+                                {**saved.get("inputs", {}), **body.inputs})
 
 
 @router.post("/plugins/{name}/stop")

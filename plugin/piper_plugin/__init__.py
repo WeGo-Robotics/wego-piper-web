@@ -15,8 +15,8 @@ lerobot 을 import 하지 않는다. 의존은 `piper_bus`·`piper_shm`·numpy·
 from piper_plugin.env import Env
 from piper_plugin.api import Api, ApiUnavailable, Response
 from piper_plugin.camera import Camera
-from piper_plugin.plugin import Plugin, PluginStop
+from piper_plugin.plugin import Plugin, PluginStop, Topic
 from piper_plugin.mission import Decision, MissionPlugin
 
 __all__ = ["Env", "Api", "ApiUnavailable", "Response", "Camera",
-           "Plugin", "PluginStop", "Decision", "MissionPlugin"]
+           "Plugin", "PluginStop", "Topic", "Decision", "MissionPlugin"]

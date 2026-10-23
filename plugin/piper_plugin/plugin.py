@@ -21,6 +21,21 @@ from piper_plugin.env import Env
 from piper_plugin.robot import Robot
 
 
+class Topic:
+    """버스에서 읽은 토픽 하나 — `data` 가 발행자가 올린 값이다."""
+
+    def __init__(self, raw: dict) -> None:
+        self.raw = raw
+        self.topic: str = str(raw.get("topic", ""))
+        self.publisher: str = str(raw.get("publisher", ""))
+        self.seq: int = int(raw.get("seq", 0) or 0)
+        self.ts: float = float(raw.get("ts", 0) or 0)
+        self.data = raw.get("data")
+
+    def __repr__(self) -> str:
+        return f"Topic({self.topic!r} #{self.seq} from {self.publisher!r})"
+
+
 class PluginStop(Exception):
     """루프를 끝내라. `self.stop("사유")` 가 던진다 — 예외가 아니라 신호다."""
 
@@ -38,6 +53,7 @@ class Plugin:
         self.name = self.env.name
         self.config: dict[str, Any] = dict(self.env.config)
         self.cameras: dict[str, str] = dict(self.env.cameras)
+        self.inputs: dict[str, str] = dict(self.env.inputs)
         self.log = logging.getLogger(f"plugin.{self.name}")
         self.api = Api(self.env.api_base, self.env.token)
         self.robot = Robot(self.api)
@@ -86,6 +102,31 @@ class Plugin:
 
             self._bus = Bus()
         return self._bus
+
+    # ── 플러그인 간 입출력 (feature/plugins.md §7-3) ──
+
+    def input(self, key: str) -> str:
+        """매니페스트 `inputs` 의 슬롯 키 → 시작할 때 고른 소스(검출 이름·토픽). 안 골랐으면 키 그대로."""
+        return self.inputs.get(key, key)
+
+    def publish(self, topic: str, data, ttl_s: float | None = None) -> dict:
+        """토픽 최신값을 올린다 — 다음 플러그인이 `latest()` 로 읽는다. 매니페스트 `outputs.topics` 에 적어 둔다."""
+        return self.bus.put_topic(topic, data, publisher=self.name,
+                                  ttl_ms=int(ttl_s * 1000) if ttl_s else None)
+
+    def latest(self, topic: str, fresh_s: float | None = None):
+        """토픽 최신값(`Topic`) — 없거나 `fresh_s` 보다 낡았으면 None. `topic` 은 슬롯 키여도 된다."""
+        raw = self.bus.get_topic(self.input(topic))
+        if not raw:
+            return None
+        t = Topic(raw)
+        if fresh_s is not None and time.time() - t.ts > fresh_s:
+            return None
+        return t
+
+    def input_detections(self, key: str, fresh_s: float | None = None) -> Detections | None:
+        """`kind: detections` 입력 슬롯의 최신 검출."""
+        return self.detections(self.input(key), fresh_s=fresh_s)
 
     def detector(self, model: str | None = None, device: str = "cpu"):
         from piper_plugin import detector

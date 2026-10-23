@@ -316,6 +316,24 @@ class Bus:
         raw = self.r.lpop(C.plugin_cmd_key(name))
         return json.loads(raw) if raw else None
 
+    # ── 플러그인 토픽 (plugin → plugin) ──
+
+    def put_topic(self, topic: str, data, publisher: str = "", ttl_ms: int | None = None) -> dict:
+        """토픽 최신값. `seq` 는 발행마다 1씩 — 소비자가 "새 값인가"를 가른다."""
+        key = C.plugin_topic_key(topic)
+        prev = self.r.get(key)
+        seq = (json.loads(prev).get("seq", 0) + 1) if prev else 1
+        payload = {"topic": topic, "publisher": publisher, "seq": seq, "ts": time.time(), "data": data}
+        self.r.set(key, json.dumps(payload, ensure_ascii=False), px=ttl_ms or C.PLUGIN_TOPIC_TTL_MS)
+        return payload
+
+    def get_topic(self, topic: str) -> dict | None:
+        raw = self.r.get(C.plugin_topic_key(topic))
+        return json.loads(raw) if raw else None
+
+    def topic_names(self) -> list[str]:
+        return sorted(C.plugin_topic_name(k) for k in self.r.scan_iter(match=C.PLUGIN_TOPIC_PATTERN))
+
     def put_vision_meta(self, publisher: str, meta: dict) -> None:
         """검출 발행자 자기소개(모델·설정). 발행자별 키 — 루프마다 갱신, TTL 이 stale 판정을 대신한다."""
         self.r.set(C.vision_meta_key(publisher), json.dumps({**meta, "publisher": publisher}),

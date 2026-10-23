@@ -6,7 +6,7 @@ import type { SpecField } from '../hooks/usePolicyUi'
 import CameraStreamSelect from './CameraStreamPicker'
 import { useCameraStreams } from '../hooks/useCameraStreams'
 import type { Model, Dataset } from '../types/models'
-import type { PluginCameraSlot, PluginConfigField, PluginConfigValues } from '../types/plugins'
+import type { PluginCameraSlot, PluginConfigField, PluginConfigValues, PluginInputSlot, PluginSources } from '../types/plugins'
 
 /**
  * 매니페스트 `cameras` + `config` 를 폼으로 (feature/plugins.md §4, §8-1).
@@ -19,16 +19,27 @@ import type { PluginCameraSlot, PluginConfigField, PluginConfigValues } from '..
 type Props = {
   fields: PluginConfigField[]
   cameraSlots: PluginCameraSlot[]
+  inputSlots?: PluginInputSlot[]
   values: PluginConfigValues
   cameras: Record<string, string>
+  inputs?: Record<string, string>
   onChange: (key: string, value: number | boolean | string) => void
   onCameraChange: (slot: string, stream: string) => void
+  onInputChange?: (slot: string, source: string) => void
   disabled?: boolean
 }
 
-export default function PluginConfigForm({ fields, cameraSlots, values, cameras, onChange, onCameraChange, disabled }: Props) {
+export default function PluginConfigForm({ fields, cameraSlots, inputSlots = [], values, cameras, inputs = {}, onChange, onCameraChange, onInputChange, disabled }: Props) {
   const t = useT()
   const { streams } = useCameraStreams()
+  const [sources, setSources] = useState<PluginSources | null>(null)
+  useEffect(() => {
+    if (inputSlots.length === 0) return
+    const load = () => api.get<PluginSources>('/plugins/topics').then(setSources).catch(() => {})
+    load()
+    const id = setInterval(load, 3000)
+    return () => clearInterval(id)
+  }, [inputSlots.length])
   const [models, setModels] = useState<Model[]>([])
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const needModels = fields.some((f) => f.kind === 'model')
@@ -64,6 +75,30 @@ export default function PluginConfigForm({ fields, cameraSlots, values, cameras,
                 streams={streams} takenBy={takenBy} className={input} placeholder={t('— 카메라 선택 —')} />
             </div>
           ))}
+        </div>
+      )}
+      {inputSlots.length > 0 && (
+        <div className="grid grid-cols-2 gap-2">
+          {inputSlots.map((slot) => {
+            const pool = slot.kind === 'topic' ? sources?.topics ?? {} : sources?.detections ?? {}
+            const cur = inputs[slot.key] ?? slot.source ?? ''
+            const names = Array.from(new Set([...Object.keys(pool), ...(cur ? [cur] : [])]))
+            return (
+              <div key={slot.key} className="space-y-0.5">
+                <label className="text-xs text-neutral-400">
+                  {slot.label || slot.key}{slot.required === false ? '' : ' *'}
+                  <span className="ml-1 text-neutral-600 font-mono">{slot.kind === 'topic' ? t('토픽') : t('검출')}</span>
+                </label>
+                <select value={cur} onChange={(e) => onInputChange?.(slot.key, e.target.value)} className={input}>
+                  <option value="">{t('— 입력 소스 선택 —')}</option>
+                  {names.map((n) => {
+                    const meta = pool[n]
+                    return <option key={n} value={n}>{n}{meta ? ` · ${meta.publisher ?? '?'}` : ` · ${t('지금 없음')}`}</option>
+                  })}
+                </select>
+              </div>
+            )
+          })}
         </div>
       )}
       {others.length > 0 && (

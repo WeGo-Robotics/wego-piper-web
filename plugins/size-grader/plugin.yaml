@@ -1,0 +1,24 @@
+# 플러그인 간 입출력의 실례 — 검출기의 출력을 **입력 슬롯**으로 받아 등급을 매기고 **토픽**으로 내보낸다 (feature/plugins.md §7-3).
+#   detector ──(검출 piper:vision:<name>)──▶ size-grader ──(토픽 grades)──▶ 다음 플러그인(미션 등)
+name: size-grader
+version: 0.1.0
+title: "크기 등급"
+description: "검출된 물체를 bbox 크기로 대·중·소 등급으로 나눠 토픽 `grades` 로 올린다"
+entry: main.py
+python: system
+
+inputs:
+  - { key: det, kind: detections, source: "top", label: "검출 입력", required: true }
+
+config:
+  - { key: large_px, kind: number, default: 200, min: 10, max: 2000, label: "대 기준 (짧은 변 px)" }
+  - { key: small_px, kind: number, default: 80, min: 5, max: 1000, label: "소 기준 (짧은 변 px)" }
+  - { key: fresh_s, kind: number, default: 2, min: 0.2, max: 30, step: 0.2, label: "검출 신선도 한계(초)" }
+
+permissions: []
+
+outputs:
+  topics: ["grades"]
+  state:
+    - { key: counts, label: "등급 수" }
+    - { key: source, label: "입력" }

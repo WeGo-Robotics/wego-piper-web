@@ -24,6 +24,8 @@ plugins/<name>/
 | 그림 올리기 | `self.publish_preview(name, frame)` | `/api/vision/preview/<name>` |
 | 상태 보이기 | `self.state(phase="…", fps=…)` | 버스 KV, 화면 카드 |
 | 다른 검출기 읽기 | `self.detections(name, fresh_s=1.0)` | `.objects` `.count(label)` `.text` |
+| 다른 플러그인에 넘기기 | `self.publish("grades", data)` / 받기 `self.latest("슬롯")` → `.data` `.seq` `.publisher` | 버스 토픽. 매니페스트 `outputs.topics`·`inputs` 가 배선을 선언한다 (§7-3) |
+| 입력 슬롯 풀기 | `self.input("슬롯")` / `self.input_detections("슬롯")` | 시작할 때 고른 검출 이름·토픽 — 코드는 소스 이름을 모른다 |
 | 추론 시작·정지 | `self.robot.start_inference(ckpt, self.camera_mapping())` / `.stop_inference()` | REST, 권한 `inference.start`/`inference.stop` |
 | 지시문(task) | `self.robot.set_task("…")` | 권한 `params.write`. 언어 정책만 읽는다 |
 | 일시정지·재개·리셋 | `self.robot.pause()` `.resume()` `.reset()` | 권한 `params.write` |
@@ -76,3 +78,4 @@ curl -X POST localhost:8000/api/plugins/my-thing/start -H 'content-type: applica
 | `recycling/` | 2층 | 검출 → LLM 판단 → task → 저널. `MissionPlugin` 의 참고 구현. 외부 API 미션 타입 `recycling` |
 | `detector/` | 1층 | 카메라 여러 대를 한 모델로 훑는 검출기. 검출 페이지의 뒷단. 둘 이상 돌리려면 폴더를 다른 이름으로 복사 |
 | `ui-demo/` | 1층 | `ui: server` — 자기 FastAPI 서버(HTTP·WS)를 소켓에 띄워 게이트웨이 뒤로 프록시. 포트를 고르지 않는다 |
+| `size-grader/` | 1층 | `detector` 의 검출을 **입력 슬롯**으로 받아 크기 등급을 토픽 `grades` 로 — 플러그인 배선의 실례 |

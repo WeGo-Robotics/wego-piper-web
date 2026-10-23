@@ -43,9 +43,23 @@ class Resources(BaseModel):
     cpu: str | None = None      # systemd CPUQuota (6단계)
 
 
+class InputSlot(BaseModel):
+    """다른 플러그인(또는 검출기)의 출력을 받는 자리 (feature/plugins.md §7-3).
+
+    `kind: detections` 는 버스 검출(`piper:vision:<source>`), `kind: topic` 은 플러그인 토픽
+    (`piper:plugin:topic:<source>`). `source` 는 기본값 — 시작할 때 화면이 살아 있는 것들 중에서 고른다.
+    """
+    key: str
+    kind: Literal["detections", "topic"] = "detections"
+    source: str = ""
+    label: str = ""
+    required: bool = True
+
+
 class Outputs(BaseModel):
     previews: list[str] = []
     detections: list[str] = []
+    topics: list[str] = []
     state: list[dict] = []
 
 
@@ -57,6 +71,7 @@ class Manifest(BaseModel):
     entry: str = "main.py"
     python: Literal["system", "venv", "venv-isolated"] = "system"
     cameras: list[CameraSlot] = []
+    inputs: list[InputSlot] = []
     config: list[ConfigField] = []
     permissions: list[str] = []
     resources: Resources = Field(default_factory=Resources)
@@ -74,7 +89,7 @@ class Manifest(BaseModel):
 
     @model_validator(mode="after")
     def _unique_keys(self):
-        for what, items in (("config", self.config), ("cameras", self.cameras)):
+        for what, items in (("config", self.config), ("cameras", self.cameras), ("inputs", self.inputs)):
             keys = [i.key for i in items]
             dup = {k for k in keys if keys.count(k) > 1}
             if dup:

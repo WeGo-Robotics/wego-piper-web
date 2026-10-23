@@ -427,3 +427,38 @@ def test_resource_limits_go_to_the_unit_owner_only(reg, monkeypatch):
     asyncio.run(reg.start("lim", {}, {"watch": "top"}))
     assert unit_pm.props == {"MemoryMax": "2G", "CPUQuota": "150%"}
     assert reg.status("lim")["limits_applied"] is True
+
+
+# ── 7단계 — 플러그인 간 입출력 ────────────────────────────────────────────────
+
+
+def test_inputs_are_resolved_saved_and_handed_to_the_process(reg, monkeypatch):
+    from fastapi import HTTPException
+
+    from app.core.config import settings
+
+    body = GOOD.format(name="chain", gpu="false").replace(
+        "config:", 'inputs:\n  - { key: det, kind: detections, source: "top" }\n  - { key: grades, kind: topic, required: false }\nconfig:')
+    _make(settings.plugins_dir, "chain", body=body)
+    monkeypatch.setattr(reg, "sources", lambda: {"detections": {"top": {"publisher": "detector"}}, "topics": {}})
+    asyncio.run(reg.start("chain", {}, {"watch": "top"}, {"grades": "grades"}))
+    env = reg._fakes["piper-plugin-chain"].env
+    assert json.loads(env["PIPER_PLUGIN_INPUTS"]) == {"det": "top", "grades": "grades"}     # 기본 소스 + 고른 것
+    st = reg.status("chain")
+    assert st["inputs"] == {"det": "top", "grades": "grades"}
+    assert st["inputs_live"] == {"det": True, "grades": False}                             # 말만 한다, 막지 않는다
+    assert reg.saved_config("chain")["inputs"]["det"] == "top"
+    asyncio.run(reg.stop("chain"))
+    # 필수 입력에 기본도 선택도 없으면 400
+    body2 = GOOD.format(name="chain2", gpu="false").replace("config:", "inputs:\n  - { key: det }\nconfig:")
+    _make(settings.plugins_dir, "chain2", body=body2)
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(reg.start("chain2", {}, {"watch": "top"}))
+    assert e.value.status_code == 400 and "입력" in e.value.detail
+
+
+def test_bundled_size_grader_declares_its_wiring():
+    info = P.read_manifest(P.REPO / "plugins" / "size-grader")
+    assert info.manifest is not None, info.error
+    assert [s.key for s in info.manifest.inputs] == ["det"] and info.manifest.inputs[0].source == "top"
+    assert info.manifest.outputs.topics == ["grades"]

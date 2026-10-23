@@ -19,11 +19,13 @@ router = APIRouter(prefix="/api/plugins", tags=["plugins"])
 class StartRequest(BaseModel):
     config: dict = {}
     cameras: dict[str, str] = {}
+    inputs: dict[str, str] = {}
 
 
 class ConfigRequest(BaseModel):
     config: dict = {}
     cameras: dict[str, str] = {}
+    inputs: dict[str, str] = {}
 
 
 class InstallRequest(BaseModel):
@@ -51,6 +53,22 @@ async def list_scopes():
     """권한 범위 표 — 화면의 배지와 매니페스트 작성자가 본다."""
     return {"scopes": {k: [list(r) for r in v] for k, v in plugin_scopes.SCOPES.items()},
             "all": plugin_scopes.ALL, "never": list(plugin_scopes.NEVER_PREFIXES)}
+
+
+@router.get("/topics")
+async def list_sources():
+    """살아 있는 검출 이름과 토픽 — 입력 슬롯 선택기가 고르는 것들 (feature/plugins.md §7-3)."""
+    return registry.sources()
+
+
+@router.get("/topics/{topic}")
+async def get_topic(topic: str):
+    from piper_bus.client import Bus
+
+    tp = Bus().get_topic(topic)
+    if tp is None:
+        raise HTTPException(404, "그런 토픽이 없거나 낡았습니다")
+    return tp
 
 
 @router.get("/runs")
@@ -85,7 +103,7 @@ async def get_plugin(name: str):
 
 @router.post("/{name}/start")
 async def start_plugin(name: str, body: StartRequest):
-    return await registry.start(name, body.config, body.cameras)
+    return await registry.start(name, body.config, body.cameras, body.inputs)
 
 
 @router.post("/{name}/stop")
@@ -121,7 +139,7 @@ async def remove_deps(name: str):
 @router.put("/{name}/config")
 async def save_config(name: str, body: ConfigRequest):
     registry.get(name)
-    registry.save_config(name, body.config, body.cameras)
+    registry.save_config(name, body.config, body.cameras, body.inputs)
     return {"status": "ok"}
 
 

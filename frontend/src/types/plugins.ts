@@ -16,6 +16,8 @@ export type PluginConfigField = {
 }
 
 export type PluginCameraSlot = { key: string; label?: string; required?: boolean }
+/** 다른 플러그인의 출력을 받는 자리 — 검출 이름 또는 토픽 (§7-3) */
+export type PluginInputSlot = { key: string; kind: 'detections' | 'topic'; source?: string; label?: string; required?: boolean }
 
 export type PluginManifest = {
   name: string
@@ -25,12 +27,13 @@ export type PluginManifest = {
   entry: string
   python: 'system' | 'venv' | 'venv-isolated'
   cameras: PluginCameraSlot[]
+  inputs: PluginInputSlot[]
   config: PluginConfigField[]
   permissions: string[]
   resources: { gpu: boolean; heartbeat: boolean; memory?: string | null; cpu?: string | null }
   /** false | 저장소 경로(`/detector`) | `ui/` | `server` — §8-2 */
   ui: boolean | string
-  outputs: { previews: string[]; detections: string[]; state: { key: string; label?: string; unit?: string }[] }
+  outputs: { previews: string[]; detections: string[]; topics: string[]; state: { key: string; label?: string; unit?: string }[] }
   commands: string[]
   mission: boolean
 }
@@ -47,6 +50,9 @@ export type PluginStatus = {
   run_id: string | null
   config: PluginConfigValues | null
   cameras: Record<string, string> | null
+  inputs?: Record<string, string> | null
+  /** 입력마다 소스가 지금 살아 있나 — 막지 않고 말만 한다 */
+  inputs_live?: Record<string, boolean>
   /** 플러그인이 버스에 올린 상태 KV (`phase`·fps·…). 없으면 아직 안 올렸거나 죽었다 */
   kv: Record<string, unknown> | null
   log_tail?: string[]
@@ -69,8 +75,16 @@ export type PluginInfo = PluginStatus & {
   error: string | null
   manifest?: PluginManifest
   scopes?: PluginScopeDesc[]
-  saved: { config: PluginConfigValues; cameras: Record<string, string> }
+  saved: { config: PluginConfigValues; cameras: Record<string, string>; inputs?: Record<string, string> }
 }
+
+/** `GET /api/plugins/topics` — 살아 있는 소스 */
+export type PluginSources = {
+  detections: Record<string, { publisher?: string | null; ts?: number }>
+  topics: Record<string, { publisher?: string | null; ts?: number; seq?: number }>
+}
+
+export type PluginTopic = { topic: string; publisher: string; seq: number; ts: number; data: unknown }
 
 export type PluginRun = { id: string; plugin: string; bytes: number; mtime: number; live: boolean }
 
