@@ -208,6 +208,13 @@ def test_gpu_plugin_is_blocked_by_training(reg, monkeypatch):
     # GPU 를 안 쓰는 플러그인은 학습 중에도 뜬다
     asyncio.run(reg.start("c", {}, {"watch": "top"}))
     assert reg.any_running() and not reg.any_running(gpu_only=True)
+    # `gpu: true` 라도 장치를 cpu 로 고르면 이 실행은 GPU 플러그인이 아니다 — 학습 중에도 뜬다
+    asyncio.run(reg.start("g", {"device": "cpu"}, {"watch": "top"}))
+    assert reg.status("g")["gpu"] is False and not reg.any_running(gpu_only=True)
+    asyncio.run(reg.stop("g"))
+    monkeypatch.setitem(ex.STATE_PROVIDERS, ex.Activity.TRAINING, lambda: False)
+    asyncio.run(reg.start("g", {"device": "cuda:0"}, {"watch": "top"}))
+    assert reg.status("g")["gpu"] is True and reg.any_running(gpu_only=True)
 
 
 def test_double_start_is_409_and_kill_all_clears_everything(reg):

@@ -426,6 +426,20 @@ class PluginRegistry:
             raise HTTPException(409, "도는 중에는 의존을 지울 수 없습니다")
         shutil.rmtree(self.venv_dir(name), ignore_errors=True)
 
+    @staticmethod
+    def uses_gpu(m: Manifest, config: dict) -> bool:
+        """이 실행이 GPU 를 쓰나 — 매니페스트가 `gpu: true` 여도 설정의 장치가 `cpu` 면 아니다.
+
+        검출기를 CPU 로 돌리면 학습 중에도 켤 수 있어야 한다(사용자 지적 2026-10-23). 플래그 하나로 막으면
+        "GPU 를 쓸 수 있다" 와 "지금 쓴다" 가 뭉개진다.
+        """
+        if not m.resources.gpu:
+            return False
+        key = m.resources.gpu_field or "device"
+        if key not in config:
+            return True
+        return not str(config.get(key) or "").strip().lower().startswith("cpu")
+
     def _limits(self, m: Manifest) -> dict[str, str]:
         props = {}
         if m.resources.memory:
@@ -463,7 +477,9 @@ class PluginRegistry:
 
         from app.services import exclusivity
 
-        if m.resources.gpu:
+        config = {**m.defaults(), **(config or {})}
+        gpu = self.uses_gpu(m, config)
+        if gpu:
             # ⚠ `require_idle(PLUGIN_GPU)` 를 쓰면 **GPU 플러그인이 하나 돌고 있다는 것만으로** 둘째가
             #   막힌다(활동이 자기 자신에게 막히는 규칙). GPU 플러그인끼리는 경고만 하기로 했다(§3-8) —
             #   막는 것은 학습처럼 **다른** 활동이 쥐고 있을 때뿐이다.
@@ -475,7 +491,6 @@ class PluginRegistry:
             if self.any_running(gpu_only=True):
                 logger.warning("GPU 플러그인이 이미 돌고 있는데 %s 를 더 켠다 — 메모리를 다툴 수 있다 (막지 않는다)", name)
 
-        config = {**m.defaults(), **(config or {})}
         cameras = dict(cameras or {})
         self._check_cameras(m, cameras)
         inputs = self.resolve_inputs(m, inputs)
@@ -511,7 +526,7 @@ class PluginRegistry:
         pm = self.owner(name)
         # 토큰은 **프로세스가 뜨기 전에** 유효해야 한다 — 첫 호출이 환경을 읽는 즉시 온다
         self._grants[token] = Grant(name=name, scopes=frozenset(m.permissions))
-        self._runs[name] = Run(token=token, config=config, cameras=cameras, gpu=m.resources.gpu,
+        self._runs[name] = Run(token=token, config=config, cameras=cameras, gpu=gpu,
                                run_id=run_id, mission=m.mission, inputs=inputs)
         self._seen.add(name)
         self._starting.add(name)
@@ -591,7 +606,8 @@ class PluginRegistry:
                      "limits_applied": bool(pm is not None and hasattr(pm, "unit")),
                      "started_at": run.started_at if run else None, "run_id": run.run_id if run else None,
                      "config": run.config if run else None, "cameras": run.cameras if run else None,
-                     "inputs": run.inputs if run else None}
+                     "inputs": run.inputs if run else None,
+                     "gpu": run.gpu if run else None}
         # 입력 소스가 살아 있나 — 도는 중이면 지금 쓰는 입력, 아니면 저장된 입력 기준
         try:
             info = self.get(name)

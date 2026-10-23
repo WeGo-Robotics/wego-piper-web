@@ -226,8 +226,10 @@ ext API 를 재사용하지 않는 이유: 그 계약은 외부 소비자를 모
 - **자원 제한**: 유닛이면 `systemd-run -p MemoryMax= -p CPUQuota=` 로 매니페스트의
   `resources.memory`·`cpu` 를 건다. 폴백(자식)에서는 못 걸고, 그 사실을 카드가 말한다.
 - **배타**: 활동이 **둘**이다 — `Activity.PLUGIN`(모든 플러그인. 아무것도 막지 않고 아무것도 못 막는다,
-  UPLOAD 와 같다. E-stop 대상)과 `Activity.PLUGIN_GPU`(`resources.gpu: true` 를 선언한 것이 하나라도
-  돌고 있다는 상태. TRAINING 과 상호 배타). 둘로 나눈 이유: 배타 표는 활동 단위인데 GPU 사용은
+  UPLOAD 와 같다. E-stop 대상)과 `Activity.PLUGIN_GPU`(**지금 GPU 를 쓰는** 플러그인이 하나라도 돌고
+  있다는 상태. TRAINING 과 상호 배타). `resources.gpu: true` 는 "쓸 수 있다"이고, 실제로 쓰는지는 시작
+  시점의 설정(`resources.gpu_field`, 기본 `device`)이 `cpu` 가 아닌지로 판정한다 — 검출기를 CPU 로
+  돌리면 학습 중에도 켤 수 있다. 둘로 나눈 이유: 배타 표는 활동 단위인데 GPU 사용은
   플러그인마다 다르다 — 구현(1단계)에서 확정.
   GPU 플러그인 둘, 또는 yolod 와의 동시 실행은 **경고만**(§3-8). `require_idle` 은
   **플러그인 자체**가 아니라 플러그인이 부른 REST 가 건다 — 추론 시작이 막히면 플러그인이

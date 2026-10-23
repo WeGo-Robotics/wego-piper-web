@@ -37,7 +37,10 @@ class CameraSlot(BaseModel):
 
 
 class Resources(BaseModel):
+    #: GPU 를 **쓸 수 있는** 플러그인인가. 실제로 쓰는지는 시작 시점의 설정이 정한다 — `gpu_field` 로 지정한
+    #: 설정 값(기본 `device`)이 `cpu` 로 시작하면 그 실행은 GPU 플러그인이 아니다(학습과 배타가 아니다)
     gpu: bool = False
+    gpu_field: str = "device"
     heartbeat: bool = False
     memory: str | None = None   # systemd MemoryMax (6단계)
     cpu: str | None = None      # systemd CPUQuota (6단계)

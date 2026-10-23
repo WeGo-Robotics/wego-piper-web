@@ -34,6 +34,8 @@
   설정을 출발점으로 받는다. `detector`·`zone-guard` 가 켜져 있다 — 폴더 복사는 더 이상 권하지 않는다
 - 고친 것: GPU 플러그인이 하나 돌고 있으면 둘째가 "GPU 플러그인이 이미 실행 중" 으로 막혔다(활동의 자기 차단). GPU
   플러그인끼리는 경고만 하기로 한 결정대로, 학습이 돌 때만 막는다
+- 고친 것: `resources.gpu: true` 플러그인을 장치 `cpu` 로 켜도 GPU 플러그인으로 취급해 학습 중에 막혔다. 실제로
+  GPU 를 쓰는지는 설정의 장치 값(`resources.gpu_field`, 기본 `device`)으로 시작할 때 판정한다
 
 **플러그인 7단계 — 플러그인 간 입출력** ([feature/plugins.md §7-3](feature/plugins.md))
 - 플러그인을 이어 붙인다: 검출기 → 분류기 → 미션. 매니페스트 `inputs`(검출·토픽 슬롯)와 `outputs.topics` 가 배선을
