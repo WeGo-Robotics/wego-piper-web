@@ -12,7 +12,7 @@ import createPlotlyComponent from 'react-plotly.js/factory'
 import Plotly from 'plotly.js-dist-min'
 import type { Data, Layout, PlotMouseEvent } from 'plotly.js'
 import { api } from '../services/api'
-import type { Dataset } from '../types/models'
+import type { Dataset, DatasetDetail } from '../types/models'
 import { msg, useT } from '../i18n'
 import { useSystemMessage } from './SystemMessages'
 import PosCoverage from './PosCoverage'
@@ -178,6 +178,38 @@ export default function PosAnalysis({ datasets, onOpen }: {
     setAnalyzing((a) => [...a, id])
     try {
       await api.post(`/phase/${id}/analyze`, {}, { timeoutMs: 600_000 })
+      load(id)
+    } catch (e) {
+      notify({ level: 'error', text: e instanceof Error ? e.message : t('분석 실패'), source: t('POS분석') })
+    } finally {
+      setAnalyzing((a) => a.filter((x) => x !== id))
+    }
+  }
+
+  /** 재분석 — **라벨이 아직 없는 에피소드만**, 그 데이터셋에 저장된 기준값으로.
+   *
+   * ⚠ 전체 재분석은 검토 표시(✔)와 메모는 지키지만 **사람이 고친 구간은 자동 라벨로 덮어쓴다**
+   *   (`labeler.save`). 녹화를 더 한 뒤 새 에피소드를 넣으려는 것뿐인데 손본 라벨이 날아가면
+   *   안 된다. 기준값도 사이드카의 것을 쓴다 — 태스크마다 다르다(yeonwonju 는 hold_gap −8).
+   */
+  const analyzeNew = async (id: string) => {
+    setAnalyzing((a) => [...a, id])
+    try {
+      const [labels, detail] = await Promise.all([
+        api.get<{ params?: Record<string, number>; episodes: Record<string, unknown> }>(`/phase/${id}/labels`),
+        api.get<DatasetDetail>(`/datasets/${id}`),
+      ])
+      const have = new Set(Object.keys(labels.episodes).map(Number))
+      const all = detail.episodes.map((e, i) => Number((e as { episode_index?: number }).episode_index ?? i))
+      const missing = all.filter((e) => !have.has(e))
+      if (missing.length === 0) {
+        notify({ level: 'info', text: t('{id}: 새 에피소드가 없다 — 라벨이 모든 에피소드에 있다', { id }), source: t('POS분석') })
+        load(id)
+        return
+      }
+      const params = Object.fromEntries(Object.entries(labels.params ?? {}).filter(([k]) => k !== 'fps'))
+      await api.post(`/phase/${id}/analyze`, { episodes: missing, params }, { timeoutMs: 600_000 })
+      notify({ level: 'info', text: t('{id}: 새 에피소드 {n}개를 분석했다', { id, n: missing.length }), source: t('POS분석') })
       load(id)
     } catch (e) {
       notify({ level: 'error', text: e instanceof Error ? e.message : t('분석 실패'), source: t('POS분석') })
@@ -607,9 +639,23 @@ export default function PosAnalysis({ datasets, onOpen }: {
                     {d.id}
                   </button>
                   {p && l?.state === 'loading' && <span className="text-neutral-500">…</span>}
-                  {p && l?.state === 'ok' && (
-                    <span className="text-neutral-500">{t('파지 {n}', { n: l.res.events.length })}</span>
-                  )}
+                  {p && l?.state === 'ok' && (() => {
+                    // 라벨 없는 에피소드 수(대략) — 녹화를 더 했으면 여기서 보인다
+                    const fresh = Math.max(0, d.total_episodes - l.res.episodes)
+                    return (
+                      <>
+                        <span className="text-neutral-500">{t('파지 {n}', { n: l.res.events.length })}</span>
+                        <button
+                          onClick={() => void analyzeNew(d.id)}
+                          disabled={analyzing.includes(d.id)}
+                          title={t('라벨이 아직 없는 에피소드만 분석한다 — 이미 있는 라벨(사람이 고친 구간 포함)은 그대로 둔다')}
+                          className={`px-1.5 rounded ${fresh ? 'bg-amber-600/30 text-amber-300 hover:bg-amber-600/50' : 'text-neutral-500 hover:bg-neutral-700 hover:text-white'} disabled:opacity-50`}
+                        >
+                          {analyzing.includes(d.id) ? t('분석 중…') : fresh ? t('재분석 (새 {n})', { n: fresh }) : t('재분석')}
+                        </button>
+                      </>
+                    )
+                  })()}
                   {p && l?.state === 'error' && <span className="text-red-400" title={l.error}>{t('⚠ 오류')}</span>}
                   {p && l?.state === 'none' && (
                     <button
