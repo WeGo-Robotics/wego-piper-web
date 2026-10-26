@@ -97,6 +97,12 @@ export function normalizeMapping(
   return changed ? next : mapping
 }
 
+/** `640×480@15` — 크기를 모르면 빈 문자열. fps 는 있으면 붙인다. */
+export function sizeText(w?: number | null, h?: number | null, fps?: number | null): string {
+  if (!w || !h) return ''
+  return `${w}×${h}${fps ? `@${fps}` : ''}`
+}
+
 /** 선택기 한 줄 — `top — D435 Color 640x480@30`. 크기·fps 는 아는 것만. */
 export function streamOptionText(s: StreamInfo): string {
   const dims = s.width && s.height ? ` ${s.width}x${s.height}${s.fps ? `@${s.fps}` : ''}` : ''

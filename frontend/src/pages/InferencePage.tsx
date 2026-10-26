@@ -7,7 +7,7 @@ import { useActivity, isStateMessage } from '../hooks/useActivity'
 import { usePolicies } from '../hooks/usePolicies'
 import { useParamSpec } from '../hooks/useParamSpec'
 import CheckpointPicker from '../components/CheckpointPicker'
-import type { Model } from '../types/models'
+import type { CameraCheck, Model, TrainCamera } from '../types/models'
 import ParamSlider from '../components/ParamSlider'
 import PresetBar from '../components/PresetBar'
 import LogViewer from '../components/LogViewer'
@@ -18,7 +18,7 @@ import LightStrip from '../components/LightStrip'
 import TelemetryPanel, { type TelemetryData } from '../components/TelemetryPanel'
 import ManualControlPanel from '../components/ManualControlPanel'
 import { twoColumns } from '../components/LayoutToggle'
-import { findStream, normalizeMapping, type StreamInfo } from '../types/camera'
+import { findStream, normalizeMapping, sizeText, type StreamInfo } from '../types/camera'
 import { useCameraStreams } from '../hooks/useCameraStreams'
 import { useLiveFrames } from '../hooks/useCameraLive'
 import LiveCameraFrame from '../components/LiveCameraFrame'
@@ -33,15 +33,18 @@ import { useT } from '../i18n'
  *   (FPS 20 이면 1장)라 화면이 끊겨 보인다. 장치로 못 푸는 키(매핑이 없다 · 스트림 목록을 못
  *   받았다)만 그 파일을 500ms 마다 다시 읽는다.
  */
-function CameraPreview({ cameraNames, cameraMapping, streams }: {
+function CameraPreview({ cameraNames, cameraMapping, streams, trainCameras }: {
   cameraNames: string[]
   cameraMapping: Record<string, string>
   streams: StreamInfo[]
+  /** 학습 때 카메라 — 지금 크기가 다르면 이름 옆 해상도를 노랗게 */
+  trainCameras?: Record<string, TrainCamera>
 }) {
   const t = useT()
-  const cards = cameraNames.map((name) => ({
-    name, deviceId: findStream(cameraMapping[name] ?? '', streams)?.device_id,
-  }))
+  const cards = cameraNames.map((name) => {
+    const stream = findStream(cameraMapping[name] ?? '', streams)
+    return { name, deviceId: stream?.device_id, stream }
+  })
   const live = useLiveFrames(cards.flatMap((c) => (c.deviceId ? [c.deviceId] : [])))
   const polling = cards.some((c) => !c.deviceId)
   const [ts, setTs] = useState(0)
@@ -56,7 +59,7 @@ function CameraPreview({ cameraNames, cameraMapping, streams }: {
     <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
       <span className="text-sm font-semibold">{t('카메라')}</span>
       <div className="grid grid-cols-3 gap-3">
-        {cards.map(({ name, deviceId }) => (
+        {cards.map(({ name, deviceId, stream }) => (
           <div key={name}>
             {deviceId ? (
               <LiveCameraFrame id={deviceId} alt={name} attach={live.attach} className={frameClass} />
@@ -69,10 +72,57 @@ function CameraPreview({ cameraNames, cameraMapping, streams }: {
                 onLoad={(e) => { (e.target as HTMLImageElement).style.opacity = '1' }}
               />
             )}
-            <span className="text-xs text-neutral-400">{name}</span>
+            <div className="flex items-baseline gap-2 text-xs">
+              <span className="text-neutral-400">{name}</span>
+              {stream?.width && stream.height && (() => {
+                const tc = trainCameras?.[name]
+                const differs = !!tc && (tc.width !== stream.width || tc.height !== stream.height)
+                return (
+                  <span className={`font-mono ${differs ? 'text-amber-400' : 'text-neutral-500'}`}
+                    title={differs ? t('학습 {train} 과 다릅니다', { train: sizeText(tc.width, tc.height) }) : undefined}>
+                    {sizeText(stream.width, stream.height)}{differs && ` ≠ ${sizeText(tc.width, tc.height)}`}
+                  </span>
+                )
+              })()}
+            </div>
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+/**
+ * 카메라 줄 아래 — **학습 때 해상도**와 **지금 내는 해상도**를 나란히 (feature/camera-resolution.md).
+ * 지금 값은 드롭다운 글자 안에만 있어서, 데몬 재시작으로 기본값이 된 것을 아무도 못 봤다.
+ * 색(판정)은 백엔드 검증의 것을 쓴다 — 비율 허용치를 화면에 또 적지 않는다.
+ */
+function CameraResolution({ trained, live, check }: {
+  trained?: TrainCamera
+  live?: StreamInfo
+  check?: CameraCheck
+}) {
+  const t = useT()
+  const status = check?.status
+  const liveColor = status === 'aspect' ? 'text-red-400'
+    : status === 'size' ? 'text-amber-400'
+      : status === 'ok' ? 'text-green-400' : 'text-neutral-300'
+  return (
+    <div className="pl-[6.5rem] flex flex-wrap items-center gap-x-3 text-[11px]">
+      <span className="text-neutral-500">
+        {t('학습')}{' '}
+        <span className="font-mono text-neutral-300">{trained ? sizeText(trained.width, trained.height, trained.fps) : t('모름')}</span>
+        {trained?.model && <span> · {trained.model}</span>}
+      </span>
+      <span className="text-neutral-500">
+        {t('지금')}{' '}
+        <span className={`font-mono ${liveColor}`}>{(live && sizeText(live.width, live.height, live.fps)) || '—'}</span>
+        {check?.model_differs && live && <span className="text-amber-400"> · {live.device_name}</span>}
+      </span>
+      {status === 'aspect' && <span className="text-red-400">{t('✗ 화면 비율이 다름 — 시작할 수 없음')}</span>}
+      {status === 'size' && <span className="text-amber-400">{t('⚠ 크기만 다름')}</span>}
+      {check?.model_differs && <span className="text-amber-400">{t('⚠ 기종이 다름')}</span>}
+      {status === 'ok' && !check?.model_differs && <span className="text-green-400">✓</span>}
     </div>
   )
 }
@@ -105,7 +155,11 @@ function CollapsibleCard({ title, storageKey, defaultOpen = true, children }: {
 }
 
 type ReadyArm = { iface: string; role: string; side?: string | null; config: Record<string, unknown> }
-type ValidationResult = { valid: boolean; errors: string[]; warnings: string[]; robot_joints?: number }
+type ValidationResult = {
+  valid: boolean; errors: string[]; warnings: string[]; robot_joints?: number
+  /** 카메라별 학습/지금 대조 (backend services/train_cameras.py) */
+  cameras?: Record<string, CameraCheck>
+}
 
 // 관절 수와 정책 목록은 백엔드에서 온다 —
 // robot_joints 는 /inference/validate 응답, 정책 목록은 usePolicies()
@@ -118,7 +172,7 @@ export default function InferencePage() {
   const [leftFollower, setLeftFollower] = useState<string>('')
   const [rightFollower, setRightFollower] = useState<string>('')
   // 카메라는 **스트림 이름**으로 부른다 — 등록되고 연결된 것만 고를 수 있다.
-  const { streams, loaded: streamsLoaded, connect: connectStreams, connecting } = useCameraStreams()
+  const { streams, loaded: streamsLoaded, refresh: refreshStreams, connect: connectStreams, connecting } = useCameraStreams()
   const [models, setModels] = useState<Model[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
   const [cameraMapping, setCameraMapping] = useState<Record<string, string>>({})
@@ -280,6 +334,24 @@ export default function InferencePage() {
     for (const f of failed) notify({ level: 'error', text: f.reason, source: t('카메라') })
   }
 
+  // 매핑된 카메라가 **지금 내는 크기** — 바뀌면 다시 검증한다(학습 해상도 대조가 이걸 본다)
+  const mappedDims = Object.entries(cameraMapping)
+    .map(([k, v]) => { const s = findStream(v, streams); return `${k}=${s?.width ?? ''}x${s?.height ?? ''}` })
+    .join(',')
+  const [matching, setMatching] = useState(false)
+  /** 매핑된 카메라를 학습 해상도로 다시 연다 — 요청 해상도로 저장돼 데몬이 재시작해도 남는다 */
+  const matchTraining = async () => {
+    setMatching(true)
+    try {
+      await api.post('/cameras/match-training', { model_id: selectedModel, camera_mapping: cameraMapping })
+      await refreshStreams()
+    } catch (e) {
+      notify({ level: 'error', text: e instanceof Error ? e.message : t('알 수 없는 오류'), source: t('카메라') })
+    } finally {
+      setMatching(false)
+    }
+  }
+
   const selectedModelData = models.find((m) => m.id === selectedModel)
   /** 실행에 실을 체크포인트 경로. 서버 모드면 **서버 기준**, 아니면 로컬 모델 경로. */
   const checkpointPath = () =>
@@ -347,7 +419,7 @@ export default function InferencePage() {
         }
       }
     }).catch(() => {})
-  }, [selectedModel, selectedFollower, robotMode, leftFollower, rightFollower, cameraMapping, inferenceMode, device, serverAddress, policyType, actionsPerChunk, aggregateFn, offsetCorrection, smoothing, smoothingWindow, debugMode])
+  }, [selectedModel, selectedFollower, robotMode, leftFollower, rightFollower, cameraMapping, mappedDims, inferenceMode, device, serverAddress, policyType, actionsPerChunk, aggregateFn, offsetCorrection, smoothing, smoothingWindow, debugMode])
 
   const saveSelectionRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => {
@@ -367,6 +439,7 @@ export default function InferencePage() {
       const r = await api.post<{
         camera_profile?: { warnings?: string[] } | null
         arm_reset?: { warnings?: string[] } | null
+        cameras?: { warnings?: string[] } | null
       }>('/models/inference/start', {
         checkpoint_path: ckpt,
         robot_port: robotMode === 'single' ? selectedFollower : leftFollower,
@@ -389,6 +462,9 @@ export default function InferencePage() {
       for (const w of r.camera_profile?.warnings ?? [])
         notify({ level: 'warn', text: w, source: t('추론') })
       for (const w of r.arm_reset?.warnings ?? [])
+        notify({ level: 'warn', text: w, source: t('추론') })
+      // 학습과 크기가 다른 카메라(비율은 같아 시작됐다)
+      for (const w of r.cameras?.warnings ?? [])
         notify({ level: 'warn', text: w, source: t('추론') })
     } catch (e) {
       const msg = e instanceof Error ? e.message : t('알 수 없는 오류')
@@ -562,16 +638,31 @@ export default function InferencePage() {
                   <span className="text-xs text-neutral-400">{t('카메라 ({length}대):', { length: reqs.required_cameras.length })}</span>
                   <IdleStreams streams={streams} connecting={connecting} onConnect={connectIdle} />
                   {reqs.required_cameras.map((cam) => (
-                    <div key={cam.name} className="flex items-center gap-2 text-xs">
-                      <span className="w-24 text-neutral-300 font-medium">{cam.name}{cam.model_name && cam.model_name !== cam.name ? <span className="text-neutral-500 text-[10px] ml-1">({cam.model_name})</span> : ''}</span>
-                      <span className="text-neutral-500 w-20">{cam.width && cam.height ? `${cam.width}x${cam.height}` : ''}</span>
-                      <CameraStreamSelect value={cameraMapping[cam.name] ?? ''} streams={streams}
-                        onChange={(v) => setCameraMapping((prev) => ({ ...prev, [cam.name]: v }))}
-                        takenBy={(st) => Object.entries(cameraMapping).find(([k, v]) => v === st && k !== cam.name)?.[0] ?? ''}
-                        className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
-                      {cameraMapping[cam.name] ? <span className="text-green-400">✓</span> : <span className="text-neutral-500">-</span>}
+                    <div key={cam.name} className="space-y-0.5">
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="w-24 text-neutral-300 font-medium">{cam.name}{cam.model_name && cam.model_name !== cam.name ? <span className="text-neutral-500 text-[10px] ml-1">({cam.model_name})</span> : ''}</span>
+                        <CameraStreamSelect value={cameraMapping[cam.name] ?? ''} streams={streams}
+                          onChange={(v) => setCameraMapping((prev) => ({ ...prev, [cam.name]: v }))}
+                          takenBy={(st) => Object.entries(cameraMapping).find(([k, v]) => v === st && k !== cam.name)?.[0] ?? ''}
+                          className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
+                        {cameraMapping[cam.name] ? <span className="text-green-400">✓</span> : <span className="text-neutral-500">-</span>}
+                      </div>
+                      <CameraResolution trained={selectedModelData?.train_cameras?.cameras[cam.name]}
+                        live={cameraMapping[cam.name] ? findStream(cameraMapping[cam.name], streams) : undefined}
+                        check={validation?.cameras?.[cam.name]} />
                     </div>
                   ))}
+                  {Object.values(validation?.cameras ?? {}).some((c) => c.status === 'size' || c.status === 'aspect') && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button onClick={matchTraining} disabled={matching || isRunning}
+                        className="px-2 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50 disabled:cursor-not-allowed">
+                        {matching ? t('맞추는 중...') : t('학습 해상도로 맞추기')}
+                      </button>
+                      <span className="text-[10px] text-neutral-500">
+                        {t('카메라를 학습 때 해상도로 다시 열고 저장합니다 — 데몬이 재시작하거나 USB 가 다시 붙어도 유지됩니다')}
+                      </span>
+                    </div>
+                  )}
                 </div>
                 {/* 학습 데이터와 같은 노출·색으로 추론해야 관측이 같은 분포다 —
                     시작 직전에 이 프로파일을 한 번 적용한다 */}
@@ -823,6 +914,7 @@ export default function InferencePage() {
         cameraNames={reqs?.required_cameras.map((c) => c.name) ?? (activeCameras.length > 0 ? activeCameras : Object.keys(cameraMapping))}
         cameraMapping={cameraMapping}
         streams={streams}
+        trainCameras={selectedModelData?.train_cameras?.cameras}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">

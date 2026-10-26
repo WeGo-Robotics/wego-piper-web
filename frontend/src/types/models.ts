@@ -37,6 +37,39 @@ export type Model = {
   /** 무엇을 내는가 (backend services/action_space.py). `delta_v1` 이면 추론이 절대 위치로 되돌린다,
    *  `unknown` 은 델타로 학습한 듯한데 데이터셋이 없어 확인 못 함 — 추론이 막힌다. */
   action_space?: 'absolute' | 'delta_v1' | 'unknown'
+  /** 학습 때 카메라 (backend services/train_cameras.py) — config 의 입력 크기와 다르다 */
+  train_cameras?: TrainCameras
+}
+
+/** 학습 때 카메라 한 대. 크기는 데이터셋 비디오, fps·기종·캡처 크기는 녹화 사이드카에서 온다. */
+export type TrainCamera = {
+  width: number
+  height: number
+  fps?: number
+  /** 기종 — 카메라 페이지의 장치명(`D435I Color`) */
+  model?: string
+  /** 장치를 연 크기. 발행 크기와 다르면 넓게 받아 줄인 것이다(화각이 다르다) */
+  capture_width?: number
+  capture_height?: number
+  id?: string
+  stream?: string
+}
+
+export type TrainCameras = {
+  /** 키는 데이터셋 쪽 이름(top/hand) — 추론 매핑의 키와 같다 */
+  cameras: Record<string, TrainCamera>
+  dataset?: string | null
+  /** marker: 체크포인트의 표식 · dataset: 학습 데이터셋에서 읽음 · none: 모름 */
+  source: 'marker' | 'dataset' | 'none'
+}
+
+/** 추론 검증의 카메라 대조 한 줄 (`/inference/validate` 의 `cameras`). 판정은 백엔드 한 곳이다. */
+export type CameraCheck = {
+  train: TrainCamera | null
+  live: { width?: number; height?: number; model?: string } | null
+  /** ok · size: 비율은 같고 크기만 다름(실행됨) · aspect: 비율이 다름(시작 안 됨) · unknown: 학습 쪽 모름 · no_live */
+  status: 'ok' | 'size' | 'aspect' | 'unknown' | 'no_live'
+  model_differs: boolean
 }
 
 export type ModelDetail = Model & {

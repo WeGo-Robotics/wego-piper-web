@@ -387,7 +387,15 @@ def camera_sidecar(camera_mapping: dict[str, str]) -> dict:
         cam = camera_manager.cameras.get(cam_id)
         info = cam.running_profile() if cam else {}
         entry = {k: info.get(k) for k in ("width", "height", "fps") if info.get(k)}
+        # 장치를 연 크기. 발행 크기(`width`)와 다르면 출력 해상도로 줄인 것이다 — 같은 640×480 이라도
+        # 센서를 잘라 연 것과 넓게 받아 줄인 것은 화각이 다르다. 추론의 [맞추기]가 이걸로 재현한다.
+        if info.get("capture_width") and info.get("capture_height"):
+            entry["capture_width"] = info["capture_width"]
+            entry["capture_height"] = info["capture_height"]
         entry["id"] = cam_id
+        # 어떤 기종이었나 — 추론 때 다른 카메라가 꽂혀 있으면 경고한다 (feature/camera-resolution.md)
+        if cam is not None and cam.name:
+            entry["model"] = cam.name
         # 그때 이 카메라가 **무슨 이름이었나.** 개명하면 장치 id 만으로는 "어느 스트림이었나"를
         # 알 수 없다 — 장치 id 는 재열거로도 바뀐다.
         if cam is not None and cam.stream:

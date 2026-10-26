@@ -9,6 +9,7 @@ import LiveCameraFrame from '../components/LiveCameraFrame'
 import { isStopped, useLiveFrames, useReviveStopped } from '../hooks/useCameraLive'
 import { api } from '../services/api'
 import { useT } from '../i18n'
+import { sizeText } from '../types/camera'
 
 /**
  * USB 2.0 경고 배지.
@@ -74,7 +75,10 @@ type CamInfo = {
     /** 따로 정한 값이 아니라 깊이 창을 따라가는 중인가. */
     follows_depth: boolean; keep_unknown: boolean
   } | null
+  /** **요청 해상도** — 마지막으로 명시해 연 크기. 데몬 재시작·USB 재연결 뒤에도 이걸로 다시 연다. */
   config: { width: number | null; height: number | null; fps: number | null; color_mode: string; rotation: number; fourcc: string | null }
+  /** 지금 **발행 중인** [w, h] — 녹화·추론이 실제로 받는 크기. 연결 안 됐으면 null */
+  published?: number[] | null
 }
 
 type CamControl = {
@@ -83,6 +87,37 @@ type CamControl = {
   inactive?: boolean; readonly?: boolean
   /** 표시 단위 — 백엔드가 아는 컨트롤에만 붙는다 (piper_cam.controls.CONTROL_UNITS). */
   unit?: string
+}
+
+/**
+ * 지금 내는 해상도와 저장된 요청 해상도 (feature/camera-resolution.md).
+ * 요청이 없으면 데몬이 재시작하거나 USB 가 다시 붙을 때 장치 기본값(D435 1280×720)으로 열린다 —
+ * 그게 화면 어디에도 안 보여서, 640×480 으로 학습한 정책이 엉뚱한 영상으로 돌았다.
+ */
+function ResolutionReadout({ cam }: { cam: CamInfo }) {
+  const t = useT()
+  const { width, height, fps } = cam.config
+  const requested = width && height && fps ? sizeText(width, height, fps) : ''
+  return (
+    <>
+      {cam.published && (
+        <span className="ml-2 font-mono text-neutral-200" title={t('지금 발행 중인 해상도')}>
+          {sizeText(cam.published[0], cam.published[1])}
+        </span>
+      )}
+      {requested ? (
+        <span className="ml-2 font-mono"
+          title={t('요청 해상도 — 데몬이 재시작하거나 USB 가 다시 붙어도 이 크기로 엽니다')}>
+          {t('요청 {size}', { size: requested })}
+        </span>
+      ) : !cam.capture && cam.cam_type !== 'sim' && (
+        <span className="ml-2 text-amber-400"
+          title={t('녹화를 하거나 추론 화면의 [학습 해상도로 맞추기]를 누르면 정해집니다. 정하기 전에는 데몬이 재시작하면 장치 기본값으로 열립니다')}>
+          {t('요청 해상도 없음')}
+        </span>
+      )}
+    </>
+  )
 }
 
 /** 노출 단위의 사람 번역 — "333 이 뭔데" 를 ms 로 말해준다. */
@@ -787,8 +822,7 @@ export default function CamerasPage() {
                     <div className="text-xs text-neutral-400">
                       <span className="font-mono text-[10px] text-neutral-500">{cam.id}</span>
                       <span className="ml-2">{cam.name}</span>
-                      {cam.config.width && <span className="ml-2">{cam.config.width}x{cam.config.height}</span>}
-                      {cam.config.fps && <span className="ml-2">{cam.config.fps}fps</span>}
+                      <ResolutionReadout cam={cam} />
                     </div>
                     <ExposureReadout light={light[cam.id]} mode={metering} />
                     <div className="flex gap-1.5">
@@ -911,8 +945,7 @@ export default function CamerasPage() {
                     </div>
                     <div className="text-xs text-neutral-400">
                       {cam.name}
-                      {cam.config.width && <span className="ml-2">{cam.config.width}x{cam.config.height}</span>}
-                      {cam.config.fps && <span className="ml-2">{cam.config.fps}fps</span>}
+                      <ResolutionReadout cam={cam} />
                     </div>
                     <ExposureReadout light={light[cam.id]} mode={metering} />
                     <div className="flex gap-1.5">
@@ -1365,6 +1398,9 @@ export default function CamerasPage() {
                 </select>
               </div>
             </div>
+            <p className="text-[10px] text-neutral-500">
+              {t('Width·Height·FPS 는 요청 해상도입니다 — 다음에 연결할 때부터 이 크기로 열고, 데몬이 재시작해도 유지됩니다. 녹화를 시작하면 녹화 해상도로 바뀝니다.')}
+            </p>
 
             {/* 이미지 조정 (v4l2 컨트롤) */}
             <div className="border-t border-neutral-700 pt-3 space-y-1.5">

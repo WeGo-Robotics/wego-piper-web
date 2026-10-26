@@ -5,6 +5,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.core.cli_mapping import checkpoint_dim_problem
+from app.services import train_cameras
 from app.services.process_manager import process_manager
 from app.services.model_scanner import get_model
 from app.services.robot_manager import robot_manager
@@ -133,20 +134,16 @@ async def validate_config(body: ValidateRequest):
         if cam_id not in ready_cam_ids:
             errors.append(f"카메라 '{cam_id}'이(가) 등록되지 않았습니다 (매핑: {cam_name})")
 
-    # 5) 해상도 경고
-    for req_cam in required_cameras:
-        cam_id = camera_mapping.get(req_cam["name"])
-        if not cam_id:
-            continue
-        cam = camera_manager.cameras.get(cam_id)
-        if cam and req_cam["width"] and req_cam["height"]:
-            if cam.width and cam.height:
-                if cam.width != req_cam["width"] or cam.height != req_cam["height"]:
-                    warnings.append(
-                        f"카메라 '{req_cam['name']}' 해상도 차이: "
-                        f"모델={req_cam['width']}x{req_cam['height']}, "
-                        f"카메라={cam.width}x{cam.height}"
-                    )
+    # 5) 해상도·기종 — **학습 때 카메라**와 **지금 발행 중인 크기**를 대조한다 (feature/camera-resolution.md).
+    # ⚠ 예전에는 config 의 입력 크기(SmolVLA 는 베이스의 256×256)와 카메라의 요청값(안 정했으면 None →
+    #   건너뜀)을 비교해서, 학습 640×480 · 지금 1280×720 인 채로 한 번도 울리지 않았다.
+    trained = train_cameras.resolve(Path(model.get("path", "")))
+    rows = train_cameras.compare(
+        {k: v for k, v in trained["cameras"].items() if k in required_names},
+        {k: v for k, v in train_cameras.live_cameras(camera_mapping).items() if k in required_names})
+    cam_errors, cam_warnings = train_cameras.messages(rows)
+    errors += cam_errors
+    warnings += cam_warnings
 
     return {
         "valid": len(errors) == 0,
@@ -154,6 +151,9 @@ async def validate_config(body: ValidateRequest):
         "warnings": warnings,
         "model_requirements": reqs,
         "robot_joints": robot_joints,
+        # 화면이 카메라 줄마다 학습/지금을 나란히 보인다 — 판정(비율 허용치)은 여기 한 곳이다
+        "cameras": rows,
+        "train_cameras_source": trained["source"],
     }
 
 

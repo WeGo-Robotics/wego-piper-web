@@ -107,6 +107,7 @@ def test_sidecar_carries_what_the_frames_cannot_tell():
 
     class _Cam:
         stream = ""          # 실제 `CameraInfo` 처럼 — 사이드카가 이름을 함께 적는다
+        name = ""            # 기종도 (feature/camera-resolution.md)
         aliases: list = []
 
         def running_profile(self):

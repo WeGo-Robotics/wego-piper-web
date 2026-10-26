@@ -3,6 +3,7 @@ import NotesEditor from '../components/NotesEditor'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import type { Model } from '../types/models'
+import { sizeText } from '../types/camera'
 import DiskUsageBar from '../components/DiskUsageBar'
 import HubBrowser from '../components/HubBrowser'
 import { useT, fmt } from '../i18n'
@@ -310,18 +311,29 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                           <thead className="bg-neutral-900">
                             <tr>
                               <th className="p-2 text-left text-neutral-400">{t('이름')}</th>
-                              <th className="p-2 text-left text-neutral-400">{t('해상도')}</th>
+                              <th className="p-2 text-left text-neutral-400"
+                                title={t('학습 데이터셋을 녹화한 해상도 — 추론 카메라가 이것과 같아야 합니다')}>{t('학습 해상도')}</th>
+                              <th className="p-2 text-left text-neutral-400">{t('기종')}</th>
+                              <th className="p-2 text-left text-neutral-400"
+                                title={t('모델 config 의 입력 크기 — 정책이 안에서 줄이는 크기입니다. 베이스 모델에서 시작하면 베이스의 값이 남습니다')}>{t('모델 입력')}</th>
                               <th className="p-2 text-left text-neutral-400">{t('채널')}</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {selected.requirements.required_cameras.map((cam) => (
-                              <tr key={cam.name} className="border-t border-neutral-700">
-                                <td className="p-2 font-medium">{cam.name}</td>
-                                <td className="p-2 text-neutral-300">{cam.width}x{cam.height}</td>
-                                <td className="p-2 text-neutral-400">{cam.channels}</td>
-                              </tr>
-                            ))}
+                            {selected.requirements.required_cameras.map((cam) => {
+                              const tc = selected.train_cameras?.cameras[cam.name]
+                              return (
+                                <tr key={cam.name} className="border-t border-neutral-700">
+                                  <td className="p-2 font-medium">{cam.name}</td>
+                                  <td className="p-2 font-mono text-neutral-200">
+                                    {tc ? sizeText(tc.width, tc.height, tc.fps) : <span className="text-neutral-500">{t('모름')}</span>}
+                                  </td>
+                                  <td className="p-2 text-neutral-300">{tc?.model ?? <span className="text-neutral-500">—</span>}</td>
+                                  <td className="p-2 font-mono text-neutral-400">{sizeText(cam.width, cam.height)}</td>
+                                  <td className="p-2 text-neutral-400">{cam.channels}</td>
+                                </tr>
+                              )
+                            })}
                           </tbody>
                         </table>
                       </div>

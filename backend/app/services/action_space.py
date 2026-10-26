@@ -48,7 +48,7 @@ def dataset_delta(ds_path: Path | None) -> dict | None:
     return meta if meta.get("action_space") == DELTA_V1 else None
 
 
-def _train_dataset(ckpt: Path) -> tuple[str | None, Path | None]:
+def train_dataset(ckpt: Path) -> tuple[str | None, Path | None]:
     """`train_config.json` 이 말하는 학습 데이터셋 — (repo_id, 찾은 경로)."""
     from app.services.dataset_scanner import find_dataset_path
 
@@ -76,7 +76,7 @@ def resolve(ckpt: Path) -> dict:
                 "dataset": marked.get("dataset"), "source": "marker"}
     except (OSError, ValueError):
         pass
-    repo_id, ds_path = _train_dataset(ckpt)
+    repo_id, ds_path = train_dataset(ckpt)
     if repo_id is None:
         return {"action_space": ABSOLUTE, "spec": None, "dataset": None, "source": "default"}
     if ds_path is not None:

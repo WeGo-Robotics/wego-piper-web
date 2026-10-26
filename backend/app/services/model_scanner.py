@@ -67,6 +67,17 @@ def _action_space(model_dir: Path) -> str:
         return action_space.UNKNOWN
 
 
+def _train_cameras(model_dir: Path) -> dict:
+    """`services/train_cameras.resolve` — 학습 때 카메라의 해상도·기종. 목록이 이것 때문에 죽으면 안 된다."""
+    from app.services import train_cameras
+
+    try:
+        return train_cameras.resolve(model_dir)
+    except Exception as e:                                       # noqa: BLE001
+        logger.warning("학습 카메라 판정 실패 (%s): %s", model_dir, e)
+        return {"cameras": {}, "dataset": None, "source": "none"}
+
+
 def _parse_config(config_path: Path) -> dict:
     if not config_path.exists():
         return {}
@@ -199,6 +210,7 @@ def _scan_hf_cache(models_dir: Path) -> list[dict]:
             "notes": _notes(snapshot),
             # 절대 / delta_v1 / unknown — 화면 배지용. 추론 시작은 따로 다시 판정한다
             "action_space": _action_space(snapshot),
+            "train_cameras": _train_cameras(snapshot),
             "source_dir": str(models_dir),
         })
 
@@ -271,6 +283,7 @@ def _scan_train_outputs(models_dir: Path) -> list[dict]:
                 "created": _created_at(model_dir, config_path),
                 "source_dir": str(models_dir),
                 "action_space": _action_space(model_dir),
+                "train_cameras": _train_cameras(model_dir),
                 "notes": own_notes if (own_notes.get("name") or own_notes.get("description"))
                          else run_notes,
             })

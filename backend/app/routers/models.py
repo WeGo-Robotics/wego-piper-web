@@ -12,7 +12,7 @@ from app.core.cli_mapping import (
 )
 from app.core.config import settings
 from app.core.inference_params import foreign_to
-from app.services import action_space
+from app.services import action_space, train_cameras
 from app.core.policies import takes_language
 from app.services.exclusivity import Activity, require_idle
 from app.services.camera_config import (
@@ -372,6 +372,15 @@ async def start_inference(body: InferenceStartRequest):
     except CameraPrepareError as e:
         raise HTTPException(400, str(e))
 
+    # 학습 때 카메라와 대조 — 연결된 **뒤에** 본다(세그먼트 크기가 있어야 한다). 비율이 다르면 막고,
+    # 크기만 다르면 경고를 실어 시작한다 (feature/camera-resolution.md). 화면의 검증과 같은 판정이다.
+    trained = (train_cameras.resolve(Path(body.checkpoint_path)) if body.checkpoint_path
+               else {"cameras": {}, "source": "none"})
+    cam_errors, cam_warnings = train_cameras.messages(
+        train_cameras.compare(trained["cameras"], train_cameras.live_cameras(body.camera_mapping)))
+    if cam_errors:
+        raise HTTPException(400, cam_errors[0])
+
     # 작업 프로파일 — 학습 데이터와 다른 노출·색으로 추론하면 정책이 다른
     # 분포를 본다. 지정했으면 연결 뒤 한 번 적용하고, 없는 프로파일이면 막는다
     # (녹화 시작과 같은 규칙 — routers/recording.py).
@@ -409,6 +418,8 @@ async def start_inference(body: InferenceStartRequest):
     # wrapper 가 손으로 고친 인자와 대조한다. **시작에서만** 한다 (미리보기는 파일을 안 고친다).
     if body.checkpoint_path:
         action_space.remember(Path(body.checkpoint_path), space)
+        # 학습 카메라도 같은 이유로 — 데이터셋을 지운 뒤에도 해상도 대조가 된다
+        train_cameras.remember(Path(body.checkpoint_path), trained)
 
     env_extra = {"PIPER_DEBUG_DIR": settings.debug_dir} if body.debug_mode else None
     try:
@@ -420,7 +431,8 @@ async def start_inference(body: InferenceStartRequest):
     inference_state.set_running(body.policy_type, body.checkpoint_path)
     return {"status": "started", "pid": process_manager.pid, "args": args,
             "mode": body.inference_mode, "camera_profile": profile_report,
-            "arm_reset": {"warnings": slip_warns}}
+            "arm_reset": {"warnings": slip_warns},
+            "cameras": {"warnings": cam_warnings}}
 
 
 @router.post("/inference/start-custom")
@@ -445,6 +457,13 @@ async def start_inference_custom(body: InferenceStartCustomRequest):
         if flagged != info["action_space"]:
             raise HTTPException(400, f"액션 공간이 어긋납니다 — 체크포인트는 {info['action_space']}, 인자는 {flagged}. "
                                      f"편집 전 명령의 --action-space·--delta-spec 을 그대로 두세요")
+        # 화면 비율도 같은 규칙 — 손으로 고친 `--cameras` 의 세그먼트를 직접 읽어 대조한다
+        if "--cameras" in body.args[:-1]:
+            live = train_cameras.live_from_cameras_arg(body.args[body.args.index("--cameras") + 1])
+            cam_errors, _ = train_cameras.messages(
+                train_cameras.compare(train_cameras.resolve(Path(ckpt))["cameras"], live))
+            if cam_errors:
+                raise HTTPException(400, cam_errors[0])
 
     # 추론 전 연결된 모든 카메라 해제 (wrapper가 카메라를 직접 열므로)
     release_all_cameras("inference")

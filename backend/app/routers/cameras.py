@@ -338,6 +338,58 @@ async def set_resolution(body: ResolutionRequest):
     return cam.to_dict()
 
 
+class MatchTrainingRequest(BaseModel):
+    model_id: str
+    camera_mapping: dict[str, str]
+
+
+@router.post("/match-training")
+async def match_training(body: MatchTrainingRequest):
+    """매핑된 카메라를 모델의 **학습 해상도**로 다시 연다 (feature/camera-resolution.md).
+
+    요청 해상도로 저장되므로(`CameraInfo.connect`) 데몬이 재시작해도 이 크기로 다시 열린다.
+    학습 때 넓게 받아 줄였으면 캡처·출력까지 그대로 재현한다(`train_cameras.match_plan`).
+    이미 학습과 같게 열려 있고 저장도 돼 있으면 건드리지 않는다 — 다시 열면 그 사이 프레임이 끊긴다.
+    """
+    from pathlib import Path
+
+    from app.services import train_cameras
+    from app.services.camera_config import _wait_for_frame, normalize_mapping
+    from app.services.camera_manager import live_size
+    from app.services.model_scanner import get_model
+
+    _guard_device_access()
+    model = get_model(body.model_id)
+    if not model:
+        raise HTTPException(404, "모델을 찾을 수 없습니다")
+    trained = train_cameras.resolve(Path(model.get("path", "")))["cameras"]
+    if not trained:
+        raise HTTPException(400, "이 모델은 학습 해상도를 알 수 없습니다 — 학습 데이터셋을 찾지 못했습니다")
+    loop = asyncio.get_event_loop()
+    changed: list[str] = []
+    for name, cam_id in normalize_mapping(body.camera_mapping).items():
+        cam = camera_manager.cameras.get(cam_id) if cam_id else None
+        t = trained.get(name)
+        if cam is None or not t:
+            continue
+        want, capture, output = train_cameras.match_plan(t)
+        if (cam.requested_mode() == want and cam.capture == capture and cam.output == output
+                and live_size(cam) == want[:2]):
+            continue
+        cam.capture, cam.output = capture, output
+        ok, msg = await loop.run_in_executor(_executor, lambda c=cam, w=want: c.connect(*w))
+        if not ok:
+            raise HTTPException(400, f"카메라 '{name}' 를 {want[0]}x{want[1]}@{want[2]} 로 열지 못했습니다: {msg}")
+        # 새 크기의 프레임이 세그먼트에 들어올 때까지 — 안 기다리면 곧바로 부르는 검증이 옛 크기를 읽는다
+        got = cam.running_profile()
+        if got.get("width") and got.get("height"):
+            wh = (int(got["width"]), int(got["height"]))
+            await loop.run_in_executor(_executor, lambda c=cam, s=wh: _wait_for_frame(c.id, want_wh=s))
+        changed.append(name)
+    camera_manager.save_session()
+    return {"changed": changed}
+
+
 @router.post("/unregister")
 async def unregister_camera(body: CameraIdRequest):
     _guard_stream_move(body.id)

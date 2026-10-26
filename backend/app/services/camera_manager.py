@@ -97,6 +97,14 @@ def _header_shape(cam) -> tuple[int, int] | None:
         return None
 
 
+def live_size(cam) -> tuple[int, int] | None:
+    """지금 발행 중인 `(w, h)` — 녹화·추론이 실제로 받는 크기. 연결 안 됐거나 못 읽으면 None."""
+    if not cam.connected:
+        return None
+    shape = _header_shape(cam)
+    return (shape[1], shape[0]) if shape else None
+
+
 def _active_controls(cam) -> dict:
     """활성 프로파일에서 이 카메라의 컨트롤 값. 없으면 빈 dict.
 
@@ -177,7 +185,9 @@ class CameraInfo:
     # 예전엔 둘 다 `connected: false` 라 화면이 구분할 수 없었고, 뽑아둔 카메라가
     # 스캔 목록에 그대로 남아 "왜 계속 나오지" 가 됐다.
     present: bool = True
-    # 설정값 (요청 해상도 — 실제 값은 데몬이 정한다)
+    # **요청 해상도** — 마지막으로 명시해 연 `w×h@fps`. 세션 파일에 남아 데몬 재시작·USB 재연결 뒤
+    # 다시 열 때도 이 값으로 연다(`connect`). 실제 값은 데몬이 정한다(장치가 못 내면 근사).
+    # feature/camera-resolution.md
     width: int | None = None
     height: int | None = None
     fps: int | None = None
@@ -251,6 +261,9 @@ class CameraInfo:
             "serial": self.serial,
             "stream_type": self.stream_type,
             "connected": self.connected,
+            # 지금 **발행 중인** `[w, h]` — 요청(`config`)과 다를 수 있다. 연결 안 됐으면 None.
+            # 세그먼트 헤더 한 번 읽기라 RPC 가 아니다.
+            "published": list(size) if (size := live_size(self)) else None,
             "present": self.present,
             "ready": self.ready,
             "light_alarm": self.light_alarm,
@@ -295,8 +308,20 @@ class CameraInfo:
     def probe(self, timeout: float = 3.0) -> tuple[bool, str]:
         return self._hub.probe(self.id)
 
+    def requested_mode(self) -> tuple[int, int, int] | None:
+        """저장된 요청 해상도 `(w, h, fps)`. 셋 중 하나라도 없으면 None(장치 기본값)."""
+        if self.width and self.height and self.fps:
+            return int(self.width), int(self.height), int(self.fps)
+        return None
+
     def connect(self, width: int = 0, height: int = 0, fps: int = 0) -> tuple[bool, str]:
-        """셋 다 주면 그 프로파일로 연다. 하나라도 0이면 장치 기본값에 맡긴다.
+        """셋 다 주면 그 프로파일로 열고 **요청 해상도로 저장한다.** 안 주면 저장된 요청으로,
+        그것도 없으면 장치 기본값으로 연다.
+
+        ⚠ **요청을 데몬에만 두면 안 된다.** 데몬은 요청을 메모리에만 들고 있어서, 데몬이 재시작하면
+        (USB 가 빠지며 librealsense 가 죽는 것이 실제 경로였다 — 2026-10-23) 다음 연결이 장치
+        기본값(D435 1280×720, D405 848×480)으로 열렸다. 640×480 으로 학습한 정책이 그 영상을 보고
+        사과를 엇나간 자리로 집으러 갔다. 그래서 요청은 여기서 세션 파일에 남긴다.
 
         장치가 못 내는 조합이면 데몬이 가장 가까운 것으로 낮춰서 연다 —
         `running_profile()` 로 실제 값을 확인할 수 있다.
@@ -309,6 +334,13 @@ class CameraInfo:
         # 늦으면 첫 세그먼트가 규칙 이름으로 만들어졌다가 옮겨진다 — 그 사이 소비자가 옛 이름을 본다.
         self.push_stream()
         self.push_idle()
+        if width and height and fps:
+            asked = (int(width), int(height), int(fps))
+            if asked != self.requested_mode():
+                self.width, self.height, self.fps = asked
+                camera_manager.save_session()
+        elif (saved := self.requested_mode()) is not None:
+            width, height, fps = saved
         ok, msg = self._hub.connect(self.id, width, height, fps,
                                     _active_controls(self), capture=self.capture,
                                     output=self.output)
@@ -620,6 +652,8 @@ class CameraManager:
         if not cam:
             return False
         cam.update_config(cfg)
+        # 요청 해상도는 다음 연결이 쓰는 값이다 — 메모리에만 두면 게이트웨이 재시작에 사라진다
+        self.save_session()
         return True
 
     def register_camera(self, cam_id: str, name: str | None = None) -> tuple[bool, str]:
