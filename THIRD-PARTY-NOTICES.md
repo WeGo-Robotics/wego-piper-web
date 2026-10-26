@@ -147,7 +147,7 @@ LGPL 은 독점·제한 라이선스 소프트웨어에서 쓰는 것을 허용�
 | `jsonlines` | 4.0.0 | BSD License |
 | `lerobot` | 0.5.0 | Apache Software License |
 | `lerobot_camera_pipershm` | 0.1.0 | ? |
-| `lerobot_policy_act_aux` | 0.1.0 | ? |
+| `lerobot_policy_piper` | 0.1.0 | ? |
 | `lerobot_robot_piper` | 0.1.0 | Apache-2.0 |
 | `lerobot_robot_pipershm` | 0.1.0 | ? |
 | `lightning-utilities` | 0.15.3 | Apache-2.0 |

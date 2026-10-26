@@ -49,13 +49,16 @@ def policy_imports() -> dict[str, tuple[str, str, str, str]]:
     """`{정책: (모델모듈, 모델클래스, config모듈, config클래스)}`.
 
     옛 `POLICY_IMPORTS` 와 **같은 모양**이라 부르는 쪽이 안 바뀐다.
+    키에는 스펙의 `aliases` 도 들어간다 — wrapper 는 체크포인트 config.json 의 `type` 으로
+    찾는데, 이름을 바꾸기 전에 저장한 체크포인트는 옛 이름(`act_aux`)을 들고 있다.
     """
     out = {}
     for name, data in SPECS.items():
         rt = data.get("runtime") or {}
         model, config = rt.get("model") or [], rt.get("config") or []
         if len(model) == 2 and len(config) == 2:
-            out[name] = (model[0], model[1], config[0], config[1])
+            for key in (name, *(data.get("aliases") or [])):
+                out[key] = (model[0], model[1], config[0], config[1])
     return out
 
 

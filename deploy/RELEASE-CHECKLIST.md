@@ -151,7 +151,7 @@ diff 로 정한다. 아래 [절차](#절차-수동)는 그 스크립트가 하�
 
 | 바뀐 경로 | 올릴 것 |
 |---|---|
-| `backend/ wrapper/ policies/ act_aux/ phase/ vendor/` | backend 이미지 |
+| `backend/ wrapper/ policies/ custom_policies/ phase/ vendor/` | backend 이미지 |
 | `frontend/` | frontend 이미지 |
 | `bus/ shm/ robot/ so101/` | **backend 이미지 + 데몬 wheel** (양쪽이 쓴다 — so101 은 `relay_map` 때문) |
 | `cam/ rs/ sim/` | 데몬 wheel **+ backend 이미지** (컨테이너가 import 하진 않지만 wheel 이 이미지 안 `/opt/piper-host` 로 실려 나간다 — v0.4.14) |

@@ -22,7 +22,7 @@ INSTALL = REPO / "deploy" / "install.sh"
 README = REPO / "README.md"
 
 #: 설치 스크립트가 순서대로 넣는 로컬 패키지
-PKGS = ["bus", "shm", "plugin", "robot", "cam", "rs", "so101", "sim", "phase", "act_aux",
+PKGS = ["bus", "shm", "plugin", "robot", "cam", "rs", "so101", "sim", "phase", "custom_policies",
         "vendor/wego_piper", "vendor/lerobot_robot_piper",
         "vendor/lerobot_robot_pipershm", "vendor/lerobot_camera_pipershm",
         "backend"]

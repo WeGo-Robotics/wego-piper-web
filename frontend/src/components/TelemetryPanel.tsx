@@ -15,7 +15,7 @@ export type TelemetryData = {
   task: string
   gpu_mem_mb?: number
   gpu_total_mb?: number
-  /** act_aux 계열이 예측한 작업 단계. 다른 정책이면 오지 않는다. */
+  /** stage 헤드 정책(ACT-S·SmolVLA-S)이 예측한 작업 단계. 다른 정책이면 오지 않는다. */
   stage?: string
   /** 그 단계의 확률(0~1). 낮으면 모델이 헷갈리는 중이다. */
   stage_p?: number

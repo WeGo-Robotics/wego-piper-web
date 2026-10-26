@@ -15,8 +15,8 @@
 #
 # ## 레이어 순서 (backend/Dockerfile 과 같은 규칙)
 #
-#   안 바뀌는 것(apt · venv · 스택 5GB)이 위, 자주 바뀌는 것(act_aux · 스크립트 · 버전 ENV)이
-#   아래. 스택 RUN 이 act_aux COPY 보다 **앞**이라 정책 코드 한 줄에 5GB 를 다시 굽지 않는다.
+#   안 바뀌는 것(apt · venv · 스택 5GB)이 위, 자주 바뀌는 것(custom_policies · 스크립트 · 버전 ENV)이
+#   아래. 스택 RUN 이 custom_policies COPY 보다 **앞**이라 정책 코드 한 줄에 5GB 를 다시 굽지 않는다.
 #   버전 ARG/ENV 는 모든 RUN 뒤 — 앞에 두면 태그마다 전부 캐시 미스다 (v0.5.0 의 교훈).
 #
 # 빌드:  ./deploy/build-train.sh            (full·slim 둘 다, 기본 cu126)
@@ -63,12 +63,12 @@ RUN case "$VARIANT" in \
       *)    echo "VARIANT 는 full 또는 slim 이어야 합니다: $VARIANT" >&2; exit 1 ;; \
     esac
 
-# ── 회사 코드 — act_aux 하나뿐 ──
-# ⚠ **act_aux 를 원격에서 학습하려면 필수** — lerobot-train 이 `lerobot_policy_` 접두사로
+# ── 회사 코드 — custom_policies 하나뿐 ──
+# ⚠ **ACT-S·SmolVLA-S 를 원격에서 학습하려면 필수** — lerobot-train 이 `lerobot_policy_` 접두사로
 #   자동 import 한다. 빼먹으면 "unknown policy type" 으로 죽는다.
 #   `--no-deps`: 의존성(lerobot)은 full 이면 위에 있고 slim 이면 부팅 때 온다.
-COPY act_aux/ /opt/piper/act_aux/
-RUN pip install --no-deps --no-build-isolation /opt/piper/act_aux
+COPY custom_policies/ /opt/piper/custom_policies/
+RUN pip install --no-deps --no-build-isolation /opt/piper/custom_policies
 
 COPY deploy/train/bootstrap.sh deploy/train/env-check.sh /opt/piper/
 RUN chmod +x /opt/piper/*.sh

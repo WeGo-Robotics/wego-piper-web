@@ -63,7 +63,7 @@
 `/api/vision` 에 엔드포인트 하나가 늘고, 다음 스크립트(사람이 작업 영역에 들어오면 멈춰라,
 마커 자세를 내보내라, 검출을 MQTT 로 보내라)마다 또 하나가 는다. 이 저장소는 그 길을
 이미 세 번 거절했다 — 정책 UI 는 YAML 스펙으로([policy-ui-spec](policy-ui-spec.md)),
-정책 종류는 `lerobot_policy_*` 규약으로([act-aux](act-aux.md)), 에피소드 루프는 "스텝은
+정책 종류는 `lerobot_policy_*` 규약으로([act-s](act-s.md)), 에피소드 루프는 "스텝은
 Python, 시퀀스는 데이터"로([episode-orchestrator](episode-orchestrator.md) — 이제 플러그인에
 **흡수된다**, §12). 플러그인은 **그 셋과 같은 원칙을 "사용자 스크립트"에 적용한 것**이다.
 

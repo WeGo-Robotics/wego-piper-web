@@ -71,7 +71,8 @@ def _set_rtc(policy: Any, attr: str, value: Any) -> None:
 PARAM_SETTERS = {
     "max_guidance_weight": lambda p, v: _set_rtc(p, "max_guidance_weight", float(v)),
     "execution_horizon": lambda p, v: _set_rtc(p, "execution_horizon", int(v)),
-    "temporal_ensemble_coeff": lambda p, v: setattr(p.config, "temporal_ensemble_coeff", float(v)) if hasattr(p.config, "temporal_ensemble_coeff") else None,
+    # temporal_ensemble(_coeff) 는 여기 없다 — policy.config 에 써 봐야 아무도 안 읽는다
+    # (LeRobot 의 앙상블은 select_action 안에만 있다). wrapper 가 직접 평균한다: _ensembler
     # n_action_steps는 policy.config가 아니라 _actions_per_chunk(큐 크기)로 별도 관리 → param_listener에서 처리
     "use_amp": lambda p, v: setattr(p.config, "use_amp", bool(v)),
 }
@@ -82,6 +83,15 @@ _current_task = "do the task"
 # 액션 필터 (버스로 실시간 변경 가능)
 from action_filter import ActionFilter
 _action_filter = ActionFilter()
+
+# 시간 앙상블 (ACT temporal ensembling — temporal_ensemble.py). 켜면 매 스텝 추론하고, 같은
+# 스텝을 예측한 청크들을 가중 평균해 보낸다 — 액션 큐·재추론 트리거를 안 쓴다.
+# ⚠ 꺼짐이 기본이고 켜는 스위치가 따로다. 계수(기본 0.01)는 예전부터 시작값으로 실려 왔으므로
+#   계수만으로 켜면 모든 ACT 추론의 동작이 한꺼번에 바뀐다.
+from temporal_ensemble import TemporalEnsembler
+from delta_action import ABSOLUTE, CKPT_MARKER, DELTA_V1, DeltaRestorer
+_temporal_ensemble = False
+_ensembler = TemporalEnsembler()
 
 # 단계별 파킹 컨트롤러 (추론 종료 후 원점 복귀)
 from parking_controller import ParkingController
@@ -118,7 +128,7 @@ def param_listener(policy: Any, bus: "Bus") -> None:
     ZMQ PULL bind 를 Redis 큐 소비로 교체했다 (refactor/daemon-split.md 3단계).
     큐라서 pub/sub 과 달리 **정책 로딩 중에 보낸 값도 유실되지 않는다.**
     """
-    global _current_task, _paused, _manual_action, _refill_threshold_pct, _actions_per_chunk, _reset_requested
+    global _current_task, _paused, _manual_action, _refill_threshold_pct, _actions_per_chunk, _reset_requested, _temporal_ensemble
     logger.info("파라미터 리스너 시작 (Redis 큐)")
 
     while True:
@@ -157,6 +167,15 @@ def param_listener(policy: Any, bus: "Bus") -> None:
                 if key in ("use_chunk_size", "n_action_steps"):
                     _actions_per_chunk = max(0, int(value)) if key == "use_chunk_size" else max(1, int(value))
                     logger.info("Updated actions_per_chunk = %d (via %s)", _actions_per_chunk, key)
+                    continue
+                # 시간 앙상블 — 켜고 끄기의 반영(버퍼 비우기)은 메인 루프가 한다
+                if key == "temporal_ensemble":
+                    _temporal_ensemble = bool(value)
+                    logger.info("Updated temporal_ensemble = %s", _temporal_ensemble)
+                    continue
+                if key == "temporal_ensemble_coeff":
+                    _ensembler.coeff = float(value)
+                    logger.info("Updated temporal_ensemble_coeff = %s", _ensembler.coeff)
                     continue
                 # 액션 필터 파라미터
                 if _action_filter.update_param(key, value):
@@ -198,6 +217,9 @@ def main() -> None:
     parser.add_argument("--task", default=None)
     parser.add_argument("--config-overrides", default="{}")
     parser.add_argument("--debug", action="store_true", help="주고받은 모든 데이터를 별도 폴더에 기록")
+    # 액션 공간 (feature/act-delta.md). 백엔드가 체크포인트의 학습 데이터셋을 보고 정한다 — 사람이 고르지 않는다
+    parser.add_argument("--action-space", default="absolute", choices=["absolute", "delta_v1"])
+    parser.add_argument("--delta-spec", default="{}", help='델타 채널·스텝당 상한 {"delta_names": [...], "clamp": {...}}')
     args = parser.parse_args()
 
     cameras_cfg = json.loads(args.cameras)
@@ -215,8 +237,21 @@ def main() -> None:
 
     register_third_party_plugins()
 
-    global _current_task, _refill_threshold_pct, _actions_per_chunk, _paused, _reset_requested, _reset_gen
+    global _current_task, _refill_threshold_pct, _actions_per_chunk, _paused, _reset_requested, _reset_gen, _temporal_ensemble
     _current_task = args.task if args.task else "do the task"
+
+    # ── 액션 공간 대조 — 어긋나면 시작하지 않는다 (fail-closed) ──
+    # 델타 체크포인트를 절대로 돌리면 액션 ≈ 0 → 팔이 영점 자세로 돌진하고, 절대 체크포인트를 델타로
+    # 돌리면 현재 + 절대 목표 = 두 배 거리로 뛴다. 백엔드는 체크포인트를 쓸 때 표식을 남긴다 —
+    # 손으로 고친 인자가 그 표식과 다르면 여기서 막는다. 표식이 없으면(옛·허브 체크포인트) 인자를 믿는다.
+    # 로봇을 만들기 **전에** 본다 — 연결한 뒤에 죽으면 토크가 걸린 채 남는다.
+    _marker_path = Path(args.policy_path) / CKPT_MARKER
+    if _marker_path.is_file():
+        _marked = json.loads(_marker_path.read_text()).get("action_space", ABSOLUTE)
+        if _marked != args.action_space:
+            raise SystemExit(f"액션 공간이 어긋난다: 체크포인트는 {_marked}, 인자는 {args.action_space} — "
+                             f"시작하지 않는다 ({_marker_path})")
+    logger.info("Action space: %s", args.action_space)
 
     # ── 1. 로봇 생성 ──
     # 양팔 포함 조립은 robot_factory 한 곳이다 — gRPC wrapper 와 같은 코드를 쓴다
@@ -278,6 +313,14 @@ def main() -> None:
         if key == "refill_threshold_pct":
             _refill_threshold_pct = max(0.0, min(100.0, float(value)))
             logger.info("refill_threshold_pct override: %s", _refill_threshold_pct)
+            continue
+        if key == "temporal_ensemble":
+            _temporal_ensemble = bool(value)
+            logger.info("temporal_ensemble override: %s", _temporal_ensemble)
+            continue
+        if key == "temporal_ensemble_coeff":
+            _ensembler.coeff = float(value)
+            logger.info("temporal_ensemble_coeff override: %s", _ensembler.coeff)
             continue
         # 액션 필터 시작값 (런타임 변경과 동일 경로로 적용)
         if _action_filter.update_param(key, value):
@@ -486,8 +529,12 @@ def main() -> None:
     _latest_action_dict: dict | None = None
     _latest_action_np: np.ndarray | None = None
     _action_queue: list = []  # 타임스텝 기반 액션 큐
-    _obs_for_inference: dict | None = None
-    # act_aux 계열이 청크마다 내는 stage 예측. 다른 정책이면 계속 None 이다.
+    # (관측을 찍은 스텝, 그때의 앙상블 세대, 관측). 스텝이 있어야 청크의 k 번째가 어느 스텝인지 안다.
+    # 한 튜플로 넘긴다 — 셋을 따로 대입하면 추론 스레드가 섞인 조합을 읽을 수 있다.
+    _obs_for_inference: tuple[int, int, dict] | None = None
+    # 이번 루프가 실제로 쓰는 모드. 스위치(_temporal_ensemble)가 바뀌면 메인 루프가 버퍼를 비우며 따라간다.
+    _te_active = False
+    # stage 헤드 정책(ACT-S·SmolVLA-S)이 청크마다 내는 stage 예측. 다른 정책이면 계속 None 이다.
     _latest_aux: dict | None = None
     # 이름표는 체크포인트 config 에 들어 있다 — 추론이 piper_phase 를 import 하지
     # 않고도 클래스 순서를 안다. 다른 태스크로 구운 모델이면 이름도 그 모델 것이다.
@@ -499,6 +546,12 @@ def main() -> None:
     _inference_in_flight = False  # 연산 중 재트리거 방지 (이벤트는 연산 시작 시 clear되므로 별도 플래그 필요)
     _effective_chunk_len = max(1, _actions_per_chunk)  # 모델 청크로 클램핑된 실제 청크 길이 — refill_lead 계산용
     motor_names = list(robot.action_features.keys())
+    # 델타 체크포인트면 청크를 절대로 되돌린다 (delta_action.py). 채널이 로봇에 없으면 여기서 죽는다.
+    _delta: DeltaRestorer | None = None
+    if args.action_space == DELTA_V1:
+        _spec = json.loads(args.delta_spec)
+        _delta = DeltaRestorer(motor_names, list(_spec.get("delta_names") or []), dict(_spec.get("clamp") or {}))
+        logger.info("Delta actions: %s (clamp %s)", _delta.names, _spec.get("clamp"))
 
     def _inference_thread_fn():
         """별도 스레드에서 predict_action_chunk() 실행 (서버 방식)."""
@@ -514,10 +567,11 @@ def main() -> None:
             _obs_event.clear()
             _inference_in_flight = True
 
-            raw_obs = _obs_for_inference
-            if raw_obs is None:
+            pending = _obs_for_inference
+            if pending is None:
                 _inference_in_flight = False
                 continue
+            obs_step, obs_epoch, raw_obs = pending
 
             # 리셋 세대 캡처: 연산 도중 리셋이 발생하면 이 결과는 폐기(스톨 액션 방지)
             my_gen = _reset_gen
@@ -536,7 +590,7 @@ def main() -> None:
                     observation = _prepare_observation(raw_obs)
                     # predict_action_chunk — 서버와 동일
                     action_chunk = policy.predict_action_chunk(observation)
-                    # act_aux 계열은 같은 인코더 위에서 stage 를 함께 낸다. 바닐라
+                    # ACT-S·SmolVLA-S 는 같은 인코더 위에서 stage 를 함께 낸다. 바닐라
                     # 정책엔 이 속성이 없으므로 getattr 로 막는다 — 정책 타입 분기가
                     # wrapper 로 새어 들어오지 않게 한다.
                     aux = getattr(policy, "last_aux", None)
@@ -558,20 +612,31 @@ def main() -> None:
                     a_dict = {name: float(a_np[j]) for j, name in enumerate(motor_names)}
                     new_queue.append((a_np, a_dict))
 
+                # 델타 → 절대. 앵커는 이 추론에 넣은 관측이다 — 지금 다시 읽지 않는다.
+                # 앙상블·큐 어느 쪽이든 아래부터는 절대 위치다.
+                if _delta is not None and new_queue:
+                    restored = _delta.restore(np.stack([a for a, _ in new_queue]), _delta.anchor(raw_obs))
+                    new_queue = [(r, {name: float(r[j]) for j, name in enumerate(motor_names)}) for r in restored]
+
                 with _action_lock:
                     # 연산 도중 리셋이 발생했으면(_reset_gen 변경) 이 결과는 낡은 것 → 폐기
                     if my_gen != _reset_gen:
                         logger.info("Discarding stale inference result (reset occurred)")
                         continue
-                    _action_queue = new_queue
+                    if _te_active:
+                        # 큐를 갈아끼우지 않는다 — 관측 스텝 기준으로 평균에 더한다. 그 사이 이미 보낸
+                        # 칸은 앙상블이 버리고, 비운 뒤에 도착한 옛 관측의 청크는 세대가 달라 버린다.
+                        _ensembler.add(obs_step, [a for a, _ in new_queue], epoch=obs_epoch)
+                    else:
+                        _action_queue = new_queue
                     # 액션과 같은 추론에서 나온 값이므로 같은 세대 검사를 탄다.
                     # 위에서 폐기됐으면 stage 도 공표되지 않는다.
                     _latest_aux = aux
                     # 실제 큐에 담긴 길이 = 모델 청크로 클램핑된 값. refill_lead가 raw 슬라이더
                     # 값(클램핑 전)을 쓰면 청크보다 큰 임계치가 나와 매번 재추론하므로 이 값을 사용.
                     _effective_chunk_len = max(1, len(new_queue))
-                    # 첫 액션을 latest로 설정
-                    if new_queue:
+                    # 첫 액션을 latest로 설정 (앙상블이면 latest 는 실제로 보낸 평균이다)
+                    if new_queue and not _te_active:
                         _latest_action_np, _latest_action_dict = new_queue[0]
 
                 _inference_ms_shared = round((time.monotonic() - t0) * 1000, 1)
@@ -605,6 +670,7 @@ def main() -> None:
                 _obs_event.clear()
                 with _action_lock:
                     _action_queue = []
+                    _ensembler.clear(0)
                     _latest_action_dict = None
                     _latest_action_np = None
                     _effective_chunk_len = 1
@@ -631,6 +697,11 @@ def main() -> None:
 
             # 일시정지 중: 수동 액션만 처리
             if _paused:
+                # 멈추기 전에 쌓인 예측은 재개 시점엔 낡았다. 앙상블은 오래된 예측을 더 믿으므로 남겨 두면
+                # 재개 직후 몇 초를 낡은 궤적이 끈다 — 비운다. (큐 모드는 예전 그대로 둔다.)
+                with _action_lock:
+                    if _te_active and len(_ensembler):
+                        _ensembler.clear(step)
                 if _manual_action:
                     robot.send_action(_manual_action)
                 obs = robot.get_observation()
@@ -644,13 +715,22 @@ def main() -> None:
                 time.sleep(0.05)
                 continue
 
+            # 시간 앙상블 켜고 끄기 — 큐와 앙상블을 섞지 않는다. 둘 다 비우고 다음 청크부터 새로.
+            # 그 사이(추론 1회)는 큐가 빈 것과 같아 직전 액션을 유지한다.
+            if _temporal_ensemble != _te_active:
+                with _action_lock:
+                    _te_active = _temporal_ensemble
+                    _action_queue = []
+                    _ensembler.clear(step)
+                logger.info("Temporal ensemble %s", "ON" if _te_active else "OFF")
+
             # 5a. 관측값 가져오기
             obs = robot.get_observation()
 
             if step == 0:
                 logger.info("Observation keys: %s", list(obs.keys()))
                 # 첫 추론 트리거
-                _obs_for_inference = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()}
+                _obs_for_inference = (step, _ensembler.epoch, {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()})
                 _obs_event.set()
 
             # 5b. 관절값 추출 (텔레메트리용)
@@ -658,14 +738,23 @@ def main() -> None:
 
             # 5c. 액션 큐에서 순서대로 꺼내서 로봇에 전송
             with _action_lock:
-                if _action_queue:
-                    action_np, action_dict = _action_queue.pop(0)
-                    _latest_action_np = action_np
-                    _latest_action_dict = action_dict
+                if _te_active:
+                    # 이 스텝을 예측한 청크들의 가중 평균. 덮는 청크가 없으면 직전 액션 유지
+                    ensembled = _ensembler.pop(step)
+                    if ensembled is not None:
+                        _latest_action_np = ensembled
+                        _latest_action_dict = {name: float(ensembled[j]) for j, name in enumerate(motor_names)}
+                    action_np, action_dict = _latest_action_np, _latest_action_dict
+                    qsize_after = len(_ensembler)
                 else:
-                    action_dict = _latest_action_dict
-                    action_np = _latest_action_np
-                qsize_after = len(_action_queue)
+                    if _action_queue:
+                        action_np, action_dict = _action_queue.pop(0)
+                        _latest_action_np = action_np
+                        _latest_action_dict = action_dict
+                    else:
+                        action_dict = _latest_action_dict
+                        action_np = _latest_action_np
+                    qsize_after = len(_action_queue)
 
             # 큐 잔량이 임계치(%) 이하로 떨어질 때만 새 추론을 트리거 (매 스텝 X).
             # 임계치를 높이면 큐가 비기 전에 미리 재추론해 지연을 감추고(액션 일부 폐기),
@@ -674,8 +763,10 @@ def main() -> None:
             # 이벤트 대기(set)뿐 아니라 실제 연산 중(_inference_in_flight)에도 재트리거 금지 —
             # 연산 시작 시 이벤트가 clear되므로 이 플래그가 없으면 연산 도중 큐가 임계치 이하로
             # 떨어져 중복 추론이 짝지어 발생함.
-            if qsize_after <= _refill_lead and not _obs_event.is_set() and not _inference_in_flight:
-                _obs_for_inference = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()}
+            # 시간 앙상블이면 매 스텝 — 평균할 청크가 매 스텝 있어야 한다. 추론이 제어보다 느리면
+            # 연산 중 플래그에 걸려 끝나는 대로 다음 것을 돌린다.
+            if (_te_active or qsize_after <= _refill_lead) and not _obs_event.is_set() and not _inference_in_flight:
+                _obs_for_inference = (step, _ensembler.epoch, {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()})
                 _obs_event.set()
 
             filtered = None
@@ -722,8 +813,8 @@ def main() -> None:
                 "action": [round(float(action_np[i]), 2) for i in range(len(action_np))] if action_np is not None else [],
                 "task": _current_task,
             }
-            # act_aux 계열만 채워진다. 청크당 한 번 갱신되므로 프레임마다 바뀌지
-            # 않고, 같은 값이 청크 길이만큼(15fps·apc 20~50 → 1~3초) 반복된다.
+            # ACT-S·SmolVLA-S 만 채워진다. 추론마다 한 번 갱신된다 — 큐 모드면 같은 값이 청크
+            # 길이만큼(15fps·apc 20~50 → 1~3초) 반복되고, 시간 앙상블이면 매 스텝 바뀐다.
             with _action_lock:
                 aux_now = _latest_aux
             if aux_now is not None:
@@ -738,7 +829,7 @@ def main() -> None:
 
             # CSV 로그
             with _action_lock:
-                qsize = len(_action_queue)
+                qsize = len(_ensembler) if _te_active else len(_action_queue)
             csv_row = {
                 "timestamp": time.monotonic(),
                 "step": step, "fps": current_fps,
@@ -793,6 +884,8 @@ def main() -> None:
         _inference_running = False
         _obs_event.set()
         inference_thread.join(timeout=3)
+        if _delta is not None:
+            logger.info("Delta clamp hit on %d steps", _delta.clipped_steps)
         logger.info("Returning to home position...")
         ctrl = ParkingController(robot)
         try:

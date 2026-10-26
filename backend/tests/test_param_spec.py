@@ -85,6 +85,21 @@ def test_frontend_sliders_use_the_spec():
     assert "useParamSpec" in src
 
 
+def test_policy_cards_follow_the_spec_not_policy_names():
+    """정책별 파라미터 카드는 스펙의 `policies` 로 띄운다 — 이름을 적으면 같은 파라미터를 쓰는
+    정책이 빠진다. 실제로 `activePolicy === 'act'` 라 ACT-S(구 ACT-Aux)에 ACT 카드가 안 떴다."""
+    src = _INFERENCE_PAGE.read_text()
+    code = "\n".join(l for l in src.splitlines() if not l.strip().startswith(("//", "{/*", "*")))
+    named = re.findall(r"activePolicy\s*[!=]==\s*'[\w-]+'", code)
+    assert not named, f"정책 이름으로 화면을 가른다: {named}"
+    assert "paramSpec.temporal_ensemble?.policies.includes(activePolicy)" in src
+
+    from app.core.inference_params import spec_for_frontend
+
+    rows = {r["key"]: r for r in spec_for_frontend()}
+    assert "act_s" in rows["temporal_ensemble_coeff"]["policies"]
+
+
 def test_frontend_has_no_local_defaults_block():
     """기본값도 서버에서 온다 — 프론트 defaults 는 스펙 도착 전 임시값일 뿐이다."""
     src = _INFERENCE_PAGE.read_text()

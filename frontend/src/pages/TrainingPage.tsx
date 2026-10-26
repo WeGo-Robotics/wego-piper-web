@@ -17,7 +17,9 @@ import LogViewer from '../components/LogViewer'
 import TrainingMetrics, { type MetricsData, type HistoryData } from '../components/TrainingMetrics'
 import { useT, fmt } from '../i18n'
 
-type Dataset = { id: string; path: string; total_episodes: number; total_frames: number; fps: number | null; features: Record<string, { shape?: number[]; dtype?: string; names?: string[] }> }
+type Dataset = { id: string; path: string; total_episodes: number; total_frames: number; fps: number | null; features: Record<string, { shape?: number[]; dtype?: string; names?: string[] }>;
+  /** 액션이 관절 이동 변화량인 사본 (feature/act-delta.md) — 목록에 표시만 한다 */
+  delta?: { source: string | null } | null }
 type Model = { id: string; path: string; notes?: { name?: string; description?: string }; policy_type?: string; is_policy?: boolean; config?: Record<string, unknown>; requirements?: { required_cameras: { name: string; model_name?: string }[]; state_dim: number; action_dim: number } }
 type Checkpoint = { name: string; step: number; size_kb: number; path: string }
 
@@ -524,12 +526,12 @@ export default function TrainingPage() {
                     className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
                     <option value="">{t('선택...')}</option>
                     {shown.map((d) => (
-                      <option key={d.id} value={d.id}>{d.id} ({d.total_episodes} ep, {d.total_frames} frames)</option>
+                      <option key={d.id} value={d.id}>{d.id} ({d.total_episodes} ep, {d.total_frames} frames){d.delta ? ` · Δ ${t('델타')}` : ''}</option>
                     ))}
                   </select>
                   {req.length > 0 && (
                     <p className="text-xs text-neutral-500">
-                      {t.rich('이 정책은 {code} 가 있는 데이터셋만 받습니다{hidden}. 에피소드 화면의 [ACT-Aux용 굽기]로 만듭니다.', {
+                      {t.rich('이 정책은 {code} 가 있는 데이터셋만 받습니다{hidden}. 에피소드 화면의 [ACT-S·SmolVLA-S용 굽기]로 만듭니다.', {
                         code: <code>{req.join(', ')}</code>,
                         hidden: hidden > 0 && t(' — {hidden}개 숨김', { hidden }),
                       })}

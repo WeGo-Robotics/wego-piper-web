@@ -110,6 +110,10 @@ def _scan_hub_datasets(datasets_dir: Path) -> list[dict]:
             "size_bytes": _dir_size(snapshot),
             "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
             "created": _created_at(snapshot, info_path),
+            # 허브에서 받은 것도 구운 사본·델타 사본일 수 있다 (사본을 올렸다 받은 경우). 예전엔 LeRobot 캐시에만
+            # 붙여서, 허브 쪽 구운 사본은 편집기의 읽기 전용 잠금도 [델타 변환] 버튼 숨김도 안 걸렸다
+            "baked": baked_info(snapshot),
+            "delta": delta_info(snapshot),
             "notes": _notes(snapshot),
             "scene": _scene(snapshot),
         })
@@ -145,21 +149,47 @@ def _scan_lerobot_datasets(lerobot_dir: Path) -> list[dict]:
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
                 "created": _created_at(ds_dir, info_path),
                 "baked": baked_info(ds_dir),
+                "delta": delta_info(ds_dir),
                 "notes": _notes(ds_dir),
                 "scene": _scene(ds_dir),
             })
     return results
 
 
+# 굽기(`lerobot_policy_piper.bake`)가 사본에 남기는 표식. 뒤의 것은 이름을 바꾸기 전(ACT-Aux)
+# 굽기가 남긴 것이다 — 그 사본도 구운 사본이다. 백엔드는 정책 패키지를 import 하지 않으므로
+# 이름을 여기 다시 적는다 (backend/tests/test_custom_policies_contract.py 가 대조).
+BAKE_META_FILES = ("stage_bake.json", "act_aux.json")
+
+
+def delta_info(ds_path: Path) -> dict | None:
+    """델타로 바꾼 사본이면 그 근거 (feature/act-delta.md). 원본이면 None.
+
+    이 데이터셋으로 학습한 체크포인트는 추론이 절대로 되돌린다 — 화면이 사본을 구분해 보여준다.
+    """
+    from app.services.action_space import dataset_delta
+
+    meta = dataset_delta(ds_path)
+    if meta is None:
+        return None
+    return {
+        "source": meta.get("source_repo_id"),
+        "delta_names": meta.get("delta_names", []),
+        "absolute_names": meta.get("absolute_names", []),
+        "clamp": meta.get("clamp", {}),
+        "lag": {n: v.get("mean") for n, v in (meta.get("lag") or {}).items()},
+    }
+
+
 def baked_info(ds_path: Path) -> dict | None:
-    """`meta/act_aux.json` 이 있으면 ACT-Aux 용으로 **구운 사본**이다 (feature/act-aux.md §4.5).
+    """`meta/stage_bake.json` 이 있으면 ACT-S·SmolVLA-S 용으로 **구운 사본**이다 (feature/act-s.md §4.5).
 
     사본에서 구간을 고치면 원본엔 반영되지 않고 다음 bake 에 조용히 덮인다 — 그래서
     화면이 사본을 구분해 읽기 전용으로 두고, 원본 사이드카가 bake 뒤에 바뀌었으면
     (`stale`) 재굽기를 알린다. 원본이 사라졌으면 `source_missing`.
     """
-    meta_path = ds_path / "meta" / "act_aux.json"
-    if not meta_path.is_file():
+    meta_path = next((p for n in BAKE_META_FILES if (p := ds_path / "meta" / n).is_file()), None)
+    if meta_path is None:
         return None
     try:
         meta = json.loads(meta_path.read_text())

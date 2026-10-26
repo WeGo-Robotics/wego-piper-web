@@ -5,9 +5,9 @@
 1. **핀은 한 곳(install-stack.sh)이고 추론 기계(Dockerfile.base)와 같다** — 학습 기계와
    추론 기계의 lerobot·torch 가 갈리면 체크포인트가 로컬 추론에서 안 열릴 수 있다.
    두 변종이 같은 스크립트를 쓰므로 "포함형"과 "다운로드형"의 환경도 같다.
-2. **레이어 순서** — 스택 5GB 가 act_aux·스크립트·버전 ENV 보다 위. 정책 코드 한 줄에
+2. **레이어 순서** — 스택 5GB 가 custom_policies·스크립트·버전 ENV 보다 위. 정책 코드 한 줄에
    5GB 를 다시 굽지 않는다 (v0.5.0 의 교훈을 그대로).
-3. **회사 코드는 act_aux 뿐** — 로봇·카메라·게이트웨이 코드가 임대 서버에 갈 이유가 없다.
+3. **회사 코드는 custom_policies 뿐** — 로봇·카메라·게이트웨이 코드가 임대 서버에 갈 이유가 없다.
 4. **부팅은 멱등** — 두 번 불려도 한 번만 깔고, 끝나면 `.ready` 를 남긴다.
 5. **환경 체크는 실제 쓰는 경로에서 회선을 잰다** — PyTorch 인덱스·PyPI·GHCR·HF.
    speedtest 숫자는 그 네 곳과 무관하다. 그리고 torch 없이도 돈다(slim 부팅 전).
@@ -103,26 +103,26 @@ def test_the_two_variants_share_one_install_script():
 
 
 def test_the_stack_layer_comes_before_everything_that_changes():
-    """스택 5GB 위에 act_aux·스크립트·버전 ENV — 순서가 바뀌면 정책 한 줄에 5GB 를 다시 굽는다."""
+    """스택 5GB 위에 custom_policies·스크립트·버전 ENV — 순서가 바뀌면 정책 한 줄에 5GB 를 다시 굽는다."""
     lines = _lines(DF)
     i_stack = next(n for n, l in enumerate(lines) if l.startswith("RUN ") and "install-stack.sh" in l)
-    i_aux = next(n for n, l in enumerate(lines) if l.startswith("COPY act_aux/"))
+    i_aux = next(n for n, l in enumerate(lines) if l.startswith("COPY custom_policies/"))
     i_scripts = next(n for n, l in enumerate(lines) if l.startswith("COPY ") and "env-check.sh" in l)
     assert i_stack < i_aux < i_scripts, "스택 레이어가 자주 바뀌는 것 뒤에 있다"
     last_run = max(n for n, l in enumerate(lines) if l.startswith("RUN "))
     i_ver = next(n for n, l in enumerate(lines) if l.startswith("ENV PIPER_TRAIN_IMAGE="))
     assert last_run < i_ver, "이미지 태그 ENV 가 RUN 앞에 있다 — 태그마다 전부 다시 굽는다"
-    # act_aux 는 --no-deps — 의존성은 full 이면 위에 있고 slim 이면 부팅 때 온다
-    aux_run = next(l for l in lines if l.startswith("RUN ") and "/opt/piper/act_aux" in l)
+    # custom_policies 는 --no-deps — 의존성은 full 이면 위에 있고 slim 이면 부팅 때 온다
+    aux_run = next(l for l in lines if l.startswith("RUN ") and "/opt/piper/custom_policies" in l)
     assert "--no-deps" in aux_run
 
 
-def test_the_image_carries_only_act_aux():
+def test_the_image_carries_only_custom_policies():
     """학습은 데이터셋만 본다. 로봇·카메라·게이트웨이 코드가 임대 서버에 갈 이유가 없다."""
     copies = [l for l in _lines(DF) if l.startswith("COPY ")]
     for l in copies:
         src = l.split()[1]
-        assert src.startswith(("act_aux/", "deploy/train/")), f"학습 이미지에 실릴 것이 아니다: {l}"
+        assert src.startswith(("custom_policies/", "deploy/train/")), f"학습 이미지에 실릴 것이 아니다: {l}"
     df = DF.read_text()
     for pkg in ("backend/", "vendor/", "robot/", "cam/", "rs/", "wrapper/", "daemons/"):
         assert f"COPY {pkg}" not in df, f"{pkg} 가 학습 이미지에 들어간다"

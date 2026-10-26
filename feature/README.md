@@ -22,7 +22,9 @@
 | 깊이 배경 제거 | 깊이 `far_mm` 밖을 **컬러에서** 지워 정책이 배경에 안 물들게. 깊이를 못 읽은 픽셀은 남긴다(D405 는 42%가 그렇다) | rsd 소유라 녹화·추론이 같은 처리를 받는다. `rs.align` 은 켠 장치에서만 | [depth-background-mask.md](depth-background-mask.md) |
 | 화면 레이아웃 개편 | 좌측 세로 내비(그룹) + 상단 상태바(도는 활동·로봇/캠 개수). 상단 가로 내비가 한계 — **모델·데이터셋은 이미 자리가 없어 밀려나 있다** | 프론트 껍데기 + 요약 API 하나라 **아예 안 겹침.** 값은 `/api/activity` 와 `device_watch` 가 이미 갖고 있다 | [layout-redesign.md](layout-redesign.md) |
 | 외부 LLM 연동 | 분리수거 판단·플래너용 구조화 출력 클라이언트 — 슬롯 JSON 만, 에피소드 경계에서만, 오케스트레이터 스텝으로. 규칙은 프리셋 스토어 합류, 온프레미스는 로컬 Qwen 어댑터 | 백엔드 서비스 + 외부 HTTP 뿐이라 **아예 안 겹침** — 클라이언트(1단계)는 지금 가능, 스텝 합류는 오케스트레이터 1단계 뒤 | [llm-integration.md](llm-integration.md) |
-| ACT-Aux | ◐ 1~2단계 ☑. ACT 를 **상속**해 행동 + 작업 단계(stage)를 함께 내는 `act_aux` 정책. 기존 ACT 무수정, `lerobot_policy_*` 플러그인 규약으로 꽂는다. 라벨은 phase-annotation 의 FSM 사이드카를 컬럼으로 굽는다 | 설치 패키지 하나 + wrapper 10줄이라 **거의 안 겹침**. 관측 차원을 안 바꿔 refactor #8 과 무관 | [act-aux.md](act-aux.md) |
+| ACT-S (구 ACT-Aux) | ◐ 1~2단계 ☑. ACT 를 **상속**해 행동 + 작업 단계(stage)를 함께 내는 `act_s` 정책. 기존 ACT 무수정, `lerobot_policy_*` 플러그인 규약으로 꽂는다. 라벨은 phase-annotation 의 FSM 사이드카를 subtask 로 굽는다 | 설치 패키지(`custom_policies/`) 하나 + wrapper 10줄이라 **거의 안 겹침**. 관측 차원을 안 바꿔 refactor #8 과 무관 | [act-s.md](act-s.md) |
+| ACT-delta | ◐ 1~4 ☑. 액션을 절대 위치 대신 **관절 이동 변화량**으로 학습 — 영점이 바뀌어도 액션이 안 망가진다. 데이터셋을 `<이름>_delta` 사본으로 바꾸고(정책 코드 무수정), 추론이 체크포인트의 학습 데이터셋을 보고 알아서 절대로 되돌린다. 남은 것: A/B 실기 | 변환기는 굽기 옆, 복원은 wrapper 한 자리 — 정책·학습 코드와 **안 겹침** | [act-delta.md](act-delta.md) |
+| SmolVLA-S | ◐ 1단계 ☑. 같은 stage 헤드를 SmolVLA 의 VLM prefix 출력에 붙인 `smolvla_s`. 굽기·wrapper 배선은 ACT-S 것 그대로. 남은 것: smolvla_base 에서 출발(워밍스타트) | ACT-S 와 같은 패키지 — 정책 하나가 늘 뿐 | [smolvla-s.md](smolvla-s.md) |
 | SO-101 180° 거치 | 리더를 반 바퀴 돌려 놓고 잡는 옵션 — **부호 표 하나**로 닫힌다 | [so101d](so101d.md) §5a 관절 매칭의 옵션. POSE 는 크로스 모델에서 막혀 있어 해당 없다 | [so101-flipped.md](so101-flipped.md) |
 | 시뮬 환경 | 하드웨어 없이 등록→수집→학습→추론 왕복. `simd` 하나가 세계(팔+카메라)를 든다 | 계약(shm·RPC)을 그대로 재사용해 **데몬 하나가 늘 뿐** — ◐ 1~3단계 ☑, 4단계(E2E 한 바퀴)가 인수 기준 | [sim-env.md](sim-env.md) |
 | 시뮬 데이터 출처 | 데이터셋·가중치가 **어느 세계에서 나왔는지** 스스로 말하게 한다 | 물체는 이미 사이드카에 통째로 남는다(실측). 빈 곳은 **메시·세계 버전·가중치로의 전달** 셋 | [sim-provenance.md](sim-provenance.md) |

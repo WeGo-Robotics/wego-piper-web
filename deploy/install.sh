@@ -65,7 +65,7 @@ fi
 # ── 4. 파이썬 패키지 — **순서가 있다** ────────────────────────────────────
 echo "4. 파이썬 패키지"
 # 의존 순서: bus·shm → robot·cam → rs → phase → vendor → backend
-PKGS=(bus shm plugin robot cam rs so101 sim phase act_aux
+PKGS=(bus shm plugin robot cam rs so101 sim phase custom_policies
       vendor/wego_piper vendor/lerobot_robot_piper
       vendor/lerobot_robot_pipershm vendor/lerobot_camera_pipershm
       backend)
@@ -75,6 +75,9 @@ if [ $CHECK_ONLY -eq 1 ]; then
     python3 -m pip show "$n" >/dev/null 2>&1 && ok "$p" || bad "$p 미설치"
   done
 else
+  # 옛 이름(ACT-Aux) 패키지 — 소스가 custom_policies/ 로 옮겨 가 import 가 깨진 채 남는다.
+  # lerobot-train 이 `lerobot_policy_*` 를 전부 import 하므로 그대로 두면 학습마다 오류를 찍는다.
+  python3 -m pip uninstall -y -q lerobot_policy_act_aux 2>/dev/null || true
   for p in "${PKGS[@]}"; do
     python3 -m pip install -q -e "$REPO/$p" && ok "$p"
   done

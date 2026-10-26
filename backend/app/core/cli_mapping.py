@@ -77,6 +77,10 @@ INFERENCE_ARGS_MAP: dict[str, str] = {
     "task": "--task",
     "cameras": "--cameras",
     "debug": "--debug",
+    # 델타 체크포인트일 때만 실린다 (routers/models._action_space_for). 절대면 아무것도 안 붙어
+    # 기존 체크포인트의 명령은 한 글자도 안 바뀐다
+    "action_space": "--action-space",
+    "delta_spec": "--delta-spec",
 }
 
 # 데이터셋 편집 operation 매핑
@@ -224,6 +228,19 @@ def build_edit_dataset_args(
     if operation_params:
         for key, value in operation_params.items():
             args.append(f"--operation.{key}={value}")
+    return args
+
+
+def build_delta_args(dataset_path: str, out: str, *, force: bool = False) -> list[str]:
+    """델타 변환(`lerobot_policy_piper.delta`) 인자 — 데이터셋 편집 유닛으로 돈다 (feature/act-delta.md).
+
+    백엔드는 lerobot 을 import 하지 않는다 — 학습 파이썬으로 실행한다 (굽기와 같다). 원본은 안 고치고
+    `<이름>_delta` 사본을 만든다 — 자리(`out`)는 호출부가 데이터셋 이름으로 정한다(LeRobot 캐시).
+    `force` 는 이전 변환 결과물만 지운다 (변환기가 확인한다).
+    """
+    args = [settings.grpc_python, "-u", "-m", "lerobot_policy_piper.delta", dataset_path, "--out", out]
+    if force:
+        args.append("--force")
     return args
 
 
@@ -440,6 +457,9 @@ def checkpoint_dim_problem(path: str) -> str | None:
 # ACT 는 자체 기본값이 이미 ImageNet 이라 빠져 있다.
 _IMAGENET_BACKBONE_POLICIES = {"diffusion", "vqbet"}
 
+# `load_vlm_weights` 기본값이 false 인 SmolVLA 계열 — 처음부터 학습하면 VLM 이 랜덤이 된다.
+_VLM_WEIGHT_POLICIES = {"smolvla", "smolvla_s"}
+
 
 def build_train_args(
     params: dict,
@@ -496,8 +516,9 @@ def build_train_args(
     # VLM 전체(SigLIP 비전 인코더 포함)가 랜덤 초기화된다. freeze_vision_encoder 기본값이 true라
     # 그 랜덤 가중치는 학습조차 되지 않는다. UI가 값을 보내지 않는 경우(오래된 localStorage 등)를
     # 위한 안전망. 파인튜닝(has_pretrained)은 체크포인트에서 가중치가 오므로 false가 정상이다.
+    # SmolVLA-S 는 SmolVLAConfig 를 상속해 같은 기본값(false)을 물려받는다.
     if (
-        params.get("policy_type") == "smolvla"
+        params.get("policy_type") in _VLM_WEIGHT_POLICIES
         and not has_pretrained
         and "load_vlm_weights" not in policy_params
     ):

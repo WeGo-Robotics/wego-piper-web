@@ -8,13 +8,16 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from app.core.cli_mapping import build_edit_dataset_args
+from app.core.cli_mapping import build_delta_args, build_edit_dataset_args
+from app.core.config import settings
 from app.services.dataset_scanner import (
     scan_datasets,
     get_dataset,
     delete_dataset,
     check_disk_usage,
     find_dataset_path,
+    baked_info,
+    delta_info,
 )
 from app.services.dataset_jobs import edit_pm as _edit_pm, upload_pm as _upload_pm
 import asyncio
@@ -109,7 +112,9 @@ async def edit_status():
     화면은 "안 돌고 있으니 끝났다" 로 읽고 **"삭제 완료" 라고 답했다** —
     데이터셋은 그대로인데 지웠다고 믿게 된다. 실패는 실패라고 말해야 한다.
     """
-    return {"state": _edit_pm.state.value, "running": _edit_pm.is_running}
+    # 끝났으면 마지막 줄들 — 실패 이유가 여기만 남는다 (델타 변환은 "이미 델타다" 같은 이유를 찍고 끝난다)
+    return {"state": _edit_pm.state.value, "running": _edit_pm.is_running,
+            "log": [] if _edit_pm.is_running else _edit_pm.recent_log(8)}
 
 
 @router.get("/hf-cli")
@@ -336,6 +341,36 @@ async def edit_dataset(dataset_id: str, body: EditDatasetRequest):
 
     await _edit_pm.start(args)
     return {"status": "started", "command": args}
+
+
+class DeltaRequest(BaseModel):
+    force: bool = False     # 이미 있는 `<이름>_delta` 를 지우고 다시 만든다 (변환 결과물일 때만)
+
+
+@router.post("/{dataset_id:path}/delta")
+async def convert_to_delta(dataset_id: str, body: DeltaRequest):
+    """액션을 관절 이동 변화량으로 바꾼 `<이름>_delta` 사본을 만든다 (feature/act-delta.md).
+
+    데이터셋 편집 유닛으로 돈다 — 상태는 `/edit-status`. 원본은 안 고친다. 바로 알 수 있는 거절은
+    유닛을 띄우기 전에 여기서 한다 (변환기도 같은 검사를 한다).
+    """
+    require_idle(Activity.DATASET_EDIT)
+    ds = find_dataset_path(dataset_id)
+    if ds is None:
+        raise HTTPException(404, "Dataset not found")
+    if delta_info(ds) is not None:
+        raise HTTPException(400, "이미 델타로 바꾼 사본입니다")
+    if baked_info(ds) is not None:
+        raise HTTPException(400, "구운 사본입니다 — 원본을 델타로 바꾼 뒤 그 사본을 굽습니다")
+    # 사본 자리는 **늘 LeRobot 캐시의 `<org>/<이름>_delta`** — 원본이 HF 캐시에 있어도 그 옆이 아니다
+    # (lerobot_policy_piper.bake.default_output 머리말 — 원본 이름이 사본을 가리키게 된 사고)
+    org, name = dataset_id.split("/", 1)
+    out = settings.lerobot_dir / org / f"{name}_delta"
+    if out.exists() and not body.force:
+        raise HTTPException(409, f"{dataset_id}_delta 가 이미 있습니다 — 다시 만들려면 force")
+    args = build_delta_args(str(ds), str(out), force=body.force)
+    await _edit_pm.start(args)
+    return {"status": "started", "output_id": f"{dataset_id}_delta", "command": args}
 
 
 class UpdateTaskRequest(BaseModel):

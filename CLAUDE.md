@@ -72,7 +72,7 @@ C4 3계층 다이어그램: [docs/architecture-c4.drawio](docs/architecture-c4.d
 - 버스(Redis) = 실행 중인 프로세스 내부와 실시간 통신 (policy 객체 속성 변경)
 
 ### 파라미터 안전 분류
-- **Safe (실시간 변경 가능)**: `max_guidance_weight`, `execution_horizon`, `temporal_ensemble_coeff`, `n_action_steps`(chunk_size 이하일 때)
+- **Safe (실시간 변경 가능)**: `max_guidance_weight`, `execution_horizon`, `temporal_ensemble`(켜고 끄기)·`temporal_ensemble_coeff`, `n_action_steps`(chunk_size 이하일 때)
 - **Unsafe (재시작 필요)**: `chunk_size`, `dim_model`, `n_obs_steps`, `use_vae`, 모델 아키텍처 관련 전부
 
 ## 기술 스택
@@ -102,6 +102,7 @@ C4 3계층 다이어그램: [docs/architecture-c4.drawio](docs/architecture-c4.d
 | `POST /api/models/inference/stop` | 추론 정지 |
 | `GET /api/datasets` | 로컬 데이터셋 목록 |
 | `POST /api/datasets/{id}/edit` | 데이터셋 편집 (CLI 래핑) |
+| `POST /api/datasets/{id}/delta` | 액션을 관절 이동 변화량으로 바꾼 `_delta` 사본 ([feature/act-delta.md](feature/act-delta.md)). 추론은 체크포인트의 학습 데이터셋을 보고 알아서 절대로 되돌린다 |
 | `GET /api/hub/models` | HuggingFace Hub 모델 검색 |
 | `GET /api/hub/datasets` | HuggingFace Hub 데이터셋 검색 |
 | `POST /api/hub/download` | Hub에서 다운로드 |

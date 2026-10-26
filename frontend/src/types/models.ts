@@ -34,6 +34,9 @@ export type Model = {
   // 학습(run) 루트 사이드카 — 학습 폼의 제목·설명. 체크포인트마다 물려받는다.
   run_notes?: SidecarNotes
   run_created?: string
+  /** 무엇을 내는가 (backend services/action_space.py). `delta_v1` 이면 추론이 절대 위치로 되돌린다,
+   *  `unknown` 은 델타로 학습한 듯한데 데이터셋이 없어 확인 못 함 — 추론이 막힌다. */
+  action_space?: 'absolute' | 'delta_v1' | 'unknown'
 }
 
 export type ModelDetail = Model & {
@@ -54,10 +57,23 @@ export type Dataset = {
   size_bytes: number
   modified: string
   created?: string
-  /** ACT-Aux 용으로 구운 사본이면 그 정보 (backend dataset_scanner.baked_info). 원본이면 null/undefined. */
+  /** ACT-S·SmolVLA-S 용으로 구운 사본이면 그 정보 (backend dataset_scanner.baked_info). 원본이면 null/undefined. */
   baked?: BakedInfo | null
+  /** 액션을 관절 이동 변화량으로 바꾼 사본이면 그 근거 (backend dataset_scanner.delta_info). 원본이면 null. */
+  delta?: DeltaInfo | null
   /** 시뮬로 모았으면 **어느 세계에서** 모았는지 (meta/piper_scene.json). 실기면 없다. */
   scene?: { id: string; name: string; objects: number } | null
+}
+
+export type DeltaInfo = {
+  source: string | null
+  delta_names: string[]
+  /** 절대값 그대로인 채널 (그리퍼) */
+  absolute_names: string[]
+  /** 스텝당 상한 — 데모에서 나온 가장 큰 한 스텝 */
+  clamp: Record<string, number | null>
+  /** 추종 지연 ε 평균 (학습 기준 a[t−1] 과 추론 기준 s[t] 의 차이) */
+  lag: Record<string, number>
 }
 
 export type BakedInfo = {

@@ -38,10 +38,12 @@ def _policy_type_of(config: dict) -> tuple[str, bool]:
 
     아는 정책 이름인지는 `core/policies.py` 한 곳에서 판단한다 — 목록을 또 만들지 않는다.
     """
-    from app.core.policies import POLICIES
+    from app.core.policies import POLICIES, canonical
 
     raw = config.get("type") or config.get("policy_type") or config.get("_target_") or "unknown"
     name = raw.rsplit(".", 1)[-1] if "." in raw else raw
+    # 이름을 바꾸기 전에 저장한 체크포인트(`act_aux`)는 지금 이름으로 — 못 알아보면 목록에서 사라진다
+    name = canonical(name)
     if name in POLICIES:
         return name, True
 
@@ -52,6 +54,17 @@ def _policy_type_of(config: dict) -> tuple[str, bool]:
         if policy.replace("_", "") == key:
             return policy, True
     return name, False
+
+
+def _action_space(model_dir: Path) -> str:
+    """`services/action_space.resolve` 의 결과만. 목록이 이것 때문에 죽으면 안 된다."""
+    from app.services import action_space
+
+    try:
+        return action_space.resolve(model_dir)["action_space"]
+    except Exception as e:                                       # noqa: BLE001
+        logger.warning("액션 공간 판정 실패 (%s): %s", model_dir, e)
+        return action_space.UNKNOWN
 
 
 def _parse_config(config_path: Path) -> dict:
@@ -184,6 +197,8 @@ def _scan_hf_cache(models_dir: Path) -> list[dict]:
             "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
             "created": _created_at(snapshot, config_path),
             "notes": _notes(snapshot),
+            # 절대 / delta_v1 / unknown — 화면 배지용. 추론 시작은 따로 다시 판정한다
+            "action_space": _action_space(snapshot),
             "source_dir": str(models_dir),
         })
 
@@ -255,6 +270,7 @@ def _scan_train_outputs(models_dir: Path) -> list[dict]:
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
                 "created": _created_at(model_dir, config_path),
                 "source_dir": str(models_dir),
+                "action_space": _action_space(model_dir),
                 "notes": own_notes if (own_notes.get("name") or own_notes.get("description"))
                          else run_notes,
             })

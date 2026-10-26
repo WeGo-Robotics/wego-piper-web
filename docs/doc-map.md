@@ -67,7 +67,7 @@
 
 | 시기 | 문서 |
 |---|---|
-| 9월 (14개) | `gateway-auth`(미커밋) `vast-training` `so101-flipped` `readme-rewrite` `lighting-watch` `web-leader` `sim-scene-editor` `sim-env` `gray-card-calibration` `version-update` `so101d` `services` `act-delta` `joint-diagnostics` `alignment-check` `hf-account` `cloud-training` `camera-profiles` `act-aux` |
+| 9월 (14개) | `gateway-auth`(미커밋) `vast-training` `so101-flipped` `readme-rewrite` `lighting-watch` `web-leader` `sim-scene-editor` `sim-env` `gray-card-calibration` `version-update` `so101d` `services` `act-delta` `joint-diagnostics` `alignment-check` `hf-account` `cloud-training` `camera-profiles` `act-s`(구 `act-aux`) |
 | 8월에서 멈춤 (15개) | `teleoperation` `episode-orchestrator` `service-restart` `depth-background-mask` `detector-training` `llm-integration` `external-api` `episode-editor` `bimanual` `01-phase-annotation` `layout-redesign` `policy-ui-spec` `parameter-presets` `manual-control` `demo-scenario-gaps` |
 
 ⚠ **8월 = 낡음이 아니다.** 끝나서 안 건드리는 것과 방치된 것이 섞여 있고, 그 둘을 가르는

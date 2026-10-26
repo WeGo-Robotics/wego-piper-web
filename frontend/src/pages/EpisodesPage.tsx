@@ -634,8 +634,8 @@ export default function EpisodesPage() {
     if (d) setUndoStack((u) => [...u.slice(-49), d.map((s) => [...s] as Segment)])
   }, [])
 
-  // 구운 사본(ACT-Aux 용 `_stage`)은 읽기 전용 — 여기서 고친 구간은 원본에 반영되지 않고
-  // 다음 bake 에 조용히 덮인다. 원본에서 고치고 다시 굽는다 (feature/act-aux.md §4.5).
+  // 구운 사본(ACT-S·SmolVLA-S 용 `_stage`)은 읽기 전용 — 여기서 고친 구간은 원본에 반영되지 않고
+  // 다음 bake 에 조용히 덮인다. 원본에서 고치고 다시 굽는다 (feature/act-s.md §4.5).
   const baked: BakedInfo | null = datasets.find((d) => d.id === dsId)?.baked ?? null
 
   const enterEdit = () => {
@@ -794,17 +794,19 @@ export default function EpisodesPage() {
 
   const reloadDatasets = () => api.get<Dataset[]>('/datasets').then(setDatasets).catch(() => {})
 
-  // ACT-Aux 용 굽기: 사이드카 → LeRobot subtask 로 `<name>_stage` 사본 생성 (feature/act-aux.md §4)
+  // ACT-S·SmolVLA-S 용 굽기: 사이드카 → LeRobot subtask 로 `<name>_stage` 사본 생성 (feature/act-s.md §4)
   const handleBake = async () => {
     if (!dsId || baking) return
     const eps = labels ? Object.values(labels.episodes) : []
     const unreviewed = eps.filter((e) => !e.reviewed).length
-    const reviewedOnly = unreviewed > 0
+    // ⚠ 검토한 에피소드가 하나도 없으면 묻지 않는다 — "예" 를 누르면 전부 라벨 없음으로 구워지고, 그 데이터로
+    //   학습한 stage 헤드는 아무것도 못 배운다 (실기: 10-23 SmolVLA-S, stage_counts 전부 0). 굽기도 거절한다.
+    const reviewedOnly = unreviewed > 0 && unreviewed < eps.length
       && (await askConfirm(t('검토 안 된 에피소드가 {unreviewed}개 있습니다. 그 에피소드는 라벨 없음으로 굽을까요? (취소하면 전부 포함)', { unreviewed })))
     setBaking(true)
     try {
       const r = await api.post<{ output_id: string; log: string[] }>(`/phase/${dsId}/bake`, { reviewed_only: reviewedOnly, force: true })
-      notify({ level: 'info', text: t('구웠습니다 → {output_id} (학습 화면에서 ACT-Aux 로 선택)', { output_id: r.output_id }), source: t('에피소드') })
+      notify({ level: 'info', text: t('구웠습니다 → {output_id} (학습 화면에서 ACT-S·SmolVLA-S 로 선택)', { output_id: r.output_id }), source: t('에피소드') })
       await reloadDatasets()
     } catch (e) {
       notifyError(e instanceof Error ? e.message : t('굽기 실패'))
@@ -885,7 +887,7 @@ export default function EpisodesPage() {
         >
           <option value="">{t('데이터셋 선택…')}</option>
           {datasets.map((d) => (
-            <option key={d.id} value={d.id}>{d.id} ({d.total_episodes}){d.baked ? t(' · 구운 사본') : ''}</option>
+            <option key={d.id} value={d.id}>{d.id} ({d.total_episodes}){d.baked ? t(' · 구운 사본') : ''}{d.delta ? ` · Δ ${t('델타')}` : ''}</option>
           ))}
         </select>}
       </div>
@@ -916,10 +918,10 @@ export default function EpisodesPage() {
                     <button
                       onClick={() => void handleBake()}
                       disabled={baking || analyzing || draft != null}
-                      title={t('사이드카를 LeRobot subtask 로 구워 ACT-Aux 학습용 `_stage` 사본을 만든다 (원본 불변)')}
+                      title={t('사이드카를 LeRobot subtask 로 구워 ACT-S·SmolVLA-S 학습용 `_stage` 사본을 만든다 (원본 불변)')}
                       className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-emerald-600 text-neutral-300 hover:text-white disabled:opacity-50"
                     >
-                      {baking ? t('굽는 중…') : t('ACT-Aux용 굽기')}
+                      {baking ? t('굽는 중…') : t('ACT-S·SmolVLA-S용 굽기')}
                     </button>
                   )}
                 </span>
@@ -927,7 +929,7 @@ export default function EpisodesPage() {
             </div>
             {baked && (
               <div className="rounded border border-neutral-600 bg-neutral-900 p-2 space-y-0.5">
-                <div className="text-neutral-300">{t('🔒 ACT-Aux용 구운 사본 — 읽기 전용')}</div>
+                <div className="text-neutral-300">{t('🔒 ACT-S·SmolVLA-S용 구운 사본 — 읽기 전용')}</div>
                 <div className="text-neutral-500">{t('원본: {source}', { source: baked.source ?? '?' })}</div>
                 {baked.source_missing && <div className="text-amber-400">{t('⚠ 원본이 없다 — 다시 구울 수 없음')}</div>}
                 {baked.stale && <div className="text-amber-400">{t('⚠ 원본 라벨이 bake 뒤에 바뀜 — 원본에서 다시 구워야 학습에 반영된다')}</div>}

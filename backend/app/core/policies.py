@@ -21,6 +21,7 @@
 (`core/` → `services/` 방향 import 는 이 저장소에 없다).
 """
 
+import re
 from typing import TypedDict
 
 from app.core.policy_spec import PolicySpec, load_specs
@@ -54,12 +55,21 @@ def _flatten(spec: PolicySpec) -> Policy:
 
 # ⚠ 정렬 순서가 화면 목록 순서다. YAML 파일명이 아니라 **원하는 표시 순서**로
 # 고정한다 — 파일명 알파벳순이면 SmolVLA 가 ACT 뒤로 가서 목록이 뒤집힌다.
-_ORDER = ["smolvla", "act", "act_aux", "diffusion", "pi0", "pi05", "pi0_fast", "vqbet", "tdmpc"]
+# 커스텀 정책(`-S`)은 바탕 정책 바로 뒤다.
+_ORDER = ["smolvla", "smolvla_s", "act", "act_s", "diffusion", "pi0", "pi05", "pi0_fast", "vqbet", "tdmpc"]
 
 POLICIES: dict[str, Policy] = {
     name: _flatten(SPECS[name])
     for name in sorted(SPECS, key=lambda n: (_ORDER.index(n) if n in _ORDER else 99, n))
 }
+
+# 옛 타입 이름 → 지금 이름. 체크포인트 config.json 의 `type` 을 읽는 쪽이 쓴다.
+ALIASES: dict[str, str] = {alias: name for name, spec in SPECS.items() for alias in spec.aliases}
+
+
+def canonical(policy_type: str) -> str:
+    """옛 이름이면 지금 이름으로. 모르는 이름은 그대로 돌려준다."""
+    return ALIASES.get(policy_type, policy_type)
 
 
 def _names(flag: str) -> list[str]:
@@ -115,9 +125,15 @@ TAG_MATCH_ORDER: list[str] = sorted(POLICIES, key=len, reverse=True)
 
 
 def guess_from_name(model_name: str) -> str | None:
-    """Hub 모델 이름에서 정책 타입 추론. 못 찾으면 None."""
+    """Hub 모델 이름에서 정책 타입 추론. 못 찾으면 None.
+
+    ⚠ 정책 이름 **바로 뒤에 글자가 오면** 그 정책이 아니다. `act_s`·`smolvla_s` 가 생긴 뒤로
+    Hub 에 흔한 `act_so100_cube`·`smolvla_so101_pick` 이 통째로 `-S` 로 잡혔다 — 길이순이라
+    긴 이름이 먼저 맞기 때문이다. 숫자는 허용한다(`act10k`).
+    """
     lowered = model_name.lower()
-    return next((p for p in TAG_MATCH_ORDER if p in lowered), None)
+    return next((p for p in TAG_MATCH_ORDER
+                 if re.search(rf"{re.escape(p)}(?![a-z])", lowered)), None)
 
 
 def spec_for_frontend() -> list[dict]:

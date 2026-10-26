@@ -146,7 +146,7 @@ searching → creating → ssh_wait → training → retrieving → destroying �
 |---|---|
 | 베이스: PyTorch CUDA 12.x runtime (보수적 버전) | 최신 CUDA 고집 = 쓸 수 있는 호스트 축소. ACT 성능 차이는 없다. ⚠ 우리 배포 이미지는 torch 2.11+**cu130** 인데 Vast 호스트에 CUDA 13 은 드물다 — 학습 이미지는 lerobot 이 요구하는 torch(<2.11, cu124/126)를 그대로 쓴다. 체크포인트는 state dict 라 torch 마이너 차이는 문제없지만 **V0 에서 "원격 학습 → 로컬 추론"으로 확인한다** |
 | `lerobot[smolvla]==0.5.0` + `transformers==5.3.0` | [**Dockerfile.base:64 와 같은 핀.**](../backend/Dockerfile.base#L64) 버전이 다르면 체크포인트가 로컬 추론에서 안 열릴 수 있다 (cloud-training §4) |
-| `lerobot_policy_act_aux` | ⚠ **act_aux 를 원격에서 학습하려면 필수** — `lerobot-train` 이 접두사로 자동 import 한다. 빼먹으면 "모르는 정책"으로 죽는다 |
+| `lerobot_policy_piper` | ⚠ **ACT-S·SmolVLA-S 를 원격에서 학습하려면 필수** — `lerobot-train` 이 접두사로 자동 import 한다. 빼먹으면 "모르는 정책"으로 죽는다 |
 | tmux · ffmpeg | tmux 는 SSHRunner 의 전제. ffmpeg 는 데이터셋 디코딩 |
 | robot/카메라 vendor 패키지 **없음** | 학습은 데이터셋만 본다 — CAN·RealSense 코드가 원격에 갈 이유가 없다 |
 
@@ -159,7 +159,7 @@ searching → creating → ssh_wait → training → retrieving → destroying �
 
 | | full | slim |
 |---|---|---|
-| 담긴 것 | 스택(lerobot·torch) + act_aux + 스크립트 | act_aux + 스크립트 (스택 없음) |
+| 담긴 것 | 스택(lerobot·torch) + custom_policies + 스크립트 | custom_policies + 스크립트 (스택 없음) |
 | pull (실측, 0.5.0-cu126) | **압축 4.47GB** (풀면 4.7GB) | **압축 0.32GB** (풀면 1.0GB) |
 | 부팅 | 즉시 학습 가능 | `bootstrap.sh` 가 `install-stack.sh` 로 스택을 깐다 — **wheel 8.2GB 받기 + 설치, 사무실 회선 317초** |
 | 유리한 때 | GHCR 회선이 좋을 때 · 같은 호스트를 다시 빌릴 때(레이어 캐시) | PyPI 회선이 좋을 때 · 호스트 캐시를 기대 못 할 때 |
@@ -180,7 +180,7 @@ pull 량이다. 태그는 `full-0.5.0-cu126-20260914`(digest `sha256:a48cd991…
 - 파일: [deploy/train/Dockerfile](../deploy/train/Dockerfile)(`--build-arg VARIANT=full|slim`, `TORCH_CUDA=cu126`)
   · [install-stack.sh](../deploy/train/install-stack.sh) · [bootstrap.sh](../deploy/train/bootstrap.sh)(멱등, 끝나면 `/opt/piper/.ready`)
   · [env-check.sh](../deploy/train/env-check.sh) · [deploy/build-train.sh](../deploy/build-train.sh)(둘 다 굽고 `--push` 일 때만 올린다).
-  **레이어 규칙은 v0.5.0 의 것 그대로** — 스택 5GB 위, act_aux·스크립트·버전 ENV 아래.
+  **레이어 규칙은 v0.5.0 의 것 그대로** — 스택 5GB 위, custom_policies·스크립트·버전 ENV 아래.
 - **환경 체크 `env-check.sh`** — 인스턴스 안에서(또는 아무 SSH 박스에서 curl 로) 돌린다. GPU·드라이버·
   sm 세대와 torch 커널 대조(RTX 50 은 cu126 이 조용히 죽는다 → cu128 이미지) · 디스크·/dev/shm · 도구 ·
   스택 유무, 그리고 **실제 쓰는 네 경로의 회선**(PyTorch 인덱스·PyPI·GHCR·HF, 100MB 씩)을 재서
@@ -188,7 +188,7 @@ pull 량이다. 태그는 `full-0.5.0-cu126-20260914`(digest `sha256:a48cd991…
 - `.ready` 마커가 **러너와의 계약**이다(W1): 있으면 학습 시작, 없으면 "아직 설치 중". `PIPER_TRAIN_IMAGE`
   ENV 로 이미지 태그를 안에 박아 job 레코드가 "어느 환경에서 학습했나"를 읽는다.
 - 레지스트리: **GHCR 공개 패키지 `ghcr.io/wego-robotics/piper-train`** 으로 제안. Vast 가 인증 없이
-  pull 한다. 회사 코드는 act_aux(순수 파이썬, 정책 정의)뿐이라 공개해도 잃는 게 없다 — 이게
+  pull 한다. 회사 코드는 custom_policies(순수 파이썬, 정책 정의)뿐이라 공개해도 잃는 게 없다 — 이게
   싫으면 Vast 에 레지스트리 자격증명을 등록해야 한다(§10 결정 2).
 - 태그는 `<변종>-<lerobot>-<cuda>-<날짜>` 로 고정(지금은 `full-0.5.0-cu126-20260916` — §12-7), 손으로 쓸 때는
   움직이는 `full-cu126`/`slim-cu126`. 오퍼 필터의 `inet_down` 이 pull 시간을 정한다(V0 실측).
@@ -688,7 +688,7 @@ pull, 부팅 때 스택 설치. 네트워크 600Mbps 급이면 full 이 유리�
 | # | 결정 | 제안 |
 |---|---|---|
 | 1 | 프로바이더 1호 = Vast.ai? | **예.** RunPod 으로 바뀌면 §2 표와 `providers/vast.py` 만 다시 쓴다 (러너·전송·가드는 무관) |
-| 2 | 학습 이미지 공개(GHCR public)? | **공개.** 담기는 회사 코드는 act_aux 뿐. 비공개면 Vast 에 레지스트리 자격증명 등록 절차가 도우미에 하나 더 |
+| 2 | 학습 이미지 공개(GHCR public)? | **공개.** 담기는 회사 코드는 custom_policies 뿐. 비공개면 Vast 에 레지스트리 자격증명 등록 절차가 도우미에 하나 더 |
 | 3 | 원격에 줄 HF 토큰 | W0 은 로그인 토큰 그대로, W3 부터 fine-grained 전용 토큰 칸 |
 | 4 | 예산·시간 기본값 | job 당 **$10 · 6시간**, on-demand 만. interruptible 은 resume 검증 뒤 |
 | 5 | 고아 인스턴스 | **경고 + 버튼.** 자동 파기는 안 한다 |
@@ -756,7 +756,7 @@ pull, 부팅 때 스택 설치. 네트워크 600Mbps 급이면 full 이 유리�
 | 2 | 데이터셋 업로드 | ☑ **통과(2026-09-16)** — `sim_data2` 토큰 조회 200 · `private=false` · 실질 7개 파일이 **바이트까지 일치**(영상 4.91MB·7.17MB 실물, LFS 포인터 아님) |
 | 3 | ⭐ **로컬 CPU 드라이런** | ☑ **통과(2026-09-16)** — 아래 11-2-a |
 
-⭐ **3번이 가성비의 핵심이다.** 인자 조립 · act_aux 로드 · HF 다운로드 · **torchcodec 영상
+⭐ **3번이 가성비의 핵심이다.** 인자 조립 · custom_policies 로드 · HF 다운로드 · **torchcodec 영상
 디코드** · 푸시 경로가 전부 지상에서 검증된다. 통과하면 임대 인스턴스가 새로 증명할 것은
 **GPU 커널과 SSH 배관 둘뿐**이다.
 

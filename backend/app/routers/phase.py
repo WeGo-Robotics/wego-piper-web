@@ -178,7 +178,8 @@ async def put_episode_labels(dataset_id: str, episode: int, body: EpisodeLabels)
     labels_path, _ = PL.sidecar_paths(ds)
     import json
 
-    labels_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    # 링크를 따라 쓰지 않는다 — HF 캐시에서 받은 데이터셋이면 blob 을 고치게 된다 (PL.replace_file)
+    PL.replace_text(labels_path, json.dumps(data, indent=2, ensure_ascii=False))
     return prev
 
 
@@ -368,7 +369,7 @@ async def status(dataset_id: str):
     }
 
 
-# ── ACT-Aux 용 굽기 (feature/act-aux.md §4) ──────────────────────────────────
+# ── ACT-S·SmolVLA-S 용 굽기 (feature/act-s.md §4) ────────────────────────────
 
 class BakeRequest(BaseModel):
     reviewed_only: bool = False
@@ -379,7 +380,7 @@ class BakeRequest(BaseModel):
 async def bake(dataset_id: str, body: BakeRequest):
     """사이드카 → LeRobot subtask 로 구운 `<name>_stage` 데이터셋을 만든다.
 
-    백엔드는 lerobot 을 직접 import 하지 않는다 — `lerobot_policy_act_aux.bake` 를
+    백엔드는 lerobot 을 직접 import 하지 않는다 — `lerobot_policy_piper.bake` 를
     학습 파이썬(`settings.grpc_python`)으로 subprocess 실행한다 (CLAUDE.md 의 CLI 래핑 원칙).
     수십 초 걸리므로 요청 스레드에서 돌리지 않고, 동시에 둘은 허용하지 않는다.
     """
@@ -391,7 +392,11 @@ async def bake(dataset_id: str, body: BakeRequest):
     if _bake_lock.locked():
         raise HTTPException(409, "다른 굽기가 진행 중입니다")
 
-    cmd = [settings.grpc_python, "-m", "lerobot_policy_act_aux.bake", str(ds)]
+    # 출력은 **늘 LeRobot 캐시의 `<org>/<이름>_stage`** — 원본이 HF 캐시에 있어도 그 옆에 만들지 않는다
+    # (bake.default_output 머리말). 찾는 쪽(`find_dataset_path`)과 같은 규칙으로 여기서 정해 넘긴다.
+    org, name = dataset_id.split("/", 1)
+    cmd = [settings.grpc_python, "-m", "lerobot_policy_piper.bake", str(ds),
+           "--out", str(settings.lerobot_dir / org / f"{name}_stage")]
     if body.reviewed_only:
         cmd.append("--reviewed-only")
     if body.force:

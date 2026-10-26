@@ -59,6 +59,16 @@ def test_guess_from_name_prefix_collision():
     assert policies.guess_from_name("my_pi0_fast_ckpt") == "pi0_fast"
 
 
+def test_guess_does_not_read_so100_as_a_custom_policy():
+    """`act_s`·`smolvla_s` 가 생기자 Hub 에 흔한 SO-100/101 이름이 통째로 `-S` 로 잡혔다 —
+    긴 이름이 먼저 맞으므로 `act_so100` 안의 `act_s` 가 이긴다."""
+    assert policies.guess_from_name("lerobot/act_so100_test") == "act"
+    assert policies.guess_from_name("someone/smolvla_so101_pick") == "smolvla"
+    assert policies.guess_from_name("wego/act_s_cube") == "act_s"
+    assert policies.guess_from_name("wego/cube_smolvla_s") == "smolvla_s"
+    assert policies.guess_from_name("someone/act10k") == "act"          # 숫자는 이어져도 된다
+
+
 def test_guess_ignores_non_policies():
     """`rtc` 는 스무딩 기법이지 정책이 아니다. `sac` 은 지원하지 않는다."""
     assert policies.guess_from_name("rtc_experiment") is None

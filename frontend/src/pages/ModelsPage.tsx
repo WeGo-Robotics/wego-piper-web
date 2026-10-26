@@ -214,6 +214,8 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                         </p>
                         <p className="text-xs text-neutral-400 mt-1">
                           {m.policy_type} · {formatBytes(m.size_bytes)}
+                          {m.action_space === 'delta_v1' && <span className="text-emerald-300" title={t('델타 체크포인트 — 추론이 절대 위치로 되돌린다')}> · Δ</span>}
+                          {m.action_space === 'unknown' && <span className="text-red-400" title={t('델타로 학습한 것으로 보이는데 학습 데이터셋이 없어 확인할 수 없습니다 — 시작하지 않습니다')}> · Δ?</span>}
                           {m.created && <> · {fmt.dateTime(m.created, { dateStyle: 'short', timeStyle: 'short' })}</>}
                         </p>
                       </div>
@@ -264,7 +266,11 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
                   <div>
                     <span className="text-neutral-400 text-xs">Policy</span>
-                    <p className="font-medium">{selected.policy_type}</p>
+                    <p className="font-medium">
+                      {selected.policy_type}
+                      {selected.action_space === 'delta_v1' && <span className="ml-1 text-emerald-300 text-xs">Δ {t('델타')}</span>}
+                      {selected.action_space === 'unknown' && <span className="ml-1 text-red-400 text-xs">Δ? {t('확인 불가')}</span>}
+                    </p>
                   </div>
                   <div>
                     <span className="text-neutral-400 text-xs">{t('크기')}</span>

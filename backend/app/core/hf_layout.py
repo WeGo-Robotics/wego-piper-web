@@ -36,15 +36,25 @@ def dirname_from_repo_id(repo_id: str, kind: RepoKind) -> str | None:
     return f"{kind}--{parts[0]}--{parts[1]}"
 
 
+# HF 가 만드는 스냅샷 디렉터리 이름 = 커밋 해시
+_REVISION = re.compile(r"^[0-9a-f]{40}$")
+
+
 def latest_snapshot(repo_dir: Path) -> Path | None:
-    """`snapshots/` 아래에서 가장 최근 수정된 스냅샷 디렉토리."""
+    """`snapshots/` 아래에서 가장 최근 수정된 스냅샷 디렉토리.
+
+    ⚠ **커밋 해시 이름만 스냅샷이다.** 예전 굽기가 원본 옆에 `<해시>_stage` 를 만들었는데, 가장 최근이라
+    그게 뽑혀 **원본 이름이 구운 사본을 가리켰다** (실기 2026-10-25). 해시 이름이 하나도 없을 때만 예전처럼
+    아무 디렉터리나 본다 — 손으로 만든 배치를 못 읽게 되지 않게.
+    """
     snapshots_dir = repo_dir / "snapshots"
     if not snapshots_dir.exists():
         return None
     candidates = [d for d in snapshots_dir.iterdir() if d.is_dir()]
     if not candidates:
         return None
-    return max(candidates, key=lambda d: d.stat().st_mtime)
+    revisions = [d for d in candidates if _REVISION.match(d.name)]
+    return max(revisions or candidates, key=lambda d: d.stat().st_mtime)
 
 
 def resolve_info_json(root: Path) -> Path | None:

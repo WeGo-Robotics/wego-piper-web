@@ -34,7 +34,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 num()  { printf '%s' "${1:-0}" | sed 's/[^0-9.]//g'; }
 
 J_GPU="" J_DRIVER="" J_CUDA_MAX="" J_CC="" J_VRAM=0 J_DISK=0 J_SHM=0 J_RAM=0 J_CPU=0
-J_READY=false J_TORCH="" J_TORCH_CUDA="" J_CUDA_OK=false J_ARCH_OK=false J_LEROBOT="" J_ACT_AUX=false
+J_READY=false J_TORCH="" J_TORCH_CUDA="" J_CUDA_OK=false J_ARCH_OK=false J_LEROBOT="" J_CUSTOM=false
 J_MB_PT=0 J_MB_PYPI=0 J_MB_GHCR=0 J_MB_HF=0 J_ETA_FULL=0 J_ETA_SLIM=0 J_REC="unknown"
 NOTES=()
 
@@ -100,8 +100,8 @@ try:
     import lerobot; out["lerobot"] = lerobot.__version__
 except Exception: pass
 try:
-    import lerobot_policy_act_aux; out["act_aux"] = True
-except Exception: out["act_aux"] = False
+    import lerobot_policy_piper; out["custom_policies"] = True
+except Exception: out["custom_policies"] = False
 print(json.dumps(out))
 EOF
 )"
@@ -111,7 +111,7 @@ EOF
         J_CUDA_OK="$(echo "$probe" | "$PY" -c 'import json,sys; print("true" if json.load(sys.stdin).get("cuda_ok") else "false")')"
         J_ARCH_OK="$(echo "$probe" | "$PY" -c 'import json,sys; print("true" if json.load(sys.stdin).get("matmul") else "false")')"
         J_LEROBOT="$(echo "$probe" | "$PY" -c 'import json,sys; print(json.load(sys.stdin).get("lerobot",""))')"
-        J_ACT_AUX="$(echo "$probe" | "$PY" -c 'import json,sys; print("true" if json.load(sys.stdin).get("act_aux") else "false")')"
+        J_CUSTOM="$(echo "$probe" | "$PY" -c 'import json,sys; print("true" if json.load(sys.stdin).get("custom_policies") else "false")')"
         err="$(echo "$probe" | "$PY" -c 'import json,sys; print(json.load(sys.stdin).get("error",""))')"
         if [ -n "$J_TORCH" ]; then
             if [ "$J_CUDA_OK" = true ] && [ "$J_ARCH_OK" = true ]; then
@@ -127,7 +127,7 @@ EOF
             warn "torch 없음${err:+ ($err)}"
         fi
         [ -n "$J_LEROBOT" ] && ok "lerobot $J_LEROBOT" || warn "lerobot 없음"
-        [ "$J_ACT_AUX" = true ] && ok "lerobot_policy_act_aux import 됨" || warn "act_aux 없음 — --policy.type=act_aux 는 못 쓴다"
+        [ "$J_CUSTOM" = true ] && ok "lerobot_policy_piper import 됨" || warn "lerobot_policy_piper 없음 — --policy.type=act_s / smolvla_s 는 못 쓴다"
     fi
 else
     bad "python 없음"
@@ -206,7 +206,7 @@ fi
 #   깨진다 — 빈 줄 거르기는 파이썬이 한다
 notes_json="$(printf '%s\n' "${NOTES[@]}" | "$PY" -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))' 2>/dev/null)"
 notes_json="${notes_json:-[]}"
-printf 'ENVCHECK {"gpu":"%s","driver":"%s","cuda_max":"%s","compute_cap":"%s","vram_mib":%s,"cpu":%s,"ram_gb":%s,"shm_mb":%s,"disk_free_gb":%s,"stack_ready":%s,"torch":"%s","torch_cuda":"%s","cuda_ok":%s,"arch_ok":%s,"lerobot":"%s","act_aux":%s,"mbps":{"pytorch":%s,"pypi":%s,"ghcr":%s,"hf":%s},"eta_s":{"full":%s,"slim":%s},"recommend":"%s","notes":%s}\n' \
+printf 'ENVCHECK {"gpu":"%s","driver":"%s","cuda_max":"%s","compute_cap":"%s","vram_mib":%s,"cpu":%s,"ram_gb":%s,"shm_mb":%s,"disk_free_gb":%s,"stack_ready":%s,"torch":"%s","torch_cuda":"%s","cuda_ok":%s,"arch_ok":%s,"lerobot":"%s","custom_policies":%s,"mbps":{"pytorch":%s,"pypi":%s,"ghcr":%s,"hf":%s},"eta_s":{"full":%s,"slim":%s},"recommend":"%s","notes":%s}\n' \
     "$J_GPU" "$J_DRIVER" "$J_CUDA_MAX" "$J_CC" "${J_VRAM:-0}" "$J_CPU" "$J_RAM" "$J_SHM" "$J_DISK" "$J_READY" \
-    "$J_TORCH" "$J_TORCH_CUDA" "$J_CUDA_OK" "$J_ARCH_OK" "$J_LEROBOT" "$J_ACT_AUX" \
+    "$J_TORCH" "$J_TORCH_CUDA" "$J_CUDA_OK" "$J_ARCH_OK" "$J_LEROBOT" "$J_CUSTOM" \
     "$J_MB_PT" "$J_MB_PYPI" "$J_MB_GHCR" "$J_MB_HF" "$J_ETA_FULL" "$J_ETA_SLIM" "$J_REC" "$notes_json"

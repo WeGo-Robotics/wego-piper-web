@@ -1,8 +1,9 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.core.inference_params import bounds, defaults, realtime_params, spec_for_frontend
+from app.core.inference_params import bounds, defaults, foreign_to, realtime_params, spec_for_frontend
 from app.routers.presets import register_domain
+from app.services import inference_state
 from app.services.param_bridge import param_bridge
 
 router = APIRouter(prefix="/api/params", tags=["params"])
@@ -32,9 +33,19 @@ class ParamUpdate(BaseModel):
 
 @router.post("")
 async def update_params(body: ParamUpdate):
-    safe, unsafe = param_bridge.validate_params(body.params)
+    # 돌고 있는 정책이 안 쓰는 정책별 파라미터는 버린다 — 시작 때와 같은 규칙
+    # (inference_params.foreign_to). 화면은 그 카드를 감추지만 프리셋·외부 API 는 그대로 보낸다.
+    params, foreign = dict(body.params), []
+    running = inference_state.get()
+    if running is not None and running.policy_type:
+        foreign = sorted(set(params) & foreign_to(running.policy_type))
+        for key in foreign:
+            params.pop(key)
+    safe, unsafe = param_bridge.validate_params(params)
 
     warnings = []
+    if foreign:
+        warnings.append(f"이 정책이 쓰지 않는 파라미터라 무시했습니다: {', '.join(foreign)}")
     if unsafe:
         warnings.append(
             f"Unsafe params ignored (restart required): {', '.join(unsafe)}"

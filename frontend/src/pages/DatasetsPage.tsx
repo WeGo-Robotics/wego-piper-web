@@ -40,6 +40,7 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
   // 끊긴 녹화가 남긴 반쪽 상태. `null` 은 "아직 안 봤다".
   const [health, setHealth] = useState<Consistency | null>(null)
   const [repairing, setRepairing] = useState(false)
+  const [converting, setConverting] = useState(false)
   const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([])
   const [editingTask, setEditingTask] = useState<string | null>(null)  // 선택된 에피소드에 적용할 task
   const [search, setSearch] = useState('')
@@ -88,6 +89,43 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
       setUploadLogs((prev) => [...prev, `[ERROR] ${e instanceof Error ? e.message : t('업로드 실패')}`])
       setUploadState('error')
     }
+  }
+
+  // 델타 변환 — 액션을 관절 이동 변화량으로 바꾼 `<이름>_delta` 사본 (feature/act-delta.md).
+  // 편집 유닛으로 돈다. 끝날 때까지 기다리고 **결과를 확인한다** — "안 돌고 있음" 은 성공이 아니다
+  // (EpisodesPage.waitEditDone 과 같은 이유). 마지막 판정은 사본이 목록에 델타로 떴는가다.
+  const handleDelta = async (id: string) => {
+    const exists = datasets.some((d) => d.id === `${id}_delta`)
+    const ok = await askConfirm(exists
+      ? t('"{id}_delta" 가 이미 있습니다. 지우고 다시 만들까요?', { id })
+      : t('"{id}" 의 액션을 관절 이동 변화량(델타)으로 바꾼 사본 "{id}_delta" 를 만듭니다. 원본은 그대로이고, 그리퍼는 절대값을 유지합니다.', { id }))
+    if (!ok) return
+    setConverting(true)
+    try {
+      const r = await api.post<{ output_id: string }>(`/datasets/${id}/delta`, { force: exists })
+      let log: string[] = []
+      for (let i = 0; i < 900; i++) {                       // 최대 15분
+        await new Promise((res) => setTimeout(res, 1000))
+        const st = await api.get<{ state: string; running: boolean; log?: string[] }>('/datasets/edit-status')
+          .catch(() => null)                                 // 게이트웨이 순단만 삼킨다
+        if (!st || st.running) continue
+        log = st.log ?? []
+        if (st.state === 'error') {
+          throw new Error(t('델타 변환 실패: {log}', { log: log.slice(-3).join(' / ') || 'journalctl --user -u piper-xfer-edit' }))
+        }
+        break
+      }
+      const list = await api.get<Dataset[]>('/datasets')
+      setDatasets(list)
+      if (!list.some((d) => d.id === r.output_id && d.delta)) {
+        throw new Error(t('델타 사본이 생기지 않았습니다: {log}', { log: log.slice(-3).join(' / ') || '?' }))
+      }
+      notify({ level: 'info', source: t('데이터셋'),
+               text: t('델타 사본을 만들었습니다 → {output_id}. 이 데이터로 학습한 체크포인트는 추론할 때 절대 위치로 되돌립니다', { output_id: r.output_id }) })
+      handleSelect(r.output_id)
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : t('델타 변환 실패'))
+    } finally { setConverting(false) }
   }
 
   const fetchDatasets = () => {
@@ -179,6 +217,9 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
       prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx],
     )
   }
+
+  // 상세 응답에는 사본 표시(delta·baked)가 없다 — 목록의 것을 쓴다
+  const detailEntry = detail ? datasets.find((d) => d.id === detail.id) : undefined
 
   const filteredDatasets = datasets
     .filter((d) => !search || d.id.toLowerCase().includes(search.toLowerCase()))
@@ -274,6 +315,11 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
                     ? <>{ds.notes.name} <span className="text-neutral-500 font-normal">({ds.id})</span></>
                     : ds.id}
                 </p>
+                {ds.delta && (
+                  <p className="truncate text-[11px] text-emerald-300/80">
+                    Δ {t('델타 사본 · 원본 {source}', { source: ds.delta.source ?? '?' })}
+                  </p>
+                )}
                 {ds.scene && (
                   // 어느 세계에서 모았나 — 가상환경이 늘수록 이게 없으면 데이터가 섞인다
                   <p className="truncate text-[11px] text-purple-300/80" title={t('가상환경 · 물체 {objects}개', { objects: ds.scene.objects })}>
@@ -337,12 +383,34 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
                       className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-orange-600 text-neutral-300 hover:text-white">
                       {t('캐시 삭제')}
                     </button>
+                    {/* 원본에서만 — 델타 사본을 또 바꾸거나 구운 사본(_stage)을 바꾸지 않는다 (델타 → 굽기 순서) */}
+                    {!detailEntry?.delta && !detailEntry?.baked && (
+                      <button onClick={() => void handleDelta(detail.id)} disabled={converting}
+                        title={t('액션을 관절 이동 변화량으로 바꾼 사본을 만든다 — 영점이 바뀌어도 액션이 안 망가진다 (feature/act-delta.md)')}
+                        className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-emerald-600 text-neutral-300 hover:text-white disabled:opacity-50">
+                        {converting ? t('변환 중…') : t('델타 변환')}
+                      </button>
+                    )}
                     <button onClick={() => handleUpload(detail.id)}
                       className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white">
                       {t('Hub 업로드')}
                     </button>
                   </div>
                 </div>
+                {detailEntry?.delta && (
+                  <div className="rounded border border-emerald-700/50 bg-emerald-950/20 p-3 text-xs space-y-1">
+                    <p className="text-emerald-300 font-medium">
+                      Δ {t('델타 사본 — 관절 {joints}축은 이동 변화량, {absolute} 는 절대값', {
+                        joints: detailEntry.delta.delta_names.length,
+                        absolute: detailEntry.delta.absolute_names.join(', ') || '-',
+                      })}
+                    </p>
+                    <p className="text-neutral-400">{t('원본: {source}', { source: detailEntry.delta.source ?? '?' })}</p>
+                    <p className="text-neutral-400">
+                      {t('이 데이터로 학습한 체크포인트는 추론할 때 절대 위치로 자동으로 되돌립니다 (로컬 추론만). 한 스텝 변화는 데모에서 나온 최대치로 자릅니다.')}
+                    </p>
+                  </div>
+                )}
                 {/* 이름·설명 — LeRobot 에 없는 자리라 사이드카로. key 로 대상 전환 시
                     초안이 초기화된다 (다른 데이터셋에 눌러붙는 사고 방지). */}
                 <NotesEditor key={detail.id} endpoint={`/datasets/${detail.id}/notes`} source={t('데이터셋')} />

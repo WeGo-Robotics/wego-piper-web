@@ -1,6 +1,8 @@
-"""굽기 — `meta/phase_labels.json` 세그먼트를 LeRobot **subtask** 로 (feature/act-aux.md §4).
+"""굽기 — `meta/phase_labels.json` 세그먼트를 LeRobot **subtask** 로 (feature/act-s.md §4).
 
-    python -m lerobot_policy_act_aux.bake wego-hansu/min_cube_071410
+ACT-S · SmolVLA-S 가 같은 구운 데이터셋을 쓴다 — 굽기는 정책을 모른다.
+
+    python -m lerobot_policy_piper.bake wego-hansu/min_cube_071410
     → ~/.cache/huggingface/lerobot/wego-hansu/min_cube_071410_stage
 
 [01-phase-annotation §5](../../feature/01-phase-annotation.md) 굽기의 **경량 변형**이다:
@@ -53,7 +55,9 @@ import pyarrow.parquet as pq
 SUBTASK_INDEX_KEY = "subtask_index"
 SUBTASKS_FILE = "subtasks.parquet"
 UNLABELED = "_unlabeled"
-META_FILE = "act_aux.json"
+META_FILE = "stage_bake.json"
+# 이름을 바꾸기 전(ACT-Aux) 굽기가 남긴 표식. 이 이름만 있는 사본도 구운 사본이다.
+LEGACY_META_FILES = ("act_aux.json",)
 BAKE_VERSION = 1
 STATS_KEYS = ("min", "max", "mean", "std", "count", "q01", "q10", "q50", "q90", "q99")
 
@@ -75,17 +79,46 @@ def resolve_dataset(arg: str) -> Path:
 
 
 def _link_or_copy(src: Path, dst: Path) -> str:
+    """영상은 내용이 같으니 링크 — 하드링크 → 심링크 → 복사.
+
+    ⚠ **링크를 따라가 실제 파일에 건다.** HF 허브에서 받은 데이터셋의 영상은
+    `../../../../../blobs/<해시>` **상대** 심링크다. 그 링크 자체에 하드링크를 걸면 상대 경로가 그대로
+    복사돼, 사본이 다른 깊이(LeRobot 캐시)에 있으면 전부 깨진다.
+    """
     dst.parent.mkdir(parents=True, exist_ok=True)
+    real = src.resolve()
     try:
-        os.link(src, dst)
+        os.link(real, dst)
         return "hardlink"
     except OSError:
         try:
-            os.symlink(src, dst)
+            os.symlink(real, dst)
             return "symlink"
         except OSError:
-            shutil.copy2(src, dst)
+            shutil.copy2(real, dst)
             return "copy"
+
+
+def repo_id_of(src: Path) -> str:
+    """데이터셋 경로 → `org/name`. HF 허브 캐시(`datasets--org--name/snapshots/<rev>`)도 알아본다."""
+    if src.parent.name == "snapshots" and src.parent.parent.name.startswith("datasets--"):
+        _, org, name = src.parent.parent.name.split("--", 2)
+        return f"{org}/{name}"
+    return f"{src.parent.name}/{src.name}"
+
+
+def default_output(src: Path, suffix: str) -> Path:
+    """사본 자리 — **늘 LeRobot 캐시의 `org/<이름><suffix>`.**
+
+    ⚠ 원본이 HF 허브 캐시에 있으면 그 옆(`snapshots/<rev><suffix>`)에 만들면 안 된다. 가짜 스냅샷이
+    하나 생기고, 데이터셋 목록은 "가장 최근 스냅샷" 을 그 이름의 데이터셋으로 고르므로 **원본 이름이
+    사본을 가리키게 된다** (실기 2026-10-25, `singlearm_apple_random_v2`). 사본 이름(`org/name_stage`)으로도
+    찾을 수 없었다.
+    """
+    org, name = repo_id_of(src).split("/", 1)
+    if src.parent.name == "snapshots":
+        return _lerobot_home() / org / (name + suffix)
+    return src.with_name(src.name + suffix)
 
 
 def frame_labels(segments: list[list[int]], n_frames: int) -> np.ndarray:
@@ -126,10 +159,9 @@ def bake(src: Path, dst: Path, *, reviewed_only: bool = False, force: bool = Fal
     if dst.exists():
         if not force:
             raise FileExistsError(f"{dst} 가 이미 있다 — 덮어쓰려면 --force")
-        if not (dst / "meta" / META_FILE).is_file():
+        if not any((dst / "meta" / n).is_file() for n in (META_FILE, *LEGACY_META_FILES)):
             # 우리가 구운 게 아닌 디렉터리는 --force 로도 안 지운다
             raise FileExistsError(f"{dst} 는 bake 결과물이 아니다 ({META_FILE} 없음) — 손으로 확인한다")
-        shutil.rmtree(dst)
 
     info = json.loads((src / "meta" / "info.json").read_text())
     if SUBTASK_INDEX_KEY in info["features"] or (src / "meta" / SUBTASKS_FILE).exists():
@@ -161,6 +193,15 @@ def bake(src: Path, dst: Path, *, reviewed_only: bool = False, force: bool = Fal
         if rec.get("frames") not in (None, n):
             log(f"  ⚠ ep{ep}: 사이드카 frames={rec.get('frames')} ≠ 데이터셋 length={n} — 사이드카가 낡았다")
         per_ep[ep] = arr
+
+    # ⚠ 라벨이 하나도 안 남으면 굽지 않는다. 검토한 에피소드가 0개인데 `--reviewed-only` 로 구우면 전부
+    #   `_unlabeled` 가 되고, 그 데이터로 학습한 stage 헤드는 **아무것도 못 배운다** — 에러 없이 끝까지
+    #   학습된다 (실기: 10-23 SmolVLA-S 20,000 스텝, stage_counts 전부 0).
+    if not any((arr >= 0).any() for arr in per_ep.values()):
+        raise ValueError("라벨이 하나도 안 남는다 — " + (
+            "검토(reviewed)한 에피소드가 없는데 --reviewed-only 다" if reviewed_only else "구간이 비어 있다"))
+    if dst.exists():
+        shutil.rmtree(dst)        # 위에서 우리 결과물인지 확인했다. 검사가 다 통과한 뒤에 지운다
 
     # ── 3. data parquet — 컬럼 + huggingface 메타데이터 ──
     counts = np.zeros(len(stage_names), dtype=np.int64)
@@ -241,8 +282,8 @@ def bake(src: Path, dst: Path, *, reviewed_only: bool = False, force: bool = Fal
     summary = {
         "version": BAKE_VERSION,
         "source": str(src),
-        "source_repo_id": f"{src.parent.name}/{src.name}",
-        # 원본 사이드카가 bake 뒤에 바뀌었는지 스캐너가 이 해시로 안다 (feature/act-aux.md §4.5)
+        "source_repo_id": repo_id_of(src),
+        # 원본 사이드카가 bake 뒤에 바뀌었는지 스캐너가 이 해시로 안다 (feature/act-s.md §4.5)
         "source_labels_sha256": hashlib.sha256(labels_path.read_bytes()).hexdigest(),
         "subtask_index_key": SUBTASK_INDEX_KEY,
         "stage_names": stage_names,
@@ -284,7 +325,7 @@ def _verify(dst: Path, log=print) -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("dataset", help="경로 또는 org/name (LeRobot 캐시)")
-    ap.add_argument("--out", help="출력 디렉터리. 기본 <원본>_stage")
+    ap.add_argument("--out", help="출력 디렉터리. 기본 LeRobot 캐시의 <org>/<이름>_stage")
     ap.add_argument("--reviewed-only", action="store_true",
                     help="reviewed=false 에피소드는 라벨을 -1 로 (학습에서 무시)")
     ap.add_argument("--force", action="store_true", help="이전 bake 결과물이면 지우고 다시 굽는다")
@@ -292,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     src = resolve_dataset(args.dataset)
-    dst = Path(args.out).expanduser().resolve() if args.out else src.with_name(src.name + "_stage")
+    dst = Path(args.out).expanduser().resolve() if args.out else default_output(src, "_stage")
     try:
         bake(src, dst, reviewed_only=args.reviewed_only, force=args.force, verify=not args.no_verify)
     except (FileNotFoundError, FileExistsError, ValueError) as e:

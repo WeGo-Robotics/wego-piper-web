@@ -88,12 +88,12 @@ SPECS: tuple[TemplateSpec, ...] = (
     TemplateSpec(
         name="piper-train full cu126",
         tag="full-cu126",
-        desc="LeRobot 0.5.0 + act_aux · 스택 포함, 부팅 즉시 학습",
+        desc="LeRobot 0.5.0 + ACT-S·SmolVLA-S · 스택 포함, 부팅 즉시 학습",
     ),
     TemplateSpec(
         name="piper-train slim cu126",
         tag="slim-cu126",
-        desc="LeRobot 0.5.0 + act_aux · 부팅 때 bootstrap.sh 가 스택 설치",
+        desc="LeRobot 0.5.0 + ACT-S·SmolVLA-S · 부팅 때 bootstrap.sh 가 스택 설치",
     ),
 )
 

@@ -90,7 +90,7 @@ WHEEL_PKGS=()
 while read -r f; do
   [ -z "$f" ] && continue
   case "$f" in
-    backend/*|wrapper/*|policies/*|act_aux/*|phase/*|vendor/*) need_backend=1 ;;
+    backend/*|wrapper/*|policies/*|custom_policies/*|phase/*|vendor/*) need_backend=1 ;;
   esac
   case "$f" in
     frontend/*) need_frontend=1 ;;

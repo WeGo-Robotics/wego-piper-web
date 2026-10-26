@@ -35,7 +35,7 @@ def _detect(prev: str, tag: str) -> set[str]:
     for p in out.stdout.splitlines():
         if not p or skip.search(p):
             continue
-        if p.startswith(("backend/", "wrapper/", "policies/", "act_aux/",
+        if p.startswith(("backend/", "wrapper/", "policies/", "custom_policies/",
                          "phase/", "vendor/")):
             layers.add("backend")
         if p.startswith("frontend/"):

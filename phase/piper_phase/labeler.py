@@ -26,6 +26,7 @@ pandas/pyarrow 가 필요하다: `pip install -e "phase/[labeler]"`.
 
 import json
 import logging
+import os
 from dataclasses import asdict
 from pathlib import Path
 
@@ -58,6 +59,26 @@ def tip_speed(state, fps: float):
     except Exception as exc:      # 축 수가 안 맞는 팔 등
         logger.warning("말단 속도 계산 실패: %s", exc)
         return None
+
+
+def replace_file(path: Path, write) -> None:
+    """`path` 를 새 내용으로 — **심볼릭 링크면 링크를 갈아끼운다.** 가리키는 파일은 안 건드린다.
+
+    HF 허브에서 받은 데이터셋의 사이드카는 `snapshots/<rev>/meta/…` → `../../blobs/<해시>` 링크다.
+    `write_text` 는 링크를 따라가 **공유 캐시의 blob 을 고친다** — 해시가 이름인 파일의 내용이 바뀌고,
+    같은 blob 을 쓰는 다른 리비전까지 바뀐다. 같은 디렉터리의 임시 파일에 쓰고 rename 한다.
+    `write(tmp_path)` 가 실제로 쓴다.
+    """
+    tmp = path.with_name(f".{path.name}.tmp")
+    try:
+        write(tmp)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def replace_text(path: Path, text: str) -> None:
+    replace_file(path, lambda t: t.write_text(text))
 
 
 def sidecar_paths(ds_path: Path) -> tuple[Path, Path]:
@@ -201,7 +222,7 @@ def save(ds_path: Path, result: dict) -> tuple[Path, Path | None]:
         # 재분석해 파라미터 미리보기"(§3.5)가 나머지 45개를 날리는 사고가 된다.
         result["episodes"] = merged
 
-    labels_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
+    replace_text(labels_path, json.dumps(result, indent=2, ensure_ascii=False))
     if signals is not None and len(signals):
         # 신호도 같은 이유로 병합한다 (분석한 에피소드만 갱신)
         if signals_path.exists():
@@ -210,7 +231,7 @@ def save(ds_path: Path, result: dict) -> tuple[Path, Path | None]:
             signals = pd.concat(
                 [old[~old.episode_index.isin(touched)], signals], ignore_index=True
             ).sort_values(["episode_index", "frame_index"], ignore_index=True)
-        signals.to_parquet(signals_path, index=False)
+        replace_file(signals_path, lambda t: signals.to_parquet(t, index=False))
         logger.info("사이드카 저장: %s (+ 신호 %d행)", labels_path, len(signals))
         return labels_path, signals_path
     logger.info("사이드카 저장: %s", labels_path)

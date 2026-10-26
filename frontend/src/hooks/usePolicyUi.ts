@@ -40,7 +40,7 @@ export type PolicyUi = {
     defaults: Record<string, unknown>
     fields: SpecField[]
     warnings: SpecWarning[]
-    /** 데이터셋에 있어야 하는 feature 키 — 없는 데이터셋은 목록에서 빠진다 (예: ACT-Aux 의 subtask_index). */
+    /** 데이터셋에 있어야 하는 feature 키 — 없는 데이터셋은 목록에서 빠진다 (예: ACT-S·SmolVLA-S 의 subtask_index). */
     requires_features: string[]
   }
   encoder_probe: {

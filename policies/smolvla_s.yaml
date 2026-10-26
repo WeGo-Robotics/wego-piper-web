@@ -1,0 +1,66 @@
+# SmolVLA-S — SmolVLA 를 상속해 행동 + 작업 단계(stage)를 함께 내는 변형 (feature/smolvla-s.md).
+#
+# ACT-S 와 같은 stage 헤드·같은 구운 데이터셋(`_stage`)을 쓴다. 다른 것은 특징을 꺼내는 자리
+# 하나 — VLM prefix 출력이다. 코드는 `custom_policies/` (배포명 `lerobot_policy_piper`).
+spec_version: 1
+type: smolvla_s
+label: SmolVLA-S
+supported: true
+
+capabilities:
+  train: true
+  infer: true
+  # 디노이즈 루프는 SmolVLA 그대로다 — stage 는 루프 전 prefix 에서 한 번 나온다
+  rtc: true
+  # 프로브는 정책 이름으로 SmolVLA 로더를 고른다 (wrapper/encoder_probe.py) — 붙이려면 거기부터
+  encoder_probe: false
+  language: true
+
+bases:
+  # ⚠ 비워 둔다. `lerobot/smolvla_base` 는 config `type: smolvla` 라 그대로 이어 학습하면 **바닐라
+  # SmolVLA 로** 학습된다 — 학습 화면이 이 정책의 이어 학습 목록에서 그래서 그걸 거른다.
+  # smolvla 체크포인트에서 출발하는 경로(워밍스타트)는 smolvla-s.md §6 의 다음 단계다.
+  policy: ""
+  vlm: HuggingFaceTB/SmolVLM2-500M-Video-Instruct
+
+runtime:
+  model: [lerobot_policy_piper.smolvla_s.modeling_smolvla_s, SmolVLASPolicy]
+  config: [lerobot_policy_piper.smolvla_s.configuration_smolvla_s, SmolVLASConfig]
+
+scratch_note: "VLM(SmolVLM2) 가중치로 시작하고 행동 전문가는 무작위입니다 — smolvla_base 의 로봇 사전학습은 아직 못 씁니다. 데이터셋은 bake 로 구운 `_stage` 여야 합니다"
+
+infer:
+  extra_params: [max_guidance_weight, execution_horizon]
+
+train:
+  defaults: { batch_size: 64, steps: 200000, optimizer_type: adamw }
+  # bake 가 만든 `_stage` 데이터셋만 — 없으면 첫 배치에서 KeyError 로 죽는다 (의도)
+  requires_features: [subtask_index]
+  fields:
+    - { key: chunk_size, kind: number, min: 1, max: 200, arch: true, from_lerobot: true, default: 50 }
+    - { key: n_action_steps, kind: number, min: 1, max: 200, arch: true, from_lerobot: true, default: 50 }
+    - { key: freeze_vision_encoder, kind: bool, from_lerobot: true, default: true }
+    - { key: train_expert_only, kind: bool, from_lerobot: true, default: true }
+    # smolvla.yaml 과 같은 이탈 — 이유도 같다
+    - key: load_vlm_weights
+      kind: bool
+      from_lerobot: true
+      default: false
+      override:
+        value: true
+        reason: "LeRobot 기본값 false 는 scratch 학습에서 freeze 와 충돌한다"
+    # ── stage 헤드 ──
+    # λ. 0 이면 바닐라 SmolVLA 와 손실이 수치 동일 (A/B 대조군). train_expert_only 면 CE 는
+    # 헤드와 state_proj 로만 흐른다 — 이미지·언어 표현은 안 바뀐다 (smolvla-s.md §3).
+    - { key: stage_loss_weight, kind: number, min: 0, max: 1, step: 0.01, from_lerobot: true, default: 0.1 }
+    - { key: label_smoothing, kind: number, min: 0, max: 0.3, step: 0.01, from_lerobot: true, default: 0.1 }
+    - { key: stage_balance, kind: bool, from_lerobot: true, default: true }
+
+  warnings:
+    - when: { field: load_vlm_weights, is: false }
+      level: error
+      text: "load_vlm_weights=false — VLM이 랜덤 초기화됩니다"
+    - when: { field: load_vlm_weights, is: false }
+      and: { field: freeze_vision_encoder, is: true }
+      level: error
+      text: "freeze_vision_encoder=true와 겹쳐 비전 인코더가 학습조차 되지 않습니다"

@@ -116,11 +116,22 @@ PARAM_SPEC: dict[str, ParamSpec] = {
         "scoped": True,
     },
     # ── ACT 전용 ──
+    # 시간 앙상블(ACT 논문 temporal ensembling) — wrapper/temporal_ensemble.py. 켜면 매 스텝
+    # 추론하고 같은 스텝을 예측한 청크들을 가중 평균한다. 로컬 추론에서만 돈다.
+    # ⚠ 스위치가 계수와 따로다. 계수(0.01)는 예전부터 시작값으로 실려 왔으므로 계수만으로 켜면
+    #   모든 ACT 추론의 동작이 한꺼번에 바뀐다. 기본은 꺼짐.
+    "temporal_ensemble": {
+        "label": "시간 앙상블 (매 스텝 추론)", "kind": "bool", "default": False,
+        "realtime": True, "send_at_start": True, "group": "ACT 파라미터",
+        "scoped": True,
+        "help": "켜면 매 제어 스텝마다 추론하고, 같은 스텝을 예측한 청크들을 가중 평균해 보낸다. 재추론 트리거는 쓰지 않는다",
+    },
     "temporal_ensemble_coeff": {
         "label": "temporal_ensemble_coeff", "kind": "number", "default": 0.01,
         "min": 0, "max": 1, "step": 0.001,
         "realtime": True, "send_at_start": True, "group": "ACT 파라미터",
         "scoped": True,
+        "help": "클수록 먼저 나온 예측을 더 믿는다. 0 = 균등 평균, 원 논문 0.01",
     },
     # 옛 localStorage 에 남아 들어올 수 있어 계약에는 남긴다.
     # UI 슬라이더는 use_chunk_size 로 통합됐다 (refactor/01 "노브 2개" 참고).
@@ -176,6 +187,16 @@ def _users_of(key: str) -> list[str]:
     from app.core.policies import SPECS
 
     return sorted(n for n, spec in SPECS.items() if key in spec.infer.extra_params)
+
+
+def foreign_to(policy_type: str) -> set[str]:
+    """이 정책이 쓰지 않는 정책별(`scoped`) 파라미터 — 시작할 때도 실행 중에도 싣지 않는다.
+
+    화면은 다른 정책의 카드를 감추지만 **값은 localStorage·프리셋에 남아 계속 실려 온다.**
+    ACT 에서 켠 시간 앙상블이 SmolVLA 추론에 실리면 매 스텝 추론이 되는데 화면엔 스위치조차
+    안 보인다. 모르는 정책이면 정책별 파라미터를 하나도 안 싣는다 — wrapper 기본값으로 돈다.
+    """
+    return {k for k, v in PARAM_SPEC.items() if v.get("scoped") and policy_type not in _users_of(k)}
 
 
 def spec_for_frontend() -> list[dict]:

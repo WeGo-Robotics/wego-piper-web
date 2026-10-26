@@ -114,7 +114,7 @@ class TrainSpec(_Strict):
     fields: list[TrainField] = Field(default_factory=list)
     warnings: list[Warning_] = Field(default_factory=list)
     # 데이터셋 `features` 에 있어야 하는 키. 화면이 목록을 거르고, 없는 데이터셋으로
-    # 시작하면 학습이 첫 배치에서 죽는다 (ACT-Aux 의 `subtask_index`). 정책별 **사실**이다.
+    # 시작하면 학습이 첫 배치에서 죽는다 (ACT-S·SmolVLA-S 의 `subtask_index`). 정책별 **사실**이다.
     requires_features: list[str] = Field(default_factory=list)
 
 
@@ -150,6 +150,9 @@ class PolicySpec(_Strict):
     type: str
     label: str
     supported: bool = False
+    # 이 타입의 옛 이름들. 이름을 바꾸기 전에 저장한 체크포인트의 config.json `type` 이라
+    # 모델 목록·추론이 이 이름도 이 정책으로 알아본다 (ACT-Aux → ACT-S).
+    aliases: list[str] = Field(default_factory=list)
     capabilities: Capabilities = Field(default_factory=Capabilities)
     bases: Bases = Field(default_factory=Bases)
     runtime: Runtime = Field(default_factory=Runtime)

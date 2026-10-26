@@ -182,7 +182,7 @@ export default function InferencePage() {
       lowpass_alpha: 0.5, max_jerk: 0, interpolation_steps: 0, use_chunk_size: 0,
       refill_threshold_pct: 20, gripper_bypass_filter: true,
       max_guidance_weight: 10.0, execution_horizon: 10,
-      temporal_ensemble_coeff: 0.01,
+      temporal_ensemble: false, temporal_ensemble_coeff: 0.01,
       // n_action_steps 는 로컬 모드에서 use_chunk_size 와 같은 변수를 가리켰다 →
       // "받는 액션 청크 크기" 슬라이더 하나로 통합했다.
     }
@@ -201,7 +201,7 @@ export default function InferencePage() {
   const { inferable, isRtc, takesLanguage } = usePolicies()
   const [activePreset, setActivePreset] = useState('')
   // 파라미터 범위·기본값은 백엔드 core/inference_params.py 에서 온다
-  const { rangeOf, defaults: specDefaults } = useParamSpec()
+  const { rangeOf, defaults: specDefaults, byKey: paramSpec } = useParamSpec()
 
   // 스펙이 도착하면 아직 없는 파라미터를 서버 기본값으로 보충한다
   // (프론트에 기본값을 또 적지 않기 위해)
@@ -287,6 +287,9 @@ export default function InferencePage() {
   const reqs = selectedModelData?.requirements
   // 파라미터 패널/정책 표시 기준: 선택 모델의 policy_type 우선, 없으면 수동 선택값
   const activePolicy = selectedModelData?.policy_type ?? policyType
+  // 시간 앙상블을 쓰는 정책인가(스펙) · 지금 켜져 있나. 로컬 wrapper 만 한다 — 서버 모드에선 효과가 없다.
+  const usesEnsemble = inferenceMode === 'local' && !!paramSpec.temporal_ensemble?.policies.includes(activePolicy)
+  const ensembling = usesEnsemble && params.temporal_ensemble === true
 
   /** 시작·미리보기에 실을 파라미터. **ACT 같은 정책엔 `task` 를 빼고 보낸다.**
    *
@@ -532,6 +535,20 @@ export default function InferencePage() {
             {reqs && (
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
                 <h3 className="text-sm font-semibold">{t('모델 요구사항')}</h3>
+                {/* 액션 공간은 고르는 게 아니다 — 체크포인트의 학습 데이터셋이 정하고 시작이 알아서 싣는다.
+                    여기는 무엇이 일어날지 알려 주기만 한다 (feature/act-delta.md). */}
+                {selectedModelData?.action_space === 'delta_v1' && (
+                  <p className={`text-xs ${inferenceMode === 'server' ? 'text-red-400' : 'text-emerald-300'}`}>
+                    Δ {inferenceMode === 'server'
+                      ? t('델타 체크포인트 — 정책 서버 모드에서는 돌 수 없습니다. 로컬로 바꾸세요')
+                      : t('델타 체크포인트 — 관절 이동 변화량을 내고, 추론이 현재 자세에 더해 절대 위치로 되돌립니다')}
+                  </p>
+                )}
+                {selectedModelData?.action_space === 'unknown' && (
+                  <p className="text-xs text-red-400">
+                    {t('델타로 학습한 것으로 보이는데 학습 데이터셋이 없어 확인할 수 없습니다 — 시작하지 않습니다')}
+                  </p>
+                )}
                 <div className="flex items-center gap-2 text-xs">
                   <span className="text-neutral-400">{t('관절:')}</span>
                   <span>{t('{state_dim}개', { state_dim: reqs.state_dim })}</span>
@@ -893,8 +910,11 @@ export default function InferencePage() {
               onChange={(v) => handleParamChange('interpolation_steps', v)} />
             <ParamSlider label={t('받는 액션 청크 크기 (0=모델 전체)')} value={params.use_chunk_size ?? 0} {...rangeOf('use_chunk_size', { min: 0, max: 200, step: 5 })}
               onChange={(v) => handleParamChange('use_chunk_size', v)} />
-            <ParamSlider label={t('재추론 트리거 (큐 잔량 ≤ %, 0=소진 시)')} value={params.refill_threshold_pct ?? 20} {...rangeOf('refill_threshold_pct', { min: 0, max: 100, step: 1 })}
-              onChange={(v) => handleParamChange('refill_threshold_pct', v)} />
+            {/* 시간 앙상블이 켜져 있으면 매 스텝 추론하므로 이 임계치는 쓰이지 않는다 */}
+            <div className={ensembling ? 'opacity-40 pointer-events-none' : ''}>
+              <ParamSlider label={t('재추론 트리거 (큐 잔량 ≤ %, 0=소진 시)')} value={params.refill_threshold_pct ?? 20} {...rangeOf('refill_threshold_pct', { min: 0, max: 100, step: 1 })}
+                onChange={(v) => handleParamChange('refill_threshold_pct', v)} />
+            </div>
           </CollapsibleCard>
           {isRtc(activePolicy) && (
             <CollapsibleCard title={t('RTC 파라미터')} storageKey="piper_fold_rtc" defaultOpen={false}>
@@ -904,10 +924,25 @@ export default function InferencePage() {
                 onChange={(v) => handleParamChange('execution_horizon', v)} />
             </CollapsibleCard>
           )}
-          {activePolicy === 'act' && (
+          {/* ⚠ 정책 이름을 여기 적지 않는다. 예전엔 `activePolicy === 'act'` 라 같은 파라미터를 쓰는
+              ACT-S 에서 카드가 안 떴다. 누가 쓰는지는 스펙(`policies/<type>.yaml` infer.extra_params)이 정한다.
+              스펙이 오기 전엔 안 띄운다 — 엉뚱한 정책에 잠깐 떴다 사라지지 않게.
+              시간 앙상블은 로컬 wrapper 가 한다 — 정책 서버(gRPC) 모드에선 아무 효과가 없어 감춘다. */}
+          {usesEnsemble && (
             <CollapsibleCard title={t('ACT 파라미터')} storageKey="piper_fold_act">
-              <ParamSlider label="temporal_ensemble_coeff" value={params.temporal_ensemble_coeff} {...rangeOf('temporal_ensemble_coeff', { min: 0, max: 1, step: 0.001 })}
-                onChange={(v) => handleParamChange('temporal_ensemble_coeff', v)} />
+              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <input type="checkbox" checked={params.temporal_ensemble === true}
+                  onChange={(e) => handleParamChange('temporal_ensemble', e.target.checked)}
+                  className="accent-blue-500" />
+                <span className="text-neutral-300">{t('시간 앙상블 — 매 스텝 추론해 겹친 청크를 평균')}</span>
+              </label>
+              <div className={ensembling ? 'space-y-1' : 'opacity-40 pointer-events-none space-y-1'}>
+                <ParamSlider label="temporal_ensemble_coeff" value={params.temporal_ensemble_coeff} {...rangeOf('temporal_ensemble_coeff', { min: 0, max: 1, step: 0.001 })}
+                  onChange={(v) => handleParamChange('temporal_ensemble_coeff', v)} />
+                <p className="text-[10px] text-neutral-500">
+                  {t('클수록 먼저 나온 예측을 더 믿습니다 (0 = 균등 평균, 원 논문 0.01). 켜면 재추론 트리거를 쓰지 않고 GPU 로 매 스텝 추론합니다.')}
+                </p>
+              </div>
               <p className="text-[10px] text-neutral-500">
                 {t('액션 스텝 수는 위 “받는 액션 청크 크기”로 통합되었습니다.')}
               </p>

@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -10,6 +11,8 @@ from app.core.cli_mapping import (
     build_grpc_client_args, build_inference_args, checkpoint_dim_problem,
 )
 from app.core.config import settings
+from app.core.inference_params import foreign_to
+from app.services import action_space
 from app.core.policies import takes_language
 from app.services.exclusivity import Activity, require_idle
 from app.services.camera_config import (
@@ -125,6 +128,21 @@ def _clear_arm_errors(label: str, ifaces: list[str] | None = None) -> list[str]:
     return robot_manager_mod.slip_warnings(report)
 
 
+def _action_space_for(body) -> dict:
+    """체크포인트의 액션 공간 (services/action_space.py). 돌리면 안 되는 조합이면 여기서 400.
+
+    사람이 고르는 선택지가 없다 — 고를 수 있으면 틀릴 수 있다.
+    """
+    info = action_space.resolve(Path(body.checkpoint_path)) if body.checkpoint_path else \
+        {"action_space": action_space.ABSOLUTE, "spec": None}
+    if info["action_space"] == action_space.UNKNOWN:
+        raise HTTPException(400, action_space.unknown_message(info))
+    if info["action_space"] == action_space.DELTA_V1 and body.inference_mode == "server":
+        # 델타를 절대로 되돌리는 것은 로컬 wrapper 다. 정책 서버는 액션만 돌려준다
+        raise HTTPException(400, "델타 체크포인트는 로컬 추론에서만 돌 수 있습니다 — 정책 서버 모드는 절대 액션만 압니다")
+    return info
+
+
 def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
     """추론 CLI 인자 생성 — `/inference/preview` 와 `/inference/start` 가 함께 쓴다.
 
@@ -140,6 +158,8 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
     # 한쪽에만 걸면 화면에 보이는 명령이 실제로 도는 것과 달라진다.
     robot_type = resolve_robot_type(robot_type)
     cameras = build_cameras_json(body.camera_mapping)
+    # 액션 공간 — 두 모드 모두 먼저 본다. 서버 모드에 델타를 걸면 미리보기에서부터 거절된다
+    space = _action_space_for(body)
     is_bimanual = len(body.robot_ports) >= 2
 
     # ⚠ **언어를 안 받는 정책에는 `task` 를 아예 안 싣는다.**
@@ -150,6 +170,10 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
     user_params = dict(body.params)
     if not takes_language(body.policy_type):
         user_params.pop("task", None)
+    # 정책별 파라미터(`scoped`)도 같은 이유로 그 정책에만 싣는다. ACT 에서 켠 시간 앙상블이
+    # localStorage 에 남아 SmolVLA 추론에 실리면, 스위치가 안 보이는 화면에서 매 스텝 추론이 돈다.
+    for key in foreign_to(body.policy_type):
+        user_params.pop(key, None)
 
     if body.inference_mode == "server":
         params = {
@@ -188,6 +212,9 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
         "debug": body.debug_mode,
         **user_params,
     }
+    if space["action_space"] == action_space.DELTA_V1:
+        params["action_space"] = action_space.DELTA_V1
+        params["delta_spec"] = space["spec"]
     if cameras:
         params["cameras"] = cameras
     if is_bimanual:
@@ -327,6 +354,8 @@ async def start_inference(body: InferenceStartRequest):
     problem = checkpoint_dim_problem(body.checkpoint_path)
     if problem:
         raise HTTPException(400, problem)
+    # 카메라·팔을 준비하기 전에 막는다 — 돌릴 수 없는 체크포인트면 장치를 건드릴 이유가 없다
+    space = _action_space_for(body)
     robot_type = body.robot_type or robot_manager.selected_type
     if not robot_type:
         raise HTTPException(400, "로봇이 선택되지 않았습니다. 로봇 페이지에서 먼저 선택하세요.")
@@ -376,6 +405,11 @@ async def start_inference(body: InferenceStartRequest):
     # 새 추론 시작 직후에 적용된다 (refactor/daemon-split.md 3단계).
     await param_bridge.clear()
 
+    # 델타로 판정했으면 체크포인트에 표식을 남긴다 — 학습 데이터셋이 나중에 지워져도 델타로 남고,
+    # wrapper 가 손으로 고친 인자와 대조한다. **시작에서만** 한다 (미리보기는 파일을 안 고친다).
+    if body.checkpoint_path:
+        action_space.remember(Path(body.checkpoint_path), space)
+
     env_extra = {"PIPER_DEBUG_DIR": settings.debug_dir} if body.debug_mode else None
     try:
         await process_manager.start(args, env_extra=env_extra)
@@ -400,6 +434,17 @@ async def start_inference_custom(body: InferenceStartCustomRequest):
     problem = checkpoint_dim_problem(_checkpoint_flag_value(body.args))
     if problem:
         raise HTTPException(400, problem)
+    # 손으로 고친 인자에서 델타 플래그를 빼면 델타 체크포인트가 절대로 돈다 — 팔이 영점 자세로 돌진한다
+    ckpt = _checkpoint_flag_value(body.args)
+    if ckpt:
+        info = action_space.resolve(Path(ckpt))
+        if info["action_space"] == action_space.UNKNOWN:
+            raise HTTPException(400, action_space.unknown_message(info))
+        flagged = (body.args[body.args.index("--action-space") + 1]
+                   if "--action-space" in body.args[:-1] else action_space.ABSOLUTE)
+        if flagged != info["action_space"]:
+            raise HTTPException(400, f"액션 공간이 어긋납니다 — 체크포인트는 {info['action_space']}, 인자는 {flagged}. "
+                                     f"편집 전 명령의 --action-space·--delta-spec 을 그대로 두세요")
 
     # 추론 전 연결된 모든 카메라 해제 (wrapper가 카메라를 직접 열므로)
     release_all_cameras("inference")
