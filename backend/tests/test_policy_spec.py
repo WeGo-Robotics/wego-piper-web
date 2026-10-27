@@ -50,10 +50,19 @@ def test_registry_output_is_unchanged():
 
 
 def test_frontend_spec_keeps_its_shape():
+    # 뒤 다섯은 학습의 정책 고르는 창이 쓴다 — 설명·처음부터 시작점·데이터셋 조건·이어 받을 정책·기본 배치/스텝
     keys = {"type", "label", "train", "infer", "rtc", "language",
-            "encoder_probe", "policy_base"}
+            "encoder_probe", "policy_base",
+            "description", "scratch_note", "requires_features", "warm_start_from", "defaults"}
     for row in P.spec_for_frontend():
         assert set(row) == keys, f"{row.get('type')}: 응답 모양이 바뀌었다"
+
+
+def test_every_listed_policy_explains_itself():
+    """정책 고르는 창이 설명을 보여준다 — 목록에 뜨는 정책은 전부 설명이 있어야 한다.
+    새 정책을 더하면서 빠뜨리면 창에 이름만 덩그러니 남는다."""
+    for row in P.spec_for_frontend():
+        assert row["description"].strip(), f"{row['type']}: 설명(description)이 없다"
 
 
 def test_display_order_is_not_filename_order():

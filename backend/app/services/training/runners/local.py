@@ -10,6 +10,7 @@
 import logging
 import os
 from collections.abc import Callable
+from pathlib import Path
 
 from app.services.process_manager import ProcessManager, ProcessState
 from app.services.training.spec import TrainJobSpec
@@ -27,6 +28,11 @@ class LocalRunner:
 
     def __init__(self) -> None:
         self.pm = ProcessManager()
+
+    @property
+    def workdir(self) -> Path:
+        """자식은 게이트웨이의 작업 폴더를 물려받는다 — LeRobot 상대경로의 기준."""
+        return Path.cwd()
 
     @property
     def state(self) -> ProcessState:

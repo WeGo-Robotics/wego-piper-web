@@ -2,6 +2,10 @@
 spec_version: 1
 type: smolvla
 label: SmolVLA
+# 정책 고르는 창의 설명 — 스펙에서 확인되는 사실만 (policy_spec.PolicySpec.description)
+description: >-
+  비전-언어-행동(VLA) 정책입니다. 영상·관절 상태와 함께 작업 지시 문장을 받고,
+  SmolVLM2 위에서 행동 전문가가 flow matching 으로 동작을 냅니다.
 supported: true
 
 capabilities:

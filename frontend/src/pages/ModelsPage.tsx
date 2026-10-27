@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react'
 import NotesEditor from '../components/NotesEditor'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
-import type { Model } from '../types/models'
+import type { Model, WeightRun } from '../types/models'
 import { sizeText } from '../types/camera'
 import DiskUsageBar from '../components/DiskUsageBar'
 import HubBrowser from '../components/HubBrowser'
+import WeightTable, { CheckpointChip, RunSummary } from '../components/WeightTable'
 import { useT, fmt } from '../i18n'
 
 function formatBytes(bytes: number): string {
@@ -15,8 +16,6 @@ function formatBytes(bytes: number): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
 }
-
-type SortKey = 'name' | 'size' | 'date' | 'policy'
 
 export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey }: { embedded?: boolean; tab?: 'local' | 'hub'; refreshKey?: number }) {
   const t = useT()
@@ -32,19 +31,20 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
 
   // 부모(저장소 화면)의 "새로고침" 을 받는다
   useEffect(() => { if (refreshKey !== undefined) fetchModels() }, [refreshKey])
+  // 표는 학습 단위(`/models/runs`), 펼친 체크포인트의 상세는 모델 단위(`/models`)다
   const [models, setModels] = useState<Model[]>([])
+  const [runs, setRuns] = useState<WeightRun[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
-  const [sortKey, setSortKey] = useState<SortKey>('date')
-  const [sortAsc, setSortAsc] = useState(false)
+  // ⚠ 못 읽은 것을 "모델이 없습니다" 로 보이면 안 된다 — 지운 줄 안다
+  const [loadError, setLoadError] = useState('')
+  // 상세 창 — 어느 학습의 어느 체크포인트
+  const [open, setOpen] = useState<{ key: string; ckpt: string } | null>(null)
 
   const fetchModels = () => {
     setLoading(true)
-    api
-      .get<Model[]>('/models')
-      .then(setModels)
-      .catch(() => {})
+    Promise.all([api.get<Model[]>('/models'), api.get<WeightRun[]>('/models/runs')])
+      .then(([m, r]) => { setModels(m); setRuns(r); setLoadError('') })
+      .catch((e) => setLoadError(e instanceof Error ? e.message : t('목록을 읽지 못했습니다')))
       .finally(() => setLoading(false))
   }
 
@@ -61,7 +61,6 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
     if (!await askConfirm(msg)) return
     await api.delete(`/models/${id}`)
     fetchModels()
-    if (selectedId === id) setSelectedId(null)
   }
 
   const handleStartInference = async (model: Model) => {
@@ -72,54 +71,6 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
     } catch (e) {
       notifyError(t('추론 시작 실패'))
     }
-  }
-
-  const selected = models.find((m) => m.id === selectedId)
-
-  // ⚠ **검색 중에는 전부 펼친다.** 안 그러면 걸린 게 접힌 묶음 안에 숨어
-  //   "검색해도 아무것도 안 나온다" 로 보인다.
-  const [openRuns, setOpenRuns] = useState<Set<string>>(new Set())
-  const toggleRun = (run: string) => setOpenRuns((prev) => {
-    const next = new Set(prev)
-    if (next.has(run)) next.delete(run)
-    else next.add(run)
-    return next
-  })
-
-  const filteredModels = models
-    .filter((m) => !search || m.id.toLowerCase().includes(search.toLowerCase()) || m.policy_type.toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => {
-      let cmp = 0
-      if (sortKey === 'name') cmp = a.id.localeCompare(b.id)
-      else if (sortKey === 'size') cmp = a.size_bytes - b.size_bytes
-      else if (sortKey === 'date') cmp = new Date(a.modified).getTime() - new Date(b.modified).getTime()
-      else if (sortKey === 'policy') cmp = a.policy_type.localeCompare(b.policy_type)
-      return sortAsc ? cmp : -cmp
-    })
-
-  const groups = (() => {
-    const by = new Map<string, typeof filteredModels>()
-    for (const m of filteredModels) {
-      const key = m.run ?? ''
-      const list = by.get(key)
-      if (list) list.push(m)
-      else by.set(key, [m])
-    }
-    return [...by.entries()]
-      .map(([run, list]) => ({ run, list }))
-      .sort((a, b) => (a.run ? 0 : 1) - (b.run ? 0 : 1))   // 묶이지 않은 것은 맨 아래
-  })()
-
-  // 검색 중이거나 고른 것이 있으면 그 묶음은 열어 둔다
-  const forcedOpen = new Set(openRuns)
-  if (search) for (const g of groups) forcedOpen.add(g.run)
-  const sel = models.find((m) => m.id === selectedId)
-  if (sel) forcedOpen.add(sel.run ?? '')
-  if (!openRuns.size && !search && groups.length) forcedOpen.add(groups[0].run)
-
-  const handleSort = (key: SortKey) => {
-    if (sortKey === key) setSortAsc(!sortAsc)
-    else { setSortKey(key); setSortAsc(false) }
   }
 
   return (
@@ -148,289 +99,273 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
 
       {tab === 'hub' ? <HubBrowser type="models" /> : null}
 
-      {tab === 'local' && loading ? (
+      {tab === 'local' && loading && !runs.length ? (
         <p className="text-neutral-400">{t('스캔 중...')}</p>
-      ) : tab === 'local' && models.length === 0 ? (
+      ) : tab === 'local' && loadError && !runs.length ? (
+        <p className="text-red-300">{t('목록을 읽지 못했습니다')} — {loadError}</p>
+      ) : tab === 'local' && runs.length === 0 ? (
         <p className="text-neutral-400">
           {t('로컬 모델이 없습니다. Hub에서 다운로드하거나 학습을 실행하세요.')}
         </p>
       ) : tab === 'local' ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* 모델 목록 */}
-          <div className="lg:col-span-1 space-y-2">
-            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
-              placeholder={t('검색 (이름, 정책)...')}
-              className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 placeholder:text-neutral-500" />
-            <div className="flex gap-1 text-[10px]">
-              {([['name', t('이름')], ['policy', t('정책')], ['size', t('크기')], ['date', t('날짜')]] as [SortKey, string][]).map(([k, l]) => (
-                <button key={k} onClick={() => handleSort(k)}
-                  className={`px-2 py-0.5 rounded ${sortKey === k ? 'bg-blue-600 text-white' : 'bg-neutral-700 text-neutral-400'}`}>
-                  {l}{sortKey === k ? (sortAsc ? ' ↑' : ' ↓') : ''}
-                </button>
-              ))}
-              <span className="ml-auto text-neutral-500">{filteredModels.length}/{models.length}</span>
-            </div>
-            {groups.map((g) => {
-              const open = forcedOpen.has(g.run)
-              return (
-                <div key={g.run || '_other'} className="space-y-2">
-                  {/* ⚠ 학습이 목록의 단위다. 예전에는 체크포인트 72개가 평면으로
-                      깔려 어느 학습의 몇 번째인지 읽을 수가 없었다. */}
-                  <button type="button" onClick={() => toggleRun(g.run)}
-                    className="flex w-full items-center gap-2 rounded border border-neutral-700 bg-neutral-800/60 px-3 py-2 text-left text-sm hover:border-neutral-600">
-                    <span className="text-neutral-500">{open ? '▾' : '▸'}</span>
-                    {/* 학습 폼의 제목이 run 의 이름이다 — 있으면 경로 대신 앞세우고 경로는 뒤에 */}
-                    <span className="truncate font-medium">
-                      {g.run && g.list[0]?.run_notes?.name
-                        ? <>{g.list[0].run_notes.name} <span className="text-neutral-500 font-normal">({g.run})</span></>
-                        : (g.run || t('그 외 (직접 받은 모델)'))}
-                    </span>
-                    <span className="ml-auto shrink-0 text-xs text-neutral-500">
-                      {t('{run}{run_2}{length}개', {
-                        run: g.run && g.list[0]?.policy_type ? `${g.list[0].policy_type} · ` : '',
-                        run_2: g.run && g.list[0]?.run_created
-                        ? `${fmt.date(g.list[0].run_created)} · ` : '',
-                        length: g.list.length,
-                      })}
-                    </span>
-                  </button>
-                  {open && (
-                    <div className="space-y-2 pl-3">
-                      {g.list.map((m) => (
-                  <div
-                    key={m.id}
-                    onClick={() => setSelectedId(m.id)}
-                    className={`rounded-lg border p-4 cursor-pointer transition-colors ${
-                      selectedId === m.id
-                        ? 'border-blue-500 bg-blue-500/10'
-                        : 'border-neutral-700 bg-neutral-800 hover:border-neutral-600'
-                    }`}
-                  >
-                    <div className="flex justify-between items-start">
-                      <div className="min-w-0">
-                        <p className="font-medium truncate">
-                          {m.notes?.name && !m.run
-                            ? <>{m.notes.name} <span className="text-neutral-500 font-normal">({m.id})</span></>
-                            : m.id}
-                        </p>
-                        <p className="text-xs text-neutral-400 mt-1">
-                          {m.policy_type} · {formatBytes(m.size_bytes)}
-                          {m.action_space === 'delta_v1' && <span className="text-emerald-300" title={t('델타 체크포인트 — 추론이 절대 위치로 되돌린다')}> · Δ</span>}
-                          {m.action_space === 'unknown' && <span className="text-red-400" title={t('델타로 학습한 것으로 보이는데 학습 데이터셋이 없어 확인할 수 없습니다 — 시작하지 않습니다')}> · Δ?</span>}
-                          {m.created && <> · {fmt.dateTime(m.created, { dateStyle: 'short', timeStyle: 'short' })}</>}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex gap-2 mt-3">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleStartInference(m)
-                        }}
-                        className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white"
-                      >
-                        {t('추론 시작')}
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleDelete(m.id)
-                        }}
-                        className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white"
-                      >
-                        {t('삭제')}
-                      </button>
-                    </div>
-                  </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-
-          {/* 상세 패널 */}
-          <div className="lg:col-span-2">
-            {selected ? (
-              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-6 space-y-5">
-                <h2 className="text-lg font-semibold">
-                  {selected.notes?.name
-                    ? <>{selected.notes.name} <span className="text-sm font-normal text-neutral-500">({selected.id})</span></>
-                    : selected.id}
-                </h2>
-
-                {/* 이름·설명 사이드카 — 체크포인트 형식에 이 자리가 없다 */}
-                <NotesEditor key={selected.id} endpoint={`/models/${selected.id}/notes`} source={t('모델')} />
-
-                {/* 기본 정보 */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                  <div>
-                    <span className="text-neutral-400 text-xs">Policy</span>
-                    <p className="font-medium">
-                      {selected.policy_type}
-                      {selected.action_space === 'delta_v1' && <span className="ml-1 text-emerald-300 text-xs">Δ {t('델타')}</span>}
-                      {selected.action_space === 'unknown' && <span className="ml-1 text-red-400 text-xs">Δ? {t('확인 불가')}</span>}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-neutral-400 text-xs">{t('크기')}</span>
-                    <p>{formatBytes(selected.size_bytes)}</p>
-                  </div>
-                  <div>
-                    <span className="text-neutral-400 text-xs">{t('수정일')}</span>
-                    <p>{fmt.dateTime(selected.modified)}</p>
-                  </div>
-                  <div>
-                    <span className="text-neutral-400 text-xs">Repo</span>
-                    <p className="truncate text-xs">{(selected.config.repo_id as string) || selected.id}</p>
-                  </div>
-                </div>
-
-                {/* 입출력 요구사항 */}
-                {selected.requirements && (
-                  <div className="space-y-2">
-                    <h3 className="text-sm font-semibold text-neutral-300">{t('입출력')}</h3>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-                      <div>
-                        <span className="text-neutral-400 text-xs">{t('관절 (state)')}</span>
-                        <p>{t('{state_dim}개', { state_dim: selected.requirements.state_dim })}</p>
-                      </div>
-                      <div>
-                        <span className="text-neutral-400 text-xs">{t('액션')}</span>
-                        <p>{t('{action_dim}차원', { action_dim: selected.requirements.action_dim })}</p>
-                      </div>
-                      <div>
-                        <span className="text-neutral-400 text-xs">{t('카메라')}</span>
-                        <p>{t('{length}대', { length: selected.requirements.required_cameras.length })}</p>
-                      </div>
-                    </div>
-                    {selected.requirements.required_cameras.length > 0 && (
-                      <div className="rounded border border-neutral-700 overflow-hidden">
-                        <table className="w-full text-xs">
-                          <thead className="bg-neutral-900">
-                            <tr>
-                              <th className="p-2 text-left text-neutral-400">{t('이름')}</th>
-                              <th className="p-2 text-left text-neutral-400"
-                                title={t('학습 데이터셋을 녹화한 해상도 — 추론 카메라가 이것과 같아야 합니다')}>{t('학습 해상도')}</th>
-                              <th className="p-2 text-left text-neutral-400">{t('기종')}</th>
-                              <th className="p-2 text-left text-neutral-400"
-                                title={t('모델 config 의 입력 크기 — 정책이 안에서 줄이는 크기입니다. 베이스 모델에서 시작하면 베이스의 값이 남습니다')}>{t('모델 입력')}</th>
-                              <th className="p-2 text-left text-neutral-400">{t('채널')}</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {selected.requirements.required_cameras.map((cam) => {
-                              const tc = selected.train_cameras?.cameras[cam.name]
-                              return (
-                                <tr key={cam.name} className="border-t border-neutral-700">
-                                  <td className="p-2 font-medium">{cam.name}</td>
-                                  <td className="p-2 font-mono text-neutral-200">
-                                    {tc ? sizeText(tc.width, tc.height, tc.fps) : <span className="text-neutral-500">{t('모름')}</span>}
-                                  </td>
-                                  <td className="p-2 text-neutral-300">{tc?.model ?? <span className="text-neutral-500">—</span>}</td>
-                                  <td className="p-2 font-mono text-neutral-400">{sizeText(cam.width, cam.height)}</td>
-                                  <td className="p-2 text-neutral-400">{cam.channels}</td>
-                                </tr>
-                              )
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* 아키텍처 */}
-                <div className="space-y-2">
-                  <h3 className="text-sm font-semibold text-neutral-300">{t('아키텍처')}</h3>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
-                    {selected.config.vlm_model_name != null && (
-                      <div className="col-span-2 sm:col-span-3">
-                        <span className="text-neutral-400">VLM</span>
-                        <span className="ml-2 text-neutral-100">{String(selected.config.vlm_model_name)}</span>
-                      </div>
-                    )}
-                    {[
-                      ['chunk_size', t('청크 크기')],
-                      ['n_action_steps', t('액션 스텝')],
-                      ['n_obs_steps', t('관측 스텝')],
-                      ['num_vlm_layers', t('VLM 레이어')],
-                      ['num_expert_layers', t('전문가 레이어')],
-                      ['num_steps', t('디노이징 스텝')],
-                      ['attention_mode', t('어텐션 모드')],
-                      ['freeze_vision_encoder', t('비전 동결')],
-                      ['use_cache', t('캐시 사용')],
-                    ].map(([key, label]) => {
-                      const val = selected.config[key]
-                      if (val == null) return null
-                      return (
-                        <div key={key}>
-                          <span className="text-neutral-400">{label}</span>
-                          <span className="ml-2 text-neutral-100">{String(val)}</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {/* 학습 설정 */}
-                <details>
-                  <summary className="text-sm text-neutral-400 cursor-pointer">{t('학습 설정')}</summary>
-                  <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
-                    {[
-                      ['optimizer_lr', 'Learning Rate'],
-                      ['optimizer_weight_decay', 'Weight Decay'],
-                      ['optimizer_grad_clip_norm', 'Grad Clip'],
-                      ['scheduler_warmup_steps', 'Warmup Steps'],
-                      ['scheduler_decay_steps', 'Decay Steps'],
-                      ['scheduler_decay_lr', 'Decay LR'],
-                      ['use_amp', 'AMP'],
-                      ['device', 'Device'],
-                    ].map(([key, label]) => {
-                      const val = selected.config[key]
-                      if (val == null) return null
-                      return (
-                        <div key={key}>
-                          <span className="text-neutral-400">{label}</span>
-                          <span className="ml-2 text-neutral-100">{String(val)}</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </details>
-
-                {/* 정규화 매핑 */}
-                {selected.config.normalization_mapping != null && (
-                  <details>
-                    <summary className="text-sm text-neutral-400 cursor-pointer">{t('정규화')}</summary>
-                    <div className="mt-2 grid grid-cols-3 gap-x-4 gap-y-1 text-xs">
-                      {Object.entries(selected.config.normalization_mapping as Record<string, string>).map(([k, v]) => (
-                        <div key={k}>
-                          <span className="text-neutral-400">{k}</span>
-                          <span className="ml-2 text-neutral-100">{v}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                )}
-
-                {/* Config JSON (raw) */}
-                <details>
-                  <summary className="text-sm text-neutral-400 cursor-pointer">{t('Config JSON (전체)')}</summary>
-                  <pre className="mt-2 text-xs bg-neutral-900 p-3 rounded overflow-auto max-h-64">
-                    {JSON.stringify(selected.config, null, 2)}
-                  </pre>
-                </details>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-6 text-neutral-400 text-center">
-                {t('모델을 선택하면 상세 정보가 표시됩니다')}
-              </div>
-            )}
-          </div>
-        </div>
+        // ⚠ 학습이 표의 단위다. 예전에는 왼쪽 좁은 목록에 학습을 접어 두었고, 그 전에는
+        //   체크포인트 72개가 평면으로 깔려 어느 학습의 몇 번째인지 읽을 수가 없었다.
+        //   행을 누르면 상세가 창으로 뜬다 — 칩을 누르면 그 체크포인트로 연다 (데이터셋 화면과 같다).
+        <WeightTable rows={runs} onRenamed={fetchModels} value={open?.ckpt}
+          onOpen={(row, ckpt) => setOpen({ key: row.key, ckpt })} />
       ) : null}
+
+      {tab === 'local' && open && (() => {
+        // ⚠ 다시 읽은 목록에서 찾는다 — 체크포인트를 지우면 그 칸이, 마지막 것을 지우면 학습이 사라진다
+        const row = runs.find((r) => r.key === open.key)
+        if (!row || !row.checkpoints.length) return null
+        const ckpt = row.checkpoints.find((c) => c.ids.includes(open.ckpt)) ?? row.checkpoints[0]
+        const m = models.find((x) => x.id === ckpt.id)
+        return (
+          // ⚠ Esc 로 닫지 않는다(전역 E-stop) — ✕ 와 바깥 클릭으로 닫는다. 확인 창(z-[60])은 이 위에 뜬다
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setOpen(null)}>
+            <div className="flex max-h-[90vh] w-full max-w-5xl flex-col rounded-lg border border-neutral-700 bg-neutral-900"
+              onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start gap-3 border-b border-neutral-800 px-5 py-3">
+                <div className="min-w-0">
+                  <h2 className="truncate text-lg font-semibold">{row.name || row.key}</h2>
+                  <p className="truncate text-xs text-neutral-500">
+                    {[row.name && row.key, row.dataset, row.policy_type].filter(Boolean).join(' · ')}
+                  </p>
+                </div>
+                <button type="button" onClick={() => setOpen(null)} title={t('닫기')}
+                  className="ml-auto rounded px-2 py-0.5 text-neutral-400 hover:bg-neutral-800 hover:text-white">✕</button>
+              </div>
+              <div className="min-h-0 space-y-4 overflow-y-auto p-5 text-xs">
+                {/* 학습 단위 이름·설명 — 학습 폼의 제목·설명과 같은 파일 */}
+                {row.kind === 'run' && (
+                  <div className="space-y-1">
+                    <p className="text-[11px] text-neutral-400">{t('학습 이름·설명 — 모든 체크포인트가 물려받습니다')}</p>
+                    {/* 보이는 이름이 체크포인트에서 빌려 온 것이면 여기가 비어 보인다 — 왜 비었는지 말한다 */}
+                    {row.name && !(row.notes as { name?: string }).name && (
+                      <p className="text-[11px] text-amber-300/90">
+                        {t('지금 보이는 이름 "{name}" 은 체크포인트에 붙은 것입니다 — 여기에 적으면 학습 이름이 됩니다', { name: row.name })}
+                      </p>
+                    )}
+                    <NotesEditor key={row.key} endpoint={`/models/runs/${row.run}/notes`} source={t('모델')} onSaved={fetchModels} />
+                  </div>
+                )}
+                <RunSummary row={row} rows={runs} />
+                {/* 체크포인트 — 눌러서 아래 상세를 바꾼다 */}
+                {row.kind === 'run' && (
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="mr-1 text-neutral-500">{t('체크포인트')}</span>
+                    {row.checkpoints.map((c) => (
+                      <CheckpointChip key={c.id} c={c} row={row} on={c.id === ckpt.id}
+                        onClick={() => setOpen({ key: row.key, ckpt: c.id })} />
+                    ))}
+                  </div>
+                )}
+                {m && (
+                  <CheckpointDetail model={m} ownNotes={row.kind === 'run'}
+                    onStartInference={() => void handleStartInference(m)}
+                    onDelete={() => void handleDelete(m.id)} onSaved={fetchModels} />
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+    </div>
+  )
+}
+
+/** 체크포인트 하나의 상세 — 입출력·아키텍처·학습 설정·Config. */
+function CheckpointDetail({ model: selected, ownNotes, onStartInference, onDelete, onSaved }: {
+  model: Model
+  /** 학습 산출물이면 이 편집기는 "이 체크포인트만" 의 이름이다 — 비우면 학습 이름을 따른다 */
+  ownNotes: boolean
+  onStartInference: () => void
+  onDelete: () => void
+  onSaved: () => void
+}) {
+  const t = useT()
+  return (
+    <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-sm font-semibold">{selected.id}</h2>
+        <div className="ml-auto flex gap-2">
+          <button onClick={onStartInference}
+            className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white">
+            {t('추론 시작')}
+          </button>
+          <button onClick={onDelete}
+            className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">
+            {t('삭제')}
+          </button>
+        </div>
+      </div>
+
+      {/* 이름·설명 사이드카 — 체크포인트 형식에 이 자리가 없다 */}
+      <div className="space-y-1">
+        {ownNotes && <p className="text-[11px] text-neutral-400">{t('이 체크포인트만의 이름·설명 — 비워 두면 학습 이름을 따릅니다')}</p>}
+        <NotesEditor key={selected.id} endpoint={`/models/${selected.id}/notes`} source={t('모델')} onSaved={onSaved} />
+      </div>
+
+      {/* 기본 정보 */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+        <div>
+          <span className="text-neutral-400 text-xs">Policy</span>
+          <p className="font-medium">
+            {selected.policy_type}
+            {selected.action_space === 'delta_v1' && <span className="ml-1 text-emerald-300 text-xs">Δ {t('델타')}</span>}
+            {selected.action_space === 'unknown' && <span className="ml-1 text-red-400 text-xs">Δ? {t('확인 불가')}</span>}
+          </p>
+        </div>
+        <div>
+          <span className="text-neutral-400 text-xs">{t('크기')}</span>
+          <p>{formatBytes(selected.size_bytes)}</p>
+        </div>
+        <div>
+          <span className="text-neutral-400 text-xs">{t('수정일')}</span>
+          <p>{fmt.dateTime(selected.modified)}</p>
+        </div>
+        <div>
+          <span className="text-neutral-400 text-xs">Repo</span>
+          <p className="truncate text-xs">{(selected.config.repo_id as string) || selected.id}</p>
+        </div>
+      </div>
+
+      {/* 입출력 요구사항 */}
+      {selected.requirements && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold text-neutral-300">{t('입출력')}</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+            <div>
+              <span className="text-neutral-400 text-xs">{t('관절 (state)')}</span>
+              <p>{t('{state_dim}개', { state_dim: selected.requirements.state_dim })}</p>
+            </div>
+            <div>
+              <span className="text-neutral-400 text-xs">{t('액션')}</span>
+              <p>{t('{action_dim}차원', { action_dim: selected.requirements.action_dim })}</p>
+            </div>
+            <div>
+              <span className="text-neutral-400 text-xs">{t('카메라')}</span>
+              <p>{t('{length}대', { length: selected.requirements.required_cameras.length })}</p>
+            </div>
+          </div>
+          {selected.requirements.required_cameras.length > 0 && (
+            <div className="rounded border border-neutral-700 overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-neutral-900">
+                  <tr>
+                    <th className="p-2 text-left text-neutral-400">{t('이름')}</th>
+                    <th className="p-2 text-left text-neutral-400"
+                      title={t('학습 데이터셋을 녹화한 해상도 — 추론 카메라가 이것과 같아야 합니다')}>{t('학습 해상도')}</th>
+                    <th className="p-2 text-left text-neutral-400">{t('기종')}</th>
+                    <th className="p-2 text-left text-neutral-400"
+                      title={t('모델 config 의 입력 크기 — 정책이 안에서 줄이는 크기입니다. 베이스 모델에서 시작하면 베이스의 값이 남습니다')}>{t('모델 입력')}</th>
+                    <th className="p-2 text-left text-neutral-400">{t('채널')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selected.requirements.required_cameras.map((cam) => {
+                    const tc = selected.train_cameras?.cameras[cam.name]
+                    return (
+                      <tr key={cam.name} className="border-t border-neutral-700">
+                        <td className="p-2 font-medium">{cam.name}</td>
+                        <td className="p-2 font-mono text-neutral-200">
+                          {tc ? sizeText(tc.width, tc.height, tc.fps) : <span className="text-neutral-500">{t('모름')}</span>}
+                        </td>
+                        <td className="p-2 text-neutral-300">{tc?.model ?? <span className="text-neutral-500">—</span>}</td>
+                        <td className="p-2 font-mono text-neutral-400">{sizeText(cam.width, cam.height)}</td>
+                        <td className="p-2 text-neutral-400">{cam.channels}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 아키텍처 */}
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold text-neutral-300">{t('아키텍처')}</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
+          {selected.config.vlm_model_name != null && (
+            <div className="col-span-2 sm:col-span-3">
+              <span className="text-neutral-400">VLM</span>
+              <span className="ml-2 text-neutral-100">{String(selected.config.vlm_model_name)}</span>
+            </div>
+          )}
+          {[
+            ['chunk_size', t('청크 크기')],
+            ['n_action_steps', t('액션 스텝')],
+            ['n_obs_steps', t('관측 스텝')],
+            ['num_vlm_layers', t('VLM 레이어')],
+            ['num_expert_layers', t('전문가 레이어')],
+            ['num_steps', t('디노이징 스텝')],
+            ['attention_mode', t('어텐션 모드')],
+            ['freeze_vision_encoder', t('비전 동결')],
+            ['use_cache', t('캐시 사용')],
+          ].map(([key, label]) => {
+            const val = selected.config[key]
+            if (val == null) return null
+            return (
+              <div key={key}>
+                <span className="text-neutral-400">{label}</span>
+                <span className="ml-2 text-neutral-100">{String(val)}</span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* 학습 설정 */}
+      <details>
+        <summary className="text-sm text-neutral-400 cursor-pointer">{t('학습 설정')}</summary>
+        <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
+          {[
+            ['optimizer_lr', 'Learning Rate'],
+            ['optimizer_weight_decay', 'Weight Decay'],
+            ['optimizer_grad_clip_norm', 'Grad Clip'],
+            ['scheduler_warmup_steps', 'Warmup Steps'],
+            ['scheduler_decay_steps', 'Decay Steps'],
+            ['scheduler_decay_lr', 'Decay LR'],
+            ['use_amp', 'AMP'],
+            ['device', 'Device'],
+          ].map(([key, label]) => {
+            const val = selected.config[key]
+            if (val == null) return null
+            return (
+              <div key={key}>
+                <span className="text-neutral-400">{label}</span>
+                <span className="ml-2 text-neutral-100">{String(val)}</span>
+              </div>
+            )
+          })}
+        </div>
+      </details>
+
+      {/* 정규화 매핑 */}
+      {selected.config.normalization_mapping != null && (
+        <details>
+          <summary className="text-sm text-neutral-400 cursor-pointer">{t('정규화')}</summary>
+          <div className="mt-2 grid grid-cols-3 gap-x-4 gap-y-1 text-xs">
+            {Object.entries(selected.config.normalization_mapping as Record<string, string>).map(([k, v]) => (
+              <div key={k}>
+                <span className="text-neutral-400">{k}</span>
+                <span className="ml-2 text-neutral-100">{v}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* Config JSON (raw) */}
+      <details>
+        <summary className="text-sm text-neutral-400 cursor-pointer">{t('Config JSON (전체)')}</summary>
+        <pre className="mt-2 text-xs bg-neutral-900 p-3 rounded overflow-auto max-h-64">
+          {JSON.stringify(selected.config, null, 2)}
+        </pre>
+      </details>
     </div>
   )
 }

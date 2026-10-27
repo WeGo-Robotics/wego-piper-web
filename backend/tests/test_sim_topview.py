@@ -360,6 +360,7 @@ def test_training_start_hands_the_scene_over_where_the_notes_already_go():
     """붙는 자리가 이미 있다 — 제목·설명 사이드카를 쓰는 그 자리다."""
     src = (REPO / "backend" / "app" / "routers" / "training.py").read_text()
     assert "sim_scenes.inherit_to_run" in src
-    start = src.split("notes_written = False", 1)[1].split("return {", 1)[0]
-    assert "inherit_to_run" in start, "학습 시작 경로가 아니다"
-    assert '"scene_inherited"' in src, "물려줬는지 화면이 알 길이 없다"
+    # LeRobot 이 실행 폴더를 정한 뒤에 부른다 — 먼저 만들면 LeRobot 이 FileExistsError 로 죽는다
+    start = src.split("def leave_in_run(", 1)[1].split("return {", 1)[0]
+    assert "inherit_to_run" in start and "write_notes" in start, "학습 시작 경로가 아니다"
+    assert "on_output_dir=leave_in_run" in start

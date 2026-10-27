@@ -5,6 +5,7 @@
 """
 
 import logging
+from pathlib import Path
 
 from app.services.process_manager import ProcessState
 from app.services.systemd_process import SystemdProcess, available
@@ -25,6 +26,12 @@ class SystemdRunner:
 
     def __init__(self, job_id: str = "local") -> None:
         self.proc = SystemdProcess(f"piper-train-{job_id}")
+
+    @property
+    def workdir(self) -> Path:
+        """유닛의 작업 폴더 — `--working-directory` 없이 띄운 사용자 유닛은 홈에서 돈다.
+        LeRobot 의 자동 경로 `outputs/train/…` 가 이 기준이다."""
+        return Path.home()
 
     @property
     def state(self) -> ProcessState:

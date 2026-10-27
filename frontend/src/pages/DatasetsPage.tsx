@@ -8,17 +8,9 @@ import type { Dataset, DatasetDetail } from '../types/models'
 import DiskUsageBar from '../components/DiskUsageBar'
 import HubBrowser from '../components/HubBrowser'
 import LogViewer from '../components/LogViewer'
+import DatasetBrowser from '../components/DatasetBrowser'
 import { useT, fmt } from '../i18n'
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
-}
-
-type SortKey = 'name' | 'size' | 'date' | 'episodes'
 
 export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKey }: { embedded?: boolean; tab?: 'local' | 'hub'; refreshKey?: number }) {
   const t = useT()
@@ -43,9 +35,6 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
   const [converting, setConverting] = useState(false)
   const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([])
   const [editingTask, setEditingTask] = useState<string | null>(null)  // 선택된 에피소드에 적용할 task
-  const [search, setSearch] = useState('')
-  const [sortKey, setSortKey] = useState<SortKey>('date')
-  const [sortAsc, setSortAsc] = useState(false)
   // Hub 업로드
   const [uploadId, setUploadId] = useState<string | null>(null)
   const [uploadLogs, setUploadLogs] = useState<string[]>([])
@@ -177,7 +166,8 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
       //   알고 지운다 — 실제로 그렇게 지워졌다.
       setHealth(await api.get<Consistency>(`/datasets/${id}/consistency`).catch(() => null))
     } catch {
-      // ignore
+      // 눌렀는데 창이 안 뜨면 고장으로 읽힌다 — 왜 안 열리는지 말한다
+      notifyError(t('데이터셋을 열 수 없습니다: {id}', { id }))
     }
   }
 
@@ -220,22 +210,6 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
 
   // 상세 응답에는 사본 표시(delta·baked)가 없다 — 목록의 것을 쓴다
   const detailEntry = detail ? datasets.find((d) => d.id === detail.id) : undefined
-
-  const filteredDatasets = datasets
-    .filter((d) => !search || d.id.toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => {
-      let cmp = 0
-      if (sortKey === 'name') cmp = a.id.localeCompare(b.id)
-      else if (sortKey === 'size') cmp = a.size_bytes - b.size_bytes
-      else if (sortKey === 'date') cmp = new Date(a.modified).getTime() - new Date(b.modified).getTime()
-      else if (sortKey === 'episodes') cmp = a.total_episodes - b.total_episodes
-      return sortAsc ? cmp : -cmp
-    })
-
-  const handleSort = (key: SortKey) => {
-    if (sortKey === key) setSortAsc(!sortAsc)
-    else { setSortKey(key); setSortAsc(false) }
-  }
 
   return (
     <div className="space-y-6">
@@ -285,294 +259,248 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
           {t('로컬 데이터셋이 없습니다. 데이터 수집을 시작하거나 Hub에서 다운로드하세요.')}
         </p>
       ) : tab === 'local' ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* 데이터셋 목록 */}
-          <div className="lg:col-span-1 space-y-2">
-            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
-              placeholder={t('검색 (이름)...')}
-              className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 placeholder:text-neutral-500" />
-            <div className="flex gap-1 text-[10px]">
-              {([['name', t('이름')], ['episodes', t('에피소드')], ['size', t('크기')], ['date', t('날짜')]] as [SortKey, string][]).map(([k, l]) => (
-                <button key={k} onClick={() => handleSort(k)}
-                  className={`px-2 py-0.5 rounded ${sortKey === k ? 'bg-blue-600 text-white' : 'bg-neutral-700 text-neutral-400'}`}>
-                  {l}{sortKey === k ? (sortAsc ? ' ↑' : ' ↓') : ''}
-                </button>
-              ))}
-              <span className="ml-auto text-neutral-500">{filteredDatasets.length}/{datasets.length}</span>
+        // ⚠ 목록이 본문이다 — 에피소드 페이지의 [선택하기] 창과 같은 것(표 | 썸네일).
+        //   예전에는 왼쪽 좁은 카드 목록 + 오른쪽 상세였고, 이름·길이·카메라를 나란히 볼 수 없었다.
+        //   누르면 상세가 창으로 뜬다.
+        <DatasetBrowser datasets={datasets} value={detail?.id} onRenamed={fetchDatasets}
+          onOpen={(d) => void handleSelect(d.id)} />
+      ) : null}
+
+      {/* 상세 — 창으로 띄운다. ⚠ Esc 로 닫지 않는다(전역 E-stop) — ✕ 와 바깥 클릭으로 닫는다.
+          업로드 창(z-50, 뒤에 그려짐)과 확인 창(z-[60])은 이 위에 뜬다. */}
+      {tab === 'local' && detail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setDetail(null)}>
+          <div className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-lg border border-neutral-700 bg-neutral-800"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3 border-b border-neutral-700 px-5 py-3">
+              <div className="min-w-0">
+                <h2 className="truncate text-lg font-semibold">{detailEntry?.notes?.name || detail.id}</h2>
+                {detailEntry?.notes?.name && <p className="truncate text-xs text-neutral-500">{detail.id}</p>}
+              </div>
+              <button type="button" onClick={() => setDetail(null)} title={t('닫기')}
+                className="ml-auto rounded px-2 py-0.5 text-neutral-400 hover:bg-neutral-700 hover:text-white">✕</button>
             </div>
-            {filteredDatasets.map((ds) => (
-              <div
-                key={ds.id}
-                onClick={() => handleSelect(ds.id)}
-                className={`rounded-lg border p-4 cursor-pointer transition-colors ${
-                  detail?.id === ds.id
-                    ? 'border-blue-500 bg-blue-500/10'
-                    : 'border-neutral-700 bg-neutral-800 hover:border-neutral-600'
-                }`}
-              >
-                <p className="font-medium truncate">
-                  {ds.notes?.name
-                    ? <>{ds.notes.name} <span className="text-neutral-500 font-normal">({ds.id})</span></>
-                    : ds.id}
-                </p>
-                {ds.delta && (
-                  <p className="truncate text-[11px] text-emerald-300/80">
-                    Δ {t('델타 사본 · 원본 {source}', { source: ds.delta.source ?? '?' })}
-                  </p>
-                )}
-                {ds.scene && (
-                  // 어느 세계에서 모았나 — 가상환경이 늘수록 이게 없으면 데이터가 섞인다
-                  <p className="truncate text-[11px] text-purple-300/80" title={t('가상환경 · 물체 {objects}개', { objects: ds.scene.objects })}>
-                    🧱 {ds.scene.name || ds.scene.id}
-                  </p>
-                )}
-                {ds.notes?.description && (
-                  <p className="truncate text-[11px] text-neutral-500">{ds.notes.description}</p>
-                )}
-                <p className="text-xs text-neutral-400 mt-1">
-                  {t('{total_episodes} 에피소드 · {size_bytes}', {
-                    total_episodes: ds.total_episodes,
-                    size_bytes: formatBytes(ds.size_bytes),
-                  })}
-                  {ds.created && <>{' '}{t('· 만든 날짜 {toLocaleDateString}', { toLocaleDateString: fmt.date(ds.created) })}</>}
-                </p>
-                <div className="flex gap-1 mt-2">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleUpload(ds.id) }}
-                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white">
-                    {t('Hub 업로드')}
+            <div className="min-h-0 space-y-4 overflow-y-auto p-5">
+              <div className="flex gap-1">
+                <button onClick={() => { copyText((detail as Record<string, unknown>).path as string ?? detail.id) }}
+                  className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 hover:text-white">
+                  {t('경로 복사')}
+                </button>
+                <button onClick={async () => {
+                  if (!await askConfirm(t('영상을 프레임별 JPG로 디코딩합니다. 학습 속도가 향상됩니다.'))) return
+                  setUploadId(detail.id); setUploadLogs([]); setUploadState('starting')
+                  api.post(`/datasets/${detail.id}/decode-cache`, {}).catch((e) => {
+                    setUploadLogs(prev => [...prev, `[ERROR] ${e instanceof Error ? e.message : t('실패')}`])
+                    setUploadState('error')
+                  })
+                }}
+                  className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white">
+                  {t('디코딩 캐시')}
+                </button>
+                <button onClick={async () => {
+                  if (!await askConfirm(t('디코딩 캐시(프레임 JPG)를 삭제합니다.'))) return
+                  const r = await api.post<{ deleted_files: number }>(`/datasets/${detail.id}/decode-cache/delete`, {})
+                  notify({ level: 'info', text: t('{deleted_files}개 파일 삭제됨', { deleted_files: r.deleted_files }), source: t('데이터셋') })
+                  handleSelect(detail.id)
+                }}
+                  className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-orange-600 text-neutral-300 hover:text-white">
+                  {t('캐시 삭제')}
+                </button>
+                {/* 원본에서만 — 델타 사본을 또 바꾸거나 구운 사본(_stage)을 바꾸지 않는다 (델타 → 굽기 순서) */}
+                {!detailEntry?.delta && !detailEntry?.baked && (
+                  <button onClick={() => void handleDelta(detail.id)} disabled={converting}
+                    title={t('액션을 관절 이동 변화량으로 바꾼 사본을 만든다 — 영점이 바뀌어도 액션이 안 망가진다 (feature/act-delta.md)')}
+                    className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-emerald-600 text-neutral-300 hover:text-white disabled:opacity-50">
+                    {converting ? t('변환 중…') : t('델타 변환')}
                   </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDelete(ds.id) }}
-                    className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">
-                    {t('삭제')}
-                  </button>
+                )}
+                <button onClick={() => handleUpload(detail.id)}
+                  className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white">
+                  {t('Hub 업로드')}
+                </button>
+                {/* 목록 카드에 있던 [삭제] — 이제 목록은 표·썸네일이라 여기 둔다 */}
+                <button onClick={() => void handleDelete(detail.id)}
+                  className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-red-600 text-neutral-300 hover:text-white">
+                  {t('삭제')}
+                </button>
+              </div>
+              {detailEntry?.delta && (
+                <div className="rounded border border-emerald-700/50 bg-emerald-950/20 p-3 text-xs space-y-1">
+                  <p className="text-emerald-300 font-medium">
+                    Δ {t('델타 사본 — 관절 {joints}축은 이동 변화량, {absolute} 는 절대값', {
+                      joints: detailEntry.delta.delta_names.length,
+                      absolute: detailEntry.delta.absolute_names.join(', ') || '-',
+                    })}
+                  </p>
+                  <p className="text-neutral-400">{t('원본: {source}', { source: detailEntry.delta.source ?? '?' })}</p>
+                  <p className="text-neutral-400">
+                    {t('이 데이터로 학습한 체크포인트는 추론할 때 절대 위치로 자동으로 되돌립니다 (로컬 추론만). 한 스텝 변화는 데모에서 나온 최대치로 자릅니다.')}
+                  </p>
+                </div>
+              )}
+              {detailEntry?.scene && (
+                // 어느 세계에서 모았나 — 가상환경이 늘수록 이게 없으면 데이터가 섞인다
+                <p className="text-xs text-purple-300/90">
+                  🧱 {t('가상환경 {name} · 물체 {objects}개', { name: detailEntry.scene.name || detailEntry.scene.id, objects: detailEntry.scene.objects })}
+                </p>
+              )}
+              {/* 이름·설명 — LeRobot 에 없는 자리라 사이드카로. key 로 대상 전환 시
+                  초안이 초기화된다 (다른 데이터셋에 눌러붙는 사고 방지). */}
+              <NotesEditor key={detail.id} endpoint={`/datasets/${detail.id}/notes`} source={t('데이터셋')} onSaved={fetchDatasets} />
+              <div className="grid grid-cols-3 gap-3 text-sm">
+                <div>
+                  <span className="text-neutral-400">{t('에피소드')}</span>
+                  <p>{detail.total_episodes}</p>
+                </div>
+
+                <div>
+                  <span className="text-neutral-400">{t('프레임')}</span>
+                  <p>{fmt.number(detail.total_frames)}</p>
+                </div>
+                <div>
+                  <span className="text-neutral-400">FPS</span>
+                  <p>{detail.fps ?? '-'}</p>
                 </div>
               </div>
-            ))}
-          </div>
 
-          {/* 상세 패널 */}
-          <div className="lg:col-span-2">
-            {detail ? (
-              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-semibold">{detail.id}</h2>
-                  <div className="flex gap-1">
-                    <button onClick={() => { copyText((detail as Record<string, unknown>).path as string ?? detail.id) }}
-                      className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 hover:text-white">
-                      {t('경로 복사')}
-                    </button>
-                    <button onClick={async () => {
-                      if (!await askConfirm(t('영상을 프레임별 JPG로 디코딩합니다. 학습 속도가 향상됩니다.'))) return
-                      setUploadId(detail.id); setUploadLogs([]); setUploadState('starting')
-                      api.post(`/datasets/${detail.id}/decode-cache`, {}).catch((e) => {
-                        setUploadLogs(prev => [...prev, `[ERROR] ${e instanceof Error ? e.message : t('실패')}`])
-                        setUploadState('error')
-                      })
-                    }}
-                      className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-green-600 text-neutral-300 hover:text-white">
-                      {t('디코딩 캐시')}
-                    </button>
-                    <button onClick={async () => {
-                      if (!await askConfirm(t('디코딩 캐시(프레임 JPG)를 삭제합니다.'))) return
-                      const r = await api.post<{ deleted_files: number }>(`/datasets/${detail.id}/decode-cache/delete`, {})
-                      notify({ level: 'info', text: t('{deleted_files}개 파일 삭제됨', { deleted_files: r.deleted_files }), source: t('데이터셋') })
-                      handleSelect(detail.id)
-                    }}
-                      className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-orange-600 text-neutral-300 hover:text-white">
-                      {t('캐시 삭제')}
-                    </button>
-                    {/* 원본에서만 — 델타 사본을 또 바꾸거나 구운 사본(_stage)을 바꾸지 않는다 (델타 → 굽기 순서) */}
-                    {!detailEntry?.delta && !detailEntry?.baked && (
-                      <button onClick={() => void handleDelta(detail.id)} disabled={converting}
-                        title={t('액션을 관절 이동 변화량으로 바꾼 사본을 만든다 — 영점이 바뀌어도 액션이 안 망가진다 (feature/act-delta.md)')}
-                        className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-emerald-600 text-neutral-300 hover:text-white disabled:opacity-50">
-                        {converting ? t('변환 중…') : t('델타 변환')}
-                      </button>
-                    )}
-                    <button onClick={() => handleUpload(detail.id)}
-                      className="px-2 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white">
-                      {t('Hub 업로드')}
-                    </button>
-                  </div>
-                </div>
-                {detailEntry?.delta && (
-                  <div className="rounded border border-emerald-700/50 bg-emerald-950/20 p-3 text-xs space-y-1">
-                    <p className="text-emerald-300 font-medium">
-                      Δ {t('델타 사본 — 관절 {joints}축은 이동 변화량, {absolute} 는 절대값', {
-                        joints: detailEntry.delta.delta_names.length,
-                        absolute: detailEntry.delta.absolute_names.join(', ') || '-',
+              {/* ⚠ 끊긴 녹화 경고. **목록보다 위에** 둔다 — 목록이 짧은 이유를
+                     모른 채 스크롤하면 데이터가 없어진 줄 안다. */}
+              {health && !health.ok && (
+                <div className="rounded border border-amber-600/60 bg-amber-950/30 p-3 text-sm space-y-2">
+                  <p className="font-semibold text-amber-300">
+                    {t('에피소드 색인이 끊겼습니다 — 녹화가 정상 종료되지 않았습니다')}
+                  </p>
+                  <p className="text-neutral-300">
+                    {t.rich('개수는 {b}인데 목록에는 {b_2}개만 있습니다. 프레임은 {b_3}개 남아 있습니다.', {
+                      b: <b>{health.declared_episodes}</b>,
+                      b_2: <b>{health.indexed_episodes}</b>,
+                      b_3: <b>{health.stored_episodes}</b>,
+                    })}
+                  </p>
+                  {health.recoverable.length > 0 && (
+                    <p className="text-neutral-400 text-xs">
+                      {t.rich('LeRobot 은 에피소드 목록을 10개씩 모아 쓰고 개수는 매번 씁니다. 강제 종료되면 아직 안 쓴 목록이 사라집니다 —{b}', {
+                        b: <b className="text-neutral-200">{' '}{t('프레임은 그대로라 되살릴 수 있습니다.')}</b>,
                       })}
                     </p>
-                    <p className="text-neutral-400">{t('원본: {source}', { source: detailEntry.delta.source ?? '?' })}</p>
-                    <p className="text-neutral-400">
-                      {t('이 데이터로 학습한 체크포인트는 추론할 때 절대 위치로 자동으로 되돌립니다 (로컬 추론만). 한 스텝 변화는 데모에서 나온 최대치로 자릅니다.')}
+                  )}
+                  {health.unrecoverable > 0 && (
+                    <p className="text-neutral-400 text-xs">
+                      {t('그중 {unrecoverable}개는 프레임까지 없어 되살릴 수 없습니다.', { unrecoverable: health.unrecoverable })}
                     </p>
-                  </div>
-                )}
-                {/* 이름·설명 — LeRobot 에 없는 자리라 사이드카로. key 로 대상 전환 시
-                    초안이 초기화된다 (다른 데이터셋에 눌러붙는 사고 방지). */}
-                <NotesEditor key={detail.id} endpoint={`/datasets/${detail.id}/notes`} source={t('데이터셋')} />
-                <div className="grid grid-cols-3 gap-3 text-sm">
-                  <div>
-                    <span className="text-neutral-400">{t('에피소드')}</span>
-                    <p>{detail.total_episodes}</p>
-                  </div>
-
-                  <div>
-                    <span className="text-neutral-400">{t('프레임')}</span>
-                    <p>{fmt.number(detail.total_frames)}</p>
-                  </div>
-                  <div>
-                    <span className="text-neutral-400">FPS</span>
-                    <p>{detail.fps ?? '-'}</p>
-                  </div>
+                  )}
+                  {/* ⚠ 색인만 빠진 것과 **파일이 미완성인 것**은 다르다.
+                      후자는 되돌릴 방법이 없는데, 그냥 "되살릴 것 없음" 으로
+                      보여주면 왜 복구 버튼이 없는지 알 수가 없다 — 실제로
+                      그 질문을 받았다. 무엇이 어떻게 깨졌는지 적는다. */}
+                  {health.broken.length > 0 && (
+                    <div className="rounded bg-neutral-900/60 p-2 space-y-1">
+                      <p className="text-neutral-300">
+                        {t.rich('아래는 {b}이라 되살릴 수 없습니다 — 녹화가 쓰는 도중 끊겼습니다.', { b: <b>{t('파일 자체가 미완성')}</b> })}
+                      </p>
+                      <ul className="text-[11px] text-neutral-400 font-mono space-y-0.5">
+                        {health.broken.map((b) => <li key={b}>· {b}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {health.recoverable.length > 0 ? (
+                    <button
+                      onClick={() => void handleRepair(detail.id)}
+                      disabled={repairing}
+                      className="px-3 py-1.5 rounded bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-xs"
+                    >
+                      {repairing ? t('복구 중…') : t('색인 복구 ({length}개)', { length: health.recoverable.length })}
+                    </button>
+                  ) : (
+                    <p className="text-xs text-neutral-400">
+                      {t('되살릴 수 있는 에피소드가 없습니다. 남은 파일은 위 [삭제] 로 치울 수 있습니다.')}
+                    </p>
+                  )}
                 </div>
+              )}
 
-                {/* ⚠ 끊긴 녹화 경고. **목록보다 위에** 둔다 — 목록이 짧은 이유를
-                       모른 채 스크롤하면 데이터가 없어진 줄 안다. */}
-                {health && !health.ok && (
-                  <div className="rounded border border-amber-600/60 bg-amber-950/30 p-3 text-sm space-y-2">
-                    <p className="font-semibold text-amber-300">
-                      {t('에피소드 색인이 끊겼습니다 — 녹화가 정상 종료되지 않았습니다')}
-                    </p>
-                    <p className="text-neutral-300">
-                      {t.rich('개수는 {b}인데 목록에는 {b_2}개만 있습니다. 프레임은 {b_3}개 남아 있습니다.', {
-                        b: <b>{health.declared_episodes}</b>,
-                        b_2: <b>{health.indexed_episodes}</b>,
-                        b_3: <b>{health.stored_episodes}</b>,
-                      })}
-                    </p>
-                    {health.recoverable.length > 0 && (
-                      <p className="text-neutral-400 text-xs">
-                        {t.rich('LeRobot 은 에피소드 목록을 10개씩 모아 쓰고 개수는 매번 씁니다. 강제 종료되면 아직 안 쓴 목록이 사라집니다 —{b}', {
-                          b: <b className="text-neutral-200">{' '}{t('프레임은 그대로라 되살릴 수 있습니다.')}</b>,
-                        })}
-                      </p>
-                    )}
-                    {health.unrecoverable > 0 && (
-                      <p className="text-neutral-400 text-xs">
-                        {t('그중 {unrecoverable}개는 프레임까지 없어 되살릴 수 없습니다.', { unrecoverable: health.unrecoverable })}
-                      </p>
-                    )}
-                    {/* ⚠ 색인만 빠진 것과 **파일이 미완성인 것**은 다르다.
-                        후자는 되돌릴 방법이 없는데, 그냥 "되살릴 것 없음" 으로
-                        보여주면 왜 복구 버튼이 없는지 알 수가 없다 — 실제로
-                        그 질문을 받았다. 무엇이 어떻게 깨졌는지 적는다. */}
-                    {health.broken.length > 0 && (
-                      <div className="rounded bg-neutral-900/60 p-2 space-y-1">
-                        <p className="text-neutral-300">
-                          {t.rich('아래는 {b}이라 되살릴 수 없습니다 — 녹화가 쓰는 도중 끊겼습니다.', { b: <b>{t('파일 자체가 미완성')}</b> })}
-                        </p>
-                        <ul className="text-[11px] text-neutral-400 font-mono space-y-0.5">
-                          {health.broken.map((b) => <li key={b}>· {b}</li>)}
-                        </ul>
+              {/* 에피소드 목록 */}
+              {detail.episodes.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm text-neutral-400">
+                      {t('에피소드 목록')}
+                    </span>
+                    {selectedEpisodes.length > 0 && (
+                      <div className="flex items-center gap-2">
+                        <input type="text" value={editingTask ?? ''}
+                          onChange={(e) => setEditingTask(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') handleUpdateTask() }}
+                          placeholder={t('새 Task 입력...')}
+                          className="px-2 py-1 text-xs rounded bg-neutral-900 border border-neutral-600 text-neutral-100 w-48 placeholder:text-neutral-500" />
+                        <button onClick={handleUpdateTask} disabled={!editingTask?.trim()}
+                          className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
+                          {t('Task 변경 ({length})', { length: selectedEpisodes.length })}
+                        </button>
+                        <button
+                          onClick={handleDeleteEpisodes}
+                          className="px-3 py-1 text-xs rounded bg-red-600 hover:bg-red-500 text-white"
+                        >
+                          {t('삭제 ({length})', { length: selectedEpisodes.length })}
+                        </button>
                       </div>
                     )}
-                    {health.recoverable.length > 0 ? (
-                      <button
-                        onClick={() => void handleRepair(detail.id)}
-                        disabled={repairing}
-                        className="px-3 py-1.5 rounded bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-xs"
-                      >
-                        {repairing ? t('복구 중…') : t('색인 복구 ({length}개)', { length: health.recoverable.length })}
-                      </button>
-                    ) : (
-                      <p className="text-xs text-neutral-400">
-                        {t('되살릴 수 있는 에피소드가 없습니다. 남은 파일은 위 [삭제] 로 치울 수 있습니다.')}
-                      </p>
-                    )}
                   </div>
-                )}
-
-                {/* 에피소드 목록 */}
-                {detail.episodes.length > 0 && (
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm text-neutral-400">
-                        {t('에피소드 목록')}
-                      </span>
-                      {selectedEpisodes.length > 0 && (
-                        <div className="flex items-center gap-2">
-                          <input type="text" value={editingTask ?? ''}
-                            onChange={(e) => setEditingTask(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') handleUpdateTask() }}
-                            placeholder={t('새 Task 입력...')}
-                            className="px-2 py-1 text-xs rounded bg-neutral-900 border border-neutral-600 text-neutral-100 w-48 placeholder:text-neutral-500" />
-                          <button onClick={handleUpdateTask} disabled={!editingTask?.trim()}
-                            className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
-                            {t('Task 변경 ({length})', { length: selectedEpisodes.length })}
-                          </button>
-                          <button
-                            onClick={handleDeleteEpisodes}
-                            className="px-3 py-1 text-xs rounded bg-red-600 hover:bg-red-500 text-white"
+                  <div className="max-h-64 overflow-auto rounded border border-neutral-700">
+                    <table className="w-full text-xs">
+                      <thead className="bg-neutral-900 sticky top-0">
+                        <tr>
+                          <th className="p-2 w-8"></th>
+                          <th className="p-2 text-left">Index</th>
+                          <th className="p-2 text-left">Task</th>
+                          <th className="p-2 text-left">Length</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detail.episodes.map((ep, i) => (
+                          <tr
+                            key={i}
+                            className="border-t border-neutral-700 hover:bg-neutral-700/30"
                           >
-                            {t('삭제 ({length})', { length: selectedEpisodes.length })}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                    <div className="max-h-64 overflow-auto rounded border border-neutral-700">
-                      <table className="w-full text-xs">
-                        <thead className="bg-neutral-900 sticky top-0">
-                          <tr>
-                            <th className="p-2 w-8"></th>
-                            <th className="p-2 text-left">Index</th>
-                            <th className="p-2 text-left">Task</th>
-                            <th className="p-2 text-left">Length</th>
+                            <td className="p-2 text-center">
+                              <input
+                                type="checkbox"
+                                checked={selectedEpisodes.includes(i)}
+                                onChange={() => toggleEpisode(i)}
+                              />
+                            </td>
+                            <td className="p-2">{(ep as Record<string, unknown>).episode_index as number ?? i}</td>
+                            <td className="p-2 truncate max-w-[200px]">
+                              {(() => {
+                                const r = ep as Record<string, unknown>
+                                const t = r.tasks ?? r.task
+                                return Array.isArray(t) ? t.join(', ') : (t as string) ?? '-'
+                              })()}
+                            </td>
+                            <td className="p-2">
+                              {(ep as Record<string, unknown>).length as number ?? '-'}
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {detail.episodes.map((ep, i) => (
-                            <tr
-                              key={i}
-                              className="border-t border-neutral-700 hover:bg-neutral-700/30"
-                            >
-                              <td className="p-2 text-center">
-                                <input
-                                  type="checkbox"
-                                  checked={selectedEpisodes.includes(i)}
-                                  onChange={() => toggleEpisode(i)}
-                                />
-                              </td>
-                              <td className="p-2">{(ep as Record<string, unknown>).episode_index as number ?? i}</td>
-                              <td className="p-2 truncate max-w-[200px]">
-                                {(() => {
-                                  const r = ep as Record<string, unknown>
-                                  const t = r.tasks ?? r.task
-                                  return Array.isArray(t) ? t.join(', ') : (t as string) ?? '-'
-                                })()}
-                              </td>
-                              <td className="p-2">
-                                {(ep as Record<string, unknown>).length as number ?? '-'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                )}
+                </div>
+              )}
 
-                {/* Feature 구조 */}
-                <details>
-                  <summary className="text-sm text-neutral-400 cursor-pointer">
-                    {t('Feature 구조')}
-                  </summary>
-                  <pre className="mt-2 text-xs bg-neutral-900 p-3 rounded overflow-auto max-h-48">
-                    {JSON.stringify(detail.features, null, 2)}
-                  </pre>
-                </details>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-6 text-neutral-400 text-center">
-                {t('데이터셋을 선택하면 상세 정보가 표시됩니다')}
-              </div>
-            )}
+              {/* Feature 구조 */}
+              <details>
+                <summary className="text-sm text-neutral-400 cursor-pointer">
+                  {t('Feature 구조')}
+                </summary>
+                <pre className="mt-2 text-xs bg-neutral-900 p-3 rounded overflow-auto max-h-48">
+                  {JSON.stringify(detail.features, null, 2)}
+                </pre>
+              </details>
+            </div>
           </div>
         </div>
-      ) : null}
+      )}
 
       {/* 업로드 모달 */}
       {uploadId && (

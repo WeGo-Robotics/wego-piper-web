@@ -5,6 +5,7 @@ HuggingFace Hub 캐시 구조: models--org--name/snapshots/hash/config.json
 
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -177,6 +178,23 @@ def _created_at(root: Path, *markers: Path) -> str:
     return datetime.fromtimestamp(min(cands)).isoformat()
 
 
+# LeRobot 의 자동 실행 폴더 `outputs/train/<날짜>/<시각>_<정책>` — 이름이 곧 시작 시각이다
+_RUN_STARTED = re.compile(r"(?:^|/)(\d{4}-\d{2}-\d{2})/(\d{2})-(\d{2})-(\d{2})_[^/]*$")
+
+
+def _run_started(rel: Path, job_dir: Path) -> str:
+    """학습을 **시작한** 시각. 폴더 시각은 체크포인트가 추가될 때마다 밀려서(마지막 저장 시각이
+    된다), 자동 경로면 이름에서 읽는다. 아니면(Output Dir 을 직접 적은 학습) 파일 시각."""
+    m = _RUN_STARTED.search(rel.as_posix())
+    if m:
+        d, hh, mm, ss = m.groups()
+        try:
+            return datetime.fromisoformat(f"{d}T{hh}:{mm}:{ss}").isoformat()
+        except ValueError:
+            pass
+    return _created_at(job_dir, job_dir / "train_config.json", job_dir / "checkpoints")
+
+
 def _scan_hf_cache(models_dir: Path) -> list[dict]:
     """HuggingFace Hub 캐시 형식: models--org--name/snapshots/hash/config.json"""
     results = []
@@ -231,8 +249,10 @@ def _scan_train_outputs(models_dir: Path) -> list[dict]:
         #   것이다. 체크포인트에 자기 사이드카가 없으면 run 의 것을 물려받는다;
         #   있으면(모델 페이지 편집기로 쓴 것) 그쪽이 이긴다.
         run_notes = _notes(job_dir)
-        run_created = _created_at(job_dir, job_dir / "train_config.json",
-                                  checkpoints_dir)
+        try:
+            run_created = _run_started(job_dir.relative_to(models_dir), job_dir)
+        except ValueError:
+            run_created = _run_started(Path(job_dir.name), job_dir)
         for ckpt_dir in checkpoints_dir.iterdir():
             if not ckpt_dir.is_dir():
                 continue
@@ -319,6 +339,148 @@ def scan_models() -> list[dict]:
 
     results.sort(key=lambda m: m["modified"], reverse=True)
     return results
+
+
+def _train_config(model_dir: Path) -> dict:
+    """체크포인트의 `train_config.json` — 스텝·배치·lr·출발점이 여기 있다. 없으면(허브 모델) 빈 값."""
+    return _parse_config(model_dir / "train_config.json")
+
+
+def _base_of(pretrained: str | None, by_real: dict[str, dict]) -> dict | None:
+    """이어 학습의 출발점. 처음부터면 None.
+
+    ⚠ `train_config` 의 경로를 그대로 믿지 않는다 — 길이를 맞추거나 워밍스타트한 학습은
+    `derived_pretrained/…` **사본**에서 출발하고, 그 사본은 원본 파일로 가는 링크다
+    (core/base_align.py). 가중치 파일을 따라가면 원본이 나온다.
+    """
+    if not pretrained:
+        return None
+    p = Path(pretrained)
+    try:
+        real = (p / "model.safetensors").resolve()
+    except OSError:
+        real = p
+    owner = by_real.get(str(real.parent))
+    if owner is not None:
+        return {"run": owner.get("run"), "id": owner["id"], "checkpoint": owner.get("checkpoint"),
+                "label": owner["id"]}
+    for part in real.parts:
+        repo = repo_id_from_dirname(part, "models")
+        if repo:
+            return {"run": None, "id": None, "checkpoint": None, "label": repo}
+    return {"run": None, "id": None, "checkpoint": None, "label": str(p)}
+
+
+def _final_loss(run_dir: Path) -> float | None:
+    """학습이 남긴 곡선의 마지막 loss. 곡선 파일은 게이트웨이가 학습 중에 쓴다 —
+    그 전(또는 원격) 학습에는 없다."""
+    from app.services.weight_eval import TRAIN_METRICS_FILE
+
+    try:
+        losses = json.loads((run_dir / TRAIN_METRICS_FILE).read_text()).get("losses") or []
+        return float(losses[-1]) if losses else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def scan_runs() -> list[dict]:
+    """가중치 표 — **학습 하나가 한 행**이다. 학습 산출물이 아닌 모델(허브에서 받은 것)은
+    모델 하나가 한 행.
+
+    ⚠ **`last` 는 따로 세지 않는다.** LeRobot 의 `checkpoints/last` 는 마지막 스텝 폴더로
+    가는 링크라, 둘을 나란히 두면 같은 가중치가 두 번 보인다(실측: 체크포인트 207개 중
+    35개). 실제 폴더로 합치고 `final` 로 표시한다. 고르는 id 는 스텝 쪽이다 — `last` 는
+    학습이 이어지면 다른 폴더를 가리킨다.
+    """
+    models = scan_models()
+    by_real: dict[str, dict] = {}
+    for m in models:
+        try:
+            by_real.setdefault(str(Path(m["path"]).resolve()), m)
+        except OSError:
+            pass
+
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for m in models:
+        key = ("run", m["run"]) if m.get("run") else ("model", m["id"])
+        groups.setdefault(key, []).append(m)
+
+    rows = []
+    for (kind, key), members in groups.items():
+        # 실제 폴더별로 합친다 — `last` 링크와 그 스텝 폴더가 한 칸이 된다
+        by_dir: dict[str, list[dict]] = {}
+        for m in members:
+            try:
+                real = str(Path(m["path"]).resolve())
+            except OSError:
+                real = m["path"]
+            by_dir.setdefault(real, []).append(m)
+        ckpts = []
+        for same in by_dir.values():
+            named = [m for m in same if m.get("checkpoint") != "last"]
+            main = named[0] if named else same[0]
+            own = main.get("notes") or {}
+            ckpts.append({
+                "id": main["id"],
+                # 이 칸이 가리키는 id 전부 — 화면이 예전에 고른 `…/last` 도 이 칸으로 알아본다
+                "ids": [m["id"] for m in same],
+                "checkpoint": main.get("checkpoint"),
+                "step": main.get("step"),
+                "final": any(m.get("checkpoint") == "last" for m in same),
+                "path": main["path"],
+                "name": own.get("name") or "",
+                "size_bytes": main.get("size_bytes", 0),
+            })
+        # 마지막 체크포인트가 먼저, 그 다음은 최신 스텝부터
+        ckpts.sort(key=lambda c: (not c["final"], -(c["step"] or 0)))
+        head = next(m for m in members if m["id"] == ckpts[0]["id"])
+        tc = _train_config(Path(head["path"]))
+        policy_cfg = tc.get("policy") or {}
+        if kind == "run":
+            # 표에서 고치는 자리 — 학습 폼 제목·설명과 같은 run 루트 사이드카
+            notes = head.get("run_notes") or {}
+            run_dir = Path(head["path"]).parents[2]
+        else:
+            notes = head.get("notes") or {}
+            run_dir = Path(head["path"])
+        # 보이는 이름 — run 사이드카가 먼저, 없으면 체크포인트에 붙인 이름(모델 페이지 편집기)
+        shown = notes if notes.get("name") else next(
+            (m["notes"] for m in members if (m.get("notes") or {}).get("name")), notes)
+        rows.append({
+            "key": key,
+            "kind": kind,
+            "run": key if kind == "run" else None,
+            "name": shown.get("name") or "",
+            "description": shown.get("description") or "",
+            # 사이드카 그대로 — 표의 이름 편집이 설명을 지우지 않게 이걸 함께 보낸다
+            "notes": notes,
+            "dataset": (head.get("train_cameras") or {}).get("dataset")
+                       or (tc.get("dataset") or {}).get("repo_id"),
+            "policy_type": head.get("policy_type"),
+            "is_policy": head.get("is_policy", True),
+            "action_space": head.get("action_space"),
+            "created": head.get("run_created") or head.get("created"),
+            "modified": max(m["modified"] for m in members),
+            "steps": tc.get("steps"),
+            "batch_size": tc.get("batch_size"),
+            "lr": (tc.get("optimizer") or {}).get("lr") or policy_cfg.get("optimizer_lr"),
+            "base": _base_of(policy_cfg.get("pretrained_path"), by_real),
+            "final_loss": _final_loss(run_dir) if kind == "run" else None,
+            "train_cameras": head.get("train_cameras"),
+            "size_bytes": sum(c["size_bytes"] for c in ckpts),
+            "path": str(run_dir),
+            "checkpoints": ckpts,
+        })
+    rows.sort(key=lambda r: r["created"] or "", reverse=True)
+    return rows
+
+
+def run_dir_of(run: str) -> Path | None:
+    """학습(run) id → run 루트. 스캔에 있는 것만 — 임의 경로에 사이드카를 쓰지 않는다."""
+    for m in scan_models():
+        if m.get("run") == run:
+            return Path(m["path"]).parents[2]
+    return None
 
 
 def get_model(model_id: str) -> dict | None:

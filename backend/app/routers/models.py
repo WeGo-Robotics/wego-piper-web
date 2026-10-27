@@ -21,7 +21,7 @@ from app.services.camera_config import (
     prepare_cameras,
     release_all_cameras,
 )
-from app.services.model_scanner import scan_models, get_model, delete_model
+from app.services.model_scanner import scan_models, scan_runs, run_dir_of, get_model, delete_model
 from app.services.robot_config import ArmPrepareError, prepare_arms, resolve_robot_type
 from app.services.param_bridge import param_bridge
 from app.services import inference_state
@@ -230,12 +230,41 @@ async def list_models():
     return scan_models()
 
 
-# 이름·설명 사이드카 — 상세 catch-all 이 path 를 통째로 삼키므로 **위에** 둔다.
+# ⚠ 아래 `/runs…` 는 `/{model_id:path}` 캐치올보다 **위**에 있어야 한다 — 뒤에 두면 `runs` 가 모델 id 로 읽힌다
+@router.get("/runs")
+async def list_runs():
+    """가중치 표 — 학습 하나가 한 행 (model_scanner.scan_runs)."""
+    return scan_runs()
+
+
 class ModelNotesRequest(BaseModel):
     name: str = ""
     description: str = ""
 
 
+@router.get("/runs/{run:path}/notes")
+async def get_run_notes(run: str):
+    from app.services.notes_sidecar import read_notes
+
+    run_dir = run_dir_of(run)
+    if run_dir is None:
+        raise HTTPException(404, "학습을 찾을 수 없습니다")
+    return read_notes(run_dir, kind="model")
+
+
+@router.put("/runs/{run:path}/notes")
+async def put_run_notes(run: str, body: ModelNotesRequest):
+    """학습 단위 이름·설명 — 학습 폼의 제목·설명과 **같은 파일**(run 루트 piper_notes.json).
+    체크포인트는 자기 사이드카가 없으면 이것을 물려받는다."""
+    from app.services.notes_sidecar import write_notes
+
+    run_dir = run_dir_of(run)
+    if run_dir is None:
+        raise HTTPException(404, "학습을 찾을 수 없습니다")
+    return write_notes(run_dir, kind="model", name=body.name, description=body.description)
+
+
+# 이름·설명 사이드카 — 상세 catch-all 이 path 를 통째로 삼키므로 **위에** 둔다.
 @router.get("/{model_id:path}/notes")
 async def get_model_notes(model_id: str):
     from pathlib import Path

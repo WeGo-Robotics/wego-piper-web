@@ -9,6 +9,9 @@
 spec_version: 1
 type: act_s
 label: ACT-S
+# 정책 고르는 창의 설명 — 스펙에서 확인되는 사실만 (policy_spec.PolicySpec.description)
+description: >-
+  ACT 에 작업 단계(stage) 예측 헤드를 붙인 변형입니다. 동작과 함께 지금이 어느 단계인지를 냅니다.
 supported: true
 # 이름을 바꾸기 전(ACT-Aux)에 저장한 체크포인트의 config.json `type`. 모델 목록·추론이 이 이름도
 # ACT-S 로 알아본다. 정책 쪽 등록은 configuration_act_s.LEGACY_TYPES 가 한다.

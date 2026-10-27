@@ -348,47 +348,33 @@ async def start_training(body: TrainStartRequest):
         python=settings.train_remote_python if remote else None,
     )
 
+    # 실행 폴더(run 루트)에 남길 것 — 제목·설명 사이드카와 가상환경 기록.
+    # ⚠ **시작 직후에 쓰지 않는다.** 폴더를 미리 만들면 LeRobot 이 validate 에서
+    #   `FileExistsError` 로 죽는다(resume 이 아니면). 그래서 LeRobot 이 자리를 정했다고
+    #   찍은 뒤에 매니저가 부른다 — Output Dir 을 비운(자동) 학습도 그때는 경로를 안다.
+    #   학습이 데이터·정책을 다 읽기 전에 멈추면 안 남는다. 실패한 시작의 흔적도 그래서 없다.
+    def leave_in_run(run_dir: Path) -> None:
+        if title or description:
+            from app.services.notes_sidecar import write_notes
+
+            run_dir.mkdir(parents=True, exist_ok=True)
+            write_notes(run_dir, kind="model", name=title, description=description)
+        # 가상환경 기록도 같은 자리에 물려준다 — 실기 데이터셋이면 아무 일도 안 일어난다.
+        if body.dataset_repo_id:
+            from app.services import sim_scenes
+
+            sim_scenes.inherit_to_run(settings.lerobot_dir / body.dataset_repo_id, run_dir)
+
     try:
         await train_manager.start(
             args, total_steps=body.steps, output_dir=body.output_dir,
             env_extra=_with_warm_start(_train_env(amp, remote=remote), warm if remote else None),
+            on_output_dir=leave_in_run,
         )
     except Exception as e:
         raise HTTPException(500, f"학습 시작 실패: {e}")
 
-    # 사이드카는 **시작이 성공한 뒤** 쓴다 — 실패한 시작의 흔적을 남기지 않는다.
-    # 시작 시점에 쓰는 이유: 학습이 중간에 멈추거나 게이트웨이가 재시작돼도
-    # 이름·설명은 남아야 하고, 모델 페이지의 편집기가 언제든 고칠 수 있다.
-    # ⚠ output_dir 이 비어 있으면(자동) LeRobot 이 고르는 경로를 여기서 모른다
-    #   — 그때는 못 쓴다. 폼이 그렇게 안내한다.
-    notes_written = False
-    if (title or description) and body.output_dir:
-        try:
-            from pathlib import Path as _P
-
-            from app.services.notes_sidecar import write_notes
-
-            _P(body.output_dir).mkdir(parents=True, exist_ok=True)
-            write_notes(_P(body.output_dir), kind="model",
-                        name=title, description=description)
-            notes_written = True
-        except Exception as exc:
-            logger.warning("가중치 제목·설명 사이드카 기록 실패 (%s): %s",
-                           body.output_dir, exc)
-    # 가상환경 기록도 같은 시점에 물려준다 — 실기 데이터셋이면 아무 일도 안 일어난다.
-    scene_inherited = False
-    if body.output_dir and body.dataset_repo_id:
-        try:
-            from pathlib import Path as _P
-
-            from app.services import sim_scenes
-
-            scene_inherited = sim_scenes.inherit_to_run(
-                settings.lerobot_dir / body.dataset_repo_id, _P(body.output_dir))
-        except Exception as exc:
-            logger.warning("가상환경 기록 물려주기 실패 (%s): %s", body.output_dir, exc)
     return {"status": "started", "pid": train_manager.runner.pid, "args": args,
-            "notes_written": notes_written, "scene_inherited": scene_inherited,
             # 미리보기와 다른 `--policy.path` 가 돌았다는 사실을 숨기지 않는다
             "pretrained_aligned": ({"from": pretrained_from, "to": params["pretrained_path"]}
                                    if pretrained_aligned else None)}

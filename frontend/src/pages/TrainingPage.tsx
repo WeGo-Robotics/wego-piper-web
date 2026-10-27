@@ -15,12 +15,16 @@ import LayoutToggle, { useLayout, twoColumns } from '../components/LayoutToggle'
 import PresetBar from '../components/PresetBar'
 import LogViewer from '../components/LogViewer'
 import TrainingMetrics, { type MetricsData, type HistoryData } from '../components/TrainingMetrics'
+import WeightTableModal from '../components/WeightTableModal'
+import CheckpointLabel from '../components/CheckpointLabel'
+import PickerField from '../components/PickerField'
+import PolicyPickerModal from '../components/PolicyPickerModal'
+import type { Dataset as DatasetInfo, Model } from '../types/models'
+import DatasetPickerModal from '../components/DatasetPickerModal'
 import { useT, fmt } from '../i18n'
 
-type Dataset = { id: string; path: string; total_episodes: number; total_frames: number; fps: number | null; features: Record<string, { shape?: number[]; dtype?: string; names?: string[] }>;
-  /** 액션이 관절 이동 변화량인 사본 (feature/act-delta.md) — 목록에 표시만 한다 */
-  delta?: { source: string | null } | null }
-type Model = { id: string; path: string; notes?: { name?: string; description?: string }; policy_type?: string; is_policy?: boolean; config?: Record<string, unknown>; requirements?: { required_cameras: { name: string; model_name?: string }[]; state_dim: number; action_dim: number } }
+// `/datasets` 응답 그대로 — feature 안쪽 모양만 이 화면이 읽는 만큼 좁힌다
+type Dataset = DatasetInfo & { features: Record<string, { shape?: number[]; dtype?: string; names?: string[] }> }
 type Checkpoint = { name: string; step: number; size_kb: number; path: string }
 
 // 정책 목록은 백엔드 core/policies.py 하나에서 온다 (usePolicies)
@@ -53,8 +57,8 @@ export default function TrainingPage() {
   const [pretrainedPath, setPretrainedPath] = useState(_saved.pretrainedPath || '')
   const [policyRepoId, setPolicyRepoId] = useState(_saved.policyRepoId || '')
   const [outputDir, setOutputDir] = useState(_saved.outputDir || '')
-  // 가중치 제목·설명 — 시작 성공 직후 output_dir/piper_notes.json 사이드카(제목 = name).
-  // 출력 경로가 자동(비움)이면 백엔드가 경로를 모르니 못 남긴다 — 라벨이 그렇게 말한다.
+  // 가중치 제목·설명 — 학습 폴더(run 루트)의 piper_notes.json 사이드카(제목 = name).
+  // LeRobot 이 폴더를 정한 뒤 백엔드가 쓴다 — Output Dir 을 비워도(자동) 남는다.
   const [title, setTitle] = useState(_saved.title || '')
   const [description, setDescription] = useState(_saved.description || '')
   const [batchSize, setBatchSize] = useState(_saved.batchSize ?? 8)
@@ -110,6 +114,9 @@ export default function TrainingPage() {
   const [amp, setAmp] = useState<string>(_saved.amp ?? 'bf16')  // 혼합정밀도: off | bf16 | fp16
   const [cliArgs, setCliArgs] = useState('')
   const [cliEdited, setCliEdited] = useState(false)
+  const [weightTable, setWeightTable] = useState(false)
+  const [datasetPicker, setDatasetPicker] = useState(false)
+  const [policyPicker, setPolicyPicker] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [confirmConfig, setConfirmConfig] = useState<string | null>(null)
 
@@ -529,15 +536,38 @@ export default function TrainingPage() {
               const hidden = datasets.length - shown.length
               const selectedOk = !selectedDataset || datasets.find((d) => d.id === selectedDataset) == null
                 || eligible(datasets.find((d) => d.id === selectedDataset)!)
+              const ds = datasets.find((d) => d.id === selectedDataset)
               return (
                 <>
-                  <select value={selectedDataset} onChange={(e) => { setSelectedDataset(e.target.value); setCliEdited(false) }}
-                    className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                    <option value="">{t('선택...')}</option>
-                    {shown.map((d) => (
-                      <option key={d.id} value={d.id}>{d.id} ({d.total_episodes} ep, {d.total_frames} frames){d.delta ? ` · Δ ${t('델타')}` : ''}</option>
-                    ))}
-                  </select>
+                  {/* ⚠ select 를 두지 않는다 — 에피소드 페이지와 같은 [선택하기] 창(표 | 썸네일)에서 고른다.
+                      창에는 위에서 거른 목록(`shown`)만 넘긴다 — 정책이 못 받는 데이터셋은 거기서도 안 보인다. */}
+                  <PickerField empty={!selectedDataset} placeholder={t('선택된 데이터셋 없음 — 눌러서 고르세요')}
+                    onOpen={() => setDatasetPicker(true)}>
+                    {ds ? (
+                      <>
+                        <p className="truncate text-sm font-medium text-neutral-100">{ds.notes?.name || ds.id}</p>
+                        <p className="truncate text-[11px] text-neutral-400">
+                          {[ds.notes?.name && ds.id, t('{n}개 에피소드', { n: ds.total_episodes }),
+                            `${fmt.number(ds.total_frames)} frames`, ds.baked && t('구운 사본'), ds.delta && `Δ ${t('델타')}`]
+                            .filter(Boolean).join(' · ')}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="truncate font-mono text-xs text-neutral-200">{selectedDataset}</p>
+                        {/* 목록을 읽기 전에는 경고하지 않는다 — 열자마자 잠깐 "없다" 가 뜨면 거짓말이다 */}
+                        {datasets.length > 0 && (
+                          <p className="text-[11px] text-amber-400">{t('목록에 없는 데이터셋입니다 — 지워졌거나 이름이 바뀌었을 수 있습니다')}</p>
+                        )}
+                      </>
+                    )}
+                  </PickerField>
+                  {datasetPicker && (
+                    <DatasetPickerModal datasets={shown} value={selectedDataset}
+                      onPick={(id) => { setSelectedDataset(id); setCliEdited(false) }}
+                      onClose={() => setDatasetPicker(false)}
+                      onRenamed={() => { api.get<Dataset[]>('/datasets').then(setDatasets).catch(() => {}) }} />
+                  )}
                   {req.length > 0 && (
                     <p className="text-xs text-neutral-500">
                       {t.rich('이 정책은 {code} 가 있는 데이터셋만 받습니다{hidden}. 에피소드 화면의 [ACT-S·SmolVLA-S용 굽기]로 만듭니다.', {
@@ -557,17 +587,56 @@ export default function TrainingPage() {
           {/* 정책 */}
           <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
             <h3 className="text-sm font-semibold">{t('정책')}</h3>
-            <select value={policyType} onChange={(e) => handlePolicyChange(e.target.value)}
-              className="w-full px-3 py-2 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-              {trainable.map((p) => <option key={p.type} value={p.type}>{p.label}</option>)}
-            </select>
+            {/* ⚠ select 를 두지 않는다 — 이름(`ACT-S`)만으로는 무엇이 다른지, 어떤 데이터셋이 필요한지
+                고른 뒤에야 알았다. 창에서 정책마다 설명과 조건을 보고 고른다 (내용은 정책 스펙). */}
+            {(() => {
+              const cur = trainable.find((p) => p.type === policyType)
+              return (
+                <PickerField empty={false} placeholder="" onOpen={() => setPolicyPicker(true)}>
+                  <p className="truncate text-sm font-medium text-neutral-100">{cur?.label ?? policyType}</p>
+                  {cur?.description && (
+                    <p className="truncate text-[11px] text-neutral-400" title={cur.description}>{cur.description}</p>
+                  )}
+                </PickerField>
+              )
+            })()}
+            {policyPicker && (
+              <PolicyPickerModal policies={trainable} value={policyType}
+                onPick={(type) => { if (type !== policyType) handlePolicyChange(type) }}
+                onClose={() => setPolicyPicker(false)} />
+            )}
             <div className="space-y-1">
-              <label className="text-xs text-neutral-400">{t('Fine-tune 모델 (선택)')}</label>
-              <select value={pretrainedPath} onChange={(e) => { setPretrainedPath(e.target.value); setCliEdited(false) }}
-                className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
-                <option value="">{t('처음부터 학습')}</option>
-                {finetuneCandidates.map((m) => <option key={m.id} value={m.path}>{m.id}</option>)}
-              </select>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-neutral-400">{t('Fine-tune 모델 (선택)')}</label>
+              </div>
+              {/* ⚠ select 를 두지 않는다 — 추론 칸과 같다. 고른 것의 이름만 보이고 [선택하기] 창(표)에서
+                  고른다. ⚠ 예전 select 는 저장된 경로가 목록에 없으면 "처음부터 학습" 으로 **보이면서**
+                  그 경로로 학습을 걸었다 — 이제는 경로를 그대로 보이고 목록에 없다고 말한다. */}
+              <PickerField empty={!pretrainedPath} placeholder={t('선택 안 함 — 처음부터 학습')}
+                onOpen={() => setWeightTable(true)}
+                onClear={() => { setPretrainedPath(''); setCliEdited(false) }} clearTitle={t('처음부터 학습으로 되돌립니다')}>
+                {baseModel ? <CheckpointLabel model={baseModel} models={models} /> : (
+                  <>
+                    <p className="truncate font-mono text-xs text-neutral-200" title={pretrainedPath}>{pretrainedPath}</p>
+                    {/* 목록을 읽기 전에는 경고하지 않는다 — 열자마자 잠깐 "없다" 가 뜨면 거짓말이다 */}
+                    {models.length > 0 && (
+                      <p className="text-[11px] text-amber-400">{t('목록에 없는 경로입니다 — 지워졌거나 이 기계의 것이 아닐 수 있습니다')}</p>
+                    )}
+                  </>
+                )}
+              </PickerField>
+              {!pretrainedPath && (
+                <p className="text-[10px] text-neutral-500">{t('고르지 않아도 됩니다 — 이어 학습할 때만 체크포인트를 고르세요')}</p>
+              )}
+              {weightTable && (
+                <WeightTableModal title={t('이어 학습할 모델 고르기')} value={baseModel?.id}
+                  onClose={() => setWeightTable(false)}
+                  onPick={(c) => { setPretrainedPath(c.path); setCliEdited(false) }}
+                  include={(r) => r.is_policy}
+                  // 후보 규칙은 위 `finetuneCandidates` 와 같다 — 같은 정책이거나 이어 받을 수 있는 정책
+                  blockedReason={(r) => !r.policy_type || r.policy_type === policyType || warmFrom.includes(r.policy_type)
+                    ? null : t('{policy} 정책이라 {to} 로 이어 학습할 수 없습니다', { policy: r.policy_type, to: policyType })} />
+              )}
               {/* SmolVLA 의 `load_vlm_weights` 는 LeRobot 기본값이 **false** 다.
                   false 면 `SmolVLMForConditionalGeneration(config=...)` 로 VLM 을
                   **랜덤 초기화**한다 — 사전학습 가중치를 안 쓴다는 뜻이다.
@@ -669,7 +738,7 @@ export default function TrainingPage() {
                 </div>
               )
             })()}
-            {/* 가중치 제목·설명 — 시작이 성공하면 output_dir/piper_notes.json 사이드카로 남는다.
+            {/* 가중치 제목·설명 — 학습이 폴더를 정하면 그 폴더의 piper_notes.json 사이드카로 남는다.
                 Fine-tune 모델을 골랐으면 그 모델의 제목·설명을 가져올 수 있다 — 자동으로
                 채우지 않는다(이어 학습한 결과는 다른 가중치라 같은 이름을 물려받으면 헷갈린다). */}
             <div className="space-y-1">
@@ -687,13 +756,10 @@ export default function TrainingPage() {
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder={t('사람이 읽는 이름 — 모델 목록에 경로 대신 보입니다')}
                 className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
-              <label className="block text-xs text-neutral-400">
-                {t('가중치 설명 (선택)')}{!outputDir && (title || description) &&
-                  <span className="ml-2 text-amber-400">{t('— Output Dir 이 비어 있으면 저장할 자리를 몰라 남기지 못합니다')}</span>}
-              </label>
+              <label className="block text-xs text-neutral-400">{t('가중치 설명 (선택)')}</label>
               <textarea value={description} rows={2}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder={t('어떤 데이터·조건·의도로 학습했는지 — 시작할 때 output_dir 옆에 남고, 모델 페이지에서 고칠 수 있습니다')}
+                placeholder={t('어떤 데이터·조건·의도로 학습했는지 — 학습 폴더에 남고, 모델 페이지에서 고칠 수 있습니다')}
                 className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
             </div>
             <div className="space-y-1">

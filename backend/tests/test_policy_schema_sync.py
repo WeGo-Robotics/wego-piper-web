@@ -117,9 +117,12 @@ def test_finetune_list_is_filtered_by_policy():
     assert "finetuneCandidates" in _SRC, "파인튜닝 후보를 거르지 않는다"
     assert "m.policy_type === policyType" in _SRC, "정책이 같은 것만 남기지 않는다"
     assert "m.is_policy !== false" in _SRC, "정책이 아닌 모델을 걸러내지 않는다"
-    # 드롭다운이 걸러진 목록을 쓰는지 (원본 `models` 를 그대로 쓰면 의미가 없다)
-    dd = _SRC.split('<option value="">{t(\'처음부터 학습\')}</option>', 1)[1].split("</select>", 1)[0]
-    assert "finetuneCandidates.map" in dd, f"드롭다운이 전체 목록을 쓴다: {dd.strip()[:80]}"
+    # 고르는 창(표)이 같은 규칙으로 막는지 — 드롭다운은 없앴다. 정책이 아닌 것은 안 보이고,
+    # 다른 정책은 흐리게(못 고름) 이유와 함께 보인다 (`finetuneCandidates` 와 같은 조건)
+    modal = _SRC.split("<WeightTableModal title={t('이어 학습할 모델 고르기')}", 1)[1].split("/>", 1)[0]
+    assert "include={(r) => r.is_policy}" in modal, "정책이 아닌 모델이 고르는 창에 뜬다"
+    assert "r.policy_type === policyType || warmFrom.includes(r.policy_type)" in modal, \
+        "고르는 창이 다른 정책의 체크포인트를 막지 않는다"
 
 
 def test_mismatched_selection_is_cleared_on_policy_change():

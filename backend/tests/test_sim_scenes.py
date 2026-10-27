@@ -456,8 +456,10 @@ def test_a_success_rate_that_mixes_easy_and_hard_worlds_means_nothing(store, mon
 
 def test_the_screen_shows_which_world_too(store):
     """백엔드만 알면 사람은 못 본다 — 목록과 평가 둘 다 가상환경을 그려야 한다."""
+    listing = (REPO / "frontend" / "src" / "components" / "DatasetBrowser.tsx").read_text()
+    assert "d.scene" in listing, "데이터셋 목록이 가상환경을 안 보여 준다"
     ds = (REPO / "frontend" / "src" / "pages" / "DatasetsPage.tsx").read_text()
-    assert "ds.scene" in ds, "데이터셋 목록이 가상환경을 안 보여 준다"
+    assert "detailEntry?.scene" in ds, "데이터셋 상세가 가상환경을 안 보여 준다"
     types = (REPO / "frontend" / "src" / "types" / "models.ts").read_text()
     assert "scene?: { id: string; name: string; objects: number }" in types
     ev = (REPO / "frontend" / "src" / "components" / "EvalPanel.tsx").read_text()

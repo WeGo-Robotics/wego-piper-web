@@ -10,7 +10,9 @@
 
 import json
 import logging
+import re
 from collections.abc import Callable
+from pathlib import Path
 
 from app.services.process_manager import ProcessState
 from app.services.training.jobs import (
@@ -26,6 +28,11 @@ from app.services.training.runners.local import LocalRunner
 from app.services.training.spec import TrainJobSpec
 
 logger = logging.getLogger(__name__)
+
+# LeRobot 이 자리를 정한 뒤 한 번 찍는 줄: `INFO ... lerobot_train.py:329 Output dir: outputs/train/…`
+# 터미널이면 색 코드가 붙는다.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_OUTPUT_DIR = re.compile(r"Output dir:\s*(\S.*?)\s*$")
 
 
 def _default_runner() -> "TrainRunner":
@@ -83,6 +90,7 @@ class TrainManager:
         self._on_metrics: Callable[[dict], None] | None = None
         self._original_log_cb: Callable[[str], None] | None = None
         self._original_state_cb: Callable[[ProcessState], None] | None = None
+        self._on_output_dir: Callable[[Path], None] | None = None
         self.tracker.set_update_callback(self._emit_metrics)
         # ⚠ **여기서 건다. WS 연결 때가 아니다.** 예전에는 `set_log_callback` 이
         #   `ws.py` 에서만 불렸다 — 즉 **브라우저가 붙어야** 메트릭이 쌓였다.
@@ -137,11 +145,38 @@ class TrainManager:
     def _intercept_log(self, line: str) -> None:
         """로그를 가로채 메트릭을 뽑고 원본 콜백에 그대로 전달."""
         self.tracker.feed(line)
+        if "Output dir:" in line:
+            self._output_dir_reported(line)
         # 6시간 학습이면 수만 줄이라 전부 WS 로 밀면 브라우저가 죽는다.
         # 버스 링버퍼에 남겨 REST 페이지네이션으로 읽게 한다 (WS 로는 신규분만).
         self.registry.append_log(self.job_id, line)
         if self._original_log_cb:
             self._original_log_cb(line)
+
+    def _output_dir_reported(self, line: str) -> None:
+        """LeRobot 이 실행 폴더를 정했다 — 그 폴더에 남길 것을 이제 남긴다.
+
+        ⚠ **그 전에는 폴더를 만들면 안 된다.** LeRobot 은 `cfg.validate()` 에서 폴더가
+        이미 있으면 `FileExistsError` 로 죽는다(resume 이 아니면). 시작 직후에 사이드카를
+        쓰려고 mkdir 하면 그 학습이 몇 초 뒤 죽는다. 이 줄은 validate 뒤에 찍힌다.
+        ⚠ Output Dir 을 비우면(자동) 경로는 LeRobot 이 정하므로 **여기서만** 알 수 있다.
+        상대경로는 러너의 작업 폴더 기준이다. 원격이면 이 기계의 경로가 아니라 손대지 않는다.
+        """
+        workdir = getattr(self.runner, "workdir", None)
+        m = _OUTPUT_DIR.search(_ANSI.sub("", line))
+        if m is None or workdir is None or getattr(self.runner, "is_remote", False):
+            return
+        out = Path(workdir) / m.group(1)
+        # 자동 경로였다면 이제야 안다 — 상태·곡선 저장이 이 값을 쓴다
+        if not self.output_dir:
+            self.output_dir = str(out)
+        cb, self._on_output_dir = self._on_output_dir, None
+        if cb is None:
+            return
+        try:
+            cb(out)
+        except Exception as exc:                                  # noqa: BLE001
+            logger.warning("실행 폴더 사이드카 기록 실패 (%s): %s", out, exc)
 
     def _intercept_state(self, state: ProcessState) -> None:
         """상태 변화를 레지스트리에 반영하고 원본 콜백에 전달.
@@ -207,9 +242,13 @@ class TrainManager:
         output_dir: str = "",
         env_extra: dict[str, str] | None = None,
         max_hours: float = 0.0,
+        on_output_dir: Callable[[Path], None] | None = None,
     ) -> None:
+        """`on_output_dir` — LeRobot 이 실행 폴더를 정한 뒤 한 번 불린다(`_output_dir_reported`).
+        게이트웨이가 그 전에 재시작하면 불리지 않는다."""
         self.tracker.reset(total_steps=total_steps)
         self.output_dir = output_dir
+        self._on_output_dir = on_output_dir
         # 이전 job 의 로그·레코드를 치운다. 남겨두면 새 학습 로그가 옛 줄 뒤에 붙어
         # "어디부터 이번 학습인가"를 알 수 없다 — 버스 링버퍼는 세션을 넘어 살아남는다.
         self.registry.delete(self.job_id)

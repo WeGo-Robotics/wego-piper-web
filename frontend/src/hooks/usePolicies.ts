@@ -20,6 +20,16 @@ export type PolicyInfo = {
   encoder_probe: boolean
   /** 처음부터 학습이 무의미한 정책의 권장 시작점 (없으면 빈 문자열). */
   policy_base: string
+  // ── 학습의 정책 고르는 창이 보여준다 (정책 스펙 YAML) ──
+  /** 무엇이고 언제 쓰나 */
+  description: string
+  /** 베이스 없이 처음부터 학습할 때 무엇이 어디서 시작하나 */
+  scratch_note: string
+  /** 데이터셋에 있어야 하는 feature (ACT-S·SmolVLA-S 의 `subtask_index`) */
+  requires_features: string[]
+  /** 이 정책으로 이어 학습할 수 있는 다른 정책 (워밍스타트) */
+  warm_start_from: string[]
+  defaults: { batch_size?: number; steps?: number }
 }
 
 export function usePolicies() {

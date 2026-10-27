@@ -8,6 +8,10 @@
 spec_version: 1
 type: act
 label: ACT
+# 정책 고르는 창의 설명 — 스펙에서 확인되는 사실만 (policy_spec.PolicySpec.description)
+description: >-
+  Action Chunking with Transformers. 카메라 영상과 관절 상태를 보고 다음 동작 묶음(chunk)을 한 번에 냅니다.
+  작업 하나를 시연 에피소드로 가르칠 때 씁니다.
 supported: true
 
 capabilities:

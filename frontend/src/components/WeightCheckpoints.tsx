@@ -152,7 +152,7 @@ export default function WeightCheckpoints({ run, setRun, sample, setSample, job,
         <select value={run} onChange={(e) => setRun(e.target.value)}
                 className="min-w-[22rem] rounded bg-neutral-800 border border-neutral-700 px-2 py-1">
           {runs.map((r) => (
-            <option key={r.run} value={r.run}>{r.run} · {r.policy_type} · {r.dataset ?? '?'} ({r.checkpoints})</option>
+            <option key={r.run} value={r.run}>{r.name ? `${r.name} · ` : ''}{r.run} · {r.policy_type} · {r.dataset ?? '?'} ({r.checkpoints})</option>
           ))}
         </select>
         {runInfo && detail && (

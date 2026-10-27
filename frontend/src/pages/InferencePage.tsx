@@ -6,7 +6,9 @@ import type { ProcessState } from '../types/ws'
 import { useActivity, isStateMessage } from '../hooks/useActivity'
 import { usePolicies } from '../hooks/usePolicies'
 import { useParamSpec } from '../hooks/useParamSpec'
-import CheckpointPicker from '../components/CheckpointPicker'
+import WeightTableModal from '../components/WeightTableModal'
+import CheckpointLabel from '../components/CheckpointLabel'
+import PickerField from '../components/PickerField'
 import type { CameraCheck, Model, TrainCamera } from '../types/models'
 import ParamSlider from '../components/ParamSlider'
 import PresetBar from '../components/PresetBar'
@@ -175,6 +177,7 @@ export default function InferencePage() {
   const { streams, loaded: streamsLoaded, refresh: refreshStreams, connect: connectStreams, connecting } = useCameraStreams()
   const [models, setModels] = useState<Model[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
+  const [weightTable, setWeightTable] = useState(false)
   const [cameraMapping, setCameraMapping] = useState<Record<string, string>>({})
   const { notify } = useSystemMessage()
   const [cameraProfile, setCameraProfile] = useState<string>(
@@ -602,9 +605,31 @@ export default function InferencePage() {
             {/* 모델 */}
             <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
               <h3 className="text-sm font-semibold">{t('체크포인트')}</h3>
-              {/* ⚠ 예전에는 목록 하나에 전부 넣었다 — 학습 10개에 체크포인트 72개라
-                  어느 학습의 몇 번째인지 읽을 수가 없었다. 학습을 먼저 고른다. */}
-              <CheckpointPicker models={models} value={selectedModel} onChange={setSelectedModel} />
+              {/* ⚠ select 를 두지 않는다 — 학습 36개·체크포인트 200개 가까이를 한 줄씩 늘어놓으면
+                  날짜만 읽힌다(학습 → 체크포인트 두 단계로 나눠도 그랬다). 지금 것의 이름만 보이고,
+                  고르는 것은 [선택하기] 창(표)에서 한다. */}
+              {/* 저장돼 있던 선택이 목록에 없으면(지운 체크포인트) 비어 보이게 두지 않는다 — 값은 남아 있다 */}
+              <PickerField empty={!selectedModel} placeholder={t('선택된 체크포인트 없음 — 눌러서 고르세요')}
+                onOpen={() => setWeightTable(true)}>
+                {selectedModelData ? <CheckpointLabel model={selectedModelData} models={models} /> : (
+                  <>
+                    <p className="truncate font-mono text-xs text-neutral-200" title={selectedModel}>{selectedModel}</p>
+                    {/* 목록을 읽기 전에는 경고하지 않는다 — 열자마자 잠깐 "없다" 가 뜨면 거짓말이다 */}
+                    {models.length > 0 && (
+                      <p className="text-[11px] text-amber-400">{t('목록에 없는 경로입니다 — 지워졌거나 이 기계의 것이 아닐 수 있습니다')}</p>
+                    )}
+                  </>
+                )}
+              </PickerField>
+              {weightTable && (
+                <WeightTableModal title={t('추론할 체크포인트 고르기')} value={selectedModel}
+                  onClose={() => setWeightTable(false)}
+                  onPick={(c) => setSelectedModel(c.id)}
+                  include={(r) => r.is_policy}
+                  // 시작이 거절할 것을 미리 흐린다 — 판정은 백엔드 action_space 가 한다
+                  blockedReason={(r) => r.action_space === 'unknown'
+                    ? t('델타로 학습한 것으로 보이는데 학습 데이터셋이 없어 확인할 수 없습니다 — 시작하지 않습니다') : null} />
+              )}
             </div>
 
             {/* 모델 요구사항 + 카메라 매핑 */}

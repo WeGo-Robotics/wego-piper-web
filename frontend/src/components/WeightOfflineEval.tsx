@@ -190,7 +190,7 @@ export default function WeightOfflineEval({ run, setRun, checkpoint, setCheckpoi
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <select value={run} onChange={(e) => setRun(e.target.value)} className={`${select} min-w-[18rem]`}>
-          {runs.map((r) => <option key={r.run} value={r.run}>{r.run} · {r.policy_type}</option>)}
+          {runs.map((r) => <option key={r.run} value={r.run}>{[r.name, r.dataset, r.run, r.policy_type].filter(Boolean).join(' · ')}</option>)}
         </select>
         <select value={checkpoint} onChange={(e) => setCheckpoint(e.target.value)} className={select}>
           {ckpts.map((c) => <option key={c.id} value={c.id}>{stepLabel(c)}</option>)}

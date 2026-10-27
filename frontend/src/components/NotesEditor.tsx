@@ -14,10 +14,12 @@ import { useT } from '../i18n'
 
 type Notes = { name: string; description: string; updated_at: string }
 
-export default function NotesEditor({ endpoint, source }: {
-  /** `/datasets/{id}/notes` 또는 `/models/{id}/notes` */
+export default function NotesEditor({ endpoint, source, onSaved }: {
+  /** `/datasets/{id}/notes`, `/models/{id}/notes`, `/models/runs/{run}/notes` */
   endpoint: string
   source: string
+  /** 저장된 뒤 — 목록이 이름을 다시 읽게 */
+  onSaved?: () => void
 }) {
   const t = useT()
   const { notify } = useSystemMessage()
@@ -40,6 +42,7 @@ export default function NotesEditor({ endpoint, source }: {
       setUpdatedAt(r.updated_at)
       setDirty(false)
       notify({ level: 'info', text: t('이름·설명 저장됨'), source })
+      onSaved?.()
     } catch (e) {
       notify({ level: 'error', source,
         text: e instanceof Error ? e.message : t('저장 실패') })

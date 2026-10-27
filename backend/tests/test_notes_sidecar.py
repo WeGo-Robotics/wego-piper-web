@@ -125,24 +125,98 @@ def test_recording_carries_the_title_as_the_sidecar_name():
 
 
 def test_training_writes_the_weight_notes_next_to_its_output(tmp_path, monkeypatch):
-    """학습 폼의 제목·설명은 **시작이 성공한 뒤** output_dir/piper_notes.json 이
-    된다 — 실패한 시작의 흔적은 남기지 않고, 학습이 중간에 멈춰도 이름은
-    남는다. CLI 인자 빌더에는 흘리지 않는다. output_dir 이 자동(비움)이면
-    경로를 몰라 못 쓴다 — 폼이 그렇게 안내한다."""
+    """학습 폼의 제목·설명은 run 루트의 piper_notes.json 이 된다. CLI 인자 빌더에는
+    흘리지 않는다.
+
+    ⚠ **시작 직후에 쓰면 안 된다.** 폴더를 미리 만들면 LeRobot 이 validate 에서
+    `FileExistsError` 로 죽는다(resume 이 아니면) — Output Dir 을 적은 학습이 제목을 넣는
+    순간 몇 초 뒤 죽었다. 그리고 Output Dir 을 비우면(자동, 대부분이 이렇게 돈다) 경로를
+    몰라 아예 안 남았다 — 목록에 이름이 하나도 안 뜬 이유다. 둘 다 LeRobot 이 자리를
+    정했다고 찍은 뒤에 쓰는 것으로 푼다(`TrainManager._output_dir_reported`)."""
     src = (Path(__file__).resolve().parents[1] / "app" / "routers" / "training.py").read_text()
     assert 'params.pop("title"' in src and 'params.pop("description"' in src, \
         "제목·설명이 인자 dict 에 남는다"
     start = src.split("async def start_training(", 1)[1].split("@router.post", 1)[0]
-    assert start.index("train_manager.start(") < start.index("write_notes("), \
-        "사이드카를 시작 성공 전에 쓴다"
-    assert "and body.output_dir" in start, "output_dir 없이도 쓰려 든다"
-    # 실제 쓰기 — 모델 사이드카는 디렉토리 바로 아래 piper_notes.json
-    from app.services.notes_sidecar import read_notes, write_notes
-    write_notes(tmp_path, kind="model", name="집기 v3", description="주간 데이터")
-    assert read_notes(tmp_path, kind="model")["name"] == "집기 v3"
+    assert "on_output_dir=leave_in_run" in start, "LeRobot 이 자리를 정하기 전에 쓴다"
+    leave = start.split("def leave_in_run(", 1)[1].split("try:", 1)[0]
+    assert "write_notes(" in leave and "inherit_to_run(" in leave
+    assert "body.output_dir" not in leave, "자동 경로면 또 못 쓴다"
     page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages" / "TrainingPage.tsx").read_text()
     assert "가중치 제목" in page and "가중치 설명" in page
-    assert "Output Dir 이 비어 있으면" in page, "자동 경로일 때의 한계를 폼이 말하지 않는다"
+    assert "Output Dir 이 비어 있으면" not in page, "이제는 남는데 폼이 못 남긴다고 말한다"
+
+
+class _Runner:
+    """로그 한 줄을 흘려 넣을 수 있는 가짜 러너."""
+    state = None
+    is_running = True
+    pid = None
+    is_remote = False
+
+    def __init__(self, workdir):
+        self.workdir = workdir
+
+    def set_log_callback(self, cb): self.feed = cb
+    def set_state_callback(self, cb): pass
+    async def start(self, spec): pass
+    async def stop(self): pass
+    def restore(self): return None
+
+
+def _manager(runner):
+    from app.services.training.jobs import JobRegistry
+    from app.services.training.manager import TrainManager
+
+    class DeadBus:          # 버스 없이도 돈다 — 레지스트리는 부가 기능이다
+        def __getattr__(self, _name):
+            def boom(*a, **k):
+                raise ConnectionError("redis down")
+            return boom
+
+    return TrainManager(runner=runner, registry=JobRegistry(DeadBus()))
+
+
+_OUT_LINE = "INFO 2026-10-26 18:20:11 ot_train.py:329 Output dir: outputs/train/2026-10-26/18-20-01_smolvla"
+
+
+def test_run_files_wait_for_lerobot_to_pick_the_folder(tmp_path):
+    import asyncio
+
+    runner = _Runner(tmp_path)
+    tm = _manager(runner)
+    got: list[Path] = []
+    asyncio.run(tm.start(["lerobot-train"], total_steps=10, output_dir="", on_output_dir=got.append))
+    runner.feed("INFO cfg.validate() 전후의 다른 줄")
+    assert got == [] and not (tmp_path / "outputs").exists(), "LeRobot 이 validate 하기 전에 폴더를 만들었다"
+
+    # 터미널이면 색 코드가 붙는다
+    runner.feed(_OUT_LINE.replace("Output dir:", "\x1b[1m\x1b[33mOutput dir:\x1b[0m"))
+    run_dir = tmp_path / "outputs" / "train" / "2026-10-26" / "18-20-01_smolvla"
+    assert got == [run_dir], "상대경로는 러너의 작업 폴더 기준이다"
+    assert tm.output_dir == str(run_dir), "자동 경로를 알게 됐는데 상태·곡선 저장이 모른다"
+
+    runner.feed(_OUT_LINE)
+    assert got == [run_dir], "한 번만 남긴다 — 재부착이 저널을 다시 읽어도"
+
+
+def test_an_explicit_output_dir_is_kept_and_remote_runs_are_left_alone(tmp_path):
+    import asyncio
+
+    runner = _Runner(tmp_path)
+    tm = _manager(runner)
+    got: list[Path] = []
+    asyncio.run(tm.start(["x"], output_dir="/data/run1", on_output_dir=got.append))
+    runner.feed(_OUT_LINE.replace("outputs/train/2026-10-26/18-20-01_smolvla", "/data/run1"))
+    assert got == [Path("/data/run1")] and tm.output_dir == "/data/run1"
+
+    # 원격이면 그 경로는 이 기계의 것이 아니다
+    remote = _Runner(tmp_path)
+    remote.is_remote = True
+    tm = _manager(remote)
+    got = []
+    asyncio.run(tm.start(["x"], output_dir="", on_output_dir=got.append))
+    remote.feed(_OUT_LINE)
+    assert got == [] and tm.output_dir == ""
 
 
 def test_lists_carry_a_created_date_not_just_the_mtime(tmp_path, monkeypatch):
@@ -185,8 +259,13 @@ def test_checkpoints_inherit_the_runs_title_from_the_training_form(tmp_path):
     assert items["000100"]["notes"]["name"] == "집기 v3", "run 제목을 물려받지 못했다"
     assert items["000200"]["notes"]["name"] == "집기 v3 — 최종", "체크포인트 자기 사이드카가 져야 할 이유가 없다"
     assert items["000100"]["created"] and items["000100"]["run_created"]
-    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages" / "ModelsPage.tsx").read_text()
-    assert "run_notes?.name" in page, "그룹 헤더가 run 제목을 안 그린다"
-    assert "run_created" in page and "fmt.date(g.list[0].run_created)" in page
-    ds_page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages" / "DatasetsPage.tsx").read_text()
-    assert "만든 날짜" in ds_page
+    # 저장소는 학습 1행 표다(test_weight_table) — 이름 규칙은 백엔드 scan_runs 가 정한다
+    label = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "components" / "CheckpointLabel.tsx").read_text()
+    assert "runName(models.filter((x) => x.run === m.run))" in label, \
+        "추론·학습이 고른 체크포인트를 이름 없이 경로(날짜)로만 보인다"
+    types = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "types" / "models.ts").read_text()
+    assert "run_notes?.name" in types and "notes?.name" in types, \
+        "학습 폼 제목도, 모델 페이지에서 붙인 이름도 run 이름이 돼야 한다"
+    # 데이터셋 목록은 표 | 썸네일 (DatasetBrowser — 저장소와 에피소드 페이지가 같이 쓴다)
+    ds_list = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "components" / "DatasetBrowser.tsx").read_text()
+    assert "만든 날짜" in ds_list

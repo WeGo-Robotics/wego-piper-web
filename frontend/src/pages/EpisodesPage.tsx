@@ -27,6 +27,7 @@ import PlotlyChart from '../components/PlotlyChart'
 import type { Series } from '../components/PlotlyChart'
 import PosAnalysis from '../components/PosAnalysis'
 import type { BakedInfo, Dataset, DatasetDetail } from '../types/models'
+import DatasetPickerModal from '../components/DatasetPickerModal'
 import { tb, useT } from '../i18n'
 
 // ── 페이즈 사이드카 형태 (backend/app/routers/phase.py 응답) ──
@@ -148,6 +149,7 @@ export default function EpisodesPage() {
   }
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [dsId, setDsId] = useState<string>('')
+  const [datasetPicker, setDatasetPicker] = useState(false)
   const [detail, setDetail] = useState<DatasetDetail | null>(null)
   const [labels, setLabels] = useState<PhaseLabels | null>(null)
   const [summary, setSummary] = useState<PhaseSummary | null>(null)
@@ -339,6 +341,17 @@ export default function EpisodesPage() {
     } catch { notifyError(t('데이터셋을 열 수 없습니다: {id}', { id })); return }
     await loadPhase(id)
   }, [loadPhase]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 고른 것이 없으면 **가장 최근에 만든** 데이터셋을 연다 — 빈 화면에서 [선택하기] 부터
+  // 누르게 하지 않는다. 처음 한 번만: 그 뒤로는 사람이 고른 것이다.
+  const autoPicked = useRef(false)
+  useEffect(() => {
+    if (autoPicked.current || dsId || !datasets.length) return
+    autoPicked.current = true
+    const latest = [...datasets].sort((a, b) =>
+      (b.created ?? b.modified).localeCompare(a.created ?? a.modified))[0]
+    if (latest) void selectDataset(latest.id)
+  }, [datasets, dsId, selectDataset])
 
   // ⚠ 시작 프레임은 **에피소드와 같은 렌더에** 넣는다 (POS분석의 [뷰어에서 열기]).
   //   고른 뒤에 따로 setFrame 하면 그 사이 비디오가 0 으로 seek 할 수 있고, 그 프레임
@@ -636,7 +649,8 @@ export default function EpisodesPage() {
 
   // 구운 사본(ACT-S·SmolVLA-S 용 `_stage`)은 읽기 전용 — 여기서 고친 구간은 원본에 반영되지 않고
   // 다음 bake 에 조용히 덮인다. 원본에서 고치고 다시 굽는다 (feature/act-s.md §4.5).
-  const baked: BakedInfo | null = datasets.find((d) => d.id === dsId)?.baked ?? null
+  const currentDataset = datasets.find((d) => d.id === dsId)
+  const baked: BakedInfo | null = currentDataset?.baked ?? null
 
   const enterEdit = () => {
     if (!displaySegments) return
@@ -880,16 +894,36 @@ export default function EpisodesPage() {
           ))}
         </div>
         {/* POS분석은 데이터셋을 여러 개 고른다 — 그 목록은 탭 안 왼쪽에 있다 */}
-        {tab === 'viewer' && <select
-          value={dsId}
-          onChange={(e) => void selectDataset(e.target.value)}
-          className="min-w-[18rem] rounded bg-neutral-800 border border-neutral-700 px-2 py-1 text-sm"
-        >
-          <option value="">{t('데이터셋 선택…')}</option>
-          {datasets.map((d) => (
-            <option key={d.id} value={d.id}>{d.id} ({d.total_episodes}){d.baked ? t(' · 구운 사본') : ''}{d.delta ? ` · Δ ${t('델타')}` : ''}</option>
-          ))}
-        </select>}
+        {/* ⚠ select 를 두지 않는다 — 51개를 한 줄씩 늘어놓으면 ID 만 읽힌다. 지금 것의 이름만
+            보이고, 고르는 것은 창(표 | 썸네일)에서 한다. */}
+        {tab === 'viewer' && (
+          <div className="flex min-w-0 items-center gap-3">
+            {currentDataset ? (
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-neutral-100">
+                  {currentDataset.notes?.name || currentDataset.id}
+                  <span className="ml-2 text-xs font-normal text-neutral-400">
+                    {t('{n}개 에피소드', { n: currentDataset.total_episodes })}
+                    {currentDataset.baked ? t(' · 구운 사본') : ''}{currentDataset.delta ? ` · Δ ${t('델타')}` : ''}
+                  </span>
+                </p>
+                {currentDataset.notes?.name && <p className="truncate text-[11px] text-neutral-500">{currentDataset.id}</p>}
+              </div>
+            ) : (
+              <span className="text-sm text-neutral-500">{t('선택된 데이터셋 없음')}</span>
+            )}
+            <button type="button" onClick={() => setDatasetPicker(true)}
+              className="shrink-0 rounded bg-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:bg-blue-600 hover:text-white">
+              {t('선택하기')}
+            </button>
+          </div>
+        )}
+        {datasetPicker && (
+          <DatasetPickerModal datasets={datasets} value={dsId}
+            onPick={(id) => void selectDataset(id)}
+            onClose={() => setDatasetPicker(false)}
+            onRenamed={() => void reloadDatasets()} />
+        )}
       </div>
 
       {tab === 'pos' ? (

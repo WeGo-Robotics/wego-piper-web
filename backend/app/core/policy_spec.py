@@ -160,6 +160,10 @@ class PolicySpec(_Strict):
     capabilities: Capabilities = Field(default_factory=Capabilities)
     bases: Bases = Field(default_factory=Bases)
     runtime: Runtime = Field(default_factory=Runtime)
+    # 정책 고르는 창의 설명 — 무엇이고 무엇을 내나. 스펙에서 확인되는 사실만 적는다
+    # (성능 비교 같은 것은 A/B 로 확인한 뒤에). 데이터셋 조건·이어 받기·처음부터 시작점은 창이
+    # 다른 필드에서 따로 보이므로 여기 되풀이하지 않는다. 화면이 따로 적으면 정책을 더할 때 갈라진다.
+    description: str = ""
     # 베이스 없이 처음부터 학습할 때의 안내. 정책마다 다른 **사실**이라 스펙에 둔다.
     scratch_note: str = ""
     train: TrainSpec = Field(default_factory=TrainSpec)

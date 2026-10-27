@@ -150,6 +150,12 @@ def spec_for_frontend() -> list[dict]:
             # 처음부터 학습이 무의미한 정책의 권장 시작점.
             # 프론트가 따로 목록을 만들면 또 갈라진다.
             "policy_base": spec.get("policy_base", ""),
+            # 정책 고르는 창(학습) — 설명·처음부터 시작점·데이터셋 조건·이어 받을 정책·기본 배치/스텝
+            "description": SPECS[name].description,
+            "scratch_note": SPECS[name].scratch_note,
+            "requires_features": list(SPECS[name].train.requires_features),
+            "warm_start_from": list(SPECS[name].bases.warm_start_from),
+            "defaults": {k: v for k, v in SPECS[name].train.defaults.items() if k in ("batch_size", "steps")},
         }
         for name, spec in POLICIES.items()
         if spec.get("supported")

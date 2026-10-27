@@ -542,8 +542,12 @@ def runs() -> list[dict]:
             continue
         r = by_run.setdefault(run, {"run": run, "policy_type": m.get("policy_type"),
                                     "created": m.get("run_created") or m.get("created"),
-                                    "checkpoints": 0, "path": m["path"]})
+                                    "checkpoints": 0, "path": m["path"],
+                                    "name": (m.get("run_notes") or {}).get("name") or ""})
         r["checkpoints"] += 1
+        # 이름 — 학습 폼 제목이 먼저, 없으면 체크포인트에 붙인 이름 (화면의 `runName` 과 같은 규칙)
+        if not r["name"]:
+            r["name"] = (m.get("notes") or {}).get("name") or ""
     out = []
     for r in by_run.values():
         try:

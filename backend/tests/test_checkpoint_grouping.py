@@ -9,7 +9,6 @@ from pathlib import Path
 
 _SRC = Path(__file__).resolve().parents[2] / "frontend" / "src"
 SCANNER = Path(__file__).resolve().parents[1] / "app" / "services" / "model_scanner.py"
-PICKER = _SRC / "components" / "CheckpointPicker.tsx"
 
 
 def test_the_scanner_says_which_run_a_checkpoint_belongs_to():
@@ -57,23 +56,34 @@ def test_last_has_no_step_number(tmp_path):
     assert out["step"] is None
 
 
-def test_the_picker_sorts_newest_first_and_puts_last_on_top():
-    """⚠ 문자열 정렬이면 `9000` 이 `10000` 뒤로 간다. 숫자로 정렬해야 한다."""
-    src = PICKER.read_text()
-    assert "(b.step ?? 0) - (a.step ?? 0)" in src, "스텝을 숫자로 정렬하지 않는다"
-    assert "if (a.checkpoint === 'last') return -1" in src, "last 를 위로 안 올린다"
+def test_checkpoints_sort_by_step_number_with_the_final_one_first(tmp_path, monkeypatch):
+    """⚠ 문자열 정렬이면 `9000` 이 `10000` 뒤로 간다. 숫자로 정렬하고, 마지막 체크포인트
+    (`last` 가 가리키는 것)를 맨 앞에 둔다 — 대개 그걸 쓴다. 고르는 화면(표)은 이 순서를 그대로 쓴다."""
+    from app.core.config import Settings
+    from app.services.model_scanner import scan_runs
+
+    monkeypatch.setattr(Settings, "model_paths", property(lambda self: [tmp_path]))
+    run = tmp_path / "2026-09-01" / "10-11-22_act"
+    for step in ("9000", "10000", "11000"):
+        pm = run / "checkpoints" / step / "pretrained_model"
+        pm.mkdir(parents=True)
+        (pm / "config.json").write_text('{"type": "act"}')
+    (run / "checkpoints" / "last").symlink_to("10000")   # 마지막 저장이 가장 큰 스텝이 아닐 수도 있다
+    [row] = scan_runs()
+    assert [c["checkpoint"] for c in row["checkpoints"]] == ["10000", "11000", "9000"]
+    assert row["checkpoints"][0]["final"]
 
 
 def test_choosing_a_run_selects_a_checkpoint():
     """⚠ 학습만 고르고 체크포인트가 비어 있으면 "골랐는데 아무 일도 안 일어나는"
-    상태가 된다 — 그게 고장으로 읽힌다."""
-    src = PICKER.read_text()
-    body = src.split("const pickRun", 1)[1].split("\n  return", 1)[0]
-    assert "onChange(list[0]?.id ?? '')" in body, "학습을 골라도 체크포인트가 안 잡힌다"
+    상태가 된다 — 그게 고장으로 읽힌다. 표에서 행을 누르면 마지막 체크포인트를 고른다."""
+    src = (_SRC / "components" / "WeightTable.tsx").read_text()
+    assert "if (onPick) { if (!blocked) onPick(r.checkpoints[0], r) }" in src, "행을 눌러도 체크포인트가 안 잡힌다"
 
 
-def test_search_opens_the_groups_it_matched():
-    """⚠ 걸린 게 접힌 묶음 안에 숨으면 "검색해도 아무것도 안 나온다" 로 보인다."""
-    src = (_SRC / "pages" / "ModelsPage.tsx").read_text()
-    assert "if (search) for (const g of groups) forcedOpen.add(g.run)" in src, \
-        "검색 중에 묶음을 안 편다"
+def test_search_finds_a_run_by_a_checkpoint_name():
+    """⚠ 걸린 게 안 보이면 "검색해도 아무것도 안 나온다" 로 보인다. 저장소는 이제 학습 1행
+    표라 접힌 묶음은 없지만, 체크포인트에만 붙인 이름은 행 안의 칩에 있다 — 그 이름으로도
+    행이 걸려야 한다."""
+    src = (_SRC / "components" / "WeightTable.tsx").read_text()
+    assert "...r.checkpoints.map((c) => c.name)" in src, "체크포인트 이름으로 못 찾는다"

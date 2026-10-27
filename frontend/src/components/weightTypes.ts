@@ -9,6 +9,8 @@ export type RunItem = {
   created: string | null
   checkpoints: number
   dataset: string | null
+  /** 학습 폼 제목, 없으면 체크포인트에 붙인 이름. 없으면 빈 문자열 */
+  name?: string
 }
 
 export type Overall = {
