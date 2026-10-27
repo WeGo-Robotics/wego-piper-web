@@ -167,7 +167,7 @@ def ui_spec(policy_type: str) -> dict:
     if spec is None:
         # 모르는 정책이면 빈 스펙. **막지는 않는다** — 스펙은 편의 계층이지
         # 안전 계층이 아니다. 값 검증의 정본은 백엔드 클램프에 남아 있다.
-        return {"type": policy_type, "scratch_note": "",
+        return {"type": policy_type, "scratch_note": "", "warm_start_from": [],
                 "train": {"defaults": {}, "fields": [], "warnings": [], "requires_features": []},
                 "encoder_probe": {"base_label": "", "taps": [],
                                   "image_key_select": False, "pad_modes": False, "note": ""}}
@@ -175,6 +175,8 @@ def ui_spec(policy_type: str) -> dict:
     return {
         "type": policy_type,
         "scratch_note": spec.scratch_note,
+        # 이어 학습 목록에 같이 보일 다른 정책 타입 — 학습 시작이 type 을 바꾼 사본으로 연다
+        "warm_start_from": list(spec.bases.warm_start_from),
         "train": {
             "defaults": t.defaults,
             "fields": [

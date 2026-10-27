@@ -22,6 +22,11 @@ capabilities:
   encoder_probe: false
   language: false
 
+bases:
+  # 바닐라 ACT 체크포인트에서 이어 학습할 수 있다 — type 만 바꾼 사본으로 열어 ACT 가중치는 그대로,
+  # stage 헤드만 무작위로 시작한다 (core/base_align.retyped_config, 실측 239개 중 234개가 실린다)
+  warm_start_from: [act]
+
 runtime:
   model: [lerobot_policy_piper.act_s.modeling_act_s, ActSPolicy]
   config: [lerobot_policy_piper.act_s.configuration_act_s, ActSConfig]

@@ -371,6 +371,21 @@ def _rent_train_args(body: "RentRequest") -> list[str]:
     return build_train_args(params, python=settings.train_remote_python)
 
 
+def _rent_train_env(body: "RentRequest") -> dict[str, str]:
+    """빌린 기계의 학습 환경변수 — `_train_env` 에 워밍스타트 지시를 더한다.
+
+    ⚠ `/training/start` 와 같은 판정이다(`warm_start_plan`). 빼 두면 smolvla 체크포인트로 고른
+    SmolVLA-S 학습이 임대 서버에서만 **바닐라 SmolVLA 로** 돈다 — 몇 시간 뒤에 아는 버그다.
+    """
+    from app.core.cli_mapping import warm_start_env, warm_start_plan
+    from app.routers.training import _train_env
+
+    env = dict(_train_env(body.amp, remote=True) or {})
+    if body.pretrained_path:
+        env.update(warm_start_env(warm_start_plan(body.policy_type, body.policy_params)))
+    return env
+
+
 def _reject_local_only_settings(body: "RentRequest") -> None:
     """빌린 기계에서 **말이 안 되는 설정**을 미리 막는다.
 
@@ -438,7 +453,7 @@ async def rent_and_train(body: RentRequest):
             template_hash=body.template_hash, disk_gb=body.disk_gb,
             budget=Budget(usd=body.budget_usd, max_hours=body.max_hours),
             args=args, total_steps=body.steps,
-            env=_train_env(body.amp, remote=True) or {},
+            env=_rent_train_env(body),
             # ⚠ 회수 보험이 "Hub 에 갔나" 를 물어볼 대상이다 (§12-4).
             repo_id=body.policy_repo_id,
             fetch_checkpoints=body.fetch_checkpoints)
@@ -495,7 +510,7 @@ async def train_on_instance(body: TrainOnRequest):
         job = await rent.train_on(
             provider=_provider(), instance_id=body.instance_id,
             args=_rent_train_args(body), total_steps=body.steps,
-            env=_train_env(body.amp, remote=True) or {},
+            env=_rent_train_env(body),
             repo_id=body.policy_repo_id, max_hours=body.max_hours,
             fetch_checkpoints=body.fetch_checkpoints)
     except RuntimeError as exc:

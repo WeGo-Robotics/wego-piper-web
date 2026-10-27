@@ -60,6 +60,10 @@ class Capabilities(_Strict):
 class Bases(_Strict):
     policy: str = ""
     vlm: str = ""
+    # 이 정책으로 **이어 학습할 수 있는 다른 타입**의 체크포인트 (워밍스타트). config 의 `type` 만
+    # 바꾼 사본으로 열어 가중치는 그대로 싣고 이 정책이 더한 층만 무작위로 시작한다
+    # (`core/base_align.retyped_config`). 화면의 이어 학습 목록도 이걸 보고 그 타입을 보여준다.
+    warm_start_from: list[str] = Field(default_factory=list)
 
 
 class Runtime(_Strict):

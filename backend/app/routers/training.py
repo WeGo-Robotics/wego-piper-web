@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.core.cli_mapping import (
     align_pretrained_to_dataset, apply_dim_overrides, build_train_args, resolve_rename_map,
+    warm_start_env, warm_start_plan,
 )
 from app.services.dataset_scanner import find_dataset_path
 from app.core.config import settings
@@ -171,6 +172,16 @@ class TrainCustomRequest(BaseModel):
     total_steps: int = 100000
     output_dir: str = ""
     amp: str = "bf16"
+    # 화면에서 고른 정책 — 이어 학습이면 인자에 `--policy.type` 이 없어(`--policy.path` 와 같이 못 쓴다)
+    # 명령만으로는 워밍스타트인지 알 수 없다. 비우면 워밍스타트를 하지 않는다(예전 그대로).
+    policy_type: str = ""
+    policy_params: dict = {}
+
+
+def _with_warm_start(env: dict[str, str] | None, plan: dict | None) -> dict[str, str] | None:
+    """원격 학습 환경변수에 워밍스타트 지시를 싣는다 — 원격의 `base_align` 이 읽는다."""
+    extra = warm_start_env(plan)
+    return {**(env or {}), **extra} if (env or extra) else None
 
 
 def _train_env(amp: str, *, remote: bool = False) -> dict[str, str] | None:
@@ -320,9 +331,14 @@ async def start_training(body: TrainStartRequest):
     #   죽는다 — 몇 시간 뒤에 아는 버그다. base 는 건드리지 않고 사본을 쓴다.
     #   원격은 로컬 경로가 서버에 없어 대상이 아니다.
     pretrained_from = params.get("pretrained_path", "")
-    if not remote and pretrained_from and params.get("dataset_root"):
+    # 워밍스타트 — 다른 정책의 체크포인트(smolvla → SmolVLA-S)면 type 을 바꾼 사본으로 연다.
+    #   안 바꾸면 LeRobot 이 type 을 체크포인트에서 가져와 **바닐라로** 학습한다. 원격은 같은 지시를
+    #   환경변수로 실어 서버의 `base_align` 이 한다 (feature/smolvla-s.md §6).
+    warm = (warm_start_plan(params.get("policy_type", ""), params.get("policy_params"))
+            if pretrained_from else None)
+    if not remote and pretrained_from and (params.get("dataset_root") or warm):
         params["pretrained_path"] = align_pretrained_to_dataset(
-            pretrained_from, params["dataset_root"])
+            pretrained_from, params.get("dataset_root", ""), warm)
     pretrained_aligned = params.get("pretrained_path", "") != pretrained_from
     args = build_train_args(
         params, rename_map=rename_map,
@@ -335,7 +351,7 @@ async def start_training(body: TrainStartRequest):
     try:
         await train_manager.start(
             args, total_steps=body.steps, output_dir=body.output_dir,
-            env_extra=_train_env(amp, remote=remote),
+            env_extra=_with_warm_start(_train_env(amp, remote=remote), warm if remote else None),
         )
     except Exception as e:
         raise HTTPException(500, f"학습 시작 실패: {e}")
@@ -401,6 +417,8 @@ async def start_training_custom(body: TrainCustomRequest):
     remote = getattr(train_manager.runner, "is_remote", False)
     args = list(body.args)
     note = None
+    # 화면에서 만든 명령을 고쳐 보낸 것이면 그 화면의 정책으로 워밍스타트한다(`/start` 와 같다)
+    warm = warm_start_plan(body.policy_type, body.policy_params) if body.policy_type else None
     if remote:
         if not repo:
             raise HTTPException(
@@ -419,17 +437,17 @@ async def start_training_custom(body: TrainCustomRequest):
             return next((a[len(prefix):] for a in args if a.startswith(prefix)), "")
 
         base, root = _arg("--policy.path="), _arg("--dataset.root=")
-        aligned = align_pretrained_to_dataset(base, root) if base and root else base
+        aligned = align_pretrained_to_dataset(base, root, warm) if base and (root or warm) else base
         if aligned != base:
             args = [f"--policy.path={aligned}" if a.startswith("--policy.path=") else a
                     for a in args]
-            note = (f"base 모델의 state/action 길이를 데이터셋에 맞춘 사본을 썼습니다 "
+            note = (f"base 모델을 데이터셋 길이·고른 정책에 맞춘 사본을 썼습니다 "
                     f"(원본은 그대로): {aligned}")
 
     try:
         await train_manager.start(
             args, total_steps=body.total_steps, output_dir=body.output_dir,
-            env_extra=_train_env(body.amp, remote=remote),
+            env_extra=_with_warm_start(_train_env(body.amp, remote=remote), warm if remote else None),
         )
     except Exception as e:
         raise HTTPException(500, f"학습 시작 실패: {e}")

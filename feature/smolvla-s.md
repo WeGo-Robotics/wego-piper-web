@@ -1,6 +1,6 @@
 # SmolVLA-S — 행동 + 작업 단계(stage)를 함께 내는 SmolVLA 변형
 
-> **◐ 1단계 완료** (패키지·yaml·테스트). 남은 것: smolvla 체크포인트에서 출발(워밍스타트, §6), 실기 학습·A/B.
+> **◐ 1단계·워밍스타트 완료** (패키지·yaml·테스트, smolvla 체크포인트에서 출발 — §6). 남은 것: 실기 학습·A/B.
 >
 > [ACT-S](act-s.md) 의 stage 헤드를 SmolVLA 에 붙인 것이다. 헤드·손실·confidence·굽기·wrapper 배선은
 > **ACT-S 와 같은 코드**이고(act-s.md §3~§6), 이 문서는 다른 것만 적는다 — 특징을 **어디서** 꺼내나.
@@ -18,7 +18,7 @@
 | 비용 | 0 — 학습 손실 forward 와 추론의 KV 캐시 채우기가 이미 prefix 출력을 낸다 |
 | 데이터 | ACT-S 와 같은 구운 `_stage` 데이터셋 (`subtask_index`) — 굽기는 정책을 모른다 |
 | 추론 | wrapper 무수정 — `last_aux` 모양이 ACT-S 와 같다. stage 는 청크마다 한 번 |
-| 학습 시작점 | **처음부터만** — VLM 은 SmolVLM2 가중치, 행동 전문가는 무작위 (§6) |
+| 학습 시작점 | `smolvla` 체크포인트·`smolvla_base` 에서 이어 학습(워밍스타트, §6) 또는 처음부터(VLM 만 SmolVLM2 가중치) |
 
 ---
 
@@ -99,15 +99,22 @@ gRPC 정책 서버 경로는 ACT-S 와 같은 이유로 안 된다 — LeRobot `
 
 ---
 
-## 6. 다음 — smolvla 체크포인트에서 출발 (워밍스타트)
+## 6. smolvla 체크포인트에서 출발 (워밍스타트) — ☑ 2026-10-27
 
-지금은 **처음부터만** 학습된다. `lerobot/smolvla_base` 는 config `type: smolvla` 라 `--policy.path` 로 주면
-type 이 체크포인트에서 오므로 **바닐라 SmolVLA 로** 학습된다. 학습 화면은 이어 학습 후보를 같은 type 으로
-거르므로 그 실수는 화면에선 안 일어나지만, 대신 SmolVLA-S 는 로봇 사전학습 없이 시작한다
-(`bases.policy` 를 비워 둔 이유). SmolVLA 를 바닥부터 올리는 것은 smolvla_base 파인튜닝보다 확실히 약하다.
+`lerobot/smolvla_base` 는 config `type: smolvla` 라 `--policy.path` 로 그대로 주면 type 이 체크포인트에서 오므로
+**바닐라 SmolVLA 로** 학습된다. 그래서 학습 시작이 config 의 `type` 만 바꾼 **사본**으로 연다
+(`core/base_align.retyped_config`). 가중치는 그대로 실리고(`from_pretrained(strict=False)`) 헤드만 무작위로 시작한다.
 
-길은 ACT-S 의 `from_act.py`(act-s.md §5.4)와 같다 — config 의 `type` 만 바꾸고 stage 필드를 채운 사본을 만들면
-가중치는 그대로 실리고(`strict=False`) 헤드만 무작위로 시작한다. 이어 학습 base 를 이미 사본으로 고치는
-`core/base_align.py` 가 그 자리다(로컬·원격 공용). 화면은 `smolvla` 체크포인트를 SmolVLA-S 의 이어 학습 후보로
-보여줘야 하고, 이어 학습이면 `--policy.*` 를 버리는 지금 규칙 때문에 stage 필드를 사본 config 에 써 넣어야 한다.
-SmolVLA vs SmolVLA-S A/B 는 둘 다 smolvla_base 에서 출발해야 공정하므로 이게 먼저다.
+| | 내용 |
+|---|---|
+| 허용 | 정책 스펙 `bases.warm_start_from` — SmolVLA-S ← `smolvla`, ACT-S ← `act`. 화면의 Fine-tune 목록도 이걸 본다 |
+| 실린 가중치 (실측) | smolvla_base → SmolVLA-S **505개 중 500개**, ACT → ACT-S 239개 중 234개. 빈 것은 `stage_head.*` 4개 + `stage_counts` 뿐, 버린 것 0 |
+| config | `type` 을 바꾸고, 화면의 정책 파라미터 중 **base 에 없는 키만** 채운다(stage 필드). base 에 있는 값(chunk_size 등)은 base 가 이긴다 — 이어 학습은 `--policy.*` 를 버리는 규칙 그대로 |
+| 자리 | 길이 맞춤 사본과 같은 함수·같은 폴더(`derived_pretrained/<base>-s7a7-smolvla_s-<키>`). 길이만 맞춘 사본과 이름이 갈린다 |
+| 로컬·원격 | 같은 `base_align.py` — 원격은 `PIPER_WARM_START`(JSON) 환경변수로 받는다(학습 스크립트가 맞춤 단계보다 먼저 export). 직접 편집한 명령은 화면이 정책을 같이 보낸다(`--policy.type` 이 명령에 없어서) |
+| 실패할 때 | 원격에서 데이터셋 길이를 못 읽어도 **워밍스타트는 한다** — 빠지면 고른 정책이 아니라 바닐라가 학습된다 |
+
+실측(20스텝, 배치 8, 시드 1000, `singlearm_apple_random_v2_stage`, bf16): 총손실(stage ×0.1 포함)이 처음부터
+1.993 → 1.374, 워밍스타트 0.610 → **0.358**. 저장된 체크포인트는 `type: smolvla_s` 라 추론·모델 목록이 SmolVLA-S 로 연다.
+
+SmolVLA vs SmolVLA-S A/B 는 이제 둘 다 smolvla_base 에서 출발할 수 있다 — 같은 `_stage` 데이터셋·스텝으로 돌린다.

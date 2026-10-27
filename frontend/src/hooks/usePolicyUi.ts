@@ -36,6 +36,9 @@ export type PolicyUi = {
   type: string
   /** 베이스 없이 처음부터 학습할 때의 안내. 없으면 빈 문자열. */
   scratch_note: string
+  /** 이 정책으로 이어 학습할 수 있는 **다른** 정책 타입 (워밍스타트 — SmolVLA-S ← smolvla).
+   *  학습 시작이 type 을 바꾼 사본으로 연다 (backend core/base_align.py). */
+  warm_start_from: string[]
   train: {
     defaults: Record<string, unknown>
     fields: SpecField[]
@@ -57,6 +60,7 @@ export type PolicyUi = {
 const EMPTY: PolicyUi = {
   type: '',
   scratch_note: '',
+  warm_start_from: [],
   train: { defaults: {}, fields: [], warnings: [], requires_features: [] },
   encoder_probe: { base_label: '', taps: [], image_key_select: false, pad_modes: false, note: '' },
 }

@@ -332,6 +332,11 @@ export default function TrainingPage() {
 
   // Fine-tune 모델의 제목·설명 (사이드카). 둘 다 비어 있으면 가져올 것이 없다.
   const baseModel = models.find((m) => m.path === pretrainedPath)
+  // 워밍스타트 — 고른 체크포인트가 **다른 정책**(smolvla → SmolVLA-S)이면 그 타입. 학습 시작이 type 을
+  // 바꾼 사본으로 연다(backend core/base_align.py). 안 그러면 LeRobot 이 바닐라로 학습한다.
+  const warmFrom = policyUi.warm_start_from ?? []
+  const warmStartFrom = baseModel?.policy_type && baseModel.policy_type !== policyType
+    && warmFrom.includes(baseModel.policy_type) ? baseModel.policy_type : ''
   const baseNotes = baseModel?.notes?.name || baseModel?.notes?.description ? baseModel.notes : undefined
   const importBaseNotes = async () => {
     if (!baseModel || !baseNotes) return
@@ -361,11 +366,12 @@ export default function TrainingPage() {
     setCliEdited(false)
   }
 
-  // 파인튜닝 후보는 **같은 정책의 체크포인트뿐**이다.
+  // 파인튜닝 후보는 **같은 정책의 체크포인트**와, 이 정책이 이어 받을 수 있는 정책(`warm_start_from`)의 것이다.
   // 예전에는 models 디렉토리의 모든 것을 나열해서, smolvla 의 비전-언어 백본
   // (`SmolVLM2-500M-Video-Instruct`) 처럼 정책이 아닌 모델까지 떴다 — 고르면 학습이 깨진다.
   const finetuneCandidates = models.filter(
-    (m) => m.is_policy !== false && (!m.policy_type || m.policy_type === policyType)
+    (m) => m.is_policy !== false
+      && (!m.policy_type || m.policy_type === policyType || warmFrom.includes(m.policy_type))
   )
 
   // 체크포인트에서 이어 학습하면 모델 구조는 이미 고정 — `arch` 값만 가린다.
@@ -399,6 +405,7 @@ export default function TrainingPage() {
         t('데이터셋: {selectedDataset}', { selectedDataset: String(selectedDataset) }),
         t('정책: {policyType}', { policyType: String(policyType) }),
         `Fine-tune: ${pretrainedPath || t('(처음부터)')}`,
+        ...(warmStartFrom ? [t('워밍스타트: {from} → {to} (가중치는 그대로, 새 층만 무작위)', { from: warmStartFrom, to: policyType })] : []),
         `Repo ID: ${policyRepoId || t('(없음)')}`,
         `Output: ${outputDir || t('(자동)')}`,
         '',
@@ -433,6 +440,8 @@ export default function TrainingPage() {
       if (cliEdited) {
         await api.post('/training/start-custom', {
           args: cliArgs.split(/\s+/).filter(Boolean), total_steps: steps, output_dir: outputDir,
+          // 이어 학습 명령엔 `--policy.type` 이 없다 — 워밍스타트인지 서버가 알 수 있게 같이 보낸다
+          policy_type: policyType, policy_params: policyParams,
         })
       } else {
         await api.post('/training/start', trainParams())
@@ -571,6 +580,11 @@ export default function TrainingPage() {
               {!pretrainedPath && warnings.some((w) => w.level === 'error') && (
                 <p className="mt-1 px-2 py-1.5 rounded bg-red-500/10 border border-red-500/30 text-[10px] text-red-300">
                   {t.rich('⚠ 이 상태로 {b}하면 사실상 학습이 되지 않습니다 —', { b: <b>{t('처음부터 학습')}</b> })}{' '}{warnings.filter((w) => w.level === 'error').map((w) => w.text).join(' / ')}{t('. 아래 파라미터에서 고치거나 체크포인트를 골라주세요.')}
+                </p>
+              )}
+              {warmStartFrom && (
+                <p className="mt-1 px-2 py-1.5 rounded bg-sky-500/10 border border-sky-500/30 text-[10px] text-sky-300">
+                  {t('{from} 체크포인트를 {to} 로 엽니다 — 가중치는 그대로 쓰고, {to} 가 더한 층(stage 헤드)만 무작위로 시작합니다', { from: warmStartFrom, to: policyType })}
                 </p>
               )}
               {!pretrainedPath && policyUi.scratch_note && (

@@ -17,17 +17,18 @@ capabilities:
   language: true
 
 bases:
-  # ⚠ 비워 둔다. `lerobot/smolvla_base` 는 config `type: smolvla` 라 그대로 이어 학습하면 **바닐라
-  # SmolVLA 로** 학습된다 — 학습 화면이 이 정책의 이어 학습 목록에서 그래서 그걸 거른다.
-  # smolvla 체크포인트에서 출발하는 경로(워밍스타트)는 smolvla-s.md §6 의 다음 단계다.
-  policy: ""
+  # `lerobot/smolvla_base` 는 config `type: smolvla` 라 그대로 이어 학습하면 **바닐라 SmolVLA 로**
+  # 학습된다. 그래서 `warm_start_from` 이다 — 학습 시작이 type 만 바꾼 사본으로 연다
+  # (core/base_align.retyped_config). smolvla 가중치는 그대로(505개 중 500개), stage 헤드만 무작위.
+  policy: lerobot/smolvla_base
   vlm: HuggingFaceTB/SmolVLM2-500M-Video-Instruct
+  warm_start_from: [smolvla]
 
 runtime:
   model: [lerobot_policy_piper.smolvla_s.modeling_smolvla_s, SmolVLASPolicy]
   config: [lerobot_policy_piper.smolvla_s.configuration_smolvla_s, SmolVLASConfig]
 
-scratch_note: "VLM(SmolVLM2) 가중치로 시작하고 행동 전문가는 무작위입니다 — smolvla_base 의 로봇 사전학습은 아직 못 씁니다. 데이터셋은 bake 로 구운 `_stage` 여야 합니다"
+scratch_note: "VLM(SmolVLM2) 가중치로 시작하고 행동 전문가는 무작위입니다 — smolvla_base 나 SmolVLA 체크포인트를 고르면 그 가중치로 시작합니다(stage 헤드만 무작위). 데이터셋은 bake 로 구운 `_stage` 여야 합니다"
 
 infer:
   extra_params: [max_guidance_weight, execution_horizon]

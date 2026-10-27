@@ -41,6 +41,18 @@
   너비를 바꾼다(기억, 더블클릭이면 기본, 화살표 키도). **개발 모드** — plugins/ 아래만 고치고 piper-plugin 으로 검사·드라이런
   (셸은 그 접두사와 git 읽기만, 드라이런은 게이트웨이에 못 붙는다 — `PIPER_AGENT_CHAT=1` 가드). 설치는 사람이 한다
 
+**SmolVLA-S·ACT-S 를 바닐라 체크포인트에서 이어 학습한다 (워밍스타트)** ([feature/smolvla-s.md §6](feature/smolvla-s.md))
+- SmolVLA-S 는 **처음부터만** 학습됐다 — `lerobot/smolvla_base` 를 고르면 config 의 `type: smolvla` 때문에 LeRobot 이
+  **바닐라 SmolVLA 로** 학습했고, 그래서 화면이 목록에서 그걸 감췄다. 사전학습 없이 2만 스텝으로 올린 SmolVLA-S 들은
+  사과를 미묘하게 어긋난 자리로 집었다(실기 2026-10-27)
+- 이제 학습 화면의 Fine-tune 목록에 SmolVLA-S 는 `smolvla` 체크포인트·`smolvla_base`, ACT-S 는 `act` 체크포인트가 같이
+  뜬다. 고르면 학습 시작이 config 의 `type` 만 바꾼 **사본**으로 연다 — 가중치는 그대로(smolvla_base 505개 중 500개,
+  ACT 239개 중 234개), 새로 붙은 stage 헤드만 무작위로 시작한다. 화면의 stage 설정은 사본 config 에 들어간다
+- 실측(20스텝, 같은 시드·배치, `singlearm_apple_random_v2_stage`): 총손실 처음부터 1.374 → 워밍스타트 **0.358**
+- 로컬·원격·임대 학습이 같은 판정을 쓴다(`core/base_align.py` — 원격은 `PIPER_WARM_START` 환경변수로 받는다).
+  원격에서 데이터셋 길이를 못 읽어도 워밍스타트는 한다 — 빠지면 바닐라가 학습된다
+- SmolVLA-S 의 권장 시작점이 `lerobot/smolvla_base` 로 돌아왔다(체크포인트가 없으면 [Hub 에서 받기])
+
 ## v0.5.20 — 2026-10-26
 
 **카메라 해상도 — 학습 때와 다른 화면이면 추론이 막는다** ([feature/camera-resolution.md](feature/camera-resolution.md), 실기 2026-10-26)

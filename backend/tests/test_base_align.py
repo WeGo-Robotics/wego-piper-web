@@ -83,7 +83,8 @@ def test_base_align_uses_only_the_standard_library():
         elif isinstance(node, ast.ImportFrom):
             modules.add((node.module or "").split(".")[0])
     # huggingface_hub 는 원격 진입점 안에서만 늦게 불린다 (로컬 판정 경로는 안 쓴다)
-    assert modules <= {"hashlib", "json", "re", "sys", "pathlib", "huggingface_hub"}, modules
+    # os 는 원격 진입점이 워밍스타트 지시(환경변수)를 읽는 데만 쓴다
+    assert modules <= {"hashlib", "json", "os", "re", "sys", "pathlib", "huggingface_hub"}, modules
     assert _ALIGN_EOF not in Path(base_align.__file__).read_text()
 
 

@@ -3,6 +3,7 @@ LeRobot CLI 인자 매핑 테이블.
 LeRobot 업데이트 시 이 파일만 수정하면 됨.
 """
 
+import json
 import logging
 from pathlib import Path
 
@@ -385,33 +386,63 @@ def apply_dim_overrides(pretrained_path: str, state_dim: int, action_dim: int) -
         return False
 
 
-def align_pretrained_to_dataset(pretrained_path: str, dataset_root: str) -> str:
+def warm_start_plan(policy_type: str, policy_params: dict | None) -> dict | None:
+    """이 정책이 다른 정책의 체크포인트에서 출발할 수 있으면 `base_align` 에 넘길 지시. 아니면 None.
+
+    어느 타입에서 출발할 수 있는지는 정책 스펙의 `bases.warm_start_from` 이다(SmolVLA-S ← smolvla,
+    ACT-S ← act). 실제로 바꿀지는 `base_align.retyped_config` 가 **base 의 config 를 보고** 정한다 —
+    여기서는 base 를 열지 않는다(원격이면 base 가 이 기계에 없다).
+
+    `fill` 은 화면의 정책 파라미터 전부다. base config 에 없는 키만 들어간다 — 새 정책이 더한
+    필드(stage 헤드)만 걸리고, base 에 있는 아키텍처 값은 체크포인트 것이 이긴다.
+    """
+    from app.core.policies import SPECS
+
+    spec = SPECS.get(policy_type)
+    allowed = list(spec.bases.warm_start_from) if spec else []
+    if not allowed:
+        return None
+    return {"to": policy_type, "from": allowed, "fill": dict(policy_params or {})}
+
+
+def warm_start_env(plan: dict | None) -> dict[str, str]:
+    """원격 학습에 실을 환경변수 — 원격의 `base_align` 이 이걸 읽는다(같은 판정)."""
+    from app.core import base_align
+
+    return {base_align.WARM_START_ENV: json.dumps(plan)} if plan else {}
+
+
+def align_pretrained_to_dataset(pretrained_path: str, dataset_root: str,
+                                warm_start: dict | None = None) -> str:
     """이어 학습의 base 와 데이터셋의 state/action 길이가 다르면 맞춘 **사본**의 경로를 돌려준다.
 
     판정과 사본 만들기는 `base_align` 에 있다 — 원격 학습 스크립트가 그 파일을 그대로
     실어 가서 **같은 판정**을 쓴다. 왜 사본인지(base 는 공유 캐시라 못 고친다), 어떤
     정책이 대상인지는 그 파일의 머리말에 있다.
 
+    `warm_start`(`warm_start_plan`)를 주면 base 를 그 정책 타입으로 여는 사본도 같이 만든다.
+    데이터셋 길이를 못 읽어도 워밍스타트는 한다 — 빠지면 고른 정책이 아니라 바닐라가 학습된다.
+
     부작용이 있다(사본을 만든다). **학습 시작 경로에서만** 부르고 미리보기에서는 부르지
     않는다. 사본은 같은 입력이면 같은 경로라 다시 만들어도 같다.
     """
-    import json
-
     from app.core import base_align
     from app.core.hf_layout import resolve_info_json
 
     src = Path(pretrained_path)
-    if not (pretrained_path and dataset_root and (src / "config.json").is_file()):
+    if not (pretrained_path and (src / "config.json").is_file()):
         return pretrained_path
-    info_path = resolve_info_json(Path(dataset_root))
-    if info_path is None:
-        return pretrained_path
-    try:
-        info = json.loads(info_path.read_text())
-    except Exception:
+    info: dict = {}
+    info_path = resolve_info_json(Path(dataset_root)) if dataset_root else None
+    if info_path is not None:
+        try:
+            info = json.loads(info_path.read_text())
+        except Exception:
+            info = {}
+    if not info and not warm_start:
         return pretrained_path
 
-    path, note = base_align.align(src, info, settings.log_dir / "derived_pretrained")
+    path, note = base_align.align(src, info, settings.log_dir / "derived_pretrained", warm_start)
     if note:
         logging.getLogger(__name__).info("%s ← %s", note, pretrained_path)
     return path

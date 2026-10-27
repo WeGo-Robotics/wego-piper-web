@@ -334,13 +334,11 @@ lerobot-train 은 `loss_dict` 를 **wandb 로만** 보내고 로그 줄(`step: �
 `stage_log_freq`(기본 200) forward 마다 `act_s stage_ce:0.412 stage_acc:0.812` 한 줄을 직접 찍는다.
 [training/metrics.py](../backend/app/services/training/metrics.py) 가 이 줄을 줍는 것은 4단계에서.
 
-### 5.4 바닐라 ACT 체크포인트에서 시작
+### 5.4 바닐라 ACT 체크포인트에서 시작 — ☑ 2026-10-27
 
-`--policy.path=<act 체크포인트>` 는 config `type: act` 라 `ActSPolicy` 로 안 열린다.
-`custom_policies/tools/from_act.py`: `config.json` 의 `type` 을 `act_s` 로 바꾸고 새 필드를 기본값으로 채워
-새 폴더에 쓴다. 가중치는 그대로 — `from_pretrained(strict=False)` 가 기본이라
-([pretrained.py:87](lerobot/policies/pretrained.py#L87))
-헤드만 무작위로 시작한다. 2단계.
+`--policy.path=<act 체크포인트>` 는 config `type: act` 라 `ActSPolicy` 로 안 열린다. 계획했던 `from_act.py` 대신
+학습 시작이 type 만 바꾼 사본으로 연다 — SmolVLA-S 와 같은 장치다(smolvla-s.md §6, `act_s.yaml` 의
+`bases.warm_start_from: [act]`). 실측 239개 중 234개가 실리고 stage 헤드만 무작위로 시작한다.
 
 ---
 
@@ -465,7 +463,7 @@ ACT-Aux 로 학습한 체크포인트는 config.json 이 `"type": "act_aux"` 이
 | 2 ☑ | `bake.py` — `min_cube_071410` → `_stage` | 굽기 + 로더 검증 ☑, `lerobot-train` 30스텝 실행 ☑ (이름을 바꾸기 전이라 `--policy.type=act_aux`, 체크포인트 `type: act_aux`) |
 | 3 | 런 A/B/C | §8 |
 | 4 | wrapper 텔레메트리 + InferencePage 한 줄 | 실기에서 stage 가 눈으로 본 단계와 맞는가 |
-| 5 | `from_act.py`(워밍스타트), Dockerfile·원격 러너 설치 | 컨테이너·원격에서 런 C 재현 |
+| 5 | 워밍스타트(☑ — `from_act.py` 대신 학습 시작의 type 바꾼 사본, §5.4), Dockerfile·원격 러너 설치 | 컨테이너·원격에서 런 C 재현 |
 
 1·2 는 독립이라 병렬 가능. 4 는 3 의 결과와 무관하게 진행해도 된다 (출력 배선은 λ 와 무관).
 
