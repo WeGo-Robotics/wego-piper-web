@@ -5,6 +5,7 @@ import HfAccountPanel from '../components/HfAccountPanel'
 import CloudPanel from '../components/CloudPanel'
 import AccessPanel from '../components/AccessPanel'
 import ApiDocsPanel from '../components/ApiDocsPanel'
+import AgentLinkPanel from '../components/AgentLinkPanel'
 import ServicesPanel from '../components/ServicesPanel'
 import VersionCard from '../components/VersionCard'
 import { useSystemMessage } from '../components/SystemMessages'
@@ -25,6 +26,7 @@ const TABS = [
   { id: 'services', label: msg('서비스') },
   { id: 'hub', label: msg('저장소') },
   { id: 'cloud', label: msg('클라우드') },
+  { id: 'agent', label: msg('에이전트') },
   { id: 'api', label: 'API' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
@@ -127,6 +129,7 @@ export default function SettingsPage() {
       )}
 
       {tab === 'api' && <ApiDocsPanel />}
+      {tab === 'agent' && <AgentLinkPanel />}
       {tab === 'hub' && <HfAccountPanel />}
       {tab === 'cloud' && <CloudPanel />}
 

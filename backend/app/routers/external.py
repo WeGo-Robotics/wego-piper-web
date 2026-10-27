@@ -16,8 +16,9 @@ import json
 import logging
 import re
 import secrets
+import time
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import settings
@@ -29,12 +30,22 @@ from app.services.plugins import registry
 logger = logging.getLogger(__name__)
 
 
-def _require_token(authorization: str = Header(default="")) -> None:
+# 마지막으로 통과한 외부 호출 — 설정 → 에이전트 탭이 "붙어 있나" 를 답하는 재료 (feature/agent-cli.md §4-7).
+# 메모리뿐이라 게이트웨이가 재시작하면 비는데, 그것도 맞는 답이다.
+_LAST_CALL: dict = {}
+
+
+def last_call() -> dict | None:
+    return dict(_LAST_CALL) or None
+
+
+def _require_token(request: Request, authorization: str = Header(default="")) -> None:
     token = settings.api_token
     if not token:
         raise HTTPException(503, "외부 API 비활성 — PIPER_API_TOKEN 을 설정하세요")
     if not secrets.compare_digest(authorization, f"Bearer {token}"):
         raise HTTPException(401, "잘못된 토큰")
+    _LAST_CALL.update(at=time.time(), method=request.method, path=request.url.path)
 
 
 router = APIRouter(
@@ -202,3 +213,125 @@ async def heartbeat():
 async def estop():
     stopped = await estop_bridge.trigger_manual()
     return {"status": "stopped", "stopped": stopped}
+
+# ── 읽기 전용 (feature/agent-cli.md §4-4) ──
+#
+# MCP 리소스의 재료이자 외부 집계 경로다. 전부 GET 이고 장치 수준은 여전히 없다 —
+# external-api.md §4 "안 여는 것" 표는 그대로다. 라우터 의존성이 인증을 걸고
+# `test_auth_covers_every_route` 가 그걸 대조한다. 내부 서비스를 직접 부른다(자기 HTTP 호출 금지).
+
+
+@router.get("/diag/context")
+async def ext_diag_context(since: str | None = None, unit: str = "all", lines: int = 200, format: str = "markdown"):
+    """에이전트용 컨텍스트 꾸러미 — `/api/system/agent-context` 와 같은 본문
+    (버전·유닛·활동·E-stop·장치·경고 이상 저널·미션 저널·읽을 문서). 토큰·키는 지워진다."""
+    import asyncio
+
+    from fastapi.responses import PlainTextResponse
+
+    from app.routers.system import check_agent_context_args
+    from app.services import agent_context as ac
+
+    check_agent_context_args(unit, format)
+    data = await asyncio.to_thread(ac.collect, since=since, unit=unit, lines=lines)
+    if format == "json":
+        return ac.redact_data(data)
+    return PlainTextResponse(ac.render_markdown(data), media_type="text/markdown; charset=utf-8")
+
+
+def _cameras_of(features: dict) -> list[str]:
+    prefix = "observation.images."
+    return sorted(k[len(prefix):] for k in (features or {}) if k.startswith(prefix))
+
+
+@router.get("/datasets")
+async def ext_datasets():
+    """로컬 데이터셋 목록 — 이름·에피소드·프레임·fps·카메라·구운 사본(stage/delta)·노트·장면.
+    `features` 전체와 경로는 내지 않는다 — 외부가 알 일이 아니고 크다."""
+    import asyncio
+
+    from app.services.dataset_scanner import scan_datasets
+
+    items = await asyncio.to_thread(scan_datasets)
+    return {"datasets": [{
+        "id": d.get("id"), "source": d.get("source"),
+        "total_episodes": d.get("total_episodes"), "total_frames": d.get("total_frames"), "fps": d.get("fps"),
+        "cameras": _cameras_of(d.get("features") or {}),
+        "baked": d.get("baked"), "delta": d.get("delta"), "notes": d.get("notes"), "scene": d.get("scene"),
+        "created": d.get("created"), "modified": d.get("modified"), "size_bytes": d.get("size_bytes"),
+    } for d in items]}
+
+
+@router.get("/datasets/{dataset_id:path}/episodes/{episode}")
+async def ext_episode(dataset_id: str, episode: int):
+    """에피소드 요약 — 길이·task·페이즈 구간(분석했으면)·노트·구운 사본 표식.
+    프레임은 내지 않는다(그건 5단계의 묶음). `phases` 가 null 이면 아직 분석하지 않은 것이다."""
+    import asyncio
+
+    from piper_phase import labeler as PL
+
+    from app.services.dataset_scanner import baked_info, delta_info, episode_meta
+    from app.services.notes_sidecar import read_notes
+
+    found = await asyncio.to_thread(episode_meta, dataset_id, episode)
+    if not found:
+        raise HTTPException(404, f"데이터셋 '{dataset_id}' 에 에피소드 {episode} 가 없습니다")
+    ds_path, meta, rec = found
+    labels = await asyncio.to_thread(PL.load, ds_path) or {}
+    entry = (labels.get("episodes") or {}).get(str(episode))
+    names = getattr(PL, "PHASE_NAMES", None)
+    phases = None
+    if entry is not None:
+        segs = []
+        for seg in entry.get("segments") or []:
+            try:
+                start, end, idx = seg
+                segs.append({"start": start, "end": end,
+                             "phase": names[idx] if names and 0 <= int(idx) < len(names) else idx})
+            except (TypeError, ValueError):
+                segs.append({"raw": seg})
+        phases = {"segments": segs, "reviewed": bool(entry.get("reviewed")), "note": entry.get("note"),
+                  "cycles": entry.get("cycles"), "version": labels.get("version")}
+    return {
+        "dataset": dataset_id, "episode": episode, "fps": meta.get("fps"),
+        "length": rec.get("length"), "tasks": rec.get("tasks"),
+        "phases": phases,
+        "notes": read_notes(ds_path, kind="dataset"),
+        "baked": baked_info(ds_path), "delta": delta_info(ds_path),
+    }
+
+
+@router.get("/eval/stats")
+async def ext_eval_stats(last_n: int = 0):
+    """평가 통계 — `/api/eval/stats` 그대로 (성공률·프리셋/체크포인트/장면별)."""
+    from app.routers import eval_log
+
+    return await eval_log.eval_stats(last_n)
+
+
+@router.get("/training")
+async def ext_training():
+    """학습 상태·진행률·러너 + job 목록 — `/api/training/status`·`/jobs` 그대로."""
+    from app.services.training import train_manager
+    from app.services.training.jobs import job_registry
+
+    return {"status": train_manager.get_status(), "jobs": [j.to_dict() for j in job_registry.list()]}
+
+
+@router.get("/datasets/{dataset_id:path}/episodes/{episode}/bundle")
+async def ext_episode_bundle(dataset_id: str, episode: int, cams: str | None = None, at: str = "phases"):
+    """에피소드 묶음 zip — `/api/datasets/{id}/episodes/{ep}/bundle` 과 같다 (feature/agent-cli.md §4-5).
+    키프레임·타임라인·상태/액션 표·README. `piper_episode_bundle` 도구가 받아서 로컬에 푼다."""
+    import asyncio
+
+    from fastapi.responses import Response
+
+    from app.services import episode_bundle as EB
+
+    try:
+        data, _summary = await asyncio.to_thread(EB.build, dataset_id, episode, cams=EB.parse_cams(cams), at=at)
+    except EB.BundleError as exc:
+        raise HTTPException(exc.status, str(exc))
+    name = f"{dataset_id.replace('/', '__')}-ep{episode:06d}.zip"
+    return Response(content=data, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})

@@ -58,7 +58,7 @@ plugins/<name>/
 
 ```bash
 piper-plugin new  plugins/my-thing --template loop|mission|detector|dashboard   # 틀 (dashboard = 정적 자기 화면 + E-stop 버튼)
-piper-plugin check plugins/my-thing [--api http://127.0.0.1:8000]      # 매니페스트·entry·권한 범위
+piper-plugin check plugins/my-thing [--api http://127.0.0.1:8000] [--json]  # 매니페스트·entry·권한 범위. --json 은 기계가 읽는 결과(ok·errors[])
 piper-plugin run  plugins/my-thing --camera watch=<스트림> \
     --api http://127.0.0.1:8000 [--config '{"conf":0.4}'] [--dry-run] # 게이트웨이가 켤 때와 같은 진입점
 curl -X POST localhost:8000/api/plugins/my-thing/start -H 'content-type: application/json' \
@@ -69,6 +69,10 @@ curl -X POST localhost:8000/api/plugins/my-thing/start -H 'content-type: applica
 - `run` 에 `--api` 가 없으면 `self.api`/`self.robot` 호출은 `ApiUnavailable` — 카메라·버스·모델만 시험하는 모드다.
 - 미션은 `--dry-run` 으로 로봇 없이 루프만 돌려 저널(`.runtime/runs/*.jsonl`)을 본다.
 - 테스트는 `backend/tests/test_plugin_sdk.py`·`test_plugins.py` 가 기준이다 — 예제 매니페스트는 전부 거기서 읽힌다.
+- **웹 채팅의 개발 모드**(🤖 → 개발)도 같은 순서를 돈다 — 단 `run` 은 `--api` 없이 드라이런만 되고(가드), 설치는 사람이 플러그인 페이지에서 한다.
+- **코딩 에이전트는 스킬로 간다** — Claude Code 에서 "플러그인 만들어/고쳐" 라고 하면 `.claude/skills/piper-plugin` 이 이 순서를 안다.
+  `plugins/` 아래 파일을 저장하면 훅(`tools/hooks/plugin-check.sh`)이 `check --json` 을 자동으로 돌려 깨진 매니페스트를
+  바로 되돌려 준다 ([feature/agent-cli.md](../feature/agent-cli.md) §4-2).
 
 ## 번들 예제
 

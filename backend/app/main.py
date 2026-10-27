@@ -27,7 +27,7 @@ from app.routers import (
     eval_log, external, health, hub, inference, logs, models, params, phase,
     policies, policy_server, presets, recording, robots, system, training, vision,
     ws, detector_train, plugins, plugin_ui,
-    web_leader, sim_scenes, sim_assets, sim_demo, weval,
+    web_leader, sim_scenes, sim_assets, sim_demo, weval, agent_chat,
 )
 
 # 라우터 목록 — 등록 누락을 구조적으로 막는다.
@@ -40,7 +40,7 @@ ROUTERS = [
     robots, cameras, logs, debug_logs, training, recording, policy_server, system,
     encoder, activity, policies, presets, phase, devices, vision, detector_train,
     plugins, plugin_ui, external, alignment, cloud, auth,
-    web_leader, sim_scenes, sim_assets, sim_demo, weval,
+    web_leader, sim_scenes, sim_assets, sim_demo, weval, agent_chat,
 ]
 from app.services.estop_bridge import estop_bridge
 from app.services.param_bridge import param_bridge

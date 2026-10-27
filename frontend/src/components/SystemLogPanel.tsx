@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
 import { useT, msg, fmt } from '../i18n'
+import { copyAgentContext } from '../services/agentContext'
+import { useSystemMessage } from './SystemMessages'
 
 /**
  * 시스템 로그 — 데몬 저널을 SSH 없이 (설정 → 로그).
@@ -50,6 +52,20 @@ export default function SystemLogPanel({ initialUnit, initialLevel, initialSince
   const [busy, setBusy] = useState(false)
   const [units, setUnits] = useState<UnitOpt[]>(FALLBACK_UNITS)
   const endRef = useRef<HTMLDivElement | null>(null)
+  const { history, notify } = useSystemMessage()
+  const [copying, setCopying] = useState(false)
+
+  // 로그를 보다가 — 지금 고른 유닛·기간의 저널을 그대로 싣는다 (feature/agent-cli.md §4-1)
+  const copyContext = async () => {
+    setCopying(true)
+    try {
+      await copyAgentContext(history, { unit, since: since || undefined, lines: Math.min(lines, 1000) })
+      notify({ level: 'info', source: t('시스템 로그'), text: t('에이전트용 컨텍스트를 복사했습니다 — AI CLI 에 붙여넣으세요') })
+    } catch (e) {
+      notify({ level: 'error', source: t('시스템 로그'),
+               text: t('컨텍스트를 모으지 못했습니다: {err}', { err: e instanceof Error ? e.message : String(e) }) })
+    } finally { setCopying(false) }
+  }
 
   useEffect(() => {
     let live = true
@@ -118,6 +134,11 @@ export default function SystemLogPanel({ initialUnit, initialLevel, initialSince
             {busy ? t('읽는 중…') : t('새로고침')}
           </button>
           <a href={dl} download className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600">{t('내려받기')}</a>
+          <button onClick={copyContext} disabled={copying}
+            title={t('버전·유닛·활동·E-stop·장치·이 필터의 저널·미션 저널을 markdown 한 장으로 — AI CLI 에 붙여넣는 용도')}
+            className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50">
+            {copying ? t('모으는 중…') : t('에이전트용 컨텍스트 복사')}
+          </button>
         </div>
       </div>
 

@@ -248,15 +248,35 @@ def _num(d, key):
 
 
 @router.get("/runs/{run_id}/download")
-async def download_run(run_id: str):
-    """런 폴더를 zip으로 다운로드."""
+async def download_run(run_id: str, keyframes: str | None = None):
+    """런 폴더를 zip으로 다운로드.
+
+    `keyframes=every:N` 이면 `keyframes/<cam>/` 에 N장마다 한 장 + 마지막, 그리고 `README.md` 를 더 넣는다 —
+    에이전트가 수천 장을 다 보지 않게. 수집 데이터셋의 에피소드 묶음과 같은 모양이다 (feature/agent-cli.md §4-5).
+    """
+    from app.services import episode_bundle as EB
+
     run_dir = _run_dir(run_id)
+    every = None
+    if keyframes:
+        try:
+            mode, every = EB.parse_at(keyframes)
+        except EB.BundleError as exc:
+            raise HTTPException(400, str(exc))
+        if mode != "every":
+            raise HTTPException(400, "디버그 런에는 페이즈가 없습니다 — keyframes=every:N 으로 주세요")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     tmp.close()
     with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in run_dir.rglob("*"):
             if f.is_file():
                 zf.write(f, f.relative_to(run_dir))
+        if every:
+            picked, readme = EB.debug_run_keyframes(run_dir, every)
+            for cam, files in picked.items():
+                for f in files:
+                    zf.write(f, f"keyframes/{cam}/{f.name}")
+            zf.writestr("README.md", readme)
     return FileResponse(
         tmp.name,
         media_type="application/zip",

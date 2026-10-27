@@ -9,6 +9,7 @@ import type { DiskUsage } from '../types/models'
 import EStopButton from './EStopButton'
 import LanguageSwitcher from './LanguageSwitcher'
 import { NotificationBell } from './SystemMessages'
+import { AgentChatToggle } from './AgentChatDrawer'
 import { useT } from '../i18n'
 
 /**
@@ -167,6 +168,9 @@ export default function StatusBar() {
 
       {/* 토스트는 2초 만에 사라진다 — 놓친 메시지는 여기 쌓인다 */}
       <NotificationBell />
+
+      {/* 우측 채팅 토글 — 벨과 같은 종류다(명령이 아니라 패널을 연다). 버튼 자체는 저 파일에 산다 */}
+      <AgentChatToggle />
 
       {/* 소켓이 끊기면 위 숫자가 **멈춘 값**이 된다 — 그걸 모르면 안 된다 */}
       <span className="flex shrink-0 items-center gap-1.5 text-xs text-neutral-500"

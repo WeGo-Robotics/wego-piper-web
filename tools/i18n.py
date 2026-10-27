@@ -46,6 +46,19 @@ PY_ROOTS = [
     "backend/app", "daemons", "bus", "cam", "robot", "rs", "sim", "so101", "phase", "plugin",
 ]
 PY_SKIP_PARTS = {"tests", "__pycache__", "egg-info", "node_modules"}
+# 화면에 안 나가는 파일 — 통째로 뺀다 (한국어는 있지만 번역 대상이 아니다)
+PY_SKIP_FILES = {
+    # 에이전트가 읽는 markdown 꾸러미 — 클립보드로 나가고 화면에는 안 뜬다 (feature/agent-cli.md §4-1)
+    "backend/app/services/agent_context.py",
+    # piper-plugin CLI — 터미널·훅만 본다 (print·help 는 원래 빼고, --json 결과도 같은 자리다)
+    "plugin/piper_plugin/__main__.py",
+    # piper-mcp — 도구 설명·오류는 에이전트가 읽는 글이다 (feature/agent-cli.md §4-3)
+    "plugin/piper_plugin/mcp.py",
+    # 에피소드 묶음 — README·오류가 에이전트가 읽는 글이다 (feature/agent-cli.md §4-5)
+    "backend/app/services/episode_bundle.py",
+    # 웹 채팅의 시스템 프롬프트 — 에이전트가 읽는 글이다 (feature/agent-cli.md §4-6)
+    "backend/app/services/agent_chat_prompt.py",
+}
 # 로그 줄은 화면에 안 나간다 (프로세스 로그 스트림은 번역하지 않는다)
 LOG_CALLS = {
     "debug", "info", "warning", "warn", "error", "exception", "critical", "log",
@@ -178,6 +191,8 @@ def python_keys() -> dict[str, list[str]]:
     for root in PY_ROOTS:
         for path in sorted((ROOT / root).rglob("*.py")):
             if PY_SKIP_PARTS & set(path.parts) or any(p.endswith(".egg-info") for p in path.parts):
+                continue
+            if str(path.relative_to(ROOT)) in PY_SKIP_FILES:
                 continue
             try:
                 tree = ast.parse(path.read_text())

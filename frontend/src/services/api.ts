@@ -11,7 +11,9 @@ const DEFAULT_TIMEOUT_MS = 30_000
 
 export type ApiOptions = { timeoutMs?: number }
 
-async function request<T>(path: string, options?: RequestInit, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
+type Parse = 'json' | 'text'
+
+async function request<T>(path: string, options?: RequestInit, timeoutMs = DEFAULT_TIMEOUT_MS, parse: Parse = 'json'): Promise<T> {
   const ctl = new AbortController()
   const timer = setTimeout(() => ctl.abort(), timeoutMs)
   let res: Response
@@ -43,6 +45,8 @@ async function request<T>(path: string, options?: RequestInit, timeoutMs = DEFAU
     }
     throw new Error(detail)
   }
+  // 글 그대로가 필요한 호출(에이전트용 markdown 꾸러미)은 JSON 파싱도 번역(tbDeep)도 거치지 않는다
+  if (parse === 'text') return (await res.text()) as unknown as T
   return tbDeep(await res.json())
 }
 
@@ -59,6 +63,9 @@ export const api = {
   },
   post: <T>(path: string, body?: unknown, opts?: ApiOptions) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }, opts?.timeoutMs),
+  /** 본문을 글자 그대로 받는다 — 서버가 markdown 을 돌려주는 호출(에이전트용 컨텍스트) */
+  postText: (path: string, body?: unknown, opts?: ApiOptions): Promise<string> =>
+    request<string>(path, { method: 'POST', body: JSON.stringify(body) }, opts?.timeoutMs, 'text'),
   put: <T>(path: string, body?: unknown, opts?: ApiOptions) =>
     request<T>(path, { method: 'PUT', body: JSON.stringify(body) }, opts?.timeoutMs),
   // ⚠ DELETE 에 본문을 허용한다 — 인증 해제가 "지금 비밀번호" 를 받아야 하기 때문이다.

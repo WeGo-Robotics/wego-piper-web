@@ -100,7 +100,8 @@ def test_auth_covers_every_route(client, monkeypatch):
         path = getattr(route, "path", "")
         if not path.startswith("/api/ext/"):
             continue
-        concrete = path.replace("{mission_id}", "run_20260101_000000")
+        concrete = (path.replace("{mission_id}", "run_20260101_000000")
+                    .replace("{dataset_id:path}", "user/ds").replace("{episode}", "0").replace("{name}", "hello"))
         for method in route.methods - {"HEAD", "OPTIONS"}:
             r = client.request(method, concrete)  # 토큰 없이
             assert r.status_code == 401, f"{method} {path} 가 인증 없이 {r.status_code}"
@@ -224,3 +225,90 @@ def test_external_can_start_and_stop_a_plain_plugin_with_saved_config(client, au
     assert client.get("/api/ext/v1/plugins/helper", headers=AUTH).json()["state"] == "running"
     assert client.post("/api/ext/v1/plugins/helper/stop", headers=AUTH).json()["state"] == "idle"
     assert client.post("/api/ext/v1/plugins/nope/start", headers=AUTH, json={}).status_code == 404
+
+
+# ── 읽기 전용 (feature/agent-cli.md §4-4) — MCP 리소스의 재료. GET 만, 장치 수준 없음 ──
+
+
+def test_dataset_list_is_slim(client, authed, monkeypatch):
+    from app.services import dataset_scanner as DS
+
+    monkeypatch.setattr(DS, "scan_datasets", lambda: [{
+        "id": "user/apple", "source": "lerobot", "total_episodes": 12, "total_frames": 3400, "fps": 15,
+        "features": {"observation.images.top": {}, "observation.images.hand": {}, "observation.state": {}},
+        "baked": None, "delta": None, "notes": {"name": "", "description": "", "updated_at": ""}, "scene": None,
+        "created": "2026-10-01T00:00:00", "modified": "2026-10-02T00:00:00", "size_bytes": 10, "path": "/srv/x"}])
+    r = client.get("/api/ext/v1/datasets", headers=AUTH)
+    assert r.status_code == 200
+    d = r.json()["datasets"][0]
+    assert d["id"] == "user/apple" and d["cameras"] == ["hand", "top"] and d["total_episodes"] == 12
+    assert "features" not in d and "path" not in d          # 크고, 외부가 알 일이 아니다
+
+
+def test_episode_summary_joins_meta_phases_and_notes(client, authed, monkeypatch, tmp_path):
+    from piper_phase import labeler as PL
+
+    from app.services import dataset_scanner as DS
+
+    ds = tmp_path / "ds"
+    (ds / "meta").mkdir(parents=True)
+    monkeypatch.setattr(DS, "episode_meta", lambda dataset_id, episode:
+                        (ds, {"fps": 15}, {"episode_index": 3, "length": 210, "tasks": ["사과를 집어라"]}) if episode == 3 else None)
+    monkeypatch.setattr(PL, "load", lambda p: {"version": 3, "episodes": {
+        "3": {"segments": [[0, 40, 0], [40, 120, 1]], "reviewed": True, "note": "", "cycles": 1}}})
+    monkeypatch.setattr(DS, "baked_info", lambda p: None)
+    monkeypatch.setattr(DS, "delta_info", lambda p: None)
+    r = client.get("/api/ext/v1/datasets/user/apple/episodes/3", headers=AUTH)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["dataset"] == "user/apple" and body["length"] == 210 and body["tasks"] == ["사과를 집어라"]
+    assert body["phases"]["reviewed"] is True and body["phases"]["segments"][1]["start"] == 40
+    assert isinstance(body["phases"]["segments"][1]["phase"], str)    # 번호가 아니라 이름
+    assert body["notes"]["name"] == ""                                 # 사이드카 없음 = 빈 값, 오류 아님
+    assert client.get("/api/ext/v1/datasets/user/apple/episodes/9", headers=AUTH).status_code == 404
+    monkeypatch.setattr(PL, "load", lambda p: None)
+    assert client.get("/api/ext/v1/datasets/user/apple/episodes/3", headers=AUTH).json()["phases"] is None
+
+
+def test_eval_training_and_context_are_the_internal_payloads(client, authed, monkeypatch, tmp_path):
+    from app.routers import eval_log
+    from app.services import agent_context as ac
+    from app.services.training import train_manager
+    from app.services.training.jobs import job_registry
+
+    monkeypatch.setattr(eval_log, "EVAL_FILE", tmp_path / "none.jsonl")
+    assert client.get("/api/ext/v1/eval/stats", headers=AUTH).json()["total"] == 0
+    monkeypatch.setattr(train_manager, "get_status", lambda: {"state": "idle"})
+    monkeypatch.setattr(job_registry, "list", lambda: [])
+    assert client.get("/api/ext/v1/training", headers=AUTH).json() == {"status": {"state": "idle"}, "jobs": []}
+    # 꾸러미 — /api/system/agent-context 와 같은 본문·같은 400
+    monkeypatch.setattr(ac, "collect", lambda **kw: {
+        "generated_at": 0.0, "since": kw.get("since") or "30 minutes ago", "unit": kw.get("unit"), "lines": kw.get("lines"),
+        "sections": {"pointers": {"docs": ["CLAUDE.md"], "more_logs": "/x", "services": "/s", "version": "/v",
+                                  "activity": "/a", "swagger": "/docs"}},
+        "errors": {"head": "stub"}})
+    r = client.get("/api/ext/v1/diag/context", headers=AUTH)
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/markdown")
+    assert r.text.startswith("# PIPER 에이전트용 컨텍스트") and "수집 실패: stub" in r.text and "CLAUDE.md" in r.text
+    assert client.get("/api/ext/v1/diag/context?format=json", headers=AUTH).json()["unit"] == "all"
+    assert client.get("/api/ext/v1/diag/context?unit=sshd", headers=AUTH).status_code == 400
+    assert client.get("/api/ext/v1/diag/context?format=xml", headers=AUTH).status_code == 400
+
+
+# ── 설정 → 에이전트 탭의 재료 (feature/agent-cli.md §4-7) ──
+
+
+def test_agent_link_tells_whether_ext_is_on_and_the_last_call_but_never_the_token(client, authed, monkeypatch):
+    r = client.get("/api/system/agent-link")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ext_enabled"] is True and TOKEN not in r.text
+    assert "piper_mission_start" in body["mcp"]["tools"] and "piper://context" in body["mcp"]["resources"]
+    client.get("/api/ext/v1/status", headers=AUTH)
+    last = client.get("/api/system/agent-link").json()["last_ext_call"]
+    assert last["method"] == "GET" and last["path"] == "/api/ext/v1/status" and last["at"] > 0
+    # 틀린 토큰은 "마지막 호출" 로 치지 않는다
+    client.get("/api/ext/v1/missions", headers={"Authorization": "Bearer wrong"})
+    assert client.get("/api/system/agent-link").json()["last_ext_call"]["path"] == "/api/ext/v1/status"
+    monkeypatch.setattr(settings, "api_token", "")
+    assert client.get("/api/system/agent-link").json()["ext_enabled"] is False

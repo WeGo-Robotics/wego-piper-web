@@ -63,6 +63,12 @@
 | `POST` | `/api/ext/v1/vision/stop` | detectord 정지 |
 | `POST` | `/api/ext/v1/heartbeat` | 데드맨 생존 신호 — **미션 중 의무** |
 | `POST` | `/api/ext/v1/estop` | 긴급 정지 |
+| `GET` | `/api/ext/v1/diag/context` | 에이전트용 컨텍스트 꾸러미 — 버전·유닛·활동·E-stop·장치·경고 이상 저널·미션 저널 (markdown, `format=json`) — [agent-cli.md §4-4](agent-cli.md) |
+| `GET` | `/api/ext/v1/datasets` | 로컬 데이터셋 목록 — 이름·에피소드·프레임·fps·카메라·구운 사본·노트 (`features`·경로는 안 낸다) |
+| `GET` | `/api/ext/v1/datasets/{id}/episodes/{ep}` | 에피소드 요약 — 길이·task·페이즈 구간(이름)·노트. 분석 전이면 `phases: null` |
+| `GET` | `/api/ext/v1/datasets/{id}/episodes/{ep}/bundle` | 에피소드 묶음 zip — 키프레임(`at=phases`\|`every:N`, `cams=`)·timeline.json·state_action.csv·README ([agent-cli.md §4-5](agent-cli.md)) |
+| `GET` | `/api/ext/v1/eval/stats` | 평가 통계 (`/api/eval/stats` 그대로) |
+| `GET` | `/api/ext/v1/training` | 학습 상태·진행률·러너 + job 목록 |
 
 미션 타입은 지금 `recycling` 하나다 (설정 = `OrchestratorConfig`: 회차 수·대기·
 규칙·프로바이더/모델·dry_run). **오케스트레이터 2단계(YAML 시나리오 스펙)가 오면
@@ -92,4 +98,4 @@ curl -H "$T" -X POST $B/missions/$MID/cancel                                 # �
 | 장치 관리 (스캔·연결·캘리브레이션) | 하드웨어 상태는 현장 몫 |
 | 녹화·학습 미션 | 다음 후보 — 미션 타입 추가로 들어온다 |
 | WS 스트림 | v1 은 폴링 (`GET /missions/{id}`). 필요해지면 `/api/ext/v1/events` SSE |
-| MCP 서버 | 외부 LLM 에이전트가 조종하려면 이 REST 위에 어댑터 하나 — 요구가 생기면 |
+| ~~MCP 서버~~ | ☑ **`piper-mcp`(stdio)** — 이 REST 위의 어댑터. 도구는 이 표와 1:1, heartbeat 는 서버가 자기 미션에만 펌프한다 ([agent-cli.md §4-3](agent-cli.md)) |

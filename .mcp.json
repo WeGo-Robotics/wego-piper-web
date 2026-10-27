@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "piper": {
+      "type": "stdio",
+      "command": "piper-mcp",
+      "args": ["--api", "http://127.0.0.1:8000"],
+      "env": { "PIPER_API_TOKEN": "${PIPER_API_TOKEN:-}" }
+    }
+  }
+}

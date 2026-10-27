@@ -98,6 +98,26 @@ export type CloudOrphan = {
   text: string
 }
 
+/**
+ * 웹 채팅의 에이전트 턴 사건 (feature/agent-cli.md §4-6). 한 턴은
+ * status(running) → init → (delta·text·tool_use·tool_result 여러 번) → result 또는 error 로 흐른다.
+ * `turn` 으로 묶는다 — 늦게 온 사건이 다음 턴 말풍선에 붙지 않게.
+ */
+export type AgentChatEvent = {
+  turn: number
+  kind: 'status' | 'init' | 'delta' | 'text' | 'tool_use' | 'tool_result' | 'result' | 'error'
+  /** status: running|idle · init/result: session_id 등 · delta/text: 글 · tool_use: name/input · tool_result: 요약 */
+  text?: string
+  running?: boolean
+  session_id?: string | null
+  name?: string
+  input?: unknown
+  is_error?: boolean
+  cost_usd?: number | null
+  duration_ms?: number | null
+  mcp?: { name: string; status: string }[]
+}
+
 export type WsMessage =
   // 추론
   | { type: 'log'; data: string }
@@ -131,6 +151,8 @@ export type WsMessage =
   // 빌린 GPU 가 관리 밖에서 살아 있다 (§6-3). 장치 경보와 같은 **상태**라
   // 전이에서만 오고, 지금 목록은 /api/cloud/orphans 가 준다.
   | { type: 'cloud_orphan_alert'; data: { orphans: CloudOrphan[] } }
+  // 웹 채팅 — 에이전트 턴의 사건 흐름 (feature/agent-cli.md §4-6)
+  | { type: 'agent_chat'; data: AgentChatEvent }
   // 연결 유지
   | { type: 'pong'; data?: undefined }
   // ⚠ **클라이언트가 보내는** 유일한 메시지 (나머지는 전부 서버 → 화면).

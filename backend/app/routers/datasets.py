@@ -170,6 +170,25 @@ async def episode_frame(dataset_id: str, episode: int, cam: str, frame: int):
     raise HTTPException(404, "디코딩 캐시에 프레임이 없습니다 — decode-cache 를 먼저 생성하세요")
 
 
+# ⚠ 이것도 상세 catch-all(`GET /{dataset_id:path}`)보다 위에 있어야 한다
+@router.get("/{dataset_id:path}/thumbnail")
+async def dataset_thumbnail(dataset_id: str):
+    """데이터셋을 고르는 창의 카드 그림 — 첫 에피소드 가운데 한 장 (services/dataset_thumbnail).
+
+    URL 에 `?v=<수정 시각>` 을 붙여 부르므로 브라우저가 오래 들고 있어도 된다.
+    """
+    from app.services.dataset_thumbnail import thumbnail
+
+    ds_path = find_dataset_path(dataset_id)
+    if not ds_path:
+        raise HTTPException(404, "Dataset not found")
+    # ⚠ 디코딩은 이벤트 루프 밖에서 — 창을 열면 카드 수십 장을 한꺼번에 부른다
+    path = await asyncio.to_thread(thumbnail, ds_path)
+    if path is None:
+        raise HTTPException(404, "썸네일을 만들 영상이 없습니다")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+
+
 @router.get("/{dataset_id:path}/episodes/{episode}/frames/{cam}/{frame}/light")
 async def episode_frame_light(dataset_id: str, episode: int, cam: str, frame: int):
     """보고 있는 프레임의 조명 측정 (feature/lighting-watch.md §5).
@@ -199,6 +218,26 @@ async def episode_frame_light(dataset_id: str, episode: int, cam: str, frame: in
     if feats is None:
         raise HTTPException(500, "프레임을 디코드하지 못했습니다")
     return JSONResponse(feats, headers={"Cache-Control": "public, max-age=86400, immutable"})
+
+
+@router.get("/{dataset_id:path}/episodes/{episode}/bundle")
+async def episode_bundle(dataset_id: str, episode: int, cams: str | None = None, at: str = "phases"):
+    """에이전트가 **보는** 자료 묶음 (feature/agent-cli.md §4-5) — zip 하나:
+    `keyframes/<cam>/frame-N.jpg`(`at=phases` 페이즈 경계 앞·뒤 + 첫·끝 / `at=every:N` 균등),
+    `timeline.json`, `state_action.csv`, `README.md`(눈금·어떻게 보나).
+    프레임은 디코딩 캐시에서, 없으면 mp4 에서 바로 뽑는다. 페이즈 분석이 없으면 균등으로 떨어지고 README 에 적는다.
+    """
+    from fastapi.responses import Response
+
+    from app.services import episode_bundle as EB
+
+    try:
+        data, _summary = await asyncio.to_thread(EB.build, dataset_id, episode, cams=EB.parse_cams(cams), at=at)
+    except EB.BundleError as exc:
+        raise HTTPException(exc.status, str(exc))
+    name = f"{dataset_id.replace('/', '__')}-ep{episode:06d}.zip"
+    return Response(content=data, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 # ── 이름·설명 사이드카 ──

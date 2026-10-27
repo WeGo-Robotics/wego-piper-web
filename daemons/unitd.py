@@ -202,6 +202,14 @@ class UnitHub:
             "applied_at": current.stat().st_mtime if current.exists() else None,
             "daemons_version": stamp.read_text().strip() if stamp.exists() else None,
         }
+        # 호스트에 깔린 AI CLI — 컨테이너 게이트웨이는 못 보므로 여기서 본다 (feature/agent-cli.md §4-7).
+        # 표·감지는 piper_bus 가 들고 있어 게이트웨이와 같은 판정이다. 못 보면 키를 아예 안 둔다 — "모른다" 가 맞다.
+        try:
+            from piper_bus import agent_clis
+
+            info["clis"] = agent_clis.detect()
+        except Exception as exc:
+            logger.debug("AI CLI 감지 실패: %s", exc)
         self._host_cache.update(at=now, info=info)
         return info
 

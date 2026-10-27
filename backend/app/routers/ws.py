@@ -74,6 +74,11 @@ async def broadcast_cloud_orphans(orphans: list[dict]) -> None:
     await broadcast({"type": M.CLOUD_ORPHAN_ALERT, "data": {"orphans": orphans}})
 
 
+async def broadcast_agent_chat(event: dict) -> None:
+    """웹 채팅의 에이전트 턴 사건 (feature/agent-cli.md §4-6) — `turn` 으로 묶인 init·delta·text·tool_use·tool_result·result."""
+    await broadcast({"type": M.AGENT_CHAT, "data": event})
+
+
 async def broadcast_load_alert(alerts: list[dict]) -> None:
     """관절 과부하 — **사건마다 한 번.** 상태가 아니라 지난 일을 알린다.
 

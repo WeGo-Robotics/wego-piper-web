@@ -173,6 +173,94 @@ async def system_logs(unit: str = "all", lines: int = 300, level: str = "info",
     return out
 
 
+class AgentContextRequest(BaseModel):
+    since: str | None = None
+    unit: str = "all"
+    lines: int = 200
+    format: str = "markdown"
+    #: 브라우저 알림함 — 프론트 상태라 서버가 모른다. 호출자가 넣어 주면 절 0 으로 앉는다
+    inbox: list[dict] = []
+
+
+def check_agent_context_args(unit: str, fmt: str) -> None:
+    """꾸러미 인자 검사 — `/api/system` 과 `/api/ext/v1/diag/context` 가 같은 400 을 낸다."""
+    from piper_bus import contract as C
+
+    if fmt not in ("markdown", "json"):
+        raise HTTPException(400, f"모르는 형식입니다: {fmt} — markdown 또는 json")
+    if unit != "all" and unit not in {o["id"] for o in C.log_unit_options()}:
+        raise HTTPException(400, f"모르는 유닛입니다: {unit} — /api/system/log-units 의 id 중 하나")
+
+
+async def _agent_context(since: str | None, unit: str, lines: int, fmt: str, inbox: list[dict] | None):
+    from fastapi.responses import PlainTextResponse
+
+    from app.services import agent_context as ac
+
+    check_agent_context_args(unit, fmt)
+    data = await asyncio.to_thread(ac.collect, since=since, unit=unit, lines=lines, inbox=inbox)
+    if fmt == "json":
+        return ac.redact_data(data)
+    return PlainTextResponse(ac.render_markdown(data), media_type="text/markdown; charset=utf-8")
+
+
+@router.get("/agent-context")
+async def agent_context(since: str | None = None, unit: str = "all", lines: int = 200, format: str = "markdown"):
+    """에이전트용 컨텍스트 꾸러미 (feature/agent-cli.md §4-1) — 버전·유닛(낡은 코드)·활동·E-stop·장치·
+    경고 이상 저널·미션 저널 꼬리·읽을 문서를 markdown 한 장으로. 터미널은
+    `curl -s :8000/api/system/agent-context | claude -p "추론이 왜 죽었나"`. 토큰·키는 지워진다."""
+    return await _agent_context(since, unit, lines, format, None)
+
+
+@router.post("/agent-context")
+async def agent_context_with_inbox(body: AgentContextRequest):
+    """같은 꾸러미 + 브라우저 알림함(`inbox`) — 화면의 [에이전트용 컨텍스트 복사] 가 쓴다."""
+    return await _agent_context(body.since, body.unit, body.lines, body.format, body.inbox)
+
+
+class AgentLinkPrefRequest(BaseModel):
+    preferred: str
+
+
+@router.put("/agent-link")
+async def set_agent_link(body: AgentLinkPrefRequest):
+    """쓸 CLI 를 고른다 — 안내(등록 명령·설정 조각·질문 한 줄)가 그 CLI 에 맞춰 바뀐다. 실행 대상이 아니다."""
+    from app.services import agent_link as AL
+
+    try:
+        return AL.save_preferred(body.preferred)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.get("/agent-link")
+async def agent_link():
+    """설정 → 에이전트 탭의 재료 (feature/agent-cli.md §4-7) — 외부 API 가 켜져 있나, 마지막 외부 호출,
+    깔린 AI CLI(게이트웨이 기계 + unitd 가 본 호스트)와 고른 CLI, CLI 별 레시피, MCP 서버가 내는 도구·리소스 이름.
+    **토큰 값은 절대 내지 않는다** — 켜짐/꺼짐만. 게이트웨이는 CLI 를 돌리지 않는다 — 사람이 자기 터미널에서
+    붙이도록 안내하는 데 쓴다."""
+    from app.core.config import settings
+    from app.routers import external as ext
+    from app.services import agent_link as AL
+
+    link = await asyncio.to_thread(AL.collect)      # --version 프로세스·unitd RPC 가 든다 — 루프 밖에서
+    mcp = None
+    try:
+        from piper_plugin import mcp as M   # SDK 없이도 import 된다 — 이름 상수만 쓴다
+
+        mcp = {"tools": list(M.TOOL_NAMES), "resources": list(M.RESOURCE_URIS), "episode_template": M.EPISODE_TEMPLATE}
+    except Exception as exc:               # 플러그인 SDK 가 없는 배포 — 안내는 그대로 나간다
+        logger.debug("piper_plugin.mcp 를 못 읽었다: %s", exc)
+    return {
+        "ext_enabled": bool(settings.api_token),
+        "last_ext_call": ext.last_call(),
+        "mcp": mcp,
+        "install": "pip install 'piper_plugin[mcp]'",
+        "docs": "feature/agent-cli.md",
+        **link,
+    }
+
+
 class RestartRequest(BaseModel):
     name: str
 

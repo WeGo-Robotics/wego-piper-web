@@ -29,10 +29,14 @@ backend/.env
 .DS_Store
 Thumbs.db
 
-# Claude plans
-# 개인 도구 설정 — `settings.json` 에는 홈 절대경로가 들어간다. 공유할 것이 아니다.
-# (`plans/` 만 막고 있었는데, 그 아래 것만 걸러져서 `settings.json` 이 공개 저장소로 나갔다)
-.claude/
+# Claude Code — 개인 것은 막고 공유할 것만 연다 (feature/agent-cli.md §4-2)
+#   settings.local.json  홈 절대경로가 든 개인 허용 목록 → 막는다
+#   settings.json        훅(플러그인 매니페스트 자동 검사)만 — 개인 경로를 넣지 않는다 → 추적
+#   skills/              플러그인 개발 루프 스킬 → 추적
+# (예전엔 `.claude/` 통째였고, 그 전엔 `plans/` 만 막아 `settings.json` 이 공개 저장소로 나갔다 — 개인 것은 local 로)
+.claude/*
+!.claude/settings.json
+!.claude/skills/
 
 # Temp
 /tmp/
@@ -66,5 +70,7 @@ backend/data/plugins/*
 !backend/data/plugins/.gitkeep
 # 이어 학습 base 의 차원을 데이터셋에 맞춘 사본 (config 만 다르고 가중치는 링크) — 학습 때 다시 만들어진다
 backend/data/derived_pretrained/
+# 데이터셋 고르는 창의 카드 그림 — 영상에서 다시 만들 수 있다 (services/dataset_thumbnail.py)
+backend/data/thumbnails/
 dist/
 .hostside/

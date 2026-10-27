@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useT } from '../i18n'
+import { copyAgentContext } from '../services/agentContext'
 
 /**
  * 시스템 메시지 — **어느 페이지에 있든** 같은 자리에 뜬다.
@@ -230,9 +231,23 @@ function timeOf(at: number): string {
  */
 export function NotificationBell() {
   const t = useT()
-  const { history, remove, clearAll } = useSystemMessage()
+  const { history, remove, clearAll, notify } = useSystemMessage()
   const [open, setOpen] = useState(false)
+  const [copying, setCopying] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
+
+  // 실패를 **본 자리**에서 바로 — 버전·유닛·활동·E-stop·장치·저널·미션 저널에 이 알림함을 실어
+  // markdown 한 장으로 클립보드에 넣는다. AI CLI 에 붙여넣는 용도다 (feature/agent-cli.md §4-1).
+  const copyContext = async () => {
+    setCopying(true)
+    try {
+      await copyAgentContext(history)
+      notify({ level: 'info', source: t('알림함'), text: t('에이전트용 컨텍스트를 복사했습니다 — AI CLI 에 붙여넣으세요') })
+    } catch (e) {
+      notify({ level: 'error', source: t('알림함'),
+               text: t('컨텍스트를 모으지 못했습니다: {err}', { err: e instanceof Error ? e.message : String(e) }) })
+    } finally { setCopying(false) }
+  }
 
   // 바깥 클릭·Escape 로 닫는다 — 드롭다운의 기본 예의다
   useEffect(() => {
@@ -277,13 +292,20 @@ export function NotificationBell() {
         // ⚠ 여기도 불투명 단색 — 토스트와 같은 이유다
         <div className="absolute right-0 top-9 z-50 w-[min(26rem,calc(100vw-2rem))]
                         overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
-          <div className="flex items-center justify-between border-b border-neutral-800 px-3 py-2">
+          <div className="flex items-center justify-between gap-2 border-b border-neutral-800 px-3 py-2">
             <span className="text-xs text-neutral-400">{t('알림 {length}개', { length: history.length })}</span>
-            {history.length > 0 && (
-              <button onClick={clearAll}
+            <div className="flex items-center gap-1">
+              <button onClick={copyContext} disabled={copying}
                       className="rounded border border-neutral-600 px-2 py-0.5 text-xs
-                                 text-neutral-300 hover:bg-neutral-800">{t('모두 지우기')}</button>
-            )}
+                                 text-neutral-300 hover:bg-neutral-800 disabled:opacity-50">
+                {copying ? t('모으는 중…') : t('에이전트용 컨텍스트 복사')}
+              </button>
+              {history.length > 0 && (
+                <button onClick={clearAll}
+                        className="rounded border border-neutral-600 px-2 py-0.5 text-xs
+                                   text-neutral-300 hover:bg-neutral-800">{t('모두 지우기')}</button>
+              )}
+            </div>
           </div>
           {history.length === 0 ? (
             <p className="px-3 py-6 text-center text-sm text-neutral-500">{t('알림이 없습니다')}</p>

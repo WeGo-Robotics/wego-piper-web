@@ -6,8 +6,13 @@ requires-python = ">=3.10"
 license = "Apache-2.0"
 dependencies = ["piper_bus", "piper_shm", "numpy", "pyyaml", "pydantic>=2"]
 
+[project.optional-dependencies]
+# MCP 어댑터(piper-mcp) — 에이전트가 도는 기계에만 깐다 (feature/agent-cli.md §4-3). v1(FastMCP)·v2(MCPServer) 둘 다 받는다
+mcp = ["mcp>=1.2"]
+
 [project.scripts]
 piper-plugin = "piper_plugin.__main__:main"
+piper-mcp = "piper_plugin.mcp:main"
 
 [tool.setuptools.packages.find]
 include = ["piper_plugin*"]

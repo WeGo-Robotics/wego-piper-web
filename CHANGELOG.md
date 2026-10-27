@@ -9,6 +9,38 @@
 
 ---
 
+## 미배포
+
+**로컬 AI CLI 협력 1~5단계 — 에이전트용 컨텍스트 꾸러미 · 플러그인 루프 스킬·훅 · MCP 서버·리소스 · 외부 API 읽기 전용 · 에피소드 묶음** ([feature/agent-cli.md](feature/agent-cli.md))
+- 알림함(🔔)과 시스템 로그 화면에 **[에이전트용 컨텍스트 복사]** — 버전·유닛(낡은 코드 표식)·활동·E-stop·장치·경고 이상
+  저널·미션 저널 꼬리·읽을 문서를 markdown 한 장으로 클립보드에. 브라우저 알림함은 절 0 으로 같이 실린다. 터미널은
+  `curl -s :8000/api/system/agent-context | claude -p "추론이 왜 죽었나"`. 토큰·키는 설정값과 흔한 토큰 모양을 지운다
+- `piper-plugin check --json` — 에이전트·훅이 읽는 결과(`ok`·`errors[].where/msg`), 사람용 출력과 같은 판정
+- Claude Code 스킬 `.claude/skills/piper-plugin`(new → check → dry-run → install 순서)과 PostToolUse 훅 — `plugins/` 아래
+  파일을 저장하면 매니페스트를 바로 검사해 깨진 것을 에이전트에게 되돌려 준다. `.claude/` 는 개인 설정(`settings.local.json`)만
+  무시하고 훅·스킬은 추적한다. 다른 CLI 를 위해 `AGENTS.md` 가 CLAUDE.md 를 가리킨다
+- **`piper-mcp`** — 외부 제어 API(`/api/ext/v1`) 위의 MCP 서버(stdio). 도구 12개가 ext v1 과 1:1(상태·미션·플러그인·검출·
+  detectord·E-stop), 장치 수준은 없다. **heartbeat 는 도구가 아니라 서버가 펌프한다** — 자기가 시작한 미션에만, 끝나면 멈추고,
+  에이전트(부모 프로세스)가 죽으면 서버도 죽어 estopd 가 세운다. `dry_run` 기본 true. 설치는 `pip install 'piper_plugin[mcp]'`,
+  등록은 저장소의 `.mcp.json`(토큰은 환경변수 `PIPER_API_TOKEN`) 또는 `claude mcp add -- piper-mcp --api http://<robot>:8000`
+- 외부 API에 **읽기 전용** GET 다섯 — `diag/context`(꾸러미), `datasets`, `datasets/{id}/episodes/{ep}`(길이·task·페이즈 구간·노트),
+  `eval/stats`, `training`. 장치 수준은 여전히 없다. MCP 는 이것들을 리소스(`piper://context`·`piper://datasets`·
+  `piper://datasets/{id}/episodes/{ep}` 등)로 내고, 꾸러미는 도구 `piper_context` 로도 부른다
+- **에피소드 묶음** `GET /api/datasets/{id}/episodes/{ep}/bundle`(외부 API 에도) — 페이즈 경계 앞·뒤 키프레임(`at=phases`, 또는
+  `at=every:N`)·`timeline.json`(구간·신호·노트)·`state_action.csv`·`README.md`(눈금·어떻게 보나)를 zip 하나로. 프레임은 디코딩
+  캐시가 없으면 mp4 에서 바로 뽑는다. 디버그 런 zip 도 `?keyframes=every:N` 으로 같은 모양의 `keyframes/` 를 싣는다. MCP 도구
+  `piper_episode_bundle` 이 받아서 에이전트 기계의 로컬 폴더에 풀고, 스킬 `piper-episode` 가 "왜 빗나갔나" 를 보는 순서를 안다
+- **설정 → 에이전트 탭** — 외부 API 토큰이 켜져 있나(값은 안 보인다), 마지막으로 통과한 외부 호출, **깔린 AI CLI**(Claude Code·
+  Codex·Gemini·Qwen·OpenCode·Cursor·Copilot·Goose·Aider — 게이트웨이 기계와 호스트(unitd) 양쪽, 버전까지)와 **쓸 CLI 고르기**.
+  고른 CLI 에 맞춰 설치·MCP 등록 명령·설정 파일 조각·꾸러미 질문 한 줄이 이 브라우저 주소를 박고 나온다. MCP 도구·리소스 목록.
+  게이트웨이가 CLI 를 띄우는 것은 아니다(설계 §4-6 보류). unitd 가 호스트 CLI 를 알리려면 unitd 재시작이 필요하다
+- **우측 채팅(🤖)** — 상태바의 🤖 가 레이아웃 오른쪽 열을 연다. 게이트웨이 **자기 기계**에 깔린 CLI(설정 → 에이전트에서 고른 것)를
+  한 턴씩 띄워 WS 로 흘린다. 코드 수정 도구는 없다(읽기 + 로봇 MCP 만, Edit·Write·Bash 는 이름으로도 막는다). 모드는 관찰/조종
+  (조종이 미션 dry_run 기본·플러그인·검출기·E-stop). 턴마다 예산 2달러·300초 상한, Claude Code 는 세션을 잇는다. 컨테이너
+  게이트웨이·CLI 없음·aider 는 이유와 함께 막힌다 — 호스트에서 대신 돌리는 길은 아직 없다 ([feature/agent-cli.md §4-6](feature/agent-cli.md)). 말풍선은 마크다운(GFM)으로 그린다 — 새 프론트 의존성 **react-markdown 10 · remark-gfm 4**. 왼쪽 가장자리를 끌어
+  너비를 바꾼다(기억, 더블클릭이면 기본, 화살표 키도). **개발 모드** — plugins/ 아래만 고치고 piper-plugin 으로 검사·드라이런
+  (셸은 그 접두사와 git 읽기만, 드라이런은 게이트웨이에 못 붙는다 — `PIPER_AGENT_CHAT=1` 가드). 설치는 사람이 한다
+
 ## v0.5.20 — 2026-10-26
 
 **카메라 해상도 — 학습 때와 다른 화면이면 추론이 막는다** ([feature/camera-resolution.md](feature/camera-resolution.md), 실기 2026-10-26)

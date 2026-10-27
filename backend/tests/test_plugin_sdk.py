@@ -329,6 +329,71 @@ def test_check_reports_a_broken_manifest(tmp_path):
     assert r.returncode == 1 and "번째 줄" in r.stderr
 
 
+def test_check_json_is_machine_readable(tmp_path):
+    """에이전트·훅이 읽는 모양 — ✓/✗ 글자를 파싱하지 않는다 (feature/agent-cli.md §4-2)."""
+    dst = tmp_path / "my-loop"
+    assert _cli("new", str(dst), "--template", "loop").returncode == 0
+    r = _cli("check", "--json", str(dst))
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["ok"] is True and out["name"] == "my-loop" and out["entry"] == "main.py"
+    assert out["errors"] == [] and out["scopes_checked"] is False
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    (bad / "plugin.yaml").write_text("name: bad\nconfig:\n  - { key: a\n")
+    r = _cli("check", "--json", str(bad))
+    assert r.returncode == 1
+    out = json.loads(r.stdout)
+    assert out["ok"] is False and out["errors"][0]["where"] == "manifest" and "번째 줄" in out["errors"][0]["msg"]
+    noentry = tmp_path / "noentry"
+    noentry.mkdir()
+    (noentry / "plugin.yaml").write_text("name: noentry\n")
+    out = json.loads(_cli("check", "--json", str(noentry)).stdout)
+    assert out["ok"] is False and out["errors"][0]["where"] == "manifest" and "main.py" in out["errors"][0]["msg"]
+
+
+def test_plugin_check_hook_runs_only_inside_a_plugin_folder(tmp_path):
+    """Claude Code PostToolUse 훅 — 플러그인 폴더 밖은 조용히 0, 안에서 깨진 매니페스트는 2 + 사유 (§4-2)."""
+    import os
+
+    hook = REPO / "tools" / "hooks" / "plugin-check.sh"
+    # 훅은 PATH 의 python3 를 쓴다 — 테스트 인터프리터(piper_plugin 이 깔린 것)를 앞에 둔다
+    env = {**os.environ, "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+    def run(path):
+        payload = json.dumps({"tool_name": "Edit", "tool_input": {"file_path": str(path)}})
+        return subprocess.run(["bash", str(hook)], input=payload, capture_output=True, text=True, env=env)
+
+    plain = tmp_path / "notes.md"
+    plain.write_text("x")
+    assert run(plain).returncode == 0
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    (bad / "plugin.yaml").write_text("name: bad\nconfig:\n  - { key: a\n")
+    (bad / "main.py").write_text("print('hi')\n")
+    r = run(bad / "main.py")
+    assert r.returncode == 2 and "번째 줄" in r.stderr, r.stderr
+    good = tmp_path / "good"
+    assert _cli("new", str(good), "--template", "loop").returncode == 0
+    assert run(good / "main.py").returncode == 0
+
+
+def test_run_refuses_the_gateway_when_launched_by_the_web_chat(tmp_path):
+    """웹 채팅 개발 모드(PIPER_AGENT_CHAT=1)가 띄운 run 은 --api/--token 을 거절한다 — 드라이런만 (feature/agent-cli.md §4-6)."""
+    import os
+
+    d = tmp_path / "echo"
+    d.mkdir()
+    (d / "plugin.yaml").write_text("name: echo\n")
+    (d / "main.py").write_text("print('ran')\n")
+    env = {**os.environ, "PIPER_AGENT_CHAT": "1"}
+    r = subprocess.run([sys.executable, "-m", "piper_plugin", "run", str(d), "--api", "http://127.0.0.1:8000"],
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 2 and "드라이런만" in r.stderr and "ran" not in r.stdout
+    r = subprocess.run([sys.executable, "-m", "piper_plugin", "run", str(d), "--dry-run"], capture_output=True, text=True, env=env)
+    assert r.returncode == 0 and "ran" in r.stdout
+
+
 def test_run_executes_the_entry_with_the_env(tmp_path):
     d = tmp_path / "echo"
     d.mkdir()

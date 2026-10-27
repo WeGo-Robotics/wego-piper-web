@@ -66,6 +66,12 @@ ROBOT_LOAD_ALERT: Final = "robot_load_alert"
 # 상태라, 화면을 안 보고 있어도 서버 로그에는 스캔마다 남는다(§6-3).
 CLOUD_ORPHAN_ALERT: Final = "cloud_orphan_alert"
 
+# ── 웹 채팅 (feature/agent-cli.md §4-6) — 에이전트 턴의 사건 흐름 ──
+#
+# 한 턴이 `status → init → delta*/text/tool_use/tool_result* → result|error` 로 흐른다.
+# 전부 `turn` 번호를 싣는다 — 늦게 온 사건이 다음 턴 말풍선에 붙지 않게.
+AGENT_CHAT: Final = "agent_chat"
+
 # ── 연결 유지 ──
 PONG: Final = "pong"
 
@@ -87,6 +93,7 @@ ALL: Final[frozenset[str]] = frozenset({
     DEVICE_ALERT,
     ROBOT_LOAD_ALERT,
     CLOUD_ORPHAN_ALERT,
+    AGENT_CHAT,
     PONG,
     HEARTBEAT,
 })

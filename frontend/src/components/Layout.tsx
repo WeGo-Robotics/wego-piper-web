@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Outlet } from 'react-router-dom'
+import AgentChatDrawer, { AgentChatProvider } from './AgentChatDrawer'
 import CloudOrphanAlerts from './CloudOrphanAlerts'
 import DeviceAlerts from './DeviceAlerts'
 import LoadAlerts from './LoadAlerts'
@@ -31,6 +32,8 @@ export default function Layout() {
   return (
     // `data-app-shell` — index.css 가 이 표지가 있을 때만 문서 스크롤을 막는다(확장 프로그램이
     // `body` 에 붙인 요소가 문서를 늘려 스크롤바가 하나 더 생기던 일).
+    // 우측 채팅의 열림 상태는 프로바이더가 든다 — 상태바의 토글과 오른쪽 열이 같은 것을 본다
+    <AgentChatProvider>
     <div data-app-shell className="h-screen flex flex-col bg-neutral-900 text-neutral-100">
       <StatusBar />
       <div className="flex flex-1 min-h-0">
@@ -40,6 +43,8 @@ export default function Layout() {
         <main className="flex-1 min-w-0 overflow-y-auto px-4 py-6">
           <Outlet />
         </main>
+        {/* 우측 열 — 모달이 아니다. 본문을 가리지 않고 heartbeat 를 막지 않는다 (feature/agent-cli.md §4-6) */}
+        <AgentChatDrawer />
       </div>
       {/* 장치 경보를 시스템 메시지로 흘려보낸다 (자기 UI 없음).
           ⚠ 문서 흐름에 배너를 두면 긴 페이지에서 스크롤을 올려야 보인다 —
@@ -54,5 +59,6 @@ export default function Layout() {
           같은 자리" 라는 요건은 그대로다 — 상태바는 스크롤과 무관하게 늘 보이고, 맨 끝이라
           앞의 내용이 변해도 자리가 안 밀린다. 근거는 그 컴포넌트 주석에 있다. */}
     </div>
+    </AgentChatProvider>
   )
 }
