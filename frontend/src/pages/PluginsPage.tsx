@@ -37,23 +37,29 @@ export default function PluginsPage() {
 
   const fail = (text: string) => notify({ level: 'error', text, source: t('플러그인') })
 
+  const startSaved = (name: string, saved: PluginInfo['saved']) =>
+    api.post(`/plugins/${name}/start`, { config: saved.config, cameras: saved.cameras, inputs: saved.inputs ?? {}, arms: saved.arms ?? {} }, { timeoutMs: 60000 })
+
   const toggle = async (p: PluginInfo) => {
     setBusy(p.name)
     try {
       if (isRunning(p.state)) await api.post(`/plugins/${p.name}/stop`)
-      else await api.post(`/plugins/${p.name}/start`, { config: p.saved.config, cameras: p.saved.cameras, inputs: p.saved.inputs ?? {}, arms: p.saved.arms ?? {} }, { timeoutMs: 60000 })
+      else await startSaved(p.name, p.saved)
       await load()
     } catch (e) {
       fail(e instanceof Error ? e.message : t('실패'))
     } finally { setBusy(null) }
   }
 
-  /** 인스턴스 줄의 시작/정지 — 저장된 설정으로 (상세에서 고친다) */
+  /**
+   * 인스턴스 줄의 시작/정지 — 저장된 설정으로 (상세에서 고친다). 목록의 인스턴스 줄에는 `saved` 가
+   * 없어서 시작 직전에 그 인스턴스를 묻는다 — 빈 본문을 보내면 매니페스트 기본값으로 돈다.
+   */
   const toggleInstance = async (iid: string, running: boolean) => {
     setBusy(iid)
     try {
       if (running) await api.post(`/plugins/${iid}/stop`)
-      else await api.post(`/plugins/${iid}/start`, {}, { timeoutMs: 60000 })
+      else await startSaved(iid, (await api.get<PluginInfo>(`/plugins/${iid}`)).saved)
       await load()
     } catch (e) { fail(e instanceof Error ? e.message : t('실패')) } finally { setBusy(null) }
   }
