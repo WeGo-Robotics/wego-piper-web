@@ -70,6 +70,9 @@
 - 로컬·원격·임대 학습이 같은 판정을 쓴다(`core/base_align.py` — 원격은 `PIPER_WARM_START` 환경변수로 받는다).
   원격에서 데이터셋 길이를 못 읽어도 워밍스타트는 한다 — 빠지면 바닐라가 학습된다
 - SmolVLA-S 의 권장 시작점이 `lerobot/smolvla_base` 로 돌아왔다(체크포인트가 없으면 [Hub 에서 받기])
+- **고친 것** — 이어 학습에서 화면의 학습 스위치(`freeze_vision_encoder`·`train_expert_only`·stage 설정 등)가 명령에서
+  **통째로 빠졌다.** 화면은 구조 값만 가리고 스위치는 보여 줬지만, 명령을 만드는 쪽이 `pretrained_path` 가 있으면 정책
+  파라미터를 전부 버려서 체크포인트 값(동결)으로 학습됐다. 이제 스펙에서 `arch` 가 아닌 필드만 싣는다(발견 2026-10-28)
 
 **ACT-DINOv3 — 비전 백본을 DINOv3 로 바꾼 ACT** ([feature/act-dinov3.md](feature/act-dinov3.md))
 - 학습·추론 정책 목록에 **ACT-DINOv3**(`act_dinov3`)가 생겼다. ACT 의 ResNet18 자리에 DINOv3(기본 ViT-S/16)를 넣고
@@ -78,6 +81,10 @@
 - 가중치는 승인 없이 받히는 timm 사본에서 온다(Meta 원본 `facebook/dinov3-*` 은 HF 승인제). 체크포인트를 열 때는
   받지 않으므로 오프라인 추론 기계에서도 열린다
 - 새 의존성 **timm 1.0.30** — 백엔드·학습 이미지 둘 다 실린다. 개발 머신은 `pip install -e custom_policies/` 를 다시 돌린다
+
+**고친 것**
+- 학습 지표의 병목 힌트는 데이터 로더가 GPU 를 굶길 때만 뜬다. "GPU 연산 병목 → AMP·Batch 가 효과적" 은 뺐다 — LeRobot 은
+  배치 대기(`data_s`)와 갱신(`updt_s`)을 차례로 재므로 그쪽은 GPU 가 쉬지 않는 정상 상태일 뿐, AMP·Batch 가 듣는지는 이 숫자로 모른다
 
 ## v0.5.20 — 2026-10-26
 

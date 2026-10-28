@@ -1,2 +1,3 @@
 [console_scripts]
+piper-mcp = piper_plugin.mcp:main
 piper-plugin = piper_plugin.__main__:main

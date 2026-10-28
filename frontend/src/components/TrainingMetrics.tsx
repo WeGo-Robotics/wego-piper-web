@@ -139,14 +139,13 @@ export default function TrainingMetrics({ metrics, history }: { metrics: Metrics
         )}
       </div>
 
-      {/* 병목 힌트: 데이터 로딩(CPU) vs GPU 연산 */}
+      {/* 병목 힌트: 로더가 GPU 를 굶길 때만 말한다. LeRobot 은 배치 대기(data_s)와
+          갱신(updt_s)을 차례로 재므로 이 비율이 알려 주는 건 로더가 따라오느냐뿐이다.
+          반대쪽은 GPU 가 쉬지 않는 정상 상태라 고칠 게 있다는 뜻이 아니고, AMP·Batch 가
+          이미 한계인지는 이 숫자로 알 수 없다 */}
       {typeof metrics.update_s === 'number' && typeof metrics.data_s === 'number'
-        && (metrics.update_s > 0 || metrics.data_s > 0) && (
-        metrics.data_s > metrics.update_s ? (
-          <p className="text-[11px] text-amber-400">{t('데이터 로딩 병목 (CPU) → num_workers를 늘리세요')}</p>
-        ) : (
-          <p className="text-[11px] text-green-400">{t('GPU 연산 병목 → AMP(bf16)·Batch가 효과적')}</p>
-        )
+        && metrics.data_s > metrics.update_s && (
+        <p className="text-[11px] text-amber-400">{t('데이터 로딩 병목 (CPU) → num_workers를 늘리세요')}</p>
       )}
 
       {/* Loss 그래프 */}

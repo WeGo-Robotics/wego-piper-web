@@ -9,3 +9,5 @@ Requires-Dist: piper_shm
 Requires-Dist: numpy
 Requires-Dist: pyyaml
 Requires-Dist: pydantic>=2
+Provides-Extra: mcp
+Requires-Dist: mcp>=1.2; extra == "mcp"

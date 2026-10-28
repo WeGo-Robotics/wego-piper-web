@@ -492,6 +492,18 @@ _IMAGENET_BACKBONE_POLICIES = {"diffusion", "vqbet"}
 _VLM_WEIGHT_POLICIES = {"smolvla", "smolvla_s"}
 
 
+def _finetune_overrides(policy_type: str, policy_params: dict) -> dict:
+    """이어 학습에 실을 정책 파라미터 — 스펙에 있고 `arch` 가 아닌 필드만.
+
+    스펙에 없는 키는 버린다(예전 localStorage 에 남은 값 등). 정책을 모르면 아무것도 싣지 않는다.
+    """
+    from app.core.policies import SPECS
+
+    spec = SPECS.get(policy_type)
+    allowed = {f.key for f in spec.train.fields if not f.arch} if spec else set()
+    return {k: v for k, v in policy_params.items() if k in allowed}
+
+
 def build_train_args(
     params: dict,
     *,
@@ -536,12 +548,16 @@ def build_train_args(
         args.append("--resume=true")
 
     # 정책별 config 오버라이드: --policy.<field>=<value>
-    # 단, pretrained_path가 있으면 아키텍처는 체크포인트 config로 고정 → skip
+    # pretrained_path가 있으면 아키텍처(`arch`)는 체크포인트 config로 고정 → 그 값만 뺀다.
+    # ⚠ 학습 스위치(freeze_vision_encoder 등)는 이어 학습에서도 실어야 한다 — 화면도 arch 만
+    #   가리고 스위치는 보여 준다. 예전에는 통째로 버려서, 화면에서 꺼도 체크포인트 값(동결)으로
+    #   학습됐다 (2026-10-28 발견).
     policy_params = params.get("policy_params") or {}
-    if policy_params and not has_pretrained:
-        for k, v in policy_params.items():
-            val = "true" if v is True else "false" if v is False else v
-            args.append(f"--policy.{k}={val}")
+    if has_pretrained:
+        policy_params = _finetune_overrides(params.get("policy_type") or "", policy_params)
+    for k, v in policy_params.items():
+        val = "true" if v is True else "false" if v is False else v
+        args.append(f"--policy.{k}={val}")
 
     # SmolVLA를 처음부터 학습할 때 load_vlm_weights를 빠뜨리면 LeRobot 기본값(false)이 적용되어
     # VLM 전체(SigLIP 비전 인코더 포함)가 랜덤 초기화된다. freeze_vision_encoder 기본값이 true라

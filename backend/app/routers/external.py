@@ -216,6 +216,7 @@ async def estop():
     stopped = await estop_bridge.trigger_manual()
     return {"status": "stopped", "stopped": stopped}
 
+
 # ── 읽기 전용 (feature/agent-cli.md §4-4) ──
 #
 # MCP 리소스의 재료이자 외부 집계 경로다. 전부 GET 이고 장치 수준은 여전히 없다 —

@@ -73,6 +73,25 @@ def test_finetuning_switches_stay_visible():
                 assert not f.arch, f"{name}.{f.key} 를 아키텍처로 표시했다"
 
 
+def test_finetuning_switches_reach_the_command():
+    """**회귀** — 화면만 보여 주고 명령에서 버리면 스위치는 장식이다.
+
+    2026-10-28: 시각 인코더를 풀어 이어 학습하려 했더니 미리보기에 `--policy.*` 가 하나도 없었다.
+    pretrained 면 정책 파라미터를 통째로 버리고 있었다 — 화면에서 꺼도 체크포인트 값(동결)으로 학습됐다.
+    """
+    from app.core.cli_mapping import build_train_args
+
+    args = build_train_args({
+        "policy_type": "smolvla_s", "dataset_repo_id": "x/y", "pretrained_path": "/some/ckpt",
+        "policy_params": {"freeze_vision_encoder": False, "train_expert_only": False,
+                          "stage_loss_weight": 0.1, "chunk_size": 50, "stale_key": 1}})
+    policy = [a for a in args if a.startswith("--policy.") and "=" in a
+              and not a.startswith(("--policy.path=", "--policy.push_to_hub=", "--policy.device="))]
+    assert policy == ["--policy.freeze_vision_encoder=false", "--policy.train_expert_only=false",
+                      "--policy.stage_loss_weight=0.1"], policy
+    assert not any(a.startswith("--policy.type=") for a in args), "--policy.path 와 같이 쓸 수 없다"
+
+
 def test_architecture_fields_actually_exist():
     """반대 방향 — 모델 구조 값은 반드시 `arch` 로 표시돼야 pretrained 때 가려진다."""
     for key in ("chunk_size", "dim_model", "n_obs_steps", "use_vae"):

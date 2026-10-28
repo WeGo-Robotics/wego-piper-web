@@ -259,7 +259,6 @@
   "GPU 를 빌려 돈을 쓸 수도": "rent GPUs and spend your money",
   "GPU 를 쓰는 플러그인이 둘 이상 돌고 있다 ({names}) — 메모리를 다툴 수 있다. 막지는 않는다": "More than one GPU plugin is running ({names}) — they may contend for memory. Not blocked",
   "GPU 없음 — 학습·추론은 못 돈다": "No GPU — training and inference can't run",
-  "GPU 연산 병목 → AMP(bf16)·Batch가 효과적": "GPU compute bottleneck → AMP(bf16) and Batch are most effective",
   "GPU 이름 모양이 아닙니다: {n}": "Not a valid GPU name: {n}",
   "GPU 플러그인": "GPU plugin",
   "Gain — 설정에서 같은 이름으로 조절합니다": "Gain — adjust it under the same name in Settings",
