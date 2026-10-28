@@ -36,6 +36,16 @@ class CameraSlot(BaseModel):
     required: bool = True
 
 
+class ArmSlot(BaseModel):
+    """상태를 **읽을** 팔 하나 (feature/plugins.md §7-5). 값은 CAN 인터페이스(`can0`)다.
+
+    읽기 전용이다 — 팔을 움직이는 길은 여전히 추론(REST)뿐이다.
+    """
+    key: str
+    label: str = ""
+    required: bool = True
+
+
 class Resources(BaseModel):
     #: GPU 를 **쓸 수 있는** 플러그인인가. 실제로 쓰는지는 시작 시점의 설정이 정한다 — `gpu_field` 로 지정한
     #: 설정 값(기본 `device`)이 `cpu` 로 시작하면 그 실행은 GPU 플러그인이 아니다(학습과 배타가 아니다)
@@ -74,6 +84,7 @@ class Manifest(BaseModel):
     entry: str = "main.py"
     python: Literal["system", "venv", "venv-isolated"] = "system"
     cameras: list[CameraSlot] = []
+    arms: list[ArmSlot] = []
     inputs: list[InputSlot] = []
     config: list[ConfigField] = []
     permissions: list[str] = []
@@ -94,7 +105,8 @@ class Manifest(BaseModel):
 
     @model_validator(mode="after")
     def _unique_keys(self):
-        for what, items in (("config", self.config), ("cameras", self.cameras), ("inputs", self.inputs)):
+        for what, items in (("config", self.config), ("cameras", self.cameras), ("arms", self.arms),
+                            ("inputs", self.inputs)):
             keys = [i.key for i in items]
             dup = {k for k in keys if keys.count(k) > 1}
             if dup:

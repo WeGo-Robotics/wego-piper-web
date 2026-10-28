@@ -43,6 +43,8 @@ logger = logging.getLogger(__name__)
 REPO = Path(__file__).resolve().parents[3]
 BUNDLED_DIR = REPO / "plugins"
 UNIT_PREFIX = "piper-plugin-"
+# 설치할 때 따라오지 않는 것 — 런타임(설정·저널·venv)은 게이트웨이가 폴더 밖(`.runtime/`)에 둔다
+_INSTALL_IGNORE = shutil.ignore_patterns(".git", "__pycache__", ".venv", ".runtime")
 
 # ── 인스턴스 (feature/plugins.md §7-4) ──
 #
@@ -78,12 +80,16 @@ class PluginInfo:
     bundled: bool
     manifest: Manifest | None = None
     error: str | None = None
+    #: 업데이트 설치의 결과 — `{from, to, deps_reset}`. 새로 깐 것이면 None
+    updated: dict | None = None
 
     def to_dict(self) -> dict:
         d = {"name": self.name, "dir": str(self.dir), "bundled": self.bundled, "error": self.error}
         if self.manifest:
             d["manifest"] = self.manifest.model_dump()
             d["scopes"] = plugin_scopes.describe(self.manifest.permissions)
+        if self.updated is not None:
+            d["updated"] = self.updated
         return d
 
 
@@ -128,6 +134,7 @@ class Run:
     run_id: str = ""
     mission: bool = False
     inputs: dict[str, str] = field(default_factory=dict)
+    arms: dict[str, str] = field(default_factory=dict)
     started_at: float = field(default_factory=time.time)
 
 
@@ -211,7 +218,7 @@ class PluginRegistry:
         if iid in self.instances(base):
             raise HTTPException(409, f"이미 있는 인스턴스입니다: {iid}")
         saved = self.saved_config(base)             # 기본 인스턴스의 설정을 출발점으로
-        self.save_config(iid, saved["config"], saved["cameras"], saved.get("inputs"))
+        self.save_config(iid, saved["config"], saved["cameras"], saved.get("inputs"), saved.get("arms"))
         return self.status(iid)
 
     # ── 소유자 ──
@@ -289,18 +296,21 @@ class PluginRegistry:
 
     def saved_config(self, name: str) -> dict:
         p = self.runtime_dir(name) / "config.json"
-        empty = {"config": {}, "cameras": {}, "inputs": {}}
+        empty = {"config": {}, "cameras": {}, "inputs": {}, "arms": {}}
         if not p.is_file():
             return empty
         try:
             d = json.loads(p.read_text())
-            return {"config": d.get("config", {}), "cameras": d.get("cameras", {}), "inputs": d.get("inputs", {})}
+            return {"config": d.get("config", {}), "cameras": d.get("cameras", {}), "inputs": d.get("inputs", {}),
+                    "arms": d.get("arms", {})}
         except (OSError, ValueError):
             return empty
 
-    def save_config(self, name: str, config: dict, cameras: dict[str, str], inputs: dict[str, str] | None = None) -> None:
+    def save_config(self, name: str, config: dict, cameras: dict[str, str], inputs: dict[str, str] | None = None,
+                    arms: dict[str, str] | None = None) -> None:
         (self.runtime_dir(name) / "config.json").write_text(
-            json.dumps({"config": config, "cameras": cameras, "inputs": inputs or {}}, ensure_ascii=False, indent=2))
+            json.dumps({"config": config, "cameras": cameras, "inputs": inputs or {}, "arms": arms or {}},
+                       ensure_ascii=False, indent=2))
 
     # ── 플러그인 간 입출력 (feature/plugins.md §7-3) ──
 
@@ -340,6 +350,57 @@ class PluginRegistry:
             pool = src["detections"] if slot.kind == "detections" else src["topics"]
             out[slot.key] = bool(v) and v in pool
         return out
+
+    # ── 팔 (읽기 전용, feature/plugins.md §7-5) ──
+
+    def live_arms(self) -> dict[str, dict]:
+        """상태를 발행 중인 팔 — `{iface: {role, side, age_s}}`. 팔 슬롯 선택기의 재료.
+
+        기준은 세그먼트다 — 플러그인이 읽는 것이 그것이므로. 역할·좌우는 등록부에서 붙인다(없으면 None).
+        리더도 상태를 발행하므로 목록에 나온다. `age_s` 가 크면 발행자가 멈춘 채 파일만 남은 것이다.
+        """
+        from piper_shm.arm import StateReader, list_segments
+
+        out: dict[str, dict] = {}
+        for seg in list_segments():
+            if not seg.endswith(".state"):
+                continue
+            iface = seg.removesuffix(".state")
+            try:
+                reader = StateReader(iface)
+            except Exception:
+                continue
+            try:
+                age = reader.age_s()
+            finally:
+                reader.close()
+            out[iface] = {"role": None, "side": None, "age_s": round(age, 2) if age != float("inf") else None}
+        try:
+            from app.services.robot_manager import robot_manager
+
+            for iface, d in out.items():
+                arm = robot_manager.arms.get(iface)
+                if arm is not None:
+                    d["role"], d["side"] = getattr(arm, "role", None), getattr(arm, "side", None)
+        except Exception as e:
+            logger.debug("팔 등록부 조회 실패: %s", e)
+        return out
+
+    def _check_arms(self, m: Manifest, arms: dict[str, str]) -> None:
+        """카메라와 같은 규칙 — 필수 슬롯이 비면 400, 고른 팔의 상태 세그먼트가 없으면 409."""
+        if not m.arms:
+            return
+        from piper_shm.arm import list_segments
+
+        live = {s.removesuffix(".state") for s in list_segments() if s.endswith(".state")}
+        for slot in m.arms:
+            iface = arms.get(slot.key)
+            if not iface:
+                if slot.required:
+                    raise HTTPException(400, f"팔 '{slot.label or slot.key}' 을 고르지 않았습니다")
+                continue
+            if iface not in live:
+                raise HTTPException(409, f"팔 '{iface}' 의 상태가 나오지 않습니다 — 연결돼 있나요?")
 
     # ── 시작·정지 ──
 
@@ -462,7 +523,8 @@ class PluginRegistry:
                 raise HTTPException(409, f"카메라 '{stream}' 이 연결돼 있지 않습니다")
 
     async def start(self, name: str, config: dict | None = None,
-                    cameras: dict[str, str] | None = None, inputs: dict[str, str] | None = None) -> dict:
+                    cameras: dict[str, str] | None = None, inputs: dict[str, str] | None = None,
+                    arms: dict[str, str] | None = None) -> dict:
         base, label = split_instance(name)
         info = self.get(base)
         if info.manifest is None:
@@ -493,12 +555,14 @@ class PluginRegistry:
 
         cameras = dict(cameras or {})
         self._check_cameras(m, cameras)
+        arms = dict(arms or {})
+        self._check_arms(m, arms)
         inputs = self.resolve_inputs(m, inputs)
         missing = [s.key for s in m.inputs if s.required and not inputs.get(s.key)]
         if missing:
             raise HTTPException(400, f"입력을 고르지 않았습니다: {missing}")
         python = self._python_for(m, base)
-        self.save_config(name, config, cameras, inputs)
+        self.save_config(name, config, cameras, inputs, arms)
 
         token = secrets.token_urlsafe(32)
         # 저널 id 는 게이트웨이가 정한다 — 외부 API 가 미션을 이 id 로 조회하므로 시작 응답에 실려야 한다
@@ -511,6 +575,7 @@ class PluginRegistry:
             "PIPER_PLUGIN_RUNTIME_DIR": str(self.runtime_dir(name)),
             "PIPER_PLUGIN_CONFIG": json.dumps(config, ensure_ascii=False),
             "PIPER_PLUGIN_CAMERAS": json.dumps(cameras),
+            "PIPER_PLUGIN_ARMS": json.dumps(arms),
             "PIPER_PLUGIN_INPUTS": json.dumps(inputs),
             "PIPER_PLUGIN_HEARTBEAT": "1" if m.resources.heartbeat else "0",
             "PIPER_API_BASE": f"http://127.0.0.1:{settings.port}",
@@ -527,7 +592,7 @@ class PluginRegistry:
         # 토큰은 **프로세스가 뜨기 전에** 유효해야 한다 — 첫 호출이 환경을 읽는 즉시 온다
         self._grants[token] = Grant(name=name, scopes=frozenset(m.permissions))
         self._runs[name] = Run(token=token, config=config, cameras=cameras, gpu=gpu,
-                               run_id=run_id, mission=m.mission, inputs=inputs)
+                               run_id=run_id, mission=m.mission, inputs=inputs, arms=arms)
         self._seen.add(name)
         self._starting.add(name)
         limits = self._limits(m)
@@ -606,7 +671,7 @@ class PluginRegistry:
                      "limits_applied": bool(pm is not None and hasattr(pm, "unit")),
                      "started_at": run.started_at if run else None, "run_id": run.run_id if run else None,
                      "config": run.config if run else None, "cameras": run.cameras if run else None,
-                     "inputs": run.inputs if run else None,
+                     "inputs": run.inputs if run else None, "arms": run.arms if run else None,
                      "gpu": run.gpu if run else None}
         # 입력 소스가 살아 있나 — 도는 중이면 지금 쓰는 입력, 아니면 저장된 입력 기준
         try:
@@ -686,7 +751,8 @@ class PluginRegistry:
 
     # ── 설치·삭제 ──
 
-    def install_from_path(self, src: Path) -> PluginInfo:
+    def install_from_path(self, src: Path, replace: bool = False) -> PluginInfo:
+        """폴더 → 설치. 이미 있으면 409 — `replace` 면 **업데이트**(`_replace`)."""
         src = src.expanduser().resolve()
         if not src.is_dir():
             raise HTTPException(400, f"폴더가 아닙니다: {src}")
@@ -695,12 +761,65 @@ class PluginRegistry:
             raise HTTPException(400, probe.error or "매니페스트를 읽을 수 없습니다")
         dst = settings.plugins_dir / probe.manifest.name
         if dst.exists():
-            raise HTTPException(409, f"이미 설치돼 있습니다: {probe.manifest.name}")
+            if not replace:
+                raise HTTPException(409, f"이미 설치돼 있습니다: {probe.manifest.name}")
+            if dst.resolve() == src:
+                raise HTTPException(400, f"설치된 폴더 자신입니다 — 고친 코드는 다른 폴더나 zip 으로 주세요: {src}")
+            return self._replace(dst, src, probe.manifest)
         settings.plugins_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src, dst, ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv", ".runtime"))
+        shutil.copytree(src, dst, ignore=_INSTALL_IGNORE)
         return read_manifest(dst)
 
-    def install_from_zip(self, data: bytes) -> PluginInfo:
+    def _replace(self, dst: Path, src: Path, new: Manifest) -> PluginInfo:
+        """설치된 플러그인을 새 코드로 바꾼다 (feature/plugins.md §3-2).
+
+        **폴더만 바뀐다.** 저장 설정·실행 기록·인스턴스·venv 는 폴더 밖(`.runtime/<id>`)이라 그대로
+        남는다 — 지우고 다시 깔면 그게 전부 사라졌다. 의존은 바뀐 것만 무효로 한다: `python` 모드가
+        바뀌면 venv 를 지우고(상속 여부가 다르다), `requirements.txt` 만 바뀌면 `.deps-ok` 만 지운다.
+        둘 다 시작이 409 로 [의존 설치] 를 다시 요구한다.
+
+        바꾸는 순간은 rename 두 번이다. 사이에 죽어도 옛 폴더든 새 폴더든 숨김 이름(`.old-*`·
+        `.staging-*`)으로 남을 뿐 목록을 깨지 않는다.
+        """
+        name = new.name
+        if any(self.is_running(i) for i in self.instances(name)):
+            raise HTTPException(409, "도는 중에는 업데이트할 수 없습니다 — 먼저 정지하세요")
+        dpm = self._deps_owners.get(name)
+        if dpm is not None and not _idle(dpm.state):
+            raise HTTPException(409, "의존 설치 중에는 업데이트할 수 없습니다")
+        old = read_manifest(dst).manifest
+        req = "requirements.txt"
+        old_req = (dst / req).read_bytes() if (dst / req).is_file() else None
+        new_req = (src / req).read_bytes() if (src / req).is_file() else None
+
+        tag = secrets.token_hex(4)
+        staged = settings.plugins_dir / f".staging-{name}-{tag}"
+        trash = settings.plugins_dir / f".old-{name}-{tag}"
+        shutil.copytree(src, staged, ignore=_INSTALL_IGNORE)
+        try:
+            dst.rename(trash)
+        except OSError as e:
+            shutil.rmtree(staged, ignore_errors=True)
+            raise HTTPException(500, f"업데이트 실패 — 설치된 폴더를 옮기지 못했습니다: {e}")
+        staged.rename(dst)
+        shutil.rmtree(trash, ignore_errors=True)
+
+        deps_reset = False
+        venv = self.venv_dir(name)
+        if new.python != "system" and (venv / ".deps-ok").is_file():
+            if old is None or old.python != new.python:
+                shutil.rmtree(venv, ignore_errors=True)
+                deps_reset = True
+            elif old_req != new_req:
+                (venv / ".deps-ok").unlink(missing_ok=True)
+                deps_reset = True
+        info = read_manifest(dst)
+        info.updated = {"from": old.version if old else None, "to": new.version, "deps_reset": deps_reset}
+        logger.info("플러그인 업데이트: %s %s → %s%s", name, info.updated["from"], new.version,
+                    " (의존 다시 설치 필요)" if deps_reset else "")
+        return info
+
+    def install_from_zip(self, data: bytes, replace: bool = False) -> PluginInfo:
         """zip 한 장 → 설치. 루트에 `plugin.yaml` 이 있거나, 폴더 하나가 그걸 품고 있어야 한다.
 
         경로 조작(`../`, 절대 경로)이 든 항목은 거절한다 — 압축 파일은 사용자 입력이다.
@@ -739,8 +858,8 @@ class PluginRegistry:
             #   만들면 copytree 가 자기 자신을 끝없이 복사한다(RecursionError, 테스트에서 났다)
             with tempfile.TemporaryDirectory(prefix="piper-plugin-stage-") as stage_root:
                 staged = Path(stage_root) / name
-                shutil.copytree(src, staged, ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv", ".runtime"))
-                return self.install_from_path(staged)
+                shutil.copytree(src, staged, ignore=_INSTALL_IGNORE)
+                return self.install_from_path(staged, replace=replace)
 
     def remove(self, name: str) -> None:
         base, label = split_instance(name)

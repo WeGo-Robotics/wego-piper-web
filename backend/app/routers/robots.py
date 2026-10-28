@@ -1401,10 +1401,16 @@ async def end_pose_jog(body: EndPoseJogRequest):
 
 @router.get("/end-pose/{iface}")
 async def end_pose(iface: str):
-    """지금 말단 자세 + 작업 공간 상자. 화면이 한계를 알아야 한다."""
+    """지금 말단 자세 + 작업 공간 상자. 화면이 한계를 알아야 한다.
+
+    robotd RPC 라 executor 로 — 플러그인(`robot.read`)이 폴링해도 이벤트 루프를 안 문다.
+    """
+    import asyncio
+
     from piper_robot.endpose import WorkspaceBox
 
-    return {"pose": robot_manager.read_end_pose(iface), "box": WorkspaceBox().to_dict()}
+    pose = await asyncio.to_thread(robot_manager.read_end_pose, iface)
+    return {"pose": pose, "box": WorkspaceBox().to_dict()}
 
 
 # ── 리더 릴레이 (feature/teleoperation.md §3-A) ──

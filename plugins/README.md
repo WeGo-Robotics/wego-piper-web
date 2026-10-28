@@ -7,18 +7,20 @@
 
 ```
 plugins/<name>/
-  plugin.yaml      이름·설정 항목·카메라 슬롯·권한·자원     (모양: piper_plugin/manifest.py)
+  plugin.yaml      이름·설정 항목·카메라·팔 슬롯·권한·자원  (모양: piper_plugin/manifest.py)
   main.py          entry. SDK 를 써도, 환경변수만 읽어도 된다 (plugins/hello 가 후자)
   requirements.txt (선택) python: venv 일 때 깐다
 ```
 
 게이트웨이가 프로세스를 띄우며 **환경변수**를 준다: `PIPER_PLUGIN_NAME` · `PIPER_PLUGIN_DIR` ·
-`PIPER_PLUGIN_RUNTIME_DIR` · `PIPER_PLUGIN_CONFIG`(JSON) · `PIPER_PLUGIN_CAMERAS`(JSON) ·
+`PIPER_PLUGIN_RUNTIME_DIR` · `PIPER_PLUGIN_CONFIG`(JSON) · `PIPER_PLUGIN_CAMERAS`(JSON) · `PIPER_PLUGIN_ARMS`(JSON) ·
 `PIPER_API_BASE` · `PIPER_API_TOKEN`(이번 실행의 범위 토큰) · `PIPER_REDIS_URL`.
 
 | 하고 싶은 것 | SDK | 뒤에서 |
 |---|---|---|
 | 카메라 프레임 | `self.camera("slot").read_new()` → `(frame BGR, seq, ns)` | `/dev/shm` 세그먼트 구독. 카메라를 열지 않는다 |
+| 팔 상태 (읽기 전용) | `self.arm("slot").read()` → `.joints` `.gripper` `.age_s` / `.read_new()` | `/dev/shm` 상태 세그먼트 구독. 값은 정규화(관절 -100..100, 그리퍼 0..100) — `observation.state` 와 같은 눈금. 매니페스트 `arms: [{key, label}]` |
+| 말단 자세 | `self.arm("slot").end_pose()` → `x y z`(mm) `rx ry rz`(도) `inside` | REST, 권한 `robot.read`. 회차 경계·저속에만 — 제어 루프 속도로 부르지 않는다 |
 | 검출 모델 | `self.detector(model)` → `.predict(frame, conf=…)[0]` | RT-DETR(Apache). ultralytics(.pt) 는 **거절** |
 | 검출 결과 올리기 | `self.publish_detections(name, shape, result)` | 버스 `piper:vision:<name>` — 화면·다른 플러그인이 읽는다 |
 | 그림 올리기 | `self.publish_preview(name, frame)` | `/api/vision/preview/<name>` |
@@ -47,7 +49,7 @@ plugins/<name>/
 ## 하지 말 것
 
 - **장치를 직접 열지 않는다.** `/dev/video*`·CAN·RealSense 는 호스트 데몬이 독점한다. 카메라는 세그먼트로만.
-- **팔을 직접 움직이지 않는다.** shm 명령 세그먼트·CAN 에 쓰지 않는다. 추론(REST)을 통해서만.
+- **팔을 직접 움직이지 않는다.** shm 명령 세그먼트·CAN 에 쓰지 않는다. 추론(REST)을 통해서만. 상태는 `self.arm()` 으로 읽기만 한다.
 - **`/api/auth/*` 를 부르지 않는다.** 토큰이 `*` 라도 403 이다.
 - **블로킹 대기를 쓰지 않는다.** `time.sleep` 대신 `self.sleep` — SIGTERM 에 바로 멈춰야 E-stop 뒤처리가 깨끗하다.
 - **특정 검출 모델의 브랜드 이름을 쓰지 않는다** (파일·식별자·문구 전부 — `backend/tests/test_no_model_branding.py` 가 트리 전체를 막는다). 대체어는 `detector`.
@@ -59,13 +61,18 @@ plugins/<name>/
 ```bash
 piper-plugin new  plugins/my-thing --template loop|mission|detector|dashboard   # 틀 (dashboard = 정적 자기 화면 + E-stop 버튼)
 piper-plugin check plugins/my-thing [--api http://127.0.0.1:8000] [--json]  # 매니페스트·entry·권한 범위. --json 은 기계가 읽는 결과(ok·errors[])
-piper-plugin run  plugins/my-thing --camera watch=<스트림> \
+piper-plugin run  plugins/my-thing --camera watch=<스트림> [--arm follower=can0] \
     --api http://127.0.0.1:8000 [--config '{"conf":0.4}'] [--dry-run] # 게이트웨이가 켤 때와 같은 진입점
+curl -X POST localhost:8000/api/plugins/install -H 'content-type: application/json' \
+    -d '{"path":"/abs/plugins/my-thing","replace":true}'               # 설치 · 고친 뒤 다시 깔기(업데이트)
 curl -X POST localhost:8000/api/plugins/my-thing/start -H 'content-type: application/json' \
-    -d '{"config":{},"cameras":{"watch":"<스트림>"}}'                   # 게이트웨이에서 (설치돼 있어야)
+    -d '{"config":{},"cameras":{"watch":"<스트림>"},"arms":{"follower":"can0"}}'   # 게이트웨이에서
 ```
 
 - 살아 있는 스트림 이름: `GET /api/vision/segments`. 검출 결과 확인: `GET /api/vision/detections`.
+  상태를 내는 팔: `GET /api/plugins/topics` 의 `arms`.
+- **업데이트**는 `replace: true`(zip 은 `?replace=true`) — 폴더만 바뀌고 저장 설정·실행 기록·인스턴스·venv 는 남는다.
+  `requirements.txt` 나 `python:` 이 바뀌었으면 [의존 설치] 를 다시 한다(응답 `updated.deps_reset`). 도는 중이면 409.
 - `run` 에 `--api` 가 없으면 `self.api`/`self.robot` 호출은 `ApiUnavailable` — 카메라·버스·모델만 시험하는 모드다.
 - 미션은 `--dry-run` 으로 로봇 없이 루프만 돌려 저널(`.runtime/runs/*.jsonl`)을 본다.
 - 테스트는 `backend/tests/test_plugin_sdk.py`·`test_plugins.py` 가 기준이다 — 예제 매니페스트는 전부 거기서 읽힌다.

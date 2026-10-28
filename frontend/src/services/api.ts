@@ -43,7 +43,8 @@ async function request<T>(path: string, options?: RequestInit, timeoutMs = DEFAU
     if (res.status === 401 && !path.startsWith('/auth/')) {
       window.dispatchEvent(new CustomEvent('piper:unauthorized'))
     }
-    throw new Error(detail)
+    // 상태 코드를 싣는다 — 호출부가 문구가 아니라 코드로 분기한다(409 → "덮어쓸까?" 같은 것)
+    throw Object.assign(new Error(detail), { status: res.status })
   }
   // 글 그대로가 필요한 호출(에이전트용 markdown 꾸러미)은 JSON 파싱도 번역(tbDeep)도 거치지 않는다
   if (parse === 'text') return (await res.text()) as unknown as T

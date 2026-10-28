@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../services/api'
-import { useT } from '../i18n'
+import { tb, useT } from '../i18n'
 import { useSystemMessage } from '../components/SystemMessages'
 import { openPluginUi, PluginStateDot, ScopeBadges } from '../components/PluginBits'
 import { isRunning, type PluginInfo } from '../types/plugins'
@@ -15,7 +15,7 @@ import { isRunning, type PluginInfo } from '../types/plugins'
 export default function PluginsPage() {
   const t = useT()
   const navigate = useNavigate()
-  const { notify } = useSystemMessage()
+  const { notify, confirm: ask } = useSystemMessage()
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [dirs, setDirs] = useState<string[]>([])
   const [busy, setBusy] = useState<string | null>(null)
@@ -41,7 +41,7 @@ export default function PluginsPage() {
     setBusy(p.name)
     try {
       if (isRunning(p.state)) await api.post(`/plugins/${p.name}/stop`)
-      else await api.post(`/plugins/${p.name}/start`, { config: p.saved.config, cameras: p.saved.cameras, inputs: p.saved.inputs ?? {} }, { timeoutMs: 60000 })
+      else await api.post(`/plugins/${p.name}/start`, { config: p.saved.config, cameras: p.saved.cameras, inputs: p.saved.inputs ?? {}, arms: p.saved.arms ?? {} }, { timeoutMs: 60000 })
       await load()
     } catch (e) {
       fail(e instanceof Error ? e.message : t('실패'))
@@ -67,27 +67,54 @@ export default function PluginsPage() {
     } catch (e) { fail(e instanceof Error ? e.message : t('인스턴스 추가 실패')) }
   }
 
-  const installFromPath = async () => {
-    if (!installPath.trim()) return
+  /**
+   * 설치 — 이미 있으면(409) 덮어쓸지 묻고 같은 것을 `replace` 로 다시 보낸다(업데이트).
+   * 저장 설정·실행 기록·인스턴스·venv 는 폴더 밖이라 남는다 (feature/plugins.md §3-2).
+   * ⚠ 묻는 것은 논블로킹 모달이다 — `window.confirm` 은 heartbeat 를 끊는다.
+   */
+  const install = async (send: (replace: boolean) => Promise<PluginInfo>): Promise<boolean> => {
     setBusy('install')
     try {
-      const r = await api.post<PluginInfo>('/plugins/install', { path: installPath.trim() })
-      notify({ level: 'info', text: t('플러그인 설치됨: {name}', { name: r.name }), source: t('플러그인') })
-      setInstallPath(''); await load()
-    } catch (e) { fail(e instanceof Error ? e.message : t('설치 실패')) } finally { setBusy(null) }
+      let r: PluginInfo
+      try {
+        r = await send(false)
+      } catch (e) {
+        if ((e as { status?: number }).status !== 409) throw e
+        const ok = await ask(t('{detail} — 새 코드로 업데이트할까? 저장된 설정·실행 기록·인스턴스는 그대로 남는다',
+          { detail: (e as Error).message }), { danger: false })
+        if (!ok) return false
+        r = await send(true)
+      }
+      const u = r.updated
+      notify({
+        level: 'info', source: t('플러그인'),
+        text: u ? t('플러그인 업데이트됨: {name} v{from} → v{to}', { name: r.name, from: u.from ?? '?', to: u.to })
+          : t('플러그인 설치됨: {name}', { name: r.name }),
+      })
+      if (u?.deps_reset) notify({ level: 'warn', source: t('플러그인'),
+        text: t('{name} 의 의존이 바뀌었다 — 상세에서 [의존 설치] 를 다시 해야 시작된다', { name: r.name }) })
+      await load()
+      return true
+    } catch (e) {
+      fail(e instanceof Error ? e.message : t('설치 실패'))
+      return false
+    } finally { setBusy(null) }
+  }
+
+  const installFromPath = async () => {
+    const path = installPath.trim()
+    if (!path) return
+    if (await install((replace) => api.post<PluginInfo>('/plugins/install', { path, replace }))) setInstallPath('')
   }
 
   const installZip = async (file: File) => {
-    setBusy('install')
-    try {
-      const res = await fetch('/api/plugins/install/zip', { method: 'POST', body: file })
+    await install(async (replace) => {
+      const res = await fetch(`/api/plugins/install/zip${replace ? '?replace=true' : ''}`, { method: 'POST', body: file })
       const body = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error((body as { detail?: string }).detail || `HTTP ${res.status}`)
-      notify({ level: 'info', text: t('플러그인 설치됨: {name}', { name: (body as PluginInfo).name }), source: t('플러그인') })
-      await load()
-    } catch (e) { fail(e instanceof Error ? e.message : t('설치 실패')) } finally {
-      setBusy(null); if (fileRef.current) fileRef.current.value = ''
-    }
+      if (!res.ok) throw Object.assign(new Error(tb((body as { detail?: string }).detail) || `HTTP ${res.status}`), { status: res.status })
+      return body as PluginInfo
+    })
+    if (fileRef.current) fileRef.current.value = ''
   }
 
   const gpuRunning = plugins.filter((p) => p.manifest?.resources.gpu && isRunning(p.state)).map((p) => p.name)

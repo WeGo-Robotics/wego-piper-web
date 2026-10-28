@@ -8,6 +8,7 @@
 | `PIPER_PLUGIN_RUNTIME_DIR` | 설정·저널·venv 가 사는 곳 (`<plugins_dir>/.runtime/<name>`) |
 | `PIPER_PLUGIN_CONFIG` | 설정 JSON — 매니페스트 기본값이 채워져 온다 |
 | `PIPER_PLUGIN_CAMERAS` | `{슬롯 키: 스트림 이름}` JSON |
+| `PIPER_PLUGIN_ARMS` | `{슬롯 키: CAN 인터페이스}` JSON — 매니페스트 `arms` 에 고른 팔 (읽기 전용) |
 | `PIPER_PLUGIN_INPUTS` | `{입력 키: 소스}` JSON — 매니페스트 `inputs` 에 고른 검출 이름·토픽 |
 | `PIPER_PLUGIN_HEARTBEAT` | `1` 이면 SDK 가 데드맨 박동을 돈다 (`resources.heartbeat`) |
 | `PIPER_API_BASE` | 게이트웨이 주소 (`http://127.0.0.1:8000`) |
@@ -37,6 +38,8 @@ class Env:
     runtime_dir: Path = Path(".runtime")
     config: dict = field(default_factory=dict)
     cameras: dict[str, str] = field(default_factory=dict)
+    #: `{슬롯 키: CAN 인터페이스}` — 매니페스트 `arms` 에 고른 팔. 상태를 읽기만 한다 (§7-5)
+    arms: dict[str, str] = field(default_factory=dict)
     #: `{입력 키: 소스 이름}` — 매니페스트 `inputs` 의 슬롯에 고른 검출 이름·토픽 (§7-3)
     inputs: dict[str, str] = field(default_factory=dict)
     api_base: str = ""
@@ -60,6 +63,7 @@ class Env:
             dir=d, runtime_dir=rt,
             config=_json(e.get("PIPER_PLUGIN_CONFIG")),
             cameras=_json(e.get("PIPER_PLUGIN_CAMERAS")),
+            arms=_json(e.get("PIPER_PLUGIN_ARMS")),
             inputs=_json(e.get("PIPER_PLUGIN_INPUTS")),
             api_base=(e.get("PIPER_API_BASE") or "").rstrip("/"),
             token=e.get("PIPER_API_TOKEN") or "",
@@ -79,6 +83,7 @@ class Env:
             "PIPER_PLUGIN_RUNTIME_DIR": str(self.runtime_dir),
             "PIPER_PLUGIN_CONFIG": json.dumps(self.config, ensure_ascii=False),
             "PIPER_PLUGIN_CAMERAS": json.dumps(self.cameras),
+            "PIPER_PLUGIN_ARMS": json.dumps(self.arms),
             "PIPER_PLUGIN_INPUTS": json.dumps(self.inputs),
             "PIPER_PLUGIN_HEARTBEAT": "1" if self.heartbeat else "0",
             "PIPER_API_BASE": self.api_base,

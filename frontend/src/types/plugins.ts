@@ -16,6 +16,8 @@ export type PluginConfigField = {
 }
 
 export type PluginCameraSlot = { key: string; label?: string; required?: boolean }
+/** 상태를 읽을 팔 — 값은 CAN 인터페이스. 읽기 전용 (§7-5) */
+export type PluginArmSlot = { key: string; label?: string; required?: boolean }
 /** 다른 플러그인의 출력을 받는 자리 — 검출 이름 또는 토픽 (§7-3) */
 export type PluginInputSlot = { key: string; kind: 'detections' | 'topic'; source?: string; label?: string; required?: boolean }
 
@@ -27,6 +29,7 @@ export type PluginManifest = {
   entry: string
   python: 'system' | 'venv' | 'venv-isolated'
   cameras: PluginCameraSlot[]
+  arms?: PluginArmSlot[]
   inputs: PluginInputSlot[]
   config: PluginConfigField[]
   permissions: string[]
@@ -56,6 +59,7 @@ export type PluginStatus = {
   config: PluginConfigValues | null
   cameras: Record<string, string> | null
   inputs?: Record<string, string> | null
+  arms?: Record<string, string> | null
   /** 입력마다 소스가 지금 살아 있나 — 막지 않고 말만 한다 */
   inputs_live?: Record<string, boolean>
   /** 플러그인이 버스에 올린 상태 KV (`phase`·fps·…). 없으면 아직 안 올렸거나 죽었다 */
@@ -80,7 +84,9 @@ export type PluginInfo = PluginStatus & {
   error: string | null
   manifest?: PluginManifest
   scopes?: PluginScopeDesc[]
-  saved: { config: PluginConfigValues; cameras: Record<string, string>; inputs?: Record<string, string> }
+  saved: { config: PluginConfigValues; cameras: Record<string, string>; inputs?: Record<string, string>; arms?: Record<string, string> }
+  /** 업데이트 설치의 결과 — 새로 깐 것이면 없다 */
+  updated?: { from: string | null; to: string; deps_reset: boolean }
   /** 기본 인스턴스가 첫 줄 */
   instances?: PluginStatus[]
 }
@@ -89,6 +95,8 @@ export type PluginInfo = PluginStatus & {
 export type PluginSources = {
   detections: Record<string, { publisher?: string | null; ts?: number }>
   topics: Record<string, { publisher?: string | null; ts?: number; seq?: number }>
+  /** 상태를 발행 중인 팔 — `{iface: {role, side, age_s}}` */
+  arms?: Record<string, { role?: string | null; side?: string | null; age_s?: number | null }>
 }
 
 export type PluginTopic = { topic: string; publisher: string; seq: number; ts: number; data: unknown }

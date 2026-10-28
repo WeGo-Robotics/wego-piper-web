@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 from piper_plugin.api import Api
+from piper_plugin.arm import Arm
 from piper_plugin.camera import Camera
 from piper_plugin.detections import Detections, from_result
 from piper_plugin.env import Env
@@ -53,11 +54,13 @@ class Plugin:
         self.name = self.env.name
         self.config: dict[str, Any] = dict(self.env.config)
         self.cameras: dict[str, str] = dict(self.env.cameras)
+        self.arms: dict[str, str] = dict(self.env.arms)
         self.inputs: dict[str, str] = dict(self.env.inputs)
         self.log = logging.getLogger(f"plugin.{self.name}")
         self.api = Api(self.env.api_base, self.env.token)
         self.robot = Robot(self.api)
         self._cams: dict[str, Camera] = {}
+        self._arms: dict[str, Arm] = {}
         self._bus = None
         self._state: dict[str, Any] = {}
         self._state_pushed = 0.0
@@ -94,6 +97,14 @@ class Plugin:
     def camera_mapping(self) -> dict[str, str]:
         """`{슬롯 키: 스트림}` — 추론 시작의 `camera_mapping` 에 그대로 넣는다."""
         return dict(self.cameras)
+
+    def arm(self, key: str) -> Arm:
+        """매니페스트 `arms` 의 슬롯 키, 또는 CAN 인터페이스 이름 그대로(`can0`). **읽기 전용** (§7-5)."""
+        iface = self.arms.get(key, key)
+        a = self._arms.get(iface)
+        if a is None:
+            a = self._arms[iface] = Arm(iface, self.api)
+        return a
 
     @property
     def bus(self):

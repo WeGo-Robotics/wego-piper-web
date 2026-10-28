@@ -1,6 +1,10 @@
 # 플러그인 — 사람이 쓴 파이썬 스크립트를 웹에서 켜고 끈다
 
-> 상태: **☑ 0~8단계 구현 (2026-10-23).** 8단계(멀티 인스턴스)는 7단계 뒤 요청으로 더해졌다. 기획 확정 2026-10-16.
+> 상태: **☑ 0~10단계 구현 (2026-10-27).** 8단계(멀티 인스턴스)는 7단계 뒤, 9·10단계(업데이트 설치·팔 상태 읽기)는
+> 8단계 뒤 요청으로 더해졌다. 기획 확정 2026-10-16.
+> 9단계 ☑: 업데이트 설치(§3-2) — `install`·`install/zip` 의 `replace`, 폴더만 바꾸고 `.runtime/` 보존, 의존은 바뀐 것만
+> 무효, 목록 화면의 409 → "업데이트할까?" 논블로킹 확인. 10단계 ☑: 팔 상태 읽기(§7-5) — 매니페스트 `arms`, SDK
+> `self.arm()`(shm 상태 구독·발행자 재시작 추종), 범위 `robot.read`(말단 자세), 상세의 팔 선택기.
 > 1단계: `services/plugins.py`·`core/plugin_scopes.py`·`routers/plugins.py`(`/api/plugins/*`), authgate 의
 > Bearer 분기, `Activity.PLUGIN`·`PLUGIN_GPU`, 번들 `plugins/hello`.
 > 2단계: SDK [`plugin/piper_plugin`](../plugin/piper_plugin/)(`Plugin`·`MissionPlugin`·`Decision`·`robot`·`camera`·
@@ -101,7 +105,11 @@ Python, 시퀀스는 데이터"로([episode-orchestrator](episode-orchestrator.m
    데이터 볼륨이라 이미지 교체에도 남는다.
 2. **설치 출처는 zip 업로드와 로컬 폴더 경로, 둘뿐이다.** git URL 은 두지 않는다 — 권한
    화면이 있어도 받아온 코드는 그대로 돈다. 저장소의 예제 플러그인은 설치 시 데이터 루트로
-   복사된다.
+   복사된다. **같은 이름을 다시 깔면 409** 이고, `replace` 로 다시 보내면 **업데이트**다(9단계) —
+   폴더만 바뀌고 저장 설정·실행 기록·인스턴스·venv(전부 폴더 밖 `.runtime/<id>`)는 남는다. 지우고 다시
+   깔면 그게 통째로 사라졌다. 코딩 에이전트가 "고치고 다시 깔기" 를 가장 자주 돌기 때문이다(§7-2).
+   의존은 바뀐 것만 무효로 한다 — `python:` 이 바뀌면 venv 삭제, `requirements.txt` 만 바뀌면 `.deps-ok`
+   만 삭제(둘 다 시작이 409 로 [의존 설치] 를 다시 요구). 도는 인스턴스가 하나라도 있으면 409.
 3. **별도 프로세스.** yolod 와 같이 `make_process("piper-plugin-<name>")`. 플러그인이
    죽어도 게이트웨이는 산다. 동시 실행 가능(플러그인마다 소유자 하나).
 4. **SDK 는 선택.** `piper_plugin` 패키지(bus·shm 와 같은 설치 패키지)가 편의를 주지만,
@@ -153,6 +161,9 @@ python: system                         # system | venv  (§6)
 cameras:                               # 화면이 스트림 선택기(CameraStreamPicker)로 채운다
   - { key: watch, label: "감시 카메라", required: true }
 
+arms:                                  # (선택) 상태를 **읽을** 팔 — 값은 CAN 인터페이스. 움직이지 않는다 (§7-5)
+  - { key: follower, label: "팔로워" }
+
 config:                                # SpecFields 가 그린다 — 정책 YAML 과 같은 어휘
   - { key: target_class, kind: text,   default: "pet_bottle", label: "대상 클래스" }
   - { key: min_frames,   kind: number, default: 5, min: 1, max: 60, label: "연속 프레임" }
@@ -197,7 +208,7 @@ outputs:                               # 화면 위젯 힌트 — 없어도 버�
 | 발급 | `start` 때 `secrets.token_urlsafe(32)`. 메모리 딕셔너리 `{token: (plugin, scopes, pid)}`. 정지·크래시·게이트웨이 재시작으로 폐기 — 파일에 적지 않는다(§3-9, 재부착이 없으므로 필요 없다) |
 | 전달 | `env_extra={"PIPER_API_TOKEN": ..., "PIPER_API_BASE": "http://127.0.0.1:8000"}` — `injected_env` 경로 |
 | 검사 | authgate 가 `Authorization: Bearer` 를 보고 플러그인 토큰이면 **범위 표**로 경로를 대조. 통과 시 `scope["piper_plugin"]` 에 이름을 적어 라우터가 감사 로그에 남길 수 있게 |
-| 범위 → 경로 | `inference.start` → `POST /api/models/inference/start`, `inference.stop`, `inference.read`(상태·정책 종류), `params.write` → `POST /api/params`(`task` 변경이 여기), `recording.*`, `vision.read` → `GET /api/vision/*`, `vision.judge` → `POST /api/vision/judge`(LLM 판단 — 오케스트레이터 이관의 필수 범위), `eval.write` → `POST /api/eval/log`, `activity.read` → `GET /api/activity`, `estop` → 어차피 열려 있다. 표는 코드 한 곳(`plugin_scopes.py`), 테스트가 라우터 목록과 대조 |
+| 범위 → 경로 | `inference.start` → `POST /api/models/inference/start`, `inference.stop`, `inference.read`(상태·정책 종류), `params.write` → `POST /api/params`(`task` 변경이 여기), `recording.*`, `vision.read` → `GET /api/vision/*`, `vision.judge` → `POST /api/vision/judge`(LLM 판단 — 오케스트레이터 이관의 필수 범위), `eval.write` → `POST /api/eval/log`, `robot.read` → `GET /api/robots/end-pose/<iface>`(말단 자세 — 움직이는 경로는 없다, §7-5), `activity.read` → `GET /api/activity`, `estop` → 어차피 열려 있다. 표는 코드 한 곳(`plugin_scopes.py`), 테스트가 라우터 목록과 대조 |
 | `"*"` | 모든 `/api/*` 를 통과시킨다. **`/api/auth/*` 만은 예외** — 비밀번호를 바꾸거나 로그인을 끄는 것은 사람의 행위다. 카드에 배지로 보인다 |
 | 설치 때 | 매니페스트의 `permissions` 를 카드에 **보여 주고** 켠다. "이 플러그인은 추론을 시작할 수 있습니다" — 모바일 앱 권한 화면과 같은 자리 |
 
@@ -386,6 +397,22 @@ class AppleSorter(MissionPlugin):
 검출 이름(`piper:vision:<alias>`)과 프리뷰 이름은 사용자가 설정에 적는 값이라 인스턴스마다 다르게
 적어야 한다 — 같으면 서로 덮어쓴다. 화면이 발행자(인스턴스 id)를 함께 보여 주므로 눈에는 띈다.
 
+### 7-5. 팔 상태 — 읽기만 한다
+
+카메라와 검출만으로는 "그리퍼가 닫혔다"·"팔이 작업 영역을 벗어났다"(데모 격차 G3 의 스냅샷 시점)를
+모른다. `MissionPlugin.done()` 이 타임아웃에 기대던 이유다. 재료는 이미 있다 — robotd·simd 가 관절 상태를
+`/dev/shm/piper.arm.<iface>.state` 로 늘 발행하고(다중 소비자), 말단 자세는 게이트웨이 REST 에 있다.
+
+| 항목 | 설계 |
+|---|---|
+| 매니페스트 | `arms: [{key, label, required}]` — 카메라 슬롯과 같은 모양, 값은 CAN 인터페이스(`can0`, 시뮬 팔도 같다) |
+| 시작 검사 | 필수 슬롯이 비면 400, 고른 팔의 **상태** 세그먼트가 없으면 409 — 카메라와 같은 규칙. 명령 세그먼트(`.action`)만 있는 것은 상태를 내는 팔이 아니다 |
+| 선택기 | `GET /api/plugins/topics` 의 `arms` — 상태 세그먼트가 있는 팔 + 등록부의 역할·좌우. 리더도 상태를 내므로 나온다 |
+| SDK | `self.arm(key).read()` / `.read_new()` → `ArmState(joints, gripper, err_code, ctrl_mode, seq, age_s)`. 값은 **정규화**(관절 -100..100, 그리퍼 0..100) — 데이터셋 `observation.state` 와 같은 눈금이고, 캘리브레이션 소유자(robotd)를 하나로 두려고 도(°)로 되돌리지 않는다 |
+| 발행자 재시작 | 리더가 `orphaned`(파일이 지워졌다)를 보면 다시 연다 — 안 그러면 옛 mmap 이 **마지막 자세를 영원히** 낸다. `piper_shm.arm` 의 리더에 `orphaned` 를 더했다(라이터에만 있었다) |
+| 말단 자세 | `self.arm(key).end_pose()` → mm·도 + 작업 공간 상자 안인가(`inside`). 범위 `robot.read`(`GET /api/robots/end-pose/<iface>`). robotd RPC 라 엔드포인트를 executor 로 옮겼다 — 플러그인이 폴링해도 이벤트 루프를 안 문다 |
+| 움직이기 | **없다.** 범위 표에 명령 경로를 넣지 않고(`robot.read` 는 GET 하나), SDK 는 명령 세그먼트를 열지 않는다. 팔은 여전히 추론(REST)으로만 움직인다 |
+
 ### 7-2. 코딩 에이전트가 첫 사용자다
 
 루프를 사람이 손으로 짜는 것보다 로컬 코딩 에이전트(Claude Code 등)에게 "이 `recycling` 을 사과
@@ -521,6 +548,8 @@ SDK 는 `wrapper/` 처럼 lerobot 을 import 하지 않는다. 의존은 `piper_
 | 5 | **자기 화면**: `ui: ui/` 정적 서빙 + `ui: server` 소켓 프록시(HTTP·WS) + authgate 접두사 + nginx·Vite 블록 + "UI 보기" 새 창 버튼 + 번들 `detector` 의 UI(§15 결정 뒤) + 예제 `ui-demo`(Streamlit) | detector UI 가 새 창에서 돌고, 그 동안 메인 창의 E-stop heartbeat 가 끊기지 않는다(추론 켜 둔 채 10분). 정적 UI 가 플러그인이 꺼진 상태에서도 열린다 |
 | 6 | venv·venv-isolated 의존 설치 + 자원 제한 + ext API `POST /api/ext/v1/plugins/{name}/start·stop`(미션이 아닌 플러그인을 외부가 켠다) | 외부에서 플러그인만 켜고 미션 없이 운용 가능 |
 | 7 (후보) | 플러그인 간 입출력(버스 키 구독 — 검출기 → 분류기 → 미션처럼 플러그인을 이어 붙이기) | 범용성의 실측 — 저장소 자신의 기능이 플러그인 규약 위에서 돈다 |
+| 9 | 업데이트 설치(§3-2) — `replace`, `.runtime/` 보존, 의존 무효화는 바뀐 것만 | 고친 폴더·zip 을 다시 깔아도 저장 설정·실행 기록·인스턴스가 그대로다 |
+| 10 | 팔 상태 읽기(§7-5) — `arms` 슬롯, `self.arm()`, `robot.read` | 플러그인이 그리퍼 열림·말단 자세로 회차 완료를 판정한다. 움직이는 길은 여전히 추론뿐 |
 
 0~5 가 요청의 범위다(개명, 오케스트레이터·검출기 이관, 자기 화면 포함). 0 이 맨 앞인 이유: 새로
 만드는 파일이 처음부터 바른 이름으로 태어나야 한다 — 뒤에 하면 플러그인 코드까지 두 번 고친다. 6 은 외부 연동·자원 제한,

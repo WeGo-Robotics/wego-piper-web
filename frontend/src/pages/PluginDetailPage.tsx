@@ -31,6 +31,7 @@ export default function PluginDetailPage() {
   const [tab, setTab] = useState<TabId>('output')
   const [config, setConfig] = useState<PluginConfigValues>({})
   const [cameras, setCameras] = useState<Record<string, string>>({})
+  const [arms, setArms] = useState<Record<string, string>>({})
   const [inputs, setInputs] = useState<Record<string, string>>({})
   const [topics, setTopics] = useState<Record<string, PluginTopic>>({})
   const [dirty, setDirty] = useState(false)
@@ -79,6 +80,7 @@ export default function PluginDetailPage() {
     for (const f of info.manifest?.config ?? []) if (f.default !== undefined && f.default !== null) defaults[f.key] = f.default
     setConfig({ ...defaults, ...(info.saved?.config ?? {}) })
     setCameras(info.saved?.cameras ?? {})
+    setArms(info.saved?.arms ?? {})
     const inDefaults: Record<string, string> = {}
     for (const s of info.manifest?.inputs ?? []) if (s.source) inDefaults[s.key] = s.source
     setInputs({ ...inDefaults, ...(info.saved?.inputs ?? {}) })
@@ -103,7 +105,7 @@ export default function PluginDetailPage() {
   const m = info?.manifest
 
   const save = async () => {
-    await api.put(`/plugins/${name}/config`, { config, cameras, inputs })
+    await api.put(`/plugins/${name}/config`, { config, cameras, inputs, arms })
     setDirty(false)
   }
   const start = async () => {
@@ -111,7 +113,7 @@ export default function PluginDetailPage() {
     try {
       if (dirty) await save()
       setLogs([])
-      await api.post(`/plugins/${name}/start`, { config, cameras, inputs }, { timeoutMs: 60000 })
+      await api.post(`/plugins/${name}/start`, { config, cameras, inputs, arms }, { timeoutMs: 60000 })
       setTab('output'); await load()
     } catch (e) { fail(e instanceof Error ? e.message : t('시작 실패')) } finally { setBusy(false) }
   }
@@ -201,14 +203,15 @@ export default function PluginDetailPage() {
       {tab === 'config' && m && (
         <section className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
           {running && <p className="text-xs text-amber-300">{t('도는 중에는 읽기 전용이다 — 바꾸려면 정지한 뒤 고치고 다시 시작하라')}</p>}
-          <PluginConfigForm fields={m.config} cameraSlots={m.cameras} inputSlots={m.inputs} values={config} cameras={cameras} inputs={inputs} disabled={running}
+          <PluginConfigForm fields={m.config} cameraSlots={m.cameras} armSlots={m.arms ?? []} inputSlots={m.inputs} values={config} cameras={cameras} arms={arms} inputs={inputs} disabled={running}
             onChange={(k, v) => { setConfig((c) => ({ ...c, [k]: v })); setDirty(true) }}
             onCameraChange={(slot, stream) => { setCameras((c) => ({ ...c, [slot]: stream })); setDirty(true) }}
+            onArmChange={(slot, iface) => { setArms((c) => ({ ...c, [slot]: iface })); setDirty(true) }}
             onInputChange={(slot, source) => { setInputs((c) => ({ ...c, [slot]: source })); setDirty(true) }} />
           {info?.inputs_live && Object.values(info.inputs_live).some((v) => !v) && (
             <p className="text-xs text-amber-300">{t('입력 소스가 지금 살아 있지 않다 — 그 출력을 내는 플러그인(검출기 등)을 먼저 켜라. 막지는 않는다')}</p>
           )}
-          {m.config.length === 0 && m.cameras.length === 0 && <p className="text-xs text-neutral-500">{t('설정 항목이 없다')}</p>}
+          {m.config.length === 0 && m.cameras.length === 0 && !(m.arms ?? []).length && <p className="text-xs text-neutral-500">{t('설정 항목이 없다')}</p>}
           {m.python !== 'system' && (
             <div className="rounded border border-neutral-700 bg-neutral-900/60 p-3 text-sm space-y-2">
               <div className="flex items-center gap-3 flex-wrap">

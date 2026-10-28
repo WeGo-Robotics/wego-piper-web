@@ -54,3 +54,12 @@ def test_task_change_is_a_declared_scope():
     assert S.allows({"params.write"}, "POST", "/api/params")
     assert S.allows({"vision.judge"}, "POST", "/api/vision/judge")
     assert S.allows({"eval.write"}, "POST", "/api/eval/log")
+
+
+def test_robot_read_reaches_the_end_pose_but_never_moves_the_arm():
+    """팔은 추론으로만 움직인다(feature/plugins.md §7-5) — 읽기 범위가 조그로 새면 안 된다."""
+    s = {"robot.read"}
+    assert S.allows(s, "GET", "/api/robots/end-pose/can0")
+    assert not S.allows(s, "POST", "/api/robots/end-pose/jog")
+    assert not S.allows(s, "POST", "/api/robots/jog/goal")
+    assert not S.allows(s, "GET", "/api/robots/current")

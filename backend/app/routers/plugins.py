@@ -20,16 +20,20 @@ class StartRequest(BaseModel):
     config: dict = {}
     cameras: dict[str, str] = {}
     inputs: dict[str, str] = {}
+    arms: dict[str, str] = {}
 
 
 class ConfigRequest(BaseModel):
     config: dict = {}
     cameras: dict[str, str] = {}
     inputs: dict[str, str] = {}
+    arms: dict[str, str] = {}
 
 
 class InstallRequest(BaseModel):
     path: str
+    #: 이미 있으면 덮어쓴다(업데이트) — 설정·실행 기록·인스턴스·venv 는 남는다
+    replace: bool = False
 
 
 class CommandRequest(BaseModel):
@@ -69,8 +73,9 @@ async def list_scopes():
 
 @router.get("/topics")
 async def list_sources():
-    """살아 있는 검출 이름과 토픽 — 입력 슬롯 선택기가 고르는 것들 (feature/plugins.md §7-3)."""
-    return registry.sources()
+    """살아 있는 검출 이름과 토픽 — 입력 슬롯 선택기가 고르는 것들 (feature/plugins.md §7-3).
+    `arms` 는 상태를 발행 중인 팔 — 팔 슬롯 선택기의 재료 (§7-5)."""
+    return {**registry.sources(), "arms": registry.live_arms()}
 
 
 @router.get("/topics/{topic}")
@@ -115,7 +120,7 @@ async def get_plugin(name: str):
 
 @router.post("/{name}/start")
 async def start_plugin(name: str, body: StartRequest):
-    return await registry.start(name, body.config, body.cameras, body.inputs)
+    return await registry.start(name, body.config, body.cameras, body.inputs, body.arms)
 
 
 @router.post("/{name}/stop")
@@ -151,26 +156,27 @@ async def remove_deps(name: str):
 @router.put("/{name}/config")
 async def save_config(name: str, body: ConfigRequest):
     registry.get(name)
-    registry.save_config(name, body.config, body.cameras, body.inputs)
+    registry.save_config(name, body.config, body.cameras, body.inputs, body.arms)
     return {"status": "ok"}
 
 
 @router.post("/install")
 async def install_plugin(body: InstallRequest):
-    """로컬 폴더에서 설치 (zip 업로드는 4단계). git URL 은 받지 않는다 (§3-2)."""
-    info = registry.install_from_path(Path(body.path))
+    """로컬 폴더에서 설치. 이미 있으면 409 — `replace: true` 면 업데이트. git URL 은 받지 않는다 (§3-2)."""
+    info = registry.install_from_path(Path(body.path), replace=body.replace)
     if info.manifest is None:
         raise HTTPException(400, info.error or "매니페스트 오류")
     return info.to_dict()
 
 
 @router.post("/install/zip")
-async def install_zip(request: Request):
-    """zip 업로드(raw body) 설치 — 화면의 파일 선택이 여기로 온다. git URL 은 받지 않는다 (§3-2)."""
+async def install_zip(request: Request, replace: bool = False):
+    """zip 업로드(raw body) 설치 — 화면의 파일 선택이 여기로 온다. `?replace=true` 면 업데이트.
+    git URL 은 받지 않는다 (§3-2)."""
     data = await request.body()
     if not data:
         raise HTTPException(400, "본문이 비어 있습니다")
-    info = registry.install_from_zip(data)
+    info = registry.install_from_zip(data, replace=replace)
     return info.to_dict()
 
 

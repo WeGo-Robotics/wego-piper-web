@@ -41,6 +41,8 @@ SCOPES: Final[dict[str, tuple[Rule, ...]]] = {
     # 평가 기록
     "eval.write": (("POST", "/api/eval/log"),),
     "eval.read": (("GET", "/api/eval/stats"),),
+    # 팔 — 말단 자세(관절은 플러그인이 shm 에서 직접 읽는다, feature/plugins.md §7-5). 움직이는 길은 없다
+    "robot.read": (("GET", "/api/robots/end-pose/"),),
     # 상태 조회
     "activity.read": (("GET", "/api/activity"),),
     "plugins.read": (("GET", "/api/plugins"), ("GET", "/api/plugins/")),

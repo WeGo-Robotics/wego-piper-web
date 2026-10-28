@@ -481,3 +481,87 @@ def test_env_knows_its_instance():
     assert (e.base_name, e.instance) == ("detector", "")
     e2 = Env.from_environ(Env(name="d:x", base_name="d", instance="x", dir=Path("."), runtime_dir=Path(".")).to_environ())
     assert e2.base_name == "d" and e2.instance == "x" and e2.name == "d:x"
+
+
+# ── 팔 상태 (읽기 전용, feature/plugins.md §7-5) ─────────────────────────────
+
+ARM_IFACE = "pytest-plugin-arm"
+
+
+@pytest.fixture
+def arm_writer():
+    """실제 `/dev/shm` 세그먼트 — 포맷은 `piper_shm.arm` 이 정본이라 가짜로 바꾸지 않는다."""
+    import contextlib
+
+    from piper_shm import arm as A
+
+    made = []
+
+    def make():
+        w = A.StateWriter(ARM_IFACE)
+        made.append(w)
+        return w
+
+    yield make
+    for w in made:
+        with contextlib.suppress(Exception):
+            w.close()
+    A.unlink(A.segment_name(ARM_IFACE, A.KIND_STATE))
+
+
+def test_env_carries_arm_slots(tmp_path):
+    e = _env(tmp_path)
+    e.arms = {"follower": "can0"}
+    assert Env.from_environ(e.to_environ()).arms == {"follower": "can0"}
+
+
+def test_arm_reads_normalized_state_and_follows_a_restarted_publisher(tmp_path, arm_writer):
+    from piper_shm import JOINTS
+
+    env = _env(tmp_path)
+    env.arms = {"follower": ARM_IFACE}
+    p = Plugin(env)
+    arm = p.arm("follower")
+    assert arm.iface == ARM_IFACE and p.arm(ARM_IFACE) is arm      # 슬롯 키든 인터페이스든 같은 리더
+    assert arm.read() is None and arm.connected is False            # 세그먼트가 없으면 예외가 아니라 None
+
+    w = arm_writer()
+    pose = {j: float(i * 10) for i, j in enumerate(JOINTS)}
+    w.publish(pose)
+    st = arm.read_new(timeout_s=0.5)
+    assert st is not None and st.joints == pose and st.gripper == pose["gripper"] and st.fresh(1.0)
+    assert arm.read_new(timeout_s=0.05) is None                     # 새 것이 없다
+
+    # 발행자 재시작 — 옛 mmap 의 마지막 자세가 아니라 새 세그먼트를 읽어야 한다
+    w.close()
+    w2 = arm_writer()
+    w2.publish({**pose, "gripper": 5.0})
+    st2 = arm.read()
+    assert st2 is not None and st2.gripper == 5.0
+
+
+def test_arm_end_pose_is_in_mm_and_degrees_through_robot_read(tmp_path):
+    p = Plugin(_env(tmp_path))
+    api = FakeApi({
+        ("GET", "/api/robots/end-pose/can0"): {
+            "pose": {"x": 250000, "y": -10000, "z": 600000, "rx": 180000, "ry": 0, "rz": 90000},
+            "box": {"x": [100.0, 500.0], "y": [-300.0, 300.0], "z": [50.0, 500.0]}},
+        ("GET", "/api/robots/end-pose/can1"): (403, {"detail": "범위 밖"}),
+    })
+    _wire(p, api)
+    pose = p.arm("can0").end_pose()
+    assert (pose["x"], pose["y"], pose["z"], pose["rz"]) == (250.0, -10.0, 600.0, 90.0)
+    assert pose["inside"] is False                                   # z 600mm 는 상자(50~500) 밖
+    assert p.arm("can1").end_pose() is None                          # 범위가 없으면 모른다
+
+
+def test_run_hands_arm_slots_to_the_entry(tmp_path):
+    d = tmp_path / "armecho"
+    d.mkdir()
+    (d / "plugin.yaml").write_text("name: armecho\narms:\n  - { key: follower }\n")
+    (d / "main.py").write_text("import os\nprint('ARMS', os.environ['PIPER_PLUGIN_ARMS'])\n")
+    r = _cli("run", str(d), "--arm", "follower=can0")
+    assert r.returncode == 0, r.stderr
+    assert '"follower": "can0"' in r.stdout
+    c = _cli("check", str(d))
+    assert c.returncode == 0 and "arms: ['follower']" in c.stdout

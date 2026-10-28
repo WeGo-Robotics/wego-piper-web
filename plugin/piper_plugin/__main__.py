@@ -2,7 +2,7 @@
 
     piper-plugin new  <폴더> [--template loop|mission|detector]   틀을 만든다
     piper-plugin check <폴더> [--api http://127.0.0.1:8000] [--json]   매니페스트·entry·(닿으면) 권한 범위
-    piper-plugin run  <폴더> [--config JSON] [--camera key=stream]... [--api BASE] [--token T] [--dry-run]
+    piper-plugin run  <폴더> [--config JSON] [--camera key=stream]... [--arm key=iface]... [--api BASE] [--token T] [--dry-run]
 
 `run` 은 게이트웨이가 켠 것과 **같은 진입점**으로 돈다 — 환경변수를 이 명령이 채울 뿐이다.
 "터미널에선 됐는데 화면에선 안 된다"가 구조로 줄어든다.
@@ -122,8 +122,12 @@ def cmd_run(a) -> int:
     for spec in a.camera or []:
         k, _, v = spec.partition("=")
         cameras[k] = v or k
+    arms = {}
+    for spec in a.arm or []:
+        k, _, v = spec.partition("=")
+        arms[k] = v or k
     env = Env(name=m.name, dir=folder, runtime_dir=Path(a.runtime or (folder / ".runtime")),
-              config=config, cameras=cameras, api_base=a.api or "", token=a.token or "",
+              config=config, cameras=cameras, arms=arms, api_base=a.api or "", token=a.token or "",
               heartbeat=m.resources.heartbeat and bool(a.api), redis_url=os.environ.get("PIPER_REDIS_URL"))
     os.environ.update(env.to_environ())
     if not a.api:
@@ -151,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("folder")
     r.add_argument("--config", help='설정 JSON (기본값 위에 덮는다) 예: \'{"conf":0.4}\'')
     r.add_argument("--camera", action="append", metavar="KEY=STREAM", help="카메라 슬롯 (반복 가능)")
+    r.add_argument("--arm", action="append", metavar="KEY=IFACE", help="팔 슬롯 — 상태를 읽을 CAN 인터페이스 (반복 가능)")
     r.add_argument("--api", help="게이트웨이 주소. 없으면 REST 호출 불가")
     r.add_argument("--token", help="게이트웨이 토큰 (로그인이 꺼져 있으면 없어도 된다)")
     r.add_argument("--runtime", help="런타임 디렉토리 (기본 <폴더>/.runtime)")

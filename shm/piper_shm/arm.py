@@ -238,6 +238,15 @@ class _Reader:
         self._last_seq = 0
         self.retries = 0        # 진단용 — 비정상적으로 높으면 라이터가 너무 빠르다
 
+    @property
+    def orphaned(self) -> bool:
+        """세그먼트 파일이 사라졌는가 — 라이터(robotd·simd)가 재시작하면 옛 mmap 은 계속 읽히고
+        **마지막 자세가 영원히** 나온다. 라이터 쪽 `orphaned` 와 같은 함정의 리더 쪽이다."""
+        try:
+            return os.fstat(self._fd).st_nlink == 0
+        except OSError:
+            return True
+
     def seq(self) -> int:
         return struct.unpack("<Q", self._buf[_SEQ_OFF:_SEQ_OFF + 8])[0]
 

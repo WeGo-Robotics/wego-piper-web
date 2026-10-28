@@ -66,6 +66,7 @@ class MissionRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
     type: str = "recycling"
     cameras: dict[str, str] = {}
+    arms: dict[str, str] = {}
 
 
 @router.post("/missions")
@@ -81,8 +82,8 @@ async def start_mission(body: MissionRequest):
     live = registry.live_mission()
     if live:
         raise HTTPException(409, f"미션이 이미 돌고 있습니다: {live}")
-    config = {k: v for k, v in body.model_dump().items() if k not in ("type", "cameras")}
-    status = await registry.start(body.type, config, body.cameras)
+    config = {k: v for k, v in body.model_dump().items() if k not in ("type", "cameras", "arms")}
+    status = await registry.start(body.type, config, body.cameras, arms=body.arms)
     logger.info("외부 미션 시작: %s (%s)", status.get("run_id"), body.type)
     return {"id": status.get("run_id"), "type": body.type, "plugin": body.type,
             "max_episodes": config.get("max_episodes")}
@@ -129,6 +130,7 @@ class PluginStartRequest(BaseModel):
     config: dict = {}
     cameras: dict[str, str] = {}
     inputs: dict[str, str] = {}
+    arms: dict[str, str] = {}
 
 
 @router.get("/plugins")
@@ -154,7 +156,7 @@ async def ext_plugin_start(name: str, body: PluginStartRequest):
     """플러그인 시작. 저장된 설정 위에 본문을 덮는다 — 비우면 화면에서 저장한 값으로 돈다."""
     saved = registry.saved_config(name)
     return await registry.start(name, {**saved["config"], **body.config}, {**saved["cameras"], **body.cameras},
-                                {**saved.get("inputs", {}), **body.inputs})
+                                {**saved.get("inputs", {}), **body.inputs}, {**saved.get("arms", {}), **body.arms})
 
 
 @router.post("/plugins/{name}/stop")

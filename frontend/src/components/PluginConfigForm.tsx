@@ -6,10 +6,10 @@ import type { SpecField } from '../hooks/usePolicyUi'
 import CameraStreamSelect from './CameraStreamPicker'
 import { useCameraStreams } from '../hooks/useCameraStreams'
 import type { Model, Dataset } from '../types/models'
-import type { PluginCameraSlot, PluginConfigField, PluginConfigValues, PluginInputSlot, PluginSources } from '../types/plugins'
+import type { PluginArmSlot, PluginCameraSlot, PluginConfigField, PluginConfigValues, PluginInputSlot, PluginSources } from '../types/plugins'
 
 /**
- * 매니페스트 `cameras` + `config` 를 폼으로 (feature/plugins.md §4, §8-1).
+ * 매니페스트 `cameras` + `arms` + `config` 를 폼으로 (feature/plugins.md §4, §8-1).
  *
  * 숫자·불은 정책 스펙과 같은 `SpecFields` 가 그린다 — 플러그인 폼이 자기 입력칸을 따로
  * 들 이유가 없다. 여기서 더하는 것은 `text`·`select` 와, **기존 선택기**로 채우는 셋
@@ -19,27 +19,31 @@ import type { PluginCameraSlot, PluginConfigField, PluginConfigValues, PluginInp
 type Props = {
   fields: PluginConfigField[]
   cameraSlots: PluginCameraSlot[]
+  armSlots?: PluginArmSlot[]
   inputSlots?: PluginInputSlot[]
   values: PluginConfigValues
   cameras: Record<string, string>
+  arms?: Record<string, string>
   inputs?: Record<string, string>
   onChange: (key: string, value: number | boolean | string) => void
   onCameraChange: (slot: string, stream: string) => void
+  onArmChange?: (slot: string, iface: string) => void
   onInputChange?: (slot: string, source: string) => void
   disabled?: boolean
 }
 
-export default function PluginConfigForm({ fields, cameraSlots, inputSlots = [], values, cameras, inputs = {}, onChange, onCameraChange, onInputChange, disabled }: Props) {
+export default function PluginConfigForm({ fields, cameraSlots, armSlots = [], inputSlots = [], values, cameras, arms = {}, inputs = {}, onChange, onCameraChange, onArmChange, onInputChange, disabled }: Props) {
   const t = useT()
   const { streams } = useCameraStreams()
   const [sources, setSources] = useState<PluginSources | null>(null)
+  const needSources = inputSlots.length + armSlots.length > 0
   useEffect(() => {
-    if (inputSlots.length === 0) return
+    if (!needSources) return
     const load = () => api.get<PluginSources>('/plugins/topics').then(setSources).catch(() => {})
     load()
     const id = setInterval(load, 3000)
     return () => clearInterval(id)
-  }, [inputSlots.length])
+  }, [needSources])
   const [models, setModels] = useState<Model[]>([])
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const needModels = fields.some((f) => f.kind === 'model')
@@ -75,6 +79,31 @@ export default function PluginConfigForm({ fields, cameraSlots, inputSlots = [],
                 streams={streams} takenBy={takenBy} className={input} placeholder={t('— 카메라 선택 —')} />
             </div>
           ))}
+        </div>
+      )}
+      {armSlots.length > 0 && (
+        <div className="grid grid-cols-2 gap-2">
+          {armSlots.map((slot) => {
+            const live = sources?.arms ?? {}
+            const cur = arms[slot.key] ?? ''
+            const names = Array.from(new Set([...Object.keys(live), ...(cur ? [cur] : [])])).sort()
+            return (
+              <div key={slot.key} className="space-y-0.5">
+                <label className="text-xs text-neutral-400">
+                  {slot.label || slot.key}{slot.required === false ? '' : ' *'}
+                  <span className="ml-1 text-neutral-600">{t('읽기 전용')}</span>
+                </label>
+                <select value={cur} onChange={(e) => onArmChange?.(slot.key, e.target.value)} className={input}>
+                  <option value="">{t('— 팔 선택 —')}</option>
+                  {names.map((n) => {
+                    const meta = live[n]
+                    const tags = meta ? [meta.role, meta.side].filter(Boolean).join(' · ') : t('지금 없음')
+                    return <option key={n} value={n}>{n}{tags ? ` · ${tags}` : ''}</option>
+                  })}
+                </select>
+              </div>
+            )
+          })}
         </div>
       )}
       {inputSlots.length > 0 && (

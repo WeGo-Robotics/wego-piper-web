@@ -537,3 +537,176 @@ def test_instance_inherits_the_default_instance_settings_and_shares_the_venv(reg
     assert reg.saved_config("vm:two")["config"]["conf"] == 0.9
     assert reg.venv_dir("vm:two") == reg.venv_dir("vm")
     assert reg.deps("vm:two")["python"] == "venv"
+
+
+# ── 업데이트 설치 (feature/plugins.md §3-2) ──────────────────────────────────
+
+
+def test_update_replaces_the_code_and_keeps_settings_runs_and_instances(reg, tmp_path):
+    """지우고 다시 깔면 `.runtime/` 이 통째로 사라졌다 — 업데이트는 폴더만 바꾼다."""
+    from fastapi import HTTPException
+
+    from app.core.config import settings
+
+    reg.install_from_path(_make(tmp_path / "v1", "upd"))
+    reg.save_config("upd", {"conf": 0.8}, {"watch": "top"})
+    reg.save_config("upd:cam2", {"conf": 0.3}, {"watch": "top"})
+    runs = settings.plugins_dir / ".runtime" / "upd" / "runs"
+    runs.mkdir(parents=True)
+    (runs / "run_1.jsonl").write_text("{}\n")
+
+    v2 = _make(tmp_path / "v2", "upd", body=GOOD.format(name="upd", gpu="false").replace("0.1.0", "0.2.0"))
+    (v2 / "main.py").write_text("print('v2')\n")
+    with pytest.raises(HTTPException) as e:
+        reg.install_from_path(v2)                          # 묻지 않고 덮지 않는다
+    assert e.value.status_code == 409
+    with pytest.raises(HTTPException) as e:
+        reg.install_from_path(settings.plugins_dir / "upd", replace=True)   # 자기 자신으로는 못 바꾼다
+    assert e.value.status_code == 400
+
+    info = reg.install_from_path(v2, replace=True)
+    assert info.updated == {"from": "0.1.0", "to": "0.2.0", "deps_reset": False}
+    assert info.to_dict()["updated"]["to"] == "0.2.0"
+    assert (settings.plugins_dir / "upd" / "main.py").read_text() == "print('v2')\n"
+    assert reg.saved_config("upd")["config"] == {"conf": 0.8}
+    assert reg.instances("upd") == ["upd", "upd:cam2"]
+    assert [r["id"] for r in reg.runs("upd")] == ["run_1"]
+    # 스테이징·옛 폴더(숨김 이름)가 남지 않는다
+    assert sorted(p.name for p in settings.plugins_dir.iterdir()) == [".runtime", "upd"]
+
+
+def test_update_is_refused_while_any_instance_runs(reg, tmp_path):
+    from fastapi import HTTPException
+
+    reg.install_from_path(_make(tmp_path / "v1", "upd"))
+    asyncio.run(reg.start("upd", {}, {"watch": "top"}))
+    with pytest.raises(HTTPException) as e:
+        reg.install_from_path(_make(tmp_path / "v2", "upd"), replace=True)
+    assert e.value.status_code == 409 and "정지" in e.value.detail
+
+
+VENV = """
+name: dep
+version: {ver}
+entry: main.py
+python: {py}
+"""
+
+
+def test_update_reinstalls_dependencies_only_when_they_changed(reg, tmp_path):
+    def src(tag, py="venv", req="numpy\n", ver="0.1.0"):
+        d = _make(tmp_path / tag, "dep", body=VENV.format(ver=ver, py=py))
+        (d / "requirements.txt").write_text(req)
+        return d
+
+    reg.install_from_path(src("a"))
+    venv = reg.venv_dir("dep")
+
+    def installed():
+        (venv / "bin").mkdir(parents=True, exist_ok=True)
+        (venv / "bin" / "python").write_text("")
+        (venv / ".deps-ok").touch()
+
+    installed()
+    # 코드만 바뀌었다 — 의존은 그대로 쓴다
+    assert reg.install_from_path(src("b", ver="0.1.1"), replace=True).updated["deps_reset"] is False
+    assert reg.deps("dep")["venv_ready"] is True
+    # requirements 가 바뀌었다 — 표지만 지운다(venv 위에 다시 깐다)
+    info = reg.install_from_path(src("c", req="numpy\nscipy\n"), replace=True)
+    assert info.updated["deps_reset"] is True and reg.deps("dep")["venv_ready"] is False
+    assert (venv / "bin" / "python").exists()
+    # python 모드가 바뀌었다 — 상속 여부가 다르므로 venv 를 통째로
+    installed()
+    info = reg.install_from_path(src("d", py="venv-isolated", req="numpy\nscipy\n"), replace=True)
+    assert info.updated["deps_reset"] is True and not venv.exists()
+
+
+def test_update_from_zip(reg):
+    from fastapi import HTTPException
+
+    manifest = GOOD.format(name="zipped", gpu="false")
+    reg.install_from_zip(_zip_bytes({"plugin.yaml": manifest, "main.py": "x"}))
+    with pytest.raises(HTTPException) as e:
+        reg.install_from_zip(_zip_bytes({"plugin.yaml": manifest, "main.py": "y"}))
+    assert e.value.status_code == 409
+    info = reg.install_from_zip(_zip_bytes({"plugin.yaml": manifest.replace("0.1.0", "0.3.0"), "main.py": "y"}),
+                                replace=True)
+    assert info.updated == {"from": "0.1.0", "to": "0.3.0", "deps_reset": False}
+    assert (info.dir / "main.py").read_text() == "y"
+
+
+# ── 팔 상태 슬롯 (읽기 전용, feature/plugins.md §7-5) ────────────────────────
+
+ARMED = """
+name: {name}
+entry: main.py
+arms:
+  - {{ key: follower, label: "팔로워" }}
+  - {{ key: leader, required: false }}
+"""
+
+
+def test_arm_slots_are_checked_saved_and_handed_to_the_process(reg, monkeypatch):
+    from fastapi import HTTPException
+
+    from app.core.config import settings
+
+    _make(settings.plugins_dir, "armed", body=ARMED.format(name="armed"))
+    # can1 은 명령 세그먼트만 있다 — 상태를 내는 팔이 아니다
+    monkeypatch.setattr("piper_shm.arm.list_segments", lambda: ["can0.state", "can0.action", "can1.action"])
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(reg.start("armed", {}, {}))
+    assert e.value.status_code == 400 and "팔로워" in e.value.detail
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(reg.start("armed", {}, {}, arms={"follower": "can1"}))
+    assert e.value.status_code == 409 and "can1" in e.value.detail
+
+    out = asyncio.run(reg.start("armed", {}, {}, arms={"follower": "can0"}))
+    assert json.loads(reg._fakes["piper-plugin-armed"].env["PIPER_PLUGIN_ARMS"]) == {"follower": "can0"}
+    assert out["arms"] == {"follower": "can0"}
+    assert reg.saved_config("armed")["arms"] == {"follower": "can0"}
+
+
+def test_plugins_without_arm_slots_never_read_arm_segments(reg, monkeypatch):
+    from app.core.config import settings
+
+    def boom():
+        raise AssertionError("팔 슬롯이 없으면 /dev/shm 을 볼 일이 없다")
+
+    monkeypatch.setattr("piper_shm.arm.list_segments", boom)
+    _make(settings.plugins_dir, "p1")
+    asyncio.run(reg.start("p1", {}, {"watch": "top"}))
+    assert json.loads(reg._fakes["piper-plugin-p1"].env["PIPER_PLUGIN_ARMS"]) == {}
+
+
+def test_live_arms_lists_state_segments_with_the_registered_role(reg, monkeypatch):
+    from types import SimpleNamespace
+
+    import piper_shm.arm as A
+
+    from app.services.robot_manager import robot_manager
+
+    class FakeReader:
+        def __init__(self, iface):
+            if iface == "can9":
+                raise A.ArmSegmentError("포맷이 다르다")
+            self.iface = iface
+
+        def age_s(self):
+            return 0.0123 if self.iface == "can0" else float("inf")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(A, "list_segments", lambda: ["can0.state", "can0.action", "can9.state", "sim0.state"])
+    monkeypatch.setattr(A, "StateReader", FakeReader)
+    monkeypatch.setattr(robot_manager, "arms", {"can0": SimpleNamespace(role="follower", side="left")})
+    assert reg.live_arms() == {
+        "can0": {"role": "follower", "side": "left", "age_s": 0.01},
+        "sim0": {"role": None, "side": None, "age_s": None},          # 아직 한 번도 안 썼다 — inf 는 JSON 이 못 싣는다
+    }
+
+
+def test_manifest_rejects_duplicate_arm_keys():
+    with pytest.raises(Exception, match="arms"):
+        P.Manifest(name="x", arms=[{"key": "a"}, {"key": "a"}])

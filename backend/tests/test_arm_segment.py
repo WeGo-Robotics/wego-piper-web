@@ -242,3 +242,15 @@ def test_segment_existence_is_the_lease():
     finally:
         w.close()
     assert A.segment_name(IFACE, A.KIND_STATE) not in A.list_segments(), "누수"
+
+
+def test_a_reader_knows_when_its_segment_was_replaced():
+    """robotd·simd 가 재시작하면 세그먼트가 지워졌다 다시 생긴다. 옛 mmap 은 계속 읽혀
+    **마지막 자세를 영원히** 낸다 — 리더도 그걸 알아야 다시 연다(플러그인 SDK `Arm`)."""
+    w = StateWriter(IFACE)
+    w.publish(POSE)
+    r = StateReader(IFACE)
+    assert r.orphaned is False
+    w.close()
+    assert r.orphaned is True
+    r.close()
