@@ -166,9 +166,9 @@ def test_the_screen_shows_the_mode_the_server_reports():
 
 
 def test_the_status_carries_the_mode():
-    from app.services.relay import relay_session
+    from app.services.relay import relays
 
-    assert "mode" in relay_session.status()
+    assert "mode" in relays.status()
 
 
 # ── 손목 특이점 — 짐벌락과 **다른 조건** ────────────────────────────────────

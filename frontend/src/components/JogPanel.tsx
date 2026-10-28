@@ -30,7 +30,9 @@ type Props = {
   side?: string | null
 }
 
-type Teleop = { running: boolean; iface: string | null; mode: string; started: number | null }
+/** 팔마다 누가 잡고 있나. 양팔 릴레이는 팔로워 둘을 함께 잡는다 (feature/bimanual.md §8) */
+type HeldArm = { iface: string; mode: string }
+type Teleop = { running: boolean; iface: string | null; mode: string; arms?: HeldArm[] }
 
 const SIDE_LABEL: Record<string, string> = { left: msg('왼쪽'), right: msg('오른쪽') }
 
@@ -70,17 +72,18 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
   // ⚠ **서버가 누구를 잡고 있는지 읽는다.** 이걸 안 보면 버튼이 거짓말한다:
   //   릴레이를 켜 둔 채 새로고침하면 로컬 state 가 비어서 [조그 시작] 이 눌리는
   //   것처럼 보이고, 누르면 409 만 돌아온다 — "조그가 안 된다"로 보고된 게 이 경우다.
-  const [heldBy, setHeldBy] = useState<Teleop | null>(null)
+  const [held, setHeld] = useState<HeldArm[]>([])
   useEffect(() => {
     let alive = true
     const read = () => {
       api.get<Teleop>('/robots/teleop/status')
         .then((t) => {
           if (!alive) return
-          setHeldBy(t.running ? t : null)
+          const arms = t.arms ?? (t.running && t.iface ? [{ iface: t.iface, mode: t.mode }] : [])
+          setHeld(arms)
           // 내 팔을 내가 잡고 있는 경우에만 로컬 state 를 켠다
-          setRunning(t.running && t.iface === iface && t.mode === 'joint')
-          setRelaying(t.running && t.iface === iface && t.mode === 'leader')
+          setRunning(arms.some((a) => a.iface === iface && a.mode === 'joint'))
+          setRelaying(arms.some((a) => a.iface === iface && a.mode === 'leader'))
         })
         .catch(() => {})
     }
@@ -101,7 +104,7 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
     if (!relaying) { setRelayBlocked(''); return }
     let alive = true
     const read = () => {
-      api.get<{ mode: string; blocked: string }>('/robots/relay/status')
+      api.get<{ mode: string; blocked: string }>(`/robots/relay/status?follower=${encodeURIComponent(iface)}`)
         .then((r) => {
           if (!alive) return
           setRelayBlocked(r.blocked || '')
@@ -168,7 +171,8 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
   //   사용자는 왜 막히는지 알 길이 없다.
   useEffect(() => () => {
     if (runningRef.current) api.post('/robots/jog/stop', {}).catch(() => {})
-    if (relayingRef.current) api.post('/robots/relay/stop', {}).catch(() => {})
+    // ⚠ 팔로워를 꼭 준다 — 비우면 양팔의 다른 쪽 릴레이까지 닫힌다
+    if (relayingRef.current) api.post('/robots/relay/stop', { follower: iface }).catch(() => {})
   }, [])
 
   const startRelay = async () => {
@@ -187,15 +191,17 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
   const stopRelay = async () => {
     setBusy(true)
     try {
-      await api.post('/robots/relay/stop', {})
+      await api.post('/robots/relay/stop', { follower: iface })
       setRelaying(false)
     } catch (e) { fail(e, t('릴레이를 멈추지 못했습니다')) }
     finally { setBusy(false) }
   }
 
-  const heldLabel = heldBy
-    ? t('{iface} {MODE_NAMES} 중', { iface: String(heldBy.iface), MODE_NAMES: t(MODE_NAMES[heldBy.mode] ?? heldBy.mode) })
-    : ''
+  // 다른 팔을 잡은 조작들 — 조그는 그 무엇과도 함께 못 연다(릴레이끼리만 함께 돈다)
+  const others = held.filter((a) => a.iface !== iface)
+  const heldLabel = others
+    .map((a) => t('{iface} {MODE_NAMES} 중', { iface: a.iface, MODE_NAMES: t(MODE_NAMES[a.mode] ?? a.mode) }))
+    .join(' · ')
 
   const send = (values: Record<string, number>) => {
     api.post('/robots/jog/goal', { iface, values }).catch((e) => {
@@ -206,7 +212,7 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
   }
 
   // 다른 조작이 팔을 잡고 있으면 **무엇이** 잡고 있는지 보여준다.
-  const blocked = heldBy && !(heldBy.iface === iface && (running || relaying))
+  const blocked = others.length > 0
 
   if (!commandable) {
     return (
@@ -351,7 +357,7 @@ export default function JogPanel({ iface, commandable, reason, leader, side }: P
 
       {blocked && (
         <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          {t('{heldLabel}입니다 — 조작은 한 번에 하나입니다. 먼저 그것을 멈추세요.', { heldLabel })}
+          {t('{heldLabel}입니다 — 조그는 다른 조작이 도는 동안 못 합니다. 먼저 그것을 멈추세요.', { heldLabel })}
         </p>
       )}
 

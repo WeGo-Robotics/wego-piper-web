@@ -68,6 +68,7 @@ def test_the_list_covers_every_mutating_post():
         "/parking/go", "/parking/save", "/jog/start", "/jog/stop",
         "/jog/goal", "/jog/home", "/presets/save", "/can/up", "/usb/recover",
         "/end-pose/jog", "/end-pose/home", "/relay/start", "/relay/stop",
+        "/relay/pairs/start",
         "/errors/clear", "/save-config", "/load-config",
         # 바닥 필터 설정 — 세션(팔 슬롯·역할·config)이 아니라 **robotd 가**
         # 자기 `safety.json` 에 따로 저장한다. 게이트웨이 세션에 실으면

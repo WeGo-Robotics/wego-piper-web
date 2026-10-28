@@ -106,10 +106,10 @@ class JogSession:
             try:
                 self._writer = open_action_writer(iface, DEADMAN_MS)
             except ArmBusyError as exc:
-                teleop_session.stop()
+                teleop_session.release(iface, "joint")
                 raise JogError(str(exc)) from exc
             except Exception as exc:
-                teleop_session.stop()
+                teleop_session.release(iface, "joint")
                 raise JogError(f"명령 경로를 열지 못했습니다: {exc}") from exc
 
             # 버스가 죽어 있으면 여기서 말한다 — 안 그러면 슬라이더는
@@ -136,7 +136,7 @@ class JogSession:
         close_action_writer(writer, iface)
         if iface:
             logger.info("조그 정지: %s", iface)
-        teleop_session.stop()
+        teleop_session.release(iface, "joint")
 
     # ── 목표 ──
 

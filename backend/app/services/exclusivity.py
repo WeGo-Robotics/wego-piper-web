@@ -207,9 +207,10 @@ async def _stop_teleop() -> None:
     `teleop_session` 만 닫으면 그것들이 남는다.
     """
     from app.services.jog import jog_session
-    from app.services.relay import relay_session
+    from app.services.relay import relays
 
-    for session in (jog_session, relay_session):
+    # 릴레이는 팔로워마다 하나다(양팔이면 둘) — `relays.stop()` 은 인자 없이 전부 닫는다
+    for session in (jog_session, relays):
         try:
             session.stop()
         except Exception as exc:
@@ -277,9 +278,15 @@ def blocked_reason(target: Activity) -> str | None:
     return " · ".join(LABELS[a] for a in blockers)
 
 
-def require_idle(target: Activity) -> None:
-    """막는 활동이 있으면 409. 메시지 형식이 여기 한 곳에만 있다."""
+def require_idle(target: Activity, *, allow_self: bool = False) -> None:
+    """막는 활동이 있으면 409. 메시지 형식이 여기 한 곳에만 있다.
+
+    `allow_self` — 같은 활동이 이미 도는 것은 막지 않는다. 팔마다 따로 잡는 리더
+    릴레이가 쓴다(양팔은 쌍이 둘이다). 같은 팔인지는 `teleop_session` 이 가린다.
+    """
     blockers = blocking(target)
+    if allow_self:
+        blockers = [a for a in blockers if a != target]
     if not blockers:
         return
     label = LABELS[target]
@@ -312,8 +319,9 @@ def _detail(target: Activity) -> str:
     st = teleop_session.to_dict()
     if not st.get("running"):
         return ""
-    what = _MODE_NAMES.get(st.get("mode", ""), st.get("mode") or "조작")
-    return f" — {st['iface']} {what} 중입니다. 먼저 멈추세요."
+    held = ", ".join(f"{a['iface']} {_MODE_NAMES.get(a['mode'], a['mode'] or '조작')}"
+                     for a in st["arms"])
+    return f" — {held} 중입니다. 먼저 멈추세요."
 
 
 def snapshot() -> dict:

@@ -37,9 +37,12 @@ export default function So101TeleopPanel({ arm, side, followers, onClose }: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
+  // 릴레이는 팔로워마다 하나다(양팔이면 둘) — 이 리더의 쌍만 본다
   const refresh = useCallback(() => {
-    api.get<RelayStatus>('/robots/relay/status').then(setSt).catch(() => {})
-  }, [])
+    api.get<RelayStatus & { pairs?: RelayStatus[] }>('/robots/relay/status')
+      .then((r) => setSt((r.pairs ?? [r]).find((p) => p.leader === arm) ?? null))
+      .catch(() => {})
+  }, [arm])
 
   useEffect(() => {
     refresh()
@@ -58,12 +61,16 @@ export default function So101TeleopPanel({ arm, side, followers, onClose }: {
   const running = !!st?.running && st.leader === arm
   const runningRef = useRef(false)
   runningRef.current = running
+  // ⚠ 정지·정합·해제는 **이 쌍의 팔로워를 준다** — 비우면 양팔의 다른 쪽까지 닫힌다
+  const mine = { follower: st?.follower ?? undefined }
+  const mineRef = useRef(mine)
+  mineRef.current = mine
 
   // ⚠ 화면을 떠나면 **반드시 끝낸다** — 조그 패널과 같은 규칙. 이 정리가 없어서
   //   [해제]만 누르고 다른 화면으로 간 세션이 한 시간 넘게 남아 수집·추론·
   //   게이트웨이 재시작을 "수동 조작 중"으로 막았다 (2026-09-09 실측).
   useEffect(() => () => {
-    if (runningRef.current) api.post('/robots/relay/stop', {}).catch(() => {})
+    if (runningRef.current) api.post('/robots/relay/stop', mineRef.current).catch(() => {})
   }, [])
 
   return (
@@ -116,19 +123,19 @@ export default function So101TeleopPanel({ arm, side, followers, onClose }: {
             </div>
             <div className="flex gap-2">
               {st.engaged ? (
-                <button onClick={() => call(() => api.post('/robots/relay/disengage', {}), t('해제'))}
+                <button onClick={() => call(() => api.post('/robots/relay/disengage', mine), t('해제'))}
                   disabled={busy}
                   className="flex-1 px-3 py-1.5 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-40">
                   {t('해제 (리더 옮기기)')}
                 </button>
               ) : (
-                <button onClick={() => call(() => api.post('/robots/relay/engage', {}), t('정합'))}
+                <button onClick={() => call(() => api.post('/robots/relay/engage', mine), t('정합'))}
                   disabled={busy}
                   className="flex-1 px-3 py-1.5 text-xs rounded bg-green-600 hover:bg-green-500 text-white disabled:opacity-40">
                   {t('정합')}
                 </button>
               )}
-              <button onClick={() => call(() => api.post('/robots/relay/stop', {}), t('정지'))}
+              <button onClick={() => call(() => api.post('/robots/relay/stop', mine), t('정지'))}
                 disabled={busy}
                 className="flex-1 px-3 py-1.5 text-xs rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-40">
                 {t('정지')}

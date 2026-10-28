@@ -143,7 +143,7 @@ def test_the_demo_writes_the_same_leader_the_teleop_window_does(demo):
     src = (__import__("pathlib").Path(__file__).resolve().parents[2]
            / "backend" / "app" / "services" / "sim_demo.py").read_text()
     assert "StateWriter(LEADER_NAME)" in src, "리더 세그먼트를 발행하지 않는다"
-    assert "relay_session.start(LEADER_NAME, FOLLOWER" in src, "릴레이를 못 켠다"
+    assert "relays.start(LEADER_NAME, FOLLOWER" in src, "릴레이를 못 켠다"
     # 수집 중엔 릴레이를 끈다 — 녹화 프로세스와 릴레이가 같은 팔로워 세그먼트를 못 쥔다
     router = (__import__("pathlib").Path(__file__).resolve().parents[2]
               / "backend" / "app" / "routers" / "sim_demo.py").read_text()

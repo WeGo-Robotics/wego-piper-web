@@ -381,7 +381,7 @@ class WebLeader:
         if ee_only(follower):
             mode = "ee"          # 시뮬엔 관절 모드가 없다 — 창이 무엇을 보내든
         from piper_shm import arm as shm_arm
-        from app.services.relay import RelayError, relay_session
+        from app.services.relay import RelayError, relays
         from app.services.robot_manager import _call
 
         from app.services.sim_demo import sim_demo
@@ -417,7 +417,7 @@ class WebLeader:
             self._thread.start()
         if relay:
             try:
-                relay_session.start(LEADER_NAME, follower, "joint", "piper", "piper")
+                relays.start(LEADER_NAME, follower, "joint", "piper", "piper")
             except RelayError as exc:
                 self.stop()
                 raise RuntimeError(str(exc))
@@ -449,20 +449,21 @@ class WebLeader:
 
     def release_follower(self) -> bool:
         """릴레이만 끝낸다 — 세그먼트는 계속 발행한다. 수집이 팔을 넘겨받을 때."""
-        from app.services.relay import relay_session
-        if relay_session.is_running and relay_session.status().get("leader") == LEADER_NAME:
-            relay_session.stop()
+        from app.services.relay import relays
+        mine = relays.by_leader(LEADER_NAME)
+        if mine is not None:
+            relays.stop(mine.follower)
             logger.info("웹 리더: 팔로워를 놓음 (발행은 계속) — 수집이 움직인다")
             return True
         return False
 
     def relaying(self) -> bool:
-        from app.services.relay import relay_session
-        return bool(relay_session.is_running and relay_session.status().get("leader") == LEADER_NAME
-                    and relay_session.holding)
+        from app.services.relay import relays
+        mine = relays.by_leader(LEADER_NAME)
+        return bool(mine is not None and mine.holding)
 
     def stop(self) -> None:
-        from app.services.relay import relay_session
+        from app.services.relay import relays
         with self._lock:
             writer, self._writer = self._writer, None
             reader, self._reader = self._reader, None
@@ -472,8 +473,10 @@ class WebLeader:
         if reader is not None:
             try: reader.close()
             except Exception: pass
-        if relay_session.is_running and relay_session.status().get("leader") == LEADER_NAME:
-            relay_session.stop()
+        # 내 쌍만 닫는다 — 다른 팔로워의 릴레이(양팔의 다른 쪽)는 그대로다
+        mine = relays.by_leader(LEADER_NAME)
+        if mine is not None:
+            relays.stop(mine.follower)
         if writer is not None:
             try:
                 writer.close()                  # 세그먼트를 지운다 — 남기면 낡은 리더가 된다
@@ -483,11 +486,11 @@ class WebLeader:
             logger.info("웹 리더 끝: %s", follower)
 
     def status(self) -> dict:
-        from app.services.relay import relay_session
+        from app.services.relay import relays
         integ = self.integ
         if not self.is_running or integ is None:
             return {"running": False}
-        rs = relay_session.status()
+        rs = relays.status(self.follower)
         mine = rs.get("leader") == LEADER_NAME
         return {"running": True, "follower": self.follower, "mode": integ.mode,
                 "publishing": True, "relaying": bool(mine and rs.get("holding")),

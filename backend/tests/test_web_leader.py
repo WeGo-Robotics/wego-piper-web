@@ -115,10 +115,12 @@ def test_start_publishes_the_anchor_then_relays_with_the_web_leader_name(monkeyp
     from app.services import relay
     class FakeRelay:
         is_running = False
-        def start(self, leader, follower, mode, la, fa): started.append((leader, follower, mode, la, fa)); self.is_running = True
-        def stop(self): stopped.append("relay"); self.is_running = False
-        def status(self): return {"leader": svc.LEADER_NAME, "running": self.is_running, "holding": True, "sent": 3, "stale": False, "blocked": ""}
-    monkeypatch.setattr(relay, "relay_session", FakeRelay())
+        follower = None
+        def start(self, leader, follower, mode, la, fa): started.append((leader, follower, mode, la, fa)); self.is_running = True; self.follower = follower
+        def stop(self, follower=None): stopped.append("relay"); self.is_running = False
+        def by_leader(self, leader): return self if self.is_running and leader == svc.LEADER_NAME else None
+        def status(self, follower=None): return {"leader": svc.LEADER_NAME, "running": self.is_running, "holding": True, "sent": 3, "stale": False, "blocked": ""}
+    monkeypatch.setattr(relay, "relays", FakeRelay())
     wl = svc.WebLeader()
     st = wl.start("sim_follower1")
     try:
@@ -172,10 +174,12 @@ def test_recording_takes_the_follower_from_the_relay_and_the_leader_keeps_publis
     calls = []
     class FakeRelay:
         is_running = False; holding = False
-        def start(self, *a): calls.append("start"); self.is_running = self.holding = True
-        def stop(self): calls.append("stop"); self.is_running = self.holding = False
-        def status(self): return {"leader": svc.LEADER_NAME if self.is_running else None, "running": self.is_running, "holding": self.holding, "sent": 0, "stale": False, "blocked": ""}
-    monkeypatch.setattr(relay, "relay_session", FakeRelay())
+        follower = None
+        def start(self, *a): calls.append("start"); self.is_running = self.holding = True; self.follower = a[1]
+        def stop(self, follower=None): calls.append("stop"); self.is_running = self.holding = False
+        def by_leader(self, leader): return self if self.is_running and leader == svc.LEADER_NAME else None
+        def status(self, follower=None): return {"leader": svc.LEADER_NAME if self.is_running else None, "running": self.is_running, "holding": self.holding, "sent": 0, "stale": False, "blocked": ""}
+    monkeypatch.setattr(relay, "relays", FakeRelay())
     wl = svc.WebLeader()
     try:
         wl.start("can0")                                   # 실기: 속도 절반
@@ -578,11 +582,13 @@ def test_the_simulator_is_ee_only_and_the_backend_is_the_one_that_decides(monkey
     from app.services import relay
     class FakeRelay:
         is_running = False
-        def start(self, *a): self.is_running = True
-        def stop(self): self.is_running = False
-        def status(self): return {"leader": svc.LEADER_NAME, "running": self.is_running,
-                                  "holding": True, "sent": 0, "stale": False, "blocked": ""}
-    monkeypatch.setattr(relay, "relay_session", FakeRelay())
+        follower = None
+        def start(self, *a): self.is_running = True; self.follower = a[1]
+        def stop(self, follower=None): self.is_running = False
+        def by_leader(self, leader): return self if self.is_running and leader == svc.LEADER_NAME else None
+        def status(self, follower=None): return {"leader": svc.LEADER_NAME, "running": self.is_running,
+                                                 "holding": True, "sent": 0, "stale": False, "blocked": ""}
+    monkeypatch.setattr(relay, "relays", FakeRelay())
 
     wl = svc.WebLeader()
     wl.start("sim_follower1")            # 창이 mode 를 안 보내도 (서명 기본값은 "joint")

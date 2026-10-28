@@ -144,7 +144,7 @@ def test_estop_closes_whichever_session_runs():
     from app.services import exclusivity as ex
 
     src = inspect.getsource(ex._stop_teleop)
-    assert "jog_session" in src and "relay_session" in src
+    assert "jog_session" in src and "relays" in src
     assert "disable_torque" not in src, "게이트웨이가 토크를 끊으려 한다"
 
 

@@ -578,9 +578,10 @@ def test_a_failed_relay_start_leaves_no_session_open():
     assert "_unwind_start" in src
     start = src.split("def start", 1)[1].split("\n    def ", 1)[0]
     # teleop_session.start 이후 전 구간이 하나의 try 로 감싸여 실패 시 되감는다
-    assert start.count("_unwind_start(reader)") >= 2, "실패 경로가 되감지 않는다"
+    assert start.count("_unwind_start(reader, follower)") >= 2, "실패 경로가 되감지 않는다"
     unwind = src.split("def _unwind_start", 1)[1].split("\n    def ", 1)[0]
-    assert "teleop_session.stop()" in unwind
+    # 그 팔로워의 잠금만 놓는다 — 전부 놓으면 양팔의 다른 쪽 잠금까지 풀린다
+    assert "teleop_session.release(follower" in unwind
     assert "self._writer = self._reader = None" in unwind
 
 
@@ -922,26 +923,26 @@ def test_changing_the_mount_is_refused_while_that_leader_drives():
         def __init__(self, leader):
             self.leader = leader
 
-        def status(self):
-            return {"running": self.leader is not None, "leader": self.leader}
+        def by_leader(self, leader):
+            return self if leader == self.leader else None
 
-    old_client, old_relay = client_mod.so101_client, relay_mod.relay_session
+    old_client, old_relay = client_mod.so101_client, relay_mod.relays
     client_mod.so101_client = _Client()
     try:
         with TestClient(app) as c:
-            relay_mod.relay_session = _Relay("so101_leader1")
+            relay_mod.relays = _Relay("so101_leader1")
             r = c.post("/api/robots/serial/flipped",
                        json={"arm": "so101_leader1", "flipped": True})
             assert r.status_code == 409 and "릴레이" in r.json()["detail"]
             assert "정지" in r.json()["detail"], "무엇을 하라는 말이 없다"
             assert not calls, "거절했는데 데몬에 썼다"
             # 다른 팔로 도는 중이면 이 팔의 거치는 바꿔도 안전하다
-            relay_mod.relay_session = _Relay("so101_leader2")
+            relay_mod.relays = _Relay("so101_leader2")
             assert c.post("/api/robots/serial/flipped",
                           json={"arm": "so101_leader1", "flipped": True}).status_code == 200
             assert calls == [("so101_leader1", True)]
     finally:
-        client_mod.so101_client, relay_mod.relay_session = old_client, old_relay
+        client_mod.so101_client, relay_mod.relays = old_client, old_relay
 
 
 def test_the_relay_pins_the_mount_at_start_and_says_so():

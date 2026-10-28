@@ -996,14 +996,13 @@ async def serial_set_flipped(body: SerialFlippedRequest):
     """
     import asyncio
 
-    from app.services.relay import relay_session
+    from app.services.relay import relays
     from app.services.so101_client import so101_client
 
     # ⚠ **도는 중에는 거절한다.** 부호가 바뀌면 같은 리더 각도가 다른 방향의
     #   목표가 되어 팔로워가 그 순간 튄다 — 사람이 리더를 쥐고 있는 자리다.
     #   앵커는 오프셋만 흡수하지 방향은 못 흡수하므로 재정합으로도 못 덮는다.
-    st = relay_session.status()
-    if st.get("running") and st.get("leader") == body.arm:
+    if relays.by_leader(body.arm) is not None:
         raise HTTPException(
             409, f"{body.arm} 로 릴레이가 도는 중입니다 — 거치 방향을 바꾸면 "
                  "팔로워가 튑니다. 릴레이를 정지한 뒤 바꾸고 다시 정합하세요.")
@@ -1448,9 +1447,11 @@ async def relay_start(body: RelayStartRequest):
                안전 필터를 그대로 탄다.
     """
     from app.services.exclusivity import Activity, require_idle
-    from app.services.relay import RelayError, relay_session
+    from app.services.relay import RelayError, relays
 
-    require_idle(Activity.TELEOP)
+    # 다른 쌍의 릴레이는 막지 않는다 — 양팔은 팔로워마다 하나씩 돈다(feature/bimanual.md §8).
+    # 같은 팔·조그와의 충돌은 `teleop_session` 이 팔마다 가린다.
+    require_idle(Activity.TELEOP, allow_self=True)
     _require_commandable(body.follower)
     follower = _require_paired(body.follower)
 
@@ -1499,11 +1500,11 @@ async def relay_start(body: RelayStartRequest):
                 409, f"리더는 {_side_label(lside)}, 팔로워는 "
                      f"{_side_label(fside)}입니다 — 같은 쪽끼리 이으세요")
     try:
-        relay_session.start(body.leader, body.follower, body.mode,
-                            body.leader_arm, body.follower_arm, leader_flipped)
+        relays.start(body.leader, body.follower, body.mode,
+                     body.leader_arm, body.follower_arm, leader_flipped)
     except RelayError as e:
         raise HTTPException(409, str(e))
-    return {"status": "started", **relay_session.status()}
+    return {"status": "started", **relays.status(body.follower)}
 
 
 @router.get("/relay/arms")
@@ -1519,41 +1520,143 @@ async def relay_arms():
     return {"arms": ArmModel.available()}
 
 
+class RelayTarget(BaseModel):
+    """어느 쌍인가 — 팔로워로 가린다. 비우면: 정지는 **전부**, 정합·해제는 하나뿐일 때 그것."""
+    model_config = {"extra": "forbid"}
+
+    follower: str | None = None
+
+
 @router.post("/relay/engage")
-async def relay_engage():
+async def relay_engage(body: RelayTarget | None = None):
     """[정합] — 크로스 모델 릴레이의 클러치. 지금의 양쪽 자세를 앵커로 잡고
     전송을 켠다. 재정합 = 리더를 옮겨 작업 공간 이어 쓰기."""
-    from app.services.relay import RelayError, relay_session
+    from app.services.relay import RelayError, relays
 
+    follower = body.follower if body else None
     try:
-        relay_session.engage()
+        relays.engage(follower)
     except RelayError as exc:
         raise HTTPException(400, str(exc))
-    return relay_session.status()
+    return relays.status(follower)
 
 
 @router.post("/relay/disengage")
-async def relay_disengage():
+async def relay_disengage(body: RelayTarget | None = None):
     """[해제] — 전송만 멈춘다 (세션 유지). 팔로워는 robotd 데드맨이 세운다."""
-    from app.services.relay import relay_session
+    from app.services.relay import RelayError, relays
 
-    relay_session.disengage()
-    return relay_session.status()
+    follower = body.follower if body else None
+    try:
+        relays.disengage(follower)
+    except RelayError as exc:
+        raise HTTPException(400, str(exc))
+    return relays.status(follower)
 
 
 @router.post("/relay/stop")
-async def relay_stop():
-    from app.services.relay import relay_session
+async def relay_stop(body: RelayTarget | None = None):
+    """그 팔로워의 쌍을 끝낸다. 팔로워를 안 주면 **전부.**
 
-    relay_session.stop()
-    return {"status": "stopped"}
+    ⚠ 화면 하나가 자기 쌍만 닫을 때는 반드시 팔로워를 준다 — 비우면 양팔의 다른
+      쪽까지 닫힌다."""
+    from app.services.relay import relays
+
+    stopped = relays.stop(body.follower if body else None)
+    return {"status": "stopped", "stopped": stopped}
 
 
 @router.get("/relay/status")
-async def relay_status():
-    from app.services.relay import relay_session
+async def relay_status(follower: str | None = None):
+    """팔로워를 주면 그 쌍. 안 주면 `pairs` 에 전부 — 한 쌍뿐이면 위층이 그 쌍이다."""
+    from app.services.relay import relays
 
-    return relay_session.status()
+    return relays.status(follower)
+
+
+# ── 양팔 리더 조종 (feature/bimanual.md §8) ──
+
+
+def _side_pair(side: str) -> dict:
+    """그 쪽의 쌍 — **등록(좌/우·역할)이 정한다.** 화면은 쌍을 고르지 않는다.
+
+    고르게 하면 왼팔을 오른쪽 리더로 끄는 실수가 생긴다 — 단팔 릴레이가 같은 쪽
+    리더만 받는 것과 같은 규칙이다. 못 이으면 `problem` 에 사람이 할 일을 적는다.
+    """
+    from app.services.relay import relays
+
+    out = {"side": side, "leader": None, "follower": None, "problem": "", "relay": None}
+    here = [a for a in robot_manager.arms.values() if a.side == side]
+    try:
+        leader = _leader_on_side(side)
+    except HTTPException as exc:
+        out["problem"] = str(exc.detail)
+        return out
+    followers = [a for a in here if a.role == "follower"]
+    live = [a for a in followers if a.connected]
+    if leader is not None:
+        out["leader"] = leader.iface
+    if len(live) == 1:
+        out["follower"] = live[0].iface
+    if leader is None:
+        gone = next((a for a in here if a.role == "leader" and not a.connected), None)
+        out["problem"] = (f"{gone.iface} 연결 끊김 — [연결]하세요" if gone else
+                          f"{_side_label(side)}에 리더 팔이 없습니다 — 그 쪽 팔 하나를 [마스터] 로 설정하세요.")
+    elif len(live) > 1:
+        out["problem"] = (f"{_side_label(side)}에 팔로워가 {len(live)}개입니다 "
+                          f"({', '.join(a.iface for a in live)}) — 한 쪽에 하나여야 합니다.")
+    elif not live:
+        out["problem"] = (f"{followers[0].iface} 연결 끊김 — [연결]하세요" if followers else
+                          f"{_side_label(side)}에 팔로워가 없습니다 — 팔로워 팔 카드의 [좌/우?] 로 정하세요.")
+    if out["follower"]:
+        s = relays.get(out["follower"])
+        if s is not None and s.leader != out["leader"]:
+            # ⚠ 그 팔로워를 **다른 리더**가 끌고 있다(조종 창·SO-101). 도는 쌍으로 치면
+            #   [양팔 시작]이 그 쪽을 건너뛰어, 이 쪽 리더를 움직여도 팔로워가 안 따라온다.
+            out["problem"] = out["problem"] or (
+                f"{out['follower']} 는 지금 {s.leader} 가 끌고 있습니다 — 그 조종을 먼저 끝내세요")
+        elif s is not None:
+            out["relay"] = s.status()
+    return out
+
+
+@router.get("/relay/pairs")
+async def relay_pairs():
+    """양팔 조종 패널의 재료 — 쪽마다 쌍·준비 상태·도는 릴레이."""
+    return {"pairs": [_side_pair(side) for side in ("left", "right")]}
+
+
+class RelayPairsStartRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    mode: str = "joint"
+
+
+@router.post("/relay/pairs/start")
+async def relay_pairs_start(body: RelayPairsStartRequest):
+    """양팔을 **함께** 시작한다 — 한쪽이 실패하면 다른 쪽도 되감는다.
+
+    이미 도는 쪽은 그대로 두고 빠진 쪽만 연다(상세 창에서 한쪽을 먼저 켰을 수 있다).
+    """
+    import asyncio
+
+    from app.services.exclusivity import Activity, require_idle
+    from app.services.relay import RelayError, relays
+
+    require_idle(Activity.TELEOP, allow_self=True)
+    pairs = [_side_pair(side) for side in ("left", "right")]
+    bad = [p for p in pairs if p["problem"]]
+    if bad:
+        raise HTTPException(409, " / ".join(
+            f"{_side_label(p['side'])}: {p['problem']}" for p in bad))
+    todo = [(p["leader"], p["follower"]) for p in pairs if p["relay"] is None]
+    # ⚠ 스레드로 연다 — 쌍마다 토크 켜기·버스 확인이 robotd RPC 다. 이벤트 루프에서 두 번
+    #   기다리면 그동안 heartbeat 도 멈춘다.
+    try:
+        await asyncio.to_thread(relays.start_pairs, todo, body.mode)
+    except RelayError as exc:
+        raise HTTPException(409, str(exc))
+    return {"status": "started", "pairs": [_side_pair(side) for side in ("left", "right")]}
 
 
 # ── 설정 저장/로드 ──

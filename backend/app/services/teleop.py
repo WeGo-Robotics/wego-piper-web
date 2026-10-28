@@ -11,36 +11,69 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
+#: 여럿이 함께 잡을 수 있는 조작 — 리더 릴레이뿐이다. 양팔은 쌍이 둘이라 팔로워
+#: 둘을 함께 쥔다 (feature/bimanual.md §8). 조그·말단 조그는 화면 하나가 팔 하나를
+#: 미는 것이라 그대로 혼자다.
+STACKABLE = "leader"
+
 
 @dataclass
 class TeleopSession:
-    """지금 어느 팔을 조종 중인가. 한 번에 하나다."""
+    """지금 어느 팔을 조종 중인가. **팔마다 하나다** — 같은 팔을 둘이 밀면 안 된다.
 
-    iface: str | None = None
-    mode: str = ""            # leader | joint | endpoint
-    started: float = 0.0
-    _log: list = field(default_factory=list, repr=False)
+    팔이 달라도 함께 잡을 수 있는 것은 릴레이끼리뿐이다. 조그가 도는 중에 릴레이를,
+    릴레이가 도는 중에 조그를 열지 않는다 — 막는 규칙이 여기 한 곳에 있다.
+    """
+
+    #: iface → (mode, 시작 시각). mode: leader | joint | endpoint
+    held: dict[str, tuple[str, float]] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
     def is_running(self) -> bool:
-        return self.iface is not None
+        return bool(self.held)
 
     def start(self, iface: str, mode: str) -> tuple[bool, str]:
-        if self.is_running:
-            return False, f"이미 {self.iface} 를 조종 중입니다"
-        self.iface, self.mode, self.started = iface, mode, time.time()
+        with self._lock:
+            if iface in self.held:
+                return False, f"이미 {iface} 를 조종 중입니다"
+            others = list(self.held)
+            if others and (mode != STACKABLE
+                           or any(m != STACKABLE for m, _ in self.held.values())):
+                return False, f"이미 {', '.join(others)} 를 조종 중입니다"
+            self.held[iface] = (mode, time.time())
         logger.info("텔레오퍼레이션 시작: %s (%s)", iface, mode)
         return True, "OK"
 
+    def release(self, iface: str | None, mode: str) -> None:
+        """그 팔 하나를 놓는다 — **내가 잡은 것일 때만.** 다른 팔의 조작은 그대로다.
+
+        ⚠ 모드를 대조한다. 해제([해제]·정합 실패)로 이미 놓은 릴레이가 나중에 정지하면서
+          놓으면, 그 사이 같은 팔을 잡은 조그의 잠금을 대신 풀어 버린다.
+        """
+        if not iface:
+            return
+        with self._lock:
+            had = self.held.get(iface)
+            if had and had[0] == mode:
+                del self.held[iface]
+            else:
+                had = None
+        if had:
+            logger.info("텔레오퍼레이션 정지: %s", iface)
+
     def stop(self) -> None:
-        if self.iface:
-            logger.info("텔레오퍼레이션 정지: %s", self.iface)
-        self.iface, self.mode, self.started = None, "", 0.0
+        """**전부** 놓는다 — E-stop 경로."""
+        with self._lock:
+            ifaces, self.held = list(self.held), {}
+        for iface in ifaces:
+            logger.info("텔레오퍼레이션 정지: %s", iface)
 
     async def kill(self) -> None:
         """E-stop 경로. **토크는 robotd 가 끊는다** — 여기서는 세션만 닫는다.
@@ -51,8 +84,11 @@ class TeleopSession:
         self.stop()
 
     def to_dict(self) -> dict:
-        return {"running": self.is_running, "iface": self.iface, "mode": self.mode,
-                "started": self.started or None}
+        arms = [{"iface": i, "mode": m, "started": t} for i, (m, t) in list(self.held.items())]
+        # `iface`·`mode` 는 한 팔 시절의 모양 — 옛 화면이 읽는다
+        first = arms[0] if arms else {}
+        return {"running": bool(arms), "arms": arms, "iface": first.get("iface"),
+                "mode": first.get("mode", ""), "started": first.get("started")}
 
 
 teleop_session = TeleopSession()

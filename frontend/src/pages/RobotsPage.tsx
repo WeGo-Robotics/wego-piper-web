@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState, useRef, useCallback } from 'react'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import AlignmentPanel from '../components/AlignmentPanel'
+import BimanualRelayPanel from '../components/BimanualRelayPanel'
 import BusStatusPanel from '../components/BusStatusPanel'
 import DiagnosticsPanel from '../components/DiagnosticsPanel'
 import VersionPanel from '../components/VersionPanel'
@@ -522,6 +523,8 @@ export default function RobotsPage() {
   const [serialBusy, setSerialBusy] = useState<string | null>(null)
   const [calibArm, setCalibArm] = useState<string | null>(null)
   const [teleopArm, setTeleopArm] = useState<{ arm: string; side?: string } | null>(null)
+  // 양팔 리더 조종 패널 (feature/bimanual.md §8) — 팔 한 대의 상세 창이 아니라 로봇 카드에 둔다
+  const [bimanualOpen, setBimanualOpen] = useState(false)
   // 상세 창 (파킹/영점/조작 탭). 팔 하나에 고정된 모달 — 행 펼침은 긴 목록에서
   // 다른 행을 밀어낸다는 판단을 그대로 잇는다.
   const [detailIface, setDetailIface] = useState<string | null>(null)
@@ -1092,7 +1095,18 @@ export default function RobotsPage() {
       {/* 로봇 — 연결·등록된 팔 카드. 움직임이 감지되면 깜빡인다
           (마스터는 지령, 슬레이브는 피드백으로 — 백엔드가 가려서 잰다). */}
       <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
-        <h2 className="text-sm font-semibold">{t('로봇')}</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-sm font-semibold">{t('로봇')}</h2>
+          {robotArms.length >= 2 && (
+            <button onClick={() => setBimanualOpen((v) => !v)}
+              title={t('두 리더로 두 팔로워를 함께 조종 — 녹화 없이')}
+              className={`px-2.5 py-1 text-xs rounded text-white ${
+                bimanualOpen ? 'bg-purple-600' : 'bg-purple-800 hover:bg-purple-700'}`}>
+              {t('양팔 조종')}
+            </button>
+          )}
+        </div>
+        {bimanualOpen && <BimanualRelayPanel onClose={() => setBimanualOpen(false)} />}
         {robotArms.length + so101Arms.length === 0 ? (
           <p className="text-xs text-neutral-400">{t('등록된 로봇이 없습니다 — 포트에서 [연결]을 누르세요.')}</p>
         ) : (

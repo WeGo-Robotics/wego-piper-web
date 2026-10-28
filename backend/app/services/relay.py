@@ -1,5 +1,7 @@
 """리더 팔 → 팔로워 팔 릴레이 (feature/teleoperation.md §3-A).
 
+팔로워마다 하나다(`relays`) — 양팔은 쌍 둘이 함께 돈다(feature/bimanual.md §8).
+
 ```
 robotd ─shm state→ [리더]  ──읽기──  [RelaySession]  ──쓰기──  [팔로워] ←shm action─ robotd
                                                                     → filter_goal → JointCtrl
@@ -175,6 +177,14 @@ class RelaySession:
         return self._leader is not None
 
     @property
+    def leader(self) -> str | None:
+        return self._leader
+
+    @property
+    def follower(self) -> str | None:
+        return self._follower
+
+    @property
     def holding(self) -> bool:
         """팔로워의 **명령 경로를 쥐고 있는가.** 이게 True 인 동안만 수집·추론·재시작이
         막힌다. 해제하면 False 다 — 팔로워는 데드맨이 세우고, 짝은 기억한다."""
@@ -262,33 +272,36 @@ class RelaySession:
                     self._engage_locked()
                 self._spawn_loop_locked()
             except RelayError:
-                self._unwind_start(reader)
+                self._unwind_start(reader, follower)
                 raise
             except ArmBusyError as exc:
-                self._unwind_start(reader)
+                self._unwind_start(reader, follower)
                 raise RelayError(str(exc)) from exc
             except Exception as exc:
-                self._unwind_start(reader)
+                self._unwind_start(reader, follower)
                 raise RelayError(f"릴레이를 시작하지 못했습니다: {exc}") from exc
             logger.info("릴레이 시작: %s → %s (%s 모드, leader_arm=%s)",
                         leader, follower, mode, leader_arm)
 
-    def _unwind_start(self, reader) -> None:
+    def _unwind_start(self, reader, follower: str) -> None:
         """실패한 start 를 **완전히** 되감는다 — 명령 세그먼트·리더·teleop
-        세션 전부. 하나라도 남으면 다음 시작이 "수동 조작 실행 중"으로 막힌다."""
+        세션 전부. 하나라도 남으면 다음 시작이 "수동 조작 실행 중"으로 막힌다.
+
+        팔로워는 인자로 받는다 — `self._follower` 는 성공해야 채워지므로 여기서는
+        비어 있을 수 있고, 그걸 쓰면 세그먼트도 잠금도 엉뚱하게(또는 전부) 놓는다."""
         w = self._writer
         self._writer = self._reader = None
         self._leader = self._follower = None
         if w is not None:
             try:
-                close_action_writer(w, self._follower)
+                close_action_writer(w, follower)
             except Exception:
                 pass
         try:
             reader.close()
         except Exception:
             pass
-        teleop_session.stop()
+        teleop_session.release(follower, "leader")
 
     def _spawn_loop_locked(self) -> None:
         self._stop.clear()
@@ -305,7 +318,7 @@ class RelaySession:
         self._writer = None
         if writer is not None:
             close_action_writer(writer, follower)
-        teleop_session.stop()
+        teleop_session.release(follower, "leader")
 
     # ── 정합 (클러치) — 크로스 모델 전용 ──
 
@@ -418,7 +431,7 @@ class RelaySession:
                 pass
         if leader:
             logger.info("릴레이 정지: %s → %s (%d회 전송)", leader, follower, self._sent)
-        teleop_session.stop()
+        teleop_session.release(follower, "leader")
 
     async def kill(self) -> None:
         self.stop()
@@ -624,4 +637,121 @@ class RelaySession:
                 "follower_arm": getattr(self._follower_model, "name", None)}
 
 
-relay_session = RelaySession()
+
+class RelayPool:
+    """팔로워마다 릴레이 하나 (feature/bimanual.md §8). 양팔이면 쌍이 둘이다.
+
+    쌍 하나의 일은 `RelaySession` 이 그대로 한다 — 여기는 **누가 누구를 끄나**만 지킨다:
+    한 팔로워를 리더 둘이, 리더 하나로 팔로워 둘을 끌지 않는다. 같은 팔을 두 조작이
+    미는 것은 `teleop_session` 이 팔마다 막는다.
+    """
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, RelaySession] = {}
+        # 시작은 한 번에 하나 — 검사와 등록 사이에 다른 시작이 끼면 같은 리더로 둘을 연다.
+        # 상태 조회는 이 잠금을 안 탄다: 시작이 토크 켜기로 오래 걸려도 화면 폴링은 돈다.
+        self._start_lock = threading.Lock()
+
+    def sessions(self) -> list[RelaySession]:
+        return [s for s in list(self._sessions.values()) if s.is_running]
+
+    def get(self, follower: str) -> RelaySession | None:
+        s = self._sessions.get(follower)
+        return s if s is not None and s.is_running else None
+
+    def by_leader(self, leader: str) -> RelaySession | None:
+        return next((s for s in self.sessions() if s.leader == leader), None)
+
+    @property
+    def is_running(self) -> bool:
+        return bool(self.sessions())
+
+    @property
+    def holding(self) -> bool:
+        return any(s.holding for s in self.sessions())
+
+    def start(self, leader: str, follower: str, mode: str = "joint",
+              leader_arm: str = "piper", follower_arm: str = "piper",
+              leader_flipped: bool = False) -> None:
+        with self._start_lock:
+            cur = self.get(follower)
+            if cur is not None:
+                raise RelayError(f"이미 {cur.leader} → {follower} 릴레이 중입니다")
+            other = self.by_leader(leader)
+            if other is not None:
+                raise RelayError(f"{leader} 는 이미 {other.follower} 를 끌고 있습니다 "
+                                 "— 리더 하나로 팔로워 둘을 끌지 않습니다")
+            s = RelaySession()
+            s.start(leader, follower, mode, leader_arm, follower_arm, leader_flipped)
+            self._sessions[follower] = s
+
+    def start_pairs(self, pairs: list[tuple[str, str]], mode: str = "joint") -> None:
+        """여러 쌍을 **함께** 연다 — 하나라도 실패하면 이미 연 것을 되감는다.
+
+        ⚠ 한 팔만 따라 움직이는 상태를 남기지 않는다. 사람은 두 리더를 함께 쥐고
+        있어서, 한쪽 팔로워가 안 따라오는 것을 놓치기 쉽다.
+        """
+        started: list[str] = []
+        try:
+            for leader, follower in pairs:
+                self.start(leader, follower, mode)
+                started.append(follower)
+        except Exception:
+            for f in started:
+                self.stop(f)
+            raise
+
+    def stop(self, follower: str | None = None) -> list[str]:
+        """그 팔로워의 쌍을 끝낸다. 팔로워를 안 주면 **전부** — E-stop 경로."""
+        if follower is None:
+            targets = list(self._sessions.items())
+        else:
+            s = self._sessions.get(follower)
+            targets = [(follower, s)] if s is not None else []
+        stopped = []
+        for f, s in targets:
+            try:
+                s.stop()
+            except Exception as exc:
+                logger.error("릴레이 정지 실패 (%s): %s", f, exc)
+            if self._sessions.get(f) is s:
+                del self._sessions[f]
+            stopped.append(f)
+        return stopped
+
+    async def kill(self) -> None:
+        self.stop()
+
+    def _one(self, follower: str | None) -> RelaySession:
+        if follower is not None:
+            s = self.get(follower)
+            if s is None:
+                raise RelayError(f"{follower} 로 도는 릴레이가 없습니다")
+            return s
+        live = self.sessions()
+        if not live:
+            raise RelayError("릴레이가 돌고 있지 않습니다")
+        if len(live) > 1:
+            raise RelayError("릴레이가 여럿입니다 — 어느 팔로워인지 정하세요")
+        return live[0]
+
+    def engage(self, follower: str | None = None) -> None:
+        self._one(follower).engage()
+
+    def disengage(self, follower: str | None = None) -> None:
+        self._one(follower).disengage()
+
+    def status(self, follower: str | None = None) -> dict:
+        """팔로워를 주면 그 쌍. 안 주면 쌍 전부(`pairs`) — 한 쌍뿐일 때는 위층이 예전
+        모양 그대로다(단팔 화면들이 `leader`·`follower` 를 바로 읽는다)."""
+        if follower is not None:
+            return (self.get(follower) or RelaySession()).status()
+        live = self.sessions()
+        out = live[0].status() if len(live) == 1 else RelaySession().status()
+        if len(live) > 1:
+            out.update(running=True, holding=any(s.holding for s in live))
+        out["pairs"] = [s.status() for s in live]
+        return out
+
+
+relays = RelayPool()

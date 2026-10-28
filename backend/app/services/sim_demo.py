@@ -225,7 +225,7 @@ class SimDemo:
         from piper_shm import arm as shm_arm
 
         from app.services import sim_robot_client as sim
-        from app.services.relay import RelayError, relay_session
+        from app.services.relay import RelayError, relays
 
         writer = started_relay = None
         try:
@@ -235,7 +235,7 @@ class SimDemo:
             writer.publish(dict(PARKING))         # 릴레이가 시작 전에 한 번 읽는다
             if relay:
                 try:
-                    relay_session.start(LEADER_NAME, FOLLOWER, "joint", "piper", "piper")
+                    relays.start(LEADER_NAME, FOLLOWER, "joint", "piper", "piper")
                     started_relay = True
                 except RelayError as exc:
                     raise DemoError(str(exc))
@@ -254,7 +254,7 @@ class SimDemo:
         finally:
             if started_relay:
                 try:
-                    relay_session.stop()
+                    relays.stop(FOLLOWER)
                 except Exception as exc:
                     logger.warning("릴레이 정지 실패: %s", exc)
             if writer is not None:
