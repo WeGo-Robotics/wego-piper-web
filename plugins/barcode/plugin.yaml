@@ -1,0 +1,29 @@
+# 바코드·QR 읽기 — 카메라 프레임을 디코딩해 읽은 글자를 검출로 올린다.
+#   카메라(shm) ──▶ barcode ──(검출 piper:vision:barcode, label = 읽은 글자)──▶ 화면 · 다른 플러그인 · LLM
+# 디코더는 zxing-cpp(Apache-2.0)라 `python: venv` — 상세의 [의존 설치] 가 먼저다.
+name: barcode
+version: 0.1.0
+title: "바코드 읽기"
+description: "카메라에 비친 바코드·QR 을 읽어 읽은 글자를 검출로 올린다 (1D·QR·DataMatrix 등)"
+entry: main.py
+python: venv
+
+cameras:
+  - { key: watch, label: "카메라", required: true }
+
+config:
+  - { key: formats, kind: text, default: "", label: "읽을 형식 (쉼표, 비우면 전부 — 예: Code128, QRCode)" }
+  - { key: fps, kind: number, default: 5, min: 0.5, max: 30, step: 0.5, label: "읽기 주기(fps)" }
+  - { key: repeat_s, kind: number, default: 3, min: 0, max: 60, step: 0.5, label: "같은 코드를 다시 알리는 간격(초)" }
+  - { key: preview, kind: bool, default: true, label: "표시 프리뷰 발행" }
+
+permissions: []
+
+outputs:
+  detections: ["barcode"]
+  previews: ["det_barcode"]
+  state:
+    - { key: phase, label: "단계" }
+    - { key: last, label: "마지막 코드" }
+    - { key: reads, label: "읽은 횟수" }
+    - { key: scan_fps, label: "읽기 fps" }

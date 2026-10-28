@@ -92,3 +92,4 @@ curl -X POST localhost:8000/api/plugins/my-thing/start -H 'content-type: applica
 | `detector/` | 1층 | 카메라 여러 대를 한 모델로 훑는 검출기. 검출 페이지의 뒷단. 둘 이상은 인스턴스(`detector:cam2`) |
 | `ui-demo/` | 1층 | `ui: server` — 자기 FastAPI 서버(HTTP·WS)를 소켓에 띄워 게이트웨이 뒤로 프록시. 포트를 고르지 않는다 |
 | `size-grader/` | 1층 | `detector` 의 검출을 **입력 슬롯**으로 받아 크기 등급을 토픽 `grades` 로 — 플러그인 배선의 실례 |
+| `barcode/` | 1층 | 바코드·QR 을 읽어 검출 `barcode`(label = 읽은 글자)로. 디코더는 zxing-cpp — `python: venv` + `requirements.txt` 의 실례 |

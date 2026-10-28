@@ -404,7 +404,7 @@ def test_run_executes_the_entry_with_the_env(tmp_path):
     assert '"k": 7' in r.stdout and '"x": 1' in r.stdout and '"watch": "top"' in r.stdout
 
 
-@pytest.mark.parametrize("name", ["hello", "detect-and-start", "zone-guard"])
+@pytest.mark.parametrize("name", ["hello", "detect-and-start", "zone-guard", "barcode"])
 def test_bundled_examples_are_valid(name):
     from app.services.plugins import read_manifest
 

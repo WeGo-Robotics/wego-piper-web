@@ -93,6 +93,13 @@
   아직 코어·CPU 를 몰라 상한 없이 계산만 하고, 다음 폼에 남기지도 않는다
 - 새 API: `GET /api/training/loader-hint?dataset=&policy=&amp=`, `/api/training/status` 의 `loader`
 
+**번들 플러그인 `barcode` — 카메라로 바코드·QR 을 읽는다** ([plugins/barcode/](plugins/barcode/))
+- 카메라 슬롯 하나(`watch`)의 프레임을 디코딩해 검출 `barcode` 로 올린다 — 코드 하나가 물체 하나, `label` 이 읽은 글자,
+  `format` 이 형식. 다른 플러그인은 `self.detections("barcode")`, LLM 은 `text` 로 읽는다. 프리뷰 `det_barcode` 에 테두리와 글자
+- 디코더는 **zxing-cpp**(Apache-2.0) — 1D(Code128·EAN·UPC·Code39·ITF …)와 2D(QR·DataMatrix·PDF417·Aztec). 시험 이미지 다섯 장에서
+  OpenCV 내장 디코더는 QR 하나만 읽었다. `python: venv` 라 처음 켜기 전에 상세의 **[의존 설치]**(휠 1.1MB, 인터넷 필요)
+- 설정: 읽을 형식(비우면 전부), 읽기 주기, 같은 코드를 다시 알리는 간격(기본 3초 — 로그·상태 `last`·`reads`), 프리뷰. 팔·권한·GPU 없음
+
 **고친 것**
 - 학습 지표에서 "GPU 연산 병목 → AMP·Batch 가 효과적" 을 뺐다 — LeRobot 은
   배치 대기(`data_s`)와 갱신(`updt_s`)을 차례로 재므로 그쪽은 GPU 가 쉬지 않는 정상 상태일 뿐, AMP·Batch 가 듣는지는 이 숫자로 모른다
