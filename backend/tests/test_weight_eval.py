@@ -184,3 +184,44 @@ def test_frames_refuses_too_many_and_path_tricks(store, monkeypatch):
     for bad in ("../x", ".hidden"):
         with pytest.raises(LookupError):
             WE.frame_png("abc", bad, "top")
+
+
+# ── 카메라 이름 — 학습 때 rename_map 을 쓴 체크포인트 ─────────────────────────
+
+def _offline_eval():
+    import importlib
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "wrapper"))
+    try:
+        import offline_eval
+        return importlib.reload(offline_eval)
+    finally:
+        sys.path.pop(0)
+
+
+def test_cameras_are_taken_by_their_dataset_names(tmp_path):
+    """**회귀** — smolvla_base 에서 이어 학습한 모델은 `camera1`·`camera2` 로 학습됐다.
+
+    정책의 입력 이름으로 데이터셋을 찾아 `KeyError: 'observation.images.camera1'` 로 죽었다(2026-10-28).
+    데이터셋 이름 그대로 넘기면 체크포인트 전처리기의 rename 단계가 바꾼다. base 의 빈 자리(`camera3`)와
+    정책이 안 받는 카메라는 고르지 않는다.
+    """
+    from types import SimpleNamespace
+
+    (tmp_path / "policy_preprocessor.json").write_text(json.dumps({"steps": [
+        {"registry_name": "rename_observations_processor", "config": {"rename_map": {
+            "observation.images.top": "observation.images.camera1",
+            "observation.images.hand": "observation.images.camera2"}}},
+        {"registry_name": "to_batch_processor", "config": {}}]}))
+    policy = SimpleNamespace(config=SimpleNamespace(input_features={
+        "observation.state": 0, "observation.images.camera1": 0,
+        "observation.images.camera2": 0, "observation.images.camera3": 0}))
+    cams = ["observation.images.top", "observation.images.hand", "observation.images.side"]
+    W = _offline_eval()
+    assert W.image_keys_for(policy, str(tmp_path), cams) == cams[:2]
+
+    # rename 없이 학습한 것은 이름이 그대로 맞는다
+    plain = SimpleNamespace(config=SimpleNamespace(input_features={"observation.images.top": 0}))
+    assert W.image_keys_for(plain, str(tmp_path / "none"), cams) == ["observation.images.top"]

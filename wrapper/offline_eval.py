@@ -81,6 +81,23 @@ def load_policy(checkpoint: str, device: str):
     return ptype, policy, pre, post
 
 
+def image_keys_for(policy, checkpoint: str, camera_keys) -> list[str]:
+    """정책이 받는 카메라를 **데이터셋 이름으로** — 전처리기가 학습 때의 `rename_map` 으로 다시 바꾼다.
+
+    smolvla_base 에서 이어 학습하면 `top`·`hand` 가 `camera1`·`camera2` 로 바뀌어 학습된다. 정책의
+    입력 이름으로 데이터셋 항목을 찾으면 KeyError 로 죽었다 (2026-10-28).
+    """
+    rename = {}
+    pre_json = Path(checkpoint) / "policy_preprocessor.json"
+    if pre_json.is_file():
+        for step in json.loads(pre_json.read_text()).get("steps", []):
+            if step.get("registry_name") == "rename_observations_processor":
+                rename = step.get("config", {}).get("rename_map") or {}
+                break
+    wanted = set(policy.config.input_features)
+    return [k for k in camera_keys if rename.get(k, k) in wanted]
+
+
 def predict(policy, pre, post, item: dict, image_keys: list[str], device: str) -> np.ndarray:
     """데이터셋 항목 하나 → 후처리까지 마친 청크 (chunk, action_dim), 데이터셋 단위."""
     import torch
@@ -111,7 +128,7 @@ def run_episodes(args, out: Path) -> None:
 
     ptype, policy, pre, post = load_policy(args.checkpoint, args.device)
     ds = open_dataset(args.repo_id, args.root, args.episodes or None)
-    image_keys = [k for k in policy.config.input_features if k.startswith("observation.images.")]
+    image_keys = image_keys_for(policy, args.checkpoint, ds.meta.camera_keys)
 
     cols = ds.hf_dataset.select_columns(["episode_index", "frame_index", "action"]).with_format("numpy")
     ep_idx = np.asarray(cols["episode_index"]).astype(int)
@@ -174,7 +191,7 @@ def run_reaction(args, out: Path) -> None:
 
     ptype, policy, pre, post = load_policy(args.checkpoint, args.device)
     ds = open_dataset(args.repo_id, args.root, [args.episode])
-    image_keys = [k for k in policy.config.input_features if k.startswith("observation.images.")]
+    image_keys = image_keys_for(policy, args.checkpoint, ds.meta.camera_keys)
 
     cols = ds.hf_dataset.select_columns(["episode_index", "frame_index"]).with_format("numpy")
     hit = np.flatnonzero((np.asarray(cols["episode_index"]) == args.episode)
