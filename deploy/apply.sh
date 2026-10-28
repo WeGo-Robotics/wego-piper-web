@@ -40,6 +40,28 @@ DATA="${PIPER_DATA_ROOT:-/srv/piper-data}"
 say "0. 호스트 전제"
 NEED_SUDO=()
 NEED_APT=()
+# 명령을 실행한 **뒤에** 할 것 — "" · relogin · reboot. 둘 다면 재부팅이 다시 로그인을 덮는다.
+THEN=""
+REBOOT_WHY=()
+relogin_after() { [ "$THEN" = reboot ] || THEN=relogin; }
+reboot_for() {   # 이유가 같으면 한 번만 적는다
+  THEN=reboot
+  local w; for w in ${REBOOT_WHY[@]+"${REBOOT_WHY[@]}"}; do [ "$w" = "$1" ] && return 0; done
+  REBOOT_WHY+=("$1")
+}
+
+# ⚠ **그룹은 세 군데에 따로 있다.** `usermod` 는 /etc/group 만 고치고, 이미 떠 있는
+#   프로세스는 옛 그룹 그대로다 — 이 셸도, 데몬을 띄우는 사용자 systemd 도. 사용자
+#   systemd 는 linger 면 로그아웃해도 살아 있어서 **다시 로그인해도 옛 그룹으로 남고**,
+#   데스크톱 터미널도 그 아래서 뜬다. 그래서 "넣었는데 아직 안 들어왔다" 의 처방은 재부팅이다.
+in_db()      { id -nG "$USER" | tr ' ' '\n' | grep -qx "$1"; }
+in_session() { id -nG | tr ' ' '\n' | grep -qx "$1"; }
+USER_MGR="$(systemctl show "user@$(id -u).service" -p MainPID --value 2>/dev/null || true)"
+in_manager() {   # 모르면(사용자 systemd 가 없으면) 통과로 친다
+  local gid; gid="$(getent group "$1" | cut -d: -f3)"
+  [ -n "$USER_MGR" ] && [ "$USER_MGR" != 0 ] && [ -r "/proc/$USER_MGR/status" ] || return 0
+  awk -v g="$gid" '/^Groups:/ { for (i = 2; i <= NF; i++) if ($i == g) f = 1 } END { exit !f }' "/proc/$USER_MGR/status"
+}
 
 # ⚠ **가장 큰 전제가 안 걸리고 있었다.** docker 가 없어도 이 절을 통과해 버려서
 #   한참 뒤 `docker load` 가 `command not found` 로 깨졌다 — "전제를 찍어 주고
@@ -57,9 +79,12 @@ if command -v docker >/dev/null; then
   elif ! systemctl is-active --quiet docker 2>/dev/null; then
     bad "docker 데몬이 안 돎"
     NEED_SUDO+=("systemctl enable --now docker")
+  elif in_db docker; then
+    bad "docker 그룹에 넣었는데 이 로그인에 아직 안 들어왔다"
+    reboot_for "넣은 그룹이 아직 반영 안 됐다"
   else
-    bad "docker 데몬 접근 권한 없음 — 그룹은 **다시 로그인해야** 반영된다"
-    NEED_SUDO+=("usermod -aG docker $USER")
+    bad "docker 데몬 접근 권한 없음 (docker 그룹이 아니다)"
+    NEED_SUDO+=("usermod -aG docker $USER"); relogin_after
   fi
 fi
 # 장치 그룹 — 데몬은 이 사용자로 돈다. `video` 가 없으면 `/dev/video*` 를 못 열어
@@ -67,9 +92,18 @@ fi
 # `/dev/ttyACM*` 와 slcan 어댑터를 못 연다. install.sh 와 같은 검사다 — 여기만
 # 빠져 있어서 소스 설치에서는 잡히던 것이 배포 호스트에서는 "장치 0개" 로만 보였다.
 for g in video dialout; do
-  if id -nG | tr ' ' '\n' | grep -qx "$g"; then ok "그룹 $g"; else
-    bad "그룹 $g 없음 — 그룹은 **다시 로그인해야** 반영된다"
-    NEED_SUDO+=("usermod -aG $g $USER")
+  if ! in_db "$g"; then
+    bad "그룹 $g 없음"
+    NEED_SUDO+=("usermod -aG $g $USER"); relogin_after
+  elif ! in_session "$g"; then
+    bad "그룹 $g 에 넣었는데 이 로그인에 아직 안 들어왔다"
+    reboot_for "넣은 그룹이 아직 반영 안 됐다"
+  elif ! in_manager "$g"; then
+    # 셸만 보고 ✓ 를 찍으면 데몬은 여전히 장치를 못 연다 — "카메라 0개" 로만 보인다
+    bad "그룹 $g 가 셸엔 있는데 데몬(사용자 systemd)엔 아직 없다 — linger 라 로그아웃으로는 안 바뀐다"
+    reboot_for "넣은 그룹이 아직 반영 안 됐다"
+  else
+    ok "그룹 $g"
   fi
 done
 # ⚠ **robotd 가 CAN 을 올리려면 비밀번호 없는 sudo 가 필요하다** — `ip link set can0 type can
@@ -125,11 +159,23 @@ MIN_CUDA=13.0   # 이미지가 실은 CUDA 런타임 (nvidia-cuda-runtime 13.0.9
 # "$1 >= $2" 인가
 vge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]; }
 HAVE_GPU=0   # 3c 절이 본다 — 없으면 compose 조합에서 GPU 예약을 뺀다
-if command -v nvidia-smi >/dev/null 2>&1; then
+NEED_TOOLKIT=0
+SECURE_BOOT=0
+# ⚠ **`nvidia-smi` 가 없다고 GPU 가 없는 게 아니다** — 드라이버를 안 깐 새 머신이 그렇다.
+#   예전엔 그걸 "GPU 없음" 으로 읽고 GPU 예약을 뺀 채 깔아 버려서, 학습·추론이 안 되는
+#   줄 모르고 설치가 끝났다(OMEN 16L, 2026-10-28). 카드는 PCI 에서 본다 — 드라이버 없이도 보인다.
+NV_CARDS=()
+for d in /sys/bus/pci/devices/*; do
+  [ "$(cat "$d/vendor" 2>/dev/null)" = 0x10de ] || continue
+  case "$(cat "$d/class" 2>/dev/null)" in 0x0300*|0x0302*) ;; *) continue ;; esac   # 화면·3D 만 (HDMI 오디오 제외)
+  n="$(lspci -s "$(basename "$d")" 2>/dev/null | sed 's/^[^ ]* [^:]*: //' || true)"
+  NV_CARDS+=("${n:-$(basename "$d")}")
+done
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
   HAVE_GPU=1
   command -v nvidia-ctk >/dev/null && ok "nvidia-container-toolkit" || {
     bad "nvidia-container-toolkit 없음 — compose 의 GPU 예약이 실패한다"
-    warn "  NVIDIA 저장소부터: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html"
+    NEED_TOOLKIT=1
   }
   # ⚠ **둘은 처방이 다르다.** 드라이버가 낮은 건 `apt install` 한 줄로 고치지만,
   #   컴퓨트 능력이 낮은 건 **GPU 를 바꿔야 한다.** 같은 ✗ 로 뭉뚱그리면 현장에서
@@ -154,8 +200,21 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   else
     bad "드라이버 CUDA $DRV_CUDA — 이 이미지는 $MIN_CUDA 이상이 필요하다"
     NEED_APT+=(nvidia-driver-580)
-    warn "  드라이버를 올리면 **재부팅해야** 반영된다"
+    reboot_for "NVIDIA 드라이버는 재부팅해야 올라온다"
   fi
+elif [ ${#NV_CARDS[@]} -gt 0 ]; then
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    # 깔았는데 안 올라왔다 — 깐 뒤 재부팅을 안 했거나, 커널·드라이버가 갈렸거나, Secure Boot 가 막았다
+    bad "NVIDIA 드라이버가 깔려 있는데 안 올라와 있다 (nvidia-smi 실패) — ${NV_CARDS[0]}"
+  else
+    bad "NVIDIA GPU 가 꽂혀 있는데 드라이버가 없다 — ${NV_CARDS[0]}"
+    # ⚠ **-open 이다.** RTX 50xx(Blackwell)는 오픈 커널 모듈로만 돌고, 이 이미지가 받는
+    #   GPU(Turing 7.5+)는 전부 오픈 모듈을 지원한다. 580 은 CUDA 13.0 의 하한이다.
+    NEED_APT+=(nvidia-driver-580-open)
+  fi
+  command -v nvidia-ctk >/dev/null || NEED_TOOLKIT=1
+  reboot_for "NVIDIA 드라이버는 재부팅해야 올라온다"
+  mokutil --sb-state 2>/dev/null | grep -q "SecureBoot enabled" && SECURE_BOOT=1
 else
   warn "NVIDIA GPU 가 안 보인다 — 학습·추론은 못 돈다 (수집·시뮬·조종은 된다). compose 에서 GPU 예약을 뺀다"
   # ⚠ 예약을 빼는 조각(docker-compose.nogpu.yml)은 `!reset` 을 쓴다 — compose 2.24+ 다.
@@ -272,13 +331,44 @@ else
 fi
 
 
-if [ ${#NEED_APT[@]} -gt 0 ] || [ ${#NEED_SUDO[@]} -gt 0 ]; then
+CMDS=0; { [ ${#NEED_APT[@]} -gt 0 ] || [ ${#NEED_SUDO[@]} -gt 0 ] || [ $NEED_TOOLKIT = 1 ]; } && CMDS=1
+if [ $CMDS = 1 ] || [ -n "$THEN" ]; then
   echo
-  echo "  아래를 먼저 실행하세요 (이 스크립트는 sudo 를 직접 쓰지 않습니다):"
-  # ⚠ 패키지는 **한 줄로 묶는다.** 여러 줄이면 사람이 하나 빠뜨리고, 빠뜨린 것은
-  #   늘 그 다음 절에서야 엉뚱한 에러로 드러난다.
-  [ ${#NEED_APT[@]} -gt 0 ] && echo "    sudo apt update && sudo apt install -y ${NEED_APT[*]}"
-  for c in ${NEED_SUDO[@]+"${NEED_SUDO[@]}"}; do echo "    sudo $c"; done
+  if [ $CMDS = 1 ]; then
+    echo "  아래를 먼저 실행하세요 (이 스크립트는 sudo 를 직접 쓰지 않습니다):"
+    # ⚠ 패키지는 **한 줄로 묶는다.** 여러 줄이면 사람이 하나 빠뜨리고, 빠뜨린 것은
+    #   늘 그 다음 절에서야 엉뚱한 에러로 드러난다.
+    [ ${#NEED_APT[@]} -gt 0 ] && echo "    sudo apt update && sudo apt install -y ${NEED_APT[*]}"
+    if [ $NEED_TOOLKIT = 1 ]; then
+      # Ubuntu 아카이브에 없어 위 한 줄에 못 넣는다 — 저장소를 붙이고, 깔고, 도커에 런타임을 등록한다
+      key=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+      echo "    # nvidia-container-toolkit (컨테이너가 GPU 를 쓰는 다리 — NVIDIA 저장소에서)"
+      echo "    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor --yes -o $key"
+      echo "    curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=$key] https://#' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null"
+      echo "    sudo apt update && sudo apt install -y nvidia-container-toolkit"
+      echo "    sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+    fi
+    for c in ${NEED_SUDO[@]+"${NEED_SUDO[@]}"}; do echo "    sudo $c"; done
+    [ -n "$THEN" ] && echo
+  fi
+  case "$THEN" in
+    relogin)
+      echo "  ⚠ 그룹은 **다시 로그인해야** 반영된다 — 위를 실행한 뒤 로그아웃했다가 로그인하고 ./piper-install.sh 를 다시 돌리세요."
+      echo "    이미 다시 로그인했는데도 그룹이 ✗ 면 **재부팅**하세요."
+      ;;
+    reboot)
+      why="$(printf ' · %s' "${REBOOT_WHY[@]}")"
+      if [ $CMDS = 1 ]; then
+        echo "  ⚠ 위를 실행한 뒤 **재부팅**하고 ./piper-install.sh 를 다시 돌리세요 (${why# · })"
+      else
+        echo "  ⚠ **재부팅**하고 ./piper-install.sh 를 다시 돌리세요 (${why# · })"
+      fi
+      [ $SECURE_BOOT = 1 ] && {
+        echo "    Secure Boot 가 켜져 있다 — 드라이버를 깔 때 MOK 비밀번호를 정하라고 하면 정해 두고, 재부팅 때 파란"
+        echo "    화면에서 Enroll MOK → 그 비밀번호. 건너뛰면 드라이버가 안 올라와 여기서 다시 ✗ 가 난다"
+      }
+      ;;
+  esac
   [ $CHECK = 0 ] && exit 1
 fi
 

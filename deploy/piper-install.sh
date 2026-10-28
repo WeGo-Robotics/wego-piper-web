@@ -37,15 +37,19 @@ say "0. 도커"
 if ! command -v docker >/dev/null; then
   bad "docker 가 없습니다"
   echo "     sudo apt update && sudo apt install -y docker.io"
-  echo "     sudo usermod -aG docker \$USER   # 그 뒤 다시 로그인"
+  echo "     sudo usermod -aG docker \$USER   # 그 뒤 다시 로그인 (그래도 안 되면 재부팅)"
   exit 1
 fi
 if ! docker info >/dev/null 2>&1; then
   bad "docker 데몬에 못 붙습니다"
-  if systemctl is-active --quiet docker 2>/dev/null; then
-    echo "     sudo usermod -aG docker $USER   # 그 뒤 **다시 로그인**해야 반영됩니다"
-  else
+  if ! systemctl is-active --quiet docker 2>/dev/null; then
     echo "     sudo systemctl enable --now docker"
+  elif id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
+    # usermod 는 했는데 이 로그인엔 아직 없다 — 다시 로그인해도 데스크톱 터미널은 살아 있는
+    # 사용자 systemd 의 옛 그룹을 물려받으므로 확실한 것은 재부팅이다 (apply.sh 0절과 같은 판정)
+    echo "     docker 그룹에 넣었는데 이 로그인엔 아직 안 들어왔습니다 — **재부팅**하고 다시 돌리세요"
+  else
+    echo "     sudo usermod -aG docker $USER   # 그 뒤 **다시 로그인**해야 반영됩니다 (그래도 이 줄이 나오면 재부팅)"
   fi
   exit 1
 fi
