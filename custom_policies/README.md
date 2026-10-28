@@ -7,6 +7,7 @@ LeRobot 정책을 **상속**해 우리가 고친 정책들. 상류(`lerobot.poli
 |---|---|---|---|
 | `act_s` | ACT-S | ACT + stage 헤드 | [feature/act-s.md](../feature/act-s.md) |
 | `smolvla_s` | SmolVLA-S | SmolVLA + stage 헤드 | [feature/smolvla-s.md](../feature/smolvla-s.md) |
+| `act_dinov3` | ACT-DINOv3 | ACT, 비전 백본만 DINOv3(timm) | [feature/act-dinov3.md](../feature/act-dinov3.md) |
 
 ```bash
 pip install -e custom_policies/              # 학습·추론 파이썬 양쪽 (install.sh 가 한다)

@@ -29,6 +29,8 @@ TORCH="${TORCH:-2.11.0}"
 TORCHVISION="${TORCHVISION:-0.26.0}"
 TORCHCODEC="${TORCHCODEC:-0.11.0}"
 TORCH_CUDA="${TORCH_CUDA:-cu126}"
+# ACT-DINOv3 백본. custom_policies 는 `--no-deps` 로 깔리므로 그 의존성을 여기서 같이 깐다.
+TIMM="${TIMM:-1.0.30}"
 
 export PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 export TORCH   # 아래 확인 스크립트가 버전을 단언할 때 쓴다
@@ -79,6 +81,7 @@ for raw in requires("lerobot") or []:
     print(str(r))
 PYEOF
 echo "transformers==$TRANSFORMERS" >> /tmp/piper-deps.txt
+echo "timm==$TIMM" >> /tmp/piper-deps.txt
 echo "== 의존성 $(wc -l < /tmp/piper-deps.txt)줄 (torch 셋 제외)"
 
 # ⚠ **제약으로 torch 를 못 내리게 막는다.** 139개의 이행 의존성 중 누군가 `torch<2.11`
@@ -118,7 +121,7 @@ fi
 
 # 확인 — 여기서 못 열면 학습도 못 연다. 조용히 넘어가지 않는다.
 python - <<'EOF'
-import lerobot, torch, torchvision, torchcodec
+import lerobot, timm, torch, torchvision, torchcodec
 
 # ⚠ **학습 진입점까지 열어 본다.** 네 개를 import 하는 것과 `lerobot-train` 이 도는 것은
 #   다르다 — 의존성 하나가 빠지면 여기서는 멀쩡하고, 기계를 빌린 뒤에 죽는다.

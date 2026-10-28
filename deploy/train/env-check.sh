@@ -127,7 +127,7 @@ EOF
             warn "torch 없음${err:+ ($err)}"
         fi
         [ -n "$J_LEROBOT" ] && ok "lerobot $J_LEROBOT" || warn "lerobot 없음"
-        [ "$J_CUSTOM" = true ] && ok "lerobot_policy_piper import 됨" || warn "lerobot_policy_piper 없음 — --policy.type=act_s / smolvla_s 는 못 쓴다"
+        [ "$J_CUSTOM" = true ] && ok "lerobot_policy_piper import 됨" || warn "lerobot_policy_piper 없음 — --policy.type=act_s / smolvla_s / act_dinov3 는 못 쓴다"
     fi
 else
     bad "python 없음"

@@ -25,7 +25,7 @@ COPY shm/ /tmp/pkg/shm/
 COPY plugin/ /tmp/pkg/plugin/
 COPY robot/ /tmp/pkg/robot/
 COPY phase/ /tmp/pkg/phase/
-# custom_policies: 배포명 `lerobot_policy_piper` (ACT-S·SmolVLA-S) — lerobot-train 이 접두사로 자동 import 한다 (feature/act-s.md §2)
+# custom_policies: 배포명 `lerobot_policy_piper` (ACT-S·SmolVLA-S·ACT-DINOv3) — lerobot-train 이 접두사로 자동 import 한다 (feature/act-s.md §2)
 COPY custom_policies/ /tmp/pkg/custom_policies/
 # so101: 데몬(so101d)은 호스트지만 **관절 매핑 표**(`piper_so101.relay_map`)는 게이트웨이의
 # 릴레이와, 이 컨테이너 안에서 도는 녹화 프로세스의 `so101_leader_shm` 드라이버가 읽는다.
@@ -44,8 +44,12 @@ COPY cam/ /tmp/pkg/cam/
 # ⚠ `--no-deps` 라 mujoco 는 안 딸려 온다. `scene_spec` 은 mujoco 없이 import 된다
 #   (굽는 함수 안에서만 늦게 import). 게이트웨이는 세계를 굽지 않는다 — 그건 simd 의 일이다.
 COPY sim/ /tmp/pkg/sim/
+# timm 은 custom_policies 의 의존성이다(ACT-DINOv3 백본) — `--no-deps` 라 따로 깐다. 순수 파이썬 3MB 이고
+# 의존성(torch·torchvision·huggingface_hub·safetensors)은 이미 있어 여기서도 `--no-deps` 다.
+# 핀은 학습 이미지(deploy/train/install-stack.sh)와 같아야 한다 — test_train_image.py 가 대조한다.
 RUN pip install --no-deps /tmp/pkg/bus /tmp/pkg/shm /tmp/pkg/plugin /tmp/pkg/robot /tmp/pkg/phase /tmp/pkg/custom_policies \
         /tmp/pkg/so101 /tmp/pkg/cam /tmp/pkg/sim \
+    && pip install --no-deps "timm==1.0.30" \
     && pip install redis \
     && rm -rf /tmp/pkg
 

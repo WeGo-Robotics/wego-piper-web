@@ -55,8 +55,9 @@ def _flatten(spec: PolicySpec) -> Policy:
 
 # ⚠ 정렬 순서가 화면 목록 순서다. YAML 파일명이 아니라 **원하는 표시 순서**로
 # 고정한다 — 파일명 알파벳순이면 SmolVLA 가 ACT 뒤로 가서 목록이 뒤집힌다.
-# 커스텀 정책(`-S`)은 바탕 정책 바로 뒤다.
-_ORDER = ["smolvla", "smolvla_s", "act", "act_s", "diffusion", "pi0", "pi05", "pi0_fast", "vqbet", "tdmpc"]
+# 커스텀 정책(`-S`·`-DINOv3`)은 바탕 정책 바로 뒤다.
+_ORDER = ["smolvla", "smolvla_s", "act", "act_s", "act_dinov3",
+          "diffusion", "pi0", "pi05", "pi0_fast", "vqbet", "tdmpc"]
 
 POLICIES: dict[str, Policy] = {
     name: _flatten(SPECS[name])

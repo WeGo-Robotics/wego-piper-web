@@ -195,11 +195,12 @@ def test_only_act_and_smolvla_are_supported_for_now():
 
     스키마·권장 베이스·백본 안전망이 이미 붙어 있으므로,
     되살릴 때는 `"supported": True` 한 줄이면 된다.
-    `act_s`·`smolvla_s` 는 각각 ACT·SmolVLA 의 상속 변형이라 같이 켜져 있다 (feature/act-s.md).
+    `act_s`·`act_dinov3`·`smolvla_s` 는 ACT·SmolVLA 의 상속 변형이라 같이 켜져 있다
+    (feature/act-s.md, feature/act-dinov3.md).
     """
     from app.core.policies import POLICIES
 
-    on = {"act", "act_s", "smolvla", "smolvla_s"}
+    on = {"act", "act_s", "act_dinov3", "smolvla", "smolvla_s"}
     assert set(policies.supported()) == on
     # 어느 목록에도 미지원 정책이 새지 않는다
     for names in (policies.trainable(), policies.inferable(),

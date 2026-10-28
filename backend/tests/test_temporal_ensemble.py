@@ -170,7 +170,7 @@ def test_an_ensemble_switch_left_on_for_act_does_not_follow_into_smolvla():
     """화면은 localStorage 의 파라미터를 정책과 무관하게 통째로 싣는다. ACT 에서 켠 앙상블이
     SmolVLA 에 실리면 스위치가 안 보이는 화면에서 매 스텝 추론이 돈다."""
     stale = {"temporal_ensemble": True, "temporal_ensemble_coeff": 0.05, "max_velocity": 100}
-    for policy in ("act", "act_s"):
+    for policy in ("act", "act_s", "act_dinov3"):
         o = _overrides(policy, stale)
         assert o["temporal_ensemble"] is True and o["temporal_ensemble_coeff"] == 0.05
     for policy in ("smolvla", "smolvla_s"):
@@ -206,9 +206,9 @@ def test_runtime_updates_drop_params_the_running_policy_does_not_use(monkeypatch
     assert any("temporal_ensemble" in w for w in r["warnings"])
 
 
-def test_the_switch_reaches_act_and_act_s_only():
+def test_the_switch_reaches_the_act_family_only():
     from app.core.inference_params import spec_for_frontend
 
     rows = {r["key"]: r for r in spec_for_frontend()}
-    assert rows["temporal_ensemble"]["policies"] == ["act", "act_s"]
+    assert rows["temporal_ensemble"]["policies"] == ["act", "act_dinov3", "act_s"]
     assert rows["temporal_ensemble"]["kind"] == "bool"

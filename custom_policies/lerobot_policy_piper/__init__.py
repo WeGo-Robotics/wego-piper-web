@@ -4,6 +4,7 @@
 |---|---|---|---|
 | `act_s` | ACT-S | ACT 상속 + stage 헤드 | feature/act-s.md |
 | `smolvla_s` | SmolVLA-S | SmolVLA 상속 + stage 헤드 | feature/smolvla-s.md |
+| `act_dinov3` | ACT-DINOv3 | ACT 상속, 비전 백본만 DINOv3 | feature/act-dinov3.md |
 
 상류 정책(`lerobot.policies.*`)은 한 줄도 건드리지 않는다. 전부 **상속**이고 LeRobot 의
 서드파티 정책 플러그인 규약으로 꽂힌다 (feature/act-s.md §1~2). 두 정책이 같이 쓰는
@@ -17,7 +18,8 @@ config 를 import 한다. 그것이 곧 `@PreTrainedConfig.register_subclass(...
 기본값만 읽을 수 있어야 한다.
 """
 
+from .act_dinov3.configuration_act_dinov3 import ActDinov3Config
 from .act_s.configuration_act_s import ActSConfig
 from .smolvla_s.configuration_smolvla_s import SmolVLASConfig
 
-__all__ = ["ActSConfig", "SmolVLASConfig"]
+__all__ = ["ActDinov3Config", "ActSConfig", "SmolVLASConfig"]

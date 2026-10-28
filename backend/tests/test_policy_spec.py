@@ -38,10 +38,12 @@ def test_registry_output_is_unchanged():
     이 값들은 이관 **직전에** 실행해 받아둔 것이다. 여기가 깨지면 스펙이 아니라
     이관이 틀린 것이다.
     """
-    # 커스텀 정책(-S)은 이관 뒤에 추가됐다 (feature/act-s.md) — 바탕 정책 바로 뒤, 프로브는 아직 없다
-    assert P.supported() == ["smolvla", "smolvla_s", "act", "act_s"]
-    assert P.trainable() == ["smolvla", "smolvla_s", "act", "act_s"]
-    assert P.inferable() == ["smolvla", "smolvla_s", "act", "act_s"]
+    # 커스텀 정책(-S·-DINOv3)은 이관 뒤에 추가됐다 (feature/act-s.md, act-dinov3.md) — 바탕 정책
+    # 바로 뒤, 프로브는 아직 없다
+    custom = ["smolvla", "smolvla_s", "act", "act_s", "act_dinov3"]
+    assert P.supported() == custom
+    assert P.trainable() == custom
+    assert P.inferable() == custom
     assert P.rtc_policies() == ["smolvla", "smolvla_s"]
     assert P.encoder_probe_policies() == {"smolvla", "act"}
     # 긴 이름이 먼저 — "pi0" 가 앞이면 "pi05_base" 가 pi0 로 잡힌다
@@ -316,8 +318,8 @@ def test_the_api_shape_did_not_change():
 
     rows = {r["key"]: r for r in spec_for_frontend()}
     assert rows["max_velocity"]["policies"] == [], "공용 파라미터에 정책이 붙었다"
-    # -S 는 바탕 정책 상속이라 같은 파라미터를 쓴다 (policies/*_s.yaml infer.extra_params)
-    assert rows["temporal_ensemble_coeff"]["policies"] == ["act", "act_s"]
+    # -S·-DINOv3 는 바탕 정책 상속이라 같은 파라미터를 쓴다 (policies/*.yaml infer.extra_params)
+    assert rows["temporal_ensemble_coeff"]["policies"] == ["act", "act_dinov3", "act_s"]
     assert set(rows["max_guidance_weight"]["policies"]) == {"smolvla", "smolvla_s", "pi0", "pi05"}
 
 

@@ -60,6 +60,10 @@ def test_the_stack_pins_match_the_inference_image():
     ):
         want = re.search(pat, base).group(1)
         assert _pin(stack, name) == want, f"{name}: 학습 {_pin(stack, name)} ≠ 추론 {want}"
+    # timm(ACT-DINOv3 백본)은 베이스가 아니라 백엔드 이미지의 custom_policies 층에 있다
+    want = re.search(r'timm==([0-9.]+)', (REPO / "backend" / "Dockerfile").read_text()).group(1)
+    assert _pin(stack, "TIMM") == want, f"TIMM: 학습 {_pin(stack, 'TIMM')} ≠ 추론 {want}"
+    assert '"timm==$TIMM"' in stack, "TIMM 핀을 적고 안 깐다"
     # ⚠ **절차가 2026-09-17 에 뒤집혔다.** 예전에는 lerobot 을 먼저 깔고(그때 PyPI 기본
     #   빌드 torch 가 딸려 온다) 그걸 지운 뒤 원하는 CUDA 빌드로 다시 깔았다 —
     #   **torch 를 두 번 받았다.** 설치본 기준 torch 1.7GB + nvidia 런타임 4.0GB 라,

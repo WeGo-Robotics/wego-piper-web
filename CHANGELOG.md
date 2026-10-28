@@ -71,6 +71,14 @@
   원격에서 데이터셋 길이를 못 읽어도 워밍스타트는 한다 — 빠지면 바닐라가 학습된다
 - SmolVLA-S 의 권장 시작점이 `lerobot/smolvla_base` 로 돌아왔다(체크포인트가 없으면 [Hub 에서 받기])
 
+**ACT-DINOv3 — 비전 백본을 DINOv3 로 바꾼 ACT** ([feature/act-dinov3.md](feature/act-dinov3.md))
+- 학습·추론 정책 목록에 **ACT-DINOv3**(`act_dinov3`)가 생겼다. ACT 의 ResNet18 자리에 DINOv3(기본 ViT-S/16)를 넣고
+  나머지는 ACT 그대로 — 토큰 수도 같아 바닐라 ACT 와 A/B 하면 다른 것이 백본뿐이다. 데이터셋은 ACT 와 같이 아무거나
+- 화면 필드: `dino_feature_stride`(기본 32 = ResNet18 과 같은 토큰 수), `freeze_backbone`(기본 꺼짐 — ACT 처럼 같이 학습)
+- 가중치는 승인 없이 받히는 timm 사본에서 온다(Meta 원본 `facebook/dinov3-*` 은 HF 승인제). 체크포인트를 열 때는
+  받지 않으므로 오프라인 추론 기계에서도 열린다
+- 새 의존성 **timm 1.0.30** — 백엔드·학습 이미지 둘 다 실린다. 개발 머신은 `pip install -e custom_policies/` 를 다시 돌린다
+
 ## v0.5.20 — 2026-10-26
 
 **카메라 해상도 — 학습 때와 다른 화면이면 추론이 막는다** ([feature/camera-resolution.md](feature/camera-resolution.md), 실기 2026-10-26)

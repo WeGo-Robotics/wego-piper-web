@@ -1,0 +1,45 @@
+# ACT-DINOv3 — ACT 의 비전 백본(ResNet18)만 DINOv3 로 바꾼 변형 (feature/act-dinov3.md).
+#
+# 나머지(트랜스포머·VAE·액션 헤드·전처리)는 ACT 그대로라 바닐라 ACT 와 A/B 하면 다른 것이
+# 백본뿐이다. 코드는 `custom_policies/` (배포명 `lerobot_policy_piper`), 가중치는 timm 의 DINOv3
+# 사본에서 받는다 — Meta 원본(facebook/dinov3-*)은 HF 승인제다.
+spec_version: 1
+type: act_dinov3
+label: ACT-DINOv3
+# 정책 고르는 창의 설명 — 스펙에서 확인되는 사실만 (policy_spec.PolicySpec.description)
+description: >-
+  ACT 의 비전 백본(ResNet18)만 DINOv3(ViT-S/16)로 바꾼 변형입니다. 트랜스포머·액션 헤드·추론 파라미터는 ACT 그대로라
+  ACT 와 비교하면 다른 것은 백본뿐입니다.
+supported: true
+
+capabilities:
+  train: true
+  infer: true
+  rtc: false
+  # 프로브는 ACT 의 ResNet 특징맵을 직접 다시 만든다(encoder_probe.py) — DINOv3 tap 은 아직 없다
+  encoder_probe: false
+  language: false
+
+runtime:
+  model: [lerobot_policy_piper.act_dinov3.modeling_act_dinov3, ActDinov3Policy]
+  config: [lerobot_policy_piper.act_dinov3.configuration_act_dinov3, ActDinov3Config]
+
+scratch_note: "비전 백본이 DINOv3(ViT-S/16) 사전학습 가중치로 시작합니다 — 첫 학습 때 timm 에서 약 90MB 를 받습니다"
+
+infer:
+  extra_params: [temporal_ensemble, temporal_ensemble_coeff, n_action_steps]
+
+train:
+  defaults: { batch_size: 8, steps: 100000, optimizer_type: adam }
+  fields:
+    - { key: chunk_size, kind: number, min: 1, max: 200, arch: true, from_lerobot: true, default: 100 }
+    - { key: n_action_steps, kind: number, min: 1, max: 200, arch: true, from_lerobot: true, default: 100 }
+    - { key: n_obs_steps, kind: number, min: 1, max: 10, arch: true, from_lerobot: true, default: 1 }
+    - { key: dim_model, kind: number, min: 64, max: 2048, step: 64, arch: true, from_lerobot: true, default: 512 }
+    - { key: use_vae, kind: bool, arch: true, from_lerobot: true, default: true }
+    # ── DINOv3 백본 ──
+    # 카메라 픽셀 몇 개(한 변)가 토큰 하나인가. 32 = ResNet18 ACT 와 같은 토큰 수(480×640 → 15×20).
+    # 16 이면 ViT 를 원본 크기로 돌려 토큰이 4배 — 인코더 주의 비용은 16배다.
+    - { key: dino_feature_stride, kind: number, min: 16, max: 64, step: 16, arch: true, from_lerobot: true, default: 32 }
+    # 끄면(기본) ACT 가 ResNet 을 다루듯 optimizer_lr_backbone 으로 같이 학습한다
+    - { key: freeze_backbone, kind: bool, from_lerobot: true, default: false }

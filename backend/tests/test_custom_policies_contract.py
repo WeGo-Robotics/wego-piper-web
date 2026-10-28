@@ -1,4 +1,5 @@
-"""커스텀 정책(ACT-S·SmolVLA-S) ↔ 저장소 계약 (feature/act-s.md, feature/smolvla-s.md).
+"""커스텀 정책(ACT-S·SmolVLA-S·ACT-DINOv3) ↔ 저장소 계약 (feature/act-s.md, feature/smolvla-s.md,
+feature/act-dinov3.md).
 
 정책 패키지는 `piper_phase` 를 import 하지 않는다 (학습 머신엔 phase 패키지가 없을 수 있다).
 대신 **여기서** 두 이름 목록을 대조한다 — 어긋나면 굽기가 쓴 subtask 이름과 정책의 클래스
@@ -16,7 +17,7 @@ from conftest import code_only
 from app.core import policies as P
 
 
-CUSTOM = ("act_s", "smolvla_s")
+CUSTOM = ("act_s", "smolvla_s", "act_dinov3")
 
 
 def test_default_stage_names_match_piper_phase():
@@ -45,6 +46,16 @@ def test_custom_policy_is_a_supported_sibling_of_its_base(name, base):
     assert P.guess_from_name(f"someone/{base}_so101_pick") == base
     # 같은 구운 데이터셋을 받는다
     assert P.SPECS[name].train.requires_features == ["subtask_index"]
+
+
+def test_act_dinov3_sits_with_act_and_takes_any_dataset():
+    """백본만 바뀐 ACT 다 — ACT 무리(ACT·ACT-S) 바로 뒤에 뜨고, 굽지 않은 데이터셋도 받는다."""
+    assert P.POLICIES["act_dinov3"]["supported"]
+    order = list(P.POLICIES)
+    assert order.index("act_dinov3") == order.index("act_s") + 1
+    assert P.SPECS["act_dinov3"].train.requires_features == []
+    assert P.guess_from_name("org/act_dinov3_cube") == "act_dinov3"
+    assert P.guess_from_name("org/act_so101_pick") == "act"
 
 
 def test_checkpoints_saved_under_the_old_name_are_still_act_s():

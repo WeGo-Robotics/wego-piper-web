@@ -8,10 +8,13 @@
 # 고쳐야 하고, 공용 stage 헤드·굽기 코드를 어느 배포에 둘지도 정해야 한다.
 name = "lerobot_policy_piper"
 version = "0.1.0"
-description = "Piper 커스텀 정책 — 행동 + 작업 단계(stage)를 함께 내는 ACT-S · SmolVLA-S (feature/act-s.md)"
+description = "Piper 커스텀 정책 — 행동 + 작업 단계(stage)를 함께 내는 ACT-S · SmolVLA-S (feature/act-s.md), DINOv3 백본의 ACT-DINOv3"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-dependencies = ["lerobot>=0.5.0"]
+# timm: ACT-DINOv3 의 백본(DINOv3 가중치·아키텍처). 1.0.20 부터 DINOv3 가 있다.
+# ⚠ 이미지 둘은 이 패키지를 `--no-deps` 로 깐다 — 거기엔 따로 핀이 있다
+#   (backend/Dockerfile · deploy/train/install-stack.sh, test_train_image.py 가 대조).
+dependencies = ["lerobot>=0.5.0", "timm>=1.0.20"]
 
 # 굽기(bake)는 parquet 만 만진다 — 정책 런타임에 pandas 를 끌고 오지 않는다.
 [project.optional-dependencies]
