@@ -378,6 +378,20 @@ class Bus:
         self.r.hdel(C.TRAIN_LOG_LINES, job_id)
         self.r.publish(C.CH_TRAIN_JOBS, json.dumps({"job_id": job_id, "deleted": True}))
 
+    # ── 로더 실측 프로파일 ──
+
+    def put_loader_profile(self, key: str, profile: dict) -> None:
+        self.r.hset(C.TRAIN_LOADER_PROFILES, key, json.dumps(profile))
+
+    def get_loader_profile(self, key: str) -> dict | None:
+        raw = self.r.hget(C.TRAIN_LOADER_PROFILES, key)
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+
     # ── job 로그 링버퍼 ──
 
     def append_job_log(self, job_id: str, line: str) -> int:

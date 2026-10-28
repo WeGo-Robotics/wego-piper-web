@@ -280,6 +280,10 @@ TRAIN_LOG_LINES: Final = _k("train", "log_lines")
 # 로컬 학습에도 job_id 를 준다. 원격과 다른 경로를 만들면 UI 가 두 벌이 된다.
 LOCAL_JOB_ID: Final = "local"
 
+# 해시: {"데이터셋|정책|amp": 로더 실측 JSON}. job 레코드는 다음 학습이 지우므로 따로 둔다 —
+# 학습 폼이 지난 실측으로 workers 권장값을 미리 채운다 (feature/train-loader-workers.md §4).
+TRAIN_LOADER_PROFILES: Final = _k("train", "loader_profiles")
+
 
 # ── 데몬 RPC (게이트웨이 → 하드웨어 데몬) ───────────────────────────────────
 #

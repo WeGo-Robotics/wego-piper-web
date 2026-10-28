@@ -24,7 +24,8 @@ export type TrainMetricsData = {
   loss?: number
   lr?: number
   grad_norm?: number
-  [key: string]: number | undefined
+  // 실제로는 `TrainManager.get_status()` 통째 — 문자열(output_dir·runner)과 로더 진단 객체도 온다
+  [key: string]: unknown
 }
 
 export type RecordStatusData = {

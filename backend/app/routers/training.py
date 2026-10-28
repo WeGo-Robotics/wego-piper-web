@@ -459,6 +459,26 @@ async def training_metrics():
     return train_manager.history.to_dict()
 
 
+@router.get("/loader-hint")
+async def loader_hint(dataset: str, policy: str, amp: str = "bf16"):
+    """같은 데이터셋·정책·AMP 로 이 기계에서 잰 지난 실측으로 workers 권장값을 낸다
+    (feature/train-loader-workers.md §4). 실측이 없으면 `profile: null`."""
+    import os
+
+    from app.services.training.loader import judge
+    from app.services.training.manager import loader_profile_key
+
+    prof = job_registry.get_loader_profile(loader_profile_key(dataset, policy, amp))
+    if not prof:
+        return {"profile": None}
+    try:
+        advice = judge(float(prof["update_s"]), float(prof["data_s"]), int(prof["num_workers"]),
+                       cores=os.cpu_count(), cpu_pct=prof.get("cpu_pct"), amp=amp)
+    except (KeyError, TypeError, ValueError):
+        return {"profile": None}
+    return {"profile": prof, "advice": advice}
+
+
 # ── job 레지스트리 (feature/cloud-training.md 3단계) ──
 #
 # 로컬 학습도 `job_id="local"` 로 여기 들어간다. 원격이 붙어도 UI 가 한 벌로 끝나고,

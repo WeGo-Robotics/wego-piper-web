@@ -14,7 +14,7 @@ import { usePolicies } from '../hooks/usePolicies'
 import LayoutToggle, { useLayout, twoColumns } from '../components/LayoutToggle'
 import PresetBar from '../components/PresetBar'
 import LogViewer from '../components/LogViewer'
-import TrainingMetrics, { type MetricsData, type HistoryData } from '../components/TrainingMetrics'
+import TrainingMetrics, { type MetricsData, type HistoryData, type LoaderAdvice } from '../components/TrainingMetrics'
 import WeightTableModal from '../components/WeightTableModal'
 import CheckpointLabel from '../components/CheckpointLabel'
 import PickerField from '../components/PickerField'
@@ -226,6 +226,18 @@ export default function TrainingPage() {
       .catch(() => {})
     api.get<{ jobs: JobRecord[] }>('/training/jobs').then((r) => setJobs(r.jobs)).catch(() => {})
   }, [])
+
+  // workers 권장값 — 같은 데이터셋·정책·AMP 로 이 기계에서 잰 지난 실측 (feature/train-loader-workers.md §4)
+  const [loaderHint, setLoaderHint] = useState<{ profile: { batch_size?: string | null } | null; advice?: LoaderAdvice } | null>(null)
+  useEffect(() => {
+    if (!selectedDataset || !policyType) { setLoaderHint(null); return }
+    let alive = true
+    api.get<{ profile: { batch_size?: string | null } | null; advice?: LoaderAdvice }>(
+      `/training/loader-hint?dataset=${encodeURIComponent(selectedDataset)}&policy=${encodeURIComponent(policyType)}&amp=${encodeURIComponent(amp)}`)
+      .then((h) => { if (alive) setLoaderHint(h) })
+      .catch(() => { if (alive) setLoaderHint(null) })
+    return () => { alive = false }
+  }, [selectedDataset, policyType, amp])
 
   // 보고 있는 job 이 바뀌면 그 job 의 과거 로그를 채운다.
   // WS 는 신규분만 보내므로(6시간 학습은 수만 줄이라 전부 밀면 브라우저가 죽는다),
@@ -992,7 +1004,8 @@ export default function TrainingPage() {
                   <input type="number" value={numWorkers} min={0} max={32}
                     onChange={(e) => { setNumWorkers(Number(e.target.value)); setCliEdited(false) }}
                     className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
-                  <p className="text-[10px] text-neutral-500 mt-0.5">{t('data_s > updt_s면 ↑ (데이터 로딩 병목)')}</p>
+                  <WorkersHint hint={loaderHint} batchSize={batchSize} numWorkers={numWorkers}
+                    onApply={(n) => { setNumWorkers(n); setCliEdited(false) }} />
                 </div>
                 <div>
                   <label className="text-xs text-neutral-400">Seed</label>
@@ -1137,5 +1150,39 @@ export default function TrainingPage() {
         </>
       )}
     </div>
+  )
+}
+
+
+/** Workers 칸 아래 — 지난 실측이 있으면 권장값과 [적용], 없으면 언제 나오는지만 말한다. */
+function WorkersHint({ hint, batchSize, numWorkers, onApply }: {
+  hint: { profile: { batch_size?: string | null } | null; advice?: LoaderAdvice } | null
+  batchSize: number
+  numWorkers: number
+  onApply: (n: number) => void
+}) {
+  const t = useT()
+  const a = hint?.advice
+  if (!hint?.profile || !a || a.reason === 'warming') {
+    return <p className="text-[10px] text-neutral-500 mt-0.5">{t('학습 시작 1분쯤 뒤 메트릭 카드에 실측 권장값이 나옵니다')}</p>
+  }
+  const wait = fmt.number(a.wait_pct ?? 0, { maximumFractionDigits: 1 })
+  const measured = hint.profile.batch_size && Number(hint.profile.batch_size) !== batchSize
+    ? t('지난 실측(workers {n}, 배치 {b})', { n: a.num_workers ?? 0, b: hint.profile.batch_size })
+    : t('지난 실측(workers {n})', { n: a.num_workers ?? 0 })
+  const rec = a.recommended
+  return (
+    <p className="text-[10px] text-neutral-500 mt-0.5">
+      {measured}{': '}
+      {a.reason === 'enough'
+        ? t('데이터 대기 {wait}% — 충분', { wait })
+        : rec !== undefined && a.num_workers !== null && rec > a.num_workers
+          ? t('데이터 대기 {wait}% → {rec} 권장', { wait, rec })
+          : t('데이터 대기 {wait}% — CPU가 모자라 workers로는 더 빨라지지 않습니다', { wait })}
+      {rec !== undefined && rec !== numWorkers && (
+        <button type="button" onClick={() => onApply(rec)}
+          className="ml-1 text-blue-400 hover:text-blue-300 underline">{t('{rec}로', { rec })}</button>
+      )}
+    </p>
   )
 }

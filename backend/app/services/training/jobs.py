@@ -153,6 +153,27 @@ class JobRegistry:
         except Exception as exc:
             logger.warning("job 삭제 실패 (%s): %s", job_id, exc)
 
+    # ── 로더 실측 프로파일 (feature/train-loader-workers.md §4) ──
+
+    def put_loader_profile(self, key: str, profile: dict) -> None:
+        bus = self._b()
+        if bus is None:
+            return
+        try:
+            bus.put_loader_profile(key, profile)
+        except Exception as exc:
+            logger.warning("로더 프로파일 저장 실패 (%s): %s", key, exc)
+
+    def get_loader_profile(self, key: str) -> dict | None:
+        bus = self._b()
+        if bus is None:
+            return None
+        try:
+            return bus.get_loader_profile(key)
+        except Exception as exc:
+            logger.warning("로더 프로파일 조회 실패 (%s): %s", key, exc)
+            return None
+
     # ── 로그 링버퍼 ──
 
     def append_log(self, job_id: str, line: str) -> None:

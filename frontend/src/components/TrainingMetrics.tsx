@@ -11,6 +11,24 @@ type MetricsData = {
   epoch: number
   update_s?: number  // GPU 갱신 시간 (병목 힌트)
   data_s?: number    // 데이터 로딩 시간 (병목 힌트)
+  loader?: LoaderAdvice
+}
+
+// 백엔드 `training/loader.py` 의 `advise()` — 숫자와 판정 코드만 온다 (feature/train-loader-workers.md)
+type LoaderAdvice = {
+  reason: 'warming' | 'enough' | 'add_workers' | 'cpu_limit'
+  num_workers: number | null
+  samples: number
+  update_s?: number
+  data_s?: number
+  wait_pct?: number
+  max_gain?: number
+  cap?: number | null
+  amp_off?: boolean
+  recommended?: number
+  predicted_wait_pct?: number
+  cpu_pct?: number | null
+  cpu_busy?: boolean
 }
 
 type HistoryData = {
@@ -18,6 +36,59 @@ type HistoryData = {
   losses: number[]
   grad_norms: number[]
   lrs: number[]
+}
+
+/** step 시간이 어디에 쓰이나 + workers 판정. 누가 병목인지 판정하지 않고, workers 로 얻을 수 있는
+ *  최대 이득만 말한다 — GPU 쪽 처방(AMP·배치)은 이 숫자로 할 수 없다. */
+function LoaderAdviceView({ a }: { a: LoaderAdvice }) {
+  const t = useT()
+  if (a.reason === 'warming' || a.update_s === undefined || a.data_s === undefined) {
+    return <p className="text-[11px] text-neutral-500">{t('데이터 로더 측정 중…')}</p>
+  }
+  const step = a.update_s + a.data_s
+  const gpuPct = step > 0 ? (a.update_s / step) * 100 : 100
+  const wait = fmt.number(a.wait_pct ?? 0, { maximumFractionDigits: 1 })
+  const raised = a.recommended !== undefined && a.num_workers !== null && a.recommended > a.num_workers
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-between text-[11px] text-neutral-400">
+        <span>{t('step 시간')} <span className="font-mono">{step.toFixed(3)}s</span></span>
+        <span>{t('GPU 연산 {gpu}% · 데이터 대기 {wait}%', { gpu: fmt.number(gpuPct, { maximumFractionDigits: 0 }), wait })}</span>
+      </div>
+      <div className="flex h-1.5 w-full overflow-hidden rounded bg-neutral-700">
+        <div className="h-full bg-blue-500" style={{ width: `${gpuPct}%` }} />
+        <div className="h-full bg-amber-500" style={{ width: `${100 - gpuPct}%` }} />
+      </div>
+      {a.reason === 'enough' && (
+        <p className="text-[11px] text-neutral-400">
+          {t('workers {n}로 충분 — 늘려도 최대 {gain}배', { n: a.num_workers ?? 0, gain: fmt.number(a.max_gain ?? 1, { maximumFractionDigits: 2 }) })}
+          {a.amp_off && <> · {t('AMP가 꺼져 있습니다 — bf16을 켜면 GPU 연산이 빨라질 수 있습니다')}</>}
+        </p>
+      )}
+      {a.reason === 'add_workers' && (
+        <p className="text-[11px] text-amber-400">
+          {t('workers {n} → {rec} 권장 (예상 대기 {pred}%) · 다음 학습부터', {
+            n: a.num_workers ?? 0, rec: a.recommended ?? 0,
+            pred: fmt.number(a.predicted_wait_pct ?? 0, { maximumFractionDigits: 1 }),
+          })}
+        </p>
+      )}
+      {a.reason === 'cpu_limit' && (raised ? (
+        <p className="text-[11px] text-amber-400">
+          {t('CPU 코어가 모자라 workers로는 다 못 메웁니다 — 최대 {rec}로 올려도 대기 {pred}%', {
+            rec: a.recommended ?? 0,
+            pred: fmt.number(a.predicted_wait_pct ?? 0, { maximumFractionDigits: 1 }),
+          })}
+        </p>
+      ) : (
+        <p className="text-[11px] text-amber-400">
+          {a.cpu_busy && a.cpu_pct != null
+            ? t('CPU가 이미 {cpu}% — workers를 늘려도 빨라지지 않습니다', { cpu: fmt.number(a.cpu_pct, { maximumFractionDigits: 0 }) })
+            : t('CPU 코어가 모자라 workers로는 더 빨라지지 않습니다')}
+        </p>
+      ))}
+    </div>
+  )
 }
 
 function LossChart({ history }: { history: HistoryData }) {
@@ -139,14 +210,7 @@ export default function TrainingMetrics({ metrics, history }: { metrics: Metrics
         )}
       </div>
 
-      {/* 병목 힌트: 로더가 GPU 를 굶길 때만 말한다. LeRobot 은 배치 대기(data_s)와
-          갱신(updt_s)을 차례로 재므로 이 비율이 알려 주는 건 로더가 따라오느냐뿐이다.
-          반대쪽은 GPU 가 쉬지 않는 정상 상태라 고칠 게 있다는 뜻이 아니고, AMP·Batch 가
-          이미 한계인지는 이 숫자로 알 수 없다 */}
-      {typeof metrics.update_s === 'number' && typeof metrics.data_s === 'number'
-        && metrics.data_s > metrics.update_s && (
-        <p className="text-[11px] text-amber-400">{t('데이터 로딩 병목 (CPU) → num_workers를 늘리세요')}</p>
-      )}
+      {metrics.loader && <LoaderAdviceView a={metrics.loader} />}
 
       {/* Loss 그래프 */}
       {history.steps.length > 1 && (
@@ -159,4 +223,4 @@ export default function TrainingMetrics({ metrics, history }: { metrics: Metrics
   )
 }
 
-export type { MetricsData, HistoryData }
+export type { MetricsData, HistoryData, LoaderAdvice }

@@ -40,6 +40,7 @@
 | 가중치 분석기 | 추론 분석 화면의 탭 — 체크포인트 개요(손실·오프라인 오차·실기 성공을 step 축 하나에), 데이터셋 에피소드 open-loop 평가(페이즈별 오차), 학습 프레임을 복제 도장으로 고친 장면의 반응 | LeRobot 을 부르는 스크립트 하나(`wrapper/offline_eval.py`) + 작업 유닛. GPU 배타에 한 줄. ◐ 1단계 진행 | [weight-analyzer.md](weight-analyzer.md) |
 | 에피소드 분석기 | 에피소드 화면 **POS분석** 탭 — 여러 데이터셋의 파지 순간(GRASP 시작)을 말단 3D + 마디별 색 스틱 + 관절별 분포로. 점 → 뷰어 그 프레임 | 페이즈 사이드카·FK 를 **읽기만** 한다 — 새 검출기·데몬 없음. ◐ 1단계 ☑ | [episode-analyzer.md](episode-analyzer.md) |
 | 로컬 AI CLI 협력 | ☑ 1~5 + 설정 탭 + 우측 채팅 (꾸러미 · 스킬·훅 · MCP 서버·리소스 · ext 읽기 전용 · 에피소드 묶음 · 설정 → 에이전트 · 웹 채팅은 코드 수정 없이 관찰/조종 모드). 코딩 에이전트(이 머신은 Claude Code)가 로봇 옆에서 일하는 다섯 자리 — 에이전트용 컨텍스트 꾸러미(실패 자리에서 복사 한 번) · 플러그인 루프 스킬·훅 · **MCP 서버 `piper-mcp`(stdio — 에이전트가 죽으면 heartbeat 가 끊겨 팔이 선다, 자기 미션에만 박동)** · ext v1 읽기 전용 · 에피소드 키프레임 묶음. 웹에서 에이전트 띄우기는 보류 | 발판이 이미 둘([plugins §7-2](plugins.md)·[external-api §4](external-api.md)). 전부 REST 위라 데몬·전송·포트 신규 없음, 장치 수준은 여전히 안 연다. 런타임 플래너 폐기 결정은 유지 | [agent-cli.md](agent-cli.md) |
+| 학습 로더 진단 | ◐ 1~4 ☑ (원격 CPU 남음). 메트릭 카드가 step 시간을 GPU 연산·데이터 대기로 나눠 보여 주고, 로더가 GPU 를 굶길 때 **workers 권장값**을 실측으로 계산(N·(updt_s+data_s)/updt_s). 다음 학습 폼에도 같은 값을 채운다. 판정은 대기 비율·CPU·설정값으로만 — GPU 병목 처방은 하지 않는다 | 백엔드 순수 함수 하나 + 상태 필드 + 카드·폼 화면. LeRobot·러너 무수정 | [train-loader-workers.md](train-loader-workers.md) |
 
 ## 왜 순서가 중요한가 (요약)
 

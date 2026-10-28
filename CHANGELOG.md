@@ -82,8 +82,19 @@
   받지 않으므로 오프라인 추론 기계에서도 열린다
 - 새 의존성 **timm 1.0.30** — 백엔드·학습 이미지 둘 다 실린다. 개발 머신은 `pip install -e custom_policies/` 를 다시 돌린다
 
+**학습 로더 진단 — step 시간이 어디에 쓰이나, workers 를 몇으로** ([feature/train-loader-workers.md](feature/train-loader-workers.md))
+- 학습 지표 카드가 step 시간을 **GPU 연산 · 데이터 대기** 막대로 나눠 보여 준다. 판정은 누가 병목인지가 아니라 workers 로 얻을 수
+  있는 최대 이득(`(updt_s+data_s)/updt_s` 배)이다 — 대기 10% 미만이면 "workers 4로 충분 — 늘려도 최대 1.03배" 로 끝난다
+- 로더가 GPU 를 굶기면 **권장 workers 수**를 낸다: `⌈N·(updt_s+data_s)/updt_s × 1.2⌉`, 코어 − 2 에서 자른다. 코어가 모자라거나
+  CPU 가 이미 90% 면 workers 로는 안 된다고 따로 말한다. 첫 구간은 버리고 최근 5구간 중앙값으로 잰다(1분 안팎)
+- 실측(`singlearm_apple_random_v2` · ACT · 배치 8): workers 1·2·4·8 어디서 재도 14~15 를 권하고, 실제로 12 에서 대기 6% 였다.
+  예측 step 은 실측보다 5~7% 빠르다 — 여유 1.2 가 덮는다. workers 4 로는 GPU 가 시간의 66% 를 기다린다
+- 학습 폼의 Workers 칸: 같은 데이터셋·정책·AMP 로 **이 기계에서 잰 지난 실측**이 있으면 권장값과 [N로] 버튼. 원격 학습은
+  아직 코어·CPU 를 몰라 상한 없이 계산만 하고, 다음 폼에 남기지도 않는다
+- 새 API: `GET /api/training/loader-hint?dataset=&policy=&amp=`, `/api/training/status` 의 `loader`
+
 **고친 것**
-- 학습 지표의 병목 힌트는 데이터 로더가 GPU 를 굶길 때만 뜬다. "GPU 연산 병목 → AMP·Batch 가 효과적" 은 뺐다 — LeRobot 은
+- 학습 지표에서 "GPU 연산 병목 → AMP·Batch 가 효과적" 을 뺐다 — LeRobot 은
   배치 대기(`data_s`)와 갱신(`updt_s`)을 차례로 재므로 그쪽은 GPU 가 쉬지 않는 정상 상태일 뿐, AMP·Batch 가 듣는지는 이 숫자로 모른다
 - 오프라인 평가가 smolvla_base 에서 이어 학습한 모델을 못 돌렸다(`KeyError: 'observation.images.camera1'`). 그 모델은
   `top`·`hand` 를 `camera1`·`camera2` 로 바꿔(`rename_map`) 학습됐는데 평가가 정책의 입력 이름으로 데이터셋을 찾았다.

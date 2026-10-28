@@ -10,6 +10,7 @@
 
 import json
 import logging
+import os
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -21,6 +22,7 @@ from app.services.training.jobs import (
     JobRegistry,
     job_registry,
 )
+from app.services.training import loader
 from app.services.training.metrics import MetricsTracker
 from app.services.training.runners.base import TrainRunner
 from app.services.training.runners.local import LocalRunner
@@ -33,6 +35,44 @@ logger = logging.getLogger(__name__)
 # 터미널이면 색 코드가 붙는다.
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 _OUTPUT_DIR = re.compile(r"Output dir:\s*(\S.*?)\s*$")
+
+
+def _cmd_arg(cmd: list[str], name: str) -> str | None:
+    prefix = f"--{name}="
+    for a in cmd:
+        if a.startswith(prefix):
+            return a[len(prefix):]
+    return None
+
+
+def _loader_context(cmd: list[str], env: dict[str, str] | None) -> dict:
+    """로더 진단에 필요한 것을 명령에서 읽는다. `env` 가 None 이면(재부착) AMP 는 모른다."""
+    try:
+        # 인자가 없으면 LeRobot 기본값(4)으로 돈다
+        workers = int(_cmd_arg(cmd, "num_workers") or 4)
+    except ValueError:
+        workers = None
+    policy = _cmd_arg(cmd, "policy.type")
+    if policy is None and (path := _cmd_arg(cmd, "policy.path")):
+        # 체크포인트에서 이어 학습 — 정책 이름은 그 config 에 있다
+        try:
+            policy = json.loads((Path(path) / "config.json").read_text()).get("type")
+        except (OSError, ValueError, AttributeError):
+            policy = None
+    return {
+        "num_workers": workers,
+        "amp": None if env is None else (env.get("ACCELERATE_MIXED_PRECISION") or "off"),
+        "dataset": _cmd_arg(cmd, "dataset.repo_id"),
+        "policy": policy,
+        "batch_size": _cmd_arg(cmd, "batch_size"),
+    }
+
+
+def loader_profile_key(dataset: str, policy: str, amp: str) -> str:
+    """로더 비용은 데이터셋·정책(관측 프레임 수)에, GPU 시간은 정책·AMP 에 달렸다.
+    배치는 키에 넣지 않는다 — 배치 2배에 updt_s 1.8배·T_b 2.0배라 필요한 워커가 12%
+    차이뿐이고, 권장값의 여유(1.2)가 덮는다 (feature/train-loader-workers.md §6 실측)."""
+    return f"{dataset}|{policy}|{amp}"
 
 
 def _default_runner() -> "TrainRunner":
@@ -91,6 +131,7 @@ class TrainManager:
         self._original_log_cb: Callable[[str], None] | None = None
         self._original_state_cb: Callable[[ProcessState], None] | None = None
         self._on_output_dir: Callable[[Path], None] | None = None
+        self._loader: dict = {}
         self.tracker.set_update_callback(self._emit_metrics)
         # ⚠ **여기서 건다. WS 연결 때가 아니다.** 예전에는 `set_log_callback` 이
         #   `ws.py` 에서만 불렸다 — 즉 **브라우저가 붙어야** 메트릭이 쌓였다.
@@ -191,6 +232,7 @@ class TrainManager:
     def _emit_metrics(self) -> None:
         status = self.get_status()
         self._sync_record(metrics=status)
+        self._save_loader_profile(status["loader"])
         if self._on_metrics:
             self._on_metrics(status)
 
@@ -212,6 +254,26 @@ class TrainManager:
             record.history = self.tracker.history.to_dict()
             self._save_history(record.history)
         self.registry.put(record)
+
+    def _save_loader_profile(self, advice: dict) -> None:
+        """다음 학습 폼이 workers 권장값을 미리 채우도록 남긴다 — 이 기계 학습만.
+        원격은 임대할 때마다 기계가 달라 지난 실측이 다음 기계에 안 맞는다."""
+        ctx = self._loader
+        if (advice.get("reason") == "warming" or getattr(self.runner, "is_remote", False)
+                or not (ctx.get("dataset") and ctx.get("policy") and ctx.get("amp"))):
+            return
+        from datetime import datetime
+
+        self.registry.put_loader_profile(
+            loader_profile_key(ctx["dataset"], ctx["policy"], ctx["amp"]),
+            {
+                "num_workers": advice["num_workers"],
+                "batch_size": ctx.get("batch_size"),
+                "update_s": advice["update_s"], "data_s": advice["data_s"],
+                "cpu_pct": advice.get("cpu_pct"),
+                "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            },
+        )
 
     def _save_history(self, history: dict) -> None:
         """곡선을 **실행 폴더에도** 쓴다 — 레지스트리 레코드는 다음 학습을 시작하면 지워진다.
@@ -249,6 +311,7 @@ class TrainManager:
         self.tracker.reset(total_steps=total_steps)
         self.output_dir = output_dir
         self._on_output_dir = on_output_dir
+        self._loader = _loader_context(cmd, env_extra or {})
         # 이전 job 의 로그·레코드를 치운다. 남겨두면 새 학습 로그가 옛 줄 뒤에 붙어
         # "어디부터 이번 학습인가"를 알 수 없다 — 버스 링버퍼는 세션을 넘어 살아남는다.
         self.registry.delete(self.job_id)
@@ -309,6 +372,8 @@ class TrainManager:
             return False
         # 총 스텝만 채운다 — **여기서 다시 비우면** 재생된 히스토리가 사라진다
         self.tracker.metrics.total_steps = spec.total_steps
+        # 유닛 argv 만 남는다 — 환경변수로 들어간 AMP 는 모른다
+        self._loader = _loader_context(spec.cmd, None)
         self.output_dir = spec.output_dir
         self._sync_record()
         return True
@@ -327,6 +392,7 @@ class TrainManager:
             "epoch": m.epoch,
             "update_s": m.update_time,  # GPU 갱신 시간 (병목 힌트)
             "data_s": m.data_time,      # 데이터 로딩 시간 (병목 힌트)
+            "loader": self.loader_advice(),
             "output_dir": self.output_dir,
             # ⚠ **지금 러너를 실시간으로 싣는다.** `JobRecord.runner` 는 `_sync_record()`
             #   가 마지막으로 쓴 **과거 스냅샷**이라 재기동을 안 따라온다(실측: 어제
@@ -336,6 +402,22 @@ class TrainManager:
             "runner": type(self.runner).__name__.replace("Runner", "").lower(),
             "remote": bool(getattr(self.runner, "is_remote", False)),
         }
+
+
+    def loader_advice(self) -> dict:
+        """로더 진단 (feature/train-loader-workers.md). 코어·CPU 는 **이 기계** 것이라
+        원격 학습이면 넘기지 않는다 — 남의 기계를 우리 숫자로 자르면 틀린다."""
+        remote = bool(getattr(self.runner, "is_remote", False))
+        if remote:
+            cores = cpu = None
+        else:
+            from app.services import trends
+
+            cores, cpu = os.cpu_count(), trends.latest_cpu()
+        return loader.advise(
+            list(self.tracker.timings), self._loader.get("num_workers"),
+            cores=cores, cpu_pct=cpu, amp=self._loader.get("amp"),
+        )
 
 
 train_manager = TrainManager()

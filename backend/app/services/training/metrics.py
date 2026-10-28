@@ -6,8 +6,11 @@
 """
 
 import re
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+
+from app.services.training.loader import WINDOW
 
 # step:200 smpl:12.8K ep:106 epch:1.07 loss:0.342 grdn:2.157 lr:1.0e-03 updt_s:0.456 data_s:0.012
 # step:1K smpl:64K ep:154 epch:3.07 ...  (1000스텝 이후 K 접미사)
@@ -124,6 +127,10 @@ class MetricsTracker:
     def __init__(self) -> None:
         self.metrics = TrainMetrics()
         self.history = TrainHistory()
+        # 로그 구간마다의 (updt_s, data_s) — 로더 진단 재료(`loader.advise`).
+        # ⚠ 히스토리와 따로 둔다: 히스토리는 1000 step 해상도라 같은 step 을 덮어쓴다.
+        self.timings: deque[tuple[float, float]] = deque(maxlen=WINDOW)
+        self._timing_lines = 0
         self._on_update: Callable[[], None] | None = None
 
     def set_update_callback(self, cb: Callable[[], None]) -> None:
@@ -132,6 +139,8 @@ class MetricsTracker:
     def reset(self, total_steps: int = 0) -> None:
         self.metrics = TrainMetrics(total_steps=total_steps)
         self.history.clear()
+        self.timings.clear()
+        self._timing_lines = 0
 
     def feed(self, line: str) -> bool:
         """로그 한 줄 처리. 메트릭 줄이었으면 True."""
@@ -145,6 +154,10 @@ class MetricsTracker:
         self.metrics.lr = float(m.group(7))
         self.metrics.update_time = float(m.group(8))
         self.metrics.data_time = float(m.group(9))
+        # 첫 구간은 버린다 — 워커 기동·cudnn 자동 튜닝이 섞여 있다
+        self._timing_lines += 1
+        if self._timing_lines > 1:
+            self.timings.append((self.metrics.update_time, self.metrics.data_time))
 
         self.history.append(
             self.metrics.step, self.metrics.loss,
