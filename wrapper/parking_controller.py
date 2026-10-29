@@ -4,8 +4,8 @@
 추론 종료 후 로봇팔을 원점(INITIALIZE_POSITION)으로 되돌린다. 모든 축을 동시에
 움직이면 파킹 궤적 중 그리퍼가 바닥을 긁는 문제가 있어, 단계별로 수행한다:
 
-  1단계(lift): joint2(숄더)만 먼저 원점으로 보내 팔을 세워 그리퍼를 바닥에서 들어올림
-               (나머지 축은 현재 위치 유지).
+  1단계(lift): joint2(숄더)를 먼저 원점으로 보내 팔을 세워 그리퍼를 바닥에서 들어올림.
+               joint1(베이스, J0)도 같이 돌린다 — 나머지 축은 현재 위치 유지.
   2단계(full): 나머지 전체 축을 원점으로 보냄.
 
 각 단계는 관절 위치 델타로 정지를 감지해 타임아웃 전이라도 팔이 멈추면 다음 단계로
@@ -21,8 +21,11 @@ from arm_controller import ArmController
 
 logger = logging.getLogger(__name__)
 
-# 1단계에서 먼저 원점으로 보내 그리퍼를 들어올릴 축
-LIFT_JOINTS = ("joint2",)
+# 1단계에서 먼저 원점으로 보낼 축. joint2 가 그리퍼를 들어올리고, joint1(베이스)은 그동안
+# 같이 돈다 — 2단계까지 미루면 파킹이 그만큼 길어진다 (사용자 요청 2026-10-29).
+# ⚠ 베이스는 수직축 회전이라 그리퍼를 낮추지는 않지만, 들리기 전 첫 순간엔 바닥에 닿은 채
+#   옆으로 쓸 수 있다. 긁는 게 다시 보이면 joint1 을 여기서 빼면 된다.
+LIFT_JOINTS = ("joint1", "joint2")
 
 # 정지 감지 파라미터
 SETTLE_THRESHOLD = 0.5   # 정규화 스케일(-100~100). 이 미만 델타면 "안 움직임"
@@ -71,7 +74,7 @@ class ParkingController:
         from lerobot_robot_piper.motors.tables import INITIALIZE_POSITION
         home = INITIALIZE_POSITION
 
-        # 1. 리프트: joint2만 원점, 나머지 현재값 유지 → 그리퍼를 바닥에서 들어올림
+        # 1. 리프트: LIFT_JOINTS 만 원점, 나머지 현재값 유지 → 그리퍼를 바닥에서 들어올림
         lift_targets = {j: home[j] for j in LIFT_JOINTS if j in home}
         logger.info("Phase 1 (lift %s): raising gripper off the floor", ", ".join(LIFT_JOINTS))
         settled = arm.move_and_wait(

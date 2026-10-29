@@ -149,6 +149,8 @@
 - 그룹(`docker`·`video`·`dialout`)을 넣으라는 명령 밑에 **다시 로그인하라는 말이 없었다.** 이제 명령 뒤에 다시 로그인을
   안내하고, 이미 넣었는데 이 로그인이나 데몬(사용자 systemd — linger 라 로그아웃해도 옛 그룹으로 남는다)에 안 들어온
   경우는 따로 잡아 재부팅을 안내한다. 예전엔 셸만 봐서 데몬이 장치를 못 여는데도 ✓ 였다
+- 추론이 끝난 뒤의 파킹이 베이스(joint1, J0)를 숄더 리프트와 **같이** 돌린다. 전에는 리프트가 끝난 뒤 2단계에서야
+  돌아 파킹이 그만큼 길었다 ([wrapper/parking_controller.py](wrapper/parking_controller.py))
 - 오프라인 평가가 smolvla_base 에서 이어 학습한 모델을 못 돌렸다(`KeyError: 'observation.images.camera1'`). 그 모델은
   `top`·`hand` 를 `camera1`·`camera2` 로 바꿔(`rename_map`) 학습됐는데 평가가 정책의 입력 이름으로 데이터셋을 찾았다.
   이제 데이터셋 이름 그대로 넘기고 체크포인트 전처리기의 이름 바꾸기 단계가 바꾼다 — 에피소드 평가·한 프레임 반응 둘 다
