@@ -9,6 +9,7 @@ import BoardEditor from './BoardEditor'
 import CatalogEditor from './CatalogEditor'
 import PlanSummary, { variantLabel } from './PlanSummary'
 import PrintPanel from './PrintPanel'
+import { designRequest, loadStoredDesign, saveDesign } from './design'
 import SortFields, { sortDefaults } from './SortFields'
 import type { TemplateFieldsProps } from './SortFields'
 import type { Common, Design, Nuisance, Plan, TemplateSpec } from './types'
@@ -41,14 +42,6 @@ const TEMPLATE_UI: Record<string, TemplateUi> = {
 const COMMON_DEFAULTS: Omit<Common, 'episode_unit'> = {
   episodes: 120, block_size: 20, composition: 'equal', fixed_composition: {}, min_spacing: 1,
   episode_s: 20, reset_s: 15, nuisance: [], policy_type: '', variants: {},
-}
-
-// 마지막 설계 — 수집 화면의 폼(`piper_record_settings`)과 같은 자리(브라우저)에 둔다. 이름 붙여 공유할
-// 것은 프리셋으로, 이건 "새로고침해도 하던 것 그대로" 를 위한 것이다.
-const STORE_KEY = 'piper_scenario_design'
-
-function loadStored(): unknown {
-  try { return JSON.parse(localStorage.getItem(STORE_KEY) || 'null') } catch { return null }
 }
 
 /** 저장된 설계(프리셋·마지막 값)를 지금 템플릿 기본값 위에 얹는다 — 예전 모양에 없던 값은 기본값으로.
@@ -121,7 +114,7 @@ export default function ScenarioDesigner() {
       .then(list => {
         setSpecs(list)
         const first = list.find(s => TEMPLATE_UI[s.type])
-        setDesign(d => d ?? mergeDesign(t, list, loadStored()) ?? (first ? makeDesign(t, first) : null))
+        setDesign(d => d ?? mergeDesign(t, list, loadStoredDesign()) ?? (first ? makeDesign(t, first) : null))
       })
       .catch(e => setErr((e as Error).message))
     // 처음 한 번만 — 기본 설계의 이름(t)은 그때 언어로 정해지고 이후엔 데이터다
@@ -129,8 +122,7 @@ export default function ScenarioDesigner() {
   }, [])
 
   useEffect(() => {
-    if (!design) return
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(design)) } catch { /* 사생활 모드 — 이번 세션엔 그대로 쓴다 */ }
+    if (design) saveDesign(design)
   }, [design])
 
   // [처음 값으로] 는 두 번 눌러야 한다 — 기억해 둔 설계를 한 번에 날리지 않게. window.confirm 은 쓰지 않는다
@@ -153,28 +145,15 @@ export default function ScenarioDesigner() {
   const policy = policies.find(p => p.type === design?.common.policy_type)
   const language = policy ? policy.language : null
 
-  const values = useMemo(() => {
-    if (!design) return null
-    const ids = new Set(design.catalog.map(i => i.id))
-    const fixed = Object.fromEntries(
-      Object.entries(design.common.fixed_composition).filter(([k, v]) => ids.has(k) && v > 0))
-    return {
-      ...design.fields,
-      ...design.common,
-      fixed_composition: fixed,
-      nuisance: design.common.nuisance.map(n => ({ name: n.name, levels: n.levels.filter(Boolean) })),
-    }
-  }, [design])
-  const key = JSON.stringify([design?.template, design?.seed, design?.board, design?.catalog, values])
+  const request = useMemo(() => design && designRequest(design), [design])
+  const key = JSON.stringify(request)
 
   const generate = async () => {
-    if (!design || !values) return
+    if (!request) return
     setBusy(true)
     setErr('')
     try {
-      const p = await api.post<Plan>('/scenario/generate', {
-        template: design.template, seed: design.seed, board: design.board, catalog: design.catalog, values,
-      }, { timeoutMs: 60_000 })
+      const p = await api.post<Plan>('/scenario/generate', request, { timeoutMs: 60_000 })
       setPlan(p)
       setPlanKey(key)
     } catch (e) {

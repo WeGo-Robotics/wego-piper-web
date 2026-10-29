@@ -261,6 +261,48 @@ async def get_notes(dataset_id: str):
     return read_notes(ds_path, kind="dataset")
 
 
+@router.get("/{dataset_id:path}/scenario")
+async def get_scenario(dataset_id: str):
+    """시나리오 계획과 에피소드별 결과 — 에피소드 화면의 실패·미결 표시 (scenario-designer §8-3).
+    시나리오 없이 찍은 데이터셋이면 `plan` 이 None 이고 `episodes` 가 빈다."""
+    from app.services.scenario import sidecar
+
+    ds_path = find_dataset_path(dataset_id)
+    if not ds_path:
+        raise HTTPException(404, "Dataset not found")
+    plan = sidecar.read_plan(ds_path)
+    eps = sidecar.episodes(ds_path)
+    keep = ("trial", "outcome", "decision", "by")
+    return {
+        "plan": {"plan_id": plan.get("plan_id"), "template": plan.get("template"), "seed": plan.get("seed"),
+                 "total": len(plan.get("episodes") or [])} if plan else None,
+        "episodes": {str(i): {k: e[k] for k in keep if k in e} for i, e in sorted(eps.items())},
+        "pending": sidecar.pending(ds_path),
+        "excluded": sidecar.excluded(ds_path),
+        # 학습 패널이 "절반 가까이 빼면 통계를 다시" 를 판단한다 (stats.json 은 전체로 계산돼 있다)
+        "total_episodes": sidecar.total_episodes(ds_path),
+    }
+
+
+class ScenarioDecisionRequest(BaseModel):
+    episodes: list[int]
+    decision: Literal["include", "exclude"]
+    # 어디서 정했나 — 이력용 (`episodes` 화면, `training-start` 패널, `recording` 요약)
+    by: Literal["episodes", "training-start", "recording"] = "episodes"
+
+
+@router.post("/{dataset_id:path}/scenario/decision")
+async def scenario_decision(dataset_id: str, body: ScenarioDecisionRequest):
+    """실패로 표시한 에피소드를 학습에 넣을지·뺄지. 지우지 않는다 — 학습이 `--dataset.episodes` 로 거른다."""
+    from app.services.scenario import sidecar
+
+    ds_path = find_dataset_path(dataset_id)
+    if not ds_path:
+        raise HTTPException(404, "Dataset not found")
+    changed = sidecar.decide(ds_path, body.episodes, body.decision, by=body.by)
+    return {"changed": changed, "pending": sidecar.pending(ds_path), "excluded": sidecar.excluded(ds_path)}
+
+
 @router.put("/{dataset_id:path}/notes")
 async def put_notes(dataset_id: str, body: NotesRequest):
     from app.services.notes_sidecar import write_notes

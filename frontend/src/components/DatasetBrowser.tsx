@@ -178,6 +178,10 @@ export default function DatasetBrowser({ datasets, value, onOpen, onRenamed }: P
         title={d.delta.source ? t('{source} 에서 만든 델타 사본', { source: d.delta.source }) : undefined}>Δ {t('델타')}</span>}
       {d.scene && <span className="mr-1 rounded bg-sky-500/15 px-1 text-sky-300">{t('시뮬')} · {d.scene.name}</span>}
       {d.source === 'hub' && <span className="mr-1 rounded bg-neutral-700 px-1 text-neutral-300">{t('허브')}</span>}
+      {/* 미결 실패 — 학습 시작이 다시 묻지만, 고르기 전에 보여야 한다 (scenario-designer §8-3) */}
+      {!!d.scenario?.pending && <span className="mr-1 rounded bg-amber-500/20 px-1 text-amber-300"
+        title={t('시나리오 녹화에서 실패로 표시하고 학습에 넣을지 아직 안 정한 에피소드')}>
+        {t('미결 {n}', { n: d.scenario.pending })}</span>}
     </>
   )
 

@@ -134,7 +134,35 @@ def train_cli_params(body: BaseModel) -> tuple[dict, str, str, str]:
     for k in ("pretrained_path", "wandb_project", "output_dir", "policy_repo_id"):
         if not params.get(k):
             params.pop(k, None)
+    apply_scenario_exclusions(params, enforce=True)
     return params, amp, title, description
+
+
+def apply_scenario_exclusions(params: dict, *, enforce: bool) -> dict:
+    """시나리오 녹화에서 **제외**로 정한 에피소드를 빼고 학습한다 (scenario-designer §8-3).
+
+    지우지 않는다 — `--dataset.episodes=[남길 것]` 으로 거르므로 결정을 나중에 뒤집을 수 있다.
+    `enforce` 면 **미결 실패가 남은 데이터셋은 시작을 거절한다.** 학습 화면이 시작 전에
+    선택 패널로 정하게 하므로 보통은 여기까지 안 온다 — 화면을 거치지 않은 시작을 위한 그물이다.
+
+    ⚠ 정규화 통계(`meta/stats.json`)는 전체 에피소드로 계산된 것을 그대로 쓴다.
+    """
+    repo = params.get("dataset_repo_id")
+    root = find_dataset_path(repo) if repo else None
+    if root is None:
+        return params
+    from app.services.scenario import sidecar
+
+    pending = sidecar.pending(root)
+    if enforce and pending:
+        raise HTTPException(409, f"실패로 표시한 에피소드 {len(pending)}개를 학습에 넣을지 아직 안 정했습니다 — "
+                                 "에피소드 화면이나 학습 시작 패널에서 정하세요")
+    kept = sidecar.kept_episodes(root)
+    if kept is not None:
+        if not kept:
+            raise HTTPException(400, "모든 에피소드가 제외돼 학습할 것이 없습니다")
+        params["dataset_episodes"] = "[" + ",".join(map(str, kept)) + "]"
+    return params
 
 
 def preset_keys() -> set[str]:
@@ -549,6 +577,8 @@ async def preview_train_args(body: TrainPreviewRequest):
         resolve_rename_map(params["pretrained_path"]) if params.get("pretrained_path") else ""
     )
     add_local_dataset_root(params, getattr(train_manager.runner, "is_remote", False))
+    # 미리보기는 거절하지 않는다 — 미결은 시작 버튼이 묻는다. 이미 정한 제외는 보여야 한다
+    apply_scenario_exclusions(params, enforce=False)
     args = build_train_args(params, rename_map=rename_map)
     env = {"ACCELERATE_MIXED_PRECISION": amp} if amp and amp != "off" else {}
     return {"args": args, "command": " ".join(args), "env": env}

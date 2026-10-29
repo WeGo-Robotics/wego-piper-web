@@ -22,7 +22,7 @@ export function variantLabel(t: TFn, v: string): string {
   return m[v] ?? v
 }
 
-function hintText(t: TFn, h: Hint, name: (id: string) => string, zone: (id: string) => string): string {
+export function hintText(t: TFn, h: Hint, name: (id: string) => string, zone: (id: string) => string): string {
   switch (h.kind) {
     case 'missed_grasp':
       return t('시작 전: 그리퍼를 {obj} 옆 2~3cm 빗나간 자리에 두고 시작', { obj: name(h.obj) })

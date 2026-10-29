@@ -117,14 +117,136 @@ if os.environ.get("PIPER_PREVIEW") == "1":
 # 헤드리스라 LeRobot 의 키보드 리스너가 꺼져 에피소드 제어가 동작하지 않는다.
 # init_keyboard_listener 를 가로채, 백엔드가 PUSH 하는 명령으로 events dict 를
 # 직접 set 한다(record() 가 이 dict 를 모든 record_loop 에 공유 사용).
+class _Scenario:
+    """시나리오 계획을 따르는 녹화 (feature/scenario-designer.md §9-3).
+
+    어느 시도를 찍는지는 여기(커서)가 정한다 — 에피소드 진입·저장·버림을 직접 보므로
+    ←/→ 와 경합하지 않는다. 게이트웨이는 버스의 진행 키를 읽기만 한다.
+    저장 순간 `(episode_index, trial)` 를 사이드카 로그에 덧붙인다 — **이 줄이 진실이다.**
+    재녹화된 에피소드는 저장되지 않으므로 줄도 안 남는다.
+    """
+
+    def __init__(self, bus, payload: dict) -> None:
+        from scenario_cursor import Cursor
+
+        self.bus = bus
+        self.plan = {"plan_id": payload["plan_id"], **payload["plan"]}
+        self.cursor = Cursor(payload["plan_id"], self.plan.get("episodes") or [], payload.get("done") or ())
+        self.events: dict | None = None
+        self._plan_written = False
+        print(f"[start_record] scenario plan={payload['plan_id']} "
+              f"remaining={len(self.cursor.queue)}/{self.cursor.total}", flush=True)
+        self.publish()
+
+    def publish(self) -> None:
+        try:
+            self.bus.set_record_scenario_state(self.cursor.state())
+        except Exception as e:   # 진행 표시가 죽어도 녹화·바인딩은 계속된다
+            print(f"[start_record] scenario state publish failed: {e}", flush=True)
+
+    def begin(self) -> dict | None:
+        trial = self.cursor.begin()
+        if trial:
+            print(f"[start_record] scenario begin trial={trial['id']}", flush=True)
+        self.publish()
+        return trial
+
+    def saved(self, root, episode_index: int) -> None:
+        import scenario_cursor as SC
+
+        line = self.cursor.saved(episode_index)
+        if line is not None:
+            try:
+                if not self._plan_written:
+                    SC.write_plan(root, self.plan)
+                    self._plan_written = True
+                SC.append_line(root, line)
+            except Exception as e:
+                # 여기서 녹화를 죽이면 저장한 에피소드까지 잃는다 — 로그로 남겨 손으로 맞춘다
+                print(f"[start_record] scenario log write failed: {e} line={line}", flush=True)
+            print(f"[start_record] scenario trial={line['trial']} episode={episode_index} "
+                  f"outcome={line['outcome']}", flush=True)
+        self.publish()
+        if self.cursor.finished and self.events is not None:
+            print("[start_record] scenario finished — stopping", flush=True)
+            self.events["stop_recording"] = True
+
+    def dropped(self) -> None:
+        self.cursor.dropped()
+        self.publish()
+
+    def command(self, cmd: str) -> None:
+        from piper_bus import contract as C
+
+        if cmd == C.CONTROL_RERECORD:
+            self.cursor.mark_rerecord()
+        elif cmd in (C.CONTROL_FAIL, C.CONTROL_UNFAIL):
+            if not self.cursor.set_failed(cmd == C.CONTROL_FAIL):
+                print(f"[start_record] scenario {cmd} ignored — no episode in progress", flush=True)
+        elif cmd == C.CONTROL_DEFER:
+            tid = self.cursor.defer()
+            print(f"[start_record] scenario deferred {tid or '(nothing)'}", flush=True)
+        self.publish()
+
+
+def _install_scenario(bus) -> "_Scenario | None":
+    """게이트웨이가 계획을 올렸으면 커서를 세우고 LeRobot 의 저장·버림에 건다."""
+    try:
+        payload = bus.record_scenario_plan()
+    except Exception as e:
+        print(f"[start_record] scenario plan read failed: {e}", flush=True)
+        return None
+    if not payload:
+        return None
+    scen = _Scenario(bus, payload)
+
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    _orig_save = LeRobotDataset.save_episode
+    _orig_clear = LeRobotDataset.clear_episode_buffer
+    # ⚠ save_episode 가 끝에서 clear_episode_buffer 를 부른다 — 그걸 재녹화로 읽으면
+    #   저장한 시도를 큐에 도로 넣는다. 저장 중의 비우기는 버림이 아니다.
+    saving = [False]
+
+    def _save(self, *args, **kwargs):
+        episode_data = args[0] if args else kwargs.get("episode_data")
+        index = None
+        if episode_data is None and isinstance(getattr(self, "episode_buffer", None), dict):
+            index = self.episode_buffer.get("episode_index")
+        saving[0] = True
+        try:
+            out = _orig_save(self, *args, **kwargs)
+        finally:
+            saving[0] = False
+        if index is not None:
+            scen.saved(self.root, int(index))
+        return out
+
+    def _clear(self, *args, **kwargs):
+        out = _orig_clear(self, *args, **kwargs)
+        if not saving[0]:
+            scen.dropped()
+        return out
+
+    LeRobotDataset.save_episode = _save
+    LeRobotDataset.clear_episode_buffer = _clear
+    return scen
+
+
 def _install_control() -> None:
     import threading
 
     from piper_bus import contract as C
     from piper_bus.client import Bus
 
+    # 제어 루프는 BRPOP 으로 연결을 오래 잡고 있으므로 읽기용 연결을 따로 둔다.
+    _task_bus = Bus()
+    scen = _install_scenario(_task_bus)
+
     def _patched_listener():
         events = {"exit_early": False, "rerecord_episode": False, "stop_recording": False}
+        if scen is not None:
+            scen.events = events
         # ZMQ PULL bind 를 버스 큐 소비로 교체 (refactor/daemon-split.md 3단계).
         # 게이트웨이가 녹화 시작·종료 때 큐를 비우므로 지난 세션의 명령은 오지 않는다.
         bus = Bus()
@@ -145,6 +267,8 @@ def _install_control() -> None:
                 elif cmd == C.CONTROL_STOP:
                     events["stop_recording"] = True
                     events["exit_early"] = True
+                if scen is not None:
+                    scen.command(cmd)
                 print(f"[start_record] control: {cmd}", flush=True)
 
         threading.Thread(target=loop, daemon=True).start()
@@ -172,10 +296,16 @@ def _install_control() -> None:
     # (도중에 바꾸면 한 에피소드 안에서 프레임마다 task 가 달라진다 — 하지 않는다.)
     _orig_record_loop = LR.record_loop
     _last_task = [None]
-    # 제어 루프는 BRPOP 으로 연결을 오래 잡고 있으므로 읽기용 연결을 따로 둔다.
-    _task_bus = Bus()
 
     def _record_loop(*args, **kwargs):
+        # 계획을 따르면 task 는 시도가 정한다 — 에피소드 진입(dataset 이 붙은 호출)에서만.
+        # 리셋 루프(dataset 없음)는 프레임을 안 남기므로 아래의 원래 길로 둔다.
+        if scen is not None and kwargs.get("dataset") is not None:
+            trial = scen.begin()
+            if trial is not None:
+                if trial["task"]:
+                    kwargs["single_task"] = trial["task"]
+                return _orig_record_loop(*args, **kwargs)
         try:
             task = _task_bus.record_task()
         except Exception:

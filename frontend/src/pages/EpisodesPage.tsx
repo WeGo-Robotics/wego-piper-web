@@ -18,6 +18,7 @@
  * 같은 파일이라 똑같이 보인다.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../services/api'
 import { PHASE_COLORS } from '../config/phases'
 import LayoutToggle, { useLayout } from '../components/LayoutToggle'
@@ -92,6 +93,15 @@ type EpisodeRow = {
 }
 
 type Segment = [number, number, number]
+
+/** 시나리오 녹화 결과 (feature/scenario-designer.md §8-3) — 실패로 표시한 것과 학습에 넣을지 */
+type ScenarioEpisode = { trial?: string; outcome?: 'success' | 'failed'; decision?: 'pending' | 'include' | 'exclude' }
+type ScenarioInfo = {
+  plan: { plan_id: string; template: string; seed: number; total: number } | null
+  episodes: Record<string, ScenarioEpisode>
+  pending: number[]
+  excluded: number[]
+}
 
 type FrameLightInfo = {
   luma: number; sat_pct: number; dark_pct: number; log_rg: number; log_bg: number
@@ -223,6 +233,10 @@ export default function EpisodesPage() {
   // 삭제는 CLI 래핑(edit 유닛)이라 비동기다: activity 폴링으로 완료를 기다린다.
   const [marked, setMarked] = useState<number[]>([])
   const [lifecycleBusy, setLifecycleBusy] = useState(false)
+  // 시나리오 결과 — 미결 실패를 여기서 정한다. 수집 화면의 [지금 정하기]가 `?dataset=…&scenario=pending` 으로 연다
+  const [searchParams] = useSearchParams()
+  const [scen, setScen] = useState<ScenarioInfo | null>(null)
+  const [pendingOnly, setPendingOnly] = useState(searchParams.get('scenario') === 'pending')
   const [taskInput, setTaskInput] = useState('')
 
   const videoRefs = useRef<Record<string, VideoWithRVFC | null>>({})
@@ -321,7 +335,18 @@ export default function EpisodesPage() {
     // 사이드카는 선택적 — 404 는 "아직 분석 안 됨"이지 오류가 아니다
     setLabels(await api.get<PhaseLabels>(`/phase/${id}/labels`).catch(() => null))
     setSummary(await api.get<PhaseSummary>(`/phase/${id}/summary`).catch(() => null))
+    setScen(await api.get<ScenarioInfo>(`/datasets/${id}/scenario`).catch(() => null))
   }, [])
+
+  const decide = async (indices: number[], decision: 'include' | 'exclude') => {
+    if (!dsId || !indices.length) return
+    try {
+      await api.post(`/datasets/${dsId}/scenario/decision`, { episodes: indices, decision })
+      setScen(await api.get<ScenarioInfo>(`/datasets/${dsId}/scenario`).catch(() => null))
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : t('결정을 저장하지 못했습니다'))
+    }
+  }
 
   const selectDataset = useCallback(async (id: string) => {
     setDsId(id)
@@ -335,7 +360,7 @@ export default function EpisodesPage() {
     setSelectedSeg(null)
     setUndoStack([])
     setMarked([])
-    if (!id) { setDetail(null); setLabels(null); setSummary(null); return }
+    if (!id) { setDetail(null); setLabels(null); setSummary(null); setScen(null); return }
     try {
       setDetail(await api.get<DatasetDetail>(`/datasets/${id}`))
     } catch { notifyError(t('데이터셋을 열 수 없습니다: {id}', { id })); return }
@@ -348,10 +373,12 @@ export default function EpisodesPage() {
   useEffect(() => {
     if (autoPicked.current || dsId || !datasets.length) return
     autoPicked.current = true
+    const asked = searchParams.get('dataset')
+    if (asked && datasets.some((d) => d.id === asked)) { void selectDataset(asked); return }
     const latest = [...datasets].sort((a, b) =>
       (b.created ?? b.modified).localeCompare(a.created ?? a.modified))[0]
     if (latest) void selectDataset(latest.id)
-  }, [datasets, dsId, selectDataset])
+  }, [datasets, dsId, selectDataset, searchParams])
 
   // ⚠ 시작 프레임은 **에피소드와 같은 렌더에** 넣는다 (POS분석의 [뷰어에서 열기]).
   //   고른 뒤에 따로 setFrame 하면 그 사이 비디오가 0 으로 seek 할 수 있고, 그 프레임
@@ -407,6 +434,18 @@ export default function EpisodesPage() {
     // ⚠ 먼저 (사유 많은 순) — 50개를 다 볼 필요 없이 이상한 것부터 본다
     return rows.sort((a, b) => b.reasons.length - a.reasons.length || a.index - b.index)
   }, [detail, labels, summary])
+
+  const scenFailed = useMemo(
+    () => Object.entries(scen?.episodes ?? {}).filter(([, e]) => e.outcome === 'failed').map(([i]) => Number(i)),
+    [scen])
+  const shownEpisodes = pendingOnly && scen
+    ? episodes.filter((r) => scen.episodes[String(r.index)]?.decision === 'pending')
+    : episodes
+  const decisionLabel = (d?: string) =>
+    d === 'exclude' ? t('제외') : d === 'include' ? t('포함') : t('미결')
+  const decisionClass = (d?: string) =>
+    d === 'exclude' ? 'bg-red-500/20 text-red-300' : d === 'include' ? 'bg-green-500/20 text-green-300'
+      : 'bg-amber-500/20 text-amber-300'
 
   const current = ep != null ? episodes.find((r) => r.index === ep) : undefined
   const labeledEp = ep != null ? labels?.episodes[String(ep)] : undefined
@@ -1035,9 +1074,52 @@ export default function EpisodesPage() {
           </div>
         )}
 
-        {episodes.length > 0 && (
+        {scenFailed.length > 0 && (
+          <div className={`rounded-lg border p-3 text-xs space-y-2 ${scen!.pending.length
+            ? 'border-amber-500/40 bg-amber-500/10' : 'border-neutral-700 bg-neutral-800'}`}>
+            <div className="text-neutral-200">
+              {t('시나리오: 실패로 표시 {failed}개 · 미결 {pending}개 · 제외 {excluded}개', {
+                failed: scenFailed.length, pending: scen!.pending.length, excluded: scen!.excluded.length })}
+            </div>
+            {scen!.pending.length > 0 && (
+              <p className="text-amber-300">
+                {t('미결은 학습을 시작할 때 다시 묻습니다. 제외해도 지우지 않습니다 — 학습이 그 에피소드만 빼고 읽습니다')}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              <label className="flex items-center gap-1 cursor-pointer text-neutral-300">
+                <input type="checkbox" checked={pendingOnly} onChange={(e) => setPendingOnly(e.target.checked)}
+                  className="accent-amber-500" />
+                {t('미결 실패만')}
+              </label>
+              {scen!.pending.length > 0 && (
+                <>
+                  <button onClick={() => void decide(scen!.pending, 'exclude')}
+                    className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-200">{t('미결 전부 제외')}</button>
+                  <button onClick={() => void decide(scen!.pending, 'include')}
+                    className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-200">{t('미결 전부 포함')}</button>
+                </>
+              )}
+            </div>
+            {ep != null && scen!.episodes[String(ep)]?.outcome === 'failed' && (
+              <div className="flex flex-wrap items-center gap-1.5 border-t border-neutral-700 pt-2">
+                <span className="text-neutral-300">
+                  {t('#{ep} (시도 {trial}) — {decision}', {
+                    ep, trial: scen!.episodes[String(ep)].trial ?? '—',
+                    decision: decisionLabel(scen!.episodes[String(ep)].decision) })}
+                </span>
+                <button onClick={() => void decide([ep], 'include')}
+                  className="px-2 py-0.5 rounded bg-green-700/70 hover:bg-green-700 text-white">{t('학습에 포함')}</button>
+                <button onClick={() => void decide([ep], 'exclude')}
+                  className="px-2 py-0.5 rounded bg-red-700/70 hover:bg-red-700 text-white">{t('학습에서 제외')}</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {shownEpisodes.length > 0 && (
           <ul className="rounded-lg border border-neutral-700 bg-neutral-800 divide-y divide-neutral-700/60 max-h-[70vh] overflow-y-auto">
-            {episodes.map((r) => (
+            {shownEpisodes.map((r) => (
               <li key={r.index} className={`flex items-center ${ep === r.index ? 'bg-neutral-700' : ''}`}>
                 <input
                   type="checkbox"
@@ -1056,6 +1138,12 @@ export default function EpisodesPage() {
                     <span className="text-xs text-neutral-400">{t('{cycles}사이클', { cycles: r.cycles })}</span>
                   )}
                   <span className="ml-auto flex items-center gap-1">
+                    {scen?.episodes[String(r.index)]?.outcome === 'failed' && (
+                      <span className={`px-1 rounded text-[10px] ${decisionClass(scen.episodes[String(r.index)].decision)}`}
+                        title={t('시나리오 시도 {trial} — 실패로 표시됨', { trial: scen.episodes[String(r.index)].trial ?? '—' })}>
+                        {decisionLabel(scen.episodes[String(r.index)].decision)}
+                      </span>
+                    )}
                     {r.reasons.length > 0 && (
                       <span className="text-amber-400" title={r.reasons.join(', ')}>⚠</span>
                     )}

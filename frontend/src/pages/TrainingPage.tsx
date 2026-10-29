@@ -22,6 +22,7 @@ import PolicyPickerModal from '../components/PolicyPickerModal'
 import type { Dataset as DatasetInfo, Model } from '../types/models'
 import DatasetPickerModal from '../components/DatasetPickerModal'
 import { useT, fmt } from '../i18n'
+import { useNavigate } from 'react-router-dom'
 
 // `/datasets` 응답 그대로 — feature 안쪽 모양만 이 화면이 읽는 만큼 좁힌다
 type Dataset = DatasetInfo & { features: Record<string, { shape?: number[]; dtype?: string; names?: string[] }> }
@@ -119,6 +120,12 @@ export default function TrainingPage() {
   const [policyPicker, setPolicyPicker] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [confirmConfig, setConfirmConfig] = useState<string | null>(null)
+  // 미결 실패 (feature/scenario-designer.md §8-3) — 시나리오 녹화에서 실패로 표시하고 학습에 넣을지 안 정한 것.
+  // 정하지 않으면 시작하지 않는다(서버도 409). 고른 것은 사이드카에 결정으로 남아 다음 학습에서 다시 묻지 않는다.
+  const [pendingPanel, setPendingPanel] = useState<{
+    dataset: string; pending: number[]; excluded: number; total: number; then: 'start' | 'confirm'
+  } | null>(null)
+  const navigate = useNavigate()
 
   // 설정값 변경 시 localStorage에 저장
   useEffect(() => {
@@ -469,6 +476,33 @@ export default function TrainingPage() {
       const msg = e instanceof Error ? e.message : t('알 수 없는 오류')
       setLogs((prev) => [...prev, t('[ERROR] 학습 시작 실패: {msg}', { msg })])
     }
+  }
+
+  const guardPending = async (next: 'start' | 'confirm') => {
+    const sc = selectedDataset
+      ? await api.get<{ pending: number[]; excluded: number[]; total_episodes: number | null }>(
+          `/datasets/${selectedDataset}/scenario`).catch(() => null)
+      : null
+    if (sc?.pending.length) {
+      setPendingPanel({ dataset: selectedDataset, pending: sc.pending, excluded: sc.excluded.length,
+                        total: sc.total_episodes ?? 0, then: next })
+      return
+    }
+    void (next === 'start' ? handleStart() : handlePreConfirm())
+  }
+  const resolvePending = async (decision: 'include' | 'exclude') => {
+    if (!pendingPanel) return
+    try {
+      await api.post(`/datasets/${pendingPanel.dataset}/scenario/decision`,
+        { episodes: pendingPanel.pending, decision, by: 'training-start' })
+    } catch (e) {
+      setLogs((prev) => [...prev, `[ERROR] ${e instanceof Error ? e.message : t('결정을 저장하지 못했습니다')}`])
+      return
+    }
+    const next = pendingPanel.then
+    setPendingPanel(null)
+    // 패널이 떠 있는 동안 폼을 고쳤을 수 있다 — 지금 렌더의 처리기로 잇는다
+    void (next === 'start' ? handleStart() : handlePreConfirm())
   }
 
   const handleStop = async () => { await api.post('/training/stop') }
@@ -1074,12 +1108,39 @@ export default function TrainingPage() {
               disabledReason={cliEdited ? t('CLI 를 직접 고친 학습은 아직 빌려서 못 돌립니다') : undefined}
             />
 
-            <button onClick={cliEdited ? handleStart : handlePreConfirm}
-              disabled={!canStart || (where === 'rent' && !rentPick)}
-              className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium">
-              {where === 'rent' ? t('고른 기계에서 학습 시작')
-                : cliEdited ? t('학습 시작 (CLI 직접)') : t('설정 확인 후 시작')}
-            </button>
+            {/* 미결 실패가 있으면 시작 버튼 **자리에** 선택 패널 (scenario-designer §8-3) */}
+            {!pendingPanel ? (
+              <button onClick={() => void guardPending(cliEdited ? 'start' : 'confirm')}
+                disabled={!canStart || (where === 'rent' && !rentPick)}
+                className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium">
+                {where === 'rent' ? t('고른 기계에서 학습 시작')
+                  : cliEdited ? t('학습 시작 (CLI 직접)') : t('설정 확인 후 시작')}
+              </button>
+            ) : (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 space-y-2 text-sm">
+                <p className="text-amber-200">
+                  {t('이 데이터셋에 실패로 표시하고 아직 안 정한 에피소드가 {n}개 있습니다 — 학습에 넣을까요?', { n: pendingPanel.pending.length })}
+                </p>
+                <p className="text-xs text-neutral-400">
+                  {t('제외해도 지우지 않습니다 — 학습이 그 에피소드만 빼고 읽고, 결정은 데이터셋에 남아 다음 학습에서 다시 묻지 않습니다')}
+                </p>
+                {pendingPanel.total > 0 && (pendingPanel.excluded + pendingPanel.pending.length) / pendingPanel.total >= 0.4 && (
+                  <p className="text-xs text-amber-300">
+                    {t('⚠ 빼면 전체의 절반 가까이가 빠집니다 — 정규화 통계(stats.json)는 전체 에피소드로 계산돼 있으니 다시 계산하는 게 좋습니다')}
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => void resolvePending('exclude')}
+                    className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white">{t('제외하고 계속')}</button>
+                  <button onClick={() => void resolvePending('include')}
+                    className="px-3 py-1.5 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-200">{t('포함하고 계속')}</button>
+                  <button onClick={() => navigate(`/episodes?dataset=${encodeURIComponent(pendingPanel.dataset)}&scenario=pending`)}
+                    className="px-3 py-1.5 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-200">{t('에피소드 보기')}</button>
+                  <button onClick={() => setPendingPanel(null)}
+                    className="ml-auto px-3 py-1.5 rounded text-neutral-400 hover:text-white">{t('취소')}</button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 설정 확인 모달 */}

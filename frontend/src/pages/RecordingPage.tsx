@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useSystemMessage } from '../components/SystemMessages'
 import RepoIdInput from '../components/RepoIdInput'
 import { api } from '../services/api'
@@ -16,6 +16,9 @@ import { useCameraStreams } from '../hooks/useCameraStreams'
 import CameraStreamSelect, { IdleStreams } from '../components/CameraStreamPicker'
 import { useT } from '../i18n'
 import ScenarioDesigner from '../components/scenario/ScenarioDesigner'
+import RecordGuide, { useScenarioProgress } from '../components/scenario/RecordGuide'
+import { designRequest, storedDesign } from '../components/scenario/design'
+import { useNavigate } from 'react-router-dom'
 
 type ReadyArm = { iface: string; role: string; side?: string | null }
 type RecordStatusData = { state?: string; current_episode: number; total_episodes: number; phase: string; progress: number }
@@ -98,6 +101,9 @@ export default function RecordingPage() {
   const [title, setTitle] = useState(_saved.title || '')
   const [description, setDescription] = useState(_saved.description || '')
   const [numEpisodes, setNumEpisodes] = useState(_saved.numEpisodes ?? 50)
+  // 시나리오 계획을 따른다 (feature/scenario-designer.md §9) — 설계는 시나리오 탭의 마지막 것.
+  // 켜면 task 와 에피소드 수는 계획이 정한다.
+  const [followScenario, setFollowScenario] = useState<boolean>(_saved.followScenario ?? false)
   // 시뮬 스크립트 시연 — 사람 대신 프로그램이 리더를 민다 (feature/sim-env.md 4단계).
   // 조종 창과 **같은 리더 세그먼트**를 쓰므로 수집 쪽은 아무것도 안 바뀐다.
   const [demo, setDemo] = useState<DemoStatus | null>(null)
@@ -239,9 +245,9 @@ export default function RecordingPage() {
       followerPort, leaderPort, cameraMapping, cameraProfile, camWidth, camHeight,
       armMode, leftFollower, rightFollower, leftLeader, rightLeader,
       repoId, singleTask, title, description, numEpisodes, fps, episodeTime, resetTime,
-      streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled,
+      streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled, followScenario,
     }))
-  }, [followerPort, leaderPort, cameraMapping, cameraProfile, camWidth, camHeight, armMode, leftFollower, rightFollower, leftLeader, rightLeader, repoId, singleTask, title, description, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled])
+  }, [followerPort, leaderPort, cameraMapping, cameraProfile, camWidth, camHeight, armMode, leftFollower, rightFollower, leftLeader, rightLeader, repoId, singleTask, title, description, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled, followScenario])
 
   // 데이터셋 존재 여부 확인
   useEffect(() => {
@@ -316,7 +322,29 @@ export default function RecordingPage() {
     }
   }, [demo, numEpisodes, isRunning, t])
 
-  const canStart = armsChosen && !!repoId && !repoIdError && !!singleTask && !isRunning && !isBlocked('recording')
+  // 시나리오 탭에서 고친 설계를 탭을 오갈 때마다 다시 읽는다 (그 탭이 브라우저에 적어 둔다)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const scenarioDesign = useMemo(() => storedDesign(), [tab])
+  const scenarioOn = followScenario && !!scenarioDesign
+  const scenario = useScenarioProgress(isRunning)
+  const scenarioLive = isRunning && !!scenario?.active && !!scenario.recording
+  // 정지 직후 요약 (§8-3) — 실패로 표시한 것이 있으면 "아직 안 정했다" 를 바로 말한다
+  const navigate = useNavigate()
+  const [scenarioEnded, setScenarioEnded] = useState<{ repo: string; saved: number; failed: number; finished: boolean } | null>(null)
+  const wasScenarioLive = useRef(false)
+  useEffect(() => {
+    if (scenarioLive) { wasScenarioLive.current = true; setScenarioEnded(null); return }
+    if (isRunning || !wasScenarioLive.current) return
+    wasScenarioLive.current = false
+    api.get<{ active: boolean; session?: { saved: number; failed: number }; finished?: boolean }>('/recording/scenario')
+      .then(d => {
+        if (d.active && d.session) {
+          setScenarioEnded({ repo: repoId, saved: d.session.saved, failed: d.session.failed, finished: !!d.finished })
+        }
+      }).catch(() => {})
+  }, [scenarioLive, isRunning, repoId])
+
+  const canStart = armsChosen && !!repoId && !repoIdError && (scenarioOn || !!singleTask) && !isRunning && !isBlocked('recording')
 
   const handleStart = async () => {
     try {
@@ -326,6 +354,7 @@ export default function RecordingPage() {
       const r = await api.post<{
         camera_profile?: { warnings?: string[] } | null
         arm_reset?: { warnings?: string[] } | null
+        scenario?: { remaining: number; done: number } | null
       }>('/recording/start', {
         ...armPayload,
         camera_mapping: cameraMapping,
@@ -336,7 +365,13 @@ export default function RecordingPage() {
         num_episodes: numEpisodes, fps, episode_time_s: episodeTime, reset_time_s: resetTime,
         streaming_encoding: streamingEncoding, vcodec, encoder_threads: encoderThreads, encoder_queue_maxsize: encoderQueue, push_to_hub: pushToHub, resume,
         web_preview: webPreview,
-      })
+        scenario: scenarioOn && scenarioDesign ? designRequest(scenarioDesign) : undefined,
+      }, { timeoutMs: 60_000 })
+      if (r.scenario) {
+        notify({ level: 'info', source: t('시나리오'), text: r.scenario.done
+          ? t('시나리오: 남은 시도 {remaining}개 — 이미 찍은 {done}개는 건너뜁니다', r.scenario)
+          : t('시나리오: 시도 {remaining}개', r.scenario) })
+      }
       // 프로파일이 못 덮은 카메라, 리셋이 드러낸 관절 슬립 — 막을 일은 아니지만
       // 시작 전에 알아야 한다. 문구는 백엔드가 만든다.
       for (const w of r.camera_profile?.warnings ?? [])
@@ -430,6 +465,27 @@ export default function RecordingPage() {
       <div className={tab === 'record' ? 'space-y-6' : 'hidden'}>
       {!isRunning ? (
         <>
+          {scenarioEnded && (
+            <div className={`rounded-lg border p-3 flex flex-wrap items-center gap-3 text-sm ${scenarioEnded.failed
+              ? 'border-amber-500/40 bg-amber-500/10' : 'border-neutral-700 bg-neutral-800'}`}>
+              <span className="text-neutral-200">
+                {scenarioEnded.finished ? t('계획을 다 찍었습니다.') : t('시나리오 수집을 멈췄습니다.')}{' '}
+                {t('이번 수집: 시도 {saved}개 저장', { saved: scenarioEnded.saved })}
+              </span>
+              {scenarioEnded.failed > 0 && (
+                <>
+                  <span className="text-amber-300">
+                    {t('실패로 표시한 에피소드 {failed}개 — 학습에 넣을지 아직 안 정했습니다', { failed: scenarioEnded.failed })}
+                  </span>
+                  <button onClick={() => navigate(`/episodes?dataset=${encodeURIComponent(scenarioEnded.repo)}&scenario=pending`)}
+                    className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white text-xs">{t('지금 정하기')}</button>
+                </>
+              )}
+              <button onClick={() => setScenarioEnded(null)} className="ml-auto text-xs text-neutral-400 hover:text-white">
+                {t('닫기')}
+              </button>
+            </div>
+          )}
           {/* 설정 화면 — 로봇·데이터셋을 한 줄에 나란히 두고,
               로그와 CLI 는 가로를 다 쓴다. 예전에는 2:1 세로 분할이라
               로그가 좁고 길게 눌려 한 줄이 자꾸 접혔다. */}
@@ -671,12 +727,27 @@ export default function RecordingPage() {
                 </div>
               )}
             </div>
+            <div className="rounded border border-neutral-700 px-2 py-1.5 space-y-1">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={followScenario} onChange={e => setFollowScenario(e.target.checked)}
+                  className="accent-blue-500" />
+                {t('시나리오 계획 따르기')}
+              </label>
+              {followScenario && (scenarioDesign ? (
+                <p className="text-xs text-neutral-400">
+                  {t('시나리오 탭의 설계로 — 시도 {episodes}개, 시드 {seed}. task 와 에피소드 수는 계획이 정하고, 같은 데이터셋이면 찍은 시도는 건너뜁니다', {
+                    episodes: scenarioDesign.common.episodes, seed: scenarioDesign.seed })}
+                </p>
+              ) : (
+                <p className="text-xs text-amber-300">{t('시나리오 탭에서 설계를 먼저 만드세요')}</p>
+              ))}
+            </div>
             <div>
               <label className="text-xs text-neutral-400">{t('Task 설명')}</label>
-              <input type="text" value={singleTask}
+              <input type="text" value={scenarioOn ? '' : singleTask} disabled={scenarioOn}
                 onChange={e => { setSingleTask(e.target.value); setCliEdited(false) }}
-                placeholder="Pick the cube and put in the box"
-                className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+                placeholder={scenarioOn ? t('시도마다 계획이 정합니다') : 'Pick the cube and put in the box'}
+                className="w-full px-3 py-1.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 disabled:opacity-50" />
             </div>
             <div>
               <label className="text-xs text-neutral-400">{t('데이터셋 제목 (선택)')}</label>
@@ -694,16 +765,17 @@ export default function RecordingPage() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               {[
-                { label: t('에피소드 수'), val: numEpisodes, set: setNumEpisodes, min: 1, max: 1000 },
+                { label: t('에피소드 수'), val: numEpisodes, set: setNumEpisodes, min: 1, max: 1000, off: scenarioOn },
                 { label: 'FPS', val: fps, set: setFps, min: 10, max: 60 },
                 { label: t('에피소드 시간(s)'), val: episodeTime, set: setEpisodeTime, min: 5, max: 300 },
                 { label: t('리셋 시간(s)'), val: resetTime, set: setResetTime, min: 5, max: 300 },
-              ].map(({ label, val, set, min, max }) => (
+              ].map(({ label, val, set, min, max, off }: { label: string; val: number; set: (n: number) => void; min: number; max: number; off?: boolean }) => (
                 <div key={label}>
                   <label className="text-xs text-neutral-400">{label}</label>
-                  <input type="number" value={val} min={min} max={max}
+                  <input type="number" value={val} min={min} max={max} disabled={off}
+                    title={off ? t('시나리오 계획의 남은 시도 수로 정해집니다') : undefined}
                     onChange={e => { set(Number(e.target.value)); setCliEdited(false) }}
-                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+                    className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100 disabled:opacity-50" />
                 </div>
               ))}
             </div>
@@ -785,6 +857,7 @@ export default function RecordingPage() {
           <div {...twoColumns([2, 1], [480, 320])}>
             <div className="space-y-4">
               {webPreview && <RecordPreview />}
+              {scenarioLive && scenario && <RecordGuide data={scenario} voice={voiceEnabled} />}
               {/* 조명 급변은 경보로 오지만, "지금 몇인가"는 여기서 계속 보인다 */}
               <LightStrip />
               {status?.phase === 'recording' && (
@@ -873,8 +946,8 @@ export default function RecordingPage() {
                 </p>
               </div>
 
-              {/* 녹화 중 Task 메모 (녹화 후 일괄 변경용) */}
-              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
+              {/* 녹화 중 Task 메모 (녹화 후 일괄 변경용) — 시나리오면 시도가 task 를 정한다 */}
+              {!scenarioLive && <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-2">
                 <h3 className="text-sm font-semibold">{t('Task 변경')}</h3>
                 <div className="text-xs text-neutral-400">
                   {t.rich('현재: {span}', { span: <span className="text-neutral-100">{liveTask || singleTask}</span> })}
@@ -893,7 +966,7 @@ export default function RecordingPage() {
                     b: <b>{t('다음 에피소드부터')}</b>,
                   })}
                 </p>
-              </div>
+              </div>}
             </div>
           </div>
 

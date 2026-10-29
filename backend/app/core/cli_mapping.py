@@ -258,6 +258,8 @@ TRAIN_ARGS_MAP: dict[str, str] = {
     #   죽는다(실기 2026-09-23: `wego-mink/sim_two_box_3_120` 는 태그가 없다).
     #   `root` 에 `meta/info.json` 이 있으면 lerobot 은 **허브를 아예 안 탄다**(실측).
     "dataset_root": "--dataset.root",
+    # 시나리오 녹화에서 제외로 정한 에피소드를 뺀 목록 `[0,1,3,…]` (training.apply_scenario_exclusions)
+    "dataset_episodes": "--dataset.episodes",
     "policy_type": "--policy.type",
     "pretrained_path": "--policy.path",
     "policy_repo_id": "--policy.repo_id",

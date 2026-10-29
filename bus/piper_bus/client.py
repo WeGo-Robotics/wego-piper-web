@@ -235,6 +235,34 @@ class Bus:
         """세션 격리 — 지난 녹화의 task 가 다음 녹화 첫 에피소드에 새면 안 된다."""
         return int(self.r.delete(C.RECORD_TASK))
 
+    # ── 녹화 시나리오 (계획: 게이트웨이 → wrapper, 진행: wrapper → 게이트웨이) ──
+
+    def set_record_scenario_plan(self, plan: dict) -> None:
+        self.r.set(C.RECORD_SCENARIO_PLAN, json.dumps(plan, ensure_ascii=False))
+
+    def record_scenario_plan(self) -> dict | None:
+        return self._json_key(C.RECORD_SCENARIO_PLAN)
+
+    def set_record_scenario_state(self, state: dict) -> None:
+        self.r.set(C.RECORD_SCENARIO_STATE, json.dumps(state, ensure_ascii=False))
+
+    def record_scenario_state(self) -> dict | None:
+        return self._json_key(C.RECORD_SCENARIO_STATE)
+
+    def clear_record_scenario(self) -> int:
+        """세션 격리 — 지난 녹화의 계획을 다음 녹화의 wrapper 가 집으면 안 된다."""
+        return int(self.r.delete(C.RECORD_SCENARIO_PLAN, C.RECORD_SCENARIO_STATE))
+
+    def _json_key(self, key: str) -> dict | None:
+        raw = self.r.get(key)
+        if raw is None:
+            return None
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
     # ── 녹화 프리뷰 (wrapper → 게이트웨이) ──
 
     def put_preview(self, name: str, jpeg: bytes) -> None:

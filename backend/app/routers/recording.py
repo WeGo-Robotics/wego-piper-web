@@ -21,6 +21,16 @@ router = APIRouter(prefix="/api/recording", tags=["recording"])
 logger = logging.getLogger(__name__)
 
 
+class ScenarioSpec(BaseModel):
+    """시나리오 설계 — 계획은 게이트웨이가 다시 만든다(결정적이라 화면과 같다).
+    화면이 만든 계획을 받지 않는 것은 받은 그대로 믿을 이유가 없어서다."""
+    template: str
+    seed: int = 0
+    board: dict
+    catalog: list[dict]
+    values: dict = {}
+
+
 class RecordStartRequest(BaseModel):
     robot_type: str = "piper_follower"
     robot_port: str = ""
@@ -61,6 +71,9 @@ class RecordStartRequest(BaseModel):
     private: bool = False
     resume: bool = False
     web_preview: bool = True  # 녹화 중 웹 카메라 미리보기 (log_rerun_data 탭)
+    # 시나리오 계획을 따른다 (feature/scenario-designer.md §9-3). 주면 task·에피소드 수는
+    # 계획이 정한다 — `single_task` 는 비어도 되고 `num_episodes` 는 무시한다.
+    scenario: ScenarioSpec | None = None
 
 
 class RecordPreviewRequest(BaseModel):
@@ -179,6 +192,11 @@ async def start_recording(body: RecordStartRequest):
     # 팔·카메라를 다 잡은 뒤 ValueError 로 죽어서 원인을 알기 어렵다. 시작 전에 막는다.
     if err := repo_id_error(body.repo_id):
         raise HTTPException(400, err)
+    scenario = await _scenario_payload(body.scenario, body.repo_id) if body.scenario else None
+    if scenario:
+        remaining = [ep for ep in scenario["plan"]["episodes"] if ep["id"] not in set(scenario["done"])]
+        # LeRobot 은 task 없이 시작을 안 한다 — 첫 시도의 것을 넣는다 (에피소드마다 wrapper 가 덮는다)
+        body.single_task = body.single_task or remaining[0].get("task") or body.repo_id
     if not body.single_task:
         raise HTTPException(400, "Task 설명이 필요합니다.")
     bimanual = len(body.robot_ports) >= 2
@@ -332,6 +350,13 @@ async def start_recording(body: RecordStartRequest):
 
     params = body.model_dump()
     params.pop("web_preview", None)
+    params.pop("scenario", None)
+    total_episodes = body.num_episodes
+    if scenario:
+        # 실패로 표시한 시도는 블록 끝에 다시 들어가므로 LeRobot 의 상한은 넉넉히 —
+        # 계획을 다 찍으면 wrapper 가 스스로 멈춘다. 화면의 진행률은 남은 시도 수 기준.
+        total_episodes = len(remaining)
+        params["num_episodes"] = 2 * len(remaining)
     params.pop("camera_width", None)
     params.pop("camera_height", None)
     params.pop("camera_fps", None)
@@ -342,6 +367,12 @@ async def start_recording(body: RecordStartRequest):
     # 버스 주소는 ProcessManager 가 모든 자식에게 넣으므로 여기서 넘기지 않는다.
     env_extra: dict[str, str] = {}
     control_bridge.start()
+    if scenario:
+        try:
+            control_bridge.set_scenario(scenario)
+        except Exception as e:
+            control_bridge.stop()
+            raise HTTPException(503, f"시나리오 계획을 버스에 올리지 못했습니다: {e}")
 
     # 웹 미리보기: display_data=true 로 log_rerun_data 호출을 켜고, wrapper 가
     # 그 프레임을 JPEG 로 버스에 올리도록 켠다.
@@ -370,16 +401,46 @@ async def start_recording(body: RecordStartRequest):
             logger.warning("가상환경을 못 읽었다 (사이드카 생략): %s", exc)
 
     try:
-        await record_manager.start(args, total_episodes=body.num_episodes, env_extra=env_extra)
+        await record_manager.start(args, total_episodes=total_episodes, env_extra=env_extra)
     except Exception as e:
         control_bridge.stop()
+        control_bridge.clear_scenario()
         preview_bridge.stop()
         raise HTTPException(500, f"녹화 시작 실패: {e}")
     # 프로파일 경고(안 덮는 카메라 등)와 팔 슬립 경고는 막을 일은 아니지만
     # **시작 전에 알아야** 한다 — 화면이 응답에서 꺼내 시스템 메시지로 띄운다.
     return {"status": "started", "pid": record_manager.pm.pid, "args": args,
             "camera_profile": profile_report,
-            "arm_reset": {"warnings": slip_warns}}
+            "arm_reset": {"warnings": slip_warns},
+            "scenario": {"plan_id": scenario["plan_id"], "remaining": len(remaining),
+                         "done": len(scenario["done"])} if scenario else None}
+
+
+async def _scenario_payload(spec: ScenarioSpec, repo_id: str) -> dict:
+    """계획을 만들고, 이 데이터셋에 이미 찍은 시도를 뺀다 (이어 찍기)."""
+    from fastapi.concurrency import run_in_threadpool
+
+    from app.services.scenario import ScenarioError
+    from app.services.scenario import plan as scenario_plan
+    from app.services.scenario import sidecar
+
+    try:
+        plan = await run_in_threadpool(
+            scenario_plan.generate, spec.template, spec.board, spec.catalog, spec.values, spec.seed)
+    except ScenarioError as e:
+        raise HTTPException(400, f"시나리오 계획: {e}")
+    plan.pop("summary", None)
+    pid = sidecar.plan_id(plan)
+    root = settings.lerobot_dir / repo_id
+    old = sidecar.read_plan(root)
+    if old and old.get("plan_id") != pid:
+        # 같은 시도 번호(b1-r1-1)가 다른 배치를 뜻하게 된다 — 섞으면 대조가 거짓말을 한다
+        raise HTTPException(409, "이 데이터셋은 다른 시나리오 계획으로 찍혔습니다 — 같은 설계·시드로 "
+                                 "이어 찍거나 새 데이터셋을 쓰세요")
+    done = sorted(sidecar.done_trials(root, pid))
+    if len(done) >= len(plan["episodes"]):
+        raise HTTPException(400, "이 계획의 시도를 모두 찍었습니다")
+    return {"plan_id": pid, "plan": plan, "done": done}
 
 
 # `escape` 를 보낸 뒤 LeRobot 이 스스로 끝날 때까지 기다리는 시간.
@@ -463,9 +524,61 @@ async def set_task(body: TaskRequest):
     if not task:
         raise HTTPException(400, "task 가 비어 있습니다")
     from app.services.control_bridge import control_bridge
+    if record_manager.is_running and control_bridge.scenario()[0]:
+        raise HTTPException(409, "시나리오 계획을 따르는 녹화는 시도마다 task 가 정해집니다")
     if not control_bridge.set_task(task):
         raise HTTPException(409, "녹화 중이 아니거나 버스에 연결되지 않았습니다")
     return {"status": "ok", "task": task, "applies_from": "next_episode"}
+
+
+@router.get("/scenario")
+async def scenario_progress():
+    """시나리오 녹화의 진행 — 지금·다음 시도와 그 사이에 옮길 것 (§9-2).
+
+    정지 뒤에도 마지막 세션의 것을 돌려준다(`recording=false`) — 화면이 실패 몇 개를 요약한다.
+    다음 녹화를 시작하면 지워진다.
+    """
+    from app.services.control_bridge import control_bridge
+    from app.services.scenario import progress
+
+    payload, state = control_bridge.scenario()
+    if not payload:
+        return {"active": False}
+    return {"active": True, "recording": record_manager.is_running,
+            "phase": record_manager.status.phase, **progress.view(payload, state)}
+
+
+class ScenarioFailRequest(BaseModel):
+    failed: bool = True
+
+
+def _scenario_command(command: str) -> None:
+    from app.services.control_bridge import control_bridge
+
+    if not record_manager.is_running:
+        raise HTTPException(400, "녹화가 실행 중이 아닙니다.")
+    if not control_bridge.scenario()[0]:
+        raise HTTPException(409, "시나리오 계획을 따르는 녹화가 아닙니다")
+    if not control_bridge.send(command):
+        raise HTTPException(503, "녹화 프로세스에 전하지 못했습니다")
+
+
+@router.post("/scenario/fail")
+async def scenario_fail(body: ScenarioFailRequest):
+    """지금 에피소드에 실패 표시(또는 취소). 저장은 그대로 되고, 학습에 넣을지는 나중에 정한다 (§8-2)."""
+    from piper_bus import contract as C
+
+    _scenario_command(C.CONTROL_FAIL if body.failed else C.CONTROL_UNFAIL)
+    return {"status": "ok", "failed": body.failed}
+
+
+@router.post("/scenario/defer")
+async def scenario_defer():
+    """다음 시도를 블록 끝으로 미룬다 — 배치가 물리적으로 안 될 때. → 와 달리 아무것도 저장하지 않는다."""
+    from piper_bus import contract as C
+
+    _scenario_command(C.CONTROL_DEFER)
+    return {"status": "ok"}
 
 
 @router.get("/preview")

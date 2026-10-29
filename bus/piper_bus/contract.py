@@ -106,7 +106,13 @@ RECORD_CONTROL_QUEUE: Final = _k("record", "control")
 CONTROL_NEXT: Final = "right"       # exit_early — 지금 마감하고 저장 → 다음
 CONTROL_RERECORD: Final = "left"    # rerecord_episode — 폐기 후 다시
 CONTROL_STOP: Final = "escape"      # stop_recording — 저장하고 녹화 종료
+# 시나리오 계획을 따르는 녹화에서만 뜻이 있다 (feature/scenario-designer.md §8-2) — 계획 없는 녹화의
+# wrapper 는 받아도 무시한다. 같은 큐로 오는 것은 ←/→ 와 **순서가 섞이면 안 되기** 때문이다.
+CONTROL_FAIL: Final = "scenario_fail"        # 지금 에피소드를 실패로 표시 (저장은 그대로)
+CONTROL_UNFAIL: Final = "scenario_unfail"    # 위 표시 취소
+CONTROL_DEFER: Final = "scenario_defer"      # 다음 시도를 블록 끝으로 미룬다
 CONTROL_COMMANDS: Final = frozenset({CONTROL_NEXT, CONTROL_RERECORD, CONTROL_STOP})
+SCENARIO_COMMANDS: Final = frozenset({CONTROL_FAIL, CONTROL_UNFAIL, CONTROL_DEFER})
 
 
 # ── 녹화 task (게이트웨이 → wrapper) ─────────────────────────────────────────
@@ -119,6 +125,20 @@ CONTROL_COMMANDS: Final = frozenset({CONTROL_NEXT, CONTROL_RERECORD, CONTROL_STO
 # 프레임마다 task 가 달라져 데이터셋의 "에피소드 = 하나의 task" 전제가 깨진다.
 # 그래서 바꾼 값은 **다음 에피소드부터** 적용한다.
 RECORD_TASK: Final = _k("record", "task")
+
+
+# ── 녹화 시나리오 (feature/scenario-designer.md §9-3) ────────────────────────
+#
+# 계획(게이트웨이 → wrapper)과 진행(wrapper → 게이트웨이). 둘 다 키다.
+#
+# ⚠ **어느 시도를 찍는지는 wrapper 가 정한다.** 재녹화 여부는 리셋이 끝나야 정해지므로
+#   게이트웨이가 로그를 보고 시도를 넘기면 ←/→ 와 경합한다. wrapper 는 에피소드 진입·저장·
+#   버림을 직접 보므로 틀릴 수가 없고, 녹화는 유닛이라 게이트웨이가 재시작돼도 그대로다.
+#   게이트웨이는 진행 키를 **읽기만** 한다.
+# 계획은 파일이 아니라 키로 넘긴다 — 컨테이너 배포에서 게이트웨이와 녹화 유닛의 파일
+# 경로가 다르다. 녹화 시작 때 쓰고 시작·정지 때 지운다 (세션 격리, task 와 같다).
+RECORD_SCENARIO_PLAN: Final = _k("record", "scenario", "plan")
+RECORD_SCENARIO_STATE: Final = _k("record", "scenario", "state")
 
 
 # ── 녹화 프리뷰 (wrapper → 게이트웨이) ───────────────────────────────────────

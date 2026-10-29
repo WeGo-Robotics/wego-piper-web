@@ -44,6 +44,14 @@ def _scene(root: Path) -> dict | None:
             "objects": len(sc.get("objects") or [])} if sc else None
 
 
+def _scenario(root: Path) -> dict | None:
+    """시나리오 결과 요약 (meta/piper_scenario_log.jsonl) — 목록의 `미결 N` 배지.
+    미결 실패를 아무도 안 정한 채 학습되면 표시한 의미가 없다 (scenario-designer §8-3)."""
+    from app.services.scenario.sidecar import summary
+
+    return summary(root)
+
+
 def _parse_meta(meta_path: Path) -> dict:
     if not meta_path.exists():
         return {}
@@ -116,6 +124,8 @@ def _scan_hub_datasets(datasets_dir: Path) -> list[dict]:
             "delta": delta_info(snapshot),
             "notes": _notes(snapshot),
             "scene": _scene(snapshot),
+            # 허브로 받은 것도 사이드카가 같이 온다 — 보낸 쪽의 미결이 여기서도 보여야 한다
+            "scenario": _scenario(snapshot),
         })
     return results
 
@@ -152,6 +162,7 @@ def _scan_lerobot_datasets(lerobot_dir: Path) -> list[dict]:
                 "delta": delta_info(ds_dir),
                 "notes": _notes(ds_dir),
                 "scene": _scene(ds_dir),
+                "scenario": _scenario(ds_dir),
             })
     return results
 

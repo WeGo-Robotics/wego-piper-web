@@ -49,6 +49,7 @@ class ControlBridge:
             return
         try:
             bus.clear_record_task()
+            bus.clear_record_scenario()
             dropped = bus.clear_control()
         except Exception as exc:
             logger.error("ControlBridge 시작 실패: %s", exc)
@@ -79,11 +80,42 @@ class ControlBridge:
             logger.warning("task 변경 실패: %s", exc)
             return False
 
+    # ── 시나리오 계획 (feature/scenario-designer.md §9-3) ──
+    #
+    # 계획은 시작 때 wrapper 보다 **먼저** 올린다 — wrapper 는 기동할 때 한 번 읽는다.
+    # 정지 때 지우지 않는다: 정지 뒤에도 그 세션의 진행(실패 몇 개)을 화면이 읽는다.
+    # 다음 녹화의 `start()` 가 지운다 — 그게 세션 격리다.
+
+    def set_scenario(self, payload: dict) -> None:
+        bus = self._connect()
+        if bus is None:
+            raise RuntimeError("버스에 연결되지 않았습니다")
+        bus.set_record_scenario_plan(payload)
+
+    def clear_scenario(self) -> None:
+        bus = self._connect()
+        if bus is not None:
+            try:
+                bus.clear_record_scenario()
+            except Exception as exc:
+                logger.warning("시나리오 계획 정리 실패: %s", exc)
+
+    def scenario(self) -> tuple[dict | None, dict | None]:
+        """(시작 때 올린 계획, wrapper 가 올린 진행). 버스가 없으면 둘 다 None."""
+        bus = self._connect()
+        if bus is None:
+            return None, None
+        try:
+            return bus.record_scenario_plan(), bus.record_scenario_state()
+        except Exception as exc:
+            logger.warning("시나리오 진행 읽기 실패: %s", exc)
+            return None, None
+
     def send(self, command: str) -> bool:
         if not self._active:
             logger.warning("ControlBridge not active; dropping command %r", command)
             return False
-        if command not in C.CONTROL_COMMANDS:
+        if command not in C.CONTROL_COMMANDS | C.SCENARIO_COMMANDS:
             logger.warning("알 수 없는 제어 명령: %r", command)
             return False
         bus = self._connect()

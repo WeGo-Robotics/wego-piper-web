@@ -28,6 +28,7 @@ const DebugLogsPage = lazy(() => import('../pages/DebugLogsPage'))
 const EpisodesPage = lazy(() => import('../pages/EpisodesPage'))
 // 조종 창 — 별도 브라우저 창(window.open)으로만 연다. 사이드바엔 없다 (feature/web-leader.md §5)
 const TeleopWindowPage = lazy(() => import('../pages/TeleopWindowPage'))
+const ScenarioGuidePage = lazy(() => import('../pages/ScenarioGuidePage'))
 
 /**
  * 사이드바 묶음. **순서가 곧 화면 순서다** — 정렬 규칙을 따로 두지 않는다.
@@ -205,6 +206,7 @@ export const pages: PageEntry[] = [
   { path: '/logs', label: msg('로그'), component: LogsPage, nav: true, group: msg('시스템'), icon: '📄' },
   { path: '/settings', label: msg('설정'), component: SettingsPage, nav: true, group: msg('시스템'), icon: '⚙' },
   { path: '/teleop', label: msg('조종 창'), component: TeleopWindowPage, nav: false, standalone: true },
+  { path: '/scenario-guide', label: msg('시나리오 안내 창'), component: ScenarioGuidePage, nav: false, standalone: true },
 ]
 
 export const navPages = pages.filter((p) => p.nav)

@@ -148,6 +148,9 @@ export type Dataset = {
   delta?: DeltaInfo | null
   /** 시뮬로 모았으면 **어느 세계에서** 모았는지 (meta/piper_scene.json). 실기면 없다. */
   scene?: { id: string; name: string; objects: number } | null
+  /** 시나리오 녹화 결과 요약 (meta/piper_scenario_log.jsonl). 시나리오 없이 찍었으면 없다.
+   *  `pending` 이 미결 실패 — 학습에 넣을지 아직 안 정한 것 (feature/scenario-designer.md §8-3). */
+  scenario?: { bound: number; failed: number; pending: number; excluded: number } | null
 }
 
 export type DeltaInfo = {

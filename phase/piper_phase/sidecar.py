@@ -24,7 +24,10 @@ from .labeler import LABELS_FILE, SIGNALS_FILE
 logger = logging.getLogger(__name__)
 
 # 에피소드 번호와 무관한 사이드카 — 그대로 복사하면 된다
-COPY_AS_IS = ("piper_cameras.json",)
+# (시나리오 계획은 시도 목록이라 번호가 없다 — 번호는 아래 결과 로그에 있다)
+COPY_AS_IS = ("piper_cameras.json", "piper_scenario.json")
+# 시나리오 결과 로그 (feature/scenario-designer.md §11-1) — 한 줄마다 episode_index
+SCENARIO_LOG = "piper_scenario_log.jsonl"
 
 
 def _episode_mapping(total_before: int, deleted: list[int]) -> dict[int, int]:
@@ -73,7 +76,23 @@ def remap_after_delete(ds_root: Path, deleted: list[int]) -> list[str]:
         df.to_parquet(new_meta / SIGNALS_FILE, index=False)
         moved.append(SIGNALS_FILE)
 
-    # 3. 번호 무관 사이드카 — 그대로
+    # 3. 시나리오 결과 로그 — 줄마다 episode_index. 지운 에피소드의 줄은 버린다
+    #    (그 시도는 안 찍은 것이 되어 이어 찍을 때 다시 나온다)
+    log_path = old_meta / SCENARIO_LOG
+    if log_path.is_file():
+        out = []
+        for raw in log_path.read_text(encoding="utf-8").splitlines():
+            try:
+                line = json.loads(raw)
+            except ValueError:
+                continue
+            idx = line.get("episode_index") if isinstance(line, dict) else None
+            if isinstance(idx, int) and idx in mapping:
+                out.append(json.dumps({**line, "episode_index": mapping[idx]}, ensure_ascii=False))
+        (new_meta / SCENARIO_LOG).write_text("".join(x + "\n" for x in out), encoding="utf-8")
+        moved.append(SCENARIO_LOG)
+
+    # 4. 번호 무관 사이드카 — 그대로
     for name in COPY_AS_IS:
         src = old_meta / name
         if src.is_file() and not (new_meta / name).is_file():
