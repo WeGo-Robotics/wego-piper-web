@@ -69,6 +69,20 @@ export function ZeroCalibrationPanel({ iface }: { iface: string }) {
     }
   }
 
+  // 2단계(손으로 맞추기)는 토크가 꺼져 있어야 한다. 상세 창은 모달이라 목록의 [토크 OFF] 에
+  // 손이 안 닿는다 — 그래서 여기 둔다. 굽기 준비와는 다른 일이다(아래 [영점] 옆 주석).
+  const [torqueBusy, setTorqueBusy] = useState(false)
+  const setTorque = async (enable: boolean) => {
+    setTorqueBusy(true)
+    try {
+      await api.post(`/robots/parking/torque?enable=${enable}`, { iface })
+    } catch {
+      notify({ level: 'error', source: t('영점'), text: enable ? t('토크 ON 실패') : t('토크 OFF 실패') })
+    } finally {
+      setTorqueBusy(false)
+    }
+  }
+
   // 300ms 폴링이 이미 돌지만, 명시적 버튼은 "지금 이 순간 값"이라는 확신을 준다 —
   // 폴링이 조용히 실패하고 있어도 여기서는 에러가 보인다.
   const [refreshing, setRefreshing] = useState(false)
@@ -128,6 +142,16 @@ export function ZeroCalibrationPanel({ iface }: { iface: string }) {
             className="rounded bg-blue-600 px-3 py-1.5 text-xs text-white
                        hover:bg-blue-500 disabled:opacity-40">
             {resetting ? t('리셋 중…') : t('리셋 (0x150 재동기화)')}
+          </button>
+          <button onClick={() => void setTorque(false)} disabled={torqueBusy || busy !== null}
+            className="rounded bg-neutral-700 px-3 py-1.5 text-xs text-neutral-200
+                       hover:bg-amber-600 disabled:opacity-40">
+            {t('토크 OFF')}
+          </button>
+          <button onClick={() => void setTorque(true)} disabled={torqueBusy || busy !== null}
+            className="rounded bg-neutral-700 px-3 py-1.5 text-xs text-neutral-200
+                       hover:bg-green-600 disabled:opacity-40">
+            {t('토크 ON')}
           </button>
           <button onClick={() => void doRefresh()} disabled={refreshing}
             title={t('raw 위치를 지금 다시 읽습니다 (평소에도 0.3초마다 자동 갱신됩니다)')}

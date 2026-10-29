@@ -36,6 +36,8 @@ function ParkingPanel({ iface }: { iface: string }) {
   const [busy, setBusy] = useState<'' | 'park' | 'read' | 'save'>('')
   const [msg, setMsg] = useState('')
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined)
+  //: 이 패널이 토크를 풀어 둔 채인가 — 떠날 때 되돌릴지는 이것만 본다
+  const releasedRef = useRef(false)
 
   const readJoints = useCallback(async () => {
     try {
@@ -70,6 +72,7 @@ function ParkingPanel({ iface }: { iface: string }) {
         last = now
       }
       await api.post('/robots/parking/torque?enable=false', { iface })
+      releasedRef.current = true
       setMsg(t('파킹 자세에 섰고 토크를 풀었습니다 — 손으로 자세를 맞추세요.'))
     } catch (e) {
       setMsg(e instanceof Error ? e.message : t('파킹으로 보내지 못했습니다'))
@@ -91,16 +94,21 @@ function ParkingPanel({ iface }: { iface: string }) {
     try {
       await api.post('/robots/parking/save', { iface, positions: captured })
       await api.post('/robots/parking/torque?enable=true', { iface })
+      releasedRef.current = false
       setMsg(t('파킹 위치를 저장했고 토크를 걸었습니다.'))
     } catch (e) {
       setMsg(e instanceof Error ? e.message : t('저장하지 못했습니다'))
     } finally { setBusy('') }
   }
 
-  // ⚠ 떠날 때 토크를 복원한다 — 파킹 흐름이 토크를 풀어 두는데, 풀린 채로
-  //   두면 팔이 중력으로 내려앉는다 (예전 모달의 닫기와 같은 책임).
+  // ⚠ 떠날 때 토크를 복원한다 — **이 패널이 풀어 둔 경우만.** 파킹 흐름이 토크를
+  //   풀어 두는데, 풀린 채로 두면 팔이 중력으로 내려앉는다 (예전 모달의 닫기와 같은 책임).
+  // ⚠ 예전엔 무조건 걸었다. 파킹이 상세 창의 첫 탭이라 [영점] 으로 넘어가기만 해도 토크가
+  //   들어와 손으로 원점을 맞출 수 없었다 — 개발 서버에서는 StrictMode 가 effect 를 한 번
+  //   걷었다 다시 걸어서 **창을 열자마자** 들어왔다 (2026-10-29).
   useEffect(() => () => {
-    api.post('/robots/parking/torque?enable=true', { iface }).catch(() => {})
+    if (releasedRef.current)
+      api.post('/robots/parking/torque?enable=true', { iface }).catch(() => {})
   }, [iface])
 
   const drift = (n: string) =>

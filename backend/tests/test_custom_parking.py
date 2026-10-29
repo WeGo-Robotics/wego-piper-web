@@ -112,3 +112,28 @@ def test_parking_waits_for_the_arm_to_settle_not_a_fixed_delay():
     park = modal.split("const goParking = async", 1)[1][:900]
     assert "setTimeout(async" not in park, "고정 지연으로 도착을 가정한다"
     assert "still" in park, "멈췄는지 보지 않는다"
+
+
+def test_leaving_the_parking_tab_restores_only_the_torque_it_released():
+    """**회귀** — 파킹은 상세 창의 첫 탭이다. 떠날 때 토크를 무조건 걸어서 [영점] 탭으로
+    넘어가기만 해도 팔이 굳었고(개발 서버는 StrictMode 로 창을 열자마자), 손으로 원점을
+    맞출 수 없었다 (2026-10-29). 되돌릴 것은 이 패널이 풀어 둔 토크뿐이다."""
+    from conftest import code_only
+
+    src = code_only(_page())
+    modal = src.split("function ParkingPanel", 1)[1].split("\nfunction ", 1)[0]
+    cleanup = modal.split("useEffect(() => () => {", 1)[1][:200]
+    assert "releasedRef.current" in cleanup, "떠날 때 무조건 토크를 건다"
+    park = modal.split("const goParking = async", 1)[1].split("const capture", 1)[0]
+    assert "releasedRef.current = true" in park, "토크를 풀고도 기억하지 않는다 — 떠날 때 안 되돌린다"
+
+
+def test_the_zero_tab_can_release_torque_itself():
+    """영점 2단계는 "토크를 끄고 손으로 맞춘다" 인데 상세 창은 모달이라 목록의 [토크 OFF] 에
+    손이 안 닿는다. 영점 탭 안에 있어야 한다."""
+    from pathlib import Path
+    from conftest import code_only
+
+    src = code_only((Path(__file__).resolve().parents[2]
+                     / "frontend/src/components/ZeroCalibrationModal.tsx").read_text())
+    assert "/robots/parking/torque?enable=" in src, "영점 탭에서 토크를 끌 수 없다"
