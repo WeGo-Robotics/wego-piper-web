@@ -1027,6 +1027,7 @@
   "같은 모션": "same motion",
   "같은 배치 반복은 지시문으로 목표를 고를 때만 됩니다 — 규칙이면 매번 같은 것을 집습니다": "Repeating the same layout only works when the instruction picks the target — with a rule it picks the same object every time",
   "같은 배치에서 목표만 바꾸기": "Same layout, change only the target",
+  "같은 이름의 프리셋 \"{name}\" 이 있습니다. 지금 값으로 덮어쓸까요?": "A preset named \"{name}\" already exists. Overwrite it with the current values?",
   "같은 프레임의 어디를 보고 노출을 잴지. 목표(0.0 EV)는 셋 다 같습니다.": "Which part of the same frame to meter exposure from. The target (0.0 EV) is the same for all three.",
   "개발": "Develop",
   "개발 — plugins/ 아래만 고치고 piper-plugin 으로 검사·드라이런. 설치는 사람이": "Develop — edits only under plugins/, checks and dry-runs with piper-plugin. Installing is up to you",

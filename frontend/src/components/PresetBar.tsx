@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { useT } from '../i18n'
+import { useSystemMessage } from './SystemMessages'
 
 /**
  * 프리셋 저장·불러오기 바 — 도메인만 바꿔 재사용한다.
@@ -8,6 +9,12 @@ import { useT } from '../i18n'
  * 이전에는 설정이 브라우저 localStorage 의 **이름 없는 프리셋 1개**였다.
  * 브라우저를 바꾸면 사라지고 팀에서 공유할 수도 없었다
  * (feature/parameter-presets.md).
+ *
+ * ⚠ **이름은 화면 안 칸으로 받는다 — `window.prompt` 를 쓰지 않는다.** prompt 는 confirm 과 같이 이벤트
+ *   루프를 멈춰 E-stop heartbeat 가 끊긴다. 추론 화면은 추론 중에도 이 바를 쓰므로, 이름을 고르느라
+ *   2초를 넘기면 돌던 추론이 SIGKILL 될 수 있었다.
+ * ⚠ **같은 이름이면 덮어쓸지 묻는다.** 서버는 같은 이름을 그대로 덮어쓰고, 이름 칸에는 지금 고른
+ *   프리셋 이름이 미리 들어가 있어 [저장] → Enter 만으로 남의 프리셋이 바뀌었다.
  */
 
 export type PresetMeta = {
@@ -59,6 +66,9 @@ export default function PresetBar({
   const [list, setList] = useState<PresetMeta[]>([])
   const [selected, setSelected] = useState('')
   const [msg, setMsg] = useState('')
+  // 이름 칸 — 열려 있으면 그 값, 닫혀 있으면 null
+  const [naming, setNaming] = useState<string | null>(null)
+  const { confirm } = useSystemMessage()
 
   const refresh = useCallback(() => {
     api.get<PresetMeta[]>(`/presets/${domain}`).then(setList).catch(() => {})
@@ -66,9 +76,18 @@ export default function PresetBar({
 
   useEffect(() => { refresh() }, [refresh])
 
-  const handleSave = async () => {
-    const name = window.prompt(t('프리셋 이름'), selected || '')
+  const submitName = async () => {
+    const name = (naming ?? '').trim()
     if (!name) return
+    if (list.some((p) => p.name === name)
+        && !(await confirm(t('같은 이름의 프리셋 "{name}" 이 있습니다. 지금 값으로 덮어쓸까요?', { name }), { danger: true }))) {
+      return
+    }
+    setNaming(null)
+    await handleSave(name)
+  }
+
+  const handleSave = async (name: string) => {
     try {
       if (onSaveAs) {
         setMsg(await onSaveAs(name))
@@ -134,22 +153,36 @@ export default function PresetBar({
     <div className="space-y-1">
       <div className="flex items-center gap-2 text-xs">
         <span className="text-neutral-400">{t('프리셋')}</span>
-        <select
-          value={selected}
-          onChange={(e) => { setSelected(e.target.value); handleApply(e.target.value) }}
-          disabled={disabled}
-          className="flex-1 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 disabled:opacity-50">
-          <option value="">{t('— 선택 —')}</option>
-          {list.map((p) => (
-            <option key={p.name} value={p.name}>
-              {p.name}{p.policy_type ? ` (${p.policy_type})` : ''}
-            </option>
-          ))}
-        </select>
-        <button onClick={handleSave} disabled={disabled}
-          className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40">{t('저장')}</button>
-        <button onClick={handleDelete} disabled={disabled || !selected}
-          className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40">{t('삭제')}</button>
+        {naming === null ? (<>
+          <select
+            value={selected}
+            onChange={(e) => { setSelected(e.target.value); handleApply(e.target.value) }}
+            disabled={disabled}
+            className="flex-1 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 disabled:opacity-50">
+            <option value="">{t('— 선택 —')}</option>
+            {list.map((p) => (
+              <option key={p.name} value={p.name}>
+                {p.name}{p.policy_type ? ` (${p.policy_type})` : ''}
+              </option>
+            ))}
+          </select>
+          <button onClick={() => { setNaming(selected || ''); setMsg('') }} disabled={disabled}
+            className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40">{t('저장')}</button>
+          <button onClick={handleDelete} disabled={disabled || !selected}
+            className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40">{t('삭제')}</button>
+        </>) : (<>
+          <input autoFocus value={naming} placeholder={t('프리셋 이름')}
+            onChange={(e) => setNaming(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); void submitName() }
+              if (e.key === 'Escape') { e.preventDefault(); setNaming(null) }
+            }}
+            className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-blue-500 text-neutral-100" />
+          <button onClick={() => void submitName()} disabled={!naming.trim()}
+            className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">{t('저장')}</button>
+          <button onClick={() => setNaming(null)}
+            className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600">{t('취소')}</button>
+        </>)}
       </div>
       {msg && <p className="text-[10px] text-neutral-400">{msg}</p>}
     </div>
