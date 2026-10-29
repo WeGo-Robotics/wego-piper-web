@@ -1,0 +1,40 @@
+# 분류 — 물체를 속성(색·크기)에 따라 정해진 구역(상자)에 담는다 (feature/scenario-designer.md §5).
+#
+# 이 파일은 **값의 모양**만 말한다 — 어떤 필드가 있고 기본값·선택지·범위가 무엇인가.
+# 화면 문구는 여기 없다: YAML 문자열은 번역 추출(tools/i18n.py) 대상이 아니라서, 라벨을 여기
+# 두면 영어 화면에 한국어가 섞인다. 문구는 템플릿 컴포넌트(frontend/src/components/scenario/)
+# 가 `t()` 로 갖는다.
+spec_version: 1
+type: sort
+generator: sort
+
+# 첫 번째가 기본값.
+#   one — 한 에피소드 = 물체 하나. 담고 나면 그 자체가 다음 배치다(연쇄).
+#   all — 한 에피소드 = 라운드 전체를 순서 규칙대로 분류.
+episode_units: [one, all]
+
+fields:
+  # 라운드에 놓는 물체 수. 여럿이면 번갈아 쓴다 — 방해물 수 자체가 다양해진다.
+  round_sizes: { kind: text, default: "3,5" }
+  # chain   — 담은 물체는 상자에 남고 다음 목표로 (라운드 크기만큼 에피소드)
+  # restore — 같은 배치에서 목표만 바꿔 targets_per_layout 번, 담은 것은 되돌려 놓는다
+  round_style: { kind: select, options: [chain, restore], default: chain }
+  targets_per_layout: { kind: number, default: 3, min: 1, max: 10 }
+  # instruction — 지시문이 목표를 정한다 (지시문을 보는 정책 전용)
+  # rule        — 장면만으로 정해진다 (아래 order_rule)
+  target_by: { kind: select, options: [instruction, rule], default: instruction }
+  # type_priority — 물체 목록 순서대로, 같은 종류는 가까운 순
+  # nearest       — 종류와 무관하게 로봇에서 가까운 순, 같으면 왼쪽부터
+  order_rule: { kind: select, options: [type_priority, nearest], default: type_priority }
+  # 여러 개 연속 분류(all)의 task 문구. 데이터다 — 화면 언어를 따라 바뀌지 않는다.
+  all_task: { kind: text, default: "sort the objects into the boxes" }
+  # [{obj, dest, task}] — 물체 종류마다 하나. 생성기가 검증한다.
+  rules: { kind: data, default: [] }
+
+variants:
+  recover_missed_grasp: { default: 0.10 }
+  recover_dropped: { default: 0.05 }
+  perturb: { default: 0.05, requires: { episode_unit: one } }
+  empty_target: { default: 0.05, requires: { episode_unit: one, target_by: instruction } }
+  wrong_bin_fix: { default: 0.0, requires: { episode_unit: one, target_by: instruction, round_style: chain } }
+  hard_layout: { default: 0.10, per: round }

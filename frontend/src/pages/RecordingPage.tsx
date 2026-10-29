@@ -15,6 +15,7 @@ import { normalizeMapping } from '../types/camera'
 import { useCameraStreams } from '../hooks/useCameraStreams'
 import CameraStreamSelect, { IdleStreams } from '../components/CameraStreamPicker'
 import { useT } from '../i18n'
+import ScenarioDesigner from '../components/scenario/ScenarioDesigner'
 
 type ReadyArm = { iface: string; role: string; side?: string | null }
 type RecordStatusData = { state?: string; current_episode: number; total_episodes: number; phase: string; progress: number }
@@ -52,6 +53,10 @@ function formatElapsed(ms: number): string {
 
 export default function RecordingPage() {
   const t = useT()
+  // [수집 | 시나리오] — 시나리오 설계기(feature/scenario-designer.md)는 처음 열 때 붙이고, 탭을
+  // 오가도 설계 중인 값이 날아가지 않게 감추기만 한다. 수집 화면도 같은 이유로 감추기만 한다.
+  const [tab, setTab] = useState<'record' | 'scenario'>('record')
+  const [scenarioOpened, setScenarioOpened] = useState(false)
   const { notify, confirm: askConfirm } = useSystemMessage()
   const [followers, setFollowers] = useState<ReadyArm[]>([])
   const [leaders, setLeaders] = useState<ReadyArm[]>([])
@@ -399,9 +404,18 @@ export default function RecordingPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center gap-4">
         <h1 className="text-2xl font-bold">{t('데이터 수집')}</h1>
-        <div className="flex items-center gap-3">
+        <div className="flex overflow-hidden rounded-lg border border-neutral-700 text-sm">
+          {([['record', t('수집')], ['scenario', t('시나리오')]] as const).map(([k, label]) => (
+            <button key={k} onClick={() => { setTab(k); if (k === 'scenario') setScenarioOpened(true) }}
+              className={`px-4 py-1.5 ${tab === k
+                ? 'bg-neutral-700 text-white' : 'bg-neutral-900 text-neutral-400 hover:text-white'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="ml-auto flex items-center gap-3">
           <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
           {isRunning && (
             <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-500/20 text-green-400">{recordState}</span>
@@ -409,6 +423,11 @@ export default function RecordingPage() {
         </div>
       </div>
 
+      {scenarioOpened && (
+        <div className={tab === 'scenario' ? '' : 'hidden'}><ScenarioDesigner /></div>
+      )}
+
+      <div className={tab === 'record' ? 'space-y-6' : 'hidden'}>
       {!isRunning ? (
         <>
           {/* 설정 화면 — 로봇·데이터셋을 한 줄에 나란히 두고,
@@ -884,6 +903,7 @@ export default function RecordingPage() {
           </div>
         </>
       )}
+      </div>
     </div>
   )
 }
