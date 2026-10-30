@@ -34,6 +34,7 @@ from typing import Any
 
 import numpy as np
 from piper_bus.client import Bus
+from run_record import RunRecord
 
 # root handler 정리 (중복 방지)
 _handler = logging.StreamHandler(sys.stdout)
@@ -55,6 +56,8 @@ _interpolation_steps: int = 0  # 액션 보간 스텝 수 (0=보간 없음)
 _use_chunk_size: int = 0  # 수신 chunk에서 사용할 액션 수 (0=전부 사용)
 _gripper_bypass_filter: bool = True  # 그리퍼 속도 제한/필터 미적용 (True=우회, 기본값)
 _reset_requested: bool = False  # 원위치+리셋 요청 (실제 처리는 제어 루프)
+# 실행 기록 — CSV 옆 .json 에 체크포인트·시작 조건·도중 변경 (run_record.py)
+_run_record: RunRecord | None = None
 
 
 def apply_param(key: str, value) -> bool:
@@ -117,6 +120,8 @@ def param_listener(bus: Bus) -> None:
             if msg is None:      # 타임아웃 — 빈 큐일 뿐이다
                 continue
             for key, value in msg.items():
+                if _run_record is not None:
+                    _run_record.change(key, value)
                 apply_param(key, value)
         except Exception as e:
             logger.error("파라미터 수신 오류: %s", e)
@@ -266,6 +271,16 @@ def main() -> None:
     stub.Ready(services_pb2.Empty())
     stub.SendPolicyInstructions(services_pb2.PolicySetup(data=pickle.dumps(policy_config)))
     logger.info("Policy server connected")
+
+    # ── 실행 기록 — 리스너보다 먼저 연다: 연결 중에 큐에 쌓인 값도 "도중 변경"에 남게 ──
+    import datetime
+    _log_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    _csv_path = f"/tmp/piper_inference_{_log_ts}.csv"
+    global _run_record
+    _run_record = RunRecord(
+        _csv_path, clock=time.time, wrapper="grpc", policy_type=args.policy_type, checkpoint=args.pretrained_path,
+        args={**vars(args), "cameras": cameras_cfg, "config_overrides": json.loads(args.config_overrides)})
+    logger.info("Run record: %s", _run_record.path)
 
     # ── 3. 파라미터 리스너 시작 ──
     # 주소는 `PIPER_REDIS_URL` 에서 온다 — ZMQ 시절 `--zmq-addr` 가 없어졌다.
@@ -483,11 +498,8 @@ def main() -> None:
     start_barrier.wait()
     logger.info("Control loop starting (fps=%d)", args.fps)
 
-    # ── CSV 데이터 로그 ──
+    # ── CSV 데이터 로그 (경로는 실행 기록과 같이 위에서 정했다) ──
     import csv
-    import datetime
-    _log_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    _csv_path = f"/tmp/piper_inference_{_log_ts}.csv"
     _csv_file = open(_csv_path, "w", newline="")
     _csv_cols = (
         ["timestamp", "step", "fps", "queue_size"]
@@ -783,6 +795,7 @@ def main() -> None:
         logger.info("Disconnected.")
         channel.close()
         _csv_file.close()
+        _run_record.finish(step)
         _debug_log.close()
         _debug_dir = recorder.close() if recorder is not None else None
         print(json.dumps({"t": "log_saved", "csv_path": _csv_path, "steps": step, "debug_dir": _debug_dir}), flush=True)

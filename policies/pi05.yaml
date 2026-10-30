@@ -23,7 +23,7 @@ runtime:
 
 infer:
 # 이 정책만 노출하는 추론 파라미터.
-  extra_params: [max_guidance_weight, execution_horizon]
+  extra_params: [rtc_enabled, max_guidance_weight, execution_horizon]
 
 train:
   defaults: { batch_size: 32, steps: 30000, optimizer_type: adamw }

@@ -136,13 +136,42 @@ def test_ensembling_infers_every_step():
     assert re.search(r"if \(_te_active or qsize_after <= _refill_lead\)", src)
 
 
-def test_ensembling_is_off_unless_asked():
-    """계수(0.01)는 예전부터 시작값으로 실려 왔다 — 계수만으로 켜면 모든 ACT 추론이 바뀐다."""
+def test_ensembling_is_on_by_default_for_the_act_family_only():
+    """기본은 켬(2026-10-29 실기). 하지만 wrapper 는 모든 정책을 돌리므로 제 기본값은 꺼짐이다 —
+    화면 밖(플러그인·외부 API)에서 띄운 ACT 추론에는 시작 라우터가 스펙 기본값을 채운다."""
     assert re.search(r"^_temporal_ensemble = False", _WRAPPER, re.M)
     from app.core.inference_params import PARAM_SPEC
 
-    assert PARAM_SPEC["temporal_ensemble"]["default"] is False
+    assert PARAM_SPEC["temporal_ensemble"]["default"] is True
     assert PARAM_SPEC["temporal_ensemble"]["send_at_start"] and PARAM_SPEC["temporal_ensemble"]["realtime"]
+    for policy in ("act", "act_s", "act_dinov3"):
+        assert _overrides(policy, {"max_velocity": 100})["temporal_ensemble"] is True
+        assert _overrides(policy, {"temporal_ensemble": False})["temporal_ensemble"] is False, "고른 값을 덮었다"
+    for policy in ("smolvla", "smolvla_s", "pi0"):
+        assert "temporal_ensemble" not in _overrides(policy, {"max_velocity": 100})
+    assert "temporal_ensemble" not in _overrides("act", {"max_velocity": 100}, mode="server"), \
+        "앙상블은 로컬 wrapper 의 것이다"
+
+
+def test_the_coefficient_is_capped_where_it_stopped_helping():
+    from app.core.inference_params import PARAM_SPEC
+    from temporal_ensemble import MAX_COEFF, TemporalEnsembler
+
+    assert PARAM_SPEC["temporal_ensemble_coeff"]["max"] == MAX_COEFF == 0.05
+    e = TemporalEnsembler()
+    e.set_coeff(0.764)
+    assert e.coeff == MAX_COEFF, "프리셋·외부 API 의 큰 값이 그대로 들어간다"
+    e.set_coeff(-1)
+    assert e.coeff == 0.0
+    src = code_only(_WRAPPER)
+    assert src.count("_ensembler.set_coeff(value)") == 2 and "_ensembler.coeff =" not in src
+
+
+def test_the_screen_resets_a_saved_old_default_once():
+    """화면은 파라미터를 통째로 저장한다 — 예전 기본값(꺼짐)이 고른 값처럼 남아 새 기본값이 안 먹는다."""
+    src = (_REPO / "frontend" / "src" / "pages" / "InferencePage.tsx").read_text()
+    assert "temporal_ensemble: true," in src
+    assert re.search(r"piper_inference_params_rev.*\n\s*delete saved\.temporal_ensemble", src)
 
 
 def test_reset_and_pause_clear_the_ensemble():

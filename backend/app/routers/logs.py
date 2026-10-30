@@ -1,5 +1,6 @@
 """로그 파일 통합 관리 — 조회 / 다운로드 / 삭제 / 차트 생성."""
 
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,8 @@ LOG_DIR = Path("/tmp")
 LOG_CATEGORIES = {
     "inference": {"dir": LOG_DIR, "glob": "piper_inference_*.csv", "label": "추론 CSV"},
     "inference_chart": {"dir": LOG_DIR, "glob": "piper_inference_*.html", "label": "추론 차트"},
+    # 어느 체크포인트를 어떤 조건으로 돌렸나 + 도중 변경 (wrapper/run_record.py)
+    "inference_run": {"dir": LOG_DIR, "glob": "piper_inference_*.json", "label": "추론 조건"},
     "debug": {"dir": LOG_DIR, "glob": "grpc_wrapper_debug.log", "label": "래퍼 디버그"},   # /debug(추론 디버그 페이지)와 헷갈리지 않게
 }
 
@@ -70,7 +73,7 @@ async def download_log(filename: str):
     for cat in LOG_CATEGORIES.values():
         path = cat["dir"] / filename
         if path.exists():
-            media = "text/csv" if path.suffix == ".csv" else "application/octet-stream"
+            media = {".csv": "text/csv", ".json": "application/json"}.get(path.suffix, "application/octet-stream")
             return FileResponse(path, media_type=media, filename=filename)
     raise HTTPException(404, "File not found")
 
@@ -84,13 +87,30 @@ async def delete_log(filename: str):
         path = cat["dir"] / filename
         if path.exists():
             path.unlink()
-            # 연관 HTML 차트도 삭제
-            html_path = path.with_suffix(".html")
-            if html_path.exists():
-                html_path.unlink()
+            # CSV 를 지우면 거기 딸린 HTML 차트·실행 기록도 삭제 (반대로는 안 지운다)
+            if path.suffix == ".csv":
+                for sfx in (".html", ".json"):
+                    companion = path.with_suffix(sfx)
+                    if companion.exists():
+                        companion.unlink()
             logger.info("Deleted log: %s", path)
             return {"status": "deleted", "name": filename}
     raise HTTPException(404, "File not found")
+
+
+def _run_label(csv_path: Path) -> str:
+    """차트 제목에 붙일 정책·체크포인트 — 실행 기록(.json)에서. 기록이 없는 옛 CSV 는 빈 문자열."""
+    try:
+        rec = json.loads(csv_path.with_suffix(".json").read_text())
+    except (OSError, ValueError):
+        return ""
+    parts = Path(rec.get("checkpoint") or "").parts
+    if "checkpoints" in parts:   # <run>/checkpoints/<step>/pretrained_model → <run>/<step>
+        i = parts.index("checkpoints")
+        ckpt = "/".join(parts[max(i - 1, 0):i] + parts[i + 1:i + 2])
+    else:
+        ckpt = parts[-1] if parts else ""
+    return f" · {rec.get('policy_type') or '?'} {ckpt}"
 
 
 @router.get("/chart/{filename}")
@@ -168,7 +188,7 @@ async def chart_log(filename: str):
     duration = df["time_s"].iloc[-1]
     empty_pct = (df["queue_size"] == 0).mean() * 100
     fig.update_layout(
-        title=dict(text=f"{csv_path.stem} — {len(df)} steps, {duration:.1f}s, queue empty {empty_pct:.1f}%"),
+        title=dict(text=f"{csv_path.stem}{_run_label(csv_path)} — {len(df)} steps, {duration:.1f}s, queue empty {empty_pct:.1f}%"),
         height=250 * total_rows, template="plotly_dark",
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1),
         hovermode="x unified",

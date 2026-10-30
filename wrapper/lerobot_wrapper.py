@@ -93,6 +93,22 @@ from delta_action import ABSOLUTE, CKPT_MARKER, DELTA_V1, DeltaRestorer
 _temporal_ensemble = False
 _ensembler = TemporalEnsembler()
 
+# 청크 이어 붙이기 (chunk_merge.py) — 큐 모드에서 새 청크를 갈아끼우는 대신 경계를 크로스페이드하고
+# 지연 없이 다듬는다. 시간 앙상블이 켜져 있으면 앙상블이 이미 합치므로 안 쓴다. 기본 크로스페이드 10·창 7.
+from chunk_merge import ChunkMerger
+_chunk_merger = ChunkMerger()
+
+# RTC (rtc_feed.py) — flow-matching 정책(SmolVLA·π0)이 이전 청크의 남은 부분을 이어 받아 새 청크를 만든다.
+# 정책이 `init_rtc_processor` 를 가질 때만 돈다. ⚠ 꺼짐이 기본 — 켜면 그 정책 추론의 청크가 바뀐다.
+from rtc_feed import RtcFeed
+_rtc_enabled = False
+_rtc_feed = RtcFeed()
+
+# 계획 안 순간이동 고쳐 잇기 (jump_repair.py) — 청크 안에서 말단이 한 스텝에 너무 멀리 가는 곳을 매끈하게
+# 잇는다. 말단 위치(FK)가 필요해 PIPER 팔에서만 돈다 — 팔은 로봇을 연결한 뒤에 붙인다. 기본 켬.
+from jump_repair import JumpRepair, piper_arms, piper_fk
+_jump_repair = JumpRepair()
+
 # 단계별 파킹 컨트롤러 (추론 종료 후 원점 복귀)
 from parking_controller import ParkingController
 
@@ -114,6 +130,10 @@ _refill_threshold_pct = 20.0
 # 시작 시 확정하되 버스 n_action_steps로 런타임 변경 가능. 0 = 모델 전체 청크.
 _actions_per_chunk = 0
 
+# 실행 기록 — CSV 옆 .json 에 체크포인트·시작 조건·도중 변경 (run_record.py)
+from run_record import RunRecord, settings
+_run_record: RunRecord | None = None
+
 # 정책 타입별 lazy import (policies/__init__.py 우회)
 # 정책 → (모델모듈, 모델클래스, config모듈, config클래스).
 # ⚠ **손으로 적지 않는다.** 예전에는 이 dict 와 백엔드 `POLICIES` 가 각자 목록을
@@ -128,7 +148,7 @@ def param_listener(policy: Any, bus: "Bus") -> None:
     ZMQ PULL bind 를 Redis 큐 소비로 교체했다 (refactor/daemon-split.md 3단계).
     큐라서 pub/sub 과 달리 **정책 로딩 중에 보낸 값도 유실되지 않는다.**
     """
-    global _current_task, _paused, _manual_action, _refill_threshold_pct, _actions_per_chunk, _reset_requested, _temporal_ensemble
+    global _current_task, _paused, _manual_action, _refill_threshold_pct, _actions_per_chunk, _reset_requested, _temporal_ensemble, _rtc_enabled
     logger.info("파라미터 리스너 시작 (Redis 큐)")
 
     while True:
@@ -137,6 +157,8 @@ def param_listener(policy: Any, bus: "Bus") -> None:
             if msg is None:      # 타임아웃 — 빈 큐일 뿐이다
                 continue
             for key, value in msg.items():
+                if _run_record is not None:
+                    _run_record.change(key, value)
                 # 일시정지/재개
                 if key == "pause":
                     _paused = bool(value)
@@ -174,8 +196,19 @@ def param_listener(policy: Any, bus: "Bus") -> None:
                     logger.info("Updated temporal_ensemble = %s", _temporal_ensemble)
                     continue
                 if key == "temporal_ensemble_coeff":
-                    _ensembler.coeff = float(value)
+                    _ensembler.set_coeff(value)
                     logger.info("Updated temporal_ensemble_coeff = %s", _ensembler.coeff)
+                    continue
+                if _chunk_merger.update_param(key, value):
+                    logger.info("Updated chunk merge %s = %s", key, value)
+                    continue
+                if _jump_repair.update_param(key, value):
+                    logger.info("Updated %s = %s", key, value)
+                    continue
+                # RTC 켜고 끄기 — 다음 추론부터 (rtc_config.enabled 는 추론 스레드가 매번 맞춘다)
+                if key == "rtc_enabled":
+                    _rtc_enabled = bool(value)
+                    logger.info("Updated rtc_enabled = %s", _rtc_enabled)
                     continue
                 # 액션 필터 파라미터
                 if _action_filter.update_param(key, value):
@@ -237,7 +270,7 @@ def main() -> None:
 
     register_third_party_plugins()
 
-    global _current_task, _refill_threshold_pct, _actions_per_chunk, _paused, _reset_requested, _reset_gen, _temporal_ensemble
+    global _current_task, _refill_threshold_pct, _actions_per_chunk, _paused, _reset_requested, _reset_gen, _temporal_ensemble, _rtc_enabled
     _current_task = args.task if args.task else "do the task"
 
     # ── 액션 공간 대조 — 어긋나면 시작하지 않는다 (fail-closed) ──
@@ -292,6 +325,20 @@ def main() -> None:
     policy.eval()
     policy.to(device)
 
+    # RTC 를 걸 수 있는 정책이면 설정을 만들어 둔다 — 체크포인트의 `rtc_config` 는 대개 None 이라
+    # 아래 오버라이드의 RTC 슬라이더가 "rtc_config is None" 으로 버려졌다. 켜기는 추론 스레드가 매번 한다.
+    # 가중치를 얼린다: RTC 가이던스는 enable_grad 안에서 디노이저를 돌리는데, 가중치가 grad 를 요구하면
+    # 매 스텝 네트워크 전체의 그래프를 쌓는다 (가이던스 자체는 출력에 대한 기울기만 쓴다).
+    _rtc_capable = hasattr(policy, "init_rtc_processor") and hasattr(policy_cfg, "rtc_config")
+    if _rtc_capable:
+        from lerobot.policies.rtc.configuration_rtc import RTCConfig
+        if policy_cfg.rtc_config is None:
+            policy_cfg.rtc_config = RTCConfig(enabled=False)
+        policy.init_rtc_processor()
+        policy.requires_grad_(False)
+        logger.info("RTC capable (execution_horizon=%s, max_guidance_weight=%s)",
+                    policy_cfg.rtc_config.execution_horizon, policy_cfg.rtc_config.max_guidance_weight)
+
     # config 오버라이드 적용
     # (n_action_steps/use_chunk_size는 policy.config에 적용하지 않음 — actions_per_chunk로 별도 관리)
     #
@@ -319,8 +366,18 @@ def main() -> None:
             logger.info("temporal_ensemble override: %s", _temporal_ensemble)
             continue
         if key == "temporal_ensemble_coeff":
-            _ensembler.coeff = float(value)
+            _ensembler.set_coeff(value)
             logger.info("temporal_ensemble_coeff override: %s", _ensembler.coeff)
+            continue
+        if _chunk_merger.update_param(key, value):
+            logger.info("Chunk merge override: %s = %s", key, value)
+            continue
+        if _jump_repair.update_param(key, value):
+            logger.info("%s override: %s", key, value)
+            continue
+        if key == "rtc_enabled":
+            _rtc_enabled = bool(value)
+            logger.info("rtc_enabled override: %s", _rtc_enabled)
             continue
         # 액션 필터 시작값 (런타임 변경과 동일 경로로 적용)
         if _action_filter.update_param(key, value):
@@ -371,6 +428,20 @@ def main() -> None:
     except Exception:
         pass
 
+    # ── 실행 기록 — 리스너보다 먼저 연다: 로딩 중에 큐에 쌓인 값도 "도중 변경"에 남게 ──
+    import datetime as _dt
+    _log_ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    _csv_path = f"/tmp/piper_inference_{_log_ts}.csv"
+    global _run_record
+    _run_record = RunRecord(
+        _csv_path, wrapper="local", policy_type=policy_type, checkpoint=local_path,
+        args={**vars(args), "cameras": cameras_cfg, "config_overrides": config_overrides},
+        model={k: getattr(policy_cfg, k, None) for k in ("chunk_size", "n_action_steps", "n_obs_steps")},
+        # 시작값 = 기본값 + config_overrides
+        refill_threshold_pct=_refill_threshold_pct, temporal_ensemble=_temporal_ensemble,
+        temporal_ensemble_coeff=_ensembler.coeff, filter=settings(_action_filter))
+    logger.info("Run record: %s", _run_record.path)
+
     # ── 4. 파라미터 리스너 시작 (Redis 큐) ──
     # 주소는 `PIPER_REDIS_URL` 에서 온다 — ZMQ 시절 `--zmq-addr` 가 없어졌다.
     param_thread = threading.Thread(
@@ -406,11 +477,8 @@ def main() -> None:
 
     logger.info("Starting inference loop (fps=%d, device=%s, amp=%s)", args.fps, args.device, args.use_amp)
 
-    # ── CSV 로그 ──
+    # ── CSV 로그 (경로는 실행 기록과 같이 위에서 정했다) ──
     import csv
-    import datetime as _dt
-    _log_ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    _csv_path = f"/tmp/piper_inference_{_log_ts}.csv"
     _csv_motor_names = list(robot.action_features.keys())
     _csv_cols = (
         ["timestamp", "step", "fps", "inference_ms", "queue_size"]
@@ -448,6 +516,7 @@ def main() -> None:
     policy_image_features = policy.config.image_features
     _actions_per_chunk = _actions_per_chunk_override or policy_cfg.n_action_steps
     logger.info("actions_per_chunk: %d (model default: %d)", _actions_per_chunk, policy_cfg.n_action_steps)
+    _run_record.update(actions_per_chunk=_actions_per_chunk)
 
     def _prepare_observation(raw_obs: dict) -> dict:
         """raw_obs → 모델 입력 변환. preprocessor가 있으면 사용."""
@@ -529,9 +598,10 @@ def main() -> None:
     _latest_action_dict: dict | None = None
     _latest_action_np: np.ndarray | None = None
     _action_queue: list = []  # 타임스텝 기반 액션 큐
-    # (관측을 찍은 스텝, 그때의 앙상블 세대, 관측). 스텝이 있어야 청크의 k 번째가 어느 스텝인지 안다.
-    # 한 튜플로 넘긴다 — 셋을 따로 대입하면 추론 스레드가 섞인 조합을 읽을 수 있다.
-    _obs_for_inference: tuple[int, int, dict] | None = None
+    # (관측을 찍은 스텝, 그때의 앙상블 세대, 관측, RTC 이어 받기). 스텝이 있어야 청크의 k 번째가 어느 스텝인지 안다.
+    # 한 튜플로 넘긴다 — 따로 대입하면 추론 스레드가 섞인 조합을 읽을 수 있다. RTC 이어 받기는
+    # (이전 청크의 남은 원본, inference_delay) 또는 None — 관측과 **같은 순간**의 큐에서 떠야 맞물린다.
+    _obs_for_inference: tuple[int, int, dict, tuple[np.ndarray, int] | None] | None = None
     # 이번 루프가 실제로 쓰는 모드. 스위치(_temporal_ensemble)가 바뀌면 메인 루프가 버퍼를 비우며 따라간다.
     _te_active = False
     # stage 헤드 정책(ACT-S·SmolVLA-S)이 청크마다 내는 stage 예측. 다른 정책이면 계속 None 이다.
@@ -545,7 +615,21 @@ def main() -> None:
     _infer_seq = 0
     _inference_in_flight = False  # 연산 중 재트리거 방지 (이벤트는 연산 시작 시 clear되므로 별도 플래그 필요)
     _effective_chunk_len = max(1, _actions_per_chunk)  # 모델 청크로 클램핑된 실제 청크 길이 — refill_lead 계산용
+    # 액션을 꺼내 간 마지막 스텝 (락 안에서 쓴다). 청크를 이어 붙일 때 관측 뒤 몇 칸이 이미 나갔는지 센다.
+    _queue_step = -1
     motor_names = list(robot.action_features.keys())
+    # 그리퍼 우회가 켜져 있으면 청크 이어 붙이기도 그리퍼에 손대지 않는다 — ActionFilter 와 같은 판정
+    _gripper_dims = [j for j, name in enumerate(motor_names) if "gripper" in name]
+    # 고쳐 잇기는 PIPER 팔에만 붙는다. 못 붙이면 꺼진 채로 추론은 그대로 돈다 — 다듬기일 뿐 안전장치가 아니다.
+    _arms = piper_arms(args.robot_type, motor_names)
+    _fk = piper_fk() if _arms else None
+    if _fk is not None:
+        _jump_repair.attach(_fk, _arms, args.fps)
+        logger.info("Jump repair: %d arm(s), limit %.1fmm/step, %s", len(_arms), _jump_repair.limit,
+                    "ON" if _jump_repair.on else "OFF")
+    else:
+        logger.info("Jump repair unavailable (needs PIPER kinematics)")
+    _run_record.update(jump_repair=_jump_repair.enabled)
     # 델타 체크포인트면 청크를 절대로 되돌린다 (delta_action.py). 채널이 로봇에 없으면 여기서 죽는다.
     _delta: DeltaRestorer | None = None
     if args.action_space == DELTA_V1:
@@ -571,10 +655,11 @@ def main() -> None:
             if pending is None:
                 _inference_in_flight = False
                 continue
-            obs_step, obs_epoch, raw_obs = pending
+            obs_step, obs_epoch, raw_obs, rtc = pending
 
             # 리셋 세대 캡처: 연산 도중 리셋이 발생하면 이 결과는 폐기(스톨 액션 방지)
             my_gen = _reset_gen
+
 
             seq = _infer_seq
             _infer_seq += 1
@@ -583,13 +668,26 @@ def main() -> None:
 
             t0 = time.monotonic()
             try:
+                # RTC — 이어 받을 것이 있을 때만 켠다. 없으면 예전과 한 비트도 다르지 않게 끈다.
+                # ⚠ inference_mode 안에서는 RTC 가 죽는다: 가이던스가 enable_grad 로 출력에 대한 기울기를
+                #   구하는데 inference_mode 가 그걸 막는다 ("element 0 of tensors does not require grad",
+                #   SmolVLA-S 실모델 확인). 그래서 RTC 일 때만 no_grad 다.
+                rtc_kwargs = {}
+                if _rtc_capable:
+                    policy.config.rtc_config.enabled = rtc is not None
+                    if rtc is not None:
+                        rtc_prev, rtc_delay = rtc
+                        rtc_kwargs = {
+                            "inference_delay": rtc_delay,
+                            "prev_chunk_left_over": torch.as_tensor(rtc_prev, dtype=torch.float32, device=device).unsqueeze(0),
+                        }
                 with (
-                    torch.inference_mode(),
+                    torch.no_grad() if rtc_kwargs else torch.inference_mode(),
                     torch.autocast(device_type=device.type) if device.type == "cuda" and policy.config.use_amp else nullcontext(),
                 ):
                     observation = _prepare_observation(raw_obs)
                     # predict_action_chunk — 서버와 동일
-                    action_chunk = policy.predict_action_chunk(observation)
+                    action_chunk = policy.predict_action_chunk(observation, **rtc_kwargs)
                     # ACT-S·SmolVLA-S 는 같은 인코더 위에서 stage 를 함께 낸다. 바닐라
                     # 정책엔 이 속성이 없으므로 getattr 로 막는다 — 정책 타입 분기가
                     # wrapper 로 새어 들어오지 않게 한다.
@@ -601,6 +699,8 @@ def main() -> None:
                     _model_chunk = action_chunk.shape[1]
                     _apc = _model_chunk if _actions_per_chunk <= 0 else max(1, min(_actions_per_chunk, _model_chunk))
                     action_chunk = action_chunk[0, :_apc, :]
+                    # 정규화 원본 — 다음 추론의 RTC 가 이걸 이어 받는다 (후처리한 큐로는 못 잇는다)
+                    raw_chunk = action_chunk.float().cpu().numpy()
 
                 # postprocessor 적용 (unnormalize) + 액션 큐에 추가
                 new_queue = []
@@ -618,17 +718,47 @@ def main() -> None:
                     restored = _delta.restore(np.stack([a for a, _ in new_queue]), _delta.anchor(raw_obs))
                     new_queue = [(r, {name: float(r[j]) for j, name in enumerate(motor_names)}) for r in restored]
 
+                # 청크 안의 순간이동을 잇는다 (jump_repair.py) — 앙상블·병합·RTC 어느 쪽으로 가든 그 전에.
+                # 병합의 크로스페이드는 경계만 잇는다. 디버그 기록은 고치기 전 청크에 고친 자리만 덧붙인다.
+                recorded_queue = new_queue
+                repaired: list = []
+                if _jump_repair.enabled and new_queue:
+                    fixed_chunk, repaired = _jump_repair.repair(np.stack([a for a, _ in new_queue]))
+                    if repaired:
+                        new_queue = [(r, {name: float(r[j]) for j, name in enumerate(motor_names)}) for r in fixed_chunk]
+                        logger.info("Jump repaired (seq %d): %s", seq, repaired)
+
                 with _action_lock:
                     # 연산 도중 리셋이 발생했으면(_reset_gen 변경) 이 결과는 낡은 것 → 폐기
                     if my_gen != _reset_gen:
                         logger.info("Discarding stale inference result (reset occurred)")
                         continue
+                    elapsed = _queue_step + 1 - obs_step
                     if _te_active:
                         # 큐를 갈아끼우지 않는다 — 관측 스텝 기준으로 평균에 더한다. 그 사이 이미 보낸
                         # 칸은 앙상블이 버리고, 비운 뒤에 도착한 옛 관측의 청크는 세대가 달라 버린다.
                         _ensembler.add(obs_step, [a for a, _ in new_queue], epoch=obs_epoch)
+                    elif _chunk_merger.enabled and new_queue:
+                        # 갈아끼우면 경계에서 팔이 되돌아간다 — 남은 큐에 이어 붙인다 (chunk_merge.py).
+                        # ⚠ 이후 CSV·텔레메트리의 target 은 정책 원본이 아니라 이어 붙인 값이다.
+                        #   원본 청크는 디버그 기록(inference.jsonl)에 남는다.
+                        merged = _chunk_merger.merge(
+                            [a for a, _ in new_queue], [a for a, _ in _action_queue],
+                            elapsed=elapsed, last_sent=_latest_action_np,
+                            keep=_gripper_dims if _action_filter.gripper_bypass_filter else (),
+                        )
+                        _action_queue = [(r, {name: float(r[j]) for j, name in enumerate(motor_names)})
+                                         for r in merged]
+                    elif rtc_kwargs and new_queue:
+                        # RTC 는 앞 칸을 이전 계획에 맞춰 둔 청크다 — 이미 지나간 칸을 버려야 맞물린다 (LeRobot 과 같다)
+                        _action_queue = new_queue[min(max(0, elapsed), len(new_queue) - 1):]
                     else:
                         _action_queue = new_queue
+                    if not _te_active:
+                        _rtc_feed.replace(raw_chunk, len(_action_queue))
+                        # 첫 청크(워밍업이라 느리다)는 지연 기록에 안 넣는다 — 넣으면 한동안 앞을 과하게 고정한다
+                        if obs_step > 0:
+                            _rtc_feed.note_elapsed(elapsed)
                     # 액션과 같은 추론에서 나온 값이므로 같은 세대 검사를 탄다.
                     # 위에서 폐기됐으면 stage 도 공표되지 않는다.
                     _latest_aux = aux
@@ -636,8 +766,8 @@ def main() -> None:
                     # 값(클램핑 전)을 쓰면 청크보다 큰 임계치가 나와 매번 재추론하므로 이 값을 사용.
                     _effective_chunk_len = max(1, len(new_queue))
                     # 첫 액션을 latest로 설정 (앙상블이면 latest 는 실제로 보낸 평균이다)
-                    if new_queue and not _te_active:
-                        _latest_action_np, _latest_action_dict = new_queue[0]
+                    if _action_queue and not _te_active:
+                        _latest_action_np, _latest_action_dict = _action_queue[0]
 
                 _inference_ms_shared = round((time.monotonic() - t0) * 1000, 1)
 
@@ -645,8 +775,9 @@ def main() -> None:
                     recorder.record_inference(
                         seq,
                         action_chunk.cpu().numpy(),
-                        [a_dict for (_, a_dict) in new_queue],
+                        [a_dict for (_, a_dict) in recorded_queue],
                         _inference_ms_shared,
+                        repaired=repaired,
                     )
             except Exception as e:
                 logger.error("Inference thread error: %s", e, exc_info=True)
@@ -671,9 +802,11 @@ def main() -> None:
                 with _action_lock:
                     _action_queue = []
                     _ensembler.clear(0)
+                    _rtc_feed.clear()
                     _latest_action_dict = None
                     _latest_action_np = None
                     _effective_chunk_len = 1
+                    _queue_step = -1
                 _action_filter.reset()
                 try:
                     policy.reset()
@@ -722,6 +855,7 @@ def main() -> None:
                     _te_active = _temporal_ensemble
                     _action_queue = []
                     _ensembler.clear(step)
+                    _rtc_feed.clear()
                 logger.info("Temporal ensemble %s", "ON" if _te_active else "OFF")
 
             # 5a. 관측값 가져오기
@@ -730,7 +864,7 @@ def main() -> None:
             if step == 0:
                 logger.info("Observation keys: %s", list(obs.keys()))
                 # 첫 추론 트리거
-                _obs_for_inference = (step, _ensembler.epoch, {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()})
+                _obs_for_inference = (step, _ensembler.epoch, {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()}, None)
                 _obs_event.set()
 
             # 5b. 관절값 추출 (텔레메트리용)
@@ -738,6 +872,8 @@ def main() -> None:
 
             # 5c. 액션 큐에서 순서대로 꺼내서 로봇에 전송
             with _action_lock:
+                # 큐가 비어 직전 액션을 유지해도 이 스텝은 지나간 것이다
+                _queue_step = step
                 if _te_active:
                     # 이 스텝을 예측한 청크들의 가중 평균. 덮는 청크가 없으면 직전 액션 유지
                     ensembled = _ensembler.pop(step)
@@ -749,6 +885,7 @@ def main() -> None:
                 else:
                     if _action_queue:
                         action_np, action_dict = _action_queue.pop(0)
+                        _rtc_feed.pop()
                         _latest_action_np = action_np
                         _latest_action_dict = action_dict
                     else:
@@ -766,7 +903,15 @@ def main() -> None:
             # 시간 앙상블이면 매 스텝 — 평균할 청크가 매 스텝 있어야 한다. 추론이 제어보다 느리면
             # 연산 중 플래그에 걸려 끝나는 대로 다음 것을 돌린다.
             if (_te_active or qsize_after <= _refill_lead) and not _obs_event.is_set() and not _inference_in_flight:
-                _obs_for_inference = (step, _ensembler.epoch, {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()})
+                # RTC 이어 받기는 관측과 같은 순간의 큐에서 뜬다. 델타 체크포인트는 앵커가 관측마다 달라
+                # 이전 청크의 원본(델타)을 새 청크 공간으로 옮길 수 없다 — RTC 를 안 건다.
+                rtc = None
+                if _rtc_enabled and _rtc_capable and _delta is None and not _te_active:
+                    with _action_lock:
+                        left = _rtc_feed.left_over()
+                        if left is not None:
+                            rtc = (left, _rtc_feed.delay())
+                _obs_for_inference = (step, _ensembler.epoch, {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()}, rtc)
                 _obs_event.set()
 
             filtered = None
@@ -904,6 +1049,7 @@ def main() -> None:
         except Exception:
             pass
         _csv_file.close()
+        _run_record.finish(step)
         _debug_dir = recorder.close() if recorder is not None else None
         print(json.dumps({"t": "log_saved", "csv_path": _csv_path, "steps": step, "debug_dir": _debug_dir}), flush=True)
         logger.info("Done. Total steps: %d, CSV log: %s%s", step, _csv_path,

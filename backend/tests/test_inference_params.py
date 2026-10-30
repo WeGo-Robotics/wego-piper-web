@@ -20,7 +20,8 @@ UI_PARAMS = {
     "max_gripper_velocity": 200,
     "lowpass_alpha": 0.3,
     "max_jerk": 1000,
-    "interpolation_steps": 3,
+    "chunk_blend_steps": 8,
+    "chunk_smooth_window": 5,
     "use_chunk_size": 40,
     "refill_threshold_pct": 35,
     "gripper_bypass_filter": False,
@@ -118,3 +119,20 @@ def test_realtime_params_are_also_sent_at_start():
     realtime = (set(SAFE_PARAMS) | BOOL_PARAMS) - {"fps", "task"}
     missing = realtime - OVERRIDE_KEYS
     assert not missing, f"실시간 변경은 되는데 시작 시 전달 안 되는 파라미터: {missing}"
+
+
+def test_interpolation_left_in_saved_params_goes_nowhere():
+    """보간은 화면에서 뺐다 — 청크 정책에는 해롭다(inference_params.py 의 사유).
+
+    화면만 감추면 localStorage·프리셋에 남은 값이 **보이지 않는 데서 계속 실린다.** 시작 인자에도,
+    실행 중 버스에도 실리지 않아야 한다 — 그래야 wrapper 의 기본값(0, 끔)으로 돈다.
+    """
+    from app.services.param_bridge import ParamBridge
+
+    stale = {"interpolation_steps": 5}
+    for args in (build_inference_args({**_LOCAL_BASE, **UI_PARAMS, **stale}),
+                 build_grpc_client_args({**_GRPC_BASE, **UI_PARAMS, **stale})):
+        assert "interpolation_steps" not in _overrides_of(args)
+        assert not any("interpolation" in a for a in args)
+    safe, _ = ParamBridge(bus=None).validate_params({**stale, "lowpass_alpha": 0.6})
+    assert safe == {"lowpass_alpha": 0.6}

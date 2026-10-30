@@ -86,11 +86,11 @@ PARAM_SPEC: dict[str, ParamSpec] = {
         "min": 0, "max": 5000, "step": 100,
         "realtime": True, "send_at_start": True, "group": "진동 감소",
     },
-    "interpolation_steps": {
-        "label": "보간 스텝 (0=OFF)", "kind": "number", "default": 0,
-        "min": 0, "max": 10, "step": 1,
-        "realtime": True, "send_at_start": True, "group": "진동 감소",
-    },
+    # ⚠ `interpolation_steps`(보간)는 뺐다 — **청크 정책에는 해롭다.** N스텝에 한 번만 목표를 집어
+    #   거기서 멈췄다 가므로 15/N Hz 로 맥동하고(보간 5 에서 떨림 0.66→1.34mm, 피크 3Hz), 사이에 낀
+    #   액션을 버려 잡으러 내려가는 짧은 하강이 빠진다. 그리퍼는 우회라 제때 닫혀 **도착 전에 집는다**
+    #   (2026-10-28 실물). 스펙에 없으므로 localStorage·프리셋에 남은 값도 시작·실행 중 어느 쪽으로도
+    #   안 실린다 — 화면만 감추면 안 보이는 데서 계속 돈다. 코드는 ActionFilter 에 남아 있다(기본 0).
     "use_chunk_size": {
         "label": "받는 액션 청크 크기 (0=모델 전체)", "kind": "number", "default": 0,
         "min": 0, "max": 200, "step": 5,
@@ -102,7 +102,38 @@ PARAM_SPEC: dict[str, ParamSpec] = {
         "min": 0, "max": 100, "step": 1,
         "realtime": True, "send_at_start": True, "group": "진동 감소",
     },
+    # 청크 이어 붙이기 — wrapper/chunk_merge.py. 로컬 큐 모드에서만 돈다(시간 앙상블이 켜져 있으면
+    # 앙상블이 이미 합친다). 기본 10·7 — 실물 3모델에서 말단 떨림 30~50%↓·속도 15~35%↑(2026-10-28).
+    # 상한이 낮은 이유는 chunk_merge.py "상한을 낮게 둔 이유" — 크게 잡으면 모서리를 깎는다.
+    # ⚠ 기본값·상한을 바꾸면 chunk_merge.DEFAULT_*·MAX_* 도 (테스트가 잡는다).
+    "chunk_blend_steps": {
+        "label": "청크 경계 크로스페이드 (스텝, 0=OFF)", "kind": "number", "default": 10,
+        "min": 0, "max": 12, "step": 1,
+        "realtime": True, "send_at_start": True, "group": "진동 감소",
+        "help": "새 청크가 오면 갈아끼우지 않고, 남은 큐에서 새 청크로 이 스텝 수에 걸쳐 옮겨 간다. 경계에서 팔이 되돌아가며 떠는 것을 없앤다",
+    },
+    "chunk_smooth_window": {
+        "label": "청크 스무딩 창 (스텝, 0=OFF)", "kind": "number", "default": 7,
+        "min": 0, "max": 9, "step": 1,
+        "realtime": True, "send_at_start": True, "group": "진동 감소",
+        "help": "새 청크를 받을 때 남은 큐 전체를 지연 없이 다듬는다. 5 미만은 꺼짐, 짝수는 다음 홀수로 쓴다",
+    },
+    # wrapper/jump_repair.py — 정책과 무관하게 모든 청크에 건다(앙상블이 켜져 있어도). PIPER 팔에서만
+    # 돈다(말단 위치가 필요). 켬이 기본이고 wrapper 기본값도 켬이라 화면 밖에서 띄워도 같다.
+    "jump_repair": {
+        "label": "순간이동 고쳐 잇기", "kind": "bool", "default": True,
+        "realtime": True, "send_at_start": True, "group": "진동 감소",
+        "help": "청크 안에서 팔 끝이 한 스텝에 너무 멀리 가는 곳(15Hz 에서 35mm 초과)을 매끈하게 이어 원래 계획에 합류시킨다. PIPER 만",
+    },
     # ── RTC (flow-matching 정책 전용) ──
+    # 스위치 — wrapper/rtc_feed.py. 예전엔 아래 두 슬라이더만 있었고 wrapper 가 RTC 를 부르지 않아
+    # **처음부터 효과가 없었다.** ⚠ 꺼짐이 기본: 켜면 그 정책 추론의 청크가 바뀐다(시간 앙상블과 같은 이유).
+    "rtc_enabled": {
+        "label": "RTC 켜기", "kind": "bool", "default": False,
+        "realtime": True, "send_at_start": True, "group": "RTC 파라미터",
+        "scoped": True,
+        "help": "새 청크를 만들 때 이전 청크의 남은 부분을 이어 받는다. 청크마다 계획이 달라져 생기는 2~5Hz 흔들림을 줄인다",
+    },
     "max_guidance_weight": {
         "label": "max_guidance_weight", "kind": "number", "default": 10.0,
         "min": 0, "max": 50, "step": 0.5,
@@ -119,19 +150,22 @@ PARAM_SPEC: dict[str, ParamSpec] = {
     # 시간 앙상블(ACT 논문 temporal ensembling) — wrapper/temporal_ensemble.py. 켜면 매 스텝
     # 추론하고 같은 스텝을 예측한 청크들을 가중 평균한다. 로컬 추론에서만 돈다.
     # ⚠ 스위치가 계수와 따로다. 계수(0.01)는 예전부터 시작값으로 실려 왔으므로 계수만으로 켜면
-    #   모든 ACT 추론의 동작이 한꺼번에 바뀐다. 기본은 꺼짐.
+    #   모든 ACT 추론의 동작이 한꺼번에 바뀐다.
+    # 기본은 켬 (2026-10-29) — 실기(ACT-DINOv3)에서 청크 이어 붙이기만 쓸 때보다 말단 2-5Hz 가
+    # 명령 −58%·실제 −38%, 작업 사이클은 같았다. wrapper 기본값은 정책을 안 가려 꺼짐이므로 화면 밖에서
+    # 띄운 추론에는 시작 라우터가 채운다(routers/models.py). 계수 상한 근거는 temporal_ensemble.MAX_COEFF.
     "temporal_ensemble": {
-        "label": "시간 앙상블 (매 스텝 추론)", "kind": "bool", "default": False,
+        "label": "시간 앙상블 (매 스텝 추론)", "kind": "bool", "default": True,
         "realtime": True, "send_at_start": True, "group": "ACT 파라미터",
         "scoped": True,
         "help": "켜면 매 제어 스텝마다 추론하고, 같은 스텝을 예측한 청크들을 가중 평균해 보낸다. 재추론 트리거는 쓰지 않는다",
     },
     "temporal_ensemble_coeff": {
         "label": "temporal_ensemble_coeff", "kind": "number", "default": 0.01,
-        "min": 0, "max": 1, "step": 0.001,
+        "min": 0, "max": 0.05, "step": 0.001,
         "realtime": True, "send_at_start": True, "group": "ACT 파라미터",
         "scoped": True,
-        "help": "클수록 먼저 나온 예측을 더 믿는다. 0 = 균등 평균, 원 논문 0.01",
+        "help": "클수록 먼저 나온 예측을 더 믿는다. 0 = 균등 평균, 원 논문 0.01. 0.01~0.025 가 실측 최적 — 크게 올리면 오히려 떤다",
     },
     # 옛 localStorage 에 남아 들어올 수 있어 계약에는 남긴다.
     # UI 슬라이더는 use_chunk_size 로 통합됐다 (refactor/01 "노브 2개" 참고).

@@ -211,6 +211,11 @@ if |delta| > max_delta:
 
 #### ② 보간 (`interpolation_steps`, 0=OFF, 최대 10)
 
+> ⚠ **화면·파라미터 스펙에서 뺐다 (2026-10-28).** 청크 정책에는 해롭다 — N스텝에 한 번만 목표를
+> 집어 멈췄다 가므로 15/N Hz 로 맥동하고, 사이 액션을 버려 짧은 하강(잡으러 내려가기)이 빠지며,
+> 우회한 그리퍼만 제때 닫혀 도착 전에 집는다. 코드는 남아 있고 기본 0 이라 돌지 않는다.
+> 청크 경계 떨림은 `chunk_blend_steps`·`chunk_smooth_window`([chunk_merge.py](../wrapper/chunk_merge.py))가 맡는다.
+
 [`action_filter.py:79-95`](../wrapper/action_filter.py)
 
 ```python
@@ -265,7 +270,10 @@ result = alpha · 목표 + (1 − alpha) · 이전전송
 | `max_velocity` | 180 deg/s | 0 – 1000 | 0 = 무제한 | 관절 급발진 방지 |
 | `max_gripper_velocity` | 300 %/s | 0 – 500 | 0 = 무제한 | 그리퍼 급발진 방지 |
 | `max_jerk` | 0 | 0 – 5000 | 0 = OFF | 진동/덜컹임 억제 |
-| `interpolation_steps` | 0 | 0 – 10 | 0 = OFF | 스텝 간 궤적 부드럽게 |
+| ~~`interpolation_steps`~~ | 0 | — | 화면에서 뺌 | 청크 정책에 해롭다 (위 ②) |
+| `chunk_blend_steps` | 10 | 0 – 12 | 0 = OFF | 청크 경계 크로스페이드 — 경계에서 되돌아가는 떨림 제거 |
+| `chunk_smooth_window` | 7 | 0 – 9 | 5 미만 = OFF | 청크 단위 무지연 스무딩 |
+| `jump_repair` | 켬 | — | 끔 = OFF | 청크 안 순간이동(말단 한 스텝 > 525mm/s÷fps)을 Hermite 로 이어 계획에 합류 — PIPER 만 ([jump_repair.py](../wrapper/jump_repair.py)) |
 | `fps` | 20 | 1 – 60 | — | 제어 주파수(모든 환산의 분모) |
 
 ### 4.4 상호작용 & 주의점

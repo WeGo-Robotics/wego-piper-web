@@ -43,6 +43,11 @@ import numpy as np
 # exp 가 넘치지 않게. m·k 가 이만큼이면 이미 가장 오래된 예측 하나가 전부다.
 _MAX_EXPONENT = 700.0
 
+# 계수 상한. 실기(ACT-DINOv3, 2026-10-29)에서 0.01~0.025 는 청크 이어 붙이기만 쓸 때보다 말단 2-5Hz 가
+# 명령 −58%·실제 −38% 였지만, 0.135 이상은 그보다도 나빴고 0.5~0.76 은 5~30배였다 — 오래된(먼 미래를
+# 내다본) 예측만 믿게 되는데 그 예측끼리 서로 어긋난다. inference_params 의 max 와 같은 값.
+MAX_COEFF = 0.05
+
 
 class TemporalEnsembler:
     """절대 스텝별 가중합. 스레드 안전하지 않다 — 부르는 쪽이 락을 잡는다."""
@@ -60,6 +65,10 @@ class TemporalEnsembler:
         self._den.clear()
         self._next = next_step
         self.epoch += 1
+
+    def set_coeff(self, value) -> None:
+        """버스·시작값. 화면 밖(프리셋·외부 API)에서 온 값도 상한으로 자른다."""
+        self.coeff = max(0.0, min(MAX_COEFF, float(value)))
 
     def add(self, start_step: int, actions, epoch: int | None = None) -> int:
         """스텝 `start_step` 의 관측으로 낸 청크를 넣는다. 반영한 칸 수를 돌려준다.

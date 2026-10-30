@@ -34,7 +34,7 @@ runtime:
 scratch_note: "VLM(SmolVLM2) 가중치로 시작하고 행동 전문가는 무작위입니다 — smolvla_base 나 SmolVLA 체크포인트를 고르면 그 가중치로 시작합니다(stage 헤드만 무작위). 데이터셋은 bake 로 구운 `_stage` 여야 합니다"
 
 infer:
-  extra_params: [max_guidance_weight, execution_horizon]
+  extra_params: [rtc_enabled, max_guidance_weight, execution_horizon]
 
 train:
   defaults: { batch_size: 64, steps: 200000, optimizer_type: adamw }

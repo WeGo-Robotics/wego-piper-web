@@ -32,12 +32,11 @@ type FilterParams = {
   max_velocity: number
   max_gripper_velocity: number
   max_jerk: number
-  interpolation_steps: number
   fps: number
 }
 
 const DEFAULT_PARAMS: FilterParams = {
-  lowpass_alpha: 0.5, max_velocity: 180, max_gripper_velocity: 300, max_jerk: 0, interpolation_steps: 0, fps: 20,
+  lowpass_alpha: 0.5, max_velocity: 180, max_gripper_velocity: 300, max_jerk: 0, fps: 20,
 }
 
 type Tab = 'logs' | 'ckpt' | 'offline'
@@ -381,14 +380,12 @@ export default function DebugLogsPage() {
                     onChange={(v) => setParams((p) => ({ ...p, max_gripper_velocity: v }))} hint={t('0=무제한')} />
                   <FilterSlider label="max_jerk (deg/s²)" value={params.max_jerk} min={0} max={5000} step={50}
                     onChange={(v) => setParams((p) => ({ ...p, max_jerk: v }))} hint={t('0=무제한')} />
-                  <FilterSlider label="interpolation_steps" value={params.interpolation_steps} min={0} max={10} step={1}
-                    onChange={(v) => setParams((p) => ({ ...p, interpolation_steps: v }))} hint={t('0=OFF (근사)')} />
                   <FilterSlider label="fps" value={params.fps} min={1} max={60} step={1}
                     onChange={(v) => setParams((p) => ({ ...p, fps: v }))} hint={t('속도/jerk 계산 기준')} />
                 </div>
                 <div className="flex items-center justify-between pt-1">
                   <p className="text-[11px] text-neutral-500">
-                    {t.rich('녹화된 raw {span}을 실제 필터코드로 재생 → {span_2}. velocity/jerk/lowpass 충실, interpolation·서버 smoothing은 근사.', {
+                    {t.rich('녹화된 raw {span}을 실제 필터코드로 재생 → {span_2}. velocity/jerk/lowpass 충실, 서버 smoothing은 근사.', {
                       span: <span className="text-[#6b7fff]">target</span>,
                       span_2: <span className="text-[#eab308]">{t('filtered(시뮬)')}</span>,
                     })}

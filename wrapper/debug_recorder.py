@@ -102,9 +102,11 @@ class DebugRecorder:
         self._enqueue(("obs", {"line": line, "images": img_payload}))
 
     def record_inference(
-        self, seq: int, action_chunk: Any, postprocessed: Any = None, inference_ms: float | None = None
+        self, seq: int, action_chunk: Any, postprocessed: Any = None, inference_ms: float | None = None,
+        repaired: Any = None,
     ) -> None:
-        """정책이 되돌려준 원본 action chunk(+후처리)를 기록."""
+        """정책이 되돌려준 원본 action chunk(+후처리)를 기록. `repaired` 는 고쳐 잇기가 바꾼 자리
+        [(튄 칸, 이은 길이), ...] — 청크는 고치기 전 그대로 남긴다 (wrapper/jump_repair.py)."""
         if self._closed:
             return
         line = {
@@ -115,6 +117,8 @@ class DebugRecorder:
         }
         if postprocessed is not None:
             line["postprocessed"] = _jsonable(postprocessed)
+        if repaired:
+            line["repaired"] = _jsonable(repaired)
         self._enqueue(("line", (self._inf_f, line)))
 
     def record_step(

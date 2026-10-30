@@ -28,7 +28,7 @@ infer:
 # 예전에는 `PARAM_SPEC` 쪽이 `policies: [smolvla, pi0, pi05]` 로 알고 있었다.
 # 방향이 뒤집힌 이유: 모델이 늘 때 고쳐야 하는 게 **새 모델 파일**이어야지
 # 모두가 쓰는 공용 파라미터 표가 아니다.
-  extra_params: [max_guidance_weight, execution_horizon]
+  extra_params: [rtc_enabled, max_guidance_weight, execution_horizon]
 
 train:
   defaults: { batch_size: 64, steps: 200000, optimizer_type: adamw }

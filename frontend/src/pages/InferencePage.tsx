@@ -236,15 +236,22 @@ export default function InferencePage() {
     // 새로 추가된 파라미터는 defaults가 채워지도록 병합.
     const defaults = {
       fps: 20, max_velocity: 180, max_gripper_velocity: 300,
-      lowpass_alpha: 0.5, max_jerk: 0, interpolation_steps: 0, use_chunk_size: 0,
+      lowpass_alpha: 0.5, max_jerk: 0, use_chunk_size: 0,
       refill_threshold_pct: 20, gripper_bypass_filter: true,
+      chunk_blend_steps: 10, chunk_smooth_window: 7, jump_repair: true,
       max_guidance_weight: 10.0, execution_horizon: 10,
-      temporal_ensemble: false, temporal_ensemble_coeff: 0.01,
+      temporal_ensemble: true, temporal_ensemble_coeff: 0.01, rtc_enabled: false,
       // n_action_steps 는 로컬 모드에서 use_chunk_size 와 같은 변수를 가리켰다 →
       // "받는 액션 청크 크기" 슬라이더 하나로 통합했다.
     }
     try {
       const saved = JSON.parse(localStorage.getItem('piper_inference_params') || '{}') as Partial<typeof defaults>
+      // 기본값을 바꾼 키는 한 번 비운다 — 화면은 값을 통째로 저장하므로 예전 기본값이 고른 값처럼
+      // 남아 새 기본값이 안 먹는다 (시간 앙상블 꺼짐 → 켬, 2026-10-29)
+      if (Number(localStorage.getItem('piper_inference_params_rev') || 0) < 1) {
+        delete saved.temporal_ensemble
+        localStorage.setItem('piper_inference_params_rev', '1')
+      }
       return { ...defaults, ...saved }
     } catch {
       return defaults
@@ -262,13 +269,19 @@ export default function InferencePage() {
 
   // 스펙이 도착하면 아직 없는 파라미터를 서버 기본값으로 보충한다
   // (프론트에 기본값을 또 적지 않기 위해)
+  // 저장된 값은 지금 범위로 자른다 — 상한을 낮추면 예전에 저장한 값이 슬라이더 밖에 남아
+  // 그대로 실려 간다 (청크 크로스페이드 20 → 상한 12).
   useEffect(() => {
     if (!Object.keys(specDefaults).length) return
     setParams((prev) => {
-      const merged = { ...specDefaults, ...prev }
-      return JSON.stringify(merged) === JSON.stringify(prev) ? prev : merged
+      const merged: Record<string, unknown> = { ...specDefaults, ...prev }
+      for (const [k, v] of Object.entries(merged)) {
+        const s = paramSpec[k]
+        if (typeof v === 'number' && s?.min != null && s?.max != null) merged[k] = Math.min(s.max, Math.max(s.min, v))
+      }
+      return JSON.stringify(merged) === JSON.stringify(prev) ? prev : merged as typeof prev
     })
-  }, [specDefaults])
+  }, [specDefaults, paramSpec])
 
   const { connected } = useWebSocket('/ws', {
     onMessage: useCallback((msg: WsMessage) => {
@@ -1023,8 +1036,6 @@ export default function InferencePage() {
               onChange={(v) => handleParamChange('lowpass_alpha', v)} />
             <ParamSlider label={t('Jerk 제한 (deg/s², 0=OFF)')} value={params.max_jerk ?? 0} {...rangeOf('max_jerk', { min: 0, max: 5000, step: 100 })}
               onChange={(v) => handleParamChange('max_jerk', v)} />
-            <ParamSlider label={t('보간 스텝 (0=OFF)')} value={params.interpolation_steps ?? 0} {...rangeOf('interpolation_steps', { min: 0, max: 10, step: 1 })}
-              onChange={(v) => handleParamChange('interpolation_steps', v)} />
             <ParamSlider label={t('받는 액션 청크 크기 (0=모델 전체)')} value={params.use_chunk_size ?? 0} {...rangeOf('use_chunk_size', { min: 0, max: 200, step: 5 })}
               onChange={(v) => handleParamChange('use_chunk_size', v)} />
             {/* 시간 앙상블이 켜져 있으면 매 스텝 추론하므로 이 임계치는 쓰이지 않는다 */}
@@ -1032,13 +1043,51 @@ export default function InferencePage() {
               <ParamSlider label={t('재추론 트리거 (큐 잔량 ≤ %, 0=소진 시)')} value={params.refill_threshold_pct ?? 20} {...rangeOf('refill_threshold_pct', { min: 0, max: 100, step: 1 })}
                 onChange={(v) => handleParamChange('refill_threshold_pct', v)} />
             </div>
+            {/* 청크 이어 붙이기는 로컬 wrapper 가 한다 — 정책 서버(gRPC) 모드에선 효과가 없어 감춘다.
+                시간 앙상블이 켜져 있으면 앙상블이 이미 겹친 청크를 합치므로 쓰이지 않는다. */}
+            {inferenceMode === 'local' && (
+              <div className={ensembling ? 'opacity-40 pointer-events-none space-y-4' : 'space-y-4'}>
+                <ParamSlider label={t('청크 경계 크로스페이드 (스텝, 0=OFF)')} value={params.chunk_blend_steps ?? 10} {...rangeOf('chunk_blend_steps', { min: 0, max: 12, step: 1 })}
+                  onChange={(v) => handleParamChange('chunk_blend_steps', v)} />
+                <ParamSlider label={t('청크 스무딩 창 (스텝, 0=OFF)')} value={params.chunk_smooth_window ?? 7} {...rangeOf('chunk_smooth_window', { min: 0, max: 9, step: 1 })}
+                  onChange={(v) => handleParamChange('chunk_smooth_window', v)} />
+                <p className="text-[10px] text-neutral-500">
+                  {t('새 청크를 갈아끼우지 않고 남은 큐에 이어 붙여, 경계에서 팔이 되돌아가며 떠는 것을 없앱니다. 이게 켜져 있으면 저역통과 α 는 떨림을 더 줄이지 못하고 느리게만 만듭니다 — 1.0(끔)을 권합니다. 스무딩 창은 5 미만이면 꺼집니다.')}
+                </p>
+              </div>
+            )}
+            {/* 고쳐 잇기도 로컬 wrapper 가 한다(jump_repair.py). 앙상블이 켜져 있어도 돈다 — 합치기 전에 청크마다 고친다 */}
+            {inferenceMode === 'local' && (
+              <div className="space-y-1">
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input type="checkbox" checked={params.jump_repair !== false}
+                    onChange={(e) => handleParamChange('jump_repair', e.target.checked)}
+                    className="accent-blue-500" />
+                  <span className="text-neutral-300">{t('순간이동 고쳐 잇기')}</span>
+                </label>
+                <p className="text-[10px] text-neutral-500">
+                  {t('청크 안에서 팔 끝이 한 스텝에 너무 멀리 가는 곳(15Hz 에서 35mm 초과)을 매끈하게 이어 원래 계획에 합류시킵니다. 정지 자세에서 출발할 때 머뭇거리다 뛰는 것을 막습니다. PIPER 팔에서만 동작합니다.')}
+                </p>
+              </div>
+            )}
           </CollapsibleCard>
           {isRtc(activePolicy) && (
             <CollapsibleCard title={t('RTC 파라미터')} storageKey="piper_fold_rtc" defaultOpen={false}>
-              <ParamSlider label="max_guidance_weight" value={params.max_guidance_weight} {...rangeOf('max_guidance_weight', { min: 0, max: 50, step: 0.5 })}
-                onChange={(v) => handleParamChange('max_guidance_weight', v)} />
-              <ParamSlider label="execution_horizon" value={params.execution_horizon} {...rangeOf('execution_horizon', { min: 1, max: 100, step: 1 })}
-                onChange={(v) => handleParamChange('execution_horizon', v)} />
+              {/* RTC 는 로컬 wrapper 가 건다(rtc_feed.py) — 정책 서버(gRPC) 모드에선 스위치가 아무 일도 안 한다 */}
+              {inferenceMode === 'local' && (
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input type="checkbox" checked={params.rtc_enabled === true}
+                    onChange={(e) => handleParamChange('rtc_enabled', e.target.checked)}
+                    className="accent-blue-500" />
+                  <span className="text-neutral-300">{t('RTC 켜기 — 이전 청크의 남은 부분을 이어 받아 새 청크를 만든다')}</span>
+                </label>
+              )}
+              <div className={inferenceMode === 'local' && params.rtc_enabled !== true ? 'opacity-40 pointer-events-none space-y-4' : 'space-y-4'}>
+                <ParamSlider label="max_guidance_weight" value={params.max_guidance_weight} {...rangeOf('max_guidance_weight', { min: 0, max: 50, step: 0.5 })}
+                  onChange={(v) => handleParamChange('max_guidance_weight', v)} />
+                <ParamSlider label="execution_horizon" value={params.execution_horizon} {...rangeOf('execution_horizon', { min: 1, max: 100, step: 1 })}
+                  onChange={(v) => handleParamChange('execution_horizon', v)} />
+              </div>
             </CollapsibleCard>
           )}
           {/* ⚠ 정책 이름을 여기 적지 않는다. 예전엔 `activePolicy === 'act'` 라 같은 파라미터를 쓰는
@@ -1054,10 +1103,10 @@ export default function InferencePage() {
                 <span className="text-neutral-300">{t('시간 앙상블 — 매 스텝 추론해 겹친 청크를 평균')}</span>
               </label>
               <div className={ensembling ? 'space-y-1' : 'opacity-40 pointer-events-none space-y-1'}>
-                <ParamSlider label="temporal_ensemble_coeff" value={params.temporal_ensemble_coeff} {...rangeOf('temporal_ensemble_coeff', { min: 0, max: 1, step: 0.001 })}
+                <ParamSlider label="temporal_ensemble_coeff" value={params.temporal_ensemble_coeff} {...rangeOf('temporal_ensemble_coeff', { min: 0, max: 0.05, step: 0.001 })}
                   onChange={(v) => handleParamChange('temporal_ensemble_coeff', v)} />
                 <p className="text-[10px] text-neutral-500">
-                  {t('클수록 먼저 나온 예측을 더 믿습니다 (0 = 균등 평균, 원 논문 0.01). 켜면 재추론 트리거를 쓰지 않고 GPU 로 매 스텝 추론합니다.')}
+                  {t('클수록 먼저 나온 예측을 더 믿습니다 (0 = 균등 평균, 원 논문 0.01). 0.01~0.025 가 실측 최적이고, 크게 올리면 오히려 떱니다. 켜면 재추론 트리거를 쓰지 않고 GPU 로 매 스텝 추론합니다.')}
                 </p>
               </div>
               <p className="text-[10px] text-neutral-500">
