@@ -27,13 +27,15 @@ _RE_EPISODE = re.compile(r"Recording episode (\d+)")
 _RE_SAVED = re.compile(r"Saved episode (\d+)")
 _RE_RESET = re.compile(r"Reset")
 _RE_DONE = re.compile(r"Done recording|Recording complete|Finalize")
+# wrapper 가 찍는다 (start_record._install_dataset_guards) — 에피소드는 다 저장됐고 허브에 올리는 중
+_RE_UPLOAD = re.compile(r"\[start_record\] hub upload started")
 
 
 @dataclass
 class RecordStatus:
     current_episode: int = 0
     total_episodes: int = 0
-    phase: str = "idle"  # idle, recording, resetting, saving, done
+    phase: str = "idle"  # idle, recording, resetting, saving, uploading, done
 
 
 class RecordManager:
@@ -94,6 +96,10 @@ class RecordManager:
 
         if _RE_DONE.search(line):
             self.status.phase = "done"
+            changed = True
+
+        if _RE_UPLOAD.search(line):
+            self.status.phase = "uploading"
             changed = True
 
         if changed and self._on_status:

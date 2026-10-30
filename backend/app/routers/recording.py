@@ -71,6 +71,12 @@ class RecordStartRequest(BaseModel):
     private: bool = False
     resume: bool = False
     web_preview: bool = True  # 녹화 중 웹 카메라 미리보기 (log_rerun_data 탭)
+    # 첫 에피소드 전에 [준비 완료](→)를 기다린다 — 판을 놓을 틈. API 기본은 예전처럼 바로 찍기
+    # (화면 밖에서 녹화를 거는 쪽이 기다리느라 멈추면 안 된다). 수집 화면은 켜서 보낸다.
+    wait_first: bool = False
+    # 준비 대기의 상한(초). 지나면 [준비 완료] 없이 첫 에피소드를 찍는다 — 리셋 시간과 같은 규칙.
+    # 0 이면 상한 없이 [준비 완료]까지 기다린다.
+    wait_first_s: int = 0
     # 시나리오 계획을 따른다 (feature/scenario-designer.md §9-3). 주면 task·에피소드 수는
     # 계획이 정한다 — `single_task` 는 비어도 되고 `num_episodes` 는 무시한다.
     scenario: ScenarioSpec | None = None
@@ -351,6 +357,8 @@ async def start_recording(body: RecordStartRequest):
     params = body.model_dump()
     params.pop("web_preview", None)
     params.pop("scenario", None)
+    params.pop("wait_first", None)
+    params.pop("wait_first_s", None)
     total_episodes = body.num_episodes
     if scenario:
         # 실패로 표시한 시도는 블록 끝에 다시 들어가므로 LeRobot 의 상한은 넉넉히 —
@@ -366,6 +374,10 @@ async def start_recording(body: RecordStartRequest):
     # 헤드리스 에피소드 제어 채널은 미리보기와 무관하게 항상 켠다.
     # 버스 주소는 ProcessManager 가 모든 자식에게 넣으므로 여기서 넘기지 않는다.
     env_extra: dict[str, str] = {}
+    if body.wait_first:
+        env_extra["PIPER_RECORD_WAIT_FIRST"] = "1"
+        if body.wait_first_s > 0:
+            env_extra["PIPER_RECORD_WAIT_FIRST_S"] = str(body.wait_first_s)
     control_bridge.start()
     if scenario:
         try:
@@ -459,13 +471,17 @@ async def stop_recording():
     record_manager.send_key("escape")
 
     # 스스로 끝나면 그 즉시 빠져나온다 — 다 기다리지 않는다.
+    # ⚠ **허브 업로드가 시작되면 기다리기를 멈추고 두고 나온다.** 업로드는 에피소드가 다 저장된
+    #   뒤라 여기서 내리면 올리던 것만 잃는다 — 실기(2026-10-29)에서 업로드 30초째에 이 시계가
+    #   프로세스를 죽였고, 화면에는 정지가 안 되는 것처럼 보였다. 업로드가 끝나면 스스로 닫힌다.
     deadline = GRACEFUL_STOP_S * 4
     for _ in range(deadline):
-        if not record_manager.is_running:
+        if not record_manager.is_running or record_manager.status.phase == "uploading":
             break
         await asyncio.sleep(0.25)
 
-    graceful = not record_manager.is_running
+    uploading = record_manager.is_running and record_manager.status.phase == "uploading"
+    graceful = not record_manager.is_running or uploading
     if not graceful:
         logger.warning(
             "escape 후 %d초 안에 끝나지 않아 프로세스를 종료합니다", GRACEFUL_STOP_S
@@ -505,7 +521,7 @@ async def stop_recording():
 
         sim_scenes.write_sidecar(settings.lerobot_dir / repo_id, scene)
 
-    return {"status": "stopped", "graceful": graceful}
+    return {"status": "stopped", "graceful": graceful, "uploading": uploading}
 
 
 class TaskRequest(BaseModel):

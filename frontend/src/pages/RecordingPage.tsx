@@ -29,6 +29,9 @@ type DemoStatus = {
 
 const VCODECS = ['auto', 'libsvtav1', 'h264', 'hevc', 'h264_nvenc', 'libx264']
 
+// 정지 요청을 기다리는 시간 — 서버의 저장 대기(recording.GRACEFUL_STOP_S = 60초)보다 길어야 한다
+const STOP_WAIT_MS = 90_000
+
 // 백엔드가 `play_sounds=false`로 녹화를 돌리므로(컨테이너엔 스피커가 없다) lerobot_record가
 // spd-say로 내려던 안내를 여기서 대신 읽는다. lerobot_record.py의 log_say() 호출 5곳과 맞춘 목록.
 const SPEAKABLE_PATTERNS = [
@@ -104,6 +107,10 @@ export default function RecordingPage() {
   // 시나리오 계획을 따른다 (feature/scenario-designer.md §9) — 설계는 시나리오 탭의 마지막 것.
   // 켜면 task 와 에피소드 수는 계획이 정한다.
   const [followScenario, setFollowScenario] = useState<boolean>(_saved.followScenario ?? false)
+  // 첫 에피소드 전에 [준비 완료]를 기다린다 — LeRobot 은 시작하자마자 찍어서 판을 놓을 틈이 없었다
+  const [waitFirst, setWaitFirst] = useState<boolean>(_saved.waitFirst ?? true)
+  // 준비 대기 상한(초) — 지나면 [준비 완료] 없이 첫 에피소드를 찍는다. 0 이면 [준비 완료]까지
+  const [waitFirstS, setWaitFirstS] = useState<number>(_saved.waitFirstS ?? 0)
   // 시뮬 스크립트 시연 — 사람 대신 프로그램이 리더를 민다 (feature/sim-env.md 4단계).
   // 조종 창과 **같은 리더 세그먼트**를 쓰므로 수집 쪽은 아무것도 안 바뀐다.
   const [demo, setDemo] = useState<DemoStatus | null>(null)
@@ -245,9 +252,9 @@ export default function RecordingPage() {
       followerPort, leaderPort, cameraMapping, cameraProfile, camWidth, camHeight,
       armMode, leftFollower, rightFollower, leftLeader, rightLeader,
       repoId, singleTask, title, description, numEpisodes, fps, episodeTime, resetTime,
-      streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled, followScenario,
+      streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled, followScenario, waitFirst, waitFirstS,
     }))
-  }, [followerPort, leaderPort, cameraMapping, cameraProfile, camWidth, camHeight, armMode, leftFollower, rightFollower, leftLeader, rightLeader, repoId, singleTask, title, description, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled, followScenario])
+  }, [followerPort, leaderPort, cameraMapping, cameraProfile, camWidth, camHeight, armMode, leftFollower, rightFollower, leftLeader, rightLeader, repoId, singleTask, title, description, numEpisodes, fps, episodeTime, resetTime, streamingEncoding, vcodec, encoderThreads, encoderQueue, pushToHub, webPreview, voiceEnabled, followScenario, waitFirst, waitFirstS])
 
   // 데이터셋 존재 여부 확인
   useEffect(() => {
@@ -365,6 +372,7 @@ export default function RecordingPage() {
         num_episodes: numEpisodes, fps, episode_time_s: episodeTime, reset_time_s: resetTime,
         streaming_encoding: streamingEncoding, vcodec, encoder_threads: encoderThreads, encoder_queue_maxsize: encoderQueue, push_to_hub: pushToHub, resume,
         web_preview: webPreview,
+        wait_first: waitFirst, wait_first_s: waitFirstS,
         scenario: scenarioOn && scenarioDesign ? designRequest(scenarioDesign) : undefined,
       }, { timeoutMs: 60_000 })
       if (r.scenario) {
@@ -407,17 +415,24 @@ export default function RecordingPage() {
   // ⚠ 조용히 실패하지 않는다. 실기(2026-09-14): 탭에 요청이 수백 개 쌓여 세 버튼의 요청이 브라우저
   //   밖으로 나가지도 못했는데(ERR_INSUFFICIENT_RESOURCES) 화면은 아무 말이 없었다 — 사용자는
   //   "정지가 안 된다"만 봤다. 실패 이유를 알림으로 띄운다(같은 id 라 쌓이지 않는다).
-  const control = async (path: string, label: string) => {
-    try { await api.post(path, undefined, { timeoutMs: 10_000 }) }
+  const control = async <T,>(path: string, label: string, timeoutMs = 10_000): Promise<T | undefined> => {
+    try { return await api.post<T>(path, undefined, { timeoutMs }) }
     catch (e) {
       notify({ id: 'record-control', level: 'error', source: t('수집'),
                text: t('{label} 요청 실패: {message} — 페이지를 새로 고친 뒤 다시 시도하세요', { label, message: (e as Error).message }) })
     }
   }
+  // ⚠ 정지는 서버가 에피소드 저장을 **최대 60초**(recording.GRACEFUL_STOP_S) 기다린 뒤에 답한다. 다른 제어처럼
+  //   10초에 끊으면 저장이 잘 되고 있어도 "정지 요청 실패" 가 떠서, 정지가 안 되는 줄 알고 또 누르게 된다(실기 2026-10-29).
   const handleStop = async () => {
     setStopping(true)
-    try { await control('/recording/stop', t('정지')) }
-    finally { setStopping(false) }
+    try {
+      const r = await control<{ uploading?: boolean }>('/recording/stop', t('정지'), STOP_WAIT_MS)
+      if (r?.uploading) {
+        notify({ id: 'record-control', level: 'info', source: t('수집'),
+                 text: t('에피소드는 저장됐습니다 — 허브에 올리는 중이고, 끝나면 녹화가 닫힙니다') })
+      }
+    } finally { setStopping(false) }
   }
   const handleSkip = () => control('/recording/skip', t('저장하고 다음'))
   const handleRerecord = () => control('/recording/rerecord', t('재녹화'))
@@ -733,6 +748,24 @@ export default function RecordingPage() {
                   className="accent-blue-500" />
                 {t('시나리오 계획 따르기')}
               </label>
+              <div className="flex items-center gap-3 text-sm">
+                <label className="flex items-center gap-2 cursor-pointer"
+                  title={t('켜면 녹화를 시작해도 바로 찍지 않고, 판을 놓은 뒤 [준비 완료]를 눌러야 첫 에피소드를 찍는다')}>
+                  <input type="checkbox" checked={waitFirst} onChange={e => setWaitFirst(e.target.checked)}
+                    className="accent-blue-500" />
+                  {t('첫 에피소드 전에 준비 대기')}
+                </label>
+                {waitFirst && (
+                  <label className="flex items-center gap-1 text-xs text-neutral-400"
+                    title={t('이 시간이 지나면 [준비 완료]를 누르지 않아도 첫 에피소드를 찍는다. 0 이면 [준비 완료]를 누를 때까지 기다린다')}>
+                    {t('최대')}
+                    <input type="number" value={waitFirstS} min={0} max={3600} step={10}
+                      onChange={e => setWaitFirstS(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                      className="w-16 px-1.5 py-0.5 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
+                    {t('초 (0 = 무제한)')}
+                  </label>
+                )}
+              </div>
               {followScenario && (scenarioDesign ? (
                 <p className="text-xs text-neutral-400">
                   {t('시나리오 탭의 설계로 — 시도 {episodes}개, 시드 {seed}. task 와 에피소드 수는 계획이 정하고, 같은 데이터셋이면 찍은 시도는 건너뜁니다', {
@@ -889,12 +922,13 @@ export default function RecordingPage() {
                       <span className={`px-2 py-0.5 rounded text-xs font-medium ${
                         status.phase === 'recording' ? 'bg-red-500/20 text-red-400' :
                         status.phase === 'resetting' ? 'bg-amber-500/20 text-amber-400' :
-                        status.phase === 'saving' ? 'bg-blue-500/20 text-blue-400' :
+                        status.phase === 'saving' || status.phase === 'uploading' ? 'bg-blue-500/20 text-blue-400' :
                         'bg-neutral-700 text-neutral-400'
                       }`}>
                         {status.phase === 'recording' && t('녹화 중')}
                         {status.phase === 'resetting' && t('리셋 대기')}
                         {status.phase === 'saving' && t('저장 중')}
+                        {status.phase === 'uploading' && t('허브 업로드 중')}
                         {status.phase === 'done' && t('완료')}
                         {status.phase === 'idle' && t('대기')}
                       </span>
@@ -906,6 +940,13 @@ export default function RecordingPage() {
               {/* 에피소드 제어 */}
               <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
                 <h3 className="text-sm font-semibold">{t('에피소드 제어')}</h3>
+
+                {/* 정지 뒤 허브 업로드 — 에피소드는 이미 저장됐다. 서버는 이걸 죽이지 않고 끝나길 둔다 */}
+                {status?.phase === 'uploading' && (
+                  <p className="rounded bg-blue-500/10 border border-blue-500/30 px-2 py-1.5 text-sm text-blue-300">
+                    {t('에피소드는 저장됐습니다 — 허브에 올리는 중이고, 끝나면 녹화가 닫힙니다')}
+                  </p>
+                )}
 
                 {/* 리셋 대기 중: 준비 완료 버튼 강조 */}
                 {status?.phase === 'resetting' && (

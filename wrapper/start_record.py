@@ -8,6 +8,7 @@ lerobot.policies.__init__ 우회 후 lerobot-record를 실행.
 
 import os
 import sys
+import time
 
 # lerobot.policies.__init__ 우회 — 다른 lerobot import 보다 먼저여야 한다
 import lerobot_bootstrap
@@ -297,7 +298,63 @@ def _install_control() -> None:
     _orig_record_loop = LR.record_loop
     _last_task = [None]
 
+    # ── 첫 에피소드 전 준비 대기 (PIPER_RECORD_WAIT_FIRST=1) ──
+    #
+    # LeRobot 은 시작하자마자 첫 에피소드를 찍는다 — 판을 놓을 틈이 없다(시나리오면 첫 배치).
+    # 첫 에피소드 진입 전에 **리셋과 같은 루프**(프레임을 안 남기고 텔레옵만)를 돌리고 → 로 끝낸다.
+    # 그 동안은 "Recording episode N" 을 붙잡아 두었다가 준비가 끝나면 낸다 — 기다리는 동안
+    # 게이트웨이·화면이 "녹화 중" 으로 읽으면 안 된다(경과 시간·음성이 그 줄을 따른다).
+    wait_first = [os.environ.get("PIPER_RECORD_WAIT_FIRST") == "1"]
+    held_say: list = []
+    _orig_log_say = LR.log_say
+
+    def _log_say(text, *args, **kwargs):
+        if wait_first[0] and str(text).startswith("Recording episode"):
+            held_say[:] = [(text, args, kwargs)]
+            return None
+        return _orig_log_say(text, *args, **kwargs)
+
+    LR.log_say = _log_say
+
+    def _prepare(args, kwargs) -> bool:
+        """준비 대기. 녹화를 이어 가면 True, 기다리는 중에 정지했으면 False."""
+        print("[start_record] Reset the environment before the first episode — waiting for ready (→)", flush=True)
+        events = kwargs.get("events") or {}
+        limit_s = float(os.environ.get("PIPER_RECORD_WAIT_FIRST_S") or 0) or WAIT_FIRST_MAX_S
+        deadline = time.monotonic() + limit_s
+        gaps: list[float] = []
+        while True:
+            try:
+                _orig_record_loop(*args, **{**kwargs, "dataset": None,
+                                            "control_time_s": max(0.0, deadline - time.monotonic())})
+                break
+            except TimeoutError as e:
+                # 카메라가 프레임을 한 번 늦게 줬다(shm async_read 200ms). 대기는 아무것도 남기지
+                # 않으므로 그 한 번에 녹화 전체를 죽일 이유가 없다 — 다시 기다린다.
+                # 짧은 사이에 거듭되면 카메라가 정말 멈춘 것이니 그때는 그대로 죽는다.
+                now = time.monotonic()
+                gaps[:] = [t for t in gaps if now - t < WAIT_GAP_WINDOW_S] + [now]
+                if len(gaps) >= WAIT_GAP_LIMIT:
+                    raise
+                print(f"[start_record] camera late while waiting — still waiting: {e}", flush=True)
+                if events.get("exit_early") or events.get("stop_recording") or now >= deadline:
+                    break
+        if not events.get("stop_recording") and time.monotonic() >= deadline:
+            print(f"[start_record] ready wait ran out ({limit_s:.0f}s) — starting the first episode", flush=True)
+        events["exit_early"] = False
+        events["rerecord_episode"] = False      # 준비 중의 ← 는 버릴 것이 없다
+        if events.get("stop_recording"):
+            print("[start_record] stopped before the first episode — nothing recorded", flush=True)
+            return False
+        for text, a, k in held_say:
+            _orig_log_say(text, *a, **k)
+        return True
+
     def _record_loop(*args, **kwargs):
+        if wait_first[0] and kwargs.get("dataset") is not None:
+            wait_first[0] = False
+            if not _prepare(args, kwargs):
+                return None     # 빈 버퍼 — 저장은 _guard_empty_save 가 건너뛴다
         # 계획을 따르면 task 는 시도가 정한다 — 에피소드 진입(dataset 이 붙은 호출)에서만.
         # 리셋 루프(dataset 없음)는 프레임을 안 남기므로 아래의 원래 길로 둔다.
         if scen is not None and kwargs.get("dataset") is not None:
@@ -320,11 +377,59 @@ def _install_control() -> None:
     LR.record_loop = _record_loop
 
 
+# 준비 대기는 길어도 된다 — 사람이 판을 놓는 동안이다. 끝은 → (또는 정지).
+# 화면에서 상한을 주면(PIPER_RECORD_WAIT_FIRST_S) 그 시간이 지나 첫 에피소드를 찍는다.
+WAIT_FIRST_MAX_S = 24 * 3600
+# 대기 중 카메라 지연을 몇 번까지 넘기나 — 10초 안에 5번이면 카메라가 멈춘 것으로 본다.
+WAIT_GAP_LIMIT = 5
+WAIT_GAP_WINDOW_S = 10.0
+
+
+def _install_dataset_guards() -> None:
+    """저장·업로드 둘레.
+
+    - 빈 에피소드는 저장하지 않는다 — 첫 에피소드 전 준비 중에 정지하면 LeRobot 이 프레임 없는
+      버퍼로 `save_episode()` 를 불러 ValueError 로 죽는다.
+    - 허브 업로드의 시작·끝을 찍는다. 게이트웨이의 정지는 `escape` 뒤 60초를 기다리고 프로세스를
+      내리는데, 업로드는 에피소드가 **다 저장된 뒤**라 그 시계로 죽이면 올리던 것만 잃는다
+      (실기 2026-10-29: 정지가 안 되는 것처럼 보였다). 이 줄을 보면 게이트웨이가 기다리기를 멈춘다.
+    """
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    _orig_save = LeRobotDataset.save_episode
+    _orig_push = LeRobotDataset.push_to_hub
+
+    def _save(self, *args, **kwargs):
+        buf = getattr(self, "episode_buffer", None)
+        if not args and kwargs.get("episode_data") is None and isinstance(buf, dict) and not buf.get("size"):
+            print("[start_record] empty episode — not saved", flush=True)
+            return None
+        return _orig_save(self, *args, **kwargs)
+
+    def _push(self, *args, **kwargs):
+        if not self.meta.total_episodes:
+            print("[start_record] hub upload skipped — no episodes", flush=True)
+            return None
+        print("[start_record] hub upload started — episodes are saved", flush=True)
+        out = _orig_push(self, *args, **kwargs)
+        print("[start_record] hub upload finished", flush=True)
+        return out
+
+    LeRobotDataset.save_episode = _save
+    LeRobotDataset.push_to_hub = _push
+
+
 # 주소는 `PIPER_REDIS_URL` 에서 온다. 헤드리스에서 유일한 에피소드 제어 경로다.
 try:
     _install_control()
 except Exception as _e:
     print(f"[start_record] control install failed: {_e}", flush=True)
+
+# 시나리오의 저장 훅(_install_control 안) **바깥**에 건다 — 빈 버퍼는 거기까지 가기 전에 걸러야 한다
+try:
+    _install_dataset_guards()
+except Exception as _e:
+    print(f"[start_record] dataset guard install failed: {_e}", flush=True)
 
 # ── 레코딩 실행 ──
 from lerobot.scripts.lerobot_record import record

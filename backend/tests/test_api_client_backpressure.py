@@ -58,9 +58,16 @@ def test_the_heartbeat_is_cut_short_instead_of_piling_up():
 
 def test_recording_controls_report_failure_instead_of_staying_silent():
     src = _code(RECORD)
-    assert "const control = async (path: string, label: string)" in src
+    assert "const control = async <T,>(path: string, label: string" in src
     ctl = src.split("const control = async", 1)[1].split("const handleStop", 1)[0]
     assert "timeoutMs" in ctl and "notify({" in ctl and "level: 'error'" in ctl and "요청 실패" in ctl, \
         "정지·저장하고 다음·재녹화가 실패해도 화면이 조용하다"
-    for path, label in (("/recording/stop", "정지"), ("/recording/skip", "저장하고 다음"), ("/recording/rerecord", "재녹화")):
+    for path, label in (("/recording/skip", "저장하고 다음"), ("/recording/rerecord", "재녹화")):
         assert f"control('{path}', t('{label}'))" in src, f"{label} 버튼이 실패를 안 알린다"
+    # 정지는 서버가 저장을 최대 GRACEFUL_STOP_S 기다린 뒤에 답한다 — 그보다 먼저 끊으면 잘 되고 있는 정지를
+    # "실패" 로 띄운다(실기 2026-10-29: 10초에 끊겨 정지가 안 되는 줄 알고 또 눌렀다)
+    assert "control<{ uploading?: boolean }>('/recording/stop', t('정지'), STOP_WAIT_MS)" in src, "정지 버튼이 실패를 안 알린다"
+    wait_ms = int(re.search(r"const STOP_WAIT_MS = ([\d_]+)", src).group(1).replace("_", ""))
+    rec = (REPO / "backend" / "app" / "routers" / "recording.py").read_text()
+    server_s = int(re.search(r"^GRACEFUL_STOP_S = (\d+)", rec, re.M).group(1))
+    assert wait_ms > server_s * 1000, "정지 요청이 서버의 저장 대기보다 먼저 끊긴다"

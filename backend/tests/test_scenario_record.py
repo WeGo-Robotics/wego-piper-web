@@ -371,3 +371,62 @@ def test_progress_api_and_commands(monkeypatch):
     assert sent == ["scenario_fail", "scenario_unfail", "scenario_defer"]
     # 계획을 따르는 녹화는 task 를 손으로 못 바꾼다
     assert c.post("/api/recording/task", json={"task": "x"}).status_code == 409
+
+
+# ── 5. 정지·준비 대기 (실기 2026-10-29: 업로드 중에 정지 시계가 프로세스를 죽였다) ──
+
+def test_upload_line_sets_the_uploading_phase():
+    from app.services.record_manager import RecordManager
+
+    rm = RecordManager()
+    rm._try_parse_status("[start_record] hub upload started — episodes are saved")
+    assert rm.status.phase == "uploading"
+
+
+def test_stop_leaves_an_upload_running_instead_of_killing_it(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.routers import recording
+    from app.services.record_manager import record_manager
+
+    killed = []
+    monkeypatch.setattr(type(record_manager), "is_running", property(lambda self: True))
+    monkeypatch.setattr(record_manager, "send_key", lambda key: None)
+    monkeypatch.setattr(record_manager.status, "phase", "uploading")
+
+    async def _stop():
+        killed.append(True)
+    monkeypatch.setattr(record_manager, "stop", _stop)
+    monkeypatch.setattr(recording, "_last_recording", {})
+    r = TestClient(app).post("/api/recording/stop").json()
+    assert r == {"status": "stopped", "graceful": True, "uploading": True}
+    assert not killed, "에피소드는 다 저장됐다 — 올리는 중인 프로세스를 내리면 업로드만 잃는다"
+
+
+def test_wait_first_is_opt_in_and_reaches_the_wrapper():
+    """화면 밖에서 녹화를 거는 쪽은 예전처럼 바로 찍는다. 이름은 게이트웨이·wrapper 가 같아야 한다."""
+    from app.routers.recording import RecordStartRequest
+
+    assert RecordStartRequest().wait_first is False
+    for rel in ("backend/app/routers/recording.py", "wrapper/start_record.py"):
+        assert "PIPER_RECORD_WAIT_FIRST" in (_REPO / rel).read_text(), rel
+
+
+def test_the_wait_has_an_optional_limit_and_outlives_a_late_frame():
+    """대기 상한은 화면이 정한다(0 = [준비 완료]까지). 대기 중 카메라가 한 번 늦은 것으로는 죽지 않는다.
+
+    2026-10-29 실기: left(RealSense)가 200ms 안에 프레임을 못 줘 `async_read` 가 TimeoutError —
+    대기 65초 만에 녹화째 꺼졌고, 사람은 "대기가 너무 일찍 끝난다" 로 읽었다. 대기는 아무것도
+    남기지 않으니 다시 기다리고, 짧은 사이에 거듭될 때(카메라가 정말 멈춤)만 그대로 죽는다.
+    """
+    from app.routers.recording import RecordStartRequest
+
+    assert RecordStartRequest().wait_first_s == 0
+    for rel in ("backend/app/routers/recording.py", "wrapper/start_record.py"):
+        assert "PIPER_RECORD_WAIT_FIRST_S" in (_REPO / rel).read_text(), rel
+    src = (_REPO / "wrapper" / "start_record.py").read_text()
+    prepare = src[src.index("def _prepare("):src.index("def _record_loop(")]
+    assert "except TimeoutError" in prepare
+    assert "WAIT_GAP_LIMIT" in prepare and "raise" in prepare, "멈춘 카메라를 끝없이 기다리면 안 된다"
+
