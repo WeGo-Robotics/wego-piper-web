@@ -170,6 +170,52 @@ def test_balance_counts_labels_and_weights_after_warmup():
     assert w[0] > w[3]
 
 
+class _FixedLogits(torch.nn.Module):
+    """stage 헤드 자리에 꽂아 logits 를 정해 준다 — 손실이 무엇을 미는지만 본다."""
+
+    def __init__(self, z):
+        super().__init__()
+        self.z = z
+
+    def forward(self, pooled):
+        return self.z
+
+
+def _stage_ce(pol, z, subtasks):
+    pol.stage_head = _FixedLogits(z)
+    d = {}
+    pol._add_stage_loss(torch.zeros(len(subtasks), 1), {"subtask": subtasks}, torch.zeros(()), d)
+    return d["stage_ce"]
+
+
+def test_balanced_smoothing_does_not_pull_toward_an_unseen_class():
+    """2026-10-30 dualarm_sort_apple_stage — PARKING 이 0프레임인 데이터셋에서 stage_acc 가 내내 0,
+    CE 가 학습 내내 올랐다. 가중을 smoothing 항에도 곱하면 안 나온 클래스(clamp 로 가장 무겁다)의
+    logit 을 올리는 것이 손실을 **줄였다** — 정답을 다 아는 헤드도 그 클래스를 골랐다."""
+    _, pol = _vanilla_and_stage(stage_loss_weight=0.1, label_smoothing=0.1, stage_balance_warmup=0)
+    pol.eval()                                        # 카운트를 더 쌓지 않는다
+    counts = [9620, 25617, 216, 3321, 9258, 2581, 5679, 0]   # 그 데이터셋의 프레임 분포
+    pol.stage_counts.copy_(torch.tensor(counts, dtype=torch.float64) * 40)
+    subtasks = ["APPROACH", "HOLD", "IDLE", "GRASP"]
+    tgt = [DEFAULT_STAGE_NAMES.index(s) for s in subtasks]
+    z = torch.zeros(len(subtasks), N)
+    z[torch.arange(len(tgt)), tgt] = 4.0              # 정답을 아는 헤드
+    bumped = z.clone(); bumped[:, N - 1] += 3.0       # 같은 헤드 + PARKING 쪽으로
+    assert _stage_ce(pol, bumped, subtasks) > _stage_ce(pol, z, subtasks)
+
+
+def test_unweighted_smoothing_matches_torch():
+    """가중이 없으면(워밍업 전·균형 끔) 고치기 전과 수치가 같다."""
+    _, pol = _vanilla_and_stage(label_smoothing=0.1, stage_balance=False)
+    pol.eval()
+    g = torch.Generator().manual_seed(1)
+    z = torch.randn(3, N, generator=g)
+    subtasks = ["GRASP", "_unlabeled", "DONE"]        # 무시하는 라벨이 섞여도
+    tgt = torch.tensor([3, -1, 6])
+    ref = torch.nn.functional.cross_entropy(z, tgt, ignore_index=-1, label_smoothing=0.1)
+    assert _stage_ce(pol, z, subtasks) == pytest.approx(ref.item(), rel=1e-6)
+
+
 # ── 4. 추론 ─────────────────────────────────────────────────────────────
 
 def test_predict_keeps_action_signature_and_fills_last_aux():

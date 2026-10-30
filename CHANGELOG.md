@@ -176,6 +176,11 @@
 - 오프라인 평가가 smolvla_base 에서 이어 학습한 모델을 못 돌렸다(`KeyError: 'observation.images.camera1'`). 그 모델은
   `top`·`hand` 를 `camera1`·`camera2` 로 바꿔(`rename_map`) 학습됐는데 평가가 정책의 입력 이름으로 데이터셋을 찾았다.
   이제 데이터셋 이름 그대로 넘기고 체크포인트 전처리기의 이름 바꾸기 단계가 바꾼다 — 에피소드 평가·한 프레임 반응 둘 다
+- SmolVLA-S·ACT-S 의 stage 헤드가 **데이터셋에 없는 단계로 쏠렸다.** 클래스 균형(`stage_balance`)이 한 번도 안 나온 단계
+  (clamp 로 가장 무겁다)의 가중을 label smoothing 항에도 곱해, 손실이 모든 샘플에서 그 단계를 고르라고 밀었다 — 정답을 다 아는
+  헤드도 정확도 0 이다. `dualarm_sort_apple_stage`(PARKING 0프레임)에서 stage 정확도가 내내 0, stage CE 가 3.1→4.3 으로 오르며
+  학습 loss 전체가 올라갔다. smoothing 항은 이제 가중 없이 더한다(가중이 없을 때는 예전과 수치가 같다). 그 학습의 체크포인트는
+  stage 를 늘 PARKING 으로 낸다 — 다시 학습 대상
 
 ## v0.5.20 — 2026-10-26
 

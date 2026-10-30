@@ -92,8 +92,16 @@ class StageHeadMixin:
                     tgt[valid], minlength=cfg.n_stages).to(self.stage_counts.dtype)
 
         if valid.any():
-            ce = F.cross_entropy(logits, tgt, weight=self._class_weight(), ignore_index=-1,
-                                 label_smoothing=cfg.label_smoothing)
+            # ⚠ smoothing 항은 **가중 없이** 직접 더한다. PyTorch 는 `weight` 를 smoothing 항에도
+            # 곱해서, 무거운 클래스(드물거나 한 번도 안 나와 clamp 된 것)가 있으면 손실이 모든
+            # 샘플에서 그 클래스를 고르라고 민다 — 정답을 다 아는 헤드도 정확도 0 이 된다
+            # (2026-10-30 dualarm_sort_apple_stage: PARKING 0프레임 → stage_acc 0, CE 3.1→4.3 상승).
+            # 가중이 없으면 F.cross_entropy(label_smoothing=ε) 와 수치가 같다.
+            eps = cfg.label_smoothing
+            ce = F.cross_entropy(logits, tgt, weight=self._class_weight(), ignore_index=-1)
+            if eps > 0:
+                uniform = -logits[valid].log_softmax(-1).mean(-1).mean()
+                ce = (1 - eps) * ce + eps * uniform
             with torch.no_grad():
                 acc = (logits.argmax(-1)[valid] == tgt[valid]).float().mean()
         else:
