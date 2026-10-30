@@ -35,7 +35,7 @@ export default function CatalogEditor({ items, onChange }: Props) {
         <span />
         <span>{t('이름')}</span>
         <span>id</span>
-        <span>{t('크기 mm')}</span>
+        <span title={t('가장 긴 변(둥글면 지름). 계획은 이만한 원이 서로·상자·금지 칸과 겹치지 않게 놓는다')}>{t('크기 mm')}</span>
         <span>{t('실물 개수')}</span>
         <span />
       </div>

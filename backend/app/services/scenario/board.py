@@ -224,6 +224,38 @@ class Board:
         (ac, ar), (bc, br) = self.parse(a), self.parse(b)
         return max(abs(ac - bc), abs(ar - br))
 
+    # ── 물체가 실제로 들어가나 ──
+    #
+    # 물체는 칸 가운데에 놓인 **지름 = 크기(가장 긴 변)** 인 원으로 본다. 칸보다 크면 이웃 칸까지
+    # 차지한다 — 칸 이름만 보고 놓으면 판 위에서 겹친다. 판의 바깥 가장자리는 넘어가도 된다
+    # (종이 밖도 책상이다). 구역(상자)·금지 칸에는 걸치면 안 된다.
+
+    def dist_mm(self, a: str, b: str) -> float:
+        (ax, ay), (bx, by) = self.center_mm(a), self.center_mm(b)
+        return math.hypot(ax - bx, ay - by)
+
+    @property
+    def keep_out(self) -> list[tuple[float, float, float, float]]:
+        """물체가 걸치면 안 되는 직사각형 (x, y, 폭, 높이) mm — 금지 칸·구역 칸·바깥 구역."""
+        cell = self.cell_mm
+        rects = []
+        for name in sorted(self.blocked | self.zone_cells):
+            c, r = self.parse(name)
+            rects.append((c * cell, r * cell, cell, cell))
+        rects += [r for z in self.zones if (r := self.zone_rect(z))]
+        return rects
+
+    def fits(self, name: str, size_mm: float) -> bool:
+        """크기 `size_mm` 인 물체를 이 칸에 놓으면 구역·금지 칸에 안 걸치나 (닿는 것까지는 된다)."""
+        x, y = self.center_mm(name)
+        radius = size_mm / 2
+        for rx, ry, rw, rh in self.keep_out:
+            dx = max(rx - x, 0.0, x - (rx + rw))
+            dy = max(ry - y, 0.0, y - (ry + rh))
+            if math.hypot(dx, dy) < radius - 1e-6:
+                return False
+        return True
+
     def to_dict(self) -> dict:
         return {
             "cols": self.cols, "rows": self.rows, "cell_mm": self.cell_mm,

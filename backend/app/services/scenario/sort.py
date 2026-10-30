@@ -93,6 +93,23 @@ def generate(ctx: Context) -> Generated:
     k_targets = int(ctx.fields.get("targets_per_layout", 1))
     warnings: list[dict] = []
 
+    # 물체 크기 — 칸 이름만 보고 놓으면 판 위에서 겹친다(큰 물체·작은 칸). 종류마다 구역·금지 칸에
+    # 걸치지 않는 칸만 쓰고, 균형도 그 칸들 안에서 맞춘다.
+    size = {i.id: i.size_mm for i in ctx.catalog}
+    fit = {i.id: [c for c in work if board.fits(c, i.size_mm)] for i in ctx.catalog}
+    for i in ctx.catalog:
+        if not fit[i.id]:
+            raise ScenarioError(
+                f"{i.label}({i.size_mm:g}mm): 구역·금지 칸에 걸치지 않고 놓을 칸이 없습니다 — "
+                "칸을 키우거나 구역에서 떨어진 칸을 늘리세요")
+
+    def apart(t: str, c: str, t2: str, u: str, *, tight: bool = False) -> bool:
+        """두 물체가 판 위에서 안 겹치고 틈·최소 간격을 지키나. `tight` — 어려운 배치의 짝(겹치지만 않게)."""
+        need = (size[t] + size[t2]) / 2 + (0.0 if tight else common.clearance_mm)
+        if board.dist_mm(c, u) < need - 1e-6:
+            return False
+        return tight or board.chebyshev(c, u) >= common.min_spacing
+
     def eps_of(size: int) -> int:
         if style == "chain":
             return size
@@ -154,7 +171,6 @@ def generate(ctx: Context) -> Generated:
         한 번 놓아 보고 끝내지 않는다. 앞 물체가 가져간 칸 때문에 뒤 물체가 덜 쓴 칸을 못 받는
         일이 생기므로, 순서를 바꿔 여러 번 놓아 보고 점수 합이 가장 작은 배치를 쓴다.
         """
-        spacing = common.min_spacing
         n_targets = len(comp) if n_targets is None else n_targets
 
         def score(t: str, c: str, is_target: bool) -> tuple:
@@ -173,14 +189,16 @@ def generate(ctx: Context) -> Generated:
             cost = [0, 0, 0, 0]
             for i, (t, is_target) in enumerate(seq):
                 taken = {c for _, c in used}
-                # 어려운 배치: 두 번째 물체를 첫 번째 바로 옆에 붙인다 (간격 조건은 그 둘 사이만 푼다)
+                # 어려운 배치: 두 번째 물체를 첫 번째 바로 옆에 붙인다 (간격·틈은 그 둘 사이만 푼다 —
+                # 겹치지는 않게). 크기 때문에 바로 옆이 안 되면 놓을 수 있는 가장 가까운 칸.
                 pair = hard and i == 1
                 cands = [
-                    c for c in work if c not in taken
-                    and all(board.chebyshev(c, u) >= spacing
-                            for j, (_, u) in enumerate(used) if not (pair and j == 0))
-                    and (not pair or board.chebyshev(c, used[0][1]) == 1)
+                    c for c in fit[t] if c not in taken
+                    and all(apart(t, c, tu, u, tight=pair and j == 0) for j, (tu, u) in enumerate(used))
                 ]
+                if pair and cands:
+                    near = min(board.chebyshev(c, used[0][1]) for c in cands)
+                    cands = [c for c in cands if board.chebyshev(c, used[0][1]) == near]
                 if not cands:
                     break
                 c = pick_least(cands, lambda c: score(t, c, is_target), rng)
@@ -196,7 +214,8 @@ def generate(ctx: Context) -> Generated:
                 break
         if best is None:
             raise ScenarioError(
-                f"물체 {len(comp)}개를 놓을 칸이 모자랍니다 — 칸을 늘리거나 최소 간격을 줄이세요")
+                f"물체 {len(comp)}개를 크기대로 놓을 자리가 모자랍니다 — 칸을 늘리거나 키우거나, "
+                "라운드 물체 수·최소 간격·물체 사이 틈을 줄이세요")
         for i, p in enumerate(best):
             place.add(p)
             types.add(p[0])
@@ -215,7 +234,7 @@ def generate(ctx: Context) -> Generated:
         배치의 짝(붙여 놓은 둘)은 건드리지 않는다.
         """
         def counts(rounds: list[dict], t: str) -> dict[str, int]:
-            out = dict.fromkeys(work, 0)
+            out = dict.fromkeys(fit[t], 0)
             for r in rounds:
                 for tt, c in r["placements"][:r["n_targets"]]:
                     if tt == t:
@@ -224,14 +243,15 @@ def generate(ctx: Context) -> Generated:
 
         for item in ctx.catalog:
             t = item.id
+            cells = fit[t]
             per_block = [counts(rounds, t) for rounds in blocks]
-            for _ in range(10 * len(work) * len(blocks)):
-                totals = {c: sum(b[c] for b in per_block) for c in work}
+            for _ in range(10 * len(cells) * len(blocks)):
+                totals = {c: sum(b[c] for b in per_block) for c in cells}
                 hi, lo = max(totals.values()), min(totals.values())
                 if hi - lo <= 1:
                     break
-                over = {c for c in work if totals[c] == hi}
-                under = [c for c in work if totals[c] == lo]
+                over = {c for c in cells if totals[c] == hi}
+                under = [c for c in cells if totals[c] == lo]
                 rng.shuffle(under)
                 spots = [(bi, r, idx) for bi, rounds in enumerate(blocks) for r in rounds
                          for idx in range(r["n_targets"])
@@ -241,12 +261,12 @@ def generate(ctx: Context) -> Generated:
                 done = False
                 for bi, r, idx in spots:
                     c = r["placements"][idx][1]
-                    others = [u for j, (_, u) in enumerate(r["placements"]) if j != idx]
+                    others = [p for j, p in enumerate(r["placements"]) if j != idx]
                     b = per_block[bi]
                     for u in under:
-                        if u in others or any(board.chebyshev(u, o) < common.min_spacing for o in others):
+                        if any(u == o for _, o in others) or not all(apart(t, u, to, o) for to, o in others):
                             continue
-                        vals = [b[x] - (x == c) + (x == u) for x in work]
+                        vals = [b[x] - (x == c) + (x == u) for x in cells]
                         if max(vals) - min(vals) > 1:
                             continue
                         r["placements"][idx] = (t, u)
@@ -378,8 +398,10 @@ def generate(ctx: Context) -> Generated:
                 first = ep["picks"][0]
                 hint = {"kind": _HINTS[kind], "obj": first["obj"], "cell": first["cell"]}
                 if kind == "perturb":
-                    occupied = {p["cell"] for p in ep["layout"]}
-                    free = [c for c in work if c not in occupied]
+                    # 옮긴 자리도 실제로 들어가야 한다 — 나머지 물체와 크기·틈·간격
+                    rest = [(p["obj"], p["cell"]) for p in ep["layout"] if p["cell"] != first["cell"]]
+                    free = [c for c in fit[first["obj"]] if c != first["cell"]
+                            and all(apart(first["obj"], c, to, o) for to, o in rest)]
                     far = [c for c in free if board.chebyshev(c, first["cell"]) >= 2] or free
                     if not far:
                         continue

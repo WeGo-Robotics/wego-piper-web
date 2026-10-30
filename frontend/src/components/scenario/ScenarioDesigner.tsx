@@ -40,7 +40,7 @@ const TEMPLATE_UI: Record<string, TemplateUi> = {
 }
 
 const COMMON_DEFAULTS: Omit<Common, 'episode_unit'> = {
-  episodes: 120, block_size: 20, composition: 'equal', fixed_composition: {}, min_spacing: 1,
+  episodes: 120, block_size: 20, composition: 'equal', fixed_composition: {}, min_spacing: 1, clearance_mm: 0,
   episode_s: 20, reset_s: 15, nuisance: [], policy_type: '', variants: {},
 }
 
@@ -275,6 +275,12 @@ export default function ScenarioDesigner() {
               <option value={2}>{t('한 칸 띄움')}</option>
               <option value={3}>{t('두 칸 띄움')}</option>
             </select>
+          </label>
+          <label className="text-xs text-neutral-400"
+            title={t('물체 가장자리 사이에 남길 틈 — 그리퍼 손가락이 들어갈 자리. 0 이면 겹치지만 않게 놓는다. 물체 크기는 늘 지킨다')}>
+            {t('물체 사이 틈 (mm)')}
+            <input type="number" min={0} max={100} step={5} value={design.common.clearance_mm} className={input}
+              onChange={e => setCommon({ clearance_mm: Math.min(100, Math.max(0, Number(e.target.value) || 0)) })} />
           </label>
           <label className="text-xs text-neutral-400">{t('에피소드 시간 (초)')}
             <input type="number" min={1} value={design.common.episode_s} className={input}

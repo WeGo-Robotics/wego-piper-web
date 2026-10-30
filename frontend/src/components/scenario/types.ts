@@ -34,6 +34,8 @@ export type Common = {
   composition: Composition
   fixed_composition: Record<string, number>
   min_spacing: number
+  /** 물체 가장자리 사이에 남길 틈(mm) — 그리퍼 손가락 자리. 0 이면 겹치지만 않게 */
+  clearance_mm: number
   episode_s: number
   reset_s: number
   nuisance: Nuisance[]

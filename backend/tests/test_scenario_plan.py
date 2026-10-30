@@ -281,7 +281,7 @@ def test_bad_values_are_refused(values, match):
 
 
 def test_too_tight_spacing_is_refused():
-    with pytest.raises(ScenarioError, match="칸이 모자랍니다"):
+    with pytest.raises(ScenarioError, match="자리가 모자랍니다"):
         _gen({"round_sizes": "5", "min_spacing": 3})
 
 
@@ -417,3 +417,90 @@ def test_outside_zones_on_one_side_must_not_overlap():
             {"id": "a", "outside": {"side": "top", "start": 0, "end": 2}},
             {"id": "b", "outside": {"side": "top", "start": 2, "end": 3}},
         ]})
+
+
+# ── 물체 크기 — 실제로 놓을 수 있어야 한다 ──
+#
+# 칸 60mm 에 사과 75mm. 칸 이름만 보면 이웃 칸 둘이 비어 보여도 판 위에서는 겹친다.
+# 상자(A·G 열)·금지 칸 바로 옆에 두면 사과가 상자에 걸친다.
+
+SMALL_CELLS = {**BOARD, "cell_mm": 60}
+BIG_APPLES = [
+    {"id": "red", "label": "red apple", "count": 3, "size_mm": 75},
+    {"id": "yellow", "label": "yellow apple", "count": 3, "size_mm": 75},
+    {"id": "small", "label": "small apple", "count": 2, "size_mm": 55},
+]
+
+
+def _sized(values=None, seed=42, board=SMALL_CELLS, catalog=BIG_APPLES):
+    return generate("sort", board, catalog, {"rules": RULES, **(values or {})}, seed)
+
+
+def _layouts(plan):
+    """시작 배치마다 [(종류, 칸)] — 라운드 배치와 perturb 로 옮긴 뒤의 배치."""
+    for r in plan["rounds"]:
+        yield r["hard"], [(p["obj"], p["cell"]) for p in r["placements"]]
+    for ep in plan["episodes"]:
+        h = ep["hint"]
+        if h and h["kind"] == "perturb":
+            moved = [(p["obj"], h["to"] if p["cell"] == h["cell"] else p["cell"]) for p in ep["layout"]]
+            yield False, moved
+
+
+def _check_physical(plan, clearance=0.0):
+    b = Board.from_dict(plan["board"])
+    size = {i["id"]: i["size_mm"] for i in plan["catalog"]}
+    for hard, layout in _layouts(plan):
+        for t, c in layout:
+            assert b.fits(c, size[t]), f"{t}({size[t]}mm) 가 {c} 에서 상자·금지 칸에 걸친다"
+        for i, (t, c) in enumerate(layout):
+            for j, (u_t, u) in enumerate(layout[:i]):
+                pair = hard and {i, j} == {0, 1}
+                need = (size[t] + size[u_t]) / 2 + (0 if pair else clearance)
+                assert b.dist_mm(c, u) >= need - 1e-6, f"{t}@{c} 와 {u_t}@{u} 가 겹친다 ({b.dist_mm(c, u):.0f} < {need})"
+
+
+@pytest.mark.parametrize("seed", [1, 7, 42])
+def test_objects_never_overlap_on_the_board(seed):
+    plan = _sized({"variants": {"perturb": 0.2}}, seed=seed)
+    _check_physical(plan)
+    _assert_balanced(plan)
+
+
+def test_clearance_leaves_room_for_the_fingers():
+    plan = _sized({"clearance_mm": 20, "round_sizes": "3"})
+    _check_physical(plan, clearance=20)
+
+
+def test_big_objects_stay_off_cells_that_would_touch_a_box():
+    """사과(반지름 37.5)는 상자 칸과 맞닿은 칸(중심까지 30mm)에 못 간다 — 균형은 갈 수 있는 칸 안에서."""
+    plan = _sized()
+    s = plan["summary"]
+    red_off = next(w["cells"] for w in s["warnings"] if w["code"] == "size_keeps_off" and w["obj"] == "red")
+    assert {"B1", "B4", "F1", "F4"} <= set(red_off)
+    assert all(s["target_counts"]["red"][c] == 0 for c in red_off)
+    assert not any(w["code"] == "size_keeps_off" and w["obj"] == "small" for w in s["warnings"]), \
+        "작은 사과(55mm)는 60mm 칸 어디든 들어간다"
+    assert {"code": "object_over_cell", "obj": "red", "size_mm": 75.0, "cell_mm": 60.0} in s["warnings"]
+
+
+def test_hard_pair_sits_as_close_as_it_physically_can():
+    """바로 옆(60mm)에는 75mm 사과 둘이 안 들어간다 — 대각선(85mm)이면 들어간다. 겹치게 붙이지 않는다."""
+    plan = _sized({"variants": {"hard_layout": 0.5}, "round_sizes": "3"})
+    b = Board.from_dict(plan["board"])
+    hard = [r for r in plan["rounds"] if r["hard"]]
+    assert hard
+    for r in hard:
+        (t0, c0), (t1, c1) = [(p["obj"], p["cell"]) for p in r["placements"][:2]]
+        assert b.chebyshev(c0, c1) == 1
+        if {t0, t1} <= {"red", "yellow"}:
+            c, r0 = b.parse(c0)
+            cc, rr = b.parse(c1)
+            assert c != cc and r0 != rr, "75mm 둘을 60mm 이웃 칸에 붙였다 — 겹친다"
+    _check_physical(plan)
+
+
+def test_an_object_that_fits_nowhere_is_refused():
+    huge = [*BIG_APPLES[:2], {"id": "small", "label": "melon", "count": 2, "size_mm": 320}]
+    with pytest.raises(ScenarioError, match="melon"):
+        _sized(catalog=huge)

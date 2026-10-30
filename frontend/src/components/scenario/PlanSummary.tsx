@@ -37,7 +37,7 @@ export function hintText(t: TFn, h: Hint, name: (id: string) => string, zone: (i
   }
 }
 
-function warningText(t: TFn, w: PlanWarning, variantName: (v: string) => string): string {
+function warningText(t: TFn, w: PlanWarning, variantName: (v: string) => string, objName: (id: string) => string): string {
   switch (w.code) {
     case 'combos_short':
       return t('칸 × 종류 조합 {combos}개보다 목표가 적습니다 ({targets}회) — 모든 조합을 못 채웁니다. 칸을 줄이거나 회수를 늘리세요',
@@ -48,6 +48,12 @@ function warningText(t: TFn, w: PlanWarning, variantName: (v: string) => string)
       return t('블록 끝에서 라운드가 작아졌습니다 ({size}개) — 블록 크기를 라운드 크기의 배수로 맞추면 없어집니다', { size: Number(w.size) })
     case 'variant_short':
       return t('{variant} 를 {missing}개 못 넣었습니다 — 넣을 자리가 없습니다', { variant: variantName(String(w.variant)), missing: Number(w.missing) })
+    case 'object_over_cell':
+      return t('{obj}({size}mm)가 칸({cell}mm)보다 커서 이웃 칸까지 차지합니다 — 이웃 칸에는 다른 물체를 놓지 않습니다. 칸을 {size}mm 이상으로 키우면 판을 다 씁니다',
+        { obj: objName(String(w.obj)), size: Number(w.size_mm), cell: Number(w.cell_mm) })
+    case 'size_keeps_off':
+      return t('{obj} 는 크기 때문에 상자·금지 칸에 걸치는 {n}칸({cells})에는 놓지 않습니다',
+        { obj: objName(String(w.obj)), n: (w.cells as string[]).length, cells: (w.cells as string[]).join(' ') })
     default:
       return w.code
   }
@@ -88,7 +94,7 @@ export default function PlanSummary({ plan }: { plan: Plan }) {
       {s.warnings.length > 0 && (
         <ul className="space-y-1">
           {s.warnings.map((w, i) => (
-            <li key={i} className="text-xs text-amber-400">⚠ {warningText(t, w, vName)}</li>
+            <li key={i} className="text-xs text-amber-400">⚠ {warningText(t, w, vName, name)}</li>
           ))}
         </ul>
       )}

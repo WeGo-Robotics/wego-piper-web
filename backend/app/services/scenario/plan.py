@@ -48,6 +48,9 @@ class Common:
     fixed_composition: dict[str, int] = field(default_factory=dict)
     # 물체 사이 최소 칸 거리(체비셰프). 1 = 이웃 칸 허용, 2 = 한 칸 띄움
     min_spacing: int = 1
+    # 물체 가장자리 사이에 남길 틈(mm) — 그리퍼 손가락이 들어갈 자리. 0 이면 겹치지만 않게.
+    # 물체 크기는 칸과 상관없이 늘 지킨다(`Board.fits`·`sort._apart`). 어려운 배치의 짝은 이 틈을 푼다.
+    clearance_mm: float = 0.0
     episode_s: float = 20.0
     reset_s: float = 15.0
     nuisance: list[dict] = field(default_factory=list)
@@ -139,6 +142,7 @@ def parse_common(raw: dict, spec: TemplateSpec, catalog: list[Item]) -> Common:
     if c.composition == "fixed" and not c.fixed_composition:
         raise ScenarioError("고정 구성을 고르면 라운드마다 놓을 개수를 적어야 합니다")
     c.min_spacing = _num(raw.get("min_spacing", c.min_spacing), "min_spacing", 1, 3, integer=True)
+    c.clearance_mm = _num(raw.get("clearance_mm", c.clearance_mm), "clearance_mm", 0, 100)
     c.episode_s = _num(raw.get("episode_s", c.episode_s), "episode_s", 1, 600)
     c.reset_s = _num(raw.get("reset_s", c.reset_s), "reset_s", 0, 600)
     c.policy_type = str(raw.get("policy_type", "") or "")
@@ -230,6 +234,8 @@ def summarize(ctx: Context, out: Generated, variants_off: list[str]) -> dict:
     """생성 직후 보여 줄 것 (§7-5) — 히트맵·총량·변형·교차표·예상 시간·경고."""
     work = ctx.board.work_cells
     ids = [i.id for i in ctx.catalog]
+    # 크기 때문에 그 종류가 못 쓰는 칸은 0 이 정상이다 — 고른지는 쓸 수 있는 칸에서만 본다
+    fit = {i.id: [c for c in work if ctx.board.fits(c, i.size_mm)] for i in ctx.catalog}
 
     def per_cell() -> dict[str, dict[str, int]]:
         return {t: {c: 0 for c in work} for t in ids}
@@ -259,9 +265,16 @@ def summarize(ctx: Context, out: Generated, variants_off: list[str]) -> dict:
     resets = sum(1 for ep in out.episodes if ep["reset"])
     warnings = list(out.warnings)
     picks_on_board = sum(type_totals.values())
-    combos = len(ids) * len(work)
+    combos = sum(len(fit[t]) for t in ids)
     if picks_on_board < combos:
         warnings.append({"code": "combos_short", "combos": combos, "targets": picks_on_board})
+    for i in ctx.catalog:
+        if i.size_mm > ctx.board.cell_mm:
+            warnings.append({"code": "object_over_cell", "obj": i.id, "size_mm": i.size_mm,
+                             "cell_mm": ctx.board.cell_mm})
+        off = [c for c in work if c not in fit[i.id]]
+        if off:
+            warnings.append({"code": "size_keeps_off", "obj": i.id, "cells": off})
     if ctx.common.composition == "equal" and len(ids) > 1:
         mean = picks_on_board / len(ids)
         if spread(type_totals.values()) > max(1, round(mean * 0.1)):
@@ -275,9 +288,9 @@ def summarize(ctx: Context, out: Generated, variants_off: list[str]) -> dict:
         "target_counts": targets,
         "placed_counts": placed,
         "type_totals": type_totals,
-        "spread": {t: spread(targets[t].values()) for t in ids},
+        "spread": {t: spread([targets[t][c] for c in fit[t]]) for t in ids},
         "block_spread": {
-            t: max((spread(b[t].values()) for b in blocks.values()), default=0) for t in ids
+            t: max((spread([b[t][c] for c in fit[t]]) for b in blocks.values()), default=0) for t in ids
         },
         "variant_counts": dict(Counter(ep["variant"] for ep in out.episodes)),
         "variants_off": variants_off,
