@@ -119,3 +119,19 @@ def test_not_running_is_not_success():
     wait = src.split("const waitEditDone", 1)[1][:900]
     assert "edit-status" in wait, "편집 결과를 안 본다"
     assert "'error'" in wait, "실패를 성공과 구분하지 않는다"
+
+
+def test_running_out_of_wait_is_not_success():
+    """**회귀** — remux 조건이 안 맞으면 하나를 지워도 카메라 mp4 를 통째로 재인코딩해 데이터셋
+    크기에 비례한다(120개에 85초, 실측 2026-10-29). 예전 대기는 4분이 지나면 **조용히 빠져나가
+    "삭제 완료"** 로 넘어갔다 — 큰 데이터셋이면 아직 도는데 끝났다고 말하고 옛 목록을 다시 읽는다."""
+    from pathlib import Path
+
+    from conftest import code_only
+
+    src = code_only((Path(__file__).resolve().parents[2]
+                     / "frontend/src/pages/EpisodesPage.tsx").read_text())
+    wait = src.split("const waitEditDone", 1)[1].split("const deleteEpisodes", 1)[0]
+    body_end = wait.rstrip().rsplit("}", 1)[0]
+    assert body_end.rstrip().splitlines()[-1].strip().startswith("throw new EditUnitError"), \
+        "기다리다 시간이 다 되면 성공으로 빠져나간다"

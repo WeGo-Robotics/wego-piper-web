@@ -60,11 +60,15 @@ def main() -> int:
             os.environ.get("PATH", ""), Path(sys.executable).parent)
         return 127
 
-    rc = subprocess.call([cli, *args])
+    op = _flag(args, "--operation.type")
+    # 삭제는 남은 영상을 다시 압축하지 않게 remux 를 건 채 돈다 (video_remux.py) — 하나 지우는 데
+    # 데이터셋 전체를 AV1 로 재인코딩하던 것(120개에 85초, h264 → AV1, 세대 손실)
+    cmd = [sys.executable, str(Path(__file__).with_name("edit_cli.py"))] \
+        if op == "delete_episodes" else [cli]
+    rc = subprocess.call([*cmd, *args])
     if rc != 0:
         return rc
 
-    op = _flag(args, "--operation.type")
     repo_id = _flag(args, "--repo_id")
     if op == "delete_episodes" and repo_id and not _flag(args, "--new_repo_id"):
         # in-place 삭제만 사이드카를 따라 옮긴다 — 새 repo 로 뽑는 경우 원본은 무사하다

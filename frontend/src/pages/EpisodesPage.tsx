@@ -233,6 +233,8 @@ export default function EpisodesPage() {
   // 삭제는 CLI 래핑(edit 유닛)이라 비동기다: activity 폴링으로 완료를 기다린다.
   const [marked, setMarked] = useState<number[]>([])
   const [lifecycleBusy, setLifecycleBusy] = useState(false)
+  //: 삭제를 기다린 초 — 버튼이 "작업 중…" 만 말하면 멈춘 줄 안다 (아래 waitEditDone)
+  const [editSecs, setEditSecs] = useState<number | null>(null)
   // 시나리오 결과 — 미결 실패를 여기서 정한다. 수집 화면의 [지금 정하기]가 `?dataset=…&scenario=pending` 으로 연다
   const [searchParams] = useSearchParams()
   const [scen, setScen] = useState<ScenarioInfo | null>(null)
@@ -258,7 +260,13 @@ export default function EpisodesPage() {
   const toggleMark = (idx: number) =>
     setMarked((m) => m.includes(idx) ? m.filter((i) => i !== idx) : [...m, idx].sort((a, b) => a - b))
 
-  /** edit 유닛이 끝날 때까지 기다리고 **결과를 확인한다** (최대 4분).
+  /** edit 유닛이 끝날 때까지 기다리고 **결과를 확인한다** (최대 30분).
+   *
+   * ⚠ **오래 걸릴 수 있다.** v3 는 카메라마다 에피소드 여럿을 mp4 한 파일에 담는데, LeRobot 은
+   * 하나를 지워도 그 파일을 통째로 AV1 재인코딩한다(120개·카메라 3대에 85초, 실측 2026-10-29).
+   * 보통은 패킷을 그대로 옮겨 몇 초다(wrapper/video_remux.py) — 그 조건이 안 맞으면 재인코딩으로 간다.
+   * 예전엔 4분에서 기다리기를 **조용히 그만두고 "삭제 완료"** 로 넘어갔다. 큰 데이터셋이면
+   * 아직 도는데 끝났다고 말하고 옛 목록을 다시 읽는다 — 시간이 다 되면 그렇다고 말한다.
    *
    * ⚠ **"안 돌고 있음" 은 성공이 아니다.** 예전에는 `/activity` 만 보고 안 돌면
    * 끝났다고 했다. 유닛의 PATH 에 conda `bin` 이 없어 `lerobot-edit-dataset` 을
@@ -267,8 +275,10 @@ export default function EpisodesPage() {
    * systemd 는 실패를 `failed` 로 남기므로 그 상태를 보고 판정한다.
    */
   const waitEditDone = async () => {
-    for (let i = 0; i < 240; i++) {
+    const t0 = Date.now()
+    while (Date.now() - t0 < 30 * 60_000) {
       await new Promise((r) => setTimeout(r, 1000))
+      setEditSecs(Math.round((Date.now() - t0) / 1000))
       try {
         const s = await api.get<{ state: string; running: boolean }>(
           '/datasets/edit-status')
@@ -282,6 +292,7 @@ export default function EpisodesPage() {
         if (e instanceof EditUnitError) throw e
       }
     }
+    throw new EditUnitError(t('30분이 지나도 삭제가 끝나지 않았습니다 — 편집 유닛은 계속 돕니다. 끝나면 데이터셋을 다시 여세요 (journalctl --user -u piper-xfer-edit)'))
   }
 
   /** 에피소드를 지운다. 사이드바의 표시 삭제와 뷰어의 [이 에피소드 삭제] 가
@@ -311,8 +322,9 @@ export default function EpisodesPage() {
                text: t('삭제 완료 — 번호 재정렬 + 사이드카 동기화됨. 되돌리기용 백업 \'{dsId}_old\' 가 남았습니다 — 확인 후 지우세요.', { dsId }) })
     } catch (e) {
       notifyError(e instanceof Error ? e.message : t('삭제 실패'))
-    } finally { setLifecycleBusy(false) }
+    } finally { setLifecycleBusy(false); setEditSecs(null) }
   }
+  const busyLabel = editSecs != null ? t('삭제 중… {n}초', { n: editSecs }) : t('작업 중…')
 
   const handleDeleteMarked = () => deleteEpisodes(marked)
 
@@ -1170,7 +1182,7 @@ export default function EpisodesPage() {
                 disabled={lifecycleBusy}
                 className="px-2 py-1 rounded bg-red-600/80 hover:bg-red-600 text-white disabled:opacity-50"
               >
-                {lifecycleBusy ? t('작업 중…') : t('삭제')}
+                {lifecycleBusy ? busyLabel : t('삭제')}
               </button>
               <button
                 onClick={() => setMarked([])}
@@ -1223,7 +1235,7 @@ export default function EpisodesPage() {
                   title={t('에피소드 #{ep} 를 지웁니다 — 되돌릴 수 없습니다', { ep })}
                   className="rounded bg-red-600/80 px-2 py-0.5 text-xs text-white
                              hover:bg-red-600 disabled:opacity-50">
-                  {lifecycleBusy ? t('작업 중…') : t('#{ep} 삭제', { ep })}
+                  {lifecycleBusy ? busyLabel : t('#{ep} 삭제', { ep })}
                 </button>
               )}
               <span className="ml-2 text-[11px] text-neutral-500">{t('한 줄에')}</span>
