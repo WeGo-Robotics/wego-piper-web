@@ -1981,6 +1981,7 @@
   "복사하지 못했습니다 — 직접 선택해 주세요": "Copy failed — select it manually",
   "복제": "Duplicate",
   "본문이 비어 있습니다": "Empty body",
+  "부모 프로세스 종료": "parent process exited",
   "부팅 시 시작": "Start on boot",
   "부팅 시 시작 해제": "Start on boot disabled",
   "부팅 중인 팔을 깨뜨리지 않으려고 대기": "Waiting so as not to disturb an arm that is booting",

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import sys
 import threading
@@ -67,6 +68,8 @@ class Plugin:
         self._stopping = False
         self._stop_reason = ""
         self.started_at = time.time()
+        # 띄운 프로세스. 바뀌면 그쪽이 죽은 것이다 — `run()` 이 본다
+        self._ppid = os.getppid()
 
     # ── 훅 ──
 
@@ -286,6 +289,13 @@ class Plugin:
             self._after_setup()
             self.state(phase=self._state.get("phase", "running"))
             while not self._stopping:
+                if os.getppid() != self._ppid:
+                    # 띄운 게이트웨이가 죽었다(자식 프로세스로 띄운 경우 — 유닛은 부모가 systemd 라
+                    # 안 바뀐다). 토큰도 그 게이트웨이 것이라 혼자 돌 이유가 없다. 2026-10-29: 시험
+                    # 게이트웨이가 남긴 CPU 검출기가 6일 동안 16코어를 먹어 녹화 카메라가 프레임을 놓쳤다.
+                    self.log.warning("띄운 프로세스(pid %d)가 사라졌다 — 정지", self._ppid)
+                    self._stopping, self._stop_reason = True, "부모 프로세스 종료"
+                    break
                 self._poll_commands()
                 try:
                     self.loop()

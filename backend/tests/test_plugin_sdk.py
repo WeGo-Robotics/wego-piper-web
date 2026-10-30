@@ -144,6 +144,34 @@ def test_run_calls_setup_loop_teardown_and_publishes_state(tmp_path):
     assert bus.state["t"]["phase"] == "stopped" and bus.state["t"]["stop_reason"] == "enough" and bus.state["t"]["foo"] == 1
 
 
+def test_run_stops_when_the_process_that_started_it_is_gone(tmp_path, monkeypatch):
+    """자식 프로세스로 띄운 플러그인은 게이트웨이가 죽어도 남는다 — 부모가 바뀌면 스스로 선다.
+
+    2026-10-29: 시험 게이트웨이가 남긴 CPU 검출기가 6일 동안 16코어를 먹어 녹화 카메라가
+    프레임을 놓쳤다(0.2초 공백 → 녹화가 죽음). teardown 은 정상 정지처럼 돈다.
+    """
+    import piper_plugin.plugin as mod
+
+    ppid = {"v": 4242}
+    monkeypatch.setattr(mod.os, "getppid", lambda: ppid["v"])
+    seen = []
+
+    class P(Plugin):
+        def loop(self):
+            seen.append("loop")
+            if seen.count("loop") == 2:
+                ppid["v"] = 1          # 부모가 죽어 init 에 입양됐다
+
+        def teardown(self):
+            seen.append("teardown")
+
+    p = P(_env(tmp_path))
+    bus = _wire(p)
+    assert p.run() == 0
+    assert seen == ["loop", "loop", "teardown"]
+    assert bus.state["t"]["phase"] == "stopped" and bus.state["t"]["stop_reason"] == "부모 프로세스 종료"
+
+
 def test_loop_exceptions_are_logged_and_retried(tmp_path):
     n = {"i": 0}
 
