@@ -1,6 +1,7 @@
 import json
 import os
 import logging
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -349,7 +350,38 @@ async def episode_video(dataset_id: str, cam: str, chunk: int, file: int):
         video_key=key, chunk_index=chunk, file_index=file)))
     if not path.is_relative_to(base) or not path.exists():
         raise HTTPException(404, "비디오 파일이 없습니다")
-    return FileResponse(path, media_type="video/mp4")
+    return _ChunkedVideo(path, media_type="video/mp4")
+
+
+# 영상 Range 응답 한 번의 상한. 작게 잡는다 — 크롬이 화면 대신 받아 둘 수 있는 양 안이어야, 화면이
+# 읽기를 멈춰도 응답이 끝나 연결이 풀린다.
+VIDEO_RANGE_CAP = 512 * 1024
+
+
+def _cap_range(value: bytes) -> bytes:
+    m = re.fullmatch(rb"\s*bytes=(\d+)-(\d*)\s*", value)
+    if not m:
+        return value            # 끝에서 N 바이트(`-N`)·여러 구간은 Starlette 그대로
+    start = int(m[1])
+    end = start + VIDEO_RANGE_CAP - 1
+    if m[2] and int(m[2]) <= end:
+        return value
+    return b"bytes=%d-%d" % (start, end)
+
+
+class _ChunkedVideo(FileResponse):
+    """Range 응답을 `VIDEO_RANGE_CAP` 바이트로 자른다 — 브라우저는 더 필요하면 다음 조각을 따로 청한다.
+
+    ⚠ 크롬은 같은 호스트에 HTTP/1.1 연결을 **6개만** 연다. `<video>` 는 `bytes=0-`(끝까지)로 받다가
+    버퍼가 차면 읽기만 멈추고 **연결을 쥐고 있는다** — 카메라 3대 뷰어가 두 개 열리자 6자리가 다
+    차서 화면의 모든 API 가 30초 시간초과로 죽었다(실기 2026-10-29, `/system/version`·서비스 목록).
+    E-stop heartbeat 는 WS 라 무사했다. 응답을 짧게 끝내면 연결이 바로 반납된다(속도 제한 크롬 실측:
+    영상 6개 옆 요청이 10초 → 0.9초).
+    """
+
+    async def __call__(self, scope, receive, send):
+        headers = [(k, _cap_range(v)) if k == b"range" else (k, v) for k, v in scope["headers"]]
+        await super().__call__({**scope, "headers": headers}, receive, send)
 
 
 @router.get("/{dataset_id:path}/consistency")
