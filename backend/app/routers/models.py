@@ -11,7 +11,7 @@ from app.core.cli_mapping import (
     build_grpc_client_args, build_inference_args, checkpoint_dim_problem,
 )
 from app.core.config import settings
-from app.core.inference_params import foreign_to
+from app.core.inference_params import PARAM_SPEC, foreign_to
 from app.services import action_space, train_cameras
 from app.core.policies import takes_language
 from app.services.exclusivity import Activity, require_idle
@@ -172,8 +172,16 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
         user_params.pop("task", None)
     # 정책별 파라미터(`scoped`)도 같은 이유로 그 정책에만 싣는다. ACT 에서 켠 시간 앙상블이
     # localStorage 에 남아 SmolVLA 추론에 실리면, 스위치가 안 보이는 화면에서 매 스텝 추론이 돈다.
-    for key in foreign_to(body.policy_type):
+    foreign = foreign_to(body.policy_type)
+    for key in foreign:
         user_params.pop(key, None)
+    # 그 정책의 스위치는 요청에 없으면 스펙 기본값 — 플러그인·외부 API 처럼 화면 밖에서 띄워도 화면과
+    # 같게 돈다. wrapper 기본값은 정책을 안 가려 꺼짐이다(ACT 의 시간 앙상블은 켬이 기본). 스위치만
+    # 채운다 — 숫자는 wrapper·체크포인트에 제 기본값이 있다. 둘 다 로컬 wrapper 의 것이다.
+    if body.inference_mode != "server":
+        for key, spec in PARAM_SPEC.items():
+            if spec.get("scoped") and spec.get("kind") == "bool" and key not in foreign:
+                user_params.setdefault(key, spec["default"])
 
     if body.inference_mode == "server":
         params = {
@@ -288,6 +296,73 @@ async def put_model_notes(model_id: str, body: ModelNotesRequest):
         raise HTTPException(404, "Model not found")
     return write_notes(Path(model["path"]), kind="model",
                        name=body.name, description=body.description)
+
+
+class ModelUploadRequest(BaseModel):
+    #: 올릴 Hub 모델 저장소 — `네임스페이스/이름`. 모델 id 는 학습 경로(`2026-10-27/…/020000`)라
+    #: 그대로 저장소 이름이 될 수 없어서 사람이 정한다.
+    repo_id: str
+    private: bool = False
+
+
+async def _require_hub_write() -> None:
+    """올리기 전에 — 로그인이 안 됐거나 읽기 전용 토큰이면 **지금** 말한다(로그 창에서 401 을 읽게
+    하지 않는다). HF 가 안 닿는 것은 막지 않는다 — 그건 업로드가 직접 말한다."""
+    import asyncio
+
+    from app.services import hub_client
+
+    try:
+        info = await asyncio.wait_for(asyncio.to_thread(hub_client.get_api().whoami), timeout=10)
+    except Exception as e:                                       # noqa: BLE001
+        logger.warning("HF 권한을 확인 못 했다 (업로드는 진행): %s", e)
+        return
+    if not info.get("name"):
+        raise HTTPException(400, "HuggingFace 에 로그인되어 있지 않습니다 — 설정 → 저장소에서 토큰을 넣으세요")
+    if info.get("auth", {}).get("accessToken", {}).get("role", "") == "read":
+        raise HTTPException(400, "HuggingFace 토큰이 읽기 전용입니다 — 설정 → 저장소에서 write 권한 토큰으로 바꾸세요")
+
+
+@router.post("/{model_id:path}/upload")
+async def upload_model_to_hub(model_id: str, body: ModelUploadRequest):
+    """체크포인트 하나(`pretrained_model` 폴더)를 Hub 모델 저장소로 올린다.
+
+    지금까지 모델이 Hub 로 가는 길은 학습 폼의 Policy Repo ID(학습이 끝날 때 LeRobot 이 올린다)
+    하나뿐이라, 이미 끝난 학습의 체크포인트는 올릴 수 없었다. 올라가는 것은 그 길과 같은 묶음 —
+    config·가중치·전처리 파일·train_config 다.
+
+    데이터셋 업로드와 **같은 작업 유닛**(`piper-xfer-upload`)·같은 로그 창을 쓴다. 둘 다 느린
+    네트워크 작업이라 동시에 하나만 돈다. 데이터셋과 달리 코드베이스 태그는 없다 — 모델은
+    `--policy.path` 로 받을 때 태그를 묻지 않는다.
+    """
+    import re
+
+    from app.routers.datasets import _find_hf_cli, _upload_pm
+    from app.services.notes_sidecar import ensure_readme
+
+    repo_id = body.repo_id.strip()
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+", repo_id):
+        raise HTTPException(400, "저장소 이름은 '네임스페이스/이름' 형식이어야 합니다")
+    model = get_model(model_id)
+    if not model:
+        raise HTTPException(404, "Model not found")
+    require_idle(Activity.UPLOAD)
+    hf_cli = _find_hf_cli()
+    if not hf_cli:
+        raise HTTPException(500, "HuggingFace CLI(hf)를 찾을 수 없습니다. 설정에서 경로를 지정하세요.")
+    await _require_hub_write()
+
+    model_dir = Path(model["path"])
+    # 이름·설명이 있으면 허브 카드(README.md)로 — 이미 있으면 안 건드린다. ⚠ 학습 산출물에만 쓴다:
+    #   허브에서 받은 모델의 폴더는 HF 캐시 스냅샷이라 거기 쓰면 공유 캐시를 고친다
+    if model_dir.name == "pretrained_model":
+        ensure_readme(model_dir, repo_id, model.get("notes") or {})
+    args = [hf_cli, "upload", repo_id, str(model_dir), ".", "--repo-type=model",
+            f"--commit-message=Upload {model_id}"]
+    if body.private:
+        args.append("--private")
+    await _upload_pm.start(args)
+    return {"status": "started", "model_id": model_id, "repo_id": repo_id, "pid": _upload_pm.pid}
 
 
 @router.get("/{model_id:path}")

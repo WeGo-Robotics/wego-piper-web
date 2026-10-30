@@ -60,6 +60,10 @@
 - 새 API: `GET /api/models/runs`(학습 1행), `GET·PUT /api/models/runs/{run}/notes`(학습 이름·설명)
 - 저장소 › 데이터셋 목록(표 행 끝·썸네일 카드)에서 바로 **[Hub 업로드]** — 상세 창에만 두었더니 사라진 것으로
   보였다. 이름·설명 편집기의 설명 칸은 글 길이만큼 자란다(두 줄 칸이라 긴 설명은 스크롤해야 읽혔다)
+- **체크포인트를 Hub 에 올린다** — 저장소 › 모델의 표 행(마지막 체크포인트)과 모델 창(고른 체크포인트)에
+  [Hub 업로드]. 올릴 저장소는 `내 계정/정책-데이터셋-스텝` 으로 채워 두고 고칠 수 있다. 지금까지 모델이 Hub 로
+  가는 길은 학습 폼의 Policy Repo ID(학습 끝에 올린다)뿐이라 끝난 학습은 올릴 수 없었다. 데이터셋 업로드와 같은
+  작업 유닛·로그 창을 쓴다. 새 API: `POST /api/models/{id}/upload`
 
 **SmolVLA-S·ACT-S 를 바닐라 체크포인트에서 이어 학습한다 (워밍스타트)** ([feature/smolvla-s.md §6](feature/smolvla-s.md))
 - SmolVLA-S 는 **처음부터만** 학습됐다 — `lerobot/smolvla_base` 를 고르면 config 의 `type: smolvla` 때문에 LeRobot 이

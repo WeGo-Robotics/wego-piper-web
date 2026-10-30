@@ -32,6 +32,8 @@ type Props = {
   blockedReason?: (row: WeightRun) => string | null
   /** 이름을 고친 뒤 — 부모가 목록을 다시 읽는다 */
   onRenamed?: () => void
+  /** 행마다 붙일 버튼 (저장소의 [Hub 업로드]). 누르면 그 버튼만 — 행을 열지 않는다 */
+  actions?: (row: WeightRun) => ReactNode
 }
 
 /** 스텝은 `20K` 로 — 학습 쪽에서 다들 이렇게 읽는다 */
@@ -52,7 +54,7 @@ const when = (iso: string | null) => iso
   ? fmt.dateTime(iso, { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
   : '—'
 
-export default function WeightTable({ rows, value, onPick, onOpen, blockedReason, onRenamed }: Props) {
+export default function WeightTable({ rows, value, onPick, onOpen, blockedReason, onRenamed, actions }: Props) {
   const t = useT()
   const { notify } = useSystemMessage()
   const [search, setSearch] = useState('')
@@ -172,6 +174,7 @@ export default function WeightTable({ rows, value, onPick, onOpen, blockedReason
               {th('steps', t('스텝·배치'), 'text-right')}
               <th className="px-2 py-2 text-left font-medium whitespace-nowrap">{t('출발점')}</th>
               <th className="px-2 py-2 text-left font-medium whitespace-nowrap">{t('체크포인트')}</th>
+              {actions && <th className="w-px" />}
             </tr>
           </thead>
           <tbody>
@@ -262,11 +265,14 @@ export default function WeightTable({ rows, value, onPick, onOpen, blockedReason
                         ))}
                       </div>
                     </td>
+                    {actions && (
+                      <td className="px-2 py-1.5 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>{actions(r)}</td>
+                    )}
                   </tr>
                   {isOpen && (
                     <tr className="bg-neutral-900/60">
                       <td />
-                      <td colSpan={7} className="px-2 pb-3 pt-1">
+                      <td colSpan={actions ? 8 : 7} className="px-2 pb-3 pt-1">
                         <RowDetail row={r} baseText={baseText(r)} />
                       </td>
                     </tr>
@@ -275,7 +281,7 @@ export default function WeightTable({ rows, value, onPick, onOpen, blockedReason
               )
             })}
             {!shown.length && (
-              <tr><td colSpan={8} className="px-2 py-6 text-center text-neutral-500">
+              <tr><td colSpan={actions ? 9 : 8} className="px-2 py-6 text-center text-neutral-500">
                 {rows.length ? t('조건에 맞는 가중치가 없습니다') : t('로컬 모델이 없습니다. Hub에서 다운로드하거나 학습을 실행하세요.')}
               </td></tr>
             )}

@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import NotesEditor from '../components/NotesEditor'
 import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
+import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
+import LogViewer from '../components/LogViewer'
+import RepoIdInput, { repoIdError } from '../components/RepoIdInput'
 import type { Model, WeightRun } from '../types/models'
 import { sizeText } from '../types/camera'
 import DiskUsageBar from '../components/DiskUsageBar'
@@ -39,6 +42,41 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
   const [loadError, setLoadError] = useState('')
   // 상세 창 — 어느 학습의 어느 체크포인트
   const [open, setOpen] = useState<{ key: string; ckpt: string } | null>(null)
+  // Hub 업로드 — 올릴 저장소를 묻는 창, 그다음 로그 창 (데이터셋 업로드와 같은 유닛·같은 WS 메시지)
+  const [uploadAsk, setUploadAsk] = useState<{ id: string; label: string; repoId: string; private: boolean } | null>(null)
+  const [uploadRepo, setUploadRepo] = useState<string | null>(null)
+  const [uploadLogs, setUploadLogs] = useState<string[]>([])
+  const [uploadState, setUploadState] = useState('idle')
+  const uploading = uploadState === 'running' || uploadState === 'starting'
+
+  useWebSocket('/ws', {
+    onMessage: useCallback((msg: WsMessage) => {
+      if (msg.type === 'upload_log') setUploadLogs((prev) => [...prev.slice(-200), msg.data as string])
+      else if (msg.type === 'upload_state') setUploadState(msg.data as string)
+    }, []),
+  })
+
+  /** 올릴 저장소를 묻는다. 이름은 "정책-데이터셋-스텝" 으로 채워 두고 네임스페이스는 내 계정 —
+   *  모델 id 는 학습 경로(`2026-10-27/…/020000`)라 그대로는 저장소 이름이 못 된다. */
+  const askUpload = async (id: string, row: WeightRun) => {
+    const c = row.checkpoints.find((x) => x.ids.includes(id)) ?? row.checkpoints[0]
+    const slug = [row.policy_type, row.dataset?.split('/').pop(),
+      c?.step != null ? (c.step % 1000 === 0 ? `${c.step / 1000}k` : String(c.step)) : c?.checkpoint]
+      .filter(Boolean).join('-').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-').slice(0, 96)
+    const who = await api.get<{ logged_in: boolean; username: string }>('/hub/whoami').catch(() => null)
+    setUploadAsk({ id, label: `${row.name || row.key} · ${c?.checkpoint ?? id}`,
+                   repoId: who?.logged_in && who.username ? `${who.username}/${slug}` : slug, private: false })
+  }
+
+  const startUpload = async () => {
+    if (!uploadAsk) return
+    try {
+      await api.post(`/models/${uploadAsk.id}/upload`, { repo_id: uploadAsk.repoId.trim(), private: uploadAsk.private })
+      setUploadRepo(uploadAsk.repoId.trim()); setUploadLogs([]); setUploadState('starting'); setUploadAsk(null)
+    } catch (e) {
+      notify({ level: 'error', source: t('모델'), text: e instanceof Error ? e.message : t('업로드 실패') })
+    }
+  }
 
   const fetchModels = () => {
     setLoading(true)
@@ -112,7 +150,14 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
         //   체크포인트 72개가 평면으로 깔려 어느 학습의 몇 번째인지 읽을 수가 없었다.
         //   행을 누르면 상세가 창으로 뜬다 — 칩을 누르면 그 체크포인트로 연다 (데이터셋 화면과 같다).
         <WeightTable rows={runs} onRenamed={fetchModels} value={open?.ckpt}
-          onOpen={(row, ckpt) => setOpen({ key: row.key, ckpt })} />
+          onOpen={(row, ckpt) => setOpen({ key: row.key, ckpt })}
+          // 학습한 것만 — 허브에서 받은 모델을 다시 올릴 일은 없다. 행이면 마지막 체크포인트
+          actions={(row) => row.kind === 'run' && row.checkpoints[0] ? (
+            <button type="button" onClick={() => void askUpload(row.checkpoints[0].id, row)}
+              className="rounded bg-neutral-700 px-2 py-0.5 text-xs text-neutral-300 hover:bg-blue-600 hover:text-white">
+              {t('Hub 업로드')}
+            </button>
+          ) : null} />
       ) : null}
 
       {tab === 'local' && open && (() => {
@@ -163,6 +208,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                 )}
                 {m && (
                   <CheckpointDetail model={m} ownNotes={row.kind === 'run'}
+                    onUpload={row.kind === 'run' ? () => void askUpload(m.id, row) : undefined}
                     onStartInference={() => void handleStartInference(m)}
                     onDelete={() => void handleDelete(m.id)} onSaved={fetchModels} />
                 )}
@@ -171,13 +217,75 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
           </div>
         )
       })()}
+
+      {/* 올릴 저장소 묻기 — ⚠ Esc 로 닫지 않는다(전역 E-stop) */}
+      {uploadAsk && (() => {
+        const err = repoIdError(uploadAsk.repoId)
+        const ok = !!uploadAsk.repoId.trim() && !err
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setUploadAsk(null)}>
+            <div className="w-full max-w-lg space-y-3 rounded-lg border border-neutral-700 bg-neutral-900 p-4 text-sm"
+              onClick={(e) => e.stopPropagation()}>
+              <h3 className="font-semibold text-neutral-100">{t('Hub 에 올리기')}</h3>
+              <p className="text-xs text-neutral-400">{uploadAsk.label}</p>
+              <div className="space-y-1">
+                <label className="text-xs text-neutral-400">{t('올릴 모델 저장소')}</label>
+                <RepoIdInput value={uploadAsk.repoId} onChange={(v) => setUploadAsk({ ...uploadAsk, repoId: v })} />
+                {err && <p className="text-xs text-amber-400">{err}</p>}
+              </div>
+              <label className="flex items-center gap-2 text-xs text-neutral-300">
+                <input type="checkbox" checked={uploadAsk.private}
+                  onChange={(e) => setUploadAsk({ ...uploadAsk, private: e.target.checked })} />
+                {t('비공개 저장소로 만들기')}
+              </label>
+              <p className="text-[11px] text-neutral-500">
+                {t('체크포인트 폴더(config·가중치·전처리)를 올립니다. 저장소가 없으면 새로 만들고, 있으면 새 커밋으로 올라갑니다.')}
+              </p>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setUploadAsk(null)}
+                  className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-600">{t('취소')}</button>
+                <button type="button" disabled={!ok} onClick={() => void startUpload()}
+                  className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500 disabled:opacity-50">{t('올리기')}</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* 업로드 진행 — 데이터셋 업로드와 같은 유닛이라 중지도 같다. 도는 동안은 닫지 않는다 */}
+      {uploadRepo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => { if (!uploading) setUploadRepo(null) }}>
+          <div className="bg-neutral-800 border border-neutral-600 rounded-lg w-[600px] max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-neutral-700">
+              <h3 className="text-sm font-semibold">{t('Hub 업로드: {uploadId}', { uploadId: uploadRepo })}</h3>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                uploading ? 'bg-blue-500/20 text-blue-400' :
+                uploadState === 'error' ? 'bg-red-500/20 text-red-400' :
+                uploadState === 'idle' ? 'bg-green-500/20 text-green-400' : 'bg-neutral-700 text-neutral-400'
+              }`}>{uploadState}</span>
+            </div>
+            <div className="flex-1 overflow-hidden p-2">
+              <LogViewer logs={uploadLogs} height="min-h-[280px] max-h-[50vh]" placeholder={t('시작 대기...')} searchable />
+            </div>
+            <div className="p-3 border-t border-neutral-700 flex justify-end gap-2">
+              {uploading ? (
+                <button onClick={() => api.post('/datasets/upload-stop')} className="px-3 py-1 text-xs rounded bg-red-600 hover:bg-red-500 text-white">{t('중지')}</button>
+              ) : (
+                <button onClick={() => setUploadRepo(null)} className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300">{t('닫기')}</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 /** 체크포인트 하나의 상세 — 입출력·아키텍처·학습 설정·Config. */
-function CheckpointDetail({ model: selected, ownNotes, onStartInference, onDelete, onSaved }: {
+function CheckpointDetail({ model: selected, ownNotes, onUpload, onStartInference, onDelete, onSaved }: {
   model: Model
+  /** 이 체크포인트를 Hub 에 올린다 (학습 산출물만) */
+  onUpload?: () => void
   /** 학습 산출물이면 이 편집기는 "이 체크포인트만" 의 이름이다 — 비우면 학습 이름을 따른다 */
   ownNotes: boolean
   onStartInference: () => void
@@ -190,6 +298,12 @@ function CheckpointDetail({ model: selected, ownNotes, onStartInference, onDelet
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold">{selected.id}</h2>
         <div className="ml-auto flex gap-2">
+          {onUpload && (
+            <button onClick={onUpload}
+              className="px-3 py-1 text-xs rounded bg-neutral-700 hover:bg-blue-600 text-neutral-300 hover:text-white">
+              {t('Hub 업로드')}
+            </button>
+          )}
           <button onClick={onStartInference}
             className="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white">
             {t('추론 시작')}
