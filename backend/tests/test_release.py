@@ -282,8 +282,9 @@ def test_apply_checks_every_host_tool_it_uses():
     from conftest import code_only
 
     src = code_only(APPLY.read_text())
-    head = src.split("if [ ${#NEED_APT[@]}", 1)[0]        # 0절: 전제 확인
-    body = src.split("if [ ${#NEED_APT[@]}", 1)[1]        # 그 뒤: 실제로 쓰는 곳
+    # 0절의 끝 — 모은 처방을 찍을지 정하는 줄 (fa0db4b 가 `if [ ${#NEED_APT[@]}…` 를 이 모양으로 바꿨다)
+    head = src.split("CMDS=0; { [ ${#NEED_APT[@]}", 1)[0]        # 0절: 전제 확인
+    body = src.split("CMDS=0; { [ ${#NEED_APT[@]}", 1)[1]        # 그 뒤: 실제로 쓰는 곳
     # ⚠ venv 의 관문은 **`ensurepip`** 다. `venv` 모듈은 표준 라이브러리라 늘 import
     #   되고, 데비안이 따로 떼어 둔 것은 ensurepip 다 — `import venv` 로 보면 검사는
     #   통과하는데 `python3 -m venv` 는 깨진다. 그게 실기에서 실제로 난 구멍이다

@@ -377,6 +377,6 @@ def test_the_can_advice_does_not_stop_the_apply():
     #   셸의 glob(`udev/*.rules` … `devices/*/idVendor`)이 그 모양이라 그 사이가 통째로
     #   사라진다 — 검사하려던 줄이 같이 지워졌다.
     src = (REPO / "deploy" / "apply.sh").read_text()
-    can = src[src.index('CAN_RULE="'):src.index("if [ ${#NEED_APT[@]}")]
+    can = src[src.index('CAN_RULE="'):src.index("CMDS=0; { [ ${#NEED_APT[@]}")]   # 0절의 끝 (fa0db4b 이후 모양)
     assert "NEED_SUDO" not in can, "CAN 갈래가 업데이트를 막고 있다"
     assert "udevadm control --reload-rules" in can, "안내 자체는 있어야 한다"
