@@ -304,6 +304,10 @@ LOCAL_JOB_ID: Final = "local"
 # 학습 폼이 지난 실측으로 workers 권장값을 미리 채운다 (feature/train-loader-workers.md §4).
 TRAIN_LOADER_PROFILES: Final = _k("train", "loader_profiles")
 
+# 해시: {"데이터셋|정책|amp|스위치": GPU 메모리 실측 JSON}. 학습 폼이 고른 배치의 메모리를 미리 가늠하고,
+# 메모리 부족으로 죽은 학습도 여기 남는다 (backend/app/services/training/gpu_mem.py).
+TRAIN_MEM_PROFILES: Final = _k("train", "mem_profiles")
+
 
 # ── 데몬 RPC (게이트웨이 → 하드웨어 데몬) ───────────────────────────────────
 #

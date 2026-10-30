@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import { useT, fmt } from '../i18n'
 
 type MetricsData = {
@@ -12,6 +12,26 @@ type MetricsData = {
   update_s?: number  // GPU 갱신 시간 (병목 힌트)
   data_s?: number    // 데이터 로딩 시간 (병목 힌트)
   loader?: LoaderAdvice
+  timing?: Timing | null
+  gpu_mem?: GpuMem | null
+  oom?: OomInfo | null
+}
+
+// 백엔드 `training/gpu_mem.py` — 이 학습 프로세스의 GPU 메모리(MiB). 이 기계 학습만 온다.
+type GpuMem = { used_mb: number; peak_mb: number; total_mb: number; other_mb: number }
+// 메모리 부족으로 죽었을 때 — `max_batch` 는 같은 설정의 실측·기록으로 낸 다시 시작할 배치
+type OomInfo = { batch: number | null; in_use_mb: number | null; capacity_mb: number | null; max_batch: number | null }
+
+const gb = (mb: number) => fmt.number(mb / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+
+// 백엔드 `TrainManager.timing()` — 길이는 초, 시각은 게이트웨이 시계. 돌고 있을 때만 온다.
+type Timing = {
+  started_at: string | null
+  elapsed_s: number | null
+  remaining_s: number | null
+  total_s: number | null
+  finish_at: string | null
+  basis: 'progress' | 'step_time' | null
 }
 
 // 백엔드 `training/loader.py` 의 `advise()` — 숫자와 판정 코드만 온다 (feature/train-loader-workers.md)
@@ -36,6 +56,71 @@ type HistoryData = {
   losses: number[]
   grad_norms: number[]
   lrs: number[]
+}
+
+/** 경과·남은 시간·완료 예정. 길이는 서버가 잰 초에 **받은 뒤 흐른 시간**을 더해 매초 센다 —
+ *  메트릭은 log_freq 마다(수 분) 오고, 브라우저 시계가 게이트웨이와 달라도 길이는 안 틀린다. */
+function TimingView({ timing }: { timing: Timing }) {
+  const t = useT()
+  // 새 값이 오면 받은 시각을 다시 잡는다 (prop 이 바뀔 때 상태를 맞추는 React 의 권장 모양)
+  const [got, setGot] = useState(() => ({ timing, at: Date.now() }))
+  if (got.timing !== timing) setGot({ timing, at: Date.now() })
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  const since = (Date.now() - got.at) / 1000
+  const elapsed = timing.elapsed_s === null ? null : timing.elapsed_s + since
+  const remaining = timing.remaining_s === null ? null : Math.max(0, timing.remaining_s - since)
+  const clock = (s: number) => {
+    const n = Math.floor(s)
+    const pad = (x: number) => String(x).padStart(2, '0')
+    return `${Math.floor(n / 3600)}:${pad(Math.floor(n / 60) % 60)}:${pad(n % 60)}`
+  }
+  const span = (s: number) => {
+    const m = Math.round(s / 60)
+    return m >= 60 ? t('{h}시간 {m}분', { h: Math.floor(m / 60), m: m % 60 }) : t('{m}분', { m })
+  }
+  const finish = timing.finish_at ? new Date(timing.finish_at) : null
+  const finishText = finish && (finish.toDateString() === new Date().toDateString()
+    ? fmt.time(finish, { hour: '2-digit', minute: '2-digit' })
+    : fmt.dateTime(finish, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }))
+
+  return (
+    <div className="flex flex-wrap justify-between gap-x-3 text-[11px] text-neutral-400">
+      <span>
+        {elapsed !== null && <>{t('경과 {elapsed}', { elapsed: clock(elapsed) })} · </>}
+        {remaining === null ? t('남은 시간 계산 중…') : t('남은 시간 약 {remaining}', { remaining: span(remaining) })}
+      </span>
+      {finishText && (
+        <span title={timing.basis === 'step_time' ? t('step 시간 기준 — 체크포인트 저장 시간이 빠져 조금 이를 수 있습니다') : undefined}>
+          {t('완료 예정 {at}', { at: finishText })}
+          {timing.total_s !== null && <> · {t('총 약 {total}', { total: span(timing.total_s) })}</>}
+        </span>
+      )}
+    </div>
+  )
+}
+
+/** 이 학습의 GPU 메모리. 막대는 GPU 전체 대비 — 다른 프로세스 몫도 학습이 못 쓰는 자리다. */
+function GpuMemView({ m }: { m: GpuMem }) {
+  const t = useT()
+  const pct = (m.used_mb / m.total_mb) * 100
+  const otherPct = (m.other_mb / m.total_mb) * 100
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-between text-[11px] text-neutral-400">
+        <span>{t('GPU 메모리')} <span className="font-mono">{gb(m.used_mb)} / {gb(m.total_mb)} GB</span></span>
+        <span>{t('최대 {peak} GB · 다른 프로세스 {other} GB', { peak: gb(m.peak_mb), other: gb(m.other_mb) })}</span>
+      </div>
+      <div className="flex h-1.5 w-full overflow-hidden rounded bg-neutral-700">
+        <div className={`h-full ${pct + otherPct > 90 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${pct}%` }} />
+        <div className="h-full bg-neutral-500" style={{ width: `${otherPct}%` }} />
+      </div>
+    </div>
+  )
 }
 
 /** step 시간이 어디에 쓰이나 + workers 판정. 누가 병목인지 판정하지 않고, workers 로 얻을 수 있는
@@ -167,6 +252,19 @@ export default function TrainingMetrics({ metrics, history }: { metrics: Metrics
     <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4 space-y-3">
       <h3 className="text-sm font-semibold">{t('학습 메트릭')}</h3>
 
+      {/* 메모리 부족은 첫 메트릭 줄 전에 죽는다 — 그때 화면에 남는 건 이 줄뿐이다 */}
+      {metrics.oom && (
+        <p className="rounded border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-300">
+          {metrics.oom.batch !== null && metrics.oom.in_use_mb !== null
+            ? t('⚠ GPU 메모리 부족으로 멈췄습니다 — 배치 {batch}에서 {used} GB를 쓰고 있었습니다.',
+              { batch: metrics.oom.batch, used: gb(metrics.oom.in_use_mb) })
+            : t('⚠ GPU 메모리 부족으로 멈췄습니다.')}{' '}
+          {metrics.oom.max_batch
+            ? t('배치 {n} 이하로 다시 시작하세요 (학습 폼에도 같은 권장이 뜹니다).', { n: metrics.oom.max_batch })
+            : t('배치를 줄여 다시 시작하세요.')}
+        </p>
+      )}
+
       {/* 진행률 바 */}
       <div className="space-y-1">
         <div className="flex justify-between text-xs text-neutral-400">
@@ -176,6 +274,7 @@ export default function TrainingMetrics({ metrics, history }: { metrics: Metrics
         <div className="w-full h-2 bg-neutral-700 rounded overflow-hidden">
           <div className="h-full bg-blue-500 rounded transition-all" style={{ width: `${pct}%` }} />
         </div>
+        {metrics.timing && <TimingView timing={metrics.timing} />}
       </div>
 
       {/* 수치 */}
@@ -211,6 +310,7 @@ export default function TrainingMetrics({ metrics, history }: { metrics: Metrics
       </div>
 
       {metrics.loader && <LoaderAdviceView a={metrics.loader} />}
+      {metrics.gpu_mem && <GpuMemView m={metrics.gpu_mem} />}
 
       {/* Loss 그래프 */}
       {history.steps.length > 1 && (
@@ -223,4 +323,4 @@ export default function TrainingMetrics({ metrics, history }: { metrics: Metrics
   )
 }
 
-export type { MetricsData, HistoryData, LoaderAdvice }
+export type { MetricsData, HistoryData, LoaderAdvice, Timing, GpuMem, OomInfo }

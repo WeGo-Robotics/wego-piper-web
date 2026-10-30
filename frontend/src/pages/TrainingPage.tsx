@@ -246,6 +246,22 @@ export default function TrainingPage() {
     return () => { alive = false }
   }, [selectedDataset, policyType, amp])
 
+  // GPU 메모리 가늠 — 같은 데이터셋·정책·AMP·학습 스위치로 이 기계에서 잰 지난 실측(또는 메모리 부족
+  // 기록)으로 고른 배치를 계산한다 (backend training/gpu_mem.py). 학습이 끝나거나 죽으면 기록이 바뀌므로 다시 묻는다.
+  const [memHint, setMemHint] = useState<MemHintData | null>(null)
+  useEffect(() => {
+    if (!selectedDataset || !policyType) { setMemHint(null); return }
+    let alive = true
+    // 배치 칸을 타이핑하는 동안 요청이 쌓이지 않게 잠깐 기다린다
+    const id = setTimeout(() => {
+      api.post<MemHintData>('/training/mem-hint', {
+        dataset_repo_id: selectedDataset, policy_type: policyType, amp,
+        batch_size: batchSize, policy_params: policyParams,
+      }).then((h) => { if (alive) setMemHint(h) }).catch(() => { if (alive) setMemHint(null) })
+    }, 300)
+    return () => { alive = false; clearTimeout(id) }
+  }, [selectedDataset, policyType, amp, batchSize, policyParams, trainState])
+
   // 보고 있는 job 이 바뀌면 그 job 의 과거 로그를 채운다.
   // WS 는 신규분만 보내므로(6시간 학습은 수만 줄이라 전부 밀면 브라우저가 죽는다),
   // 전환 직후 화면이 비지 않게 링버퍼에서 읽어온다.
@@ -995,6 +1011,8 @@ export default function TrainingPage() {
                 </div>
               ))}
             </div>
+            <MemHint hint={memHint} batchSize={batchSize}
+              onApply={(n) => { setBatchSize(n); setCliEdited(false) }} />
 
             {/* 혼합정밀도(AMP): ACCELERATE_MIXED_PRECISION env로 적용 (--policy.use_amp는 학습 미사용). 속도 최대 레버 */}
             <div>
@@ -1227,6 +1245,49 @@ export default function TrainingPage() {
 
 
 /** Workers 칸 아래 — 지난 실측이 있으면 권장값과 [적용], 없으면 언제 나오는지만 말한다. */
+// 백엔드 `POST /training/mem-hint` — 숫자는 MiB, 문장은 여기서 만든다
+type MemHintData = {
+  profile: { batch?: number } | null
+  estimate: {
+    need_mb: number; usable_mb: number; total_mb: number; max_batch: number
+    level: 'ok' | 'tight' | 'over'; basis: 'measured' | 'oom'
+  } | null
+  oom: { batch: number } | null
+}
+
+/** 고른 배치의 예상 GPU 메모리. 근거가 메모리 부족 기록뿐이면 필요량은 하한, 권장 배치는 상한이다. */
+function MemHint({ hint, batchSize, onApply }: {
+  hint: MemHintData | null
+  batchSize: number
+  onApply: (n: number) => void
+}) {
+  const t = useT()
+  const e = hint?.estimate
+  if (!e) {
+    return <p className="text-[10px] text-neutral-500">{t('이 설정의 GPU 메모리 실측이 없습니다 — 학습이 돌면 기록해 다음부터 미리 알려 줍니다')}</p>
+  }
+  const gbs = (mb: number) => fmt.number(mb / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+  const color = e.level === 'over' ? 'text-red-400' : e.level === 'tight' ? 'text-amber-400' : 'text-neutral-500'
+  return (
+    <p className={`text-[10px] ${color}`}>
+      {e.level !== 'ok' && '⚠ '}{t('예상 GPU 메모리 약 {need} / {usable} GB', { need: gbs(e.need_mb), usable: gbs(e.usable_mb) })}
+      {e.level === 'over' && <> — {t('메모리 부족으로 멈춥니다')}</>}
+      {e.level === 'tight' && <> — {t('빠듯합니다')}</>}
+      {e.level !== 'ok' && (e.max_batch > 0 ? (
+        <>
+          {' · '}{t('배치 {n} 이하 권장', { n: e.max_batch })}
+          <button type="button" onClick={() => onApply(e.max_batch)}
+            className="ml-1 text-blue-400 hover:text-blue-300 underline">{t('{rec}로', { rec: e.max_batch })}</button>
+        </>
+      ) : <> · {t('배치 1도 들어가지 않습니다 — 동결 스위치를 켜거나 GPU를 쓰는 다른 프로세스를 끄세요')}</>)}
+      {e.basis === 'oom' && hint?.oom
+        ? <> ({t('지난번 배치 {b}에서 메모리 부족 — 추정치', { b: hint.oom.batch })})</>
+        : hint?.profile?.batch && hint.profile.batch !== batchSize
+          ? <> ({t('배치 {b} 실측으로 계산', { b: hint.profile.batch })})</> : null}
+    </p>
+  )
+}
+
 function WorkersHint({ hint, batchSize, numWorkers, onApply }: {
   hint: { profile: { batch_size?: string | null } | null; advice?: LoaderAdvice } | null
   batchSize: number

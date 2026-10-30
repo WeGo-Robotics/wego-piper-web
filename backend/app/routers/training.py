@@ -507,6 +507,32 @@ async def loader_hint(dataset: str, policy: str, amp: str = "bf16"):
     return {"profile": prof, "advice": advice}
 
 
+class MemHintRequest(BaseModel):
+    dataset_repo_id: str
+    policy_type: str
+    amp: str = "bf16"
+    batch_size: int = 8
+    policy_params: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/mem-hint")
+async def mem_hint(body: MemHintRequest):
+    """같은 데이터셋·정책·AMP·학습 스위치로 이 기계에서 잰 지난 실측(또는 메모리 부족 기록)으로
+    고른 배치의 GPU 메모리를 가늠한다 (training/gpu_mem.py). 근거가 없으면 `estimate: null`."""
+    import asyncio
+
+    from app.services.training import gpu_mem
+
+    key = gpu_mem.profile_key(body.dataset_repo_id, body.policy_type, body.amp,
+                              {k: v for k, v in body.policy_params.items() if k in gpu_mem.MEM_SWITCHES})
+    prof = job_registry.get_mem_profile(key)
+    # 돌고 있는 학습은 빼고 잰다 — 그 학습이 끝나야 다음 학습이 시작되니까
+    pid = train_manager.runner.pid if train_manager.is_running else None
+    gpu = await asyncio.to_thread(gpu_mem.query, pid)
+    est = gpu_mem.estimate(prof, body.batch_size, gpu["total_mb"], gpu["other_mb"]) if prof and gpu else None
+    return {"profile": prof, "estimate": est, "oom": (prof or {}).get("oom")}
+
+
 # ── job 레지스트리 (feature/cloud-training.md 3단계) ──
 #
 # 로컬 학습도 `job_id="local"` 로 여기 들어간다. 원격이 붙어도 UI 가 한 벌로 끝나고,

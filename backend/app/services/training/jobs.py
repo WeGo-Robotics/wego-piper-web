@@ -174,6 +174,27 @@ class JobRegistry:
             logger.warning("로더 프로파일 조회 실패 (%s): %s", key, exc)
             return None
 
+    # ── GPU 메모리 실측 프로파일 (training/gpu_mem.py) ──
+
+    def put_mem_profile(self, key: str, profile: dict) -> None:
+        bus = self._b()
+        if bus is None:
+            return
+        try:
+            bus.put_mem_profile(key, profile)
+        except Exception as exc:
+            logger.warning("메모리 프로파일 저장 실패 (%s): %s", key, exc)
+
+    def get_mem_profile(self, key: str) -> dict | None:
+        bus = self._b()
+        if bus is None:
+            return None
+        try:
+            return bus.get_mem_profile(key)
+        except Exception as exc:
+            logger.warning("메모리 프로파일 조회 실패 (%s): %s", key, exc)
+            return None
+
     # ── 로그 링버퍼 ──
 
     def append_log(self, job_id: str, line: str) -> None:

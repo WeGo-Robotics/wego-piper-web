@@ -26,6 +26,7 @@
 import asyncio
 import contextlib
 import logging
+import shlex
 import threading
 import shutil
 import subprocess
@@ -320,6 +321,17 @@ class SystemdProcess:
             return []
         tail = out.split("argv[]=", 1)[1]
         return tail.split(" ; ", 1)[0].strip().split()
+
+    def exec_env(self) -> dict[str, str]:
+        """유닛에 실은 환경변수. argv 에 없는 설정(학습의 AMP 등)을 재부착 때 되찾는 길이다."""
+        out = _systemctl("show", self.unit, "--property=Environment").stdout.strip()
+        if not out.startswith("Environment="):
+            return {}
+        try:
+            pairs = shlex.split(out[len("Environment="):])
+        except ValueError:
+            return {}
+        return dict(p.split("=", 1) for p in pairs if "=" in p)
 
     # ── 복원 ──
 

@@ -72,4 +72,6 @@ class SystemdRunner:
             elif a.startswith("--output_dir="):
                 out_dir = a.split("=", 1)[1]
         logger.info("재부착: 총 %d 스텝, 출력 %s", total, out_dir or "?")
-        return TrainJobSpec(cmd=argv, total_steps=total, output_dir=out_dir)
+        # AMP 는 argv 가 아니라 환경변수로 들어갔다 — 그것도 유닛이 들고 있다
+        return TrainJobSpec(cmd=argv, total_steps=total, output_dir=out_dir,
+                            env=self.proc.exec_env())

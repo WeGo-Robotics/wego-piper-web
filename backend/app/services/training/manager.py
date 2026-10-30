@@ -12,7 +12,9 @@ import json
 import logging
 import os
 import re
+import time
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.services.process_manager import ProcessState
@@ -22,7 +24,7 @@ from app.services.training.jobs import (
     JobRegistry,
     job_registry,
 )
-from app.services.training import loader
+from app.services.training import gpu_mem, loader
 from app.services.training.metrics import MetricsTracker
 from app.services.training.runners.base import TrainRunner
 from app.services.training.runners.local import LocalRunner
@@ -65,6 +67,7 @@ def _loader_context(cmd: list[str], env: dict[str, str] | None) -> dict:
         "dataset": _cmd_arg(cmd, "dataset.repo_id"),
         "policy": policy,
         "batch_size": _cmd_arg(cmd, "batch_size"),
+        "switches": gpu_mem.switches_from_cmd(cmd),
     }
 
 
@@ -132,6 +135,11 @@ class TrainManager:
         self._original_state_cb: Callable[[ProcessState], None] | None = None
         self._on_output_dir: Callable[[Path], None] | None = None
         self._loader: dict = {}
+        # 학습을 건 시각 — 경과·총 시간의 기준. 재부착하면 레코드의 `created_at` 에서 되살린다.
+        self.started_at: datetime | None = None
+        # GPU 메모리 — 이 프로세스 사용량·최대치 (gpu_mem.py). 메모리 부족은 한 번만 알린다.
+        self._gpu: dict = {}
+        self._oom_reported = False
         self.tracker.set_update_callback(self._emit_metrics)
         # ⚠ **여기서 건다. WS 연결 때가 아니다.** 예전에는 `set_log_callback` 이
         #   `ws.py` 에서만 불렸다 — 즉 **브라우저가 붙어야** 메트릭이 쌓였다.
@@ -186,6 +194,11 @@ class TrainManager:
     def _intercept_log(self, line: str) -> None:
         """로그를 가로채 메트릭을 뽑고 원본 콜백에 그대로 전달."""
         self.tracker.feed(line)
+        if self.tracker.oom and not self._oom_reported:
+            # 메트릭 줄 없이 죽으므로 여기서 알린다 — 안 그러면 화면엔 아무것도 안 뜬다
+            self._oom_reported = True
+            self._save_mem_profile(oom=True)
+            self._emit_metrics()
         if "Output dir:" in line:
             self._output_dir_reported(line)
         # 6시간 학습이면 수만 줄이라 전부 WS 로 밀면 브라우저가 죽는다.
@@ -230,6 +243,9 @@ class TrainManager:
             self._original_state_cb(state)
 
     def _emit_metrics(self) -> None:
+        if not self._oom_reported:
+            self._sample_gpu()
+            self._save_mem_profile()
         status = self.get_status()
         self._sync_record(metrics=status)
         self._save_loader_profile(status["loader"])
@@ -254,6 +270,70 @@ class TrainManager:
             record.history = self.tracker.history.to_dict()
             self._save_history(record.history)
         self.registry.put(record)
+
+    def _sample_gpu(self) -> None:
+        """이 학습 프로세스의 GPU 메모리를 잰다 — 이 기계 학습만. 최대치를 남긴다."""
+        if getattr(self.runner, "is_remote", False) or not self.runner.pid:
+            return
+        q = gpu_mem.query(self.runner.pid)
+        if q is None or q["used_mb"] is None:
+            return
+        self._gpu = {**q, "peak_mb": max(q["used_mb"], self._gpu.get("peak_mb", 0))}
+
+    def _mem_key(self) -> str | None:
+        ctx = self._loader
+        if not (ctx.get("dataset") and ctx.get("policy") and ctx.get("amp")):
+            return None      # 재부착했는데 AMP 를 모르면 남기지 않는다 — 다른 설정과 섞인다
+        return gpu_mem.profile_key(ctx["dataset"], ctx["policy"], ctx["amp"], ctx.get("switches") or {})
+
+    def _save_mem_profile(self, oom: bool = False) -> None:
+        """다음 학습 폼이 메모리를 가늠하도록 남긴다 — 성공한 실측(최대치) 또는 메모리 부족 기록.
+
+        같은 키의 지난 기록에 덧쓴다: 실측과 메모리 부족은 서로 다른 배치에서 나오고, 둘 다 쓸모 있다.
+        """
+        key, params = self._mem_key(), self.tracker.params
+        try:
+            batch = int(self._loader.get("batch_size") or 0)
+        except ValueError:
+            batch = 0
+        if key is None or not batch or not (params.get("total") and params.get("learnable")):
+            return
+        if not oom and not self._gpu.get("peak_mb"):
+            return
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        prof = self.registry.get_mem_profile(key) or {}
+        prof["params"] = {"total": params["total"], "learnable": params["learnable"]}
+        if oom:
+            o = self.tracker.oom or {}
+            prof["oom"] = {"batch": batch, "in_use_mb": o.get("in_use_mb"),
+                           "capacity_mb": o.get("capacity_mb"), "at": now}
+        else:
+            prof.update(batch=batch, peak_mb=self._gpu["peak_mb"],
+                        total_mb=self._gpu["total_mb"], other_mb=self._gpu["other_mb"], at=now)
+            # 이 배치로 돌고 있다 — 그보다 작거나 같은 배치의 메모리 부족 기록은 낡았다
+            if (prof.get("oom") or {}).get("batch", 0) <= batch:
+                prof.pop("oom", None)
+        self.registry.put_mem_profile(key, prof)
+
+    def _oom_status(self) -> dict | None:
+        """메모리 부족으로 죽었으면 — 그때 배치·사용량과 다시 시작할 배치."""
+        o = self.tracker.oom
+        if not o:
+            return None
+        key = self._mem_key()
+        prof = self.registry.get_mem_profile(key) if key else None
+        try:
+            batch = int(self._loader.get("batch_size") or 0)
+        except ValueError:
+            batch = 0
+        est = None
+        if prof and batch:
+            q = gpu_mem.query(None)
+            if q:
+                est = gpu_mem.estimate(prof, batch, q["total_mb"], q["other_mb"])
+        return {"batch": batch or None, "in_use_mb": o.get("in_use_mb"),
+                "capacity_mb": o.get("capacity_mb"),
+                "max_batch": est["max_batch"] if est else None}
 
     def _save_loader_profile(self, advice: dict) -> None:
         """다음 학습 폼이 workers 권장값을 미리 채우도록 남긴다 — 이 기계 학습만.
@@ -311,6 +391,8 @@ class TrainManager:
         self.tracker.reset(total_steps=total_steps)
         self.output_dir = output_dir
         self._on_output_dir = on_output_dir
+        self.started_at = datetime.now().astimezone()
+        self._gpu, self._oom_reported = {}, False
         self._loader = _loader_context(cmd, env_extra or {})
         # 이전 job 의 로그·레코드를 치운다. 남겨두면 새 학습 로그가 옛 줄 뒤에 붙어
         # "어디부터 이번 학습인가"를 알 수 없다 — 버스 링버퍼는 세션을 넘어 살아남는다.
@@ -342,6 +424,7 @@ class TrainManager:
         #   채우려는 것이다. 그런데 그 뒤에 `reset()` 을 부르면 방금 채운 히스토리를
         #   통째로 지운다. 실측: 재시작 뒤 로스 곡선에 점이 2개만 남았다.
         self.tracker.reset()
+        self._gpu, self._oom_reported = {}, False
         # ⚠ **저장된 곡선을 먼저 되살린다.** 저널 재생만 믿으면 로그가 순환됐거나
         #   유닛이 재시작된 뒤에는 앞부분이 통째로 없다. 재생분은 이 위에 이어진다
         #   — `append` 가 뒤로 가는 값을 버리므로 겹쳐도 안전하다.
@@ -349,6 +432,11 @@ class TrainManager:
         if saved and saved.history:
             self.tracker.history.load(saved.history)
             logger.info("저장된 로스 곡선 복원: %d점", len(self.tracker.history.steps))
+        # 레코드는 `start()` 가 지우고 새로 만든다 — 그 생성 시각이 곧 학습을 건 시각이다
+        try:
+            self.started_at = datetime.fromisoformat(getattr(saved, "created_at", None) or "")
+        except (TypeError, ValueError):
+            self.started_at = None
         spec = self.runner.restore()
         if spec is None:
             stale = self.registry.get(self.job_id)
@@ -372,8 +460,8 @@ class TrainManager:
             return False
         # 총 스텝만 채운다 — **여기서 다시 비우면** 재생된 히스토리가 사라진다
         self.tracker.metrics.total_steps = spec.total_steps
-        # 유닛 argv 만 남는다 — 환경변수로 들어간 AMP 는 모른다
-        self._loader = _loader_context(spec.cmd, None)
+        # AMP 는 환경변수로 들어갔다 — 러너가 되찾아 주면(systemd) 알고, 아니면 모른다
+        self._loader = _loader_context(spec.cmd, spec.env or None)
         self.output_dir = spec.output_dir
         self._sync_record()
         return True
@@ -401,6 +489,34 @@ class TrainManager:
             #   지금 볼 수 있어야 한다 — 조용한 로컬 폴백이 가장 비싼 실패다.
             "runner": type(self.runner).__name__.replace("Runner", "").lower(),
             "remote": bool(getattr(self.runner, "is_remote", False)),
+            "timing": self.timing(),
+            "gpu_mem": ({k: self._gpu[k] for k in ("used_mb", "peak_mb", "total_mb", "other_mb")}
+                        if self._gpu else None),
+            "oom": self._oom_status(),
+        }
+
+    def timing(self, now: datetime | None = None) -> dict | None:
+        """경과·남은 시간·완료 예정 — 돌고 있을 때만.
+
+        길이는 초, 시각은 게이트웨이 시계다. 화면은 받은 뒤 흐른 시간을 길이에 더해 스스로 센다 —
+        브라우저 시계가 게이트웨이와 달라도 경과·남은 시간이 안 틀린다.
+        """
+        if not self.is_running:
+            return None
+        now = now or datetime.now().astimezone()
+        elapsed = (now - self.started_at).total_seconds() if self.started_at else None
+        est = self.tracker.remaining()
+        remaining, basis = est if est else (None, None)
+        if remaining is not None and self.tracker.seen_at is not None:
+            remaining = max(0.0, remaining - (time.monotonic() - self.tracker.seen_at))
+        return {
+            "started_at": self.started_at.isoformat(timespec="seconds") if self.started_at else None,
+            "elapsed_s": round(elapsed) if elapsed is not None else None,
+            "remaining_s": round(remaining) if remaining is not None else None,
+            "total_s": round(elapsed + remaining) if elapsed is not None and remaining is not None else None,
+            "finish_at": ((now + timedelta(seconds=remaining)).isoformat(timespec="seconds")
+                          if remaining is not None else None),
+            "basis": basis,
         }
 
 

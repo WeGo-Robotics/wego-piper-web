@@ -420,6 +420,20 @@ class Bus:
         except (TypeError, ValueError):
             return None
 
+    # ── GPU 메모리 실측 프로파일 ──
+
+    def put_mem_profile(self, key: str, profile: dict) -> None:
+        self.r.hset(C.TRAIN_MEM_PROFILES, key, json.dumps(profile))
+
+    def get_mem_profile(self, key: str) -> dict | None:
+        raw = self.r.hget(C.TRAIN_MEM_PROFILES, key)
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+
     # ── job 로그 링버퍼 ──
 
     def append_job_log(self, job_id: str, line: str) -> int:
