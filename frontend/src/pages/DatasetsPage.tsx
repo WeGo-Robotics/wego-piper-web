@@ -268,7 +268,14 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
         //   예전에는 왼쪽 좁은 카드 목록 + 오른쪽 상세였고, 이름·길이·카메라를 나란히 볼 수 없었다.
         //   누르면 상세가 창으로 뜬다.
         <DatasetBrowser datasets={datasets} value={detail?.id} onRenamed={fetchDatasets}
-          onOpen={(d) => void handleSelect(d.id)} />
+          onOpen={(d) => void handleSelect(d.id)}
+          // ⚠ 목록에서 바로 올린다 — 예전 카드에 있던 버튼이다. 상세 창에만 두었더니 사라진 것으로 보였다
+          actions={(d) => (
+            <button type="button" onClick={() => void handleUpload(d.id)}
+              className="rounded bg-neutral-700 px-2 py-0.5 text-xs text-neutral-300 hover:bg-blue-600 hover:text-white">
+              {t('Hub 업로드')}
+            </button>
+          )} />
       ) : null}
 
       {/* 상세 — 창으로 띄운다. ⚠ Esc 로 닫지 않는다(전역 E-stop) — ✕ 와 바깥 클릭으로 닫는다.

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
 import { useSystemMessage } from './SystemMessages'
 import { useT } from '../i18n'
@@ -28,6 +28,15 @@ export default function NotesEditor({ endpoint, source, onSaved }: {
   const [updatedAt, setUpdatedAt] = useState('')
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
+  // 설명 칸은 글 길이만큼 자란다 — 두 줄 칸에 긴 설명을 넣으면 스크롤해야만 읽혔다.
+  //   불러온 뒤에도 맞춰야 하므로 값이 바뀔 때마다 잰다(그리기 전에 — 깜빡이지 않게)
+  const descRef = useRef<HTMLTextAreaElement>(null)
+  useLayoutEffect(() => {
+    const el = descRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight + 2}px`   // +2: 위아래 테두리 — 없으면 마지막 줄에 스크롤이 남는다
+  }, [description])
 
   useEffect(() => {
     api.get<Notes>(endpoint)
@@ -62,11 +71,11 @@ export default function NotesEditor({ endpoint, source, onSaved }: {
           {saving ? t('저장 중…') : t('저장')}
         </button>
       </div>
-      <textarea value={description}
+      <textarea ref={descRef} value={description}
         onChange={(e) => { setDescription(e.target.value); setDirty(true) }}
         placeholder={t('설명 — 무엇을, 어떤 조건에서 만들었는지. 허브 업로드 시 카드(README)가 됩니다.')}
         rows={2}
-        className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700
+        className="w-full resize-none overflow-hidden px-2 py-1 rounded bg-neutral-900 border border-neutral-700
                    text-xs text-neutral-200" />
       {updatedAt && !dirty && (
         <p className="text-[10px] text-neutral-500">{t('마지막 수정 {updatedAt}', { updatedAt: updatedAt.slice(0, 16).replace('T', ' ') })}</p>

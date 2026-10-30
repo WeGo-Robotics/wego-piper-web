@@ -170,6 +170,9 @@ def test_the_storage_lists_datasets_the_same_way_and_opens_details_in_a_window()
     assert "fixed inset-0" in window and "handleDelete(detail.id)" in window and "handleUpload(detail.id)" in window
     picker = (REPO / "frontend" / "src" / "components" / "DatasetPickerModal.tsx").read_text()
     assert "<DatasetBrowser " in picker, "에피소드 페이지와 저장소가 다른 목록을 쓴다"
+    # ⚠ [Hub 업로드] 는 목록에서도 누를 수 있어야 한다 — 상세 창에만 두었더니 사라진 것으로 보였다
+    listing = page.split("<DatasetBrowser ", 1)[1].split("/>\n", 1)[0]
+    assert "actions={(d) =>" in listing and "handleUpload(d.id)" in listing, "목록에서 Hub 업로드를 못 한다"
 
 
 def test_the_storage_opens_model_details_in_a_window():
@@ -249,3 +252,11 @@ def test_the_training_policy_is_picked_in_a_window_with_descriptions():
     import re
     assert not re.search(r"""(type|policy\w*) === ['"]""", modal), "화면이 정책 이름으로 분기한다"
     assert "'Escape'" not in modal and "window.confirm(" not in modal
+
+
+def test_the_description_box_grows_with_its_text():
+    """이름·설명 편집기(저장소의 모델·데이터셋 창)의 설명 칸은 글 길이만큼 자란다 —
+    두 줄 칸에 긴 설명을 넣으면 스크롤해야만 읽혔다."""
+    src = (REPO / "frontend" / "src" / "components" / "NotesEditor.tsx").read_text()
+    assert "el.scrollHeight" in src and "}, [description])" in src, "설명 칸이 글에 맞춰 자라지 않는다"
+    assert "<textarea ref={descRef}" in src and "resize-none overflow-hidden" in src

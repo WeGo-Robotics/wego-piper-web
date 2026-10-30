@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { api } from '../services/api'
 import type { Dataset } from '../types/models'
 import { useSystemMessage } from './SystemMessages'
@@ -26,6 +26,8 @@ type Props = {
   onOpen: (d: Dataset) => void
   /** 이름을 고친 뒤 — 부모가 목록을 다시 읽는다 */
   onRenamed?: () => void
+  /** 행·카드마다 붙일 버튼 (저장소의 [Hub 업로드]). 누르면 그 버튼만 — 행을 열지 않는다 */
+  actions?: (d: Dataset) => ReactNode
 }
 
 const VIEW_KEY = 'dataset-picker-view'
@@ -56,7 +58,7 @@ const cameras = (d: Dataset) =>
 const stateDim = (d: Dataset) =>
   ((d.features?.['observation.state'] as { shape?: number[] } | undefined)?.shape ?? [])[0] ?? null
 
-export default function DatasetBrowser({ datasets, value, onOpen, onRenamed }: Props) {
+export default function DatasetBrowser({ datasets, value, onOpen, onRenamed, actions }: Props) {
   const t = useT()
   const { notify } = useSystemMessage()
   const [view, setView] = useState<View>(() => (localStorage.getItem(VIEW_KEY) === 'thumbs' ? 'thumbs' : 'table'))
@@ -253,6 +255,7 @@ export default function DatasetBrowser({ datasets, value, onOpen, onRenamed }: P
                     {badges(d)}
                     {fmt.date(d.created ?? d.modified)}
                   </p>
+                  {actions && <div className="flex gap-1 pt-1" onClick={(e) => e.stopPropagation()}>{actions(d)}</div>}
                 </div>
               </div>
             ))}
@@ -272,6 +275,7 @@ export default function DatasetBrowser({ datasets, value, onOpen, onRenamed }: P
                 <th className="px-2 py-2 text-left font-medium whitespace-nowrap">{t('종류')}</th>
                 {th('created', t('만든 날짜'))}
                 {th('size', t('크기'), 'text-right')}
+                {actions && <th className="w-px" />}
               </tr>
             </thead>
             <tbody>
@@ -298,11 +302,14 @@ export default function DatasetBrowser({ datasets, value, onOpen, onRenamed }: P
                       {fmt.dateTime(d.created ?? d.modified, { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}
                     </td>
                     <td className="px-2 py-2 text-right whitespace-nowrap text-neutral-400">{formatBytes(d.size_bytes)}</td>
+                    {actions && (
+                      <td className="px-2 py-1.5 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>{actions(d)}</td>
+                    )}
                   </tr>
                 )
               })}
               {!shown.length && (
-                <tr><td colSpan={8} className="px-2 py-6 text-center text-neutral-500">{empty}</td></tr>
+                <tr><td colSpan={actions ? 9 : 8} className="px-2 py-6 text-center text-neutral-500">{empty}</td></tr>
               )}
             </tbody>
           </table>

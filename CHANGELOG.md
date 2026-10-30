@@ -58,6 +58,8 @@
 - 정책 고르는 창: 정책마다 설명(스펙의 새 `description`)·작업 문장을 받나·RTC·구운 데이터셋 필요·권장 시작점·이어
   받기·처음부터 시작점·기본 배치/스텝. `/api/policies` 가 그 필드를 같이 낸다
 - 새 API: `GET /api/models/runs`(학습 1행), `GET·PUT /api/models/runs/{run}/notes`(학습 이름·설명)
+- 저장소 › 데이터셋 목록(표 행 끝·썸네일 카드)에서 바로 **[Hub 업로드]** — 상세 창에만 두었더니 사라진 것으로
+  보였다. 이름·설명 편집기의 설명 칸은 글 길이만큼 자란다(두 줄 칸이라 긴 설명은 스크롤해야 읽혔다)
 
 **SmolVLA-S·ACT-S 를 바닐라 체크포인트에서 이어 학습한다 (워밍스타트)** ([feature/smolvla-s.md §6](feature/smolvla-s.md))
 - SmolVLA-S 는 **처음부터만** 학습됐다 — `lerobot/smolvla_base` 를 고르면 config 의 `type: smolvla` 때문에 LeRobot 이
