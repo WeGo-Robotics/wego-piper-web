@@ -688,3 +688,42 @@ def test_a_subscriber_notices_its_segment_was_replaced():
     finally:
         with contextlib.suppress(Exception):
             pub.close()
+
+
+_RESIZE_PROBE = """
+import os, sys
+import numpy as np
+from piper_shm import Publisher, Subscriber, segment_path
+name = sys.argv[1]
+pub = Publisher(name, 128, 96)
+pub.publish(np.zeros((96, 128, 3), np.uint8))
+sub = Subscriber(name, observer=True)
+ino = os.stat(segment_path(name)).st_ino
+pub.close(unlink=False)                         # rs hub 재구성: 세그먼트를 남긴다
+pub = Publisher(name, 128, 96)                  # 같은 크기 — 같은 파일을 그대로 쓴다
+pub.publish(np.zeros((96, 128, 3), np.uint8))
+assert os.stat(segment_path(name)).st_ino == ino and not sub.orphaned, "같은 크기인데 소비자를 떼어냈다"
+pub.close(unlink=False)
+pub = Publisher(name, 64, 48)                   # 해상도를 줄였다
+pub.publish(np.ones((48, 64, 3), np.uint8))
+sub.read()                                      # 옛 레이아웃으로 슬롯을 읽는다 — 여기서 SIGBUS 였다
+assert sub.orphaned, "갈아 끼운 것을 소비자가 모른다"
+assert Subscriber(name, observer=True).shape == (48, 64, 3)
+pub.close()
+"""
+
+
+def test_a_resolution_change_never_shrinks_a_mapped_segment():
+    """**회귀** — 해상도를 줄이자 옛 크기로 매핑한 쪽이 SIGBUS 로 죽었다.
+
+    RealSense 는 재구성 때 세그먼트를 남기므로(`_ensure_streams`) 다음 프레임이 같은 이름으로
+    `create` 에 온다. 제자리에서 줄이면 옛 매핑의 꼬리가 사라진다 — 2026-10-29 top_1 을
+    1920x1080 → 640x480 으로 바꾸자 미리보기를 읽던 게이트웨이가 코어덤프했다.
+    신호라 잡을 수 없으므로 별도 프로세스에서 본다. 크기가 같을 때는 지금처럼 같은 파일이다.
+    """
+    import subprocess
+    import sys
+
+    r = subprocess.run([sys.executable, "-c", _RESIZE_PROBE, _NAME],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, f"returncode={r.returncode} (-7 = SIGBUS)\n{r.stderr[-2000:]}"

@@ -198,16 +198,37 @@ def read_header(buf: mmap.mmap) -> tuple[Layout, int, int]:
 
 
 def create(name: str, layout: Layout) -> tuple[int, mmap.mmap]:
-    """세그먼트를 만들고 헤더를 쓴다. 이미 있으면 크기를 맞춰 재사용한다."""
+    """세그먼트를 만들고 헤더를 쓴다. 이미 있고 **크기가 같으면** 그 파일을 재사용한다.
+
+    ⚠ **크기가 다른 파일을 제자리에서 줄이지 않는다.** 옛 크기로 매핑해 둔 소비자가 잘린 꼬리를
+    읽는 순간 SIGBUS 로 **프로세스째** 죽는다 — 예외가 아니라 신호라 잡을 수 없다. RealSense 는
+    해상도를 바꿀 때 세그먼트를 일부러 남기므로(`_ensure_streams`) 다음 프레임이 같은 이름으로
+    여기에 온다. 2026-10-29 실기: top_1 을 1920x1080 → 640x480 으로 바꾸자 미리보기를 읽던
+    게이트웨이가 코어덤프했다(녹화·추론 중이었다면 heartbeat 가 끊겨 E-stop).
+
+    그래서 새 파일을 옆 이름으로 다 만든 뒤 `rename` 으로 갈아 끼운다. 옛 매핑은 옛 inode 를
+    그대로 읽다가 `orphaned` 로 바뀐 것을 안다. 없던 세그먼트도 같은 길로 만든다 — 크기 0 인
+    파일이 잠깐이라도 보이면 그 순간 여는 쪽이 `cannot mmap an empty file` 로 실패한다.
+    """
     path = segment_path(name)
-    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        reuse = path.stat().st_size == layout.total_bytes
+    except FileNotFoundError:
+        reuse = False
+    # 점으로 시작 — `list_segments` 의 glob 에 안 잡힌다
+    target = path if reuse else path.with_name(f".{path.name}.{os.getpid()}.new")
+    fd = os.open(target, os.O_CREAT | os.O_RDWR, 0o600)
     try:
         os.ftruncate(fd, layout.total_bytes)
         buf = mmap.mmap(fd, layout.total_bytes)
+        buf[:HEADER_SIZE] = layout.pack_header(pid=os.getpid())
+        if target != path:
+            os.replace(target, path)
     except Exception:
         os.close(fd)
+        if target != path:
+            target.unlink(missing_ok=True)
         raise
-    buf[:HEADER_SIZE] = layout.pack_header(pid=os.getpid())
     return fd, buf
 
 
