@@ -401,7 +401,10 @@ def _install_dataset_guards() -> None:
 
     def _save(self, *args, **kwargs):
         buf = getattr(self, "episode_buffer", None)
-        if not args and kwargs.get("episode_data") is None and isinstance(buf, dict) and not buf.get("size"):
+        # ⚠ LeRobot 은 버퍼를 **첫 프레임에서야** 만든다(`add_frame`) — 준비 대기 중에 정지하면 `None` 이다.
+        #   dict 만 비었다고 보면 `validate_episode_buffer` 가 `argument of type 'NoneType'` 로 죽는다.
+        nothing = buf is None or (isinstance(buf, dict) and not buf.get("size"))
+        if not args and kwargs.get("episode_data") is None and nothing:
             print("[start_record] empty episode — not saved", flush=True)
             return None
         return _orig_save(self, *args, **kwargs)
