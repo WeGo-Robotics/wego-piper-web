@@ -143,6 +143,11 @@
 - 실측: 실제 `LeRobotDataset`·버스로 녹화 순서를 흉내 내(팔 없이) ←·실패·미루기를 섞어 봤다 — 시도와 에피소드가 맞고 task 도
   시도의 것이었다. **실기 녹화로는 아직 안 해 봤다**
 
+**스케줄 길이(`scheduler_decay_steps`)를 학습 화면에서 고친다** ([feature/train-recommend.md §2-3](feature/train-recommend.md))
+- SmolVLA·SmolVLA-S·pi0·pi05·pi0_fast 파라미터 칸에 `scheduler_decay_steps`(기본 30,000). LeRobot 은 steps 가 이보다 짧을 때만
+  스케줄을 줄여 주고 길면 그대로 둬, 나머지를 학습률 바닥(2.5e-6)에서 돈다 — SmolVLA 200k 학습 두 번이 85% 를 그렇게 돌았다.
+  Steps 가 더 길면 칸 아래에 경고와 [Steps 에 맞추기]
+
 **고친 것**
 - 프리셋 저장(학습·추론·시나리오)이 **같은 이름을 묻지 않고 덮어썼다.** 이름 칸에 지금 고른 프리셋 이름이 미리 들어가
   있어 [저장] → Enter 만으로 그 프리셋이 바뀌었다. 이제 같은 이름이면 덮어쓸지 묻는다. 이름은 브라우저 `prompt` 대신 화면 안

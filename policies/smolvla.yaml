@@ -37,6 +37,10 @@ train:
     - { key: n_action_steps, kind: number, min: 1, max: 200, arch: true, from_lerobot: true, default: 50 }
     - { key: freeze_vision_encoder, kind: bool, from_lerobot: true, default: true }
     - { key: train_expert_only, kind: bool, from_lerobot: true, default: true }
+    # cosine 스케줄 길이. LeRobot 은 steps 가 이보다 **짧을 때만** 줄여 준다 — 길면 나머지를
+    # decay_lr 바닥에서 돈다(2026-10 smolvla 200k 두 번이 85% 를 그렇게 돌았다). steps 를 늘리면
+    # 같이 늘린다 — 화면이 steps 보다 짧으면 경고한다 (feature/train-recommend.md §2-3)
+    - { key: scheduler_decay_steps, kind: number, min: 1000, max: 1000000, step: 1000, from_lerobot: true, default: 30000 }
     # ⚠ **상류와 일부러 다르다.** `default` 는 LeRobot 값(false)을 그대로 두고
     # `override` 가 실제로 쓸 값을 정한다. 상류가 바뀌면 테스트가 알려준다.
     - key: load_vlm_weights

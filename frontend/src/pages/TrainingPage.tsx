@@ -852,6 +852,17 @@ export default function TrainingPage() {
                 && policyParams.n_action_steps > policyParams.chunk_size && (
                 <span className="text-yellow-500 text-[10px]">{t('⚠ n_action_steps는 chunk_size 이하여야 합니다')}</span>
               )}
+              {/* LeRobot 은 steps 가 decay 보다 짧을 때만 스케줄을 줄여 준다 — 길면 나머지를 lr 바닥에서
+                  돈다 (feature/train-recommend.md §2-3). cosine 정책만 이 키가 있다. */}
+              {typeof policyParams.scheduler_decay_steps === 'number' && steps > policyParams.scheduler_decay_steps && (
+                <span className="block text-yellow-500 text-[10px]">
+                  {t('⚠ Steps({steps})가 scheduler_decay_steps({decay})보다 깁니다 — 그 뒤 {rest} step 은 학습률 바닥에서 돕니다.',
+                    { steps: fmt.number(steps), decay: fmt.number(policyParams.scheduler_decay_steps),
+                      rest: fmt.number(steps - policyParams.scheduler_decay_steps) })}{' '}
+                  <button onClick={() => setPolicyParam('scheduler_decay_steps', steps)}
+                    className="text-blue-400 hover:underline">{t('Steps 에 맞추기')}</button>
+                </span>
+              )}
               {/* 정책별 경고는 스펙이 준다 — 예전엔 `policyType === 'smolvla'` 가
                   화면에 박혀 있었다. 조건도 문구도 `policies/<type>.yaml` 에 있다. */}
               {warnings.map((w, i) => (
