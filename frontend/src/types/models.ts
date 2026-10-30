@@ -176,6 +176,8 @@ export type BakedInfo = {
 export type DatasetDetail = Dataset & {
   episodes: Record<string, unknown>[]
   tasks: Record<string, unknown>[]
+  /** 영상 주소에 붙이는 판 번호 — 편집·녹화로 mp4 가 바뀌면 달라진다 (dataset_scanner.get_dataset) */
+  rev: number
 }
 
 export type DiskUsage = {

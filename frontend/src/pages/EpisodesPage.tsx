@@ -521,12 +521,15 @@ export default function EpisodesPage() {
     (cam: string, f: number) => `/api/datasets/${dsId}/episodes/${ep}/frames/${cam}/${f}`,
     [dsId, ep],
   )
+  // ⚠ `?v=` 를 빼지 마라 — 삭제·녹화는 같은 경로의 mp4 를 바꿔 쓰고, 크롬은 같은 주소면 페이지
+  //   메모리의 옛 바이트를 섞어 읽는다. 주소가 그대로면 지운 뒤 재생이 디코드 오류로 죽는다.
+  const rev = detail?.rev ?? 0
   const videoUrl = useCallback(
     (cam: string) => {
       const m = videoMeta?.[cam]
-      return m ? `/api/datasets/${dsId}/videos/${cam}/${m.chunk}/${m.file}` : ''
+      return m ? `/api/datasets/${dsId}/videos/${cam}/${m.chunk}/${m.file}?v=${rev}` : ''
     },
-    [dsId, videoMeta],
+    [dsId, videoMeta, rev],
   )
 
   const frameRef = useRef(frame)

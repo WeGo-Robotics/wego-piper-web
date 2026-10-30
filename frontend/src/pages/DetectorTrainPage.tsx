@@ -153,6 +153,7 @@ export default function DetectorTrainPage() {
   // 뷰어는 chunk mp4 를 그대로 튼다 — 디코딩 캐시가 필요 없다.
   // 에피소드 경계(chunk/file/from/to)는 상세 응답의 episodes 레코드에서
   const [lrEpisodes, setLrEpisodes] = useState<Record<string, number>[]>([])
+  const [lrRev, setLrRev] = useState(0)
   const videoRef = useRef<HTMLVideoElement>(null)
   const [epCaptured, setEpCaptured] = useState(0)
 
@@ -166,8 +167,8 @@ export default function DetectorTrainPage() {
 
   useEffect(() => {
     if (tab !== 'episode' || !lrId) return
-    api.get<{ episodes: Record<string, number>[] }>(`/datasets/${encodeURIComponent(lrId)}`)
-      .then((d) => setLrEpisodes(d.episodes ?? []))
+    api.get<{ episodes: Record<string, number>[]; rev?: number }>(`/datasets/${encodeURIComponent(lrId)}`)
+      .then((d) => { setLrEpisodes(d.episodes ?? []); setLrRev(d.rev ?? 0) })
       .catch(() => setLrEpisodes([]))
   }, [tab, lrId])
 
@@ -189,7 +190,7 @@ export default function DetectorTrainPage() {
     from: epRec[`${vKey}from_timestamp`], to: epRec[`${vKey}to_timestamp`],
   } : null
   const videoUrl = vm && lrId && cam
-    ? `/api/datasets/${encodeURIComponent(lrId)}/videos/${cam}/${vm.chunk}/${vm.file}`
+    ? `/api/datasets/${encodeURIComponent(lrId)}/videos/${cam}/${vm.chunk}/${vm.file}?v=${lrRev}`  // 판 번호: EpisodesPage videoUrl
     : null
 
   const importEpisode = async (indices?: number[]) => {

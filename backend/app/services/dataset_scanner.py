@@ -377,6 +377,11 @@ def get_dataset(dataset_id: str) -> dict | None:
         "size_bytes": _dir_size(ds_path),
         "modified": datetime.fromtimestamp(ds_path.stat().st_mtime).isoformat(),
         "created": _created_at(ds_path, ds_path / "meta" / "info.json"),
+        # 영상 주소의 판 번호. 편집·녹화는 **같은 경로의 mp4 를 바꿔 쓰는데**, 크롬은 같은 주소의
+        # 영상 바이트를 페이지 메모리에 두고 새로고침 전까지 다시 쓴다 — 주소가 그대로면 옛 목차로
+        # 새 바이트를 읽어 디코드 오류가 난다(실기 2026-10-29, 마지막 에피소드를 지운 뒤 앞의
+        # 에피소드들이 재생 안 됨). info.json 은 영상을 다 쓴 **뒤에** 갱신된다.
+        "rev": info_path.stat().st_mtime_ns if info_path else 0,
     }
 
 
