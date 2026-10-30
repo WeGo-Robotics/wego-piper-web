@@ -359,11 +359,13 @@ async def start_recording(body: RecordStartRequest):
     params.pop("scenario", None)
     params.pop("wait_first", None)
     params.pop("wait_first_s", None)
-    total_episodes = body.num_episodes
+    total_episodes, done_before = body.num_episodes, 0
     if scenario:
         # 실패로 표시한 시도는 블록 끝에 다시 들어가므로 LeRobot 의 상한은 넉넉히 —
-        # 계획을 다 찍으면 wrapper 가 스스로 멈춘다. 화면의 진행률은 남은 시도 수 기준.
-        total_episodes = len(remaining)
+        # 계획을 다 찍으면 wrapper 가 스스로 멈춘다. 화면의 진행률은 계획 전체 기준이다
+        # (이어 찍으면 이미 찍은 시도부터 — 남은 수로 잡으면 300개 계획이 "120 / 180" 이 된다).
+        total_episodes = len(scenario["plan"]["episodes"])
+        done_before = total_episodes - len(remaining)
         params["num_episodes"] = 2 * len(remaining)
     params.pop("camera_width", None)
     params.pop("camera_height", None)
@@ -413,7 +415,8 @@ async def start_recording(body: RecordStartRequest):
             logger.warning("가상환경을 못 읽었다 (사이드카 생략): %s", exc)
 
     try:
-        await record_manager.start(args, total_episodes=total_episodes, env_extra=env_extra)
+        await record_manager.start(args, total_episodes=total_episodes, env_extra=env_extra,
+                                   done=done_before, by_trial=bool(scenario))
     except Exception as e:
         control_bridge.stop()
         control_bridge.clear_scenario()
@@ -425,7 +428,7 @@ async def start_recording(body: RecordStartRequest):
             "camera_profile": profile_report,
             "arm_reset": {"warnings": slip_warns},
             "scenario": {"plan_id": scenario["plan_id"], "remaining": len(remaining),
-                         "done": len(scenario["done"])} if scenario else None}
+                         "done": done_before, "total": total_episodes} if scenario else None}
 
 
 async def _scenario_payload(spec: ScenarioSpec, repo_id: str) -> dict:

@@ -430,3 +430,60 @@ def test_the_wait_has_an_optional_limit_and_outlives_a_late_frame():
     assert "except TimeoutError" in prepare
     assert "WAIT_GAP_LIMIT" in prepare and "raise" in prepare, "멈춘 카메라를 끝없이 기다리면 안 된다"
 
+
+# ── 6. 진행률 (실기 2026-10-29: 300개 계획을 120개 찍고 이어 찍자 "120 / 180") ──
+
+def _started(monkeypatch, **kw):
+    from app.services.record_manager import RecordManager
+
+    rm = RecordManager()
+
+    async def _start(cmd, env_extra=None):
+        pass
+
+    monkeypatch.setattr(rm.pm, "start", _start)
+    asyncio.run(rm.start([], **kw))
+    return rm
+
+
+def _feed(rm, *lines):
+    for line in lines:
+        rm._try_parse_status(line)
+    return rm.status.current_episode, rm.status.total_episodes
+
+
+def test_resumed_scenario_counts_against_the_whole_plan(monkeypatch):
+    """LeRobot 이 말하는 N 은 데이터셋 번호다 — 이어 찍으면 이미 있는 수(실패 포함)부터 시작한다.
+    계획은 시도를 센다: 실패로 표시한 에피소드는 저장돼도 그 시도는 남아 있다."""
+    rm = _started(monkeypatch, total_episodes=300, done=120, by_trial=True)
+    assert _feed(rm, "Recording episode 123") == (120, 300)
+    assert _feed(rm, "[start_record] scenario trial=b4-r1-1 episode=123 outcome=failed",
+                 "Recording episode 124") == (120, 300)
+    assert _feed(rm, "[start_record] scenario trial=b4-r1-2 episode=124 outcome=success",
+                 "Recording episode 125") == (121, 300)
+    assert rm.get_status()["progress"] == round(121 / 300, 4)
+
+
+def test_resumed_plain_recording_counts_this_session(monkeypatch):
+    """계획 없이 이어 찍기 — LeRobot 은 `num_episodes` 개를 **더** 찍는다. 화면도 그렇게 센다."""
+    rm = _started(monkeypatch, total_episodes=50)
+    assert _feed(rm, "Recording episode 30") == (0, 50)
+    assert _feed(rm, "Recording episode 31") == (1, 50)
+    assert _feed(rm, "Recording episode 31") == (1, 50), "← 재녹화는 같은 번호를 다시 말한다"
+
+
+def test_the_counter_reads_the_line_the_wrapper_prints():
+    from app.services.record_manager import _RE_TRIAL_DONE
+
+    src = (_REPO / "wrapper" / "start_record.py").read_text()
+    assert "f\"[start_record] scenario trial={line['trial']} episode={episode_index} \"" in src
+    assert "f\"outcome={line['outcome']}\"" in src
+    assert _RE_TRIAL_DONE.search("[start_record] scenario trial=b1-r2-1 episode=7 outcome=success")
+    assert not _RE_TRIAL_DONE.search("[start_record] scenario trial=b1-r2-1 episode=7 outcome=failed")
+
+
+def test_start_counts_the_scenario_against_the_whole_plan():
+    src = (_REPO / "backend" / "app" / "routers" / "recording.py").read_text()
+    start = src[src.index("total_episodes, done_before"):src.index("params.pop(\"camera_width\"")]
+    assert 'total_episodes = len(scenario["plan"]["episodes"])' in start
+    assert "done=done_before, by_trial=bool(scenario)" in src

@@ -29,6 +29,8 @@ _RE_RESET = re.compile(r"Reset")
 _RE_DONE = re.compile(r"Done recording|Recording complete|Finalize")
 # wrapper 가 찍는다 (start_record._install_dataset_guards) — 에피소드는 다 저장됐고 허브에 올리는 중
 _RE_UPLOAD = re.compile(r"\[start_record\] hub upload started")
+# wrapper 가 찍는다 (start_record._Scenario.saved) — 계획의 시도 하나가 성공으로 저장됐다
+_RE_TRIAL_DONE = re.compile(r"\[start_record\] scenario trial=\S+ episode=\d+ outcome=success")
 
 
 @dataclass
@@ -50,6 +52,9 @@ class RecordManager:
         #   (`PIPER_PROCESS_RUNNER=local` 이면 `make_process` 가 예전 동작을 준다.)
         self.pm = make_process("piper-record")
         self.status = RecordStatus()
+        self._done_before = 0
+        self._first_index: int | None = None
+        self._by_trial = False
         self._on_status: Callable[[dict], None] | None = None
         self._original_log_cb: Callable[[str], None] | None = None
 
@@ -81,8 +86,20 @@ class RecordManager:
 
         m = _RE_EPISODE.search(line)
         if m:
-            self.status.current_episode = int(m.group(1))
+            # ⚠ N 은 **데이터셋의** 에피소드 번호다 — 이어 찍으면 이미 있던 수부터 시작한다.
+            #   그대로 쓰면 300개 계획을 120개 찍고 이어 찍을 때 "120 / 180" 이 됐다.
+            #   처음 본 N 을 이번 세션의 0 으로 보고 시작 때 이미 찍은 수를 더한다.
+            n = int(m.group(1))
+            if self._first_index is None:
+                self._first_index = n
+            if not self._by_trial:
+                self.status.current_episode = self._done_before + n - self._first_index
             self.status.phase = "recording"
+            changed = True
+
+        # 시나리오는 시도를 센다 — 실패로 표시한 에피소드는 저장돼도 그 시도는 큐에 남는다
+        if self._by_trial and _RE_TRIAL_DONE.search(line):
+            self.status.current_episode += 1
             changed = True
 
         m = _RE_SAVED.search(line)
@@ -108,8 +125,12 @@ class RecordManager:
     async def start(
         self, cmd: list[str], total_episodes: int = 0,
         env_extra: dict[str, str] | None = None,
+        done: int = 0, by_trial: bool = False,
     ) -> None:
-        self.status = RecordStatus(total_episodes=total_episodes)
+        """`done` 은 `total_episodes` 중 이번 세션 전에 이미 찍은 수(시나리오 이어 찍기).
+        `by_trial` 이면 계획의 시도가 성공으로 저장될 때만 센다."""
+        self.status = RecordStatus(current_episode=done, total_episodes=total_episodes)
+        self._done_before, self._first_index, self._by_trial = done, None, by_trial
         await self.pm.start(cmd, env_extra=env_extra)
 
     async def stop(self) -> None:

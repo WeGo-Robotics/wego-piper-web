@@ -361,7 +361,7 @@ export default function RecordingPage() {
       const r = await api.post<{
         camera_profile?: { warnings?: string[] } | null
         arm_reset?: { warnings?: string[] } | null
-        scenario?: { remaining: number; done: number } | null
+        scenario?: { remaining: number; done: number; total: number } | null
       }>('/recording/start', {
         ...armPayload,
         camera_mapping: cameraMapping,
@@ -377,7 +377,7 @@ export default function RecordingPage() {
       }, { timeoutMs: 60_000 })
       if (r.scenario) {
         notify({ level: 'info', source: t('시나리오'), text: r.scenario.done
-          ? t('시나리오: 남은 시도 {remaining}개 — 이미 찍은 {done}개는 건너뜁니다', r.scenario)
+          ? t('시나리오: 시도 {total}개 중 {done}개는 이미 찍었습니다 — 남은 {remaining}개를 이어 찍습니다', r.scenario)
           : t('시나리오: 시도 {remaining}개', r.scenario) })
       }
       // 프로파일이 못 덮은 카메라, 리셋이 드러낸 관절 슬립 — 막을 일은 아니지만
