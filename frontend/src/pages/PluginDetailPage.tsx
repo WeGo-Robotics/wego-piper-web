@@ -142,6 +142,9 @@ export default function PluginDetailPage() {
 
   const stateRows = m?.outputs.state ?? []
   const kv = info?.kv ?? {}
+  // 캠 화면이 있으면 상태는 절반 폭 열로 간다 — 긴 값(JSON)은 자르지 않고 줄을 바꾼다
+  const hasPreview = (m?.outputs.previews.length ?? 0) > 0
+  const valueCls = hasPreview ? 'break-all' : 'truncate'
   const extraKv = Object.entries(kv).filter(([k]) => !stateRows.some((s) => s.key === k) && !['ts', 'uptime_s'].includes(k))
 
   return (
@@ -247,83 +250,87 @@ export default function PluginDetailPage() {
       )}
 
       {tab === 'output' && m && (
-        <section className="space-y-4">
-          {(stateRows.length > 0 || extraKv.length > 0) && (
-            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
-              <h2 className="text-sm font-semibold text-neutral-300 mb-2">{t('상태')}</h2>
-              {Object.keys(kv).length === 0 ? (
-                <p className="text-xs text-neutral-500">{running ? t('플러그인이 아직 상태를 올리지 않았다') : t('꺼져 있다')}</p>
-              ) : (
-                <dl className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                  {stateRows.map((s) => (
-                    <div key={s.key}><dt className="text-xs text-neutral-500">{s.label || s.key}</dt>
-                      <dd className="font-mono text-neutral-100 truncate">{fmtKv(kv[s.key])}{s.unit ? ` ${s.unit}` : ''}</dd></div>
-                  ))}
-                  {extraKv.map(([k, v]) => (
-                    <div key={k}><dt className="text-xs text-neutral-500">{k}</dt><dd className="font-mono text-neutral-300 truncate">{fmtKv(v)}</dd></div>
-                  ))}
-                </dl>
-              )}
-            </div>
-          )}
-          {m.outputs.previews.length > 0 && (
-            <div className="grid gap-3 md:grid-cols-2">
+        // 캠 화면은 왼쪽, 설명(상태·검출·저널)은 오른쪽 — 좁은 화면에서는 위아래로 쌓인다
+        <section className={hasPreview ? 'grid items-start gap-4 xl:grid-cols-2' : 'space-y-4'}>
+          {hasPreview && (
+            <div className="space-y-3">
               {m.outputs.previews.map((p) => (
                 <div key={p} className="rounded-lg border border-neutral-700 bg-black overflow-hidden">
                   <img src={`/api/vision/preview/${p.replace(/^det_/, '')}?t=${tick}`} alt={p} className="w-full"
-                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0.2' }} />
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0.2' }}
+                    onLoad={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '1' }} />
                   <div className="px-2 py-1 text-xs text-neutral-500 font-mono">{p}</div>
                 </div>
               ))}
             </div>
           )}
-          {m.outputs.detections.length > 0 && (
-            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
-              <h2 className="text-sm font-semibold text-neutral-300 mb-2">{t('검출')}</h2>
-              {Object.keys(detections).length === 0 ? <p className="text-xs text-neutral-500">{t('살아 있는 검출이 없다')}</p> : (
-                <ul className="text-sm space-y-1">
-                  {Object.entries(detections).map(([k, d]) => (
-                    <li key={k} className="font-mono text-xs text-neutral-300 truncate">{d.text}</li>
-                  ))}
+          <div className="min-w-0 space-y-4">
+            {(stateRows.length > 0 || extraKv.length > 0) && (
+              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
+                <h2 className="text-sm font-semibold text-neutral-300 mb-2">{t('상태')}</h2>
+                {Object.keys(kv).length === 0 ? (
+                  <p className="text-xs text-neutral-500">{running ? t('플러그인이 아직 상태를 올리지 않았다') : t('꺼져 있다')}</p>
+                ) : (
+                  <dl className={`grid grid-cols-2 gap-2 text-sm ${hasPreview ? '' : 'md:grid-cols-4'}`}>
+                    {stateRows.map((s) => (
+                      <div key={s.key} className="min-w-0"><dt className="text-xs text-neutral-500">{s.label || s.key}</dt>
+                        <dd className={`font-mono text-neutral-100 ${valueCls}`}>{fmtKv(kv[s.key])}{s.unit ? ` ${s.unit}` : ''}</dd></div>
+                    ))}
+                    {extraKv.map(([k, v]) => (
+                      <div key={k} className="min-w-0"><dt className="text-xs text-neutral-500">{k}</dt><dd className={`font-mono text-neutral-300 ${valueCls}`}>{fmtKv(v)}</dd></div>
+                    ))}
+                  </dl>
+                )}
+              </div>
+            )}
+            {m.outputs.detections.length > 0 && (
+              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
+                <h2 className="text-sm font-semibold text-neutral-300 mb-2">{t('검출')}</h2>
+                {Object.keys(detections).length === 0 ? <p className="text-xs text-neutral-500">{t('살아 있는 검출이 없다')}</p> : (
+                  <ul className="text-sm space-y-1">
+                    {Object.entries(detections).map(([k, d]) => (
+                      <li key={k} className="font-mono text-xs text-neutral-300 truncate">{d.text}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+            {m.outputs.topics.length > 0 && (
+              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
+                <h2 className="text-sm font-semibold text-neutral-300 mb-2">{t('토픽 출력')}</h2>
+                <ul className="text-xs space-y-1">
+                  {m.outputs.topics.map((tp) => {
+                    const v = topics[tp]
+                    return (
+                      <li key={tp} className="flex gap-3 items-start">
+                        <span className="font-mono text-neutral-400 shrink-0">{tp}{v ? ` #${v.seq}` : ''}</span>
+                        <span className="font-mono text-neutral-300 truncate">{v ? JSON.stringify(v.data) : t('아직 없다')}</span>
+                      </li>
+                    )
+                  })}
                 </ul>
-              )}
-            </div>
-          )}
-          {m.outputs.topics.length > 0 && (
-            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
-              <h2 className="text-sm font-semibold text-neutral-300 mb-2">{t('토픽 출력')}</h2>
-              <ul className="text-xs space-y-1">
-                {m.outputs.topics.map((tp) => {
-                  const v = topics[tp]
-                  return (
-                    <li key={tp} className="flex gap-3 items-start">
-                      <span className="font-mono text-neutral-400 shrink-0">{tp}{v ? ` #${v.seq}` : ''}</span>
-                      <span className="font-mono text-neutral-300 truncate">{v ? JSON.stringify(v.data) : t('아직 없다')}</span>
-                    </li>
-                  )
-                })}
-              </ul>
-            </div>
-          )}
-          {m.mission && (
-            <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
-              <h2 className="text-sm font-semibold text-neutral-300 mb-2">{t('회차 저널')}</h2>
-              {runs.length === 0 ? <p className="text-xs text-neutral-500">{t('아직 저널이 없다')}</p> : (
-                <ul className="text-xs font-mono text-neutral-400 space-y-0.5">
-                  {runs.slice(0, 10).map((r) => (
-                    <li key={r.id} className="flex gap-3">
-                      <span className={r.live ? 'text-green-300' : ''}>{r.id}</span>
-                      <span className="text-neutral-600">{Math.round(r.bytes / 1024)} KB</span>
-                      <a className="text-blue-400 hover:underline" href={`/api/plugins/${name}/runs/${r.id}`} target="_blank" rel="noreferrer">JSON</a>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-          {stateRows.length === 0 && m.outputs.previews.length === 0 && m.outputs.detections.length === 0 && m.outputs.topics.length === 0 && !m.mission && extraKv.length === 0 && (
-            <p className="text-xs text-neutral-500">{t('이 플러그인은 화면에 보일 출력을 선언하지 않았다 (plugin.yaml 의 outputs)')}</p>
-          )}
+              </div>
+            )}
+            {m.mission && (
+              <div className="rounded-lg border border-neutral-700 bg-neutral-800 p-4">
+                <h2 className="text-sm font-semibold text-neutral-300 mb-2">{t('회차 저널')}</h2>
+                {runs.length === 0 ? <p className="text-xs text-neutral-500">{t('아직 저널이 없다')}</p> : (
+                  <ul className="text-xs font-mono text-neutral-400 space-y-0.5">
+                    {runs.slice(0, 10).map((r) => (
+                      <li key={r.id} className="flex gap-3">
+                        <span className={r.live ? 'text-green-300' : ''}>{r.id}</span>
+                        <span className="text-neutral-600">{Math.round(r.bytes / 1024)} KB</span>
+                        <a className="text-blue-400 hover:underline" href={`/api/plugins/${name}/runs/${r.id}`} target="_blank" rel="noreferrer">JSON</a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+            {stateRows.length === 0 && !hasPreview && m.outputs.detections.length === 0 && m.outputs.topics.length === 0 && !m.mission && extraKv.length === 0 && (
+              <p className="text-xs text-neutral-500">{t('이 플러그인은 화면에 보일 출력을 선언하지 않았다 (plugin.yaml 의 outputs)')}</p>
+            )}
+          </div>
         </section>
       )}
 
