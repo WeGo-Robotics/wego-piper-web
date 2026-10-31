@@ -62,6 +62,14 @@ def test_switch_is_restored_to_what_the_profile_wants():
     assert writes[-1] == ("auto_exposure", 3)    # 4단계: 프로파일이 원한 자동으로
 
 
+def test_a_switch_already_written_is_not_written_again():
+    """1단계에서 수동으로 돌린 스위치를 4단계가 같은 값으로 또 쓰지 않는다 — 아래 RealSense 가짜 장치가
+    왜 그래야 하는지 보인다."""
+    writes = plan(UVC, {"auto_exposure": 1, "exposure_time_absolute": 312})
+    assert [n for n, _ in writes].count("auto_exposure") == 1
+    assert writes[-1] == ("auto_exposure", 1) or writes[-1][0] == "exposure_time_absolute"
+
+
 def test_switch_is_not_touched_when_no_dependent_is_written():
     """쓸 종속 값이 없으면 스위치를 흔들지 않는다 — 잘 돌던 자동노출을 건드릴 이유가 없다."""
     writes = plan(UVC, {"brightness": 10})
@@ -128,6 +136,63 @@ def test_apply_actually_lands_the_exposure():
     assert report["failed"] == 0
     after = {c["name"]: c for c in lc()}
     assert after["exposure_time_absolute"]["value"] == 312
+
+
+RS_RGB = [
+    # D435I RGB 센서 — 실기(2026-10-31)에서 읽은 범위
+    _ctrl("enable_auto_exposure", type=2, min=0, max=1, default=1, value=1),
+    _ctrl("exposure", min=1, max=10000, default=166, value=166),
+    _ctrl("gain", min=0, max=128, default=64, value=64),
+    _ctrl("enable_auto_white_balance", type=2, min=0, max=1, default=1, value=1),
+    _ctrl("white_balance", min=2800, max=6500, default=4600, value=4600),
+]
+
+
+def _realsense_rgb_device(controls):
+    """⚠ D435I 의 RGB 센서가 하는 짓 — `enable_auto_exposure` 에 **쓰기만 해도**(이미 0 이어도)
+    `exposure` 를 기본값으로 되돌린다. 117 번에서 0 을 다시 쓰자 100 → 166 이 됐다."""
+    state = {c["name"]: dict(c) for c in controls}
+
+    def list_controls():
+        return [dict(c) for c in state.values()]
+
+    def set_control(name, value):
+        c = state.get(name)
+        if c is None or c["readonly"]:
+            return False
+        c["value"] = max(c["min"], min(c["max"], float(value)))
+        if name == "enable_auto_exposure":
+            state["exposure"]["value"] = state["exposure"]["default"]
+        return True
+
+    return list_controls, set_control
+
+
+def test_realsense_rewriting_the_ae_switch_wipes_the_exposure():
+    """가짜 장치가 실기를 닮았는지 못 박는다 — 이게 깨지면 아래 테스트는 의미가 없다."""
+    lc, sc = _realsense_rgb_device(RS_RGB)
+    sc("enable_auto_exposure", 0)
+    sc("exposure", 100)
+    sc("enable_auto_exposure", 0)
+    assert {c["name"]: c for c in lc()}["exposure"]["value"] == 166
+
+
+def test_a_manual_profile_leaves_the_exposure_it_asked_for():
+    """**회귀** — 프로파일을 적용하면 어느 프로파일이든 D435I 노출이 166 으로 남았다. 마지막 단계가
+    1단계에서 이미 0 으로 쓴 `enable_auto_exposure` 를 또 써서 방금 쓴 노출을 지웠다 (gain·WB 는
+    멀쩡했고 read-back 의 `exposure` 한 줄만 `failed` 였다)."""
+    lc, sc = _realsense_rgb_device(RS_RGB)
+    report = apply_controls(lc, sc, {"enable_auto_exposure": 0, "enable_auto_white_balance": 0,
+                                     "exposure": 100, "gain": 2, "white_balance": 6500})
+    after = {c["name"]: c for c in lc()}
+    assert after["exposure"]["value"] == 100
+    assert report["failed"] == 0, report["details"]
+
+
+def test_an_auto_profile_still_goes_back_to_auto_at_the_end():
+    """수동으로 돌려 값을 쓴 뒤 자동으로 되돌리는 마지막 쓰기는 **남아야** 한다 — 값이 다르니 중복이 아니다."""
+    writes = plan(RS_RGB, {"enable_auto_exposure": 1, "exposure": 100})
+    assert writes == [("enable_auto_exposure", 0), ("exposure", 100), ("enable_auto_exposure", 1)]
 
 
 def test_auto_wins_and_the_dependent_is_locked_not_failed():

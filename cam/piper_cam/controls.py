@@ -17,6 +17,15 @@
 4단계가 자동으로 되돌리면 2단계에서 쓴 종속 값은 무시된다. 그건 **정상**이고
 `locked` 로 분류한다 — 실패로 세면 사용자가 고칠 수 없는 경고를 계속 보게 된다.
 
+## ⚠ 이미 쓴 스위치를 4단계에서 **다시 쓰지 않는다**
+
+RealSense D435I 의 RGB 센서는 `enable_auto_exposure` 에 **쓰기만 해도**(이미 0 이어도)
+`exposure` 를 기본값(166)으로 되돌린다 — 값이 안 바뀌는 쓰기가 아니라 "자동 노출 상태를
+다시 정한다"는 명령으로 받는다 (실기 2026-10-31, 117 번: 0 을 다시 쓰자 100 → 166).
+1단계에서 수동으로 돌려 둔 스위치를 4단계가 같은 값으로 또 쓰면, 2단계에서 쓴 노출이
+**방금 지워진다.** 프로파일을 적용해도 어느 프로파일이든 노출이 166 으로 남던 원인이다
+(gain·WB 는 멀쩡해서 read-back 의 `exposure` 한 줄만 `failed` 였다).
+
 ## v4l2 `auto_exposure` 는 값이 반직관적이다
 
 **1 = Manual Mode, 3 = Aperture Priority(자동)** 이다. "1이니까 자동" 으로 읽으면
@@ -202,7 +211,12 @@ def plan(controls: list[dict], wanted: dict) -> list[tuple[str, int]]:
         out.append((name, todo[name]))
 
     # 4단계 — 스위치를 프로파일이 원하는 값으로. 자동을 원했으면 여기서 되돌아간다.
+    # ⚠ 1단계에서 이미 **그 값으로** 쓴 스위치는 건너뛴다 — 위 머리말: 같은 값을 또 쓰는 것만으로
+    #   RealSense 가 방금 쓴 노출을 기본값으로 지운다. 값이 다르면(수동 → 자동) 쓴다.
+    written_manual = {n: v for n, v in out if n in AUTO_SWITCHES}
     for name in sorted(switches):
+        if name in written_manual and _same(written_manual[name], todo[name]):
+            continue
         out.append((name, todo[name]))
 
     return out
