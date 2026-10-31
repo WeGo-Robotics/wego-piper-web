@@ -208,7 +208,7 @@ outputs:                               # 화면 위젯 힌트 — 없어도 버�
 | 발급 | `start` 때 `secrets.token_urlsafe(32)`. 메모리 딕셔너리 `{token: (plugin, scopes, pid)}`. 정지·크래시·게이트웨이 재시작으로 폐기 — 파일에 적지 않는다(§3-9, 재부착이 없으므로 필요 없다) |
 | 전달 | `env_extra={"PIPER_API_TOKEN": ..., "PIPER_API_BASE": "http://127.0.0.1:8000"}` — `injected_env` 경로 |
 | 검사 | authgate 가 `Authorization: Bearer` 를 보고 플러그인 토큰이면 **범위 표**로 경로를 대조. 통과 시 `scope["piper_plugin"]` 에 이름을 적어 라우터가 감사 로그에 남길 수 있게 |
-| 범위 → 경로 | `inference.start` → `POST /api/models/inference/start`, `inference.stop`, `inference.read`(상태·정책 종류), `params.write` → `POST /api/params`(`task` 변경이 여기), `recording.*`, `vision.read` → `GET /api/vision/*`, `vision.judge` → `POST /api/vision/judge`(LLM 판단 — 오케스트레이터 이관의 필수 범위), `eval.write` → `POST /api/eval/log`, `robot.read` → `GET /api/robots/end-pose/<iface>`(말단 자세 — 움직이는 경로는 없다, §7-5), `activity.read` → `GET /api/activity`, `estop` → 어차피 열려 있다. 표는 코드 한 곳(`plugin_scopes.py`), 테스트가 라우터 목록과 대조 |
+| 범위 → 경로 | `inference.start` → `POST /api/models/inference/start`, `inference.stop`, `inference.read`(상태·정책 종류), `params.write` → `POST /api/params`(`task` 변경이 여기), `recording.*`, `vision.read` → `GET /api/vision/*`, `vision.judge` → `POST /api/vision/judge`(LLM 판단 — 오케스트레이터 이관의 필수 범위), `eval.write` → `POST /api/eval/log`, `robot.read` → `GET /api/robots/end-pose/<iface>`(말단 자세) · `GET /api/robots/load`(관절 토크 — 임계를 바꾸는 POST 는 안 연다. 움직이는 경로는 없다, §7-5), `activity.read` → `GET /api/activity`, `estop` → 어차피 열려 있다. 표는 코드 한 곳(`plugin_scopes.py`), 테스트가 라우터 목록과 대조 |
 | `"*"` | 모든 `/api/*` 를 통과시킨다. **`/api/auth/*` 만은 예외** — 비밀번호를 바꾸거나 로그인을 끄는 것은 사람의 행위다. 카드에 배지로 보인다 |
 | 설치 때 | 매니페스트의 `permissions` 를 카드에 **보여 주고** 켠다. "이 플러그인은 추론을 시작할 수 있습니다" — 모바일 앱 권한 화면과 같은 자리 |
 
@@ -415,7 +415,8 @@ class AppleSorter(MissionPlugin):
 | SDK | `self.arm(key).read()` / `.read_new()` → `ArmState(joints, gripper, err_code, ctrl_mode, seq, age_s)`. 값은 **정규화**(관절 -100..100, 그리퍼 0..100) — 데이터셋 `observation.state` 와 같은 눈금이고, 캘리브레이션 소유자(robotd)를 하나로 두려고 도(°)로 되돌리지 않는다 |
 | 발행자 재시작 | 리더가 `orphaned`(파일이 지워졌다)를 보면 다시 연다 — 안 그러면 옛 mmap 이 **마지막 자세를 영원히** 낸다. `piper_shm.arm` 의 리더에 `orphaned` 를 더했다(라이터에만 있었다) |
 | 말단 자세 | `self.arm(key).end_pose()` → mm·도 + 작업 공간 상자 안인가(`inside`). 범위 `robot.read`(`GET /api/robots/end-pose/<iface>`). robotd RPC 라 엔드포인트를 executor 로 옮겼다 — 플러그인이 폴링해도 이벤트 루프를 안 문다 |
-| 움직이기 | **없다.** 범위 표에 명령 경로를 넣지 않고(`robot.read` 는 GET 하나), SDK 는 명령 세그먼트를 열지 않는다. 팔은 여전히 추론(REST)으로만 움직인다 |
+| 관절 부하 | `GET /api/robots/load?iface=<iface>` → `status.joints.<joint>.now_nm`(robotd 가 20Hz 로 잰 토크). 범위 `robot.read`. 말단 자세와 같은 이유로 executor 로 옮겼다 — `plugins/grasp-guard` 가 10Hz 로 폴링해 "물체를 누른다" 를 잡는다 |
+| 움직이기 | **없다.** 범위 표에 명령 경로를 넣지 않고(`robot.read` 는 GET 뿐), SDK 는 명령 세그먼트를 열지 않는다. 팔은 여전히 추론(REST)으로만 움직인다 |
 
 ### 7-2. 코딩 에이전트가 첫 사용자다
 

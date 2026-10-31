@@ -1,0 +1,57 @@
+# 파지 감시 — 파지 위치가 어긋나 팔이 물체를 누르기 시작하면 관절 토크로 알아채고 원위치로 돌린다.
+#   robotd 관절 부하(GET /api/robots/load) → 관절별 임계·지속 → 리셋(원위치) → 도착 확인 → 다시 감시
+#   못 돌아오거나 같은 일이 반복되면 일시정지하고 사람을 부른다 (main.py 머리말)
+name: grasp-guard
+version: 0.1.0
+title: "파지 감시 (누름·과부하 복귀)"
+description: "파지 위치가 어긋나 팔이 물체를 누르면 관절 토크로 알아채고, 드라이버가 끊기 전에 원위치로 돌린다. 못 돌아오거나 반복되면 일시정지하고 사람을 부른다"
+entry: main.py
+python: system
+
+arms:
+  - { key: left, label: "왼팔", required: true }
+  - { key: right, label: "오른팔", required: false }
+
+config:
+  # 6.0 — 2026-10-31 사과 분류 시연(.117) 실측: 정상 동작 40분 최대 J5 5.8·J2 4.7, 누른 사고 J2 8.9·J5 9.0 (main.py 머리말)
+  - key: limits
+    kind: text
+    multiline: true
+    default: |
+      joint2 = 6.0
+      joint3 = 6.0
+      joint4 = 6.0
+      joint5 = 6.0
+    label: "관절 = 임계 토크(N·m) — 이 위로 지속 시간만큼 머물면 누름이다. 적지 않은 관절은 안 본다"
+  - { key: dwell_s, kind: number, default: 0.15, min: 0.05, max: 2, step: 0.05, label: "지속 시간(초) — 가감속의 순간 봉우리는 넘긴다" }
+  - { key: hard_nm, kind: number, default: 7.0, min: 1, max: 14, step: 0.1, label: "즉시 임계(N·m) — 한 표본만 넘어도 누름이다 (드라이버 차단은 9~10N·m 근처)" }
+  - { key: action, kind: select, default: "reset", options: ["reset", "pause", "estop", "log"], label: "누르면 — reset 원위치 후 재개 · pause 일시정지 · estop 긴급 정지 · log 기록만" }
+  - { key: recover_s, kind: number, default: 20, min: 5, max: 60, label: "원위치 도착 한도(초) — 파킹은 최대 18초" }
+  - { key: stall_s, kind: number, default: 4, min: 1, max: 20, step: 0.5, label: "원위치로 다가가지 않는 시간 한도(초) — 관절 이상이면 파킹이 거절돼 팔이 그대로다" }
+  - { key: home_tol, kind: number, default: 8, min: 1, max: 30, label: "원위치 허용 오차 (정규화 눈금 -100..100)" }
+  - { key: rearm_s, kind: number, default: 1.5, min: 0, max: 10, step: 0.5, label: "원위치 도착 뒤 다시 감시까지(초) — 재출발 순간의 토크는 세지 않는다" }
+  - { key: max_trips, kind: number, default: 3, min: 1, max: 20, label: "반복 한도 — 아래 시간 안에 이만큼 누르면 일시정지 (같은 자리를 계속 누른다)" }
+  - { key: trip_window_s, kind: number, default: 180, min: 10, max: 3600, label: "반복을 세는 시간(초)" }
+  - { key: poll_hz, kind: number, default: 10, min: 2, max: 20, label: "토크 조회 주기(Hz) — robotd 는 20Hz 로 잰다" }
+  - { key: dry_run, kind: bool, default: false, label: "드라이런 (판정·기록만 — 팔에 아무것도 안 보낸다)" }
+
+permissions:
+  - robot.read        # GET /api/robots/load — 관절 토크
+  - activity.read     # 추론이 도는가 — 안 돌면 기록만 한다
+  - params.write      # reset · pause
+
+commands: [rearm]
+
+resources:
+  gpu: false
+  heartbeat: false
+
+outputs:
+  topics: ["grasp_guard"]
+  state:
+    - { key: phase, label: "단계" }
+    - { key: torque, label: "지금 토크 (N·m)" }
+    - { key: peaks, label: "최대 토크 (N·m)" }
+    - { key: trips, label: "누름 횟수" }
+    - { key: last_trip, label: "마지막 누름" }
+    - { key: halt, label: "멈춘 이유" }

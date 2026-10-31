@@ -21,6 +21,7 @@ plugins/<name>/
 | 카메라 프레임 | `self.camera("slot").read_new()` → `(frame BGR, seq, ns)` | `/dev/shm` 세그먼트 구독. 카메라를 열지 않는다 |
 | 팔 상태 (읽기 전용) | `self.arm("slot").read()` → `.joints` `.gripper` `.age_s` / `.read_new()` | `/dev/shm` 상태 세그먼트 구독. 값은 정규화(관절 -100..100, 그리퍼 0..100) — `observation.state` 와 같은 눈금. 매니페스트 `arms: [{key, label}]` |
 | 말단 자세 | `self.arm("slot").end_pose()` → `x y z`(mm) `rx ry rz`(도) `inside` | REST, 권한 `robot.read`. 회차 경계·저속에만 — 제어 루프 속도로 부르지 않는다 |
+| 관절 부하(토크) | `self.api.get(f"/api/robots/load?iface={self.arms['slot']}")` → `status.joints.<joint>.now_nm` | REST, 권한 `robot.read`. robotd 가 20Hz 로 잰 값 — 10Hz 폴링까지. 실례 `grasp-guard/` |
 | 검출 모델 | `self.detector(model)` → `.predict(frame, conf=…)[0]` | RT-DETR(Apache). ultralytics(.pt) 는 **거절** |
 | 검출 결과 올리기 | `self.publish_detections(name, shape, result)` | 버스 `piper:vision:<name>` — 화면·다른 플러그인이 읽는다 |
 | 그림 올리기 | `self.publish_preview(name, frame)` | `/api/vision/preview/<name>` |
@@ -88,6 +89,7 @@ curl -X POST localhost:8000/api/plugins/my-thing/start -H 'content-type: applica
 | `hello/` | 없음(SDK 미사용) | 환경변수·토큰·상태 KV 의 최소 배선 |
 | `detect-and-start/` | 1층 | 검출기 안에 두고, 보이면 추론 시작·사라지면 정지 |
 | `zone-guard/` | 1층 | ROI 침입 → 일시정지/E-stop, 비면 재개 |
+| `grasp-guard/` | 1층 | 관절 토크로 "물체를 누른다" 를 잡아 드라이버가 끊기 전에 원위치 리셋, 못 돌아오거나 반복되면 일시정지. 카메라 없이 `robot.read` 부하 조회 + 팔 상태만 |
 | `recycling/` | 2층 | 검출 → LLM 판단 → task → 저널. `MissionPlugin` 의 참고 구현. 외부 API 미션 타입 `recycling` |
 | `detector/` | 1층 | 카메라 여러 대를 한 모델로 훑는 검출기. 검출 페이지의 뒷단. 둘 이상은 인스턴스(`detector:cam2`) |
 | `ui-demo/` | 1층 | `ui: server` — 자기 FastAPI 서버(HTTP·WS)를 소켓에 띄워 게이트웨이 뒤로 프록시. 포트를 고르지 않는다 |

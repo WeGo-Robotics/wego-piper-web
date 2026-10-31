@@ -63,3 +63,6 @@ def test_robot_read_reaches_the_end_pose_but_never_moves_the_arm():
     assert not S.allows(s, "POST", "/api/robots/end-pose/jog")
     assert not S.allows(s, "POST", "/api/robots/jog/goal")
     assert not S.allows(s, "GET", "/api/robots/current")
+    # 관절 부하는 읽기만 — 임계를 바꾸는 POST 는 사람의 몫이다 (plugins/grasp-guard 가 읽는다)
+    assert S.allows(s, "GET", "/api/robots/load")
+    assert not S.allows(s, "POST", "/api/robots/load")

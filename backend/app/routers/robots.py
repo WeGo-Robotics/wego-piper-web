@@ -605,11 +605,16 @@ async def get_load(iface: str):
     ⚠ 둘을 한 응답에 담는다. 임계값은 아직 잠정이라(`provisional`) 사람이
     숫자를 고르려면 "이 팔이 평소 어디까지 가나" 를 같은 화면에서 봐야 한다 —
     따로 부르게 두면 화면이 둘을 다른 시각의 값으로 나란히 보여준다.
+
+    robotd RPC 라 executor 로 — 플러그인(`robot.read`, plugins/grasp-guard)이 10Hz 로 폴링해도
+    이벤트 루프를 안 문다 (`end_pose` 와 같은 이유).
     """
-    limits = robot_manager_mod.get_load_limits(iface)
+    import asyncio
+
+    limits = await asyncio.to_thread(robot_manager_mod.get_load_limits, iface)
     if limits is None:
         raise HTTPException(503, "robotd 가 응답하지 않습니다 — 데몬이 떠 있나요?")
-    return {"limits": limits, "status": robot_manager_mod.load_status(iface)}
+    return {"limits": limits, "status": await asyncio.to_thread(robot_manager_mod.load_status, iface)}
 
 
 @router.post("/load")
