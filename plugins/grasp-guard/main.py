@@ -23,8 +23,14 @@
 즉시는 0.2초 만에 치솟는 누름을 기다리지 않는다 — 10Hz 표본에서 지속 0.15초는 세 표본(0.2초)이라 그 사고에선
 이미 봉우리다. 즉시 임계를 정상 최대보다 1.2 위(7.0)에 둬 한 표본 앞에서 잡는다(재현: 5.0→6.2→7.0→8.9 를
 7.0 에서 끊는다). ⚠ 정상 최대(J5 5.8)와 지속 임계(6.0) 사이가 좁다 —
-헛 발동이 보이면 상태의 `peaks`(관절별 최대)를 보고 그 관절만 올린다. 헛 발동의 값은 원위치 한 번(~10초)이고
+헛 발동이 보이면 상태의 `peaks`(관절별 최대)를 보고 그 팔의 그 관절만 올린다. 헛 발동의 값은 원위치 한 번(~10초)이고
 놓친 값은 시연이 멈추는 것이라 낮은 쪽에 뒀다.
+
+## 팔마다 다른 것 — 임계 둘뿐
+
+임계(`<팔>_limits`)와 즉시 임계(`<팔>_hard_nm`)는 팔마다 둔다. 양팔은 맡은 상자가 달라 평소 토크가 다르고
+(위 실측에서 임계에 붙은 건 오른팔 J5 하나다), 한 팔을 올리려고 다른 팔까지 무뎌지면 안 된다. 나머지는 공통이다 —
+양팔 정책이 하나라 리셋·일시정지는 어느 팔이 걸리든 두 팔에 같이 걸리고, 파킹은 두 팔을 같은 원점으로 한 번에 보낸다.
 
 ## 돌리는 길 — 리셋(원위치)
 
@@ -155,14 +161,16 @@ def describe(slot: str, iface: str, trip: Trip) -> str:
 
 class GraspGuard(Plugin):
     def setup(self):
-        self.limits = parse_limits(self.config["limits"])
-        if not self.limits:
-            self.stop("임계가 비었다 — `joint2 = 6.0` 처럼 한 줄 이상 적어라")
         self.slots = [k for k in ("left", "right") if self.arms.get(k)]
         if not self.slots:
             self.stop("팔 슬롯(left)을 골라라 — 어느 팔의 토크를 볼지 모른다")
-        self.watch = {k: PressWatch(self.limits, hard_nm=float(self.config["hard_nm"]),
-                                    dwell_s=float(self.config["dwell_s"])) for k in self.slots}
+        self.watch = {}
+        for k in self.slots:                                    # 임계는 팔마다 (머리말 「팔마다 다른 것」)
+            limits = parse_limits(self.config[f"{k}_limits"])
+            if not limits:
+                self.stop(f"{k}_limits 가 비었다 — `joint2 = 6.0` 처럼 한 줄 이상 적어라")
+            self.watch[k] = PressWatch(limits, hard_nm=float(self.config[f"{k}_hard_nm"]),
+                                       dwell_s=float(self.config["dwell_s"]))
         self.acting = not self.config.get("dry_run") and self.config["action"] != "log"
         self.phase = "guarding"
         self.trips: deque[float] = deque()
@@ -181,9 +189,9 @@ class GraspGuard(Plugin):
         self.run_id = self.env.run_id or time.strftime("run_%Y%m%d_%H%M%S")
         self.journal_path = self.env.runtime_dir / "runs" / f"{self.run_id}.jsonl"
         self.interval = 1.0 / max(float(self.config["poll_hz"]), 0.5)
-        self.log.info("감시 시작 — %s · 임계 %s · 즉시 %.1fN·m · 누르면 %s%s",
-                      {k: self.arms[k] for k in self.slots}, self.limits, float(self.config["hard_nm"]),
-                      self.config["action"], "" if self.acting else " (기록만)")
+        for k, w in self.watch.items():
+            self.log.info("감시 — %s(%s) 임계 %s · 즉시 %.1fN·m", k, self.arms[k], w.limits, w.hard_nm)
+        self.log.info("누르면 %s%s", self.config["action"], "" if self.acting else " (기록만)")
 
     # ── 읽기 ──
 
@@ -230,7 +238,7 @@ class GraspGuard(Plugin):
             nm = self._load(k)
             if nm is None:
                 continue
-            torque[k] = {j: round(nm[j], 1) for j in self.limits if j in nm}
+            torque[k] = {j: round(nm[j], 1) for j in self.watch[k].limits if j in nm}
             trip = self.watch[k].feed(t0, nm)
             if trip is not None and self.phase == "guarding" and t0 >= self._quiet_until:
                 self._on_trip(k, trip, nm, t0)
