@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -55,6 +55,8 @@ class TrainStartRequest(BaseModel):
     rename_map: str = ""
     policy_params: dict[str, Any] = Field(default_factory=dict)
     amp: str = "bf16"  # 혼합정밀도: "off" | "bf16" | "fp16" → ACCELERATE_MIXED_PRECISION env
+    # 이미지 증강 — cli_mapping.IMAGE_AUG_MODES. photometric 은 색을 안 건드린다
+    image_aug: Literal["off", "photometric", "full"] = "off"
     # 가중치 제목·설명 — 시작 성공 직후 output_dir/piper_notes.json 사이드카로
     # 남는다 (제목 = name). CLI 인자가 아니다 — build_train_args 전에 뺀다.
     title: str = ""
@@ -85,6 +87,7 @@ class TrainPreviewRequest(BaseModel):
     rename_map: str = ""
     policy_params: dict[str, Any] = Field(default_factory=dict)
     amp: str = "bf16"  # 혼합정밀도: "off" | "bf16" | "fp16" → ACCELERATE_MIXED_PRECISION env
+    image_aug: Literal["off", "photometric", "full"] = "off"
 
 
 def add_local_dataset_root(params: dict, remote: bool) -> dict:

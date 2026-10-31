@@ -506,6 +506,31 @@ def _finetune_overrides(policy_type: str, policy_params: dict) -> dict:
     return {k: v for k, v in policy_params.items() if k in allowed}
 
 
+# 이미지 증강 — 화면의 선택지 → `--dataset.image_transforms.*`. LeRobot 기본은 꺼짐.
+# ⚠ LeRobot 기본 묶음(`full`)은 색조를 ±18°(hue 0.05) 흔든다. 빨강–노랑 간격 56° 의 64% 라 색으로
+#   가르는 과제에서는 라벨에 잡음을 넣는 셈이다 (feature/episode-analyzer.md C2). 그래서 색을 안
+#   건드리는 묶음을 따로 둔다 — 키와 값은 LeRobot 기본 묶음에서 그대로 가져왔다.
+# ⚠ `tfs.hue.weight=0` 같은 점 경로는 draccus 가 거부한다 — dict 를 통째로 넘긴다.
+IMAGE_AUG_MODES = ("off", "photometric", "full")
+_PHOTOMETRIC_TFS = {
+    "brightness": {"type": "ColorJitter", "kwargs": {"brightness": [0.8, 1.2]}},
+    "contrast": {"type": "ColorJitter", "kwargs": {"contrast": [0.8, 1.2]}},
+    "sharpness": {"type": "SharpnessJitter", "kwargs": {"sharpness": [0.5, 1.5]}},
+}
+
+
+def _compact_json(text: str) -> str:
+    """공백 없는 JSON. JSON 이 아니면 그대로 둔다.
+
+    ⚠ 화면의 CLI 편집은 **공백으로 인자를 자른다.** 화면이 보내는 rename_map 은 들여쓴 JSON 이라
+    그대로 실으면 CLI 를 고쳐 시작하는 순간 `--rename_map={` 와 조각들로 갈라져 시작부터 죽었다.
+    """
+    try:
+        return json.dumps(json.loads(text), separators=(",", ":"))
+    except (TypeError, ValueError):
+        return text
+
+
 def build_train_args(
     params: dict,
     *,
@@ -521,10 +546,16 @@ def build_train_args(
 
     # --policy.path와 --policy.type은 동시에 사용 불가
     has_pretrained = bool(params.get("pretrained_path"))
+    # ⚠ 프리셋이 켜져 있으면 LeRobot 은 `--optimizer.*` 를 **통째로 버리고** 정책 config 의
+    #   `optimizer_lr` 로 optimizer 를 다시 만든다(TrainPipelineConfig.validate). 화면의
+    #   Learning Rate 칸이 그렇게 말없이 무시됐다 — 프리셋에서는 정책 쪽 필드로 보낸다.
+    preset = params.get("use_policy_training_preset", True)
 
     for key, value in params.items():
         if has_pretrained and key == "policy_type":
             continue  # pretrained_path가 있으면 policy_type 스킵
+        if preset and key == "learning_rate":
+            continue  # 아래에서 --policy.optimizer_lr 로
         cli_flag = TRAIN_ARGS_MAP.get(key)
         if cli_flag is None:
             continue
@@ -539,6 +570,17 @@ def build_train_args(
     #   (feature/cloud-training.md §6) → 러너별로 갈라야 한다.
     if not params.get("policy_repo_id"):
         args.append("--policy.push_to_hub=false")
+
+    if preset and params.get("learning_rate"):
+        args.append(f"--policy.optimizer_lr={params['learning_rate']}")
+
+    image_aug = params.get("image_aug") or "off"
+    if image_aug not in IMAGE_AUG_MODES:
+        raise ValueError(f"image_aug 는 {IMAGE_AUG_MODES} 중 하나여야 합니다: {image_aug!r}")
+    if image_aug != "off":
+        args.append("--dataset.image_transforms.enable=true")
+    if image_aug == "photometric":
+        args.append("--dataset.image_transforms.tfs=" + json.dumps(_PHOTOMETRIC_TFS, separators=(",", ":")))
 
     # use_policy_training_preset=false면 scheduler 필수 → 기본값 자동 추가
     if not params.get("use_policy_training_preset", True):
@@ -588,7 +630,7 @@ def build_train_args(
 
     rename_map = params.get("rename_map") or rename_map
     if rename_map:
-        args.append(f"--rename_map={rename_map}")
+        args.append(f"--rename_map={_compact_json(rename_map)}")
 
     return args
 

@@ -113,6 +113,8 @@ export default function TrainingPage() {
   }, [policyUi])
 
   const [amp, setAmp] = useState<string>(_saved.amp ?? 'bf16')  // 혼합정밀도: off | bf16 | fp16
+  // 이미지 증강: off | photometric(밝기·대비·선명도) | full(LeRobot 기본 — 색조 포함). cli_mapping.IMAGE_AUG_MODES
+  const [imageAug, setImageAug] = useState<string>(_saved.imageAug ?? 'off')
   const [cliArgs, setCliArgs] = useState('')
   const [cliEdited, setCliEdited] = useState(false)
   const [weightTable, setWeightTable] = useState(false)
@@ -133,9 +135,9 @@ export default function TrainingPage() {
       selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, title, description,
       batchSize, steps, logFreq, saveFreq, numWorkers, seed, device,
       optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset,
-      stateDim, actionDim, renameMap, policyParams, amp,
+      stateDim, actionDim, renameMap, policyParams, amp, imageAug,
     }))
-  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, title, description, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset, stateDim, actionDim, renameMap, policyParams, amp])
+  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, title, description, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset, stateDim, actionDim, renameMap, policyParams, amp, imageAug])
 
   // 실행 상태
   const [trainState, setTrainState] = useState<ProcessState>('idle')
@@ -163,7 +165,7 @@ export default function TrainingPage() {
     save_freq: saveFreq, num_workers: numWorkers, seed, device,
     optimizer_type: optimizerType, learning_rate: learningRate,
     wandb_enable: wandbEnable, wandb_project: wandbProject,
-    use_policy_training_preset: usePolicyPreset, policy_params: policyParams, amp,
+    use_policy_training_preset: usePolicyPreset, policy_params: policyParams, amp, image_aug: imageAug,
   })
   const applyPreset = (v: Record<string, unknown>) => {
     if (v.policy_type !== undefined) setPolicyType(v.policy_type as string)
@@ -181,6 +183,7 @@ export default function TrainingPage() {
     if (v.use_policy_training_preset !== undefined) setUsePolicyPreset(v.use_policy_training_preset as boolean)
     if (v.policy_params !== undefined) setPolicyParams(v.policy_params as Record<string, number | boolean>)
     if (v.amp !== undefined) setAmp(v.amp as string)
+    if (v.image_aug !== undefined) setImageAug(v.image_aug as string)
     setCliEdited(false)
   }
 
@@ -298,9 +301,9 @@ export default function TrainingPage() {
       num_workers: numWorkers, seed, device, optimizer_type: optimizerType,
       learning_rate: learningRate, wandb_enable: wandbEnable, wandb_project: wandbProject, resume,
       use_policy_training_preset: usePolicyPreset, state_dim: stateDim, action_dim: actionDim, rename_map: renameMap,
-      policy_params: policyParams, amp,
+      policy_params: policyParams, amp, image_aug: imageAug,
     }).then((r) => setCliArgs(r.command)).catch(() => {})
-  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset, stateDim, actionDim, renameMap, policyParams, amp, cliEdited])
+  }, [selectedDataset, policyType, pretrainedPath, policyRepoId, outputDir, batchSize, steps, logFreq, saveFreq, numWorkers, seed, device, optimizerType, learningRate, wandbEnable, wandbProject, resume, usePolicyPreset, stateDim, actionDim, renameMap, policyParams, amp, imageAug, cliEdited])
 
   // 체크포인트 폴링 (학습 중)
   const ckptPollRef = useRef<ReturnType<typeof setInterval>>(undefined)
@@ -429,7 +432,7 @@ export default function TrainingPage() {
     num_workers: numWorkers, seed, device, optimizer_type: optimizerType,
     learning_rate: learningRate, wandb_enable: wandbEnable, wandb_project: wandbProject, resume,
     use_policy_training_preset: usePolicyPreset, state_dim: stateDim, action_dim: actionDim, rename_map: renameMap,
-    policy_params: policyParams, amp,
+    policy_params: policyParams, amp, image_aug: imageAug,
   })
 
   const handlePreConfirm = async () => {
@@ -452,7 +455,7 @@ export default function TrainingPage() {
         `Output: ${outputDir || t('(자동)')}`,
         '',
         `Batch: ${batchSize}  Steps: ${steps}  Save: ${saveFreq}`,
-        `Device: ${device}  AMP: ${amp}`,
+        `Device: ${device}  AMP: ${amp}  LR: ${learningRate || t('(정책 기본)')}  Image aug: ${imageAug}`,
         `Workers: ${numWorkers}  Seed: ${seed}`,
         `Resume: ${resume}  Preset: ${usePolicyPreset}  State: ${stateDim || 'auto'}  Action: ${actionDim || 'auto'}`,
         '',
@@ -1028,6 +1031,26 @@ export default function TrainingPage() {
               </p>
             </div>
 
+            {/* 이미지 증강 — LeRobot 기본 묶음은 색조를 흔들어 색으로 가르는 과제에 해롭다 (cli_mapping._PHOTOMETRIC_TFS) */}
+            <div>
+              <label className="text-xs text-neutral-400">{t('이미지 증강')}</label>
+              <select value={imageAug} onChange={(e) => { setImageAug(e.target.value); setCliEdited(false) }}
+                className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100">
+                <option value="off">{t('끔 (기본)')}</option>
+                <option value="photometric">{t('밝기·대비·선명도 — 색은 그대로')}</option>
+                <option value="full">{t('LeRobot 기본 전체 — 색조·채도·회전 포함')}</option>
+              </select>
+              {imageAug === 'full' ? (
+                <p className="text-[10px] text-yellow-500 mt-0.5">
+                  {t('색조를 ±18° 흔듭니다 — 색으로 가르는 작업(빨강/노랑 사과 등)에는 쓰지 마세요.')}
+                </p>
+              ) : imageAug === 'photometric' ? (
+                <p className="text-[10px] text-neutral-500 mt-0.5">
+                  {t('조명이 수집 때와 달라도 견디게 합니다. 색과 위치는 건드리지 않습니다.')}
+                </p>
+              ) : null}
+            </div>
+
             <label className="flex items-center gap-2 text-xs cursor-pointer">
               <input type="checkbox" checked={resume} onChange={(e) => { setResume(e.target.checked); setCliEdited(false) }}
                 className="accent-blue-500" />
@@ -1058,7 +1081,8 @@ export default function TrainingPage() {
                 </div>
                 <div>
                   <label className="text-xs text-neutral-400">{t('Learning Rate (0=기본)')}</label>
-                  <input type="number" value={learningRate} step={0.0001} min={0}
+                  {/* step="any" — 0.0001 이면 2e-5 같은 이어 학습 값이 '잘못된 값'으로 표시된다 */}
+                  <input type="number" value={learningRate} step="any" min={0}
                     onChange={(e) => { setLearningRate(Number(e.target.value)); setCliEdited(false) }}
                     className="w-full px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-sm text-neutral-100" />
                 </div>

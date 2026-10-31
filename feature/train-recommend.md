@@ -220,7 +220,9 @@ singlearm_apple_random_v2 의 평균 에피소드(14.1초)의 47% 다. 에피소
 2. ☐ 경고 §3 + chunk 초 표시 §4 + 임대 예상 시간 §5(c)
 3. ☐ 검증 분리 + §7 실험 → E 확정, 필요하면 √ 규칙
 4. ☐ 이미지 증강 — `--dataset.image_transforms.enable`(LeRobot 기본 꺼짐, 밝기·대비·채도 0.8~1.2 등)을
-   폼에 노출하고 A/B. 에피소드 몇 개 아래에서 켤지는 그 결과로 정한다. [조명 변화 감시](lighting-watch.md)·
+   폼에 노출하고 A/B. 에피소드 몇 개 아래에서 켤지는 그 결과로 정한다.
+   ☑ 폼 노출(2026-10-31) — 끔 / 밝기·대비·선명도(`photometric`, 색은 그대로) / LeRobot 기본 전체(`full`,
+   색조 ±18° 경고). 묶음은 `cli_mapping._PHOTOMETRIC_TFS`. A/B 는 아직이라 기본은 끔이다. [조명 변화 감시](lighting-watch.md)·
    [회색 카드](gray-card-calibration.md)는 조명을 **고정하는** 대책이고 증강은 **견디게 하는** 대책이라,
    둘 다 필요한지도 A/B 가 답한다
 5. ☐ 실측 프로파일 — 검증 분리로 돈 학습마다 검증 오차 최저 에폭을 남긴다(Redis 해시, 키
