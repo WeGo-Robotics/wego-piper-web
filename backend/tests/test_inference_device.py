@@ -130,6 +130,16 @@ def test_the_devices_route_comes_before_the_model_id_catch_all():
     assert paths.index("/api/models/inference/devices") < paths.index("/api/models/{model_id:path}")
 
 
+def test_the_policy_route_comes_before_the_model_id_catch_all():
+    """뒤에 있으면 `inference/policy` 가 모델 id 로 먹혀 404 가 나가고, SDK 가 그걸 "추론이 안 돈다" 로 읽는다."""
+    from app.routers import models
+
+    paths = [getattr(r, "path", "") for r in models.router.routes
+             if "GET" in getattr(r, "methods", set())]
+    assert "/api/models/inference/policy" in paths
+    assert paths.index("/api/models/inference/policy") < paths.index("/api/models/{model_id:path}")
+
+
 def test_the_devices_endpoint_reports_cuda(monkeypatch):
     import asyncio
 

@@ -85,6 +85,22 @@ async def inference_devices():
     return {"cuda": resources.cuda_present()}
 
 
+# ⚠ 이것도 `GET /{model_id:path}` 보다 **앞**에 있어야 한다 — 뒤에 있을 때는 "Model not found"(404) 가 나갔고,
+#   SDK 가 그 404 를 "추론이 안 돈다" 로 읽어 도는 추론 앞에서 미션 플러그인이 멈췄다
+@router.get("/inference/policy")
+async def inference_policy():
+    """지금 도는 정책 — 플러그인(MissionPlugin)이 "판단이 로봇에 닿는가"를 묻는 길 (feature/plugins.md §12-1).
+
+    ACT 는 task 를 안 읽는다. 모르면 `takes_language: null` — 소비자는 낙관하지 않는다.
+    """
+    cur = inference_state.get()
+    if cur is None:
+        return {"running": False, "type": None, "takes_language": None, "checkpoint_path": None}
+    return {"running": True, "type": cur.policy_type or None,
+            "takes_language": takes_language(cur.policy_type) if cur.policy_type else None,
+            "checkpoint_path": cur.checkpoint_path or None}
+
+
 def _get_first_ready_follower_port() -> str | None:
     """등록된 첫 번째 follower의 iface를 반환."""
     for arm in robot_manager.arms.values():
@@ -573,20 +589,6 @@ async def start_inference_custom(body: InferenceStartCustomRequest):
     #   낫다. `policy_type=""` 이면 아래 가드가 "확인 불가" 로 막는다.
     inference_state.set_running("", "")
     return {"status": "started", "pid": process_manager.pid, "args": body.args}
-
-
-@router.get("/inference/policy")
-async def inference_policy():
-    """지금 도는 정책 — 플러그인(MissionPlugin)이 "판단이 로봇에 닿는가"를 묻는 길 (feature/plugins.md §12-1).
-
-    ACT 는 task 를 안 읽는다. 모르면 `takes_language: null` — 소비자는 낙관하지 않는다.
-    """
-    cur = inference_state.get()
-    if cur is None:
-        return {"running": False, "type": None, "takes_language": None, "checkpoint_path": None}
-    return {"running": True, "type": cur.policy_type or None,
-            "takes_language": takes_language(cur.policy_type) if cur.policy_type else None,
-            "checkpoint_path": cur.checkpoint_path or None}
 
 
 @router.post("/inference/stop")
