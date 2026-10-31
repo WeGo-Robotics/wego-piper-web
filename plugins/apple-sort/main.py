@@ -16,6 +16,10 @@
 — 그 쉼을 보고 다음 종류로 넘어간다. 같은 종류가 `max_fail` 번 연속 타임아웃이면 그 판에서는
 다음 종류를 먼저 한다 (판 위 개수가 바뀌면 다시 센다).
 
+**판이 두 번 연속 비면** 설정 두 개로 갈린다 — `on_empty_inference`: 추론을 일시정지(pause, 사과가 다시
+올라오면 지시문을 넣고 재개) · 그대로 둠(wait) · 정지(stop_inference, 플러그인도 끝). `on_empty_plugin`:
+끝냄(stop, 우리가 추론을 쉬게 했으면 task 를 공백으로) · 계속 대기(wait, 사과가 다시 올라오면 이어서).
+
 쉼 판정 숫자는 데이터셋 실측이다 (2026-10-31, phase 라벨 IDLE·DONE vs 나머지, 1초 창):
 관절 변동 중앙값 0 / 움직임 하위 5% 6.6 → `still_tol` 2, 그리퍼 쉴 때 <1 · 잡고 있을 때 ≥28
 → `grip_closed` 10.
@@ -30,7 +34,9 @@
 판단에는 안 걸린다. 모델을 바꾸면 conf 부터 다시 잰다 (`tools/replay.py`·`tools/autolabel.py`).
 
 추론은 먼저 켜 둔다 — **학습한 세 문장 중 하나로** (아무 문장이나 넣으면 첫 쉼까지 정책이
-무엇을 할지 모른다). 팔이 원위치에 있을 때 이 플러그인을 켠다.
+무엇을 할지 모른다). 이전 실행이 일시정지로 끝났어도 된다: 시작하고 팔이 쉬면 첫 판단에서
+지시문을 넣고 → 원위치 리셋 → 재개한다 (`reset_on_start`, 끄면 지시문만 넣는다). 판이 비어 있으면
+리셋하지 않는다 — 놓을 사과가 생길 때까지 추론은 그대로다.
 
     piper-plugin run plugins/apple-sort --camera top=<위 카메라 스트림> \
         --arm left=<CAN> --arm right=<CAN> --api http://127.0.0.1:8000 [--dry-run]
@@ -110,6 +116,9 @@ class AppleSort(MissionPlugin):
         self._empty_seen = 0
         self._timed_out = False
         self._skip = False
+        self._paused = False                                    # 판이 비어 우리가 추론을 쉬게 해 뒀다
+        # 첫 판단에서 원위치 리셋 후 재개한다 — 이전 실행이 일시정지로 끝났을 수 있다
+        self._wake = bool(self.config.get("reset_on_start", True)) and not self.dry_run
         self.state(rules=[c for c, _ in self.rules], model=self.model_name, arms=self.arm_keys)
 
     # ── 보기 ──
@@ -210,18 +219,24 @@ class AppleSort(MissionPlugin):
             self.fails.clear()
         if not any(board.values()):
             self._empty_seen += 1
-            if self._empty_seen >= 2:                           # 두 번 연속 비었을 때만 — 한 번은 오검출일 수 있다
-                self._finish("판 위 사과를 모두 옮겼다")
+            if self._empty_seen == 2:                           # 두 번 연속 비었을 때만 — 한 번은 오검출일 수 있다
+                self._wrap_up("판 위 사과를 모두 옮겼다", wait=self.config.get("on_empty_plugin") == "wait")
             return Decision.skip("board_empty")
         self._empty_seen = 0
+        self.state(waiting="")
         for label, task in self.rules:
             if board.get(label, 0) > 0 and self.fails.get(label, 0) < int(self.config["max_fail"]):
                 if task != self.task:
                     self.log.info("지시문 → %r (판 위 %s)", task, board)
                 self.task, self.target = task, label
                 self.state(task=task)
+                if self._wake:
+                    self._start_up(task)
+                elif self._paused:
+                    self._resume_with(task)
                 return Decision.task(task, target=label, counts=board)
-        self._finish(f"남은 사과가 있는데 모든 종류가 연속 {self.config['max_fail']}번 실패했다 — 사람이 볼 차례")
+        # 사람이 볼 차례 — 기다려도 풀리지 않으니 `on_empty_plugin` 과 상관없이 끝낸다
+        self._wrap_up(f"남은 사과가 있는데 모든 종류가 연속 {self.config['max_fail']}번 실패했다 — 사람이 볼 차례", wait=False)
 
     def done(self, ctx) -> bool:
         if self._skip:                                          # [skip] 버튼
@@ -255,14 +270,53 @@ class AppleSort(MissionPlugin):
         if name == "skip":
             self._skip = True
 
-    def _finish(self, reason: str) -> None:
-        act = self.config.get("on_finish")
+    def _wrap_up(self, reason: str, *, wait: bool) -> None:
+        """판이 비었거나 더 할 수 없을 때 — 추론은 `on_empty_inference` 대로 두고, 플러그인은 기다리거나 끝낸다.
+
+        끝낼 때 task 를 공백으로 비우는 건 **우리가 추론을 쉬게 했을 때뿐**이다 — 돌고 있는 정책에
+        빈 문장을 넣으면 학습에 없던 입력이라 팔이 무엇을 할지 모른다."""
+        act = self.config.get("on_empty_inference")
         if not self.dry_run:
-            if act == "pause":
-                self.robot.pause()
+            if act == "pause" and not self._paused:
+                if self.robot.pause().ok:
+                    self._paused = True
+                else:
+                    self.log.warning("추론 일시정지 실패")
             elif act == "stop_inference":
                 self.robot.stop_inference()
+                wait = False                                    # 추론이 없으면 기다릴 것도 없다
+        if wait:
+            self.log.info("%s — 사과가 다시 올라오기를 기다린다", reason)
+            self.state(waiting=reason)
+            return
+        if self._paused and self.robot.set_task("").ok:
+            self.task = None
+            self.state(task="")
         self.stop(reason)
+
+    def _start_up(self, task: str) -> None:
+        """시작 직후 첫 판단 — 지시문을 먼저 넣고, 원위치로 돌린 뒤, 추론을 재개한다.
+
+        지시문이 먼저인 이유: 이전 실행이 task 를 공백으로 비우고 끝냈을 수 있다 — 리셋이 끝나 재개되는
+        순간 정책이 읽는 문장이 이것이어야 한다. 리셋은 래퍼가 원점 복귀 뒤 스스로 재개하지만(일시정지와
+        무관하게 최상단에서 처리), 일시정지로 끝난 추론을 확실히 깨우도록 재개를 한 번 더 보낸다."""
+        if not self.robot.set_task(task).ok:
+            self.log.warning("시작 지시문 전달 실패 — 다음 회차에 다시 시도한다")
+            return
+        r = self.robot.reset()
+        if not r.ok:
+            self.log.warning("원위치 리셋 실패 (%s) — 재개만 한다", r.status)
+        self.robot.resume()
+        self._wake = self._paused = False
+        self.log.info("시작 — 원위치 리셋 후 추론 재개 (%s)", task)
+
+    def _resume_with(self, task: str) -> None:
+        """쉬게 해 둔 추론을 깨운다 — 지시문을 먼저 넣고 깨워서 옛 문장으로 한 걸음도 안 가게 한다."""
+        if self.robot.set_task(task).ok and self.robot.resume().ok:
+            self._paused = False
+            self.log.info("사과가 다시 올라왔다 — 추론 재개")
+        else:
+            self.log.warning("추론 재개 실패 — 다음 회차에 다시 시도한다")
 
 
 if __name__ == "__main__":

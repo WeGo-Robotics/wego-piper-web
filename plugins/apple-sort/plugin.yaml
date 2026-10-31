@@ -34,8 +34,11 @@ config:
   - { key: still_tol, kind: number, default: 2, min: 0.1, max: 20, step: 0.1, label: "정지 허용 관절 변동 (정규화 눈금 -100..100)" }
   - { key: grip_closed, kind: number, default: 10, min: 0, max: 100, label: "그리퍼 닫힘 상한 (0..100) — 쉴 때는 닫혀 있다" }
   - { key: max_fail, kind: number, default: 2, min: 1, max: 20, label: "같은 종류 연속 실패 허용 (넘으면 다음 종류)" }
-  - { key: on_finish, kind: select, default: "pause", options: ["pause", "stop_inference", "none"], label: "판이 비면" }
+  # 판이 비면 — 추론과 플러그인을 따로 고른다 (main.py `_wrap_up`)
+  - { key: on_empty_inference, kind: select, default: "pause", options: ["pause", "wait", "stop_inference"], label: "판이 비면 추론 — pause 일시정지 · wait 그대로 두기 · stop_inference 정지 (정지하면 플러그인도 끝난다)" }
+  - { key: on_empty_plugin, kind: select, default: "stop", options: ["stop", "wait"], label: "판이 비면 플러그인 — stop 검출을 멈춘다 (추론이 쉬는 중이면 task 도 공백으로) · wait 계속 대기 (사과가 다시 올라오면 이어서)" }
   - { key: reset_on_timeout, kind: bool, default: false, label: "타임아웃이면 리셋(원위치)" }
+  - { key: reset_on_start, kind: bool, default: true, label: "시작하면 원위치 리셋 후 추론 재개 (첫 지시문을 넣고 나서 — 일시정지로 끝난 추론도 다시 돈다)" }
   # 공통 항목 중 기본값을 바꾸는 것 — 학습 에피소드는 11~20초, 복구 변형은 더 길다
   - { key: episode_timeout_s, kind: number, default: 60, min: 5, max: 600, label: "회차 타임아웃(초) — 쉼 대기에도 쓴다" }
   - { key: settle_s, kind: number, default: 0, min: 0, max: 60, step: 0.5, label: "회차 사이 대기(초)" }
@@ -61,3 +64,4 @@ outputs:
     - { key: task, label: "지시문" }
     - { key: counts, label: "판 위 개수" }
     - { key: resting, label: "팔 쉼" }
+    - { key: waiting, label: "대기" }
