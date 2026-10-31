@@ -1,0 +1,63 @@
+# 사과 분류 — 작업판 위 사과를 검출해 남은 종류에 맞는 지시문을 언어 정책에 넣는다.
+#   위 카메라 → 검출(dualarm_sort_apple 커스텀 모델) → 판 위 개수 → 규칙 순서 → set_task
+#   지시문은 팔이 쉬는 동안에만 바뀐다 (main.py 머리말)
+name: apple-sort
+version: 0.1.0
+title: "사과 분류 지시문 자동 전환"
+description: "작업판 위 사과를 검출해 남은 종류의 지시문(task)을 넣는다. 하나 옮기고 팔이 쉬면 다시 세고, 그 종류가 바닥나면 다음 지시문으로"
+entry: main.py
+python: system
+mission: true
+
+cameras:
+  - { key: top, label: "위 카메라 (작업판 전체)", required: true }
+
+arms:
+  - { key: left, label: "왼팔", required: true }
+  - { key: right, label: "오른팔", required: false }
+
+config:
+  - { key: model, kind: text, default: "dualarm_sort_apple-1031-0501", label: "검출 모델 (커스텀 이름 · HF id · 경로)" }
+  - { key: device, kind: select, default: "cuda:0", options: ["cuda:0", "cpu"], label: "검출 장치" }
+  # 0.08 — 1031-0501 모델은 점수가 낮게 나온다 (참 검출 0.09~0.2, 잡음 ≤0.07 · main.py 머리말)
+  - { key: conf, kind: number, default: 0.08, min: 0.01, max: 1, step: 0.01, label: "검출 신뢰도" }
+  - key: rules
+    kind: text
+    multiline: true
+    default: |
+      red_apple = put the red apple in the left box
+      yellow_apple = put the yellow apple in the right box
+      small_apple = put the small apple in the top box
+    label: "검출 클래스 = 지시문 (위 줄부터 먼저 — 학습 때 문장 그대로)"
+  - { key: roi, kind: text, default: "0.16,0.31,0.89,0.92", label: "작업판 ROI x1,y1,x2,y2 (0~1) — 중심이 이 안인 것만 센다" }
+  - { key: still_s, kind: number, default: 1.5, min: 0.3, max: 10, step: 0.1, label: "쉰다고 볼 시간(초) — 팔 정지·개수 불변" }
+  - { key: still_tol, kind: number, default: 2, min: 0.1, max: 20, step: 0.1, label: "정지 허용 관절 변동 (정규화 눈금 -100..100)" }
+  - { key: grip_closed, kind: number, default: 10, min: 0, max: 100, label: "그리퍼 닫힘 상한 (0..100) — 쉴 때는 닫혀 있다" }
+  - { key: max_fail, kind: number, default: 2, min: 1, max: 20, label: "같은 종류 연속 실패 허용 (넘으면 다음 종류)" }
+  - { key: on_finish, kind: select, default: "pause", options: ["pause", "stop_inference", "none"], label: "판이 비면" }
+  - { key: reset_on_timeout, kind: bool, default: false, label: "타임아웃이면 리셋(원위치)" }
+  # 공통 항목 중 기본값을 바꾸는 것 — 학습 에피소드는 11~20초, 복구 변형은 더 길다
+  - { key: episode_timeout_s, kind: number, default: 60, min: 5, max: 600, label: "회차 타임아웃(초) — 쉼 대기에도 쓴다" }
+  - { key: settle_s, kind: number, default: 0, min: 0, max: 60, step: 0.5, label: "회차 사이 대기(초)" }
+
+permissions:
+  - activity.read
+  - inference.read
+  - inference.stop      # on_finish: stop_inference
+  - params.write        # set_task · pause · reset
+
+commands: [skip]
+
+resources:
+  gpu: true
+  heartbeat: false
+
+outputs:
+  detections: ["apple-sort"]
+  previews: ["det_apple-sort"]
+  state:
+    - { key: phase, label: "단계" }
+    - { key: episode, label: "회차" }
+    - { key: task, label: "지시문" }
+    - { key: counts, label: "판 위 개수" }
+    - { key: resting, label: "팔 쉼" }
