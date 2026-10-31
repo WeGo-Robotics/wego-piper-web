@@ -41,6 +41,10 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
   const [loadError, setLoadError] = useState('')
   // 상세 창 — 어느 학습의 어느 체크포인트
   const [open, setOpen] = useState<{ key: string; ckpt: string } | null>(null)
+  // [정리] — 상세 창에서 지울 체크포인트를 고르는 중이면 고른 id. 무엇이 안 쓰는 것인지는 사람이 정한다
+  const [prune, setPrune] = useState<string[] | null>(null)
+  const [pruning, setPruning] = useState(false)
+  const closeDetail = () => { setOpen(null); setPrune(null) }
   // Hub 업로드 — 올릴 저장소를 묻는 창, 그다음 로그 창 (데이터셋 업로드와 같은 유닛·같은 WS 메시지)
   // ⚠ `repoId` 는 **이름만**이다. 계정은 접속된 계정(`account`)이 정하고 사람이 적지 않는다.
   const [uploadAsk, setUploadAsk] = useState<{ id: string; label: string; repoId: string; account: string; private: boolean } | null>(null)
@@ -99,6 +103,32 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
     if (!await askConfirm(msg)) return
     await api.delete(`/models/${id}`)
     fetchModels()
+  }
+
+  /** 고른 체크포인트를 한 번에 지운다. 최종·전부를 고르면 무엇을 잃는지 묻는 글에 적는다 */
+  const handlePrune = async (row: WeightRun, ids: string[]) => {
+    const picked = row.checkpoints.filter((c) => ids.includes(c.id))
+    const labels = picked.map((c) => c.checkpoint ?? c.id).join(', ')
+    const warn = [
+      picked.length === row.checkpoints.length ? t('이 학습의 체크포인트가 모두 사라집니다.') : '',
+      picked.some((c) => c.final) ? t('마지막 체크포인트가 들어 있습니다 — 이 학습을 이어 학습할 수 없게 됩니다.') : '',
+    ].filter(Boolean).join('\n')
+    const text = t('체크포인트 {n}개를 삭제하시겠습니까? 되돌릴 수 없습니다.\n{labels}', { n: picked.length, labels })
+    if (!await askConfirm(warn ? `${text}\n\n${warn}` : text, { danger: true })) return
+    setPruning(true)
+    try {
+      const r = await api.post<{ deleted: string[]; freed_bytes: number }>(`/models/runs/${row.run}/prune`, { ids })
+      notify({ level: 'info', source: t('모델'),
+               text: t('체크포인트 {n}개를 삭제했습니다 — {size} 확보', { n: r.deleted.length, size: formatBytes(r.freed_bytes) }) })
+      // 전부 지웠으면 학습이 표에서 사라진다 — 창도 닫는다
+      if (picked.length === row.checkpoints.length) closeDetail()
+      else setPrune(null)
+    } catch (e) {
+      notify({ level: 'error', source: t('모델'), text: e instanceof Error ? e.message : t('삭제 실패') })
+    } finally {
+      setPruning(false)
+      fetchModels()
+    }
   }
 
   const handleStartInference = async (model: Model) => {
@@ -168,7 +198,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
         const m = models.find((x) => x.id === ckpt.id)
         return (
           // ⚠ Esc 로 닫지 않는다(전역 E-stop) — ✕ 와 바깥 클릭으로 닫는다. 확인 창(z-[60])은 이 위에 뜬다
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setOpen(null)}>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={closeDetail}>
             <div className="flex max-h-[90vh] w-full max-w-5xl flex-col rounded-lg border border-neutral-700 bg-neutral-900"
               onClick={(e) => e.stopPropagation()}>
               <div className="flex items-start gap-3 border-b border-neutral-800 px-5 py-3">
@@ -178,7 +208,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                     {[row.name && row.key, row.dataset, row.policy_type].filter(Boolean).join(' · ')}
                   </p>
                 </div>
-                <button type="button" onClick={() => setOpen(null)} title={t('닫기')}
+                <button type="button" onClick={closeDetail} title={t('닫기')}
                   className="ml-auto rounded px-2 py-0.5 text-neutral-400 hover:bg-neutral-800 hover:text-white">✕</button>
               </div>
               <div className="min-h-0 space-y-4 overflow-y-auto p-5 text-xs">
@@ -196,14 +226,56 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
                   </div>
                 )}
                 <RunSummary row={row} rows={runs} />
-                {/* 체크포인트 — 눌러서 아래 상세를 바꾼다 */}
+                {/* 체크포인트 — 눌러서 아래 상세를 바꾼다. [정리] 중에는 눌러서 지울 것을 고른다 */}
                 {row.kind === 'run' && (
-                  <div className="flex flex-wrap items-center gap-1">
-                    <span className="mr-1 text-neutral-500">{t('체크포인트')}</span>
-                    {row.checkpoints.map((c) => (
-                      <CheckpointChip key={c.id} c={c} row={row} on={c.id === ckpt.id}
-                        onClick={() => setOpen({ key: row.key, ckpt: c.id })} />
-                    ))}
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className="mr-1 text-neutral-500">{t('체크포인트')}</span>
+                      {row.checkpoints.map((c) => (
+                        <CheckpointChip key={c.id} c={c} row={row} on={!prune && c.id === ckpt.id}
+                          marked={prune?.includes(c.id)} disabled={pruning}
+                          onClick={() => prune
+                            ? setPrune(prune.includes(c.id) ? prune.filter((x) => x !== c.id) : [...prune, c.id])
+                            : setOpen({ key: row.key, ckpt: c.id })} />
+                      ))}
+                      {/* 하나뿐이면 아래 [삭제] 와 같다 */}
+                      {!prune && row.checkpoints.length > 1 && (
+                        <button type="button" onClick={() => setPrune([])}
+                          className="ml-1 rounded border border-neutral-600 px-2 py-0.5 text-neutral-300 hover:border-red-500 hover:text-white">
+                          {t('정리')}
+                        </button>
+                      )}
+                      {/* 체크포인트 폴더만 지운다 — 학습 폴더(이름·loss 곡선)는 남는다. 아직 도는 학습이 거기에 쓴다 */}
+                      {!prune && (
+                        <button type="button" disabled={pruning}
+                          onClick={() => void handlePrune(row, row.checkpoints.map((c) => c.id))}
+                          className="rounded border border-red-900/70 px-2 py-0.5 text-red-300 hover:bg-red-600 hover:text-white disabled:opacity-50">
+                          {t('모든 체크포인트 삭제')}
+                        </button>
+                      )}
+                    </div>
+                    {prune && (() => {
+                      const picked = row.checkpoints.filter((c) => prune.includes(c.id))
+                      return (
+                        <div className="flex flex-wrap items-center gap-2 rounded border border-red-900/60 bg-red-950/30 px-2 py-1.5">
+                          <span className="text-neutral-300">{t('지울 체크포인트를 누르세요 — 고르지 않은 것은 남습니다')}</span>
+                          <button type="button" onClick={() => setPrune(row.checkpoints.map((c) => c.id))}
+                            className="text-neutral-400 underline-offset-2 hover:text-white hover:underline">{t('전부')}</button>
+                          <button type="button" onClick={() => setPrune([])}
+                            className="text-neutral-400 underline-offset-2 hover:text-white hover:underline">{t('없음')}</button>
+                          <span className="ml-auto text-neutral-400">
+                            {t('{n}개 · 가중치 {size}', { n: picked.length, size: formatBytes(picked.reduce((s, c) => s + c.size_bytes, 0)) })}
+                          </span>
+                          <button type="button" onClick={() => setPrune(null)} disabled={pruning}
+                            className="rounded bg-neutral-700 px-2 py-0.5 text-neutral-300 hover:bg-neutral-600">{t('취소')}</button>
+                          <button type="button" disabled={!picked.length || pruning}
+                            onClick={() => void handlePrune(row, prune)}
+                            className="rounded bg-red-600 px-2 py-0.5 text-white hover:bg-red-500 disabled:opacity-50">
+                            {pruning ? t('삭제 중...') : t('{n}개 삭제', { n: picked.length })}
+                          </button>
+                        </div>
+                      )
+                    })()}
                   </div>
                 )}
                 {m && (

@@ -527,3 +527,37 @@ def delete_model(model_id: str) -> bool:
     shutil.rmtree(model_dir)
     logger.info("Deleted model: %s", model_dir)
     return True
+
+
+def delete_checkpoints(run: str, ids: list[str]) -> dict:
+    """한 학습의 체크포인트 여럿을 한 번에 지운다 — 저장소 상세 창의 [정리].
+
+    어느 것이 안 쓰는 것인지는 **사람이 고른다** — 여기서 판정하지 않는다. 하나씩
+    `DELETE /models/{id}` 로 지우면 체크포인트마다 전체를 다시 스캔한다.
+
+    ⚠ 다 확인하고 지운다 — 고른 것 중 하나라도 이 학습의 것이 아니면 아무것도 안 지운다.
+    `…/last` 는 스텝 폴더로 가는 링크라 실제 폴더로 지운다. 지우는 것은 체크포인트 폴더
+    통째(`pretrained_model` + `training_state`)라 확보 용량은 표의 가중치 크기보다 크다.
+    """
+    import shutil
+
+    members = {m["id"]: m for m in scan_models() if m.get("run") == run}
+    if not members:
+        raise LookupError("학습을 찾을 수 없습니다")
+    unknown = [i for i in ids if i not in members]
+    if unknown:
+        raise ValueError("이 학습의 체크포인트가 아닙니다: " + ", ".join(unknown))
+
+    # `…/last` 와 그 스텝은 같은 폴더 — 한 번만
+    dirs = list(dict.fromkeys(Path(members[i]["path"]).parent.resolve() for i in ids))
+    freed = 0
+    for ckpt in dirs:
+        freed += _dir_size(ckpt)
+        shutil.rmtree(ckpt)
+        logger.info("Deleted checkpoint: %s", ckpt)
+    # 가리키던 폴더가 사라진 `last` — 깨진 링크만 남는다
+    for checkpoints_dir in {d.parent for d in dirs}:
+        last = checkpoints_dir / "last"
+        if last.is_symlink() and not last.exists():
+            last.unlink()
+    return {"deleted": ids, "freed_bytes": freed}

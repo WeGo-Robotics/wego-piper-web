@@ -260,3 +260,34 @@ def test_the_description_box_grows_with_its_text():
     src = (REPO / "frontend" / "src" / "components" / "NotesEditor.tsx").read_text()
     assert "el.scrollHeight" in src and "}, [description])" in src, "설명 칸이 글에 맞춰 자라지 않는다"
     assert "<textarea ref={descRef}" in src and "resize-none overflow-hidden" in src
+
+
+def test_prune_deletes_only_the_picked_checkpoints(root):
+    """[정리] — 안 쓰는 체크포인트는 사람이 고른다. 고른 것만 지우고, 다른 학습의 id 가
+    하나라도 섞이면 아무것도 안 지운다. `last` 가 가리키던 폴더를 지우면 깨진 링크도 걷는다."""
+    from app.main import app
+
+    run = root / "2026-10-28" / "09-00-00_act"
+    for step in ("010000", "020000", "030000"):
+        _ckpt(run, step)
+    (run / "checkpoints" / "030000" / "training_state").mkdir()
+    (run / "checkpoints" / "030000" / "training_state" / "optimizer_state.safetensors").write_bytes(b"o" * 16)
+    (run / "checkpoints" / "last").symlink_to("030000")
+    other = root / "2026-10-28" / "10-00-00_act"
+    _ckpt(other, "010000")
+    c = TestClient(app)
+    url = "/api/models/runs/2026-10-28/09-00-00_act/prune"
+
+    r = c.post(url, json={"ids": ["2026-10-28/09-00-00_act/010000", "2026-10-28/10-00-00_act/010000"]})
+    assert r.status_code == 400
+    assert (run / "checkpoints" / "010000").exists(), "남의 id 가 섞였는데 지웠다"
+    assert c.post(url, json={"ids": []}).status_code == 400
+    assert c.post("/api/models/runs/2026-01-01/x/prune", json={"ids": ["a"]}).status_code == 404
+
+    # `…/last` 로 골라도 그 스텝 폴더를 지운다 — training_state 까지 확보 용량에 든다
+    r = c.post(url, json={"ids": ["2026-10-28/09-00-00_act/010000", "2026-10-28/09-00-00_act/last"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["freed_bytes"] > 2 * 8 + 16
+    left = sorted(p.name for p in (run / "checkpoints").iterdir())
+    assert left == ["020000"], f"고른 것만 지워야 한다: {left}"
+    assert (other / "checkpoints" / "010000").exists()

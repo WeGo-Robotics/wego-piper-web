@@ -293,10 +293,12 @@ export default function WeightTable({ rows, value, onPick, onOpen, blockedReason
 }
 
 /** 체크포인트 칩 한 칸 — 표의 행과 저장소 상세 창이 같이 쓴다. `last` 는 가리키는 스텝과 한 칸이다. */
-export function CheckpointChip({ c, row, on, disabled, onClick }: {
+export function CheckpointChip({ c, row, on, marked, disabled, onClick }: {
   c: WeightCheckpoint
   row: WeightRun
   on: boolean
+  /** 지우려고 고른 칸 (저장소 상세 창의 [정리]) */
+  marked?: boolean
   disabled?: boolean
   onClick: () => void
 }) {
@@ -308,7 +310,8 @@ export function CheckpointChip({ c, row, on, disabled, onClick }: {
       onClick={(e) => { e.stopPropagation(); onClick() }}
       title={[c.final ? t('마지막 체크포인트') : '', own].filter(Boolean).join(' · ') || undefined}
       className={`rounded px-1.5 py-0.5 font-mono whitespace-nowrap disabled:cursor-not-allowed
-        ${on ? 'bg-blue-600 text-white'
+        ${marked ? 'bg-red-700 text-white line-through decoration-white/70'
+          : on ? 'bg-blue-600 text-white'
           : c.final ? 'bg-neutral-700 text-neutral-100 hover:bg-neutral-600'
           : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'}`}>
       {c.step != null ? kSteps(c.step) : (c.checkpoint === 'last' ? 'last' : t('모델'))}

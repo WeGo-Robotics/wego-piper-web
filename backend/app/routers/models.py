@@ -21,7 +21,9 @@ from app.services.camera_config import (
     prepare_cameras,
     release_all_cameras,
 )
-from app.services.model_scanner import scan_models, scan_runs, run_dir_of, get_model, delete_model
+from app.services.model_scanner import (
+    delete_checkpoints, delete_model, get_model, run_dir_of, scan_models, scan_runs,
+)
 from app.services.robot_config import ArmPrepareError, prepare_arms, resolve_robot_type
 from app.services.param_bridge import param_bridge
 from app.services import inference_state
@@ -286,6 +288,24 @@ async def put_run_notes(run: str, body: ModelNotesRequest):
     if run_dir is None:
         raise HTTPException(404, "학습을 찾을 수 없습니다")
     return write_notes(run_dir, kind="model", name=body.name, description=body.description)
+
+
+class PruneRequest(BaseModel):
+    #: 지울 체크포인트 id — 전부 이 학습의 것이어야 한다
+    ids: list[str]
+
+
+@router.post("/runs/{run:path}/prune")
+async def prune_run(run: str, body: PruneRequest):
+    """한 학습에서 사람이 고른 체크포인트만 지운다 (model_scanner.delete_checkpoints)."""
+    if not body.ids:
+        raise HTTPException(400, "지울 체크포인트를 고르세요")
+    try:
+        return delete_checkpoints(run, body.ids)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 # 이름·설명 사이드카 — 상세 catch-all 이 path 를 통째로 삼키므로 **위에** 둔다.
