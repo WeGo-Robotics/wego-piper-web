@@ -38,7 +38,7 @@ config:
   - { key: on_empty_inference, kind: select, default: "pause", options: ["pause", "wait", "stop_inference"], label: "판이 비면 추론 — pause 일시정지 · wait 그대로 두기 · stop_inference 정지 (정지하면 플러그인도 끝난다)" }
   - { key: on_empty_plugin, kind: select, default: "stop", options: ["stop", "wait"], label: "판이 비면 플러그인 — stop 검출을 멈춘다 (추론이 쉬는 중이면 task 도 공백으로) · wait 계속 대기 (사과가 다시 올라오면 이어서)" }
   - { key: reset_on_timeout, kind: bool, default: false, label: "타임아웃이면 리셋(원위치)" }
-  - { key: reset_on_start, kind: bool, default: true, label: "시작하면 원위치 리셋 후 추론 재개 (첫 지시문을 넣고 나서 — 일시정지로 끝난 추론도 다시 돈다)" }
+  - { key: reset_on_start, kind: bool, default: true, label: "시작하면 원위치 리셋 후 추론 재개 (팔 쉼을 기다리지 않고 첫 지시문을 넣는다 — 일시정지·지시문 없이 도는 추론도 풀린다)" }
   # 공통 항목 중 기본값을 바꾸는 것 — 학습 에피소드는 11~20초, 복구 변형은 더 길다
   - { key: episode_timeout_s, kind: number, default: 60, min: 5, max: 600, label: "회차 타임아웃(초) — 쉼 대기에도 쓴다" }
   - { key: settle_s, kind: number, default: 0, min: 0, max: 60, step: 0.5, label: "회차 사이 대기(초)" }
@@ -64,4 +64,5 @@ outputs:
     - { key: task, label: "지시문" }
     - { key: counts, label: "판 위 개수" }
     - { key: resting, label: "팔 쉼" }
+    - { key: rest_why, label: "쉬지 못하는 이유" }
     - { key: waiting, label: "대기" }

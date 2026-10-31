@@ -33,9 +33,12 @@
 낙관치), 라벨 못 한 13 장 중 틀린 7 장은 전부 팔이 사과를 가리거나 든 장면이다 — 쉴 때만 세므로
 판단에는 안 걸린다. 모델을 바꾸면 conf 부터 다시 잰다 (`tools/replay.py`·`tools/autolabel.py`).
 
-추론은 먼저 켜 둔다 — **학습한 세 문장 중 하나로** (아무 문장이나 넣으면 첫 쉼까지 정책이
-무엇을 할지 모른다). 이전 실행이 일시정지로 끝났어도 된다: 시작하고 팔이 쉬면 첫 판단에서
-지시문을 넣고 → 원위치 리셋 → 재개한다 (`reset_on_start`, 끄면 지시문만 넣는다). 판이 비어 있으면
+추론은 먼저 켜 둔다 — 가능하면 **학습한 세 문장 중 하나로** (아무 문장이나 넣으면 첫 쉼까지 정책이
+무엇을 할지 모른다). 이전 실행이 일시정지로 끝났어도, 지시문 없이 시작했어도 된다: 시작하면
+**팔 쉼을 기다리지 않고** 판 위 개수가 안정되는 대로(`still_s`) 첫 판단에서 지시문을 넣고 → 원위치
+리셋 → 재개한다 (`reset_on_start`). 지시문 없이 도는 래퍼는 "do the task" 로 돌아 팔이 한 번도 안
+쉬는데(2026-10-31 117 실측: 1.5초 창 179개 중 쉼 0), 쉼을 기다리면 "지시문이 없어 안 쉬고, 안 쉬어서 못
+넣는" 교착이 된다. `reset_on_start` 를 끄면 예전처럼 쉼을 기다려 지시문만 넣는다. 판이 비어 있으면
 리셋하지 않는다 — 놓을 사과가 생길 때까지 추론은 그대로다.
 
     piper-plugin run plugins/apple-sort --camera top=<위 카메라 스트림> \
@@ -181,34 +184,59 @@ class AppleSort(MissionPlugin):
             grip = max(grip, s.gripper)
         return joints, grip
 
-    def _resting(self) -> bool:
+    def _resting(self, *, first: bool = False) -> bool:
         """한 번 보고 창에 넣는다. 창이 `still_s` 를 덮고, 그동안 관절 변동 < `still_tol`,
-        그리퍼 닫힘, 판 위 개수 불변이면 쉰다."""
+        그리퍼 닫힘, 판 위 개수 불변이면 쉰다.
+
+        `first` — 시작 직후의 첫 판단은 **판 위 개수가 안정적이기만 하면** 통과한다. 지시문 없이(또는 학습에 없는
+        문장으로) 도는 추론은 팔이 한 번도 안 쉬어서, 쉼을 기다리면 "지시문이 없어 안 쉬고, 안 쉬어서 못 넣는"
+        교착이 된다. 시작 직후에는 지시문을 넣고 원위치로 돌리므로(`_start_up`) 팔 쉼을 볼 이유가 없다."""
         counts = self._look()
         arms = self._arm_pose()
         now = time.monotonic()
-        if counts is None or arms is None:
+        if counts is None or (arms is None and not first):
             self._window.clear()
-            self.state(resting=False)
+            # 지시문은 첫 판단에서야 올라간다 — 쉼이 안 잡히면 화면에 "—" 로 남으니 이유를 같이 올린다
+            self.state(resting=False, rest_why="검출 결과가 없다 (카메라 프레임·검출 모델)" if counts is None
+                       else "팔 상태가 없거나 낡았다 (robotd·shm)")
             return False
+        if arms is None:                                        # first — 팔을 못 읽어도 개수만 본다
+            arms = ([], 0.0)
         self.counts = counts
         self._window.append((now, arms[0], arms[1], counts))
         span = float(self.config["still_s"])
         while len(self._window) > 1 and now - self._window[1][0] >= span:
             self._window.popleft()
         tol = float(self.config["still_tol"])
-        rest = (now - self._window[0][0] >= span
-                and all(c == counts for *_, c in self._window)
-                and all(g <= float(self.config["grip_closed"]) for _, _, g, _ in self._window)
-                and all(max(col) - min(col) < tol for col in zip(*(j for _, j, _, _ in self._window))))
-        self.state(resting=rest, counts=counts)
-        return rest
+        grip_max = float(self.config["grip_closed"])
+        seen = now - self._window[0][0]
+        same = all(c == counts for *_, c in self._window)
+        grip = max(g for _, _, g, _ in self._window)
+        spread = max((max(col) - min(col) for col in zip(*(j for _, j, _, _ in self._window))), default=0.0)
+        still = grip <= grip_max and spread < tol
+        rest = seen >= span and same and still
+        ready = seen >= span and same and (still or first)
+        if rest:
+            why = ""
+        elif seen < span:
+            why = f"지켜보는 중 ({seen:.1f}/{span:g}초)"
+        elif not same:
+            kinds = {tuple(sorted(c.items())) for *_, c in self._window}
+            why = f"판 위 개수가 바뀐다 ({len(kinds)}가지)"
+        elif first:
+            why = "시작 직후라 팔 쉼을 기다리지 않는다"
+        elif grip > grip_max:
+            why = f"그리퍼가 열려 있다 ({grip:.0f} > {grip_max:g})"
+        else:
+            why = f"팔이 움직인다 (관절 변동 {spread:.1f} ≥ {tol:g})"
+        self.state(resting=rest, counts=counts, rest_why=why)
+        return ready
 
     # ── 훅 ──
 
     def observe(self) -> dict:
         self._window.clear()
-        settled = self.wait_until(self._resting, float(self.config["episode_timeout_s"]))
+        settled = self.wait_until(lambda: self._resting(first=self._wake), float(self.config["episode_timeout_s"]))
         return {"counts": dict(self.counts) if settled else None}
 
     def decide(self, ctx) -> Decision:
