@@ -4,7 +4,6 @@ import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
 import LogViewer from '../components/LogViewer'
-import RepoIdInput, { repoIdError } from '../components/RepoIdInput'
 import type { Model, WeightRun } from '../types/models'
 import { sizeText } from '../types/camera'
 import DiskUsageBar from '../components/DiskUsageBar'
@@ -43,7 +42,8 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
   // 상세 창 — 어느 학습의 어느 체크포인트
   const [open, setOpen] = useState<{ key: string; ckpt: string } | null>(null)
   // Hub 업로드 — 올릴 저장소를 묻는 창, 그다음 로그 창 (데이터셋 업로드와 같은 유닛·같은 WS 메시지)
-  const [uploadAsk, setUploadAsk] = useState<{ id: string; label: string; repoId: string; private: boolean } | null>(null)
+  // ⚠ `repoId` 는 **이름만**이다. 계정은 접속된 계정(`account`)이 정하고 사람이 적지 않는다.
+  const [uploadAsk, setUploadAsk] = useState<{ id: string; label: string; repoId: string; account: string; private: boolean } | null>(null)
   const [uploadRepo, setUploadRepo] = useState<string | null>(null)
   const [uploadLogs, setUploadLogs] = useState<string[]>([])
   const [uploadState, setUploadState] = useState('idle')
@@ -56,7 +56,7 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
     }, []),
   })
 
-  /** 올릴 저장소를 묻는다. 이름은 "정책-데이터셋-스텝" 으로 채워 두고 네임스페이스는 내 계정 —
+  /** 올릴 저장소 이름을 묻는다. 이름은 "정책-데이터셋-스텝" 으로 채워 두고, 계정은 지금 접속된 계정 —
    *  모델 id 는 학습 경로(`2026-10-27/…/020000`)라 그대로는 저장소 이름이 못 된다. */
   const askUpload = async (id: string, row: WeightRun) => {
     const c = row.checkpoints.find((x) => x.ids.includes(id)) ?? row.checkpoints[0]
@@ -65,14 +65,14 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
       .filter(Boolean).join('-').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-').slice(0, 96)
     const who = await api.get<{ logged_in: boolean; username: string }>('/hub/whoami').catch(() => null)
     setUploadAsk({ id, label: `${row.name || row.key} · ${c?.checkpoint ?? id}`,
-                   repoId: who?.logged_in && who.username ? `${who.username}/${slug}` : slug, private: false })
+                   repoId: slug, account: who?.logged_in ? who.username : '', private: false })
   }
 
   const startUpload = async () => {
     if (!uploadAsk) return
     try {
-      await api.post(`/models/${uploadAsk.id}/upload`, { repo_id: uploadAsk.repoId.trim(), private: uploadAsk.private })
-      setUploadRepo(uploadAsk.repoId.trim()); setUploadLogs([]); setUploadState('starting'); setUploadAsk(null)
+      const r = await api.post<{ repo_id?: string }>(`/models/${uploadAsk.id}/upload`, { repo_id: uploadAsk.repoId.trim(), private: uploadAsk.private })
+      setUploadRepo(r.repo_id ?? `${uploadAsk.account}/${uploadAsk.repoId.trim()}`); setUploadLogs([]); setUploadState('starting'); setUploadAsk(null)
     } catch (e) {
       notify({ level: 'error', source: t('모델'), text: e instanceof Error ? e.message : t('업로드 실패') })
     }
@@ -220,8 +220,12 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
 
       {/* 올릴 저장소 묻기 — ⚠ Esc 로 닫지 않는다(전역 E-stop) */}
       {uploadAsk && (() => {
-        const err = repoIdError(uploadAsk.repoId)
-        const ok = !!uploadAsk.repoId.trim() && !err
+        const name = uploadAsk.repoId.trim()
+        const err = !name ? null
+          : name.includes('/') ? t('계정은 적지 않습니다 — 이름만 적으세요')
+          : !/^[\w.-]+$/.test(name) ? t('영문·숫자·밑줄·점·하이픈만 쓸 수 있습니다')
+          : null
+        const ok = !!name && !err && !!uploadAsk.account
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setUploadAsk(null)}>
             <div className="w-full max-w-lg space-y-3 rounded-lg border border-neutral-700 bg-neutral-900 p-4 text-sm"
@@ -230,7 +234,19 @@ export default function ModelsPage({ embedded = false, tab: tabProp, refreshKey 
               <p className="text-xs text-neutral-400">{uploadAsk.label}</p>
               <div className="space-y-1">
                 <label className="text-xs text-neutral-400">{t('올릴 모델 저장소')}</label>
-                <RepoIdInput value={uploadAsk.repoId} onChange={(v) => setUploadAsk({ ...uploadAsk, repoId: v })} />
+                <div className="flex items-center gap-1.5">
+                  <span className="shrink-0 rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-sm text-neutral-300">
+                    {uploadAsk.account || '—'}
+                  </span>
+                  <span className="text-neutral-500">/</span>
+                  <input type="text" value={uploadAsk.repoId} placeholder={t('이름')}
+                    onChange={(e) => setUploadAsk({ ...uploadAsk, repoId: e.target.value })}
+                    className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none" />
+                </div>
+                <p className="text-[11px] text-neutral-500">{t('지금 접속된 Hub 계정 아래로 올라갑니다 — 이름에 계정을 적지 않습니다.')}</p>
+                {!uploadAsk.account && (
+                  <p className="text-xs text-amber-400">{t('Hub 에 로그인되어 있지 않습니다 — 설정 → 저장소에서 로그인하세요.')}</p>
+                )}
                 {err && <p className="text-xs text-amber-400">{err}</p>}
               </div>
               <label className="flex items-center gap-2 text-xs text-neutral-300">

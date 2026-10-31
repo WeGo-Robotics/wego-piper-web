@@ -84,6 +84,41 @@ def clear_token() -> bool:
     refresh_api()
     return existed
 
+
+async def require_hub_write() -> str:
+    """올리기 전에 — 지금 접속된 계정 이름을 돌려준다. 로그인이 안 됐거나 읽기 전용 토큰이면
+    **지금** 말한다(로그 창에서 401 을 읽게 하지 않는다).
+
+    HF 가 안 닿는 것은 막지 않는다 — 그건 업로드가 직접 말한다. 대신 빈 문자열을 돌려주니,
+    계정이 필요한 쪽(`repo_under`)은 그때 따로 거절해야 한다.
+    """
+    from fastapi import HTTPException
+
+    try:
+        info = await asyncio.wait_for(asyncio.to_thread(get_api().whoami), timeout=10)
+    except Exception as e:                                       # noqa: BLE001
+        logger.warning("HF 권한을 확인 못 했다 (업로드는 진행): %s", e)
+        return ""
+    if not info.get("name"):
+        raise HTTPException(400, "HuggingFace 에 로그인되어 있지 않습니다 — 설정 → 저장소에서 토큰을 넣으세요")
+    if info.get("auth", {}).get("accessToken", {}).get("role", "") == "read":
+        raise HTTPException(400, "HuggingFace 토큰이 읽기 전용입니다 — 설정 → 저장소에서 write 권한 토큰으로 바꾸세요")
+    return info["name"]
+
+
+def repo_under(account: str, name: str) -> str:
+    """Hub 에 올릴 저장소 id — 접속된 계정 아래의 `name`.
+
+    ⚠ 이름의 앞 `누구/` 는 버린다. 로컬 데이터셋 id(`wego-hansu/dualarm_sort_apple`)의 앞부분은
+    녹화한 사람의 폴더 이름일 뿐 Hub 계정이 아니다 — 그대로 쓰면 다른 계정의 이름공간으로 올리려다
+    거절당한다. 올라가는 곳은 토큰이 가리키는 계정이다.
+    """
+    if not account:
+        from fastapi import HTTPException
+
+        raise HTTPException(400, "HuggingFace 에 닿지 못해 올릴 계정을 확인할 수 없습니다 — 연결을 확인하고 다시 시도하세요")
+    return f"{account}/{name.strip().rsplit('/', 1)[-1]}"
+
 # 다운로드 진행 상태 추적
 
 

@@ -576,7 +576,12 @@ class UploadRequest(BaseModel):
 
 @router.post("/{dataset_id:path}/upload")
 async def upload_to_hub(dataset_id: str, body: UploadRequest):
-    """로컬 데이터셋을 HuggingFace Hub에 업로드."""
+    """로컬 데이터셋을 HuggingFace Hub에 업로드.
+
+    올라가는 곳은 **지금 접속된 계정** 아래 `<계정>/<데이터셋 이름>` 이다. 로컬 id 의 앞부분
+    (`wego-hansu/…`)은 녹화한 사람의 폴더 이름이라 Hub 계정과 다를 수 있다 — 그대로 쓰면 남의
+    이름공간으로 올리려다 거절당한다.
+    """
     ds_path = find_dataset_path(dataset_id)
     if not ds_path:
         raise HTTPException(404, "Dataset not found")
@@ -586,10 +591,13 @@ async def upload_to_hub(dataset_id: str, body: UploadRequest):
     if not hf_cli:
         raise HTTPException(500, "HuggingFace CLI(hf)를 찾을 수 없습니다. 설정에서 경로를 지정하세요.")
 
+    from app.services import hub_client
+    repo_id = hub_client.repo_under(await hub_client.require_hub_write(), dataset_id)
+
     # 이름·설명 사이드카가 있으면 허브 카드(README.md)로 만든다 — 업로드가 폴더
     # 전체를 올리므로 여기서 만들어 두면 카드가 된다. 이미 있으면 안 건드린다.
     from app.services.notes_sidecar import ensure_readme, read_notes
-    ensure_readme(ds_path, dataset_id, read_notes(ds_path, kind="dataset"))
+    ensure_readme(ds_path, repo_id, read_notes(ds_path, kind="dataset"))
 
     # ⚠ CLI 를 직접 부르지 않고 스크립트로 감싼다 — **업로드 뒤에 코드베이스 태그를
     #   달아야** 하기 때문이다. `hf upload` 는 폴더를 올릴 뿐 태그를 안 만들고, 태그가
@@ -603,14 +611,14 @@ async def upload_to_hub(dataset_id: str, body: UploadRequest):
 
     file_count = sum(1 for _ in ds_path.rglob("*") if _.is_file())
     script = Path(__file__).resolve().parents[2] / "scripts" / "upload_dataset.py"
-    args = [settings.grpc_python, "-u", str(script), dataset_id, str(ds_path),
+    args = [settings.grpc_python, "-u", str(script), repo_id, str(ds_path),
             f"--hf-cli={hf_cli}"]
     if file_count > 1000:
         args.append("--large")
     if body.private:
         args.append("--private")
     await _upload_pm.start(args)
-    return {"status": "started", "dataset_id": dataset_id, "pid": _upload_pm.pid}
+    return {"status": "started", "dataset_id": dataset_id, "repo_id": repo_id, "pid": _upload_pm.pid}
 
 
 class DecodeCacheRequest(BaseModel):

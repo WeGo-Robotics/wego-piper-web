@@ -299,28 +299,11 @@ async def put_model_notes(model_id: str, body: ModelNotesRequest):
 
 
 class ModelUploadRequest(BaseModel):
-    #: 올릴 Hub 모델 저장소 — `네임스페이스/이름`. 모델 id 는 학습 경로(`2026-10-27/…/020000`)라
-    #: 그대로 저장소 이름이 될 수 없어서 사람이 정한다.
+    #: 올릴 Hub 모델 저장소 이름. **이름만** 주면 접속된 계정 아래로 간다(화면은 이 모양만 보낸다).
+    #: `네임스페이스/이름` 을 주면 그대로 쓴다 — 외부 호출이 조직을 직접 고를 길이다. 모델 id 는 학습
+    #: 경로(`2026-10-27/…/020000`)라 그대로 저장소 이름이 될 수 없어서 사람이 정한다.
     repo_id: str
     private: bool = False
-
-
-async def _require_hub_write() -> None:
-    """올리기 전에 — 로그인이 안 됐거나 읽기 전용 토큰이면 **지금** 말한다(로그 창에서 401 을 읽게
-    하지 않는다). HF 가 안 닿는 것은 막지 않는다 — 그건 업로드가 직접 말한다."""
-    import asyncio
-
-    from app.services import hub_client
-
-    try:
-        info = await asyncio.wait_for(asyncio.to_thread(hub_client.get_api().whoami), timeout=10)
-    except Exception as e:                                       # noqa: BLE001
-        logger.warning("HF 권한을 확인 못 했다 (업로드는 진행): %s", e)
-        return
-    if not info.get("name"):
-        raise HTTPException(400, "HuggingFace 에 로그인되어 있지 않습니다 — 설정 → 저장소에서 토큰을 넣으세요")
-    if info.get("auth", {}).get("accessToken", {}).get("role", "") == "read":
-        raise HTTPException(400, "HuggingFace 토큰이 읽기 전용입니다 — 설정 → 저장소에서 write 권한 토큰으로 바꾸세요")
 
 
 @router.post("/{model_id:path}/upload")
@@ -338,11 +321,12 @@ async def upload_model_to_hub(model_id: str, body: ModelUploadRequest):
     import re
 
     from app.routers.datasets import _find_hf_cli, _upload_pm
+    from app.services import hub_client
     from app.services.notes_sidecar import ensure_readme
 
     repo_id = body.repo_id.strip()
-    if not re.fullmatch(r"[\w.-]+/[\w.-]+", repo_id):
-        raise HTTPException(400, "저장소 이름은 '네임스페이스/이름' 형식이어야 합니다")
+    if not re.fullmatch(r"([\w.-]+/)?[\w.-]+", repo_id):
+        raise HTTPException(400, "저장소 이름에는 영문·숫자·밑줄·점·하이픈만 쓸 수 있습니다")
     model = get_model(model_id)
     if not model:
         raise HTTPException(404, "Model not found")
@@ -350,7 +334,9 @@ async def upload_model_to_hub(model_id: str, body: ModelUploadRequest):
     hf_cli = _find_hf_cli()
     if not hf_cli:
         raise HTTPException(500, "HuggingFace CLI(hf)를 찾을 수 없습니다. 설정에서 경로를 지정하세요.")
-    await _require_hub_write()
+    account = await hub_client.require_hub_write()
+    if "/" not in repo_id:
+        repo_id = hub_client.repo_under(account, repo_id)
 
     model_dir = Path(model["path"])
     # 이름·설명이 있으면 허브 카드(README.md)로 — 이미 있으면 안 건드린다. ⚠ 학습 산출물에만 쓴다:

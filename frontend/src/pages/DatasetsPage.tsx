@@ -70,7 +70,11 @@ export default function DatasetsPage({ embedded = false, tab: tabProp, refreshKe
   const handleUpload = async (id: string) => {
     // 미결 실패는 사이드카와 같이 올라간다 — 받는 쪽도 미결을 보지만, 올리기 전에 알게 한다 (scenario-designer §8-3)
     const pending = datasets.find((d) => d.id === id)?.scenario?.pending ?? 0
-    const ask = t('"{id}"를 HuggingFace Hub에 업로드하시겠습니까?', { id })
+    // 올라가는 곳은 접속된 계정 아래다 — 로컬 id 의 앞부분(녹화한 사람 폴더)이 아니다. 누르기 전에 보여 준다
+    const who = await api.get<{ logged_in: boolean; username: string }>('/hub/whoami').catch(() => null)
+    const ask = who?.logged_in && who.username
+      ? t('"{id}" 를 HuggingFace Hub 의 {target} 로 업로드하시겠습니까?', { id, target: `${who.username}/${id.split('/').pop()}` })
+      : t('"{id}"를 HuggingFace Hub에 업로드하시겠습니까?', { id })
     if (!await askConfirm(pending
       ? `${ask}\n\n${t('⚠ 학습에 넣을지 아직 안 정한 실패 에피소드가 {n}개 있습니다 — 표시는 같이 올라가므로 받는 쪽도 미결로 봅니다', { n: pending })}`
       : ask)) return
