@@ -249,12 +249,28 @@ async def get_detections():
     return {name: bus.get_detections(name) for name in bus.detection_names()}
 
 
-@router.get("/preview/{name}")
-async def get_annotated_preview(name: str):
-    """검출기의 어노테이트 프리뷰 (버스 `det_<name>` 키)."""
+# 프리뷰는 화면이 한 장 뜨는 대로 다음 장을 부른다(초당 수 장) — 요청마다 `Bus()` 를 만들면 그때마다
+# Redis 연결을 새로 연다. 한 번 만든 것을 쓴다(redis 클라이언트는 연결 풀이라 스레드에서 같이 써도 된다).
+_preview_bus = None
+
+
+def _preview_bytes(key: str) -> bytes | None:
+    global _preview_bus
     from piper_bus.client import Bus
 
-    data = Bus().get_preview(f"det_{name}")
+    if _preview_bus is None:
+        _preview_bus = Bus()
+    return _preview_bus.get_preview(key)
+
+
+@router.get("/preview/{name}")
+async def get_annotated_preview(name: str):
+    """검출기의 어노테이트 프리뷰 (버스 `det_<name>` 키).
+
+    읽기는 스레드에서 한다 — 버스가 느릴 때 이벤트 루프가 같이 서면 heartbeat 이 끊겨 E-stop 이 돈다."""
+    import asyncio
+
+    data = await asyncio.to_thread(_preview_bytes, f"det_{name}")
     if data is None:
         raise HTTPException(404, "프리뷰 없음 — 검출기가 돌고 있습니까?")
     return Response(content=data, media_type="image/jpeg")

@@ -95,8 +95,10 @@ export type LiveFrames = {
  *
  * 끊기면 스스로 다시 건다. 탭이 가려지면 닫는다 — 안 보는 화면이 연결(과 인코딩)을 쥘 이유가 없고,
  * 읽는 곳이 없으면 유휴 종료 옵션이 켜진 카메라는 닫힌다(돌아오면 `useReviveStopped` 가 연다).
+ *
+ * `fps` 를 안 주면 서버 기본(10)이다 — 카드 여럿을 띄우는 화면은 그걸로 충분하다.
  */
-export function useLiveFrames(ids: string[]): LiveFrames {
+export function useLiveFrames(ids: string[], fps?: number): LiveFrames {
   const sinks = useRef(new Map<string, { el: HTMLImageElement; url: string | null }>())
   const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden')
   // 목록이 같으면 같은 연결을 쓴다 — 정렬해서 순서 차이로 다시 걸지 않는다
@@ -129,7 +131,7 @@ export function useLiveFrames(ids: string[]): LiveFrames {
     const open = async () => {
       ctl = new AbortController()
       try {
-        const qs = list.map((i) => `ids=${encodeURIComponent(i)}`).join('&')
+        const qs = list.map((i) => `ids=${encodeURIComponent(i)}`).join('&') + (fps ? `&fps=${fps}` : '')
         const res = await fetch(`/api/cameras/live?${qs}`, { signal: ctl.signal })
         if (!res.ok || !res.body) throw new Error(String(res.status))
         wait = RETRY_MIN_MS
@@ -152,7 +154,7 @@ export function useLiveFrames(ids: string[]): LiveFrames {
       ctl?.abort()
       if (timer) clearTimeout(timer)
     }
-  }, [key, visible])
+  }, [key, visible, fps])
 
   const attach = useCallback((id: string, el: HTMLImageElement) => {
     const sink = { el, url: null as string | null }

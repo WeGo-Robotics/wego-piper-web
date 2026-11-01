@@ -4,7 +4,9 @@ import { api } from '../services/api'
 import { useT } from '../i18n'
 import { useSystemMessage } from '../components/SystemMessages'
 import { useWebSocket, type WsMessage } from '../hooks/useWebSocket'
+import { useLiveFrames } from '../hooks/useCameraLive'
 import LogViewer from '../components/LogViewer'
+import LiveCameraFrame from '../components/LiveCameraFrame'
 import PluginConfigForm from '../components/PluginConfigForm'
 import { openPluginUi, PluginStateDot, ScopeBadges } from '../components/PluginBits'
 import { isRunning, type PluginConfigValues, type PluginDeps, type PluginInfo, type PluginRun, type PluginTopic } from '../types/plugins'
@@ -17,6 +19,10 @@ const TABS = [
 type TabId = (typeof TABS)[number]['id']
 
 type DetPayload = { ts: number; objects: { label: string; conf: number }[]; text: string; publisher?: string }
+
+// 출력 탭의 실시간 원본(카메라 슬롯의 shm). 카메라는 15fps 로 열려 있다(수집 기본) — 서버 기본 10 이면 장면이
+// 듬성듬성하다. 한 화면에 한두 대라 인코딩은 작다
+const LIVE_FPS = 15
 
 /**
  * 플러그인 상세 — 제목 옆 탭 (feature/plugins.md §8-1). 설정은 도는 중 읽기 전용이고 값은
@@ -37,7 +43,6 @@ export default function PluginDetailPage() {
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState(false)
   const [logs, setLogs] = useState<string[]>([])
-  const [tick, setTick] = useState(0)
   const [detections, setDetections] = useState<Record<string, DetPayload>>({})
   const [runs, setRuns] = useState<PluginRun[]>([])
   const [deps, setDeps] = useState<PluginDeps | null>(null)
@@ -48,7 +53,6 @@ export default function PluginDetailPage() {
     try {
       const r = await api.get<PluginInfo>(`/plugins/${name}`)
       setInfo(r)
-      setTick((x) => x + 1)
       if (r.manifest?.outputs.detections.length) {
         const all = await api.get<Record<string, DetPayload>>('/vision/detections')
         setDetections(Object.fromEntries(Object.entries(all).filter(([k, v]) => r.manifest!.outputs.detections.includes(k) || v?.publisher === name)))
@@ -146,6 +150,11 @@ export default function PluginDetailPage() {
   const hasPreview = (m?.outputs.previews.length ?? 0) > 0
   const valueCls = hasPreview ? 'break-all' : 'truncate'
   const extraKv = Object.entries(kv).filter(([k]) => !stateRows.some((s) => s.key === k) && !['ts', 'uptime_s'].includes(k))
+  // 카메라 슬롯 → 스트림 이름. 도는 중이면 그 실행의 매핑, 아니면 저장값 — `/api/cameras/live` 는 이름을 그대로 받는다
+  const camMap = info?.cameras ?? info?.saved?.cameras ?? {}
+  const liveCams = (m?.cameras ?? []).flatMap((c) => (camMap[c.key] ? [{ key: c.key, stream: camMap[c.key] }] : []))
+  // 검출 표시(판단할 때마다 한 장)와 실시간 원본을 같이 본다 — 출력 탭을 보는 동안만 연결을 쥔다
+  const live = useLiveFrames(hasPreview && tab === 'output' ? liveCams.map((c) => c.stream) : [], LIVE_FPS)
 
   return (
     <div className="space-y-6">
@@ -256,10 +265,18 @@ export default function PluginDetailPage() {
             <div className="space-y-3">
               {m.outputs.previews.map((p) => (
                 <div key={p} className="rounded-lg border border-neutral-700 bg-black overflow-hidden">
-                  <img src={`/api/vision/preview/${p.replace(/^det_/, '')}?t=${tick}`} alt={p} className="w-full"
-                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0.2' }}
-                    onLoad={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '1' }} />
-                  <div className="px-2 py-1 text-xs text-neutral-500 font-mono">{p}</div>
+                  <PreviewImage name={p.replace(/^det_/, '')} alt={p} />
+                  <div className="px-2 py-1 text-xs text-neutral-500">
+                    {t('검출 표시')} <span className="font-mono">· {p}</span>
+                  </div>
+                </div>
+              ))}
+              {liveCams.map((c) => (
+                <div key={c.key} className="rounded-lg border border-neutral-700 bg-black overflow-hidden">
+                  <LiveCameraFrame id={c.stream} alt={c.key} attach={live.attach} className="w-full aspect-[4/3] object-contain" />
+                  <div className="px-2 py-1 text-xs text-neutral-500">
+                    {t('실시간 원본')} <span className="font-mono">· {c.key} · {c.stream}</span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -339,6 +356,40 @@ export default function PluginDetailPage() {
       )}
     </div>
   )
+}
+
+// 검출 표시를 다시 부르는 간격 — 한 장이 뜬 뒤 이만큼 쉬고 다음 장. 플러그인이 초당 3~5장 올리니 그보다 촘촘하면 된다
+const PREVIEW_GAP_MS = 150
+const PREVIEW_RETRY_MS = 1000
+
+/**
+ * 플러그인의 검출 표시 — **한 장이 뜨면 다음 장을 부른다**(플러그인이 올리는 속도 그대로).
+ * 예전에는 상태 폴링(1.5초)마다 한 장이라, 사과 분류가 초당 3.5장을 올려도 화면은 0.7장이었다.
+ * 요청은 늘 하나만 떠 있다 — 느려도 쌓이지 않는다(요청 적체로 버튼이 마비된 적이 있다). 탭이 가려지면 쉰다.
+ *
+ * 다음 장은 화면 밖(`Image`)에서 받고 다 받은 뒤에만 바꿔 낀다 — 미리보기 키가 잠깐 비면(버스 TTL 3초)
+ * 깨진 그림이 깜빡였다. 못 받으면 마지막 장을 흐리게 남긴다.
+ */
+function PreviewImage({ name, alt }: { name: string; alt: string }) {
+  const [src, setSrc] = useState<string | null>(null)
+  const [stale, setStale] = useState(false)
+  useEffect(() => {
+    let dead = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const load = () => {
+      if (dead) return
+      if (document.visibilityState === 'hidden') { timer = setTimeout(load, PREVIEW_RETRY_MS); return }
+      const url = `/api/vision/preview/${encodeURIComponent(name)}?t=${Date.now()}`
+      const img = new Image()
+      img.onload = () => { if (dead) return; setSrc(url); setStale(false); timer = setTimeout(load, PREVIEW_GAP_MS) }
+      img.onerror = () => { if (dead) return; setStale(true); timer = setTimeout(load, PREVIEW_RETRY_MS) }
+      img.src = url
+    }
+    load()
+    return () => { dead = true; clearTimeout(timer) }
+  }, [name])
+  if (!src) return <div className="w-full aspect-[4/3]" aria-label={alt} />
+  return <img src={src} alt={alt} className="w-full" style={{ opacity: stale ? 0.3 : 1 }} />
 }
 
 function fmtKv(v: unknown): string {
