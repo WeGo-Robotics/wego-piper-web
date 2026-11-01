@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>사과 분류</title>
+<!--
+  apple-sort 자기 화면 — 플러그인 페이지의 "UI 보기" 가 새 창으로 연다 (feature/plugins.md §8-2).
+  검출 표시(플러그인이 그린 것, 판단할 때마다 한 장)와 실시간 원본(위 카메라 shm, 15fps)을 나란히 본다.
+  게이트웨이를 건드리지 않는다 — 같은 출처의 /api/* 를 세션 쿠키로 부른다.
+-->
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: #171717; color: #e5e5e5; }
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; border-bottom: 1px solid #333; }
+  h1 { font-size: 1.05rem; margin: 0; }
+  #state { font-size: .8rem; color: #a3a3a3; font-family: ui-monospace, monospace; }
+  /* ⚠ E-stop — 새 창에는 메인 창의 E-stop 이 없다. 자기 화면은 이 버튼을 갖는다 (feature/plugins.md §8-2). */
+  #estop { margin-left: auto; background: #b91c1c; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; font-weight: 700; cursor: pointer; }
+  #estop:hover { background: #dc2626; }
+  main { padding: 12px 16px; display: grid; gap: 12px; }
+  .views { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+  .view { background: #000; border: 1px solid #404040; border-radius: 8px; overflow: hidden; }
+  .frame { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #0a0a0a; }
+  .cap { display: flex; gap: 8px; padding: 4px 8px; font-size: .75rem; color: #a3a3a3; }
+  .cap .m { font-family: ui-monospace, monospace; color: #737373; }
+  .cap .r { margin-left: auto; font-family: ui-monospace, monospace; }
+  .warn { color: #fbbf24; }
+  .kv { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+  .card { background: #262626; border: 1px solid #404040; border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  .k { font-size: .72rem; color: #a3a3a3; }
+  .v { font-family: ui-monospace, monospace; font-size: .9rem; overflow-wrap: anywhere; }
+  .card.wide { grid-column: span 2; }
+</style>
+<header>
+  <h1 id="title">사과 분류</h1>
+  <span id="state">…</span>
+  <button id="estop" title="긴급 정지 — /api/estop/trigger">E-STOP</button>
+</header>
+<main>
+  <div class="views">
+    <div class="view">
+      <img id="det" class="frame" alt="검출 표시">
+      <div class="cap">검출 표시 <span class="m" id="det-name"></span><span class="r" id="det-note"></span></div>
+    </div>
+    <div class="view">
+      <img id="live" class="frame" alt="실시간 원본">
+      <div class="cap">실시간 원본 <span class="m" id="live-name"></span><span class="r" id="live-note"></span></div>
+    </div>
+  </div>
+  <div class="kv" id="kv"></div>
+</main>
+<script>
+  // 플러그인 이름은 주소에서 — /plugins/<name>/ui/ (인스턴스면 <name>:<label>)
+  const name = decodeURIComponent(location.pathname.split('/')[2])
+  const $ = (id) => document.getElementById(id)
+  const hidden = () => document.visibilityState === 'hidden'
+  $('estop').onclick = () => fetch('/api/estop/trigger', { method: 'POST' })
+
+  // ── 상태 — 1초마다. 실시간 원본이 볼 카메라(슬롯 → 스트림 이름)도 여기서 안다 ──
+  // 위에 크게 둘 것 · 넓게 둘 것. 나머지 상태 KV 는 그 뒤에 매니페스트 순서대로
+  const FIRST = ['task', 'arm', 'counts', 'stale', 'rest_why', 'waiting', 'phase', 'episode']
+  const WIDE = new Set(['task', 'counts', 'stale', 'rest_why', 'waiting'])
+  const HIDE = new Set(['ts', 'uptime_s', 'rules', 'model', 'arms', 'run_id', 'journal', 'max_episodes', 'decision', 'last_result'])
+  let stream = null
+  const fmt = (v) => (v === null || v === undefined || v === '') ? '—' : (typeof v === 'object' ? JSON.stringify(v) : String(v))
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+  async function tick() {
+    try {
+      const d = await (await fetch(`/api/plugins/${encodeURIComponent(name)}`)).json()
+      $('title').textContent = d.manifest?.title || name
+      document.title = d.manifest?.title || name
+      $('state').textContent = `${d.state}${d.pid ? ' · pid ' + d.pid : ''}${d.manifest ? ' · v' + d.manifest.version : ''}`
+      const cams = d.cameras || d.saved?.cameras || {}
+      const slot = (d.manifest?.cameras || [])[0]?.key
+      setStream(slot ? cams[slot] || null : null, slot)
+      const labels = Object.fromEntries((d.manifest?.outputs?.state || []).map((s) => [s.key, s.label]))
+      const kv = d.kv || {}
+      const keys = [...FIRST.filter((k) => k in kv || k in labels), ...Object.keys(kv).filter((k) => !FIRST.includes(k) && !HIDE.has(k))]
+      $('kv').innerHTML = keys.map((k) =>
+        `<div class="card${WIDE.has(k) ? ' wide' : ''}"><div class="k">${esc(labels[k] || k)}</div><div class="v">${esc(fmt(kv[k]))}</div></div>`).join('')
+        || '<div class="k">상태가 아직 없다 — 플러그인을 시작하면 채워진다</div>'
+    } catch { $('state').textContent = '게이트웨이에 닿지 않는다' }
+  }
+  tick(); setInterval(tick, 1000)
+
+  // ── 검출 표시 — 한 장이 뜨면 150ms 뒤 다음 장. 화면 밖에서 받아 다 받은 뒤에만 바꿔 낀다 ──
+  // (미리보기 키가 잠깐 비면 깨진 그림이 깜빡인다 — 못 받으면 마지막 장을 흐리게 남긴다)
+  $('det-name').textContent = `det_${name}`
+  ;(function det() {
+    const url = `/api/vision/preview/${encodeURIComponent(name)}?t=${Date.now()}`
+    if (hidden()) { setTimeout(det, 1000); return }
+    const img = new Image()
+    img.onload = () => { $('det').src = url; $('det').style.opacity = 1; $('det-note').textContent = ''; setTimeout(det, 150) }
+    img.onerror = () => {
+      $('det').style.opacity = 0.3
+      $('det-note').innerHTML = '<span class="warn">검출 표시 없음 — 플러그인이 돌고 있나?</span>'
+      setTimeout(det, 1000)
+    }
+    img.src = url
+  })()
+
+  // ── 실시간 원본 — `/api/cameras/live` 한 연결(multipart)을 읽어 <img> 에 바로 건다 ──
+  // 카메라 페이지·추론 화면과 같은 길. 조각 경계 대신 Content-Length 만큼 읽는다(JPEG 안의 우연한 일치에 안 속는다)
+  function partParser(onFrame) {
+    const dec = new TextDecoder()
+    let buf = new Uint8Array(0)
+    return (chunk) => {
+      if (buf.length) { const b = new Uint8Array(buf.length + chunk.length); b.set(buf); b.set(chunk, buf.length); buf = b } else buf = chunk
+      for (;;) {
+        let end = -1
+        for (let i = 0; i + 3 < buf.length; i++) {
+          if (buf[i] === 13 && buf[i + 1] === 10 && buf[i + 2] === 13 && buf[i + 3] === 10) { end = i; break }
+        }
+        if (end < 0) return
+        const len = /content-length:\s*(\d+)/i.exec(dec.decode(buf.subarray(0, end)))
+        if (!len) { buf = buf.subarray(end + 4); continue }
+        const start = end + 4, stop = start + Number(len[1])
+        if (buf.length < stop) return
+        onFrame(buf.slice(start, stop))
+        buf = buf.subarray(stop)
+      }
+    }
+  }
+  let ctl = null, retry = null, wait = 1000, frames = 0, shown = null
+  function setStream(s, slot) {
+    if (s === stream) return
+    stream = s
+    $('live-name').textContent = s ? `${slot} · ${s}` : ''
+    if (!s) $('live-note').innerHTML = '<span class="warn">카메라 슬롯이 비었다</span>'
+    reopen()
+  }
+  function reopen() { ctl?.abort(); clearTimeout(retry); if (stream && !hidden()) open() }
+  async function open() {
+    const mine = new AbortController()
+    ctl = mine
+    try {
+      const res = await fetch(`/api/cameras/live?ids=${encodeURIComponent(stream)}&fps=15`, { signal: mine.signal })
+      if (!res.ok || !res.body) throw new Error(String(res.status))
+      wait = 1000
+      const feed = partParser((jpeg) => {
+        const url = URL.createObjectURL(new Blob([jpeg], { type: 'image/jpeg' }))
+        const prev = shown
+        shown = url
+        $('live').src = url
+        if (prev) setTimeout(() => URL.revokeObjectURL(prev), 1000)
+        frames++
+      })
+      const reader = res.body.getReader()
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (value) feed(value)
+      }
+    } catch { /* 끊겼다 — 아래에서 다시 건다 */ }
+    if (ctl !== mine || mine.signal.aborted) return          // 우리가 닫았다(카메라 바뀜·창 가림)
+    $('live-note').innerHTML = '<span class="warn">끊김 — 다시 연결 중</span>'
+    retry = setTimeout(open, wait)
+    wait = Math.min(wait * 2, 10000)
+  }
+  // 초당 장수 — 2초마다. 0 이면 카메라가 멈췄거나 연결이 끊긴 것이다
+  setInterval(() => {
+    if (!stream || hidden()) return
+    const fps = frames / 2
+    frames = 0
+    $('live-note').innerHTML = fps > 0 ? `${fps.toFixed(1)} fps` : '<span class="warn">프레임이 안 온다</span>'
+  }, 2000)
+  // 창이 가려지면 연결을 놓는다 — 안 보는 창이 연결(과 인코딩)을 쥘 이유가 없다
+  document.addEventListener('visibilitychange', () => (hidden() ? ctl?.abort() : reopen()))
+</script>
+</html>
