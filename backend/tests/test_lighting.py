@@ -49,6 +49,14 @@ def test_features_measure_what_the_charts_need():
     assert "ts" in bright
 
 
+def test_saturation_counts_a_single_clipped_channel():
+    """푸르게 날아간 흰 판 — B 만 255 에 붙고 luma 는 235 다. luma 로 세면 0% 가
+    나와 탑뷰가 하얗게 날아가도 포화가 안 올라왔다 (117, 2026-11-01)."""
+    bluish = features(_frame(b=255, g=235, r=225))
+    assert bluish["luma"] < 250
+    assert bluish["sat_pct"] == 100.0
+
+
 def test_a_steady_scene_never_alarms():
     """기준선과 같으면 영원히 조용하다 — 임계가 절대 단위인 이유의 반쪽이다
     (σ 기반이면 조용한 장면일수록 예민해진다)."""

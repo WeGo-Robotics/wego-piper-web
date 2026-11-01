@@ -155,7 +155,7 @@ def features(frame_bgr: np.ndarray, ts: float | None = None) -> dict:
 
     반환: ``{ts, luma, sat_pct, dark_pct, log_rg, log_bg, grid[9]}``
     - luma: 0~255 평균 밝기
-    - sat/dark_pct: 포화(>250)·암부(<5) 픽셀 비율 % — 노출 이상의 표지
+    - sat/dark_pct: 포화(어느 채널이든 >250)·암부(luma <5) 픽셀 비율 % — 노출 이상의 표지
     - log_rg/log_bg: log₂(R̄/Ḡ)·log₂(B̄/Ḡ) — 색온도/WB 의 **변화**용.
       로그라 노출 변화와 분리된다. 절대 Kelvin 은 일부러 안 구한다
     - grid: 3×3 칸별 luma — 판정의 전역성 검사용
@@ -184,7 +184,11 @@ def features(frame_bgr: np.ndarray, ts: float | None = None) -> dict:
         "metering": {k: round(v, 1) for k, v in metered.items()},
         "ev": {k: ev(v) for k, v in metered_lin.items()},
         "ev_ceiling": ev_ceiling(),
-        "sat_pct": round(float((luma > 250).mean() * 100), 1),
+        # ⚠ 포화는 luma 가 아니라 **가장 밝은 채널**로 센다. 색이 낀 하이라이트는
+        #   한 채널만 255 에 붙고 luma 는 235 언저리에 머문다 — luma 로 세면 판이
+        #   하얗게 날아가도 포화가 안 올라온다 (실기 2026-11-01, 117 탑뷰 D435I:
+        #   B 채널 35% 잘림, luma>250 은 5%).
+        "sat_pct": round(float((small.max(axis=2) > 250).mean() * 100), 1),
         "dark_pct": round(float((luma < 5).mean() * 100), 1),
         "log_rg": round(float(math.log2((r.mean() + eps) / (g.mean() + eps))), 3),
         "log_bg": round(float(math.log2((b.mean() + eps) / (g.mean() + eps))), 3),
