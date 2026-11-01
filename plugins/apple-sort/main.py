@@ -16,6 +16,15 @@
 — 그 쉼을 보고 다음 종류로 넘어간다. 같은 종류·팔이 `max_fail` 번 연속 타임아웃이면 그 판에서는
 반대쪽 팔·다음 종류를 먼저 한다 (판 위 개수가 바뀌면 다시 센다).
 
+**예외 — 지시문이 판과 어긋나면 쉼을 기다리지 않는다** (`stale_s`, `_watch_task`). 대상 사과가 사라지거나
+(사람이 치움·떨어짐) 반대쪽으로 옮겨지면 정책은 옛 문장대로 계속 움직여 쉼이 안 잡히고, 쉼이 안 잡히니
+문장도 안 바뀐다(2026-11-01 117). 그래서 매 프레임 본다 — 대상(그 팔 쪽의 그 종류)이 판에 없고, 그 팔이
+들고 있지 않고(`grip_closed` < 그리퍼 < `grip_open`), 이번 지시문 동안 든 적도 없는 채로 `stale_s` 가
+지나면 추론을 일시정지하고 시작 직후처럼(`_start_up`) 판을 다시 세어 맞는 지시문 → 원위치 리셋 → 재개.
+판이 비었으면 멈춘 채 사과를 기다린다. 한 번이라도 들었으면 옮기는 중이거나 옮긴 것이라 보지 않는다.
+⚠ `grip_open` 은 그리퍼 행정이 데이터셋과 같다는 전제다(117 팔로워 100mm — 70mm 면 쥔 사과가 86 으로 읽혀
+"열림" 이 된다).
+
 **팔은 지시문이 정한다** (`{arm}` 규칙). 같은 종류가 판 양쪽에 있으면 종류만 말해서는 어느 팔이 갈지
 안 정해진다 — 데이터셋에 그런 에피소드가 36개, 어느 쪽을 집을지는 시나리오 계획이 정해서 화면만 보는
 정책에게는 반반이었다(2026-10-31). 그래서 task 를 "with the left arm, put …" 로 다시 매겼고, 여기서는 사과
@@ -132,7 +141,12 @@ class AppleSort(MissionPlugin):
         self._empty_seen = 0
         self._timed_out = False
         self._skip = False
-        self._paused = False                                    # 판이 비어 우리가 추론을 쉬게 해 뒀다
+        self._paused = False                                    # 판이 비어(또는 지시문이 어긋나) 우리가 추론을 쉬게 해 뒀다
+        # 지시문 감시 (`_watch_task`) — 대상이 안 보인 시각 · 들기 시작한 시각 · 이번 지시문 동안 들었나 · 어긋나 끝냈나
+        self._absent_t0: float | None = None
+        self._hold_t0: float | None = None
+        self._held = False
+        self._stale = False
         # 첫 판단에서 원위치 리셋 후 재개한다 — 이전 실행이 일시정지로 끝났을 수 있다
         self._wake = bool(self.config.get("reset_on_start", True)) and not self.dry_run
         self.state(rules=[c for c, _ in self.rules], model=self.model_name, arms=self.arm_keys)
@@ -222,6 +236,7 @@ class AppleSort(MissionPlugin):
         if arms is None:                                        # first — 팔을 못 읽어도 개수만 본다
             arms = ([], 0.0)
         self.counts = counts
+        self._watch_task(now)
         self._window.append((now, arms[0], arms[1], counts, self.apples))
         span = float(self.config["still_s"])
         while len(self._window) > 1 and now - self._window[1][0] >= span:
@@ -250,6 +265,60 @@ class AppleSort(MissionPlugin):
             why = f"팔이 움직인다 (관절 변동 {spread:.1f} ≥ {tol:g})"
         self.state(resting=rest, counts=counts, rest_why=why)
         return ready
+
+    def _holding(self) -> bool:
+        """지시문의 팔(규칙에 `{arm}` 이 없으면 아무 팔)이 무언가를 쥐고 있나 — 그리퍼가 닫힘과 열림 사이.
+        상태를 못 읽으면 쥐고 있다고 본다 — 모르면 멈추지 않는 쪽으로 틀린다."""
+        keys = [self.target_arm] if self.target_arm in self.arm_keys else self.arm_keys
+        lo, hi = float(self.config["grip_closed"]), float(self.config["grip_open"])
+        for k in keys:
+            s = self.arm(k).read()
+            if s is None or not s.fresh(1.0) or lo < s.gripper < hi:
+                return True
+        return False
+
+    def _watch_task(self, now: float) -> None:
+        """지시문이 판과 맞나 — 쉼과 상관없이 매 프레임 (머리말 "예외"). 어긋난 채 `stale_s` 가 지나면
+        추론을 멈추고 `_wake` 를 세운다 — 다음 판단이 시작 직후처럼 팔 쉼 없이 지시문을 다시 넣고 리셋한다."""
+        limit = float(self.config.get("stale_s") or 0)
+        if limit <= 0 or not self.target or self._wake or self._paused:
+            self._absent_t0 = self._hold_t0 = None
+            return
+        holding = self._holding()
+        if holding:
+            if self._hold_t0 is None:
+                self._hold_t0 = now
+            elif now - self._hold_t0 >= 0.5:                    # 한 번 스치는 값이 아니라 쥐었다
+                self._held = True
+        else:
+            self._hold_t0 = None
+        present = any(self.target_arm is None or ("left" if cx < self.split else "right") == self.target_arm
+                      for cx, _ in self.apples.get(self.target, []))
+        if present or holding or self._held:
+            if self._absent_t0 is not None:
+                self._absent_t0 = None
+                self.state(stale="")
+            return
+        if self._absent_t0 is None:
+            self._absent_t0 = now
+        gone = now - self._absent_t0
+        where = f"{self.target}({self.target_arm or '-'})"
+        if gone < limit:
+            self.state(stale=f"{where} 안 보임 {gone:.1f}/{limit:g}초")
+            return
+        self.log.warning("지시문이 판과 어긋났다 — %s 이(가) %.1f초째 판에 없고 그 팔이 쥐고 있지 않다 (판 위 %s) "
+                         "→ 추론을 멈추고 다시 고른다", where, gone, self.counts)
+        self._stale = True
+        self._absent_t0 = None
+        self._window.clear()
+        self.state(stale=f"{where} 없음 — 다시 고른다")
+        if self.dry_run:                                        # `_start_up` 은 로봇을 부른다 — 드라이런은 쉼을 기다린다
+            return
+        self._wake = True
+        if self.robot.pause().ok:
+            self._paused = True
+        else:
+            self.log.warning("추론 일시정지 실패 — 다음 판단에서 지시문을 넣고 리셋한다")
 
     def _side_votes(self, label: str) -> Counter:
         """쉼 창의 프레임마다 이 종류가 판 어느 쪽에 있었나 — 쪽별 프레임 수.
@@ -282,10 +351,14 @@ class AppleSort(MissionPlugin):
 
     def observe(self) -> dict:
         self._window.clear()
+        # 끝난 회차에서 든 것은 그 회차 몫이다 — 끝난 뒤에도 옛 지시문으로 계속 움직이면 여기서 잡는다
+        self._held = False
+        self._hold_t0 = self._absent_t0 = None
         settled = self.wait_until(lambda: self._resting(first=self._wake), float(self.config["episode_timeout_s"]))
         return {"counts": dict(self.counts) if settled else None}
 
     def decide(self, ctx) -> Decision:
+        self._stale = False                                     # observe 중에 어긋났으면 여기서 다시 고르는 것으로 끝
         board = ctx["counts"]
         if board is None:
             return Decision.skip("not_resting")                 # 팔이 안 쉰다 — 다음 회차에 다시 본다
@@ -307,7 +380,9 @@ class AppleSort(MissionPlugin):
             if task != self.task:
                 self.log.info("지시문 → %r (판 위 %s)", task, board)
             self.task, self.target, self.target_arm = task, label, arm
-            self.state(task=task, arm=arm or "")
+            self._held = False
+            self._hold_t0 = self._absent_t0 = None
+            self.state(task=task, arm=arm or "", stale="")
             if self._wake:
                 self._start_up(task)
             elif self._paused:
@@ -323,13 +398,19 @@ class AppleSort(MissionPlugin):
         if self._skip:                                          # [skip] 버튼
             self._skip = False
             return True
-        return self._resting() and self.counts != ctx["counts"]
+        rest = self._resting()
+        if self._stale:                                         # 지시문이 판과 어긋났다 — 추론은 이미 멈췄다
+            return True
+        return rest and self.counts != ctx["counts"]
 
     def record(self, ctx, result) -> dict:
         before, after = ctx["counts"], dict(self.counts)
         self._timed_out = bool(result.get("timeout"))
         rec = {"target": self.target, "arm": self.target_arm, "task": self.task, "counts_before": before}
-        if result.get("done"):
+        if self._stale and result.get("done"):
+            self._stale = False
+            rec.update(counts_after=after, stale=True)
+        elif result.get("done"):
             delta = {k: after.get(k, 0) - before.get(k, 0) for k in before}
             rec.update(counts_after=after, delta=delta,
                        picked_target=delta.get(self.target) == -1
