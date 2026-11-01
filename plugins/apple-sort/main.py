@@ -18,10 +18,13 @@
 
 **예외 — 지시문이 판과 어긋나면 쉼을 기다리지 않는다** (`stale_s`, `_watch_task`). 대상 사과가 사라지거나
 (사람이 치움·떨어짐) 반대쪽으로 옮겨지면 정책은 옛 문장대로 계속 움직여 쉼이 안 잡히고, 쉼이 안 잡히니
-문장도 안 바뀐다(2026-11-01 117). 그래서 매 프레임 본다 — 대상(그 팔 쪽의 그 종류)이 판에 없고, 그 팔이
-들고 있지 않고(`grip_closed` < 그리퍼 < `grip_open`), 이번 지시문 동안 든 적도 없는 채로 `stale_s` 가
-지나면 추론을 일시정지하고 시작 직후처럼(`_start_up`) 판을 다시 세어 맞는 지시문 → 원위치 리셋 → 재개.
-판이 비었으면 멈춘 채 사과를 기다린다. 한 번이라도 들었으면 옮기는 중이거나 옮긴 것이라 보지 않는다.
+문장도 안 바뀐다(2026-11-01 117). 그래서 매 프레임 본다 — 대상(그 팔 쪽의 그 종류)이 판에 없고 그 팔이
+쥐고 있지 않은 채로 `stale_s` 가 지나면 추론을 일시정지하고 시작 직후처럼(`_start_up`) 판을 다시 세어 맞는
+지시문 → 원위치 리셋 → 재개. 판이 비어 보이면 멈춘 팔이 사과를 가렸을 수 있으니 원위치로 비켜서 한 번 더
+세고(`_home_and_hold`), 그래도 비었으면 멈춘 채 사과를 기다린다. 쥐었다 놓은 뒤에는 원위치로 돌아와 쉴
+시간을 더 준다(`after_release_s`) — 놓은 것으로 끝이 아니다: 117 에서 왼팔이 사과를 옮기고 원위치에 1.4초
+머문 뒤(쉼 1.5초를 못 채워 완료가 안 났다) 빈 자리를 50초 넘게 다시 집으러 갔다. "쥐었다" 는 그리퍼가
+`grip_closed` 와 `grip_open` 사이에서 멈춘 것이다(`_holding`) — 천천히 열며 그 사이를 지나가는 값은 아니다.
 ⚠ `grip_open` 은 그리퍼 행정이 데이터셋과 같다는 전제다(117 팔로워 100mm — 70mm 면 쥔 사과가 86 으로 읽혀
 "열림" 이 된다).
 
@@ -110,6 +113,14 @@ def resolve_model(name: str, plugin_dir: Path) -> str:
 
 class AppleSort(MissionPlugin):
     poll_s = 0.3
+    # "쥐었다" — 그리퍼가 닫힘과 열림 사이에서 `hold_s` 동안 `hold_still` 도 안 움직였다 (`_holding`)
+    hold_s = 0.5
+    hold_still = 2.0
+    # 원위치 — 파킹 목표의 접는 관절만 본다(접히면 위 카메라 시야에서 비킨다). 117 쉼 자세는 J5 가 27~31 이라
+    # 전 관절로 재면 허용 8 을 넘는다. 닿은 뒤 `rehold_s` 동안 일시정지를 거듭 보낸다 (`_home_and_hold`)
+    home = {"joint2": -100.0, "joint3": 100.0}
+    home_tol = 8.0
+    rehold_s = 3.0
 
     def setup(self):
         self.rules = parse_rules(self.config["rules"])
@@ -142,11 +153,13 @@ class AppleSort(MissionPlugin):
         self._timed_out = False
         self._skip = False
         self._paused = False                                    # 판이 비어(또는 지시문이 어긋나) 우리가 추론을 쉬게 해 뒀다
-        # 지시문 감시 (`_watch_task`) — 대상이 안 보인 시각 · 들기 시작한 시각 · 이번 지시문 동안 들었나 · 어긋나 끝냈나
+        # 지시문 감시 (`_watch_task`) — 대상이 안 보인 시각 · 팔별 최근 그리퍼 (시각, 값) · 지금 쥐었나 · 쥐었다 놓았나 · 어긋나 끝냈나
         self._absent_t0: float | None = None
-        self._hold_t0: float | None = None
+        self._grips: dict[str, deque] = {}
         self._held = False
+        self._released = False
         self._stale = False
+        self._look_again = False                                # 어긋나 멈췄다 — 판이 비어 보이면 원위치에서 다시 센다
         # 첫 판단에서 원위치 리셋 후 재개한다 — 이전 실행이 일시정지로 끝났을 수 있다
         self._wake = bool(self.config.get("reset_on_start", True)) and not self.dry_run
         self.state(rules=[c for c, _ in self.rules], model=self.model_name, arms=self.arm_keys)
@@ -266,39 +279,56 @@ class AppleSort(MissionPlugin):
         self.state(resting=rest, counts=counts, rest_why=why)
         return ready
 
-    def _holding(self) -> bool:
-        """지시문의 팔(규칙에 `{arm}` 이 없으면 아무 팔)이 무언가를 쥐고 있나 — 그리퍼가 닫힘과 열림 사이.
-        상태를 못 읽으면 쥐고 있다고 본다 — 모르면 멈추지 않는 쪽으로 틀린다."""
+    def _holding(self, now: float) -> bool:
+        """지시문의 팔(규칙에 `{arm}` 이 없으면 아무 팔)이 무언가를 쥐고 있나 — 그리퍼가 `grip_closed` 와
+        `grip_open` 사이에서 `hold_s` 동안 `hold_still` 도 안 움직였다. 사과를 쥐면 그 폭에서 선다(117: 54.9→54.7→54.6).
+        열고 닫으며 그 사이를 지나가는 값은 아니다 — 117 에서 0→50→53→59→71 로 1초 걸려 열린 적이 있다.
+        상태를 못 읽으면 쥐고 있다고 본다 — 모르면 멈추지 않는 쪽으로 틀린다. 프레임마다 한 번 부른다(값을 쌓는다)."""
         keys = [self.target_arm] if self.target_arm in self.arm_keys else self.arm_keys
         lo, hi = float(self.config["grip_closed"]), float(self.config["grip_open"])
         for k in keys:
             s = self.arm(k).read()
-            if s is None or not s.fresh(1.0) or lo < s.gripper < hi:
+            if s is None or not s.fresh(1.0):
+                return True
+            hist = self._grips.setdefault(k, deque())
+            hist.append((now, s.gripper))
+            while len(hist) > 1 and now - hist[1][0] >= self.hold_s:
+                hist.popleft()
+            vals = [g for _, g in hist]
+            if now - hist[0][0] >= self.hold_s and all(lo < g < hi for g in vals) and max(vals) - min(vals) < self.hold_still:
                 return True
         return False
 
+    def _watch_reset(self) -> None:
+        """새 지시문·새 관찰 — 지난 지시문 동안 쥐고 놓은 것은 그 지시문 몫이다."""
+        if self._absent_t0 is not None:                         # 세던 카운트다운이 화면에 남지 않게 (판이 비어 기다릴 때)
+            self.state(stale="")
+        self._absent_t0 = None
+        self._grips.clear()
+        self._held = self._released = False
+
     def _watch_task(self, now: float) -> None:
-        """지시문이 판과 맞나 — 쉼과 상관없이 매 프레임 (머리말 "예외"). 어긋난 채 `stale_s` 가 지나면
-        추론을 멈추고 `_wake` 를 세운다 — 다음 판단이 시작 직후처럼 팔 쉼 없이 지시문을 다시 넣고 리셋한다."""
+        """지시문이 판과 맞나 — 쉼과 상관없이 매 프레임 (머리말 "예외"). 어긋난 채 `stale_s`(쥐었다 놓은 뒤면
+        `after_release_s`)가 지나면 추론을 멈추고 `_wake` 를 세운다 — 다음 판단이 시작 직후처럼 팔 쉼 없이
+        지시문을 다시 넣고 리셋한다."""
         limit = float(self.config.get("stale_s") or 0)
         if limit <= 0 or not self.target or self._wake or self._paused:
-            self._absent_t0 = self._hold_t0 = None
+            self._watch_reset()
             return
-        holding = self._holding()
+        holding = self._holding(now)
         if holding:
-            if self._hold_t0 is None:
-                self._hold_t0 = now
-            elif now - self._hold_t0 >= 0.5:                    # 한 번 스치는 값이 아니라 쥐었다
-                self._held = True
-        else:
-            self._hold_t0 = None
+            self._held = True
+        elif self._held:                                        # 쥐었다 놓았다 — 돌아와 쉴 시간을 더 준다
+            self._held, self._released = False, True
         present = any(self.target_arm is None or ("left" if cx < self.split else "right") == self.target_arm
                       for cx, _ in self.apples.get(self.target, []))
-        if present or holding or self._held:
+        if present or holding:
             if self._absent_t0 is not None:
                 self._absent_t0 = None
                 self.state(stale="")
             return
+        if self._released:
+            limit = max(limit, float(self.config.get("after_release_s") or 0))
         if self._absent_t0 is None:
             self._absent_t0 = now
         gone = now - self._absent_t0
@@ -314,7 +344,7 @@ class AppleSort(MissionPlugin):
         self.state(stale=f"{where} 없음 — 다시 고른다")
         if self.dry_run:                                        # `_start_up` 은 로봇을 부른다 — 드라이런은 쉼을 기다린다
             return
-        self._wake = True
+        self._wake = self._look_again = True
         if self.robot.pause().ok:
             self._paused = True
         else:
@@ -352,8 +382,7 @@ class AppleSort(MissionPlugin):
     def observe(self) -> dict:
         self._window.clear()
         # 끝난 회차에서 든 것은 그 회차 몫이다 — 끝난 뒤에도 옛 지시문으로 계속 움직이면 여기서 잡는다
-        self._held = False
-        self._hold_t0 = self._absent_t0 = None
+        self._watch_reset()
         settled = self.wait_until(lambda: self._resting(first=self._wake), float(self.config["episode_timeout_s"]))
         return {"counts": dict(self.counts) if settled else None}
 
@@ -365,6 +394,10 @@ class AppleSort(MissionPlugin):
         if board != self._fail_board:                           # 판이 바뀌었다 — 실패 기록은 옛 판 것
             self.fails.clear()
         if not any(board.values()):
+            if self._look_again:                                # 멈춘 팔이 사과를 가렸을 수 있다 — 비켜서 다시 센다
+                self._look_again = False
+                self._home_and_hold()
+                return Decision.skip("board_empty_recheck")
             self._empty_seen += 1
             if self._empty_seen == 2:                           # 두 번 연속 비었을 때만 — 한 번은 오검출일 수 있다
                 self._wrap_up("판 위 사과를 모두 옮겼다", wait=self.config.get("on_empty_plugin") == "wait")
@@ -380,8 +413,7 @@ class AppleSort(MissionPlugin):
             if task != self.task:
                 self.log.info("지시문 → %r (판 위 %s)", task, board)
             self.task, self.target, self.target_arm = task, label, arm
-            self._held = False
-            self._hold_t0 = self._absent_t0 = None
+            self._watch_reset()
             self.state(task=task, arm=arm or "", stale="")
             if self._wake:
                 self._start_up(task)
@@ -407,15 +439,15 @@ class AppleSort(MissionPlugin):
         before, after = ctx["counts"], dict(self.counts)
         self._timed_out = bool(result.get("timeout"))
         rec = {"target": self.target, "arm": self.target_arm, "task": self.task, "counts_before": before}
-        if self._stale and result.get("done"):
-            self._stale = False
-            rec.update(counts_after=after, stale=True)
-        elif result.get("done"):
+        if result.get("done"):
             delta = {k: after.get(k, 0) - before.get(k, 0) for k in before}
             rec.update(counts_after=after, delta=delta,
                        picked_target=delta.get(self.target) == -1
                        and all(v == 0 for k, v in delta.items() if k != self.target))
-            if not rec["picked_target"]:
+            if self._stale:                                     # 쉬어서가 아니라 어긋나서 끝났다 — 옮긴 뒤 헤맸을 수도 있다
+                self._stale = False
+                rec["stale"] = True
+            elif not rec["picked_target"]:
                 self.log.warning("판이 지시와 다르게 바뀌었다: %s (목표 %s)", delta, self.target)
         elif self._timed_out and self.target:
             key = (self.target, self.target_arm)
@@ -470,8 +502,38 @@ class AppleSort(MissionPlugin):
         if not r.ok:
             self.log.warning("원위치 리셋 실패 (%s) — 재개만 한다", r.status)
         self.robot.resume()
-        self._wake = self._paused = False
+        self._wake = self._paused = self._look_again = False
         self.log.info("시작 — 원위치 리셋 후 추론 재개 (%s)", task)
+
+    def _home_dist(self) -> float:
+        """원위치(`home` 의 접는 관절)까지 가장 먼 관절의 거리 — 팔 상태를 못 읽으면 무한대."""
+        dist = 0.0
+        for k in self.arm_keys:
+            s = self.arm(k).read()
+            if s is None or not s.fresh(1.0):
+                return float("inf")
+            dist = max(dist, *(abs(s.joints.get(j, v + 1e9) - v) for j, v in self.home.items()))
+        return dist
+
+    def _home_and_hold(self) -> None:
+        """어긋나 멈춘 팔을 원위치로 보내고 거기서 다시 멈춘다 — 판이 비어 보이는 게 멈춘 팔이 사과를 가려서일
+        수 있다. 그대로 "사과를 기다린다" 로 가면 가린 팔이 안 비키니 영영 못 센다.
+
+        리셋은 파킹을 마치면 래퍼가 스스로 재개하고, 파킹 도중의 일시정지는 먹지 않는다(grasp-guard 머리말) —
+        그래서 원위치에 닿은 뒤 `rehold_s` 동안 일시정지를 거듭 보낸다(멱등). 재개와 다음 일시정지 사이(≤0.2초)는
+        정책이 옛 지시문으로 한 걸음 낼 수 있다."""
+        self.log.info("판이 비어 보인다 — 멈춘 팔이 사과를 가렸을 수 있어 원위치에서 다시 센다")
+        if not self.robot.reset().ok:
+            self.log.warning("원위치 리셋 실패 — 멈춘 자리에서 센다")
+            return
+        if not self.wait_until(lambda: self._home_dist() <= self.home_tol, 20.0):
+            self.log.warning("20초 안에 원위치에 닿지 않았다 — 일시정지만 해 둔다")
+            self.robot.pause()
+            return
+        end = time.monotonic() + self.rehold_s
+        while time.monotonic() < end:
+            self.robot.pause()
+            self.sleep(0.2)
 
     def _resume_with(self, task: str) -> None:
         """쉬게 해 둔 추론을 깨운다 — 지시문을 먼저 넣고 깨워서 옛 문장으로 한 걸음도 안 가게 한다."""
