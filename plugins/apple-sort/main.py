@@ -6,15 +6,23 @@
 지시문을 바꿔 주던 일을 `MissionPlugin` 훅으로 대신한다:
 
     observe  팔이 쉬고(관절 정지 + 그리퍼 닫힘) 판 위 개수가 `still_s` 동안 그대로일 때 센다
-    decide   규칙 순서대로, 판에 남은 첫 종류의 지시문
-    execute  set_task — 같은 종류가 남았으면 같은 문장이다 (정책이 다음 것을 집는다)
+    decide   규칙 순서대로, 판에 남은 첫 종류의 지시문 — `{arm}` 은 고른 사과 쪽 팔로 채운다
+    execute  set_task — 같은 종류·같은 쪽이 남았으면 같은 문장이다 (정책이 다음 것을 집는다)
     done     판 위 개수가 바뀌고 팔이 다시 쉬면 — 옮기는 도중에는 끝나지 않는다
     record   전후 개수·목표 종류를 저널에 (`.runtime/runs/*.jsonl`)
 
 **지시문은 팔이 쉬는 동안에만 바뀐다.** 잡는 도중에 문장이 바뀌는 건 학습에 없던 관측이다.
 종류가 바닥나도 정책은 가만히 있는다 — 데이터셋의 `empty_target` 변형(15개)이 그렇게 가르쳤다
-— 그 쉼을 보고 다음 종류로 넘어간다. 같은 종류가 `max_fail` 번 연속 타임아웃이면 그 판에서는
-다음 종류를 먼저 한다 (판 위 개수가 바뀌면 다시 센다).
+— 그 쉼을 보고 다음 종류로 넘어간다. 같은 종류·팔이 `max_fail` 번 연속 타임아웃이면 그 판에서는
+반대쪽 팔·다음 종류를 먼저 한다 (판 위 개수가 바뀌면 다시 센다).
+
+**팔은 지시문이 정한다** (`{arm}` 규칙). 같은 종류가 판 양쪽에 있으면 종류만 말해서는 어느 팔이 갈지
+안 정해진다 — 데이터셋에 그런 에피소드가 36개, 어느 쪽을 집을지는 시나리오 계획이 정해서 화면만 보는
+정책에게는 반반이었다(2026-10-31). 그래서 task 를 "with the left arm, put …" 로 다시 매겼고, 여기서는 사과
+중심이 `arm_split` 보다 왼쪽이면 left 다. 0.52 는 판 E|F 경계의 화면 x(위 카메라 프레임의 열 간격)이고,
+대상 종류가 하나뿐인 에피소드 220개에서 사람이 고른 팔과 214개가 맞았다 — 나머지 6개는 경계(x 0.48~0.62)에서
+반대 팔을 쓴 것. 양쪽에 있으면 상자 쪽 팔을 먼저 시킨다(덜 뻗는다). `{arm}` 이 없는 규칙은 예전 그대로다 —
+팔을 안 밝히고 학습한 체크포인트용.
 
 **판이 두 번 연속 비면** 설정 두 개로 갈린다 — `on_empty_inference`: 추론을 일시정지(pause, 사과가 다시
 올라오면 지시문을 넣고 재개) · 그대로 둠(wait) · 정지(stop_inference, 플러그인도 끝). `on_empty_plugin`:
@@ -33,7 +41,7 @@
 낙관치), 라벨 못 한 13 장 중 틀린 7 장은 전부 팔이 사과를 가리거나 든 장면이다 — 쉴 때만 세므로
 판단에는 안 걸린다. 모델을 바꾸면 conf 부터 다시 잰다 (`tools/replay.py`·`tools/autolabel.py`).
 
-추론은 먼저 켜 둔다 — 가능하면 **학습한 세 문장 중 하나로** (아무 문장이나 넣으면 첫 쉼까지 정책이
+추론은 먼저 켜 둔다 — 가능하면 **학습한 문장 중 하나로** (아무 문장이나 넣으면 첫 쉼까지 정책이
 무엇을 할지 모른다). 이전 실행이 일시정지로 끝났어도, 지시문 없이 시작했어도 된다: 시작하면
 **팔 쉼을 기다리지 않고** 판 위 개수가 안정되는 대로(`still_s`) 첫 판단에서 지시문을 넣고 → 원위치
 리셋 → 재개한다 (`reset_on_start`). 지시문 없이 도는 래퍼는 "do the task" 로 돌아 팔이 한 번도 안
@@ -47,6 +55,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections import deque
 from pathlib import Path
@@ -98,6 +107,7 @@ class AppleSort(MissionPlugin):
         if not self.rules:
             self.stop("규칙이 비었다 — `클래스 = 지시문` 을 한 줄 이상 적어라")
         self.roi = parse_roi(self.config["roi"])
+        self.split = float(self.config["arm_split"])
         self.model_path = resolve_model(str(self.config["model"]), self.env.dir)
         self.model_name = Path(self.model_path).name
         self.model = self.detector(self.model_path, device=self.config["device"])
@@ -112,9 +122,12 @@ class AppleSort(MissionPlugin):
         # (시각, 관절 벡터, 그리퍼 최대, 판 위 개수) — `still_s` 창
         self._window: deque = deque()
         self.counts: dict[str, int] = {}
+        # 종류 → [(중심 x 0~1, 점수)] — 판 위 개수와 같은 프레임. `{arm}` 을 채울 때 쓴다
+        self.apples: dict[str, list[tuple[float, float]]] = {}
         self.task: str | None = None
         self.target: str | None = None
-        self.fails: dict[str, int] = {}
+        self.target_arm: str | None = None
+        self.fails: dict[tuple[str, str | None], int] = {}       # (종류, 팔) → 연속 타임아웃
         self._fail_board: dict[str, int] | None = None
         self._empty_seen = 0
         self._timed_out = False
@@ -139,10 +152,14 @@ class AppleSort(MissionPlugin):
         self.publish_detections(self.name, (h, w), r, seq=seq, wall_ns=wall_ns, model=self.model_name)
         x1, y1, x2, y2 = self.roi
         counts = {c: 0 for c, _ in self.rules}
-        for (bx1, by1, bx2, by2), k in zip(r.boxes.xyxy.tolist(), r.boxes.cls.int().tolist()):
+        apples: dict[str, list[tuple[float, float]]] = {c: [] for c in counts}
+        for (bx1, by1, bx2, by2), k, conf in zip(r.boxes.xyxy.tolist(), r.boxes.cls.int().tolist(), r.boxes.conf.tolist()):
             label = r.names[int(k)]
-            if label in counts and x1 <= (bx1 + bx2) / 2 / w <= x2 and y1 <= (by1 + by2) / 2 / h <= y2:
+            cx = (bx1 + bx2) / 2 / w
+            if label in counts and x1 <= cx <= x2 and y1 <= (by1 + by2) / 2 / h <= y2:
                 counts[label] += 1
+                apples[label].append((cx, float(conf)))
+        self.apples = apples
         self._preview(r.plot(), counts)
         return counts
 
@@ -165,6 +182,8 @@ class AppleSort(MissionPlugin):
         h, w = canvas.shape[:2]
         x1, y1, x2, y2 = self.roi
         cv2.rectangle(canvas, (int(x1 * w), int(y1 * h)), (int(x2 * w), int(y2 * h)), (0, 200, 0), 1)
+        # 왼팔·오른팔 가르는 선 — 판 E|F 경계에 맞는지 화면에서 본다
+        cv2.line(canvas, (int(self.split * w), int(y1 * h)), (int(self.split * w), int(y2 * h)), (0, 200, 0), 1)
         lines = [" ".join(f"{k}:{v}" for k, v in counts.items()), f"task: {self.task or '-'}"]
         for i, text in enumerate(lines):
             org = (8, h - 12 - 20 * (len(lines) - 1 - i))
@@ -232,6 +251,23 @@ class AppleSort(MissionPlugin):
         self.state(resting=rest, counts=counts, rest_why=why)
         return ready
 
+    def _arm_order(self, label: str, rule: str) -> list[str | None]:
+        """이 종류를 집을 팔 — 먼저 시킬 것부터. 규칙에 `{arm}` 이 없으면 `[None]`(팔을 안 밝힌다).
+
+        사과가 판 양쪽에 있으면 상자 쪽 팔이 먼저다(덜 뻗는다 — 건너가 놓기가 데이터에서 가장 흩어졌다).
+        상자가 가운데(위)면 점수가 높은 사과 쪽. 연속 실패가 `max_fail` 에 닿은 쪽은 뺀다."""
+        if "{arm}" not in rule:
+            sides: list[str | None] = [None]
+        else:
+            apples = sorted(self.apples.get(label, []), key=lambda a: -a[1])
+            sides = list(dict.fromkeys("left" if cx < self.split else "right" for cx, _ in apples))
+            box = re.search(r"\b(left|right) box\b", rule)
+            if box and box.group(1) in sides:
+                sides.remove(box.group(1))
+                sides.insert(0, box.group(1))
+        limit = int(self.config["max_fail"])
+        return [s for s in sides if self.fails.get((label, s), 0) < limit]
+
     # ── 훅 ──
 
     def observe(self) -> dict:
@@ -252,19 +288,23 @@ class AppleSort(MissionPlugin):
             return Decision.skip("board_empty")
         self._empty_seen = 0
         self.state(waiting="")
-        for label, task in self.rules:
-            if board.get(label, 0) > 0 and self.fails.get(label, 0) < int(self.config["max_fail"]):
-                if task != self.task:
-                    self.log.info("지시문 → %r (판 위 %s)", task, board)
-                self.task, self.target = task, label
-                self.state(task=task)
-                if self._wake:
-                    self._start_up(task)
-                elif self._paused:
-                    self._resume_with(task)
-                return Decision.task(task, target=label, counts=board)
+        for label, rule in self.rules:
+            arms = self._arm_order(label, rule) if board.get(label, 0) > 0 else []
+            if not arms:
+                continue
+            arm = arms[0]
+            task = rule.replace("{arm}", arm) if arm else rule
+            if task != self.task:
+                self.log.info("지시문 → %r (판 위 %s)", task, board)
+            self.task, self.target, self.target_arm = task, label, arm
+            self.state(task=task, arm=arm or "")
+            if self._wake:
+                self._start_up(task)
+            elif self._paused:
+                self._resume_with(task)
+            return Decision.task(task, target=label, arm=arm, counts=board)
         # 사람이 볼 차례 — 기다려도 풀리지 않으니 `on_empty_plugin` 과 상관없이 끝낸다
-        self._wrap_up(f"남은 사과가 있는데 모든 종류가 연속 {self.config['max_fail']}번 실패했다 — 사람이 볼 차례", wait=False)
+        self._wrap_up(f"남은 사과가 있는데 모든 종류·팔이 연속 {self.config['max_fail']}번 실패했다 — 사람이 볼 차례", wait=False)
 
     def done(self, ctx) -> bool:
         if self._skip:                                          # [skip] 버튼
@@ -275,7 +315,7 @@ class AppleSort(MissionPlugin):
     def record(self, ctx, result) -> dict:
         before, after = ctx["counts"], dict(self.counts)
         self._timed_out = bool(result.get("timeout"))
-        rec = {"target": self.target, "task": self.task, "counts_before": before}
+        rec = {"target": self.target, "arm": self.target_arm, "task": self.task, "counts_before": before}
         if result.get("done"):
             delta = {k: after.get(k, 0) - before.get(k, 0) for k in before}
             rec.update(counts_after=after, delta=delta,
@@ -284,9 +324,10 @@ class AppleSort(MissionPlugin):
             if not rec["picked_target"]:
                 self.log.warning("판이 지시와 다르게 바뀌었다: %s (목표 %s)", delta, self.target)
         elif self._timed_out and self.target:
-            self.fails[self.target] = self.fails.get(self.target, 0) + 1
+            key = (self.target, self.target_arm)
+            self.fails[key] = self.fails.get(key, 0) + 1
             self._fail_board = before
-            self.log.warning("%s 타임아웃 (%d번째 연속)", self.target, self.fails[self.target])
+            self.log.warning("%s(%s) 타임아웃 (%d번째 연속)", self.target, self.target_arm or "-", self.fails[key])
         return rec
 
     def reset(self) -> None:

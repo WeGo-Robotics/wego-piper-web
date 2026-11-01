@@ -1,8 +1,8 @@
 # 사과 분류 — 작업판 위 사과를 검출해 남은 종류에 맞는 지시문을 언어 정책에 넣는다.
 #   위 카메라 → 검출(dualarm_sort_apple 커스텀 모델) → 판 위 개수 → 규칙 순서 → set_task
-#   지시문은 팔이 쉬는 동안에만 바뀐다 (main.py 머리말)
+#   지시문은 팔이 쉬는 동안에만 바뀐다. `{arm}` 은 고른 사과가 판 어느 쪽이냐로 채운다 (main.py 머리말)
 name: apple-sort
-version: 0.1.0
+version: 0.1.1
 title: "사과 분류 지시문 자동 전환"
 description: "작업판 위 사과를 검출해 남은 종류의 지시문(task)을 넣는다. 하나 옮기고 팔이 쉬면 다시 세고, 그 종류가 바닥나면 다음 지시문으로"
 entry: main.py
@@ -25,11 +25,13 @@ config:
     kind: text
     multiline: true
     default: |
-      red_apple = put the red apple in the left box
-      yellow_apple = put the yellow apple in the right box
-      small_apple = put the small apple in the top box
-    label: "검출 클래스 = 지시문 (위 줄부터 먼저 — 학습 때 문장 그대로)"
+      red_apple = with the {arm} arm, put the red apple in the left box
+      yellow_apple = with the {arm} arm, put the yellow apple in the right box
+      small_apple = with the {arm} arm, put the small apple in the top box
+    label: "검출 클래스 = 지시문 (위 줄부터 먼저 — 학습 때 문장 그대로. {arm} 은 고른 사과 쪽 팔 left/right 로 채운다)"
   - { key: roi, kind: text, default: "0.16,0.31,0.89,0.92", label: "작업판 ROI x1,y1,x2,y2 (0~1) — 중심이 이 안인 것만 센다" }
+  # 0.52 — 데이터셋 위 카메라 프레임에서 열 간격으로 잰 판 E|F 경계 (A~E 열은 왼팔이 집었다)
+  - { key: arm_split, kind: number, default: 0.52, min: 0, max: 1, step: 0.01, label: "왼팔·오른팔 경계의 화면 x (0~1) — 이보다 왼쪽 사과는 왼팔이 집는다 ({arm} 규칙)" }
   - { key: still_s, kind: number, default: 1.5, min: 0.3, max: 10, step: 0.1, label: "쉰다고 볼 시간(초) — 팔 정지·개수 불변" }
   - { key: still_tol, kind: number, default: 2, min: 0.1, max: 20, step: 0.1, label: "정지 허용 관절 변동 (정규화 눈금 -100..100)" }
   - { key: grip_closed, kind: number, default: 10, min: 0, max: 100, label: "그리퍼 닫힘 상한 (0..100) — 쉴 때는 닫혀 있다" }
@@ -62,6 +64,7 @@ outputs:
     - { key: phase, label: "단계" }
     - { key: episode, label: "회차" }
     - { key: task, label: "지시문" }
+    - { key: arm, label: "팔" }
     - { key: counts, label: "판 위 개수" }
     - { key: resting, label: "팔 쉼" }
     - { key: rest_why, label: "쉬지 못하는 이유" }
