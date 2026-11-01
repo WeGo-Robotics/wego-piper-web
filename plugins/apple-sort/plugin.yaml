@@ -2,7 +2,7 @@
 #   위 카메라 → 검출(dualarm_sort_apple 커스텀 모델) → 판 위 개수 → 규칙 순서 → set_task
 #   지시문은 팔이 쉬는 동안에만 바뀐다. `{arm}` 은 고른 사과가 판 어느 쪽이냐로 채운다 (main.py 머리말)
 name: apple-sort
-version: 0.1.1
+version: 0.1.2
 title: "사과 분류 지시문 자동 전환"
 description: "작업판 위 사과를 검출해 남은 종류의 지시문(task)을 넣는다. 하나 옮기고 팔이 쉬면 다시 세고, 그 종류가 바닥나면 다음 지시문으로"
 entry: main.py

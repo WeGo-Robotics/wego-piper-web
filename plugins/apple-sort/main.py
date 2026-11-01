@@ -19,7 +19,7 @@
 **팔은 지시문이 정한다** (`{arm}` 규칙). 같은 종류가 판 양쪽에 있으면 종류만 말해서는 어느 팔이 갈지
 안 정해진다 — 데이터셋에 그런 에피소드가 36개, 어느 쪽을 집을지는 시나리오 계획이 정해서 화면만 보는
 정책에게는 반반이었다(2026-10-31). 그래서 task 를 "with the left arm, put …" 로 다시 매겼고, 여기서는 사과
-중심이 `arm_split` 보다 왼쪽이면 left 다. 0.52 는 판 E|F 경계의 화면 x(위 카메라 프레임의 열 간격)이고,
+중심이 `arm_split` 보다 왼쪽이면 left 다 — 쉼 창(`still_s`) 프레임의 과반에서 그쪽에 보여야 한다. 0.52 는 판 E|F 경계의 화면 x(위 카메라 프레임의 열 간격)이고,
 대상 종류가 하나뿐인 에피소드 220개에서 사람이 고른 팔과 214개가 맞았다 — 나머지 6개는 경계(x 0.48~0.62)에서
 반대 팔을 쓴 것. 양쪽에 있으면 상자 쪽 팔을 먼저 시킨다(덜 뻗는다). `{arm}` 이 없는 규칙은 예전 그대로다 —
 팔을 안 밝히고 학습한 체크포인트용.
@@ -57,7 +57,7 @@ from __future__ import annotations
 
 import re
 import time
-from collections import deque
+from collections import Counter, deque
 from pathlib import Path
 
 from piper_plugin import Decision, MissionPlugin
@@ -222,16 +222,16 @@ class AppleSort(MissionPlugin):
         if arms is None:                                        # first — 팔을 못 읽어도 개수만 본다
             arms = ([], 0.0)
         self.counts = counts
-        self._window.append((now, arms[0], arms[1], counts))
+        self._window.append((now, arms[0], arms[1], counts, self.apples))
         span = float(self.config["still_s"])
         while len(self._window) > 1 and now - self._window[1][0] >= span:
             self._window.popleft()
         tol = float(self.config["still_tol"])
         grip_max = float(self.config["grip_closed"])
         seen = now - self._window[0][0]
-        same = all(c == counts for *_, c in self._window)
-        grip = max(g for _, _, g, _ in self._window)
-        spread = max((max(col) - min(col) for col in zip(*(j for _, j, _, _ in self._window))), default=0.0)
+        same = all(c == counts for _, _, _, c, _ in self._window)
+        grip = max(g for _, _, g, _, _ in self._window)
+        spread = max((max(col) - min(col) for col in zip(*(j for _, j, _, _, _ in self._window))), default=0.0)
         still = grip <= grip_max and spread < tol
         rest = seen >= span and same and still
         ready = seen >= span and same and (still or first)
@@ -240,7 +240,7 @@ class AppleSort(MissionPlugin):
         elif seen < span:
             why = f"지켜보는 중 ({seen:.1f}/{span:g}초)"
         elif not same:
-            kinds = {tuple(sorted(c.items())) for *_, c in self._window}
+            kinds = {tuple(sorted(c.items())) for _, _, _, c, _ in self._window}
             why = f"판 위 개수가 바뀐다 ({len(kinds)}가지)"
         elif first:
             why = "시작 직후라 팔 쉼을 기다리지 않는다"
@@ -251,16 +251,26 @@ class AppleSort(MissionPlugin):
         self.state(resting=rest, counts=counts, rest_why=why)
         return ready
 
+    def _side_votes(self, label: str) -> Counter:
+        """쉼 창의 프레임마다 이 종류가 판 어느 쪽에 있었나 — 쪽별 프레임 수.
+
+        개수는 창 전체로 확인하는데 쪽을 마지막 한 프레임으로 정하면, 점수가 낮은 모델(참 점수 0.1 안팎)의
+        한 프레임 흔들림이 그대로 지시문이 된다 — .117 에서 왼쪽 사과에 right 가 나갔다(2026-11-01)."""
+        return Counter(side for *_, apples in self._window
+                       for side in {"left" if cx < self.split else "right" for cx, _ in apples.get(label, [])})
+
     def _arm_order(self, label: str, rule: str) -> list[str | None]:
         """이 종류를 집을 팔 — 먼저 시킬 것부터. 규칙에 `{arm}` 이 없으면 `[None]`(팔을 안 밝힌다).
 
+        쪽은 쉼 창 프레임의 과반에서 보인 것만 (`_side_votes`) — 과반이 없으면 가장 많이 보인 쪽.
         사과가 판 양쪽에 있으면 상자 쪽 팔이 먼저다(덜 뻗는다 — 건너가 놓기가 데이터에서 가장 흩어졌다).
-        상자가 가운데(위)면 점수가 높은 사과 쪽. 연속 실패가 `max_fail` 에 닿은 쪽은 뺀다."""
+        상자가 가운데(위)면 많이 보인 쪽. 연속 실패가 `max_fail` 에 닿은 쪽은 뺀다."""
         if "{arm}" not in rule:
             sides: list[str | None] = [None]
         else:
-            apples = sorted(self.apples.get(label, []), key=lambda a: -a[1])
-            sides = list(dict.fromkeys("left" if cx < self.split else "right" for cx, _ in apples))
+            votes = self._side_votes(label)
+            sides = ([s for s, v in votes.most_common() if v * 2 > len(self._window)]
+                     or [s for s, _ in votes.most_common(1)])
             box = re.search(r"\b(left|right) box\b", rule)
             if box and box.group(1) in sides:
                 sides.remove(box.group(1))
@@ -302,7 +312,10 @@ class AppleSort(MissionPlugin):
                 self._start_up(task)
             elif self._paused:
                 self._resume_with(task)
-            return Decision.task(task, target=label, arm=arm, counts=board)
+            # 팔을 고른 근거 — 쪽별 프레임 수(창 크기 중)와 마지막 프레임의 사과 중심 x
+            seen = {**self._side_votes(label), "frames": len(self._window),
+                    "x": [round(cx, 2) for cx, _ in self.apples.get(label, [])]}
+            return Decision.task(task, target=label, arm=arm, counts=board, seen=seen)
         # 사람이 볼 차례 — 기다려도 풀리지 않으니 `on_empty_plugin` 과 상관없이 끝낸다
         self._wrap_up(f"남은 사과가 있는데 모든 종류·팔이 연속 {self.config['max_fail']}번 실패했다 — 사람이 볼 차례", wait=False)
 
