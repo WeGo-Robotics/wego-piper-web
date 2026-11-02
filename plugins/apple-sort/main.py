@@ -61,13 +61,22 @@
 넣는" 교착이 된다. `reset_on_start` 를 끄면 예전처럼 쉼을 기다려 지시문만 넣는다. 판이 비어 있으면
 리셋하지 않는다 — 놓을 사과가 생길 때까지 추론은 그대로다.
 
+**목표 위치도 같이 보낸다** (0.1.6, feature/target-conditioning.md). 지시문을 정하는 순간 집을 사과 하나를 골라
+그 중심 `(u, v)`(위 카메라 프레임의 폭·높이로 나눈 0~1)를 버스 `target` 으로 — 지시문보다 먼저 보내서 정책이
+새 문장을 읽는 순간 목표도 새것이다. 목표 입력으로 학습한 체크포인트(`<데이터셋>_target`)만 이 값을 쓰고, 다른
+체크포인트는 래퍼가 무시한다. 학습 목표는 `tools/targets.py` 가 같은 검출·같은 판 위 판정(`board_apples`)으로
+만든다 — 학습과 추론의 목표가 같은 정의여야 한다. 같은 종류가 같은 쪽에 둘이면 점수가 높은 쪽이다 — 목표를
+받은 정책은 받은 자리를 집는다. 쉼 창의 프레임마다 그 근처에 보인 중심의 중앙값이다(`_pick_target`).
+
     piper-plugin run plugins/apple-sort --camera top=<위 카메라 스트림> \
         --arm left=<CAN> --arm right=<CAN> --api http://127.0.0.1:8000 [--dry-run]
 """
 
 from __future__ import annotations
 
+import math
 import re
+import statistics
 import time
 from collections import Counter, deque
 from pathlib import Path
@@ -97,6 +106,24 @@ def parse_roi(text: str) -> tuple[float, float, float, float]:
     return min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
 
 
+def board_apples(result, shape: tuple[int, int], roi: tuple[float, float, float, float],
+                 labels) -> dict[str, list[tuple[float, float, float]]]:
+    """검출 결과 → 판 위 사과 `{종류: [(중심 u, 중심 v, 점수)]}` — 중심은 프레임 폭·높이로 나눈 0~1.
+
+    플러그인의 판단과 목표 라벨러(`tools/targets.py`)가 이 함수를 같이 쓴다 — 학습 때 붙인 목표와 추론에서
+    보내는 목표가 같은 정의(상자 중심·같은 ROI)여야 정책이 받은 자리를 학습한 대로 읽는다."""
+    h, w = shape
+    x1, y1, x2, y2 = roi
+    out: dict[str, list[tuple[float, float, float]]] = {c: [] for c in labels}
+    for (bx1, by1, bx2, by2), k, conf in zip(result.boxes.xyxy.tolist(), result.boxes.cls.int().tolist(),
+                                             result.boxes.conf.tolist()):
+        label = result.names[int(k)]
+        cx, cy = (bx1 + bx2) / 2 / w, (by1 + by2) / 2 / h
+        if label in out and x1 <= cx <= x2 and y1 <= cy <= y2:
+            out[label].append((cx, cy, float(conf)))
+    return out
+
+
 def resolve_model(name: str, plugin_dir: Path) -> str:
     """경로·HF id 는 그대로. 커스텀 모델 이름(`dualarm_sort_apple-1031-0501`)은 게이트웨이의
     `detector_models_dir` 에서 찾는다 — 설치본(`data/plugins/<이름>`)·저장소 실행(`plugins/<이름>`) 둘 다."""
@@ -121,6 +148,8 @@ class AppleSort(MissionPlugin):
     home = {"joint2": -100.0, "joint3": 100.0}
     home_tol = 8.0
     rehold_s = 3.0
+    # 목표 — 쉼 창의 다른 프레임에서 같은 사과로 볼 거리(px). 사과 지름 ~80px, 검출 중심 흔들림 몇 px
+    target_match_px = 25.0
 
     def setup(self):
         self.rules = parse_rules(self.config["rules"])
@@ -142,11 +171,14 @@ class AppleSort(MissionPlugin):
         # (시각, 관절 벡터, 그리퍼 최대, 판 위 개수) — `still_s` 창
         self._window: deque = deque()
         self.counts: dict[str, int] = {}
-        # 종류 → [(중심 x 0~1, 점수)] — 판 위 개수와 같은 프레임. `{arm}` 을 채울 때 쓴다
-        self.apples: dict[str, list[tuple[float, float]]] = {}
+        # 종류 → [(중심 u, 중심 v 0~1, 점수)] — 판 위 개수와 같은 프레임. `{arm}`·목표 위치를 정할 때 쓴다
+        self.apples: dict[str, list[tuple[float, float, float]]] = {}
+        self._wh = (640, 480)                                   # 마지막 프레임 크기 — 목표 맞추기의 px 거리
         self.task: str | None = None
         self.target: str | None = None
         self.target_arm: str | None = None
+        self.target_pos: tuple[float, float] | None = None      # 버스에 보낸 목표 위치 (u, v)
+        self._target_warned = False
         self.fails: dict[tuple[str, str | None], int] = {}       # (종류, 팔) → 연속 타임아웃
         self._fail_board: dict[str, int] | None = None
         self._empty_seen = 0
@@ -177,16 +209,9 @@ class AppleSort(MissionPlugin):
         r = self.model.predict(frame, conf=float(self.config["conf"]), device=self.config["device"], verbose=False)[0]
         r.boxes = self._one_per_apple(r.boxes)
         self.publish_detections(self.name, (h, w), r, seq=seq, wall_ns=wall_ns, model=self.model_name)
-        x1, y1, x2, y2 = self.roi
-        counts = {c: 0 for c, _ in self.rules}
-        apples: dict[str, list[tuple[float, float]]] = {c: [] for c in counts}
-        for (bx1, by1, bx2, by2), k, conf in zip(r.boxes.xyxy.tolist(), r.boxes.cls.int().tolist(), r.boxes.conf.tolist()):
-            label = r.names[int(k)]
-            cx = (bx1 + bx2) / 2 / w
-            if label in counts and x1 <= cx <= x2 and y1 <= (by1 + by2) / 2 / h <= y2:
-                counts[label] += 1
-                apples[label].append((cx, float(conf)))
-        self.apples = apples
+        apples = board_apples(r, (h, w), self.roi, [c for c, _ in self.rules])
+        counts = {c: len(v) for c, v in apples.items()}
+        self.apples, self._wh = apples, (w, h)
         self._preview(r.plot(), counts)
         return counts
 
@@ -211,6 +236,11 @@ class AppleSort(MissionPlugin):
         cv2.rectangle(canvas, (int(x1 * w), int(y1 * h)), (int(x2 * w), int(y2 * h)), (0, 200, 0), 1)
         # 왼팔·오른팔 가르는 선 — 판 E|F 경계에 맞는지 화면에서 본다
         cv2.line(canvas, (int(self.split * w), int(y1 * h)), (int(self.split * w), int(y2 * h)), (0, 200, 0), 1)
+        # 보낸 목표 위치 — 정책이 집으러 갈 자리
+        if self.target_pos is not None:
+            c = (int(self.target_pos[0] * w), int(self.target_pos[1] * h))
+            cv2.circle(canvas, c, 16, (255, 0, 255), 2, cv2.LINE_AA)
+            cv2.drawMarker(canvas, c, (255, 0, 255), cv2.MARKER_CROSS, 10, 1, cv2.LINE_AA)
         lines = [" ".join(f"{k}:{v}" for k, v in counts.items()), f"task: {self.task or '-'}"]
         for i, text in enumerate(lines):
             org = (8, h - 12 - 20 * (len(lines) - 1 - i))
@@ -321,7 +351,7 @@ class AppleSort(MissionPlugin):
         elif self._held:                                        # 쥐었다 놓았다 — 돌아와 쉴 시간을 더 준다
             self._held, self._released = False, True
         present = any(self.target_arm is None or ("left" if cx < self.split else "right") == self.target_arm
-                      for cx, _ in self.apples.get(self.target, []))
+                      for cx, *_ in self.apples.get(self.target, []))
         if present or holding:
             if self._absent_t0 is not None:
                 self._absent_t0 = None
@@ -356,7 +386,52 @@ class AppleSort(MissionPlugin):
         개수는 창 전체로 확인하는데 쪽을 마지막 한 프레임으로 정하면, 점수가 낮은 모델(참 점수 0.1 안팎)의
         한 프레임 흔들림이 그대로 지시문이 된다 — .117 에서 왼쪽 사과에 right 가 나갔다(2026-11-01)."""
         return Counter(side for *_, apples in self._window
-                       for side in {"left" if cx < self.split else "right" for cx, _ in apples.get(label, [])})
+                       for side in {"left" if cx < self.split else "right" for cx, *_ in apples.get(label, [])})
+
+    def _pick_target(self, label: str, arm: str | None) -> tuple[float, float] | None:
+        """집을 사과 하나의 중심 `(u, v)` — 목표 입력 체크포인트에 보낸다 (머리말 "목표 위치").
+
+        그 쪽(팔)에 그 종류가 보인 가장 최근 프레임에서 점수가 가장 높은 것을 고르고, 쉼 창의 프레임마다 그 근처
+        (`target_match_px`)에 보인 같은 종류의 중심을 모아 중앙값을 낸다 — 점수가 낮은 모델의 한 프레임 흔들림을
+        목표로 보내지 않는다. 마지막 프레임만 보면 그 한 장에서 사과가 빠졌을 때 목표 없음이 나간다(팔 쪽은 창의
+        과반으로 정했다 — `_side_votes`). 창 전체에서 그 쪽에 안 보였으면 None(목표 없음)."""
+        w, h = self._wh
+
+        def on_side(cx: float) -> bool:
+            return arm is None or ("left" if cx < self.split else "right") == arm
+
+        frames = [apples for *_, apples in self._window] or [self.apples]
+        ref = next((a for a in reversed(frames) if any(on_side(c[0]) for c in a.get(label, []))), None)
+        if ref is None:
+            return None
+        cx, cy, _ = max((c for c in ref[label] if on_side(c[0])), key=lambda c: c[2])
+        us, vs = [], []
+        for apples in frames:
+            near = [(u, v) for u, v, _ in apples.get(label, [])
+                    if math.hypot((u - cx) * w, (v - cy) * h) < self.target_match_px]
+            if near:
+                u, v = min(near, key=lambda p: math.hypot((p[0] - cx) * w, (p[1] - cy) * h))
+                us.append(u)
+                vs.append(v)
+        if not us:
+            return cx, cy
+        return statistics.median(us), statistics.median(vs)
+
+    def _send_target(self, pos: tuple[float, float] | None) -> None:
+        """목표 위치를 버스로 (`None` = 지움). 못 보내도 지시문은 그대로 간다 — 목표 입력으로 학습하지 않은
+        체크포인트에는 상관없는 값이다. 게이트웨이가 `target` 을 모르면(v0.5.25 이하) 한 번만 알린다."""
+        self.state(target_pos="" if pos is None else f"{pos[0]:.3f},{pos[1]:.3f}")
+        if self.dry_run:
+            self.log.info("[dry_run] target: %s", pos)
+            return
+        r = self.robot.set_params(target=None if pos is None else [round(pos[0], 4), round(pos[1], 4)])
+        applied = (r.json() or {}).get("applied", {}) if r.ok else {}
+        if r.ok and isinstance(applied, dict) and "target" in applied:
+            return
+        if not self._target_warned:
+            self._target_warned = True
+            self.log.warning("게이트웨이가 목표 위치를 받지 않았다 (%s) — target 을 모르는 게이트웨이다. "
+                             "목표 입력으로 학습한 체크포인트면 목표 없이 돈다", r.status)
 
     def _arm_order(self, label: str, rule: str) -> list[str | None]:
         """이 종류를 집을 팔 — 먼저 시킬 것부터. 규칙에 `{arm}` 이 없으면 `[None]`(팔을 안 밝힌다).
@@ -415,14 +490,18 @@ class AppleSort(MissionPlugin):
             self.task, self.target, self.target_arm = task, label, arm
             self._watch_reset()
             self.state(task=task, arm=arm or "", stale="")
+            # 목표가 지시문보다 먼저다 — 정책이 새 문장을 읽는 순간 목표도 새것이어야 한다
+            self.target_pos = self._pick_target(label, arm)
+            self._send_target(self.target_pos)
             if self._wake:
                 self._start_up(task)
             elif self._paused:
                 self._resume_with(task)
             # 팔을 고른 근거 — 쪽별 프레임 수(창 크기 중)와 마지막 프레임의 사과 중심 x
             seen = {**self._side_votes(label), "frames": len(self._window),
-                    "x": [round(cx, 2) for cx, _ in self.apples.get(label, [])]}
-            return Decision.task(task, target=label, arm=arm, counts=board, seen=seen)
+                    "x": [round(cx, 2) for cx, *_ in self.apples.get(label, [])]}
+            pos = None if self.target_pos is None else [round(c, 4) for c in self.target_pos]
+            return Decision.task(task, target=label, arm=arm, counts=board, seen=seen, target_pos=pos)
         # 사람이 볼 차례 — 기다려도 풀리지 않으니 `on_empty_plugin` 과 상관없이 끝낸다
         self._wrap_up(f"남은 사과가 있는데 모든 종류·팔이 연속 {self.config['max_fail']}번 실패했다 — 사람이 볼 차례", wait=False)
 
@@ -487,6 +566,8 @@ class AppleSort(MissionPlugin):
         if self._paused and self.robot.set_task("").ok:
             self.task = None
             self.state(task="")
+            self.target_pos = None
+            self._send_target(None)
         self.stop(reason)
 
     def _start_up(self, task: str) -> None:
