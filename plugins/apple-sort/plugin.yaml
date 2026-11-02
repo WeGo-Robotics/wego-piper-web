@@ -3,8 +3,9 @@
 #   지시문은 팔이 쉬는 동안에만 바뀐다. `{arm}` 은 고른 사과가 판 어느 쪽이냐로 채운다 (main.py 머리말)
 #   예외: 지시문의 사과가 판에 없고 그 팔이 안 쥐고 있으면 `stale_s`(놓은 뒤면 `after_release_s`) 뒤 추론을 멈추고 다시 고른다
 #   목표 위치: 지시문과 함께 집을 사과의 중심 (u, v) 를 버스 `target` 으로 — 목표 입력 체크포인트만 쓴다 (feature/target-conditioning.md)
+#   목표 따라가기: 고른 사과가 집기 전에 밀려 멈추면 목표도 그 자리로 옮긴다 — 정책은 사과가 아니라 좌표로 간다 (main.py 머리말)
 name: apple-sort
-version: 0.1.6
+version: 0.1.7
 title: "사과 분류 지시문 자동 전환"
 description: "작업판 위 사과를 검출해 남은 종류의 지시문(task)을 넣는다. 하나 옮기고 팔이 쉬면 다시 세고, 그 종류가 바닥나면 다음 지시문으로"
 entry: main.py
@@ -45,6 +46,8 @@ config:
   - { key: grip_open, kind: number, default: 66, min: 0, max: 100, label: "그리퍼 열림 하한 (0..100) — 닫힘 상한과 이 값 사이에 멈춰 있으면 무언가를 쥐고 있다" }
   # 7 — 117 실기 놓기→완료 4.5~6.0초(5회차), 데이터셋 놓기→쉼 p95 6.05·최대 8.4초. 짧으면 정상 완료를 가로챈다
   #     (멈추고 같은 판으로 다시 골라 리셋 — 해롭진 않다), 길면 놓은 뒤 빈손으로 헤매는 시간이 길다(117 회차 26: 7초 → 14.2초에 전환)
+  # 60 — 사과 상자(~75px)보다 작게: 옆 사과가 제자리에 있으면 이 안에 안 든다. 시연에서 집기 전 쏠림은 최대 21px
+  - { key: follow_px, kind: number, default: 60, min: 0, max: 200, step: 5, label: "목표 따라가기 거리(px) — 고른 사과가 집기 전에 이 안에서 밀리면 목표를 그 자리로 옮긴다. 더 멀리 밀리면 지시문 어긋남으로 멈추고 다시 고른다 (0 = 끔 — 어긋남도 예전처럼 그 쪽에 그 종류가 있나만 본다)" }
   - { key: after_release_s, kind: number, default: 7, min: 0, max: 60, step: 0.5, label: "쥐었다 놓은 뒤 어긋남 판정(초) — 원위치로 돌아와 쉴 시간. 그 뒤에도 지시문의 사과가 없는데 움직이면 멈추고 다시 고른다" }
   # 판이 비면 — 추론과 플러그인을 따로 고른다 (main.py `_wrap_up`)
   - { key: on_empty_inference, kind: select, default: "pause", options: ["pause", "wait", "stop_inference"], label: "판이 비면 추론 — pause 일시정지 · wait 그대로 두기 · stop_inference 정지 (정지하면 플러그인도 끝난다)" }
@@ -76,6 +79,7 @@ outputs:
     - { key: task, label: "지시문" }
     - { key: arm, label: "팔" }
     - { key: target_pos, label: "목표 위치 (u,v)" }
+    - { key: follow, label: "목표 따라가기" }
     - { key: counts, label: "판 위 개수" }
     - { key: resting, label: "팔 쉼" }
     - { key: rest_why, label: "쉬지 못하는 이유" }

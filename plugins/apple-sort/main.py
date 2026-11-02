@@ -68,6 +68,16 @@
 만든다 — 학습과 추론의 목표가 같은 정의여야 한다. 같은 종류가 같은 쪽에 둘이면 점수가 높은 쪽이다 — 목표를
 받은 정책은 받은 자리를 집는다. 쉼 창의 프레임마다 그 근처에 보인 중심의 중앙값이다(`_pick_target`).
 
+**목표는 사과를 따라간다** (0.1.7, `_follow_target`). 목표 입력 정책은 사과가 아니라 받은 좌표로 간다 — 프로브에서
+목표만 사과 없는 자리로 80mm 옮기면 말단이 70~78mm 따라갔고, 117 에서는 집다가 밀린 사과를 두고 옛 자리를 계속
+집었다(2026-11-02). 학습 목표는 에피소드 시작 자리에 고정인데 시연에서는 사과가 집기 전에 거의 안 밀렸다(280개,
+상자 중심 p99 16px·최대 21px) — 좌표와 사과가 늘 같은 자리여서, 둘이 어긋날 때 무엇을 믿을지 배운 적이 없다.
+그래서 고른 뒤에도 프레임마다 그 사과를 다시 찾아, 20px 넘게 옮겨져 멈췄으면 목표를 그 자리로 옮긴다. 쥔 동안,
+팔이 가려 그 종류가 덜 보일 때, 상자 모양이 바뀌었을 때(그리퍼가 덮으면 중심이 반대쪽으로 쏠린다), 이웃과
+헷갈릴 때는 안 옮긴다 — 시연 280개에 같은 규칙을 돌리면 한 번도 안 옮긴다. `follow_px` 보다 멀리 밀렸으면 따라가지
+않는다. 대신 지시문 어긋남(`_watch_task`)이 "그 쪽에 그 종류가 있나" 가 아니라 "목표 자리 근처에 있나" 를 봐서
+멈추고 다시 고른다.
+
     piper-plugin run plugins/apple-sort --camera top=<위 카메라 스트림> \
         --arm left=<CAN> --arm right=<CAN> --api http://127.0.0.1:8000 [--dry-run]
 """
@@ -107,8 +117,9 @@ def parse_roi(text: str) -> tuple[float, float, float, float]:
 
 
 def board_apples(result, shape: tuple[int, int], roi: tuple[float, float, float, float],
-                 labels) -> dict[str, list[tuple[float, float, float]]]:
+                 labels, *, size: bool = False) -> dict[str, list[tuple[float, ...]]]:
     """검출 결과 → 판 위 사과 `{종류: [(중심 u, 중심 v, 점수)]}` — 중심은 프레임 폭·높이로 나눈 0~1.
+    `size` 면 상자 폭·높이(0~1)를 뒤에 붙인다 — 목표 따라가기가 그리퍼에 덮인 상자를 가린다(`_follow_target`).
 
     플러그인의 판단과 목표 라벨러(`tools/targets.py`)가 이 함수를 같이 쓴다 — 학습 때 붙인 목표와 추론에서
     보내는 목표가 같은 정의(상자 중심·같은 ROI)여야 정책이 받은 자리를 학습한 대로 읽는다."""
@@ -120,7 +131,7 @@ def board_apples(result, shape: tuple[int, int], roi: tuple[float, float, float,
         label = result.names[int(k)]
         cx, cy = (bx1 + bx2) / 2 / w, (by1 + by2) / 2 / h
         if label in out and x1 <= cx <= x2 and y1 <= cy <= y2:
-            out[label].append((cx, cy, float(conf)))
+            out[label].append((cx, cy, float(conf)) + (((bx2 - bx1) / w, (by2 - by1) / h) if size else ()))
     return out
 
 
@@ -150,6 +161,15 @@ class AppleSort(MissionPlugin):
     rehold_s = 3.0
     # 목표 — 쉼 창의 다른 프레임에서 같은 사과로 볼 거리(px). 사과 지름 ~80px, 검출 중심 흔들림 몇 px
     target_match_px = 25.0
+    # 목표 따라가기 (`_follow_target`) — 연달아 볼 프레임 수 · 그동안 서 있을 범위(px) · 옮길 최소 거리(px) ·
+    # 상자 폭·높이가 고를 때에서 벗어나도 되는 비율 · 두 번째로 가까운 것이 가장 가까운 것의 이 배 안이면 헷갈린다.
+    # 시연 280개 실측(2026-11-02): 서 있는 사과는 상자 폭·높이가 99.8% ±15% 안, 그리퍼가 덮어 10px 넘게 쏠린 상자는
+    # 117개 중 6개만 ±15% 안이고 그 쏠림이 최대 17px — 20px 이면 시연 어디서도 안 옮긴다(2.5·5Hz 둘 다)
+    follow_frames = 3
+    follow_still_px = 6.0
+    follow_min_px = 20.0
+    follow_size = 0.15
+    follow_sep = 1.5
 
     def setup(self):
         self.rules = parse_rules(self.config["rules"])
@@ -179,6 +199,14 @@ class AppleSort(MissionPlugin):
         self.target_arm: str | None = None
         self.target_pos: tuple[float, float] | None = None      # 버스에 보낸 목표 위치 (u, v)
         self._target_warned = False
+        # 목표 따라가기 — 고를 때 그 사과 상자(px)·그 쪽에 보인 그 종류 수·고른 자리·연달아 본 중심·옮긴 기록
+        self._target_size: tuple[float, float] | None = None
+        self._target_n = 0
+        self._target_from: tuple[float, float] | None = None
+        self._follow: deque = deque()
+        self._target_moves: list[list[float]] = []              # [지시 뒤 초, u, v, 옮긴 px]
+        self._decided_t = 0.0
+        self._following = False                                 # 판단 → 기록 사이(집는 동안)만 따라간다
         self.fails: dict[tuple[str, str | None], int] = {}       # (종류, 팔) → 연속 타임아웃
         self._fail_board: dict[str, int] | None = None
         self._empty_seen = 0
@@ -209,7 +237,7 @@ class AppleSort(MissionPlugin):
         r = self.model.predict(frame, conf=float(self.config["conf"]), device=self.config["device"], verbose=False)[0]
         r.boxes = self._one_per_apple(r.boxes)
         self.publish_detections(self.name, (h, w), r, seq=seq, wall_ns=wall_ns, model=self.model_name)
-        apples = board_apples(r, (h, w), self.roi, [c for c, _ in self.rules])
+        apples = board_apples(r, (h, w), self.roi, [c for c, _ in self.rules], size=True)
         counts = {c: len(v) for c, v in apples.items()}
         self.apples, self._wh = apples, (w, h)
         self._preview(r.plot(), counts)
@@ -239,6 +267,10 @@ class AppleSort(MissionPlugin):
         # 보낸 목표 위치 — 정책이 집으러 갈 자리
         if self.target_pos is not None:
             c = (int(self.target_pos[0] * w), int(self.target_pos[1] * h))
+            if self._target_moves and self._target_from is not None:   # 따라 옮겼다 — 처음 고른 자리와 선으로
+                o = (int(self._target_from[0] * w), int(self._target_from[1] * h))
+                cv2.drawMarker(canvas, o, (170, 170, 170), cv2.MARKER_TILTED_CROSS, 10, 1, cv2.LINE_AA)
+                cv2.line(canvas, o, c, (170, 170, 170), 1, cv2.LINE_AA)
             cv2.circle(canvas, c, 16, (255, 0, 255), 2, cv2.LINE_AA)
             cv2.drawMarker(canvas, c, (255, 0, 255), cv2.MARKER_CROSS, 10, 1, cv2.LINE_AA)
         lines = [" ".join(f"{k}:{v}" for k, v in counts.items()), f"task: {self.task or '-'}"]
@@ -338,21 +370,22 @@ class AppleSort(MissionPlugin):
         self._held = self._released = False
 
     def _watch_task(self, now: float) -> None:
-        """지시문이 판과 맞나 — 쉼과 상관없이 매 프레임 (머리말 "예외"). 어긋난 채 `stale_s`(쥐었다 놓은 뒤면
-        `after_release_s`)가 지나면 추론을 멈추고 `_wake` 를 세운다 — 다음 판단이 시작 직후처럼 팔 쉼 없이
-        지시문을 다시 넣고 리셋한다."""
-        limit = float(self.config.get("stale_s") or 0)
-        if limit <= 0 or not self.target or self._wake or self._paused:
+        """지시문이 판과 맞나 — 쉼과 상관없이 매 프레임 (머리말 "예외"). 그 사과가 옮겨졌으면 목표를 따라 옮기고
+        (`_follow_target`), 목표 자리 근처에 없는 채 `stale_s`(쥐었다 놓은 뒤면 `after_release_s`)가 지나면 추론을
+        멈추고 `_wake` 를 세운다 — 다음 판단이 시작 직후처럼 팔 쉼 없이 지시문을 다시 넣고 리셋한다."""
+        if not self.target or self._wake or self._paused:
             self._watch_reset()
             return
         holding = self._holding(now)
+        self._follow_target(now, holding)
+        limit = float(self.config.get("stale_s") or 0)
+        if limit <= 0:                                          # 어긋남 감시만 끈다 — 쥠 판정 값은 따라가기가 쓴다
+            return
         if holding:
             self._held = True
         elif self._held:                                        # 쥐었다 놓았다 — 돌아와 쉴 시간을 더 준다
             self._held, self._released = False, True
-        present = any(self.target_arm is None or ("left" if cx < self.split else "right") == self.target_arm
-                      for cx, *_ in self.apples.get(self.target, []))
-        if present or holding:
+        if self._target_seen() or holding:
             if self._absent_t0 is not None:
                 self._absent_t0 = None
                 self.state(stale="")
@@ -366,8 +399,12 @@ class AppleSort(MissionPlugin):
         if gone < limit:
             self.state(stale=f"{where} 안 보임 {gone:.1f}/{limit:g}초")
             return
-        self.log.warning("지시문이 판과 어긋났다 — %s 이(가) %.1f초째 판에 없고 그 팔이 쥐고 있지 않다 (판 위 %s) "
-                         "→ 추론을 멈추고 다시 고른다", where, gone, self.counts)
+        if self._mine():                                        # 그 쪽에 그 종류는 있다 — 목표 자리에서 멀리 밀렸다
+            self.log.warning("지시문이 판과 어긋났다 — %s 이(가) %.1f초째 목표 자리 근처에 없고 그 팔이 쥐고 있지 않다 "
+                             "(판 위 %s) → 추론을 멈추고 다시 고른다", where, gone, self.counts)
+        else:
+            self.log.warning("지시문이 판과 어긋났다 — %s 이(가) %.1f초째 판에 없고 그 팔이 쥐고 있지 않다 (판 위 %s) "
+                             "→ 추론을 멈추고 다시 고른다", where, gone, self.counts)
         self._stale = True
         self._absent_t0 = None
         self._window.clear()
@@ -380,6 +417,75 @@ class AppleSort(MissionPlugin):
         else:
             self.log.warning("추론 일시정지 실패 — 다음 판단에서 지시문을 넣고 리셋한다")
 
+    def _mine(self) -> list[tuple[float, ...]]:
+        """지시문의 종류 중 지시문의 팔 쪽에 보인 것 (규칙에 `{arm}` 이 없으면 전부)."""
+        return [a for a in self.apples.get(self.target, [])
+                if self.target_arm is None or ("left" if a[0] < self.split else "right") == self.target_arm]
+
+    def _target_seen(self) -> bool:
+        """지시문의 사과가 판에 보이나 — 그 팔 쪽의 그 종류가, 목표를 보냈으면 목표에서 `follow_px` 안에.
+
+        종류만 보면 집다가 멀리 밀린 사과도 "판에 있다" 가 된다 — 정책은 빈 목표 자리를 계속 집고, 어긋남은 안
+        잡힌다. 다만 그 쪽의 그 종류가 고를 때보다 덜 보이면 예전처럼 하나라도 보이면 있다고 본다 — 그 사과는 팔에
+        가렸을 수 있다. 그래서 집기 전 어긋남이 예전보다 더 잡히지 않는다(시연 280개 모의에서 같은 수)."""
+        mine = self._mine()
+        gate = float(self.config.get("follow_px") or 0)
+        if not mine or gate <= 0 or self.target_pos is None or len(mine) < self._target_n:
+            return bool(mine)
+        w, h = self._wh
+        tu, tv = self.target_pos
+        return any(math.hypot((a[0] - tu) * w, (a[1] - tv) * h) <= gate for a in mine)
+
+    def _follow_target(self, now: float, holding: bool) -> None:
+        """고른 사과가 판 위에서 옮겨지면 목표를 그 자리로 옮긴다 (머리말 "목표는 사과를 따라간다").
+
+        집는 동안(판단 → 기록)만 — 회차 사이에 사람이 옛 자리 근처에 새 사과를 놓아도 다음 판단 전에 목표를 안 옮긴다.
+        목표에서 `follow_px` 안의 그 종류(그 팔 쪽) 중 가장 가까운 것이 `follow_frames` 장 연달아 `follow_still_px`
+        안에 서 있고 목표에서 `follow_min_px` 넘게 떨어졌으면 옮긴다 — 굴러가는 동안은 기다린다. 안 옮기는 때 —
+        가림·이웃·든 사과를 옮겨진 사과로 읽지 않으려고:
+        - 쥐고 있다(`_holding`) — 든 사과는 팔과 같이 간다. 학습 목표도 집은 자리에 고정이었다
+        - 그 쪽의 그 종류가 고를 때보다 적게 보인다 — 팔이 가렸거나 이미 집었다. 남은 이웃을 그 사과로 보지 않는다
+        - 상자 폭·높이가 고를 때에서 `follow_size` 넘게 다르다 — 그리퍼가 일부를 덮으면 상자 모양이 바뀌고 중심이
+          그리퍼 반대쪽으로 쏠린다(시연에서 12~17px). 그걸 따라가면 목표가 그리퍼에서 달아나고 팔이 쫓는다
+        - 두 번째로 가까운 것이 가장 가까운 것의 `follow_sep` 배 안 — 어느 것이 그 사과인지 모른다"""
+        gate = float(self.config.get("follow_px") or 0)
+        if gate <= 0 or not self._following or self.target_pos is None or self._target_size is None:
+            return
+        w, h = self._wh
+        tu, tv = self.target_pos
+
+        def dist(a) -> float:
+            return math.hypot((a[0] - tu) * w, (a[1] - tv) * h)
+
+        mine = sorted(self._mine(), key=dist)
+        if holding or not mine or len(mine) < self._target_n:
+            self._follow.clear()
+            return
+        u, v, _, bw, bh = mine[0]
+        same_box = (abs(bw * w / self._target_size[0] - 1) <= self.follow_size
+                    and abs(bh * h / self._target_size[1] - 1) <= self.follow_size)
+        if (dist(mine[0]) > gate or (len(mine) > 1 and dist(mine[1]) < self.follow_sep * dist(mine[0]))
+                or not same_box):
+            self._follow.clear()
+            return
+        self._follow.append((u, v))
+        while len(self._follow) > self.follow_frames:
+            self._follow.popleft()
+        if len(self._follow) < self.follow_frames:
+            return
+        mu = statistics.median(p[0] for p in self._follow)
+        mv = statistics.median(p[1] for p in self._follow)
+        spread = max(math.hypot((p[0] - mu) * w, (p[1] - mv) * h) for p in self._follow)
+        moved = math.hypot((mu - tu) * w, (mv - tv) * h)
+        if spread > self.follow_still_px or moved < self.follow_min_px:
+            return
+        self._follow.clear()
+        self.target_pos = (mu, mv)
+        self._target_moves.append([round(now - self._decided_t, 1), round(mu, 4), round(mv, 4), round(moved)])
+        self.log.info("목표를 따라 옮긴다 — %s 이(가) %.0fpx 옮겨졌다 → (%.3f, %.3f)", self.target, moved, mu, mv)
+        self.state(follow=f"{len(self._target_moves)}번 옮김 · 최근 {moved:.0f}px")
+        self._send_target(self.target_pos)
+
     def _side_votes(self, label: str) -> Counter:
         """쉼 창의 프레임마다 이 종류가 판 어느 쪽에 있었나 — 쪽별 프레임 수.
 
@@ -388,8 +494,10 @@ class AppleSort(MissionPlugin):
         return Counter(side for *_, apples in self._window
                        for side in {"left" if cx < self.split else "right" for cx, *_ in apples.get(label, [])})
 
-    def _pick_target(self, label: str, arm: str | None) -> tuple[float, float] | None:
-        """집을 사과 하나의 중심 `(u, v)` — 목표 입력 체크포인트에 보낸다 (머리말 "목표 위치").
+    def _pick_target(self, label: str, arm: str | None
+                     ) -> tuple[tuple[float, float], tuple[float, float], int] | None:
+        """집을 사과 하나 — 중심 `(u, v)`(목표 입력 체크포인트에 보낸다, 머리말 "목표 위치")·상자 `(폭, 높이)` px·
+        그 쪽에 보인 그 종류 수. 상자와 개수는 목표 따라가기(`_follow_target`)의 기준이다.
 
         그 쪽(팔)에 그 종류가 보인 가장 최근 프레임에서 점수가 가장 높은 것을 고르고, 쉼 창의 프레임마다 그 근처
         (`target_match_px`)에 보인 같은 종류의 중심을 모아 중앙값을 낸다 — 점수가 낮은 모델의 한 프레임 흔들림을
@@ -404,18 +512,21 @@ class AppleSort(MissionPlugin):
         ref = next((a for a in reversed(frames) if any(on_side(c[0]) for c in a.get(label, []))), None)
         if ref is None:
             return None
-        cx, cy, _ = max((c for c in ref[label] if on_side(c[0])), key=lambda c: c[2])
-        us, vs = [], []
+        best = max((c for c in ref[label] if on_side(c[0])), key=lambda c: c[2])
+        cx, cy = best[0], best[1]
+        n = sum(1 for c in ref[label] if on_side(c[0]))
+
+        def dist(c) -> float:
+            return math.hypot((c[0] - cx) * w, (c[1] - cy) * h)
+
+        seen = []
         for apples in frames:
-            near = [(u, v) for u, v, _ in apples.get(label, [])
-                    if math.hypot((u - cx) * w, (v - cy) * h) < self.target_match_px]
+            near = [c for c in apples.get(label, []) if dist(c) < self.target_match_px]
             if near:
-                u, v = min(near, key=lambda p: math.hypot((p[0] - cx) * w, (p[1] - cy) * h))
-                us.append(u)
-                vs.append(v)
-        if not us:
-            return cx, cy
-        return statistics.median(us), statistics.median(vs)
+                seen.append(min(near, key=dist))
+        seen = seen or [best]
+        return ((statistics.median(c[0] for c in seen), statistics.median(c[1] for c in seen)),
+                (statistics.median(c[3] for c in seen) * w, statistics.median(c[4] for c in seen) * h), n)
 
     def _send_target(self, pos: tuple[float, float] | None) -> None:
         """목표 위치를 버스로 (`None` = 지움). 못 보내도 지시문은 그대로 간다 — 목표 입력으로 학습하지 않은
@@ -489,9 +600,13 @@ class AppleSort(MissionPlugin):
                 self.log.info("지시문 → %r (판 위 %s)", task, board)
             self.task, self.target, self.target_arm = task, label, arm
             self._watch_reset()
-            self.state(task=task, arm=arm or "", stale="")
+            self.state(task=task, arm=arm or "", stale="", follow="")
             # 목표가 지시문보다 먼저다 — 정책이 새 문장을 읽는 순간 목표도 새것이어야 한다
-            self.target_pos = self._pick_target(label, arm)
+            picked = self._pick_target(label, arm)
+            self.target_pos, self._target_size, self._target_n = picked or (None, None, 0)
+            self._target_from, self._target_moves, self._decided_t = self.target_pos, [], time.monotonic()
+            self._follow.clear()
+            self._following = True
             self._send_target(self.target_pos)
             if self._wake:
                 self._start_up(task)
@@ -517,7 +632,10 @@ class AppleSort(MissionPlugin):
     def record(self, ctx, result) -> dict:
         before, after = ctx["counts"], dict(self.counts)
         self._timed_out = bool(result.get("timeout"))
+        self._following = False
         rec = {"target": self.target, "arm": self.target_arm, "task": self.task, "counts_before": before}
+        if self._target_moves:                                  # 따라 옮긴 목표 — 처음 자리는 판단의 target_pos
+            rec["target_moves"] = list(self._target_moves)
         if result.get("done"):
             delta = {k: after.get(k, 0) - before.get(k, 0) for k in before}
             rec.update(counts_after=after, delta=delta,
