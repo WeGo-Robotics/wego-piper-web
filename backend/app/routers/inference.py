@@ -5,7 +5,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.core.cli_mapping import checkpoint_dim_problem
-from app.services import train_cameras
+from app.services import target_input, train_cameras
 from app.services.process_manager import process_manager
 from app.services.model_scanner import get_model
 from app.services.robot_manager import robot_manager
@@ -86,6 +86,19 @@ async def validate_config(body: ValidateRequest):
         errors.append(problem)
     state_dim = reqs.get("state_dim", 0)
     action_dim = reqs.get("action_dim", 0)
+    # 목표 입력 모델은 state 뒤에 목표 칸이 붙어 있다 — 관절 수는 그 앞부분과 견준다 (feature/target-conditioning.md)
+    tinfo = (target_input.resolve(Path(model["path"])) if model.get("path")
+             else {"input": target_input.NONE, "spec": None})
+    if tinfo["input"] == target_input.UNKNOWN:
+        errors.append(target_input.unknown_message(tinfo))
+    elif tinfo["input"] == target_input.TARGET_V1:
+        state_dim -= target_input.target_dims(tinfo)
+        if (tinfo["spec"].get("names") or [""])[0] == "target.valid":
+            warnings.append("목표 위치를 입력으로 받는 모델입니다 — 목표를 보내는 플러그인을 같이 켜세요. "
+                            "목표가 없으면 학습한 '목표 없음' 장면처럼 움직입니다")
+        else:
+            warnings.append("목표 위치를 입력으로 받는 모델입니다 — 목표를 보내는 플러그인을 같이 켜세요. "
+                            "목표가 올 때까지 팔은 서 있습니다")
 
     # 2) follower 확인 — 양팔이면 둘 다
     ifaces = body.follower_ifaces if len(body.follower_ifaces) >= 2 else [body.follower_iface]

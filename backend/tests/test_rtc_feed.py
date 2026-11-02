@@ -108,7 +108,8 @@ def test_the_ledger_moves_with_the_queue():
     src = code_only(_WRAPPER)
     assert re.search(r"_action_queue\.pop\(0\)\s*_rtc_feed\.pop\(\)", src)
     assert "_rtc_feed.replace(raw_chunk, len(_action_queue))" in src
-    reset = src[src.index("if _reset_requested:"):src.index("if _paused:")]
+    rs = src.index("if _reset_requested:")
+    reset = src[rs:src.index("if _paused", rs)]           # 일시정지 분기(목표 대기도 같이 탄다) 앞까지
     assert "_rtc_feed.clear()" in reset
     start = src.index("if _temporal_ensemble != _te_active:")
     toggle = src[start:src.index("logger.info(\"Temporal ensemble %s\"", start)]

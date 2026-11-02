@@ -37,6 +37,26 @@ BOOL_PARAMS: set[str] = inference_params.bool_params()
 UNSAFE_PARAMS = {"chunk_size", "dim_model", "n_obs_steps", "use_vae"}
 
 
+def target_value(value) -> list[float] | None:
+    """목표 위치 `[u, v]` — 위 카메라 프레임의 폭·높이로 나눈 0~1 (feature/target-conditioning.md).
+
+    `None`·`[]` 는 지움(목표 없음). 0~1 밖은 자른다. 모양이 틀리면 ValueError — 호출부가 버린다.
+    `task` 처럼 튜닝 값이 아니라 "실행 대상" 이라 PARAM_SPEC 에 없다(프리셋에도 안 담긴다).
+    """
+    import math
+
+    if value is None or value == [] or value == "":
+        return None
+    if isinstance(value, dict):
+        value = [value.get("u"), value.get("v")]
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"target must be [u, v]: {value!r}")
+    u, v = float(value[0]), float(value[1])
+    if not (math.isfinite(u) and math.isfinite(v)):
+        raise ValueError(f"target must be finite: {value!r}")
+    return [min(1.0, max(0.0, u)), min(1.0, max(0.0, v))]
+
+
 class ParamBridge:
     def __init__(self, bus: Bus | None = None) -> None:
         self._bus = bus
@@ -77,6 +97,12 @@ class ParamBridge:
         for key, value in params.items():
             if key == "task":
                 safe[key] = str(value)
+                continue
+            if key == "target":
+                try:
+                    safe[key] = target_value(value)
+                except (TypeError, ValueError) as e:
+                    logger.warning("목표 위치를 버린다: %s", e)
                 continue
             if key in BOOL_PARAMS:
                 safe[key] = bool(value)

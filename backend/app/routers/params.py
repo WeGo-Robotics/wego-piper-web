@@ -44,6 +44,8 @@ async def update_params(body: ParamUpdate):
     safe, unsafe = param_bridge.validate_params(params)
 
     warnings = []
+    if "target" in params and "target" not in safe:
+        warnings.append("목표 위치는 [u, v] 두 값(0~1)이어야 합니다 — 무시했습니다")
     if foreign:
         warnings.append(f"이 정책이 쓰지 않는 파라미터라 무시했습니다: {', '.join(foreign)}")
     if unsafe:

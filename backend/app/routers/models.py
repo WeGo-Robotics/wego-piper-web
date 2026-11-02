@@ -1,3 +1,4 @@
+import json
 import logging
 from pathlib import Path
 from typing import Literal
@@ -12,7 +13,7 @@ from app.core.cli_mapping import (
 )
 from app.core.config import settings
 from app.core.inference_params import PARAM_SPEC, foreign_to
-from app.services import action_space, train_cameras
+from app.services import action_space, target_input, train_cameras
 from app.core.policies import takes_language
 from app.services.exclusivity import Activity, require_idle
 from app.services.camera_config import (
@@ -161,6 +162,21 @@ def _action_space_for(body) -> dict:
     return info
 
 
+def _target_for(body) -> dict:
+    """체크포인트가 목표 위치를 입력으로 받나 (services/target_input.py). 돌릴 수 없는 조합이면 여기서 400.
+
+    사람이 고르는 선택지가 없다 — 사양은 학습 데이터셋이 정한다.
+    """
+    info = target_input.resolve(Path(body.checkpoint_path)) if body.checkpoint_path else \
+        {"input": target_input.NONE, "spec": None}
+    if info["input"] == target_input.UNKNOWN:
+        raise HTTPException(400, target_input.unknown_message(info))
+    if info["input"] == target_input.TARGET_V1 and body.inference_mode == "server":
+        # 목표 칸을 state 에 붙이는 것은 로컬 wrapper 다. 정책 서버 경로는 로봇 state 만 보낸다
+        raise HTTPException(400, "목표 입력 체크포인트는 로컬 추론에서만 돌 수 있습니다 — 정책 서버 모드는 목표 칸을 만들지 못합니다")
+    return info
+
+
 def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
     """추론 CLI 인자 생성 — `/inference/preview` 와 `/inference/start` 가 함께 쓴다.
 
@@ -178,6 +194,7 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
     cameras = build_cameras_json(body.camera_mapping)
     # 액션 공간 — 두 모드 모두 먼저 본다. 서버 모드에 델타를 걸면 미리보기에서부터 거절된다
     space = _action_space_for(body)
+    target = _target_for(body)
     is_bimanual = len(body.robot_ports) >= 2
 
     # ⚠ **언어를 안 받는 정책에는 `task` 를 아예 안 싣는다.**
@@ -241,6 +258,9 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
     if space["action_space"] == action_space.DELTA_V1:
         params["action_space"] = action_space.DELTA_V1
         params["delta_spec"] = space["spec"]
+    # 목표 입력이면 사양을 싣는다. 아니면 아무것도 안 붙어 기존 명령이 한 글자도 안 바뀐다
+    if target["input"] == target_input.TARGET_V1:
+        params["target_spec"] = target["spec"]
     if cameras:
         params["cameras"] = cameras
     if is_bimanual:
@@ -482,6 +502,7 @@ async def start_inference(body: InferenceStartRequest):
         raise HTTPException(400, problem)
     # 카메라·팔을 준비하기 전에 막는다 — 돌릴 수 없는 체크포인트면 장치를 건드릴 이유가 없다
     space = _action_space_for(body)
+    target = _target_for(body)
     robot_type = body.robot_type or robot_manager.selected_type
     if not robot_type:
         raise HTTPException(400, "로봇이 선택되지 않았습니다. 로봇 페이지에서 먼저 선택하세요.")
@@ -544,6 +565,8 @@ async def start_inference(body: InferenceStartRequest):
     # wrapper 가 손으로 고친 인자와 대조한다. **시작에서만** 한다 (미리보기는 파일을 안 고친다).
     if body.checkpoint_path:
         action_space.remember(Path(body.checkpoint_path), space)
+        # 목표 입력 사양도 같은 이유로 — 데이터셋을 지운 뒤에도 같은 칸을 만들고, 손으로 고친 인자와 대조한다
+        target_input.remember(Path(body.checkpoint_path), target)
         # 학습 카메라도 같은 이유로 — 데이터셋을 지운 뒤에도 해상도 대조가 된다
         train_cameras.remember(Path(body.checkpoint_path), trained)
 
@@ -583,6 +606,28 @@ async def start_inference_custom(body: InferenceStartCustomRequest):
         if flagged != info["action_space"]:
             raise HTTPException(400, f"액션 공간이 어긋납니다 — 체크포인트는 {info['action_space']}, 인자는 {flagged}. "
                                      f"편집 전 명령의 --action-space·--delta-spec 을 그대로 두세요")
+        # 목표 입력도 — 사양을 빼면 wrapper 가 길이로 막지만, 다른 사양으로 바꾸면 목표가 엉뚱한 칸에 들어간다
+        tinfo = target_input.resolve(Path(ckpt))
+        if tinfo["input"] == target_input.UNKNOWN:
+            raise HTTPException(400, target_input.unknown_message(tinfo))
+        has_flag = "--target-spec" in body.args[:-1]
+        wanted = tinfo["input"] == target_input.TARGET_V1
+        if wanted and not has_flag:
+            raise HTTPException(400, "이 체크포인트는 목표 위치를 입력으로 받는데 인자에 --target-spec 이 없습니다. "
+                                     "편집 전 명령의 --target-spec 을 그대로 두세요")
+        if has_flag and not wanted:
+            raise HTTPException(400, "이 체크포인트는 목표 위치를 입력으로 받지 않는데 인자에 --target-spec 이 있습니다. "
+                                     "--target-spec 을 지우세요")
+        if has_flag:
+            try:
+                given = json.loads(body.args[body.args.index("--target-spec") + 1])
+                same = (given.get("names") == tinfo["spec"].get("names")
+                        and given.get("freqs") == tinfo["spec"].get("freqs"))
+            except (ValueError, AttributeError):
+                same = False
+            if not same:
+                raise HTTPException(400, "--target-spec 이 이 체크포인트의 학습 사양과 다릅니다. "
+                                         "편집 전 명령의 --target-spec 을 그대로 두세요")
         # 화면 비율도 같은 규칙 — 손으로 고친 `--cameras` 의 세그먼트를 직접 읽어 대조한다
         if "--cameras" in body.args[:-1]:
             live = train_cameras.live_from_cameras_arg(body.args[body.args.index("--cameras") + 1])

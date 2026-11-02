@@ -84,8 +84,8 @@ class DebugRecorder:
 
     # ── public API (제어 루프에서 호출, 비차단) ──
 
-    def record_observation(self, seq: int, obs: dict, task: str | None) -> None:
-        """정책에 보낸 관측을 기록. 이미지 numpy는 워커로 넘기기 전에 복사."""
+    def record_observation(self, seq: int, obs: dict, task: str | None, extra: dict | None = None) -> None:
+        """정책에 보낸 관측을 기록. 이미지 numpy는 워커로 넘기기 전에 복사. `extra` 는 줄에 그대로 붙는다(목표 위치 등)."""
         if self._closed:
             return
         state: dict = {}
@@ -99,6 +99,8 @@ class DebugRecorder:
                 img_files[k] = fname
                 img_payload[fname] = v.copy()
         line = {"seq": seq, "t": time.time(), "task": task, "state": state, "images": img_files}
+        if extra:
+            line.update(extra)
         self._enqueue(("obs", {"line": line, "images": img_payload}))
 
     def record_inference(

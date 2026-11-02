@@ -82,6 +82,8 @@ INFERENCE_ARGS_MAP: dict[str, str] = {
     # 기존 체크포인트의 명령은 한 글자도 안 바뀐다
     "action_space": "--action-space",
     "delta_spec": "--delta-spec",
+    # 목표 입력 체크포인트일 때만 실린다 (routers/models._target_for) — 위와 같은 규칙
+    "target_spec": "--target-spec",
 }
 
 # 데이터셋 편집 operation 매핑

@@ -80,6 +80,9 @@ PARAM_SETTERS = {
 # task 텍스트 (버스로 실시간 변경 가능)
 _current_task = "do the task"
 
+# 목표 위치 (u, v) — 목표 입력으로 학습한 체크포인트만 쓴다 (target_input.py). 버스 `target` 으로 바뀐다, None = 목표 없음
+_current_target: tuple[float, float] | None = None
+
 # 액션 필터 (버스로 실시간 변경 가능)
 from action_filter import ActionFilter
 _action_filter = ActionFilter()
@@ -90,6 +93,8 @@ _action_filter = ActionFilter()
 #   계수만으로 켜면 모든 ACT 추론의 동작이 한꺼번에 바뀐다.
 from temporal_ensemble import TemporalEnsembler
 from delta_action import ABSOLUTE, CKPT_MARKER, DELTA_V1, DeltaRestorer
+from target_input import CKPT_MARKER as TARGET_MARKER
+from target_input import TargetInput, parse_target, same_spec
 _temporal_ensemble = False
 _ensembler = TemporalEnsembler()
 
@@ -148,7 +153,7 @@ def param_listener(policy: Any, bus: "Bus") -> None:
     ZMQ PULL bind 를 Redis 큐 소비로 교체했다 (refactor/daemon-split.md 3단계).
     큐라서 pub/sub 과 달리 **정책 로딩 중에 보낸 값도 유실되지 않는다.**
     """
-    global _current_task, _paused, _manual_action, _refill_threshold_pct, _actions_per_chunk, _reset_requested, _temporal_ensemble, _rtc_enabled
+    global _current_task, _current_target, _paused, _manual_action, _refill_threshold_pct, _actions_per_chunk, _reset_requested, _temporal_ensemble, _rtc_enabled
     logger.info("파라미터 리스너 시작 (Redis 큐)")
 
     while True:
@@ -177,6 +182,15 @@ def param_listener(policy: Any, bus: "Bus") -> None:
                 if key == "task":
                     _current_task = str(value)
                     logger.info("Updated task = %s", _current_task)
+                    continue
+                # 목표 위치 — 모양이 틀리면 지운다(목표 없음 쪽으로 틀린다). 게이트웨이가 이미 거른 값이다
+                if key == "target":
+                    try:
+                        _current_target = parse_target(value)
+                    except (TypeError, ValueError) as e:
+                        _current_target = None
+                        logger.error("목표 값이 이상해 지운다: %s", e)
+                    logger.info("Updated target = %s", _current_target)
                     continue
                 # 재추론 트리거 임계치 (큐 잔량 %)
                 if key == "refill_threshold_pct":
@@ -236,6 +250,33 @@ def _resolve_policy_path(policy_path: str) -> str:
     return snapshot_download(repo_id=policy_path)
 
 
+def _target_input_for(spec: dict | None, policy_path: str, robot) -> "TargetInput | None":
+    """체크포인트가 기대하는 state 길이와 로봇 state 이름으로 목표 입력을 만든다. 어긋나면 SystemExit.
+
+    **로봇을 연결하기 전에** 부른다 — `observation_features` 는 설정에서 나오므로 연결이 필요 없다.
+    사양이 없는데 체크포인트가 로봇보다 긴 state 를 기대하면 막는다 — 목표 입력 체크포인트를 사양 없이 돌린
+    것이고, 그대로 가면 첫 추론부터 정규화에서 매 프레임 죽는다."""
+    from lerobot.datasets.utils import hw_to_dataset_features
+
+    cfg = json.loads((Path(_resolve_policy_path(policy_path)) / "config.json").read_text())
+    shape = ((cfg.get("input_features") or {}).get("observation.state") or {}).get("shape") or []
+    expected = int(shape[0]) if len(shape) == 1 else 0
+    names = list((hw_to_dataset_features(robot.observation_features, "observation", use_video=False)
+                  .get("observation.state") or {}).get("names") or [])
+    if spec is None:
+        if expected > len(names) > 0:
+            raise SystemExit(f"체크포인트 state 는 {expected} 칸인데 로봇은 {len(names)} 칸이다 — 목표 입력으로 학습한 "
+                             f"체크포인트면 백엔드가 --target-spec 을 싣는다(학습 데이터셋의 meta/piper_target.json). "
+                             f"시작하지 않는다")
+        return None
+    try:
+        target_in = TargetInput(spec, names, expected)
+    except ValueError as e:
+        raise SystemExit(f"목표 입력을 붙일 수 없다: {e} — 시작하지 않는다")
+    logger.info("Target input: %s", target_in.summary())
+    return target_in
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="LeRobot inference wrapper (v0.5+)")
     parser.add_argument("--policy-path", required=True)
@@ -253,6 +294,8 @@ def main() -> None:
     # 액션 공간 (feature/act-delta.md). 백엔드가 체크포인트의 학습 데이터셋을 보고 정한다 — 사람이 고르지 않는다
     parser.add_argument("--action-space", default="absolute", choices=["absolute", "delta_v1"])
     parser.add_argument("--delta-spec", default="{}", help='델타 채널·스텝당 상한 {"delta_names": [...], "clamp": {...}}')
+    # 목표 위치 입력 (feature/target-conditioning.md). 백엔드가 체크포인트의 학습 데이터셋을 보고 싣는다 — 사람이 고르지 않는다
+    parser.add_argument("--target-spec", default="", help="목표 칸 사양 JSON (lerobot_policy_piper.target 의 spec)")
     args = parser.parse_args()
 
     cameras_cfg = json.loads(args.cameras)
@@ -286,6 +329,17 @@ def main() -> None:
                              f"시작하지 않는다 ({_marker_path})")
     logger.info("Action space: %s", args.action_space)
 
+    # ── 목표 입력 대조 — 표식이 있는 체크포인트에서 사양을 빼거나 바꾸면 시작하지 않는다 ──
+    # 표식은 백엔드가 추론을 시작할 때 남긴다. 표식이 없으면(첫 실행·직접 돌린 체크포인트) 인자를 믿고,
+    # 길이는 아래 `_target_input_for` 가 체크포인트와 맞춰 본다.
+    _target_spec = json.loads(args.target_spec) if args.target_spec else None
+    _tmarker = Path(args.policy_path) / TARGET_MARKER
+    if _tmarker.is_file():
+        _tmarked = json.loads(_tmarker.read_text())
+        if _target_spec is None or not same_spec(_tmarked, _target_spec):
+            raise SystemExit(f"목표 입력 사양이 어긋난다: 체크포인트는 목표 입력({len(_tmarked.get('names') or [])}칸), "
+                             f"인자는 {'없음' if _target_spec is None else '다른 사양'} — 시작하지 않는다 ({_tmarker})")
+
     # ── 1. 로봇 생성 ──
     # 양팔 포함 조립은 robot_factory 한 곳이다 — gRPC wrapper 와 같은 코드를 쓴다
     logger.info("Creating robot: %s (port=%s, ports=%s, cameras=%d)",
@@ -297,6 +351,8 @@ def main() -> None:
         args.robot_type, args.robot_port, args.robot_ports, cameras_cfg)
 
     robot = make_robot_from_config(robot_cfg)
+    # 목표 입력 — 로봇 state 이름·체크포인트 길이를 **연결하기 전에** 맞춰 본다 (연결한 뒤에 죽으면 토크가 걸린 채 남는다)
+    _target_in = _target_input_for(_target_spec, args.policy_path, robot)
     robot.connect()
     logger.info("Robot connected: %s (%d motors)", robot.name, len(robot.action_features))
 
@@ -441,6 +497,8 @@ def main() -> None:
         refill_threshold_pct=_refill_threshold_pct, temporal_ensemble=_temporal_ensemble,
         temporal_ensemble_coeff=_ensembler.coeff, filter=settings(_action_filter))
     logger.info("Run record: %s", _run_record.path)
+    if _target_in is not None:
+        _run_record.update(target_input=_target_in.summary())
 
     # ── 4. 파라미터 리스너 시작 (Redis 큐) ──
     # 주소는 `PIPER_REDIS_URL` 에서 온다 — ZMQ 시절 `--zmq-addr` 가 없어졌다.
@@ -461,6 +519,7 @@ def main() -> None:
 
     target_dt = 1.0 / args.fps
     step = 0
+    _was_waiting_target = False
     _fps_history: list[float] = []       # 스텝 처리 시간 (슬립 제외)
     _loop_history: list[float] = []      # 스텝 시작 간격 = 실제 제어 주기
     _loop_prev: list[float | None] = [None]
@@ -518,8 +577,8 @@ def main() -> None:
     logger.info("actions_per_chunk: %d (model default: %d)", _actions_per_chunk, policy_cfg.n_action_steps)
     _run_record.update(actions_per_chunk=_actions_per_chunk)
 
-    def _prepare_observation(raw_obs: dict) -> dict:
-        """raw_obs → 모델 입력 변환. preprocessor가 있으면 사용."""
+    def _prepare_observation(raw_obs: dict, target: tuple[float, float] | None = None) -> dict:
+        """raw_obs → 모델 입력 변환. preprocessor가 있으면 사용. `target` 은 목표 입력 체크포인트만 쓴다."""
         OBS_STATE = "observation.state"
         OBS_IMAGES = "observation.images."
 
@@ -533,6 +592,10 @@ def main() -> None:
                 new_key = _rename_map.get(key, key)
                 renamed[new_key] = val
             lerobot_obs = renamed
+
+        # 2b. 목표 입력 — 로봇 state 뒤에 이 관측의 목표를 학습 때와 같은 식으로 펴서 붙인다 (target_input.py)
+        if _target_in is not None:
+            lerobot_obs[OBS_STATE] = _target_in.extend(lerobot_obs[OBS_STATE], target)
 
         # 3. state를 모델 기대 차원으로 트림 (학습 시 그리퍼 제외된 경우)
         _state_dim = policy_cfg.input_features.get("observation.state", {})
@@ -663,8 +726,12 @@ def main() -> None:
 
             seq = _infer_seq
             _infer_seq += 1
+            # 목표는 이 관측과 한 번에 잡는다 — 기록과 모델 입력이 같은 값이어야 한다
+            target_now = _current_target
             if recorder is not None:
-                recorder.record_observation(seq, raw_obs, _current_task)
+                # `target_pos` — control.jsonl 의 `target` 은 모터 지령이라 이름을 가른다 (텔레메트리와 같은 이름)
+                recorder.record_observation(seq, raw_obs, _current_task,
+                                            extra={"target_pos": target_now} if _target_in is not None else None)
 
             t0 = time.monotonic()
             try:
@@ -685,7 +752,7 @@ def main() -> None:
                     torch.no_grad() if rtc_kwargs else torch.inference_mode(),
                     torch.autocast(device_type=device.type) if device.type == "cuda" and policy.config.use_amp else nullcontext(),
                 ):
-                    observation = _prepare_observation(raw_obs)
+                    observation = _prepare_observation(raw_obs, target_now)
                     # predict_action_chunk — 서버와 동일
                     action_chunk = policy.predict_action_chunk(observation, **rtc_kwargs)
                     # ACT-S·SmolVLA-S 는 같은 인코더 위에서 stage 를 함께 낸다. 바닐라
@@ -828,8 +895,14 @@ def main() -> None:
                 step = 0
                 continue
 
+            # 목표를 꼭 받아야 하는 체크포인트(학습에 목표 없는 장면이 없었다)는 목표가 올 때까지 일시정지처럼 선다
+            _waiting_target = _target_in is not None and _target_in.needs_target and _current_target is None
+            if _waiting_target != _was_waiting_target:
+                logger.info("Target %s", "missing — holding until one arrives" if _waiting_target else "received — running")
+                _was_waiting_target = _waiting_target
+
             # 일시정지 중: 수동 액션만 처리
-            if _paused:
+            if _paused or _waiting_target:
                 # 멈추기 전에 쌓인 예측은 재개 시점엔 낡았다. 앙상블은 오래된 예측을 더 믿으므로 남겨 두면
                 # 재개 직후 몇 초를 낡은 궤적이 끈다 — 비운다. (큐 모드는 예전 그대로 둔다.)
                 with _action_lock:
@@ -844,6 +917,10 @@ def main() -> None:
                     "inference_ms": 0, "joints": [round(v, 2) for v in state_values],
                     "action": [], "task": _current_task, "paused": True,
                 }
+                if _target_in is not None:
+                    telemetry["target_pos"] = list(_current_target) if _current_target else None
+                    if _waiting_target:
+                        telemetry["waiting_target"] = True
                 print(json.dumps(telemetry), flush=True)
                 time.sleep(0.05)
                 continue
@@ -958,6 +1035,8 @@ def main() -> None:
                 "action": [round(float(action_np[i]), 2) for i in range(len(action_np))] if action_np is not None else [],
                 "task": _current_task,
             }
+            if _target_in is not None:
+                telemetry["target_pos"] = list(_current_target) if _current_target else None
             # ACT-S·SmolVLA-S 만 채워진다. 추론마다 한 번 갱신된다 — 큐 모드면 같은 값이 청크
             # 길이만큼(15fps·apc 20~50 → 1~3초) 반복되고, 시간 앙상블이면 매 스텝 바뀐다.
             with _action_lock:

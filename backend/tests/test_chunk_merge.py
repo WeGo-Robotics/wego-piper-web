@@ -189,7 +189,8 @@ def test_the_step_marker_follows_the_queue_and_resets():
     src = code_only(_WRAPPER)
     # 꺼내는 락 안에서, 모드와 상관없이 — 앙상블에서 큐로 돌아온 뒤에도 낡은 값이 남지 않게
     assert re.search(r"with _action_lock:\s*_queue_step = step\s*if _te_active:", src)
-    reset = src[src.index("if _reset_requested:"):src.index("if _paused:")]
+    start = src.index("if _reset_requested:")
+    reset = src[start:src.index("if _paused", start)]      # 일시정지 분기(목표 대기도 같이 탄다) 앞까지
     assert "_queue_step = -1" in reset
 
 

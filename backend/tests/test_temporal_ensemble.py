@@ -176,9 +176,11 @@ def test_the_screen_resets_a_saved_old_default_once():
 
 def test_reset_and_pause_clear_the_ensemble():
     src = code_only(_WRAPPER)
-    reset = src[src.index("if _reset_requested:"):src.index("if _paused:")]
+    rs = src.index("if _reset_requested:")
+    ps = src.index("if _paused", rs)                       # 일시정지 분기 — 목표 대기도 같이 탄다
+    reset = src[rs:ps]
     assert "_ensembler.clear(0)" in reset
-    paused = src[src.index("if _paused:"):src.index("if _temporal_ensemble != _te_active:")]
+    paused = src[ps:src.index("if _temporal_ensemble != _te_active:")]
     assert "_ensembler.clear(step)" in paused
 
 

@@ -31,6 +31,7 @@ plugins/<name>/
 | 입력 슬롯 풀기 | `self.input("슬롯")` / `self.input_detections("슬롯")` | 시작할 때 고른 검출 이름·토픽 — 코드는 소스 이름을 모른다 |
 | 추론 시작·정지 | `self.robot.start_inference(ckpt, self.camera_mapping())` / `.stop_inference()` | REST, 권한 `inference.start`/`inference.stop` |
 | 지시문(task) | `self.robot.set_task("…")` | 권한 `params.write`. 언어 정책만 읽는다 |
+| 목표 위치 | `self.robot.set_params(target=[u, v])` · 지우기 `target=None` | 권한 `params.write`. 위 카메라 프레임의 폭·높이로 나눈 0~1. 목표 입력으로 학습한 체크포인트만 읽는다 — 학습 목표와 같은 검출·같은 정의로 ([target-conditioning.md](../feature/target-conditioning.md), 예: `apple-sort`) |
 | 일시정지·재개·리셋 | `self.robot.pause()` `.resume()` `.reset()` | 권한 `params.write` |
 | LLM 판단 | `self.judge(user_text, system=rules)` → 슬롯 dict | 권한 `vision.judge` |
 | 평가 기록 | `self.robot.eval_log(success=…)` | 권한 `eval.write` |
