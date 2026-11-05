@@ -83,6 +83,11 @@ _current_task = "do the task"
 # 목표 위치 (u, v) — 목표 입력으로 학습한 체크포인트만 쓴다 (target_input.py). 버스 `target` 으로 바뀐다, None = 목표 없음
 _current_target: tuple[float, float] | None = None
 
+# 정책 카메라 화면 보정 (view_warp.py) — 카메라가 학습 녹화 때 자리에서 비켜났으면 정책 이미지를 학습 화면으로
+# 편다. 재는 쪽(apple-sort)이 버스 `view_warp` 로 보낸다. 꺼짐(원본 그대로)이 기본
+from view_warp import WarpSlot
+_view_warp = WarpSlot()
+
 # 액션 필터 (버스로 실시간 변경 가능)
 from action_filter import ActionFilter
 _action_filter = ActionFilter()
@@ -197,6 +202,14 @@ def param_listener(policy: Any, bus: "Bus") -> None:
                         _current_target = None
                         logger.error("목표 값이 이상해 지운다: %s", e)
                     logger.info("Updated target = %s", _current_target)
+                    continue
+                # 화면 보정 — 틀린 값이면 끈다(원본 쪽으로 틀린다). 실제로 펴는 것은 추론 스레드다
+                if key == "view_warp":
+                    try:
+                        warp = _view_warp.update(value)
+                        logger.info("Updated view_warp = %s", warp.summary() if warp else "끔")
+                    except (TypeError, ValueError) as e:
+                        logger.error("화면 보정 값이 이상해 끈다: %s", e)
                     continue
                 # 재추론 트리거 임계치 (큐 잔량 %)
                 if key == "refill_threshold_pct":
@@ -672,6 +685,14 @@ def main() -> None:
 
         # 1. build_dataset_frame으로 키 매핑
         lerobot_obs = build_dataset_frame(lerobot_features, raw_obs, prefix="observation")
+
+        # 1b. 화면 보정 — 정책이 보는 카메라 이미지를 학습 녹화 때 화면으로 편다 (view_warp.py). 기록(recorder)은 원본이다
+        warped, fresh = _view_warp.apply(lerobot_obs, cameras_cfg, OBS_IMAGES)
+        if fresh is not None:
+            if warped:
+                logger.info("화면 보정 적용 (%s): %s", fresh.summary(), ", ".join(warped))
+            else:
+                logger.warning("화면 보정 스트림 %r 을 읽는 정책 카메라가 없다 — 펴지 않는다", fresh.stream)
 
         # 2. rename_map 적용 (side→camera1 등)
         if _rename_map:

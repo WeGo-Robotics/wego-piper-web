@@ -57,6 +57,54 @@ def target_value(value) -> list[float] | None:
     return [min(1.0, max(0.0, u)), min(1.0, max(0.0, v))]
 
 
+# 화면 보정이 받는 범위 — wrapper/view_warp.py 와 같은 값이다 (테스트가 대조)
+VIEW_SCALE_RANGE = (0.8, 1.25)
+VIEW_MAX_ROT_DEG = 10.0
+VIEW_MAX_SHIFT_FRAC = 0.5
+VIEW_MAX_FRAME = 8192
+
+
+def view_warp_value(value) -> dict | None:
+    """정책 카메라 화면 보정 `{"stream", "frame": [w, h], "m": 2×3}` — 지금 화면 px → 학습 화면 px
+    (wrapper/view_warp.py, feature/target-conditioning.md §5).
+
+    `None`·`{}` 는 끔(원본 그대로). 모양이 틀리거나 배율·회전·이동이 지나치면 ValueError — 호출부가 버린다.
+    `target` 처럼 재는 쪽(플러그인)이 보내는 값이라 PARAM_SPEC 에 없다(프리셋에도 안 담긴다).
+    """
+    import math
+
+    if value is None or value == "" or value == {}:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"view_warp must be {{stream, frame, m}}: {value!r}")
+    stream = value.get("stream")
+    if not isinstance(stream, str) or not stream or len(stream) > 64:
+        raise ValueError(f"view_warp stream: {stream!r}")
+    frame = value.get("frame")
+    if not isinstance(frame, (list, tuple)) or len(frame) != 2:
+        raise ValueError(f"view_warp frame must be [w, h]: {frame!r}")
+    w, h = int(frame[0]), int(frame[1])
+    if not (0 < w <= VIEW_MAX_FRAME and 0 < h <= VIEW_MAX_FRAME):
+        raise ValueError(f"view_warp frame size: {frame!r}")
+    m = value.get("m")
+    if not isinstance(m, (list, tuple)) or len(m) != 2 or any(not isinstance(r, (list, tuple)) or len(r) != 3 for r in m):
+        raise ValueError(f"view_warp m must be 2x3: {m!r}")
+    (a, b, c), (d, e, f) = [[float(x) for x in r] for r in m]
+    if not all(math.isfinite(x) for x in (a, b, c, d, e, f)):
+        raise ValueError(f"view_warp m must be finite: {m!r}")
+    if a * e - b * d <= 0:
+        raise ValueError("view_warp m flips the image")
+    lo, hi = VIEW_SCALE_RANGE
+    if not (lo <= math.hypot(a, d) <= hi and lo <= math.hypot(b, e) <= hi):
+        raise ValueError(f"view_warp scale out of range: {m!r}")
+    if abs(math.degrees(math.atan2(d, a))) > VIEW_MAX_ROT_DEG:
+        raise ValueError(f"view_warp rotation out of range: {m!r}")
+    cx, cy = w / 2, h / 2
+    if abs(a * cx + b * cy + c - cx) > w * VIEW_MAX_SHIFT_FRAC or abs(d * cx + e * cy + f - cy) > h * VIEW_MAX_SHIFT_FRAC:
+        raise ValueError(f"view_warp shift out of range: {m!r}")
+    return {"stream": stream, "frame": [w, h], "m": [[a, b, c], [d, e, f]]}
+
+
 class ParamBridge:
     def __init__(self, bus: Bus | None = None) -> None:
         self._bus = bus
@@ -103,6 +151,12 @@ class ParamBridge:
                     safe[key] = target_value(value)
                 except (TypeError, ValueError) as e:
                     logger.warning("목표 위치를 버린다: %s", e)
+                continue
+            if key == "view_warp":
+                try:
+                    safe[key] = view_warp_value(value)
+                except (TypeError, ValueError) as e:
+                    logger.warning("화면 보정을 버린다: %s", e)
                 continue
             if key in BOOL_PARAMS:
                 safe[key] = bool(value)
