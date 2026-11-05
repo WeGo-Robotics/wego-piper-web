@@ -1,0 +1,36 @@
+{
+ "version": 1,
+ "tool": "plugins/apple-sort/tools/view_ref.py",
+ "dataset": "wego-hansu/dualarm_sort_apple",
+ "camera": "observation.images.left_top",
+ "frame": [640, 480],
+ "family": "apriltag_36h11",
+ "frames_checked": 100,
+ "made": "2026-11-02",
+ "tags": {
+  "2": [
+   [549.0, 389.0],
+   [569.5, 389.0],
+   [574.0, 408.5],
+   [554.0, 409.0]
+  ],
+  "3": [
+   [95.5, 386.5],
+   [116.5, 386.5],
+   [112.0, 407.0],
+   [91.0, 407.0]
+  ]
+ },
+ "report": {
+  "2": {
+   "frames": 86,
+   "center": [561.6, 398.9],
+   "spread_p95_px": 1.0
+  },
+  "3": {
+   "frames": 94,
+   "center": [103.8, 396.8],
+   "spread_p95_px": 0.5
+  }
+ }
+}

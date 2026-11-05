@@ -78,12 +78,41 @@
 않는다. 대신 지시문 어긋남(`_watch_task`)이 "그 쪽에 그 종류가 있나" 가 아니라 "목표 자리 근처에 있나" 를 봐서
 멈추고 다시 고른다.
 
+**위 카메라 보정** (0.1.9, `_calibrate_view`). 목표 입력 정책은 화면 좌표를 학습 녹화 때 자리로 읽는다 — 117 위
+카메라는 녹화(10-29) 뒤 화면이 38px 아래로 비켜나(≈41mm) 사과 중심을 줘도 그만큼 어긋난 곳으로 내려갔다(2026-11-02).
+그래서 켤 때 판 모서리 AprilTag(36h11) 둘을 찾아 지금 화면 → 학습 화면 닮음변환을 재고(`view_ref.json` — 학습
+데이터셋에서 `tools/view_ref.py` 로 잰 표지 자리), 검출한 사과 중심을 학습 화면 좌표로 옮긴 뒤 ROI·팔 경계·목표를 다
+그 좌표에서 정한다. 117 실측: 표지 모서리 잔차 0.6px, 표지에서 300px 위 커튼 경계도 2px 안. 판이 로봇에 대해 그대로라는
+전제다(원위치 팔도 37px 같이 밀려 있었다). 정책이 보는 이미지는 그대로 비켜나 있다 — 목표만 맞춘다.
+
+**정책 이미지도 편다** (0.1.10, `view_image`). 목표만 맞추면 이미지와 목표가 서로 어긋난다 — 117 에서 판 맨 앞 줄
+사과는 정책 이미지 속 자리가 학습 때 사과가 한 번도 없던 띠(학습 최저 v 0.749, 그 사과 0.80)라 왼팔이 네 번 연속
+출발하지 않았고, 안쪽으로 옮기면 움직였다(2026-11-02). 그래서 잰 변환을 그대로 버스 `view_warp` 로 보내 wrapper 가
+이 카메라 스트림을 읽는 정책 카메라 이미지를 학습 화면으로 편다(wrapper/view_warp.py) — 이미지·목표가 같은 행렬로
+같이 학습 화면에 맞는다. 켤 때 지우고 보정이 잡히면 보내고 끝날 때 지운다 — 이 플러그인이 도는 동안만 펴진다.
+게이트웨이가 `view_warp` 를 모르면 한 번 알리고 목표만 맞춘다(0.1.9 와 같다). `view_image` 를 끄면 예전처럼 목표만.
+
+**출발 안 하면 다른 사과** (0.1.11, `_watch_start`). 정책이 어떤 자리의 사과에는 원위치에서 아예 떠나지 않는다 — 117 에서
+왼쪽 맨 앞 줄 빨강에 네 번 연속(각 60초) 서 있었고, 사과를 옮기면 움직였다(2026-11-02). 타임아웃 둘을 기다리면 사과 하나에
+2분이다. 그래서 지시 뒤 그 팔이 원위치에 선 채 `start_s`(8초) 가 지나면 그 사과(종류·학습 좌표)를 "출발 안 함" 으로 적고
+추론을 멈춘 뒤, 다음 판단이 그 사과를 건너뛰고 다른 사과부터 고른다 — 같은 쪽의 같은 종류, 다른 팔, 다음 종류 순(`_choose`).
+남은 것이 그런 사과뿐이면 한 번 더 시키고(`stuck_max`, 출발은 확률이다), 그래도 안 떠나면 추론을 쉬게 하고 판 가운데 쪽으로
+옮겨 달라고 기다린다 — 그 자리에서 사과가 사라지면 기록을 지우고 이어 간다(`_forget_moved`). 시계는 원위치에 닿은 때부터
+잰다(리셋 파킹은 안 센다). 한 번 떠났으면 그 지시는 더 안 본다 — 집다 멈춘 것은 어긋남·타임아웃 몫이다. 회차 타임아웃
+실패(`max_fail`)에는 안 센다. 저널: 기록 `no_start`, 판단 `stuck`·`retry`.
+
+**회차가 끝나면 목표를 지운다** (0.1.8). 옮긴 사과의 자리는 비었는데 목표가 거기 남으면, 정책은 원위치에서 잠깐
+쉬고 다시 빈 자리로 집으러 간다 — 쉼이 안 잡혀 다음 판단도 못 한다(2026-11-02 117, 빨강 둘 중 하나를 옮긴 뒤).
+목표가 없으면 정책은 선다(목표 없음 = 가만히) — 다음 판단이 새 목표를 보낸다. 같은 까닭으로 어긋남의 "덜 보이면
+가렸을 수 있다" 물러섬은 집는 중 쥐기 전에만 쓴다.
+
     piper-plugin run plugins/apple-sort --camera top=<위 카메라 스트림> \
         --arm left=<CAN> --arm right=<CAN> --api http://127.0.0.1:8000 [--dry-run]
 """
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import statistics
@@ -117,22 +146,61 @@ def parse_roi(text: str) -> tuple[float, float, float, float]:
 
 
 def board_apples(result, shape: tuple[int, int], roi: tuple[float, float, float, float],
-                 labels, *, size: bool = False) -> dict[str, list[tuple[float, ...]]]:
+                 labels, *, size: bool = False, view=None) -> dict[str, list[tuple[float, ...]]]:
     """검출 결과 → 판 위 사과 `{종류: [(중심 u, 중심 v, 점수)]}` — 중심은 프레임 폭·높이로 나눈 0~1.
     `size` 면 상자 폭·높이(0~1)를 뒤에 붙인다 — 목표 따라가기가 그리퍼에 덮인 상자를 가린다(`_follow_target`).
+    `view` 는 지금 화면 px → 학습 화면 px 닮음변환(2×3, `view_transform`) — 위 카메라가 녹화 때 자리에서 비켜났으면
+    중심을 학습 화면 좌표로 옮긴 뒤 ROI 를 본다. 라벨러는 학습 프레임 그대로라 안 준다.
 
     플러그인의 판단과 목표 라벨러(`tools/targets.py`)가 이 함수를 같이 쓴다 — 학습 때 붙인 목표와 추론에서
     보내는 목표가 같은 정의(상자 중심·같은 ROI)여야 정책이 받은 자리를 학습한 대로 읽는다."""
     h, w = shape
     x1, y1, x2, y2 = roi
+    scale = 1.0 if view is None else math.hypot(view[0][0], view[1][0])
     out: dict[str, list[tuple[float, float, float]]] = {c: [] for c in labels}
     for (bx1, by1, bx2, by2), k, conf in zip(result.boxes.xyxy.tolist(), result.boxes.cls.int().tolist(),
                                              result.boxes.conf.tolist()):
         label = result.names[int(k)]
-        cx, cy = (bx1 + bx2) / 2 / w, (by1 + by2) / 2 / h
+        px, py = (bx1 + bx2) / 2, (by1 + by2) / 2
+        if view is not None:
+            px, py = (view[0][0] * px + view[0][1] * py + view[0][2], view[1][0] * px + view[1][1] * py + view[1][2])
+        cx, cy = float(px) / w, float(py) / h
         if label in out and x1 <= cx <= x2 and y1 <= cy <= y2:
-            out[label].append((cx, cy, float(conf)) + (((bx2 - bx1) / w, (by2 - by1) / h) if size else ()))
+            out[label].append((cx, cy, float(conf))
+                              + (((bx2 - bx1) * scale / w, (by2 - by1) * scale / h) if size else ()))
     return out
+
+
+def detect_tags(frame) -> dict:
+    """판 AprilTag(36h11, 작업판 인쇄 — scenario/printing.py) → `{id: 모서리 (4, 2) px}`. 태그가 20px 남짓이라
+    2배로 키워 찾는다 — 원본 크기로는 학습 프레임에서 둘 중 하나만 잡혔다."""
+    import cv2
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    up = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    dic = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+    corners, ids, _ = cv2.aruco.ArucoDetector(dic, cv2.aruco.DetectorParameters()).detectMarkers(up)
+    if ids is None:
+        return {}
+    return {int(i): c.reshape(4, 2) / 2 for i, c in zip(ids.ravel(), corners)}
+
+
+def view_transform(live: dict, ref: dict):
+    """지금 태그 모서리 → 학습 태그 모서리 닮음변환 — `(2×3 행렬, 배율, 회전°, 잔차 px, 쓴 태그)`. 공통 태그가 둘 미만이면 None
+    (태그 하나는 20px 라 배율·회전이 안 선다). 위 카메라만 비켜났다는 전제다 — 판이 로봇에 대해 움직였으면 틀린다."""
+    import cv2
+    import numpy as np
+
+    common = sorted(set(live) & {int(k) for k in ref})
+    if len(common) < 2:
+        return None
+    src = np.concatenate([np.asarray(live[i], dtype=np.float32) for i in common])
+    dst = np.concatenate([np.asarray(ref[str(i)] if str(i) in ref else ref[i], dtype=np.float32) for i in common])
+    m, _ = cv2.estimateAffinePartial2D(src, dst, method=cv2.LMEDS)
+    if m is None:
+        return None
+    res = float(np.abs(cv2.transform(src[None], m)[0] - dst).max())
+    return m, float(math.hypot(m[0, 0], m[1, 0])), float(math.degrees(math.atan2(m[1, 0], m[0, 0]))), res, common
 
 
 def resolve_model(name: str, plugin_dir: Path) -> str:
@@ -161,6 +229,11 @@ class AppleSort(MissionPlugin):
     rehold_s = 3.0
     # 목표 — 쉼 창의 다른 프레임에서 같은 사과로 볼 거리(px). 사과 지름 ~80px, 검출 중심 흔들림 몇 px
     target_match_px = 25.0
+    # 출발 감시 (`_watch_start`) — 떠났다 = 접는 관절이 원위치에서 이만큼 넘게 · 출발 안 한 사과와 같은 사과로 볼 거리(px) ·
+    # 한 사과를 시켜 볼 횟수(다른 사과를 다 해 본 뒤 한 번 더). 시연은 지시 뒤 중앙 0.8초·최대 3.3초에 떠났다
+    start_leave = 12.0
+    stuck_px = 30.0
+    stuck_max = 2
     # 목표 따라가기 (`_follow_target`) — 연달아 볼 프레임 수 · 그동안 서 있을 범위(px) · 옮길 최소 거리(px) ·
     # 상자 폭·높이가 고를 때에서 벗어나도 되는 비율 · 두 번째로 가까운 것이 가장 가까운 것의 이 배 안이면 헷갈린다.
     # 시연 280개 실측(2026-11-02): 서 있는 사과는 상자 폭·높이가 99.8% ±15% 안, 그리퍼가 덮어 10px 넘게 쏠린 상자는
@@ -170,6 +243,15 @@ class AppleSort(MissionPlugin):
     follow_min_px = 20.0
     follow_size = 0.15
     follow_sep = 1.5
+    # 화면 보정 (`_calibrate_view`) — 태그 둘이 같이 보인 프레임 몇 장의 모서리 중앙값으로 잰다 · 그만큼 못 모으면 이
+    # 시간 뒤 보정 없이 · 받아들일 한계(잔차 px · 배율 · 회전° · 표지 이동 px). 넘으면 태그를 잘못 잡았거나 판이 움직였다.
+    # 117 실측(2026-11-02): 잔차 0.6px · 배율 1.017 · 회전 0.09° · 이동 (+2, +38)px, 판 위쪽 끝에서도 2px 안
+    view_frames = 3
+    view_wait_s = 10.0
+    view_max_res = 2.0
+    view_scale = (0.9, 1.1)
+    view_max_rot = 3.0
+    view_max_shift = 120.0
 
     def setup(self):
         self.rules = parse_rules(self.config["rules"])
@@ -207,6 +289,25 @@ class AppleSort(MissionPlugin):
         self._target_moves: list[list[float]] = []              # [지시 뒤 초, u, v, 옮긴 px]
         self._decided_t = 0.0
         self._following = False                                 # 판단 → 기록 사이(집는 동안)만 따라간다
+        # 화면 보정 — 지금 위 카메라 px → 학습 화면 px (2×3). 첫 판단 전에 판 표지로 잰다 (`_calibrate_view`)
+        self._view = self._view_inv = self._view_info = self._view_t0 = None
+        self._view_seen: list[dict] = []
+        self._view_ref = None
+        self._view_done = not self.config.get("view_correct", True)
+        if self._view_done:
+            self.state(view="끔")
+        else:
+            try:
+                self._view_ref = json.loads((self.env.dir / "view_ref.json").read_text())["tags"]
+            except (OSError, ValueError, KeyError) as e:
+                self.log.warning("화면 보정 기준표(view_ref.json)를 못 읽는다 (%s) — 보정 없이 간다", e)
+                self._view_done = True
+                self.state(view="기준표 없음 — 보정 없음")
+        # 정책 이미지 보정 (`_send_view_warp`) — 지난 실행이 남긴 것을 먼저 지운다. 보정이 잡히면 같은 행렬을 보낸다
+        self._image_warned = False
+        self._view_sent = False
+        self._send_view_warp(None)
+        self.state(view_image="잴 때까지 끔" if self.config.get("view_image", True) and not self._view_done else "끔")
         self.fails: dict[tuple[str, str | None], int] = {}       # (종류, 팔) → 연속 타임아웃
         self._fail_board: dict[str, int] | None = None
         self._empty_seen = 0
@@ -220,6 +321,13 @@ class AppleSort(MissionPlugin):
         self._released = False
         self._stale = False
         self._look_again = False                                # 어긋나 멈췄다 — 판이 비어 보이면 원위치에서 다시 센다
+        # 출발 감시 (`_watch_start`) — 원위치에 선 채 잰 시작 시각 · 이번 지시에 떠났나 · 출발 안 해 끝냈나 ·
+        # 출발 안 한 사과 [{label, arm, pos(학습 좌표), n}] — 그 자리의 사과가 옮겨지면 지운다
+        self._home_t0: float | None = None
+        self._started = False
+        self._no_start = False
+        self._stuck: list[dict] = []
+        self._stuck_said = ""
         # 첫 판단에서 원위치 리셋 후 재개한다 — 이전 실행이 일시정지로 끝났을 수 있다
         self._wake = bool(self.config.get("reset_on_start", True)) and not self.dry_run
         self.state(rules=[c for c, _ in self.rules], model=self.model_name, arms=self.arm_keys)
@@ -234,14 +342,75 @@ class AppleSort(MissionPlugin):
             return None
         frame, seq, wall_ns = got
         h, w = frame.shape[:2]
+        if not self._view_done:
+            self._calibrate_view(frame)
         r = self.model.predict(frame, conf=float(self.config["conf"]), device=self.config["device"], verbose=False)[0]
         r.boxes = self._one_per_apple(r.boxes)
         self.publish_detections(self.name, (h, w), r, seq=seq, wall_ns=wall_ns, model=self.model_name)
-        apples = board_apples(r, (h, w), self.roi, [c for c, _ in self.rules], size=True)
+        apples = board_apples(r, (h, w), self.roi, [c for c, _ in self.rules], size=True, view=self._view)
         counts = {c: len(v) for c, v in apples.items()}
         self.apples, self._wh = apples, (w, h)
         self._preview(r.plot(), counts)
         return counts
+
+    def _calibrate_view(self, frame) -> None:
+        """위 카메라가 학습 녹화 때 자리에서 비켜난 만큼을 판 AprilTag 로 잰다 (머리말 "위 카메라 보정").
+
+        태그 둘이 같이 보인 프레임을 `view_frames` 장 모아 태그마다 모서리 중앙값 → 닮음변환(`view_transform`).
+        팔이 태그를 가린 프레임은 건너뛴다. `view_wait_s` 안에 못 모으거나 변환이 한계를 넘으면(태그 오검출·판이
+        움직임) 보정 없이 가고 크게 알린다 — 그러면 목표가 학습 때 자리에서 카메라가 비켜난 만큼 어긋난다."""
+        import cv2
+        import numpy as np
+
+        now = time.monotonic()
+        if self._view_t0 is None:
+            self._view_t0 = now
+        tags = detect_tags(frame)
+        known = {int(k) for k in self._view_ref}
+        if len(set(tags) & known) >= 2:
+            self._view_seen.append(tags)
+        if len(self._view_seen) < self.view_frames:
+            if now - self._view_t0 >= self.view_wait_s:
+                self._view_done = True
+                self.log.warning("화면 보정 — %.0f초 동안 판 표지 둘을 같이 못 봤다 (보이는 태그 %s, 기준 %s) → 보정 없이 간다. "
+                                 "위 카메라가 학습 녹화 때 자리에서 비켜났으면 목표가 그만큼 어긋난다",
+                                 now - self._view_t0, sorted(tags), sorted(known))
+                self.state(view="표지 못 찾음 — 보정 없음")
+            return
+        self._view_done = True
+        ids = set.intersection(*(set(t) & known for t in self._view_seen))
+        live = {i: np.median(np.stack([t[i] for t in self._view_seen]), axis=0) for i in ids}
+        got = view_transform(live, self._view_ref)
+        if got is None:
+            self.log.warning("화면 보정 — 매 프레임 같이 보인 표지가 둘이 안 된다 (%s) → 보정 없이 간다", sorted(ids))
+            self.state(view="표지 모자람 — 보정 없음")
+            return
+        m, scale, rot, res, used = got
+        dx, dy = np.mean([live[i].mean(0) - np.asarray(self._view_ref[str(i)]).mean(0) for i in used], axis=0)
+        info = {"shift_px": [round(float(dx), 1), round(float(dy), 1)], "scale": round(1 / scale, 4),
+                "rot_deg": round(-rot, 2), "res_px": round(res, 2), "tags": used}
+        if (res > self.view_max_res or not self.view_scale[0] <= scale <= self.view_scale[1]
+                or abs(rot) > self.view_max_rot or math.hypot(dx, dy) > self.view_max_shift):
+            self.log.warning("화면 보정 — 변환이 한계를 넘는다 %s → 보정 없이 간다. 태그를 잘못 잡았거나 판이 로봇에 대해 "
+                             "움직였을 수 있다", info)
+            self.state(view="한계 넘음 — 보정 없음")
+            return
+        self._view, self._view_inv, self._view_info = m, cv2.invertAffineTransform(m), info
+        self.log.info("화면 보정 — 위 카메라가 학습 녹화 때보다 (%+.0f, %+.0f)px 비켜나 있다 (배율 ×%.3f, 회전 %+.2f°, "
+                      "표지 %s, 잔차 %.1fpx) → 사과 자리를 학습 화면 좌표로 옮겨 쓴다", dx, dy, 1 / scale, -rot, used, res)
+        self.state(view=f"({dx:+.0f}, {dy:+.0f})px ×{1 / scale:.3f}")
+        if self.config.get("view_image", True):
+            h, w = frame.shape[:2]
+            self._send_view_warp(m, (w, h))
+            info["image"] = self._view_sent
+
+    def _to_live(self, u: float, v: float, w: int, h: int) -> tuple[int, int]:
+        """학습 화면 좌표(0~1) → 지금 화면 px — 미리보기는 지금 프레임 위에 그린다."""
+        x, y = u * w, v * h
+        if self._view_inv is not None:
+            m = self._view_inv
+            x, y = m[0][0] * x + m[0][1] * y + m[0][2], m[1][0] * x + m[1][1] * y + m[1][2]
+        return int(round(x)), int(round(y))
 
     @staticmethod
     def _one_per_apple(boxes):
@@ -259,21 +428,28 @@ class AppleSort(MissionPlugin):
     def _preview(self, canvas, counts: dict[str, int]) -> None:
         import cv2
 
+        import numpy as np
+
         h, w = canvas.shape[:2]
+        # ROI·경계·목표는 학습 화면 좌표다 — 화면 보정을 거꾸로 돌려 지금 프레임에 그린다
         x1, y1, x2, y2 = self.roi
-        cv2.rectangle(canvas, (int(x1 * w), int(y1 * h)), (int(x2 * w), int(y2 * h)), (0, 200, 0), 1)
+        roi = [self._to_live(u, v, w, h) for u, v in ((x1, y1), (x2, y1), (x2, y2), (x1, y2))]
+        cv2.polylines(canvas, [np.int32(roi)], True, (0, 200, 0), 1)
         # 왼팔·오른팔 가르는 선 — 판 E|F 경계에 맞는지 화면에서 본다
-        cv2.line(canvas, (int(self.split * w), int(y1 * h)), (int(self.split * w), int(y2 * h)), (0, 200, 0), 1)
+        cv2.line(canvas, self._to_live(self.split, y1, w, h), self._to_live(self.split, y2, w, h), (0, 200, 0), 1)
         # 보낸 목표 위치 — 정책이 집으러 갈 자리
         if self.target_pos is not None:
-            c = (int(self.target_pos[0] * w), int(self.target_pos[1] * h))
+            c = self._to_live(*self.target_pos, w, h)
             if self._target_moves and self._target_from is not None:   # 따라 옮겼다 — 처음 고른 자리와 선으로
-                o = (int(self._target_from[0] * w), int(self._target_from[1] * h))
+                o = self._to_live(*self._target_from, w, h)
                 cv2.drawMarker(canvas, o, (170, 170, 170), cv2.MARKER_TILTED_CROSS, 10, 1, cv2.LINE_AA)
                 cv2.line(canvas, o, c, (170, 170, 170), 1, cv2.LINE_AA)
             cv2.circle(canvas, c, 16, (255, 0, 255), 2, cv2.LINE_AA)
             cv2.drawMarker(canvas, c, (255, 0, 255), cv2.MARKER_CROSS, 10, 1, cv2.LINE_AA)
         lines = [" ".join(f"{k}:{v}" for k, v in counts.items()), f"task: {self.task or '-'}"]
+        if self._view_info:
+            dx, dy = self._view_info["shift_px"]
+            lines.insert(0, f"view: {dx:+.0f},{dy:+.0f}px x{self._view_info['scale']:.3f}")
         for i, text in enumerate(lines):
             org = (8, h - 12 - 20 * (len(lines) - 1 - i))
             cv2.putText(canvas, text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3, cv2.LINE_AA)
@@ -300,6 +476,10 @@ class AppleSort(MissionPlugin):
         문장으로) 도는 추론은 팔이 한 번도 안 쉬어서, 쉼을 기다리면 "지시문이 없어 안 쉬고, 안 쉬어서 못 넣는"
         교착이 된다. 시작 직후에는 지시문을 넣고 원위치로 돌리므로(`_start_up`) 팔 쉼을 볼 이유가 없다."""
         counts = self._look()
+        if not self._view_done:                                 # 첫 판단은 화면 보정 뒤 — 목표를 학습 화면 좌표로 보낸다
+            self._window.clear()
+            self.state(resting=False, rest_why="화면 보정 — 판 표지 찾는 중")
+            return False
         arms = self._arm_pose()
         now = time.monotonic()
         if counts is None or (arms is None and not first):
@@ -368,6 +548,75 @@ class AppleSort(MissionPlugin):
         self._absent_t0 = None
         self._grips.clear()
         self._held = self._released = False
+        self._home_t0 = None
+        self._started = False
+
+    def _arm_home_dist(self, arm: str | None) -> float | None:
+        """이 팔(`None` 이면 모든 팔 중 가장 먼 것)이 원위치에서 얼마나 떨어졌나 — 접는 관절 기준. 못 읽으면 None."""
+        keys = [arm] if arm in self.arm_keys else self.arm_keys
+        dist = 0.0
+        for k in keys:
+            s = self.arm(k).read()
+            if s is None or not s.fresh(1.0):
+                return None
+            dist = max(dist, *(abs(s.joints.get(j, v + 1e9) - v) for j, v in self.home.items()))
+        return dist
+
+    def _watch_start(self, now: float) -> bool:
+        """지시문의 팔이 출발했나 (머리말 "출발 안 하면 다른 사과"). 원위치에 선 채 `start_s` 가 지나면 그 사과를
+        `_stuck` 에 적고 추론을 멈춘 뒤 `_wake` 를 세운다 — 다음 판단이 다른 사과부터 골라 리셋하고 다시 시작한다.
+        끝냈으면 True. 시계는 원위치에 닿은 때부터 잰다 — 리셋 파킹으로 돌아오는 중에는 안 잰다. 한 번 떠났으면 이번
+        지시는 더 안 본다(집다 멈춘 것은 어긋남·타임아웃 몫이다). 드라이런은 팔을 안 움직이므로 안 본다."""
+        limit = float(self.config.get("start_s") or 0)
+        if limit <= 0 or self.dry_run or self._started or not self._following:
+            return False
+        d = self._arm_home_dist(self.target_arm)
+        if d is None:                                           # 모르면 출발 안 했다고 단정하지 않는다
+            return False
+        if d > self.start_leave:
+            self._started, self._home_t0 = True, None
+            self.state(start="")
+            return False
+        if d > self.home_tol:                                   # 원위치로 가는 중 — 닿은 뒤부터 잰다
+            return False
+        if self._home_t0 is None:
+            self._home_t0 = now
+        waited = now - self._home_t0
+        where = f"{self.target}({self.target_arm or '-'})"
+        if waited < limit:
+            self.state(start=f"{where} 출발 기다림 {waited:.0f}/{limit:g}초")
+            return False
+        pos = self.target_pos
+        entry = self._stuck_at(self.target, pos) if pos is not None else None
+        if entry is None and pos is not None:
+            entry = {"label": self.target, "arm": self.target_arm, "pos": [round(pos[0], 4), round(pos[1], 4)], "n": 0}
+            self._stuck.append(entry)
+        if entry is not None:
+            entry["n"] += 1
+        self.log.warning("출발 안 함 — %s 이(가) 목표 %s 에서 %.0f초째 원위치에 서 있다 (이 사과 %s번째) → 추론을 멈추고 "
+                         "다른 사과부터 한다", where, entry["pos"] if entry else "없음", waited, entry["n"] if entry else "-")
+        self._no_start = True
+        self._home_t0 = None
+        self._window.clear()
+        self.state(start=f"{where} 출발 안 함 — 다른 사과로")
+        self._wake = True
+        if self.robot.pause().ok:
+            self._paused = True
+        else:
+            self.log.warning("추론 일시정지 실패 — 다음 판단에서 지시문을 넣고 리셋한다")
+        return True
+
+    def _stuck_at(self, label: str, c) -> dict | None:
+        """이 자리(학습 좌표 중심)의 그 종류가 출발 안 한 사과인가 — 그 기록."""
+        w, h = self._wh
+        return next((s for s in self._stuck if s["label"] == label
+                     and math.hypot((c[0] - s["pos"][0]) * w, (c[1] - s["pos"][1]) * h) < self.stuck_px), None)
+
+    def _blocked(self, label: str, c, retry: bool) -> bool:
+        """지금 이 사과를 고르면 안 되나 — 출발 안 한 사과다. 두 번째 바퀴(`retry`, 다른 사과가 없을 때)에는
+        `stuck_max` 번을 못 채운 것만 다시 시킨다."""
+        s = self._stuck_at(label, c)
+        return s is not None and (not retry or s["n"] >= self.stuck_max)
 
     def _watch_task(self, now: float) -> None:
         """지시문이 판과 맞나 — 쉼과 상관없이 매 프레임 (머리말 "예외"). 그 사과가 옮겨졌으면 목표를 따라 옮기고
@@ -375,6 +624,8 @@ class AppleSort(MissionPlugin):
         멈추고 `_wake` 를 세운다 — 다음 판단이 시작 직후처럼 팔 쉼 없이 지시문을 다시 넣고 리셋한다."""
         if not self.target or self._wake or self._paused:
             self._watch_reset()
+            return
+        if self._watch_start(now):
             return
         holding = self._holding(now)
         self._follow_target(now, holding)
@@ -426,12 +677,16 @@ class AppleSort(MissionPlugin):
         """지시문의 사과가 판에 보이나 — 그 팔 쪽의 그 종류가, 목표를 보냈으면 목표에서 `follow_px` 안에.
 
         종류만 보면 집다가 멀리 밀린 사과도 "판에 있다" 가 된다 — 정책은 빈 목표 자리를 계속 집고, 어긋남은 안
-        잡힌다. 다만 그 쪽의 그 종류가 고를 때보다 덜 보이면 예전처럼 하나라도 보이면 있다고 본다 — 그 사과는 팔에
-        가렸을 수 있다. 그래서 집기 전 어긋남이 예전보다 더 잡히지 않는다(시연 280개 모의에서 같은 수)."""
+        잡힌다. 집는 중에 아직 쥔 적이 없을 때만은 그 쪽의 그 종류가 고를 때보다 덜 보이면 예전처럼 하나라도 보이면
+        있다고 본다 — 그 사과는 다가가는 팔에 가렸을 수 있다(그래서 집기 전 어긋남은 예전과 같은 수, 시연 280개 모의).
+        쥐었다 놓은 뒤나 회차 사이에는 물러서지 않는다 — 옮긴 사과의 빈 자리를 같은 종류의 다른 사과가 가려 주면
+        정책이 빈 자리를 계속 집어도 못 잡는다(2026-11-02 117: 빨강 둘 중 하나를 옮긴 뒤 왼팔이 빈 자리로 거듭)."""
         mine = self._mine()
         gate = float(self.config.get("follow_px") or 0)
-        if not mine or gate <= 0 or self.target_pos is None or len(mine) < self._target_n:
+        if not mine or gate <= 0 or self.target_pos is None:
             return bool(mine)
+        if len(mine) < self._target_n and self._following and not (self._held or self._released):
+            return True
         w, h = self._wh
         tu, tv = self.target_pos
         return any(math.hypot((a[0] - tu) * w, (a[1] - tv) * h) <= gate for a in mine)
@@ -494,7 +749,7 @@ class AppleSort(MissionPlugin):
         return Counter(side for *_, apples in self._window
                        for side in {"left" if cx < self.split else "right" for cx, *_ in apples.get(label, [])})
 
-    def _pick_target(self, label: str, arm: str | None
+    def _pick_target(self, label: str, arm: str | None, retry: bool = False
                      ) -> tuple[tuple[float, float], tuple[float, float], int] | None:
         """집을 사과 하나 — 중심 `(u, v)`(목표 입력 체크포인트에 보낸다, 머리말 "목표 위치")·상자 `(폭, 높이)` px·
         그 쪽에 보인 그 종류 수. 상자와 개수는 목표 따라가기(`_follow_target`)의 기준이다.
@@ -502,17 +757,22 @@ class AppleSort(MissionPlugin):
         그 쪽(팔)에 그 종류가 보인 가장 최근 프레임에서 점수가 가장 높은 것을 고르고, 쉼 창의 프레임마다 그 근처
         (`target_match_px`)에 보인 같은 종류의 중심을 모아 중앙값을 낸다 — 점수가 낮은 모델의 한 프레임 흔들림을
         목표로 보내지 않는다. 마지막 프레임만 보면 그 한 장에서 사과가 빠졌을 때 목표 없음이 나간다(팔 쪽은 창의
-        과반으로 정했다 — `_side_votes`). 창 전체에서 그 쪽에 안 보였으면 None(목표 없음)."""
+        과반으로 정했다 — `_side_votes`). 창 전체에서 그 쪽에 안 보였으면 None(목표 없음).
+
+        출발 안 한 사과(`_blocked`)는 고르지 않는다 — 그 쪽에 그것뿐이면 None 이고, 판단이 다음 후보로 넘어간다."""
         w, h = self._wh
 
         def on_side(cx: float) -> bool:
             return arm is None or ("left" if cx < self.split else "right") == arm
 
+        def ok(c) -> bool:
+            return on_side(c[0]) and not self._blocked(label, c, retry)
+
         frames = [apples for *_, apples in self._window] or [self.apples]
-        ref = next((a for a in reversed(frames) if any(on_side(c[0]) for c in a.get(label, []))), None)
+        ref = next((a for a in reversed(frames) if any(ok(c) for c in a.get(label, []))), None)
         if ref is None:
             return None
-        best = max((c for c in ref[label] if on_side(c[0])), key=lambda c: c[2])
+        best = max((c for c in ref[label] if ok(c)), key=lambda c: c[2])
         cx, cy = best[0], best[1]
         n = sum(1 for c in ref[label] if on_side(c[0]))
 
@@ -543,6 +803,42 @@ class AppleSort(MissionPlugin):
             self._target_warned = True
             self.log.warning("게이트웨이가 목표 위치를 받지 않았다 (%s) — target 을 모르는 게이트웨이다. "
                              "목표 입력으로 학습한 체크포인트면 목표 없이 돈다", r.status)
+
+    def _send_view_warp(self, m, wh: tuple[int, int] | None = None) -> None:
+        """정책 이미지 보정을 버스 `view_warp` 로 (`None` = 끔, 머리말 "정책 이미지도 편다").
+
+        `m` 은 목표에 쓰는 것과 같은 지금 화면 px → 학습 화면 px 행렬이고, `wh` 는 그것을 잰 프레임 크기다. wrapper 가
+        이 카메라 스트림을 읽는 정책 카메라 이미지를 이 행렬로 편다. 게이트웨이가 `view_warp` 를 모르면(v0.5.26 이하)
+        켤 때만 한 번 알린다 — 그러면 목표만 맞는다."""
+        if m is None and not self._view_sent and self._image_warned:
+            return
+        if self.dry_run:
+            self.log.info("[dry_run] view_warp: %s", None if m is None else [[round(float(x), 4) for x in row] for row in m])
+            self._view_sent = m is not None
+            return
+        value = None if m is None else {"stream": self.cam.stream, "frame": [int(wh[0]), int(wh[1])],
+                                        "m": [[round(float(x), 6) for x in row] for row in m]}
+        r = self.robot.set_params(view_warp=value)
+        applied = (r.json() or {}).get("applied", {}) if r.ok else {}
+        ok = r.ok and isinstance(applied, dict) and "view_warp" in applied
+        if m is None:
+            self._view_sent = False
+            return
+        self._view_sent = ok
+        if ok:
+            self.state(view_image="켬")
+            self.log.info("정책 이미지 보정을 켰다 — 정책이 보는 위 카메라(%s) 이미지도 같은 변환으로 학습 화면에 맞춘다",
+                          self.cam.stream)
+        elif not self._image_warned:
+            self._image_warned = True
+            self.state(view_image="게이트웨이 미지원")
+            self.log.warning("게이트웨이가 정책 이미지 보정(view_warp)을 받지 않았다 (%s) — view_warp 를 모르는 게이트웨이다. "
+                             "목표만 학습 화면 좌표로 보낸다", r.status)
+
+    def teardown(self) -> None:
+        """끝날 때 정책 이미지 보정을 지운다 — 이 플러그인이 도는 동안만 편다. setup 이 도중에 멈췄어도 불린다."""
+        if getattr(self, "_view_sent", False):
+            self._send_view_warp(None)
 
     def _arm_order(self, label: str, rule: str) -> list[str | None]:
         """이 종류를 집을 팔 — 먼저 시킬 것부터. 규칙에 `{arm}` 이 없으면 `[None]`(팔을 안 밝힌다).
@@ -589,43 +885,106 @@ class AppleSort(MissionPlugin):
                 self._wrap_up("판 위 사과를 모두 옮겼다", wait=self.config.get("on_empty_plugin") == "wait")
             return Decision.skip("board_empty")
         self._empty_seen = 0
-        self.state(waiting="")
-        for label, rule in self.rules:
-            arms = self._arm_order(label, rule) if board.get(label, 0) > 0 else []
-            if not arms:
-                continue
-            arm = arms[0]
-            task = rule.replace("{arm}", arm) if arm else rule
-            if task != self.task:
-                self.log.info("지시문 → %r (판 위 %s)", task, board)
-            self.task, self.target, self.target_arm = task, label, arm
-            self._watch_reset()
-            self.state(task=task, arm=arm or "", stale="", follow="")
-            # 목표가 지시문보다 먼저다 — 정책이 새 문장을 읽는 순간 목표도 새것이어야 한다
-            picked = self._pick_target(label, arm)
-            self.target_pos, self._target_size, self._target_n = picked or (None, None, 0)
-            self._target_from, self._target_moves, self._decided_t = self.target_pos, [], time.monotonic()
-            self._follow.clear()
-            self._following = True
-            self._send_target(self.target_pos)
-            if self._wake:
-                self._start_up(task)
-            elif self._paused:
-                self._resume_with(task)
-            # 팔을 고른 근거 — 쪽별 프레임 수(창 크기 중)와 마지막 프레임의 사과 중심 x
-            seen = {**self._side_votes(label), "frames": len(self._window),
-                    "x": [round(cx, 2) for cx, *_ in self.apples.get(label, [])]}
-            pos = None if self.target_pos is None else [round(c, 4) for c in self.target_pos]
-            return Decision.task(task, target=label, arm=arm, counts=board, seen=seen, target_pos=pos)
-        # 사람이 볼 차례 — 기다려도 풀리지 않으니 `on_empty_plugin` 과 상관없이 끝낸다
-        self._wrap_up(f"남은 사과가 있는데 모든 종류·팔이 연속 {self.config['max_fail']}번 실패했다 — 사람이 볼 차례", wait=False)
+        self._forget_moved()
+        choice = self._choose(board)
+        if choice is None:
+            if self._stuck:                                     # 남은 것이 출발 안 한 사과뿐 — 사람이 옮기기를 기다린다
+                return self._wait_stuck()
+            # 사람이 볼 차례 — 기다려도 풀리지 않으니 `on_empty_plugin` 과 상관없이 끝낸다
+            self._wrap_up(f"남은 사과가 있는데 모든 종류·팔이 연속 {self.config['max_fail']}번 실패했다 — 사람이 볼 차례",
+                          wait=False)
+        label, rule, arm, picked, retry = choice
+        self._stuck_said = ""
+        self.state(waiting="", start="")
+        task = rule.replace("{arm}", arm) if arm else rule
+        if task != self.task:
+            self.log.info("지시문 → %r (판 위 %s)", task, board)
+        self.task, self.target, self.target_arm = task, label, arm
+        self._watch_reset()
+        self.state(task=task, arm=arm or "", stale="", follow="")
+        # 목표가 지시문보다 먼저다 — 정책이 새 문장을 읽는 순간 목표도 새것이어야 한다
+        self.target_pos, self._target_size, self._target_n = picked or (None, None, 0)
+        self._target_from, self._target_moves, self._decided_t = self.target_pos, [], time.monotonic()
+        self._follow.clear()
+        self._following = True
+        self._send_target(self.target_pos)
+        if self._wake:
+            self._start_up(task)
+        elif self._paused:
+            self._resume_with(task)
+        # 팔을 고른 근거 — 쪽별 프레임 수(창 크기 중)와 마지막 프레임의 사과 중심 x
+        seen = {**self._side_votes(label), "frames": len(self._window),
+                "x": [round(cx, 2) for cx, *_ in self.apples.get(label, [])]}
+        pos = None if self.target_pos is None else [round(c, 4) for c in self.target_pos]
+        extra = {"retry": True} if retry else {}
+        if self._stuck:                                         # 미뤄 둔 사과 — 출발 안 한 자리와 횟수
+            extra["stuck"] = [[s["label"], s["arm"], s["pos"], s["n"]] for s in self._stuck]
+        return Decision.task(task, target=label, arm=arm, counts=board, seen=seen, target_pos=pos, view=self._view_info,
+                             **extra)
+
+    def _choose(self, board: dict[str, int]) -> tuple | None:
+        """이번에 시킬 (종류, 규칙, 팔, 고른 사과, 다시 시키기) — 규칙 순서·팔 순서(`_arm_order`)대로 첫 후보.
+
+        출발 안 한 사과(`_stuck`)는 건너뛴다 — 그 쪽의 그 종류가 그것뿐이면 다른 팔, 다른 종류로 넘어간다. 그것밖에
+        없으면 두 번째 바퀴에 `stuck_max` 번을 못 채운 것을 다시 시킨다(출발은 확률이라 판이 바뀌면 떠날 수 있다).
+        그래도 없으면 None."""
+        for retry in (False, True):
+            for label, rule in self.rules:
+                for arm in (self._arm_order(label, rule) if board.get(label, 0) > 0 else []):
+                    picked = self._pick_target(label, arm, retry)
+                    if picked is None and self._only_blocked(label, arm, retry):
+                        continue
+                    return label, rule, arm, picked, retry
+            if not self._stuck:
+                break
+        return None
+
+    def _only_blocked(self, label: str, arm: str | None, retry: bool) -> bool:
+        """그 쪽의 그 종류가 지금 고를 수 없는 출발 안 한 사과뿐인가 (`_pick_target` 이 None 일 때 — 아예 안 보인
+        것과 가른다. 안 보였으면 예전처럼 목표 없이 시킨다)."""
+        frames = [apples for *_, apples in self._window] or [self.apples]
+        return any(self._blocked(label, c, retry) for a in frames for c in a.get(label, [])
+                   if arm is None or ("left" if c[0] < self.split else "right") == arm)
+
+    def _forget_moved(self) -> None:
+        """출발 안 한 사과 중 그 자리에 이제 그 종류가 없는 것을 지운다 — 사람이 옮겼거나 다른 팔이 밀었다. 판단은 팔이
+        쉴 때라 가림은 없다."""
+        frames = [apples for *_, apples in self._window] or [self.apples]
+        w, h = self._wh
+
+        def still_there(s: dict) -> bool:
+            return any(math.hypot((c[0] - s["pos"][0]) * w, (c[1] - s["pos"][1]) * h) < self.stuck_px
+                       for a in frames for c in a.get(s["label"], []))
+
+        there = [s for s in self._stuck if still_there(s)]
+        gone = [s for s in self._stuck if not still_there(s)]
+        if gone:
+            self.log.info("출발 안 한 사과가 그 자리에 없다 — 옮겨졌다고 보고 지운다: %s",
+                          ", ".join(f"{s['label']}({s['arm'] or '-'}) {s['pos']}" for s in gone))
+            self._stuck = there
+
+    def _wait_stuck(self) -> Decision:
+        """남은 사과가 다 출발 안 한 사과다(사과마다 `stuck_max` 번) — 추론을 쉬게 하고 사람이 옮기기를 기다린다.
+        옮기면 그 기록이 지워져(`_forget_moved`) 다음 판단이 이어 간다."""
+        kinds = ", ".join(f"{s['label']}({s['arm'] or '-'})" for s in self._stuck)
+        msg = f"남은 사과가 팔이 출발하지 않는 자리에 있다: {kinds} → 판 가운데 쪽으로 옮겨 주세요"
+        if msg != self._stuck_said:
+            self._stuck_said = msg
+            self.log.warning("%s (자리 %s, 사과마다 %d번 시켜 봤다)", msg, [s["pos"] for s in self._stuck], self.stuck_max)
+        if not self.dry_run and not self._paused:
+            if self.robot.pause().ok:
+                self._paused = True
+            else:
+                self.log.warning("추론 일시정지 실패")
+        self.state(waiting=msg)
+        return Decision.skip("stuck_only")
 
     def done(self, ctx) -> bool:
         if self._skip:                                          # [skip] 버튼
             self._skip = False
             return True
         rest = self._resting()
-        if self._stale:                                         # 지시문이 판과 어긋났다 — 추론은 이미 멈췄다
+        if self._stale or self._no_start:                       # 어긋났다·출발 안 했다 — 추론은 이미 멈췄다
             return True
         return rest and self.counts != ctx["counts"]
 
@@ -636,6 +995,9 @@ class AppleSort(MissionPlugin):
         rec = {"target": self.target, "arm": self.target_arm, "task": self.task, "counts_before": before}
         if self._target_moves:                                  # 따라 옮긴 목표 — 처음 자리는 판단의 target_pos
             rec["target_moves"] = list(self._target_moves)
+        if self._no_start:                                      # 팔이 원위치를 안 떠나 끝냈다 — 그 사과는 `_stuck` 에 적혔다
+            self._no_start = False
+            rec["no_start"] = True
         if result.get("done"):
             delta = {k: after.get(k, 0) - before.get(k, 0) for k in before}
             rec.update(counts_after=after, delta=delta,
@@ -644,13 +1006,19 @@ class AppleSort(MissionPlugin):
             if self._stale:                                     # 쉬어서가 아니라 어긋나서 끝났다 — 옮긴 뒤 헤맸을 수도 있다
                 self._stale = False
                 rec["stale"] = True
-            elif not rec["picked_target"]:
+            elif not rec["picked_target"] and not rec.get("no_start"):
                 self.log.warning("판이 지시와 다르게 바뀌었다: %s (목표 %s)", delta, self.target)
         elif self._timed_out and self.target:
             key = (self.target, self.target_arm)
             self.fails[key] = self.fails.get(key, 0) + 1
             self._fail_board = before
             self.log.warning("%s(%s) 타임아웃 (%d번째 연속)", self.target, self.target_arm or "-", self.fails[key])
+        if result.get("done") and self.target_pos is not None:
+            # 끝난 회차의 목표는 대개 빈 자리다 — 남겨 두면 정책이 원위치에서 잠깐 쉬고 다시 그 자리로 집으러 간다
+            # (좌표를 믿는다, 2026-11-02 117 회차 7→8: 쉼이 안 잡혀 다음 판단도 못 했다). 지우면 다음 판단까지 선다
+            # — 목표 없음 = 가만히(프로브 원위치 2.9mm). 다음 판단이 새 목표를 지시문보다 먼저 보낸다
+            self.target_pos = None
+            self._send_target(None)
         return rec
 
     def reset(self) -> None:
