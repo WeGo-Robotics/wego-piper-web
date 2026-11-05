@@ -33,6 +33,7 @@ plugins/<name>/
 | 지시문(task) | `self.robot.set_task("…")` | 권한 `params.write`. 언어 정책만 읽는다 |
 | 목표 위치 | `self.robot.set_params(target=[u, v])` · 지우기 `target=None` | 권한 `params.write`. 위 카메라 프레임의 폭·높이로 나눈 0~1. 목표 입력으로 학습한 체크포인트만 읽는다 — 학습 목표와 같은 검출·같은 정의로 ([target-conditioning.md](../feature/target-conditioning.md), 예: `apple-sort`) |
 | 일시정지·재개·리셋 | `self.robot.pause()` `.resume()` `.reset()` | 권한 `params.write` |
+| 정책 바꾸기·유지 | 시작 `start_inference(ckpt, cams, policy_name="pick", extra_policies=[{"name": "place_a", "checkpoint_path": …}])` → `self.robot.set_policy("place_a")` · `.hold()` / `.hold(False)` | 권한 `params.write`. 한 추론에 정책 여럿을 올려 두고 팔을 세우지 않은 채 바꾼다. 바뀐 것은 `self.robot.policy()["active"]` 로 본다. 유지는 일시정지와 달리 마지막 액션(쥔 그리퍼째)을 계속 보낸다 ([multi-policy.md](../feature/multi-policy.md)) |
 | LLM 판단 | `self.judge(user_text, system=rules)` → 슬롯 dict | 권한 `vision.judge` |
 | 평가 기록 | `self.robot.eval_log(success=…)` | 권한 `eval.write` |
 | 긍급 정지·박동 | `self.robot.estop()` / `resources.heartbeat: true` | 열린 경로, 권한 불필요 |

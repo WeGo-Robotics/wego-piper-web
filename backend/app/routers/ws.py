@@ -5,7 +5,7 @@ import re
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core import ws_messages as M
-from app.services import trends
+from app.services import inference_state, trends
 from app.services.estop_bridge import estop_bridge
 from app.services.process_manager import ProcessState, process_manager
 from app.services.training import train_manager
@@ -105,6 +105,8 @@ def _setup_callbacks() -> None:
                     # 추이 그래프용 — 샘플러가 4초마다 마지막 값을 줍는다
                     if isinstance(data.get("fps"), (int, float)):
                         trends.note_fps(data["fps"])
+                    # 지금 정책·유지 (feature/multi-policy.md) — wrapper 가 갈아끼운 뒤에야 여기 실린다
+                    inference_state.note(data.get("policy"), bool(data.get("holding")))
                     asyncio.run_coroutine_threadsafe(
                         broadcast({"type": M.TELEMETRY, "data": data}), loop
                     )

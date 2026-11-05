@@ -10,12 +10,15 @@
   판단 결과를 `task` 로만 내보낸다. 그래서 ACT 를 올려둔 채 루프를 돌리면
   LLM 이 매번 다른 판단을 내려도 로봇은 같은 동작만 반복하고, 저널에는 판단이
   꼬박꼬박 쌓인다 — **돌아가는 것처럼 보이는 실패**다.
+
+정책을 여럿 올렸으면(feature/multi-policy.md) 이름 → 체크포인트와 지금 정책도 든다.
+지금 정책은 **wrapper 텔레메트리가 확인해 준 값**이다(`note`) — 바꾸라고 보냈다고 바뀐 것이 아니다.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +27,34 @@ logger = logging.getLogger(__name__)
 class RunningPolicy:
     policy_type: str
     checkpoint_path: str
+    policies: dict[str, str] = field(default_factory=dict)   # 이름 → 체크포인트. 직접 편집한 인자면 비어 있다
+    active: str = ""                                          # 지금 정책 이름
+    holding: bool = False                                     # 마지막 액션 유지 중
 
 
 _running: RunningPolicy | None = None
 
 
-def set_running(policy_type: str, checkpoint_path: str) -> None:
+def set_running(policy_type: str, checkpoint_path: str,
+                policies: dict[str, str] | None = None, active: str = "") -> None:
     global _running
-    _running = RunningPolicy(policy_type=policy_type, checkpoint_path=checkpoint_path)
-    logger.info("추론 정책 기록: %s (%s)", policy_type, checkpoint_path)
+    _running = RunningPolicy(policy_type=policy_type, checkpoint_path=checkpoint_path,
+                             policies=dict(policies or {}), active=active)
+    logger.info("추론 정책 기록: %s (%s)%s", policy_type, checkpoint_path,
+                f" — 정책 {', '.join(_running.policies)}" if len(_running.policies) > 1 else "")
+
+
+def note(active: str | None, holding: bool) -> None:
+    """wrapper 텔레메트리가 알려 준 지금 정책·유지. 정책이 하나면 텔레메트리에 이름이 없다 — 그대로 둔다."""
+    global _running
+    cur = _running
+    if cur is None:
+        return
+    name = active if active in cur.policies else cur.active
+    if name != cur.active or holding != cur.holding:
+        _running = replace(cur, active=name, holding=holding)
+        if name != cur.active:
+            logger.info("지금 정책: %s", name)
 
 
 def clear() -> None:

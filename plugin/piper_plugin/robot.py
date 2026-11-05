@@ -31,8 +31,9 @@ class Robot:
         return self.api.post("/api/models/inference/stop")
 
     def policy(self) -> dict | None:
-        """지금 도는 정책 — `{running, type, takes_language, checkpoint_path}`. 범위 `inference.read`.
-        모르면(404·오류) None — **모를 때 낙관하지 않는다**(§12-1)."""
+        """지금 도는 정책 — `{running, type, takes_language, checkpoint_path, policies, active, holding}`.
+        범위 `inference.read`. 모르면(404·오류) None — **모를 때 낙관하지 않는다**(§12-1).
+        정책을 여럿 올렸으면 `policies` 가 이름 → 체크포인트, `active` 가 지금 정책이다(feature/multi-policy.md)."""
         r = self.api.get("/api/models/inference/policy")
         return r.json() if r.ok else None
 
@@ -65,6 +66,17 @@ class Robot:
 
     def reset(self) -> Response:
         return self.api.post("/api/params/reset")
+
+    def set_policy(self, name: str) -> Response:
+        """올려 둔 정책 중 하나로 바꾼다 — 팔은 지금 자리에서 이어진다(feature/multi-policy.md). 시작은
+        `start_inference(..., policy_name="pick", extra_policies=[{"name": …, "checkpoint_path": …}])`.
+        바뀐 것은 `policy()["active"]` 로 본다 — wrapper 가 도는 추론을 끝낸 뒤 갈아끼운다."""
+        return self.api.post("/api/params/policy", json={"name": name})
+
+    def hold(self, on: bool = True) -> Response:
+        """새 추론 없이 마지막 액션을 계속 보낸다 — 물건을 든 채 기다릴 때. 끄면 지금 정책을 처음부터.
+        일시정지와 다르다: 일시정지는 명령을 멈춰 쥔 힘이 빠질 수 있다."""
+        return self.api.post("/api/params/hold", json={"on": on})
 
     # ── 기록·판단·안전 ──
 

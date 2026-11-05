@@ -25,6 +25,10 @@ import { useCameraStreams } from '../hooks/useCameraStreams'
 import { useLiveFrames } from '../hooks/useCameraLive'
 import LiveCameraFrame from '../components/LiveCameraFrame'
 import CameraStreamSelect, { IdleStreams } from '../components/CameraStreamPicker'
+import { ExtraPoliciesEditor, PolicyBar } from '../components/PolicySlots'
+import {
+  DEFAULT_POLICY_NAME, blocksStart, slotProblems, slotRequest, type ExtraPolicy,
+} from '../types/policySlots'
 import { useT } from '../i18n'
 
 /**
@@ -178,6 +182,9 @@ export default function InferencePage() {
   const [models, setModels] = useState<Model[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
   const [weightTable, setWeightTable] = useState(false)
+  // 함께 올릴 정책 (feature/multi-policy.md) — 위 체크포인트의 이름과 더 올릴 체크포인트들. 선택 저장에 같이 남는다
+  const [policyName, setPolicyName] = useState(DEFAULT_POLICY_NAME)
+  const [extraPolicies, setExtraPolicies] = useState<ExtraPolicy[]>([])
   const [cameraMapping, setCameraMapping] = useState<Record<string, string>>({})
   const { notify } = useSystemMessage()
   const [cameraProfile, setCameraProfile] = useState<string>(
@@ -225,6 +232,11 @@ export default function InferencePage() {
   const [processState, setProcessState] = useState<ProcessState>('idle')
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null)
   const [paused, setPaused] = useState(false)
+  // 실행 중 — 올린 정책 이름들과 지금 정책·유지. 지금 정책은 wrapper 텔레메트리가 확인해 준 값이다
+  const [loadedPolicies, setLoadedPolicies] = useState<string[]>([])
+  const [activeSlot, setActiveSlot] = useState<string | null>(null)
+  const [pendingSlot, setPendingSlot] = useState<string | null>(null)
+  const [holding, setHolding] = useState(false)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [activeCameras, setActiveCameras] = useState<string[]>([])
   const [logs, setLogs] = useState<string[]>([])
@@ -290,9 +302,15 @@ export default function InferencePage() {
         setProcessState(msg.data as ProcessState)
         if (msg.data !== 'running') setTelemetry(null)
       } else if (msg.type === 'telemetry') {
-        const td = msg.data as TelemetryData & { paused?: boolean }
+        const td = msg.data as TelemetryData & { paused?: boolean; policy?: string; holding?: boolean }
         setTelemetry(td)
         if (td.paused !== undefined) setPaused(td.paused)
+        // 정책을 여럿 올렸을 때만 이름이 실린다 — 갈아끼운 뒤에야 바뀌므로 깜박이던 칩을 여기서 끝낸다
+        if (td.policy) {
+          setActiveSlot(td.policy)
+          setPendingSlot((p) => (p === td.policy ? null : p))
+        }
+        setHolding(td.holding === true)
       } else if (msg.type === 'log_saved') {
         const d = msg.data as { csv_path: string; steps: number; debug_dir?: string | null }
         const filename = d.csv_path.split('/').pop() ?? ''
@@ -325,11 +343,16 @@ export default function InferencePage() {
         if (s.cameras && s.cameras.length > 0) setActiveCameras(s.cameras)
       }).catch(() => {}),
     ]).then(() => {
-      api.get<{ follower_iface: string; model_id: string; camera_mapping: Record<string, string> }>('/inference/selection')
+      api.get<{
+        follower_iface: string; model_id: string; camera_mapping: Record<string, string>
+        policy_name?: string; extra_policies?: ExtraPolicy[]
+      }>('/inference/selection')
         .then((sel) => {
           if (sel.follower_iface) setSelectedFollower(sel.follower_iface)
           if (sel.model_id) setSelectedModel(sel.model_id)
           if (sel.camera_mapping && Object.keys(sel.camera_mapping).length > 0) setCameraMapping(sel.camera_mapping)
+          if (sel.policy_name) setPolicyName(sel.policy_name)
+          if (sel.extra_policies?.length) setExtraPolicies(sel.extra_policies)
         }).catch(() => {})
     })
   }, [])
@@ -338,6 +361,24 @@ export default function InferencePage() {
   useEffect(() => {
     localStorage.setItem('piper_inference_params', JSON.stringify(params))
   }, [params])
+
+  // 올린 정책 이름들 — 누가 시작했든(이 화면·플러그인) 게이트웨이가 기억한다. 'running' 이 오기 전에
+  // 시작 경로가 기록을 마치므로 그때 한 번 묻는다. 지금 정책·유지는 그 뒤 텔레메트리가 갱신한다
+  useEffect(() => {
+    if (processState !== 'running') {
+      setLoadedPolicies([])
+      setActiveSlot(null)
+      setPendingSlot(null)
+      setHolding(false)
+      return
+    }
+    api.get<{ policies?: Record<string, string>; active?: string | null; holding?: boolean }>('/models/inference/policy')
+      .then((r) => {
+        setLoadedPolicies(Object.keys(r.policies ?? {}))
+        setActiveSlot((a) => a ?? r.active ?? null)
+        setHolding((h) => h || r.holding === true)
+      }).catch(() => {})
+  }, [processState])
 
   // 저장돼 있던 매핑(옛 장치 id·옛 이름)을 현재 스트림 이름으로 맞춘다. 서버도 둘 다 받지만
   // 화면은 이름으로 그려야 선택기가 "골라져 있음"을 보여준다.
@@ -373,6 +414,8 @@ export default function InferencePage() {
   const checkpointPath = () =>
     inferenceMode === 'server' ? serverCheckpoint.trim() : (selectedModelData?.path ?? '')
   const reqs = selectedModelData?.requirements
+  // 함께 올릴 정책의 문제 — 판정 기준은 위 체크포인트다. 시작 API 가 장치 전에 다시 본다
+  const slotIssues = slotProblems(t, policyName, extraPolicies, models, selectedModelData, inferenceMode)
   // 파라미터 패널/정책 표시 기준: 선택 모델의 policy_type 우선, 없으면 수동 선택값
   const activePolicy = selectedModelData?.policy_type ?? policyType
   // 시간 앙상블을 쓰는 정책인가(스펙) · 지금 켜져 있나. 로컬 wrapper 만 한다 — 서버 모드에선 효과가 없다.
@@ -431,11 +474,12 @@ export default function InferencePage() {
             policy_type: policyType, actions_per_chunk: actionsPerChunk,
             aggregate_fn: aggregateFn, offset_correction: offsetCorrection,
             smoothing, smoothing_window: smoothingWindow, debug_mode: debugMode,
+            ...slotRequest(policyName, extraPolicies, models),
           }).then((r) => { if (!cliEdited) setCliArgs(r.command) }).catch(() => {})
         }
       }
     }).catch(() => {})
-  }, [selectedModel, selectedFollower, robotMode, leftFollower, rightFollower, cameraMapping, mappedDims, inferenceMode, device, serverAddress, policyType, actionsPerChunk, aggregateFn, offsetCorrection, smoothing, smoothingWindow, debugMode])
+  }, [selectedModel, selectedFollower, robotMode, leftFollower, rightFollower, cameraMapping, mappedDims, inferenceMode, device, serverAddress, policyType, actionsPerChunk, aggregateFn, offsetCorrection, smoothing, smoothingWindow, debugMode, policyName, extraPolicies])
 
   const saveSelectionRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => {
@@ -443,9 +487,10 @@ export default function InferencePage() {
     saveSelectionRef.current = setTimeout(() => {
       api.post('/inference/selection', {
         follower_iface: selectedFollower, model_id: selectedModel, camera_mapping: cameraMapping,
+        policy_name: policyName, extra_policies: extraPolicies,
       }).catch(() => {})
     }, 500)
-  }, [selectedFollower, selectedModel, cameraMapping])
+  }, [selectedFollower, selectedModel, cameraMapping, policyName, extraPolicies])
 
   const handleStart = async () => {
     try {
@@ -473,6 +518,7 @@ export default function InferencePage() {
         smoothing,
         smoothing_window: smoothingWindow,
         debug_mode: debugMode,
+        ...slotRequest(policyName, extraPolicies, models),
       })
       // 프로파일이 못 덮은 카메라, 리셋이 드러낸 관절 슬립 — 문구는 백엔드가 만든다
       for (const w of r.camera_profile?.warnings ?? [])
@@ -497,10 +543,29 @@ export default function InferencePage() {
         policy_type: policyType, actions_per_chunk: actionsPerChunk,
         aggregate_fn: aggregateFn, offset_correction: offsetCorrection,
         smoothing, smoothing_window: smoothingWindow,
+        ...slotRequest(policyName, extraPolicies, models),
       }).then((r) => setCliArgs(r.command)).catch(() => {})
     }
   }
   const handleStop = async () => { await api.post('/models/inference/stop') }
+  // 정책 바꾸기·유지 (feature/multi-policy.md) — 확인 창은 없다: 파킹하지 않고 지금 자리에서 이어갈 뿐이다.
+  // 칩은 텔레메트리가 바뀌었다고 알릴 때까지 깜박인다(`pendingSlot`)
+  const switchPolicy = async (name: string) => {
+    setPendingSlot(name)
+    try {
+      await api.post('/params/policy', { name })
+    } catch (e) {
+      setPendingSlot(null)
+      notify({ level: 'error', text: e instanceof Error ? e.message : t('알 수 없는 오류'), source: t('추론') })
+    }
+  }
+  const setHold = async (on: boolean) => {
+    try {
+      await api.post('/params/hold', { on })
+    } catch (e) {
+      notify({ level: 'error', text: e instanceof Error ? e.message : t('알 수 없는 오류'), source: t('추론') })
+    }
+  }
   const handleReset = async () => {
     // window.confirm은 브라우저 이벤트 루프를 블로킹해 E-stop heartbeat(500ms)가 멈추고,
     // 2초 타임아웃에 걸려 추론이 강제 종료된다. 논블로킹 React 모달로 확인받는다.
@@ -522,6 +587,7 @@ export default function InferencePage() {
     : !!selectedFollower
   const inferBlockedBy = blockedBy('inference')
   const canStart = followerReady && !!selectedModel && !isRunning && validation?.valid === true && !isBlocked('inference')
+    && !blocksStart(slotIssues)
 
   // ── 정지 상태 UI ──
   if (!isRunning) {
@@ -643,6 +709,10 @@ export default function InferencePage() {
                   blockedReason={(r) => r.action_space === 'unknown'
                     ? t('델타로 학습한 것으로 보이는데 학습 데이터셋이 없어 확인할 수 없습니다 — 시작하지 않습니다') : null} />
               )}
+              {/* 함께 올릴 정책 — 실행 중 팔을 세우지 않고 바꿔 쓴다(바코드 분류의 집기·놓기 등) */}
+              <ExtraPoliciesEditor firstName={policyName} onFirstName={setPolicyName}
+                extras={extraPolicies} onChange={setExtraPolicies}
+                models={models} first={selectedModelData} problems={slotIssues} />
             </div>
 
             {/* 모델 요구사항 + 카메라 매핑 */}
@@ -946,6 +1016,12 @@ export default function InferencePage() {
         <span>{t.rich('모델: {span}', { span: <span className="text-blue-400">{selectedModel}</span> })}</span>
         <span>{t.rich('카메라: {span}', { span: <span className="text-blue-400">{Object.values(cameraMapping).join(', ')}</span> })}</span>
       </div>
+
+      {/* 정책을 여럿 올렸을 때만 — 하나면 바꿀 것이 없다 */}
+      {loadedPolicies.length > 1 && (
+        <PolicyBar policies={loadedPolicies} active={activeSlot} holding={holding} pending={pendingSlot}
+          onSwitch={switchPolicy} onHold={setHold} />
+      )}
 
       {/* 카메라 프리뷰 */}
       <CameraPreview

@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.inference_params import bounds, defaults, foreign_to, realtime_params, spec_for_frontend
@@ -89,3 +89,42 @@ class ManualAction(BaseModel):
 async def send_manual_action(body: ManualAction):
     await param_bridge.send_params({"manual_action": body.action})
     return {"status": "sent"}
+
+
+# ── 여러 정책 (feature/multi-policy.md) ──
+
+class PolicySwitch(BaseModel):
+    name: str
+
+
+@router.post("/policy")
+async def switch_policy(body: PolicySwitch):
+    """올려 둔 정책 중 하나로 바꾼다. 팔은 지금 자리에서 그 정책의 첫 청크로 이어진다(파킹 없음).
+
+    바뀌었는지는 `GET /api/models/inference/policy` 의 `active` 로 본다 — wrapper 가 도는 추론을 끝낸 뒤
+    갈아끼우고 텔레메트리로 알려야 바뀐다. 지금 이름을 다시 보내면 그 정책을 처음부터 다시 돈다.
+    """
+    running = inference_state.get()
+    if running is None:
+        raise HTTPException(409, "추론이 돌고 있지 않습니다")
+    if body.name not in running.policies:
+        raise HTTPException(400, f"올려 둔 정책이 아닙니다: {body.name} (올린 정책: {', '.join(running.policies) or '-'})")
+    await param_bridge.send_params({"policy": body.name})
+    return {"status": "requested", "policy": body.name}
+
+
+class Hold(BaseModel):
+    on: bool = True
+
+
+@router.post("/hold")
+async def hold_inference(body: Hold):
+    """새 추론 없이 마지막 액션을 계속 보낸다 — 물건을 든 채 기다릴 때. 끄면 지금 정책을 처음부터 다시.
+
+    ⚠ 일시정지(`/pause`)와 다르다. 일시정지는 명령을 멈춰 robotd 데드맨이 **측정한 자세**를 세우고, 물체에
+    막혀 벌어진 그리퍼 폭이 목표가 되면 쥐는 힘이 빠질 수 있다. 유지는 쥐라는 마지막 지령을 그대로 보낸다.
+    """
+    if inference_state.get() is None:
+        raise HTTPException(409, "추론이 돌고 있지 않습니다")
+    await param_bridge.send_params({"hold": body.on})
+    return {"status": "holding" if body.on else "released"}

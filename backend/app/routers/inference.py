@@ -20,6 +20,9 @@ _last_selection: dict = {
     "follower_iface": "",
     "model_id": "",
     "camera_mapping": {},
+    # 함께 올릴 정책 (feature/multi-policy.md) — 첫 정책의 이름과 [{name, model_id}]
+    "policy_name": "main",
+    "extra_policies": [],
 }
 
 
@@ -27,6 +30,8 @@ class SelectionRequest(BaseModel):
     follower_iface: str = ""
     model_id: str = ""
     camera_mapping: dict[str, str] = {}
+    policy_name: str = "main"
+    extra_policies: list[dict[str, str]] = []
 
 
 @router.get("/selection")
@@ -39,6 +44,8 @@ async def save_selection(body: SelectionRequest):
     _last_selection["follower_iface"] = body.follower_iface
     _last_selection["model_id"] = body.model_id
     _last_selection["camera_mapping"] = body.camera_mapping
+    _last_selection["policy_name"] = body.policy_name
+    _last_selection["extra_policies"] = body.extra_policies
     return {"status": "ok"}
 
 

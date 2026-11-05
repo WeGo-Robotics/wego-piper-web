@@ -181,14 +181,15 @@ def test_both_param_paths_reach_the_merger():
     src = code_only(_WRAPPER)
     listener = src[src.index("def param_listener"):src.index("def _resolve_policy_path")]
     assert "_chunk_merger.update_param(key, value)" in listener
-    overrides = src[src.index("for key, value in config_overrides.items():"):src.index("preprocessor = None")]
+    overrides = src[src.index("for key, value in config_overrides.items():"):src.index("import datetime as _dt")]
     assert "_chunk_merger.update_param(key, value)" in overrides
 
 
 def test_the_step_marker_follows_the_queue_and_resets():
     src = code_only(_WRAPPER)
-    # 꺼내는 락 안에서, 모드와 상관없이 — 앙상블에서 큐로 돌아온 뒤에도 낡은 값이 남지 않게
-    assert re.search(r"with _action_lock:\s*_queue_step = step\s*if _te_active:", src)
+    # 꺼내는 락 안에서, 모드와 상관없이 — 앙상블에서 큐로 돌아온 뒤에도 낡은 값이 남지 않게.
+    # 갈래(유지·앙상블·큐)보다 먼저 찍는다 — 유지 중에도 스텝은 지나간다 (feature/multi-policy.md)
+    assert re.search(r"with _action_lock:\s*_queue_step = step\s*if _switch\.holding:[\s\S]*?elif _te_active:", src)
     start = src.index("if _reset_requested:")
     reset = src[start:src.index("if _paused", start)]      # 일시정지 분기(목표 대기도 같이 탄다) 앞까지
     assert "_queue_step = -1" in reset

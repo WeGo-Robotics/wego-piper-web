@@ -114,6 +114,12 @@ _rtc_feed = RtcFeed()
 from jump_repair import JumpRepair, piper_arms, piper_fk
 _jump_repair = JumpRepair()
 
+# 여러 정책 (policy_slots.py, feature/multi-policy.md) — 이름 → 올린 정책. 버스 `policy` 로 바꾸고 `hold` 로
+# 마지막 액션을 유지한다. 정책이 하나면 이름 하나짜리 표일 뿐 아무것도 달라지지 않는다.
+from policy_slots import PolicySwitch, action_dim, parse_extra
+_slots: dict[str, Any] = {}
+_switch = PolicySwitch()
+
 # 단계별 파킹 컨트롤러 (추론 종료 후 원점 복귀)
 from parking_controller import ParkingController
 
@@ -219,6 +225,10 @@ def param_listener(policy: Any, bus: "Bus") -> None:
                 if _jump_repair.update_param(key, value):
                     logger.info("Updated %s = %s", key, value)
                     continue
+                # 정책 바꾸기·유지 — 갈아끼우는 것은 메인 루프다 (추론 스레드가 쉴 때)
+                if _switch.update_param(key, value):
+                    logger.info("Requested %s = %s", key, value)
+                    continue
                 # RTC 켜고 끄기 — 다음 추론부터 (rtc_config.enabled 는 추론 스레드가 매번 맞춘다)
                 if key == "rtc_enabled":
                     _rtc_enabled = bool(value)
@@ -231,7 +241,9 @@ def param_listener(policy: Any, bus: "Bus") -> None:
                 setter = PARAM_SETTERS.get(key)
                 if setter:
                     try:
-                        setter(policy, value)
+                        # 올린 정책 전부에 — 바꿔 쓸 때 설정이 정책마다 갈리면 안 된다
+                        for p in [s.policy for s in _slots.values()] or [policy]:
+                            setter(p, value)
                         logger.info("Updated %s = %s", key, value)
                     except Exception as e:
                         logger.error("Failed to set %s: %s", key, e)
@@ -239,6 +251,124 @@ def param_listener(policy: Any, bus: "Bus") -> None:
                     logger.warning("Unknown param: %s", key)
         except Exception as e:
             logger.error("파라미터 수신 오류: %s", e)
+
+
+def _load_policy(name: str, policy_path: str, device_name: str, use_amp: bool) -> Any:
+    """체크포인트 하나를 올린다 — 정책·전후처리·rename. 정책을 여럿 올리면 이름마다 한 번 (feature/multi-policy.md).
+
+    돌려주는 것은 정책 하나의 묶음이다. 메인 루프는 지금 정책의 것을 풀어 쓰고, 바꿀 때 통째로 갈아끼운다.
+    델타·목표 입력은 로봇을 아는 main() 이 채운다."""
+    from types import SimpleNamespace
+
+    from lerobot.utils.utils import get_safe_torch_device
+
+    local_path = _resolve_policy_path(policy_path)
+    logger.info("Loading policy %s from: %s", name, local_path)
+
+    # config.json에서 type 필드 읽기
+    config_json = json.loads((Path(local_path) / "config.json").read_text())
+    policy_type = config_json.get("type", "")
+
+    if policy_type not in POLICY_IMPORTS:
+        raise ValueError(f"Unsupported policy type: '{policy_type}'. Supported: {list(POLICY_IMPORTS.keys())}")
+
+    model_mod, model_cls, config_mod, config_cls = POLICY_IMPORTS[policy_type]
+
+    # policy 클래스 import & from_pretrained (서버 방식: 모델 자체 config 사용)
+    PolicyClass = getattr(importlib.import_module(model_mod), model_cls)
+    logger.info("Loading %s", model_cls)
+    policy = PolicyClass.from_pretrained(local_path)
+    policy_cfg = policy.config
+
+    device = get_safe_torch_device(device_name)
+    policy_cfg.device = device_name
+    policy_cfg.use_amp = use_amp
+    policy.eval()
+    policy.to(device)
+
+    # RTC 를 걸 수 있는 정책이면 설정을 만들어 둔다 — 체크포인트의 `rtc_config` 는 대개 None 이라
+    # main() 의 시작값 오버라이드에서 RTC 슬라이더가 "rtc_config is None" 으로 버려졌다. 켜기는 추론 스레드가 매번 한다.
+    # 가중치를 얼린다: RTC 가이던스는 enable_grad 안에서 디노이저를 돌리는데, 가중치가 grad 를 요구하면
+    # 매 스텝 네트워크 전체의 그래프를 쌓는다 (가이던스 자체는 출력에 대한 기울기만 쓴다).
+    rtc_capable = hasattr(policy, "init_rtc_processor") and hasattr(policy_cfg, "rtc_config")
+    if rtc_capable:
+        from lerobot.policies.rtc.configuration_rtc import RTCConfig
+        if policy_cfg.rtc_config is None:
+            policy_cfg.rtc_config = RTCConfig(enabled=False)
+        policy.init_rtc_processor()
+        policy.requires_grad_(False)
+        logger.info("RTC capable (execution_horizon=%s, max_guidance_weight=%s)",
+                    policy_cfg.rtc_config.execution_horizon, policy_cfg.rtc_config.max_guidance_weight)
+
+    # ── 전처리/후처리 파이프라인 ──
+    preprocessor = None
+    postprocessor = None
+    try:
+        # SmolVLA 등 정책별 프로세서 레지스트리 등록
+        for _proc_mod in [
+            "lerobot.policies.smolvla.processor_smolvla",
+            "lerobot.policies.pi0.processor_pi0",
+            "lerobot.policies.pi05.processor_pi05",
+        ]:
+            try:
+                importlib.import_module(_proc_mod)
+            except Exception:
+                pass
+        from lerobot.policies.factory import make_pre_post_processors
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg,
+            pretrained_path=local_path,
+            preprocessor_overrides={"device_processor": {"device": device_name}},
+            postprocessor_overrides={"device_processor": {"device": "cpu"}},
+        )
+        logger.info("Preprocessor/Postprocessor loaded via make_pre_post_processors")
+    except Exception as e:
+        logger.warning("Failed to load pre/post processors: %s (falling back to manual)", e)
+
+    # preprocessor의 rename_map 추출 (fallback용)
+    rename_map = {}
+    try:
+        pre_json_path = Path(local_path) / "policy_preprocessor.json"
+        if pre_json_path.exists():
+            for step in json.loads(pre_json_path.read_text()).get("steps", []):
+                if step.get("registry_name") == "rename_observations_processor":
+                    rename_map = step.get("config", {}).get("rename_map", {})
+                    break
+        if rename_map:
+            logger.info("Rename map: %s", rename_map)
+    except Exception:
+        pass
+
+    tokenizer = None
+    if hasattr(policy, 'model') and hasattr(policy.model, 'vlm_with_expert'):
+        tokenizer = policy.model.vlm_with_expert.processor.tokenizer
+    return SimpleNamespace(
+        name=name, path=policy_path, local_path=local_path, type=policy_type,
+        policy=policy, cfg=policy_cfg, preprocessor=preprocessor, postprocessor=postprocessor,
+        rename_map=rename_map, rtc_capable=rtc_capable,
+        stage_names=list(getattr(policy_cfg, "stage_names", []) or []),
+        tokenizer=tokenizer, max_token_len=getattr(policy_cfg, 'tokenizer_max_length', 48),
+        action_space=ABSOLUTE, delta_spec={}, target_in=None, delta=None)
+
+
+def _check_slot_markers(spec: dict) -> None:
+    """더 올릴 정책의 표식 대조 — 첫 정책은 main() 머리에서 같은 규칙을 탄다. 어긋나면 SystemExit.
+
+    로봇을 만들기 **전에** 부른다. 표식은 백엔드가 추론을 시작할 때 정책마다 남긴다 — 손으로 고친
+    `--extra-policies` 가 표식과 다르면 델타 체크포인트가 절대로 돌아 팔이 영점 자세로 돌진한다."""
+    marker = Path(spec["path"]) / CKPT_MARKER
+    if marker.is_file():
+        marked = json.loads(marker.read_text()).get("action_space", ABSOLUTE)
+        if marked != spec["action_space"]:
+            raise SystemExit(f"정책 {spec['name']}: 액션 공간이 어긋난다 — 체크포인트는 {marked}, "
+                             f"인자는 {spec['action_space']} — 시작하지 않는다 ({marker})")
+    tmarker = Path(spec["path"]) / TARGET_MARKER
+    if tmarker.is_file():
+        tmarked = json.loads(tmarker.read_text())
+        if spec["target_spec"] is None or not same_spec(tmarked, spec["target_spec"]):
+            raise SystemExit(f"정책 {spec['name']}: 목표 입력 사양이 어긋난다 — 체크포인트는 목표 입력"
+                             f"({len(tmarked.get('names') or [])}칸), 인자는 "
+                             f"{'없음' if spec['target_spec'] is None else '다른 사양'} — 시작하지 않는다 ({tmarker})")
 
 
 def _resolve_policy_path(policy_path: str) -> str:
@@ -280,6 +410,10 @@ def _target_input_for(spec: dict | None, policy_path: str, robot) -> "TargetInpu
 def main() -> None:
     parser = argparse.ArgumentParser(description="LeRobot inference wrapper (v0.5+)")
     parser.add_argument("--policy-path", required=True)
+    # 여러 정책 (feature/multi-policy.md) — 첫 정책의 이름과 더 올릴 정책들. 백엔드가 체크포인트마다 액션 공간·
+    # 목표 입력 사양을 싣는다: [{"name", "path", "action_space", "delta_spec", "target_spec"}]
+    parser.add_argument("--policy-name", default="main")
+    parser.add_argument("--extra-policies", default="")
     parser.add_argument("--robot-type", required=True)
     parser.add_argument("--robot-port", required=True)
     # 양팔: "left,right" 콤마 목록 (gRPC wrapper 와 같은 규약). 있으면 bi 로봇 조립
@@ -315,6 +449,19 @@ def main() -> None:
 
     global _current_task, _refill_threshold_pct, _actions_per_chunk, _paused, _reset_requested, _reset_gen, _temporal_ensemble, _rtc_enabled
     _current_task = args.task if args.task else "do the task"
+
+    # ── 더 올릴 정책 (feature/multi-policy.md) — 로봇을 만들기 전에 파일만 보고 막는다 ──
+    # 표식은 첫 정책(바로 아래)과 같은 규칙이고, 액션 길이는 첫 정책과 같아야 한다 — 한 로봇에서 바꿔 쓴다.
+    try:
+        _extra_specs = parse_extra(args.extra_policies, args.policy_name)
+    except ValueError as e:
+        raise SystemExit(f"--extra-policies 가 틀렸다: {e} — 시작하지 않는다")
+    _first_dim = action_dim(args.policy_path)
+    for _x in _extra_specs:
+        _check_slot_markers(_x)
+        _dim = action_dim(_x["path"])
+        if _first_dim and _dim and _dim != _first_dim:
+            raise SystemExit(f"정책 {_x['name']} 의 액션 길이 {_dim} 가 첫 정책({_first_dim})과 다르다 — 시작하지 않는다")
 
     # ── 액션 공간 대조 — 어긋나면 시작하지 않는다 (fail-closed) ──
     # 델타 체크포인트를 절대로 돌리면 액션 ≈ 0 → 팔이 영점 자세로 돌진하고, 절대 체크포인트를 델타로
@@ -353,47 +500,24 @@ def main() -> None:
     robot = make_robot_from_config(robot_cfg)
     # 목표 입력 — 로봇 state 이름·체크포인트 길이를 **연결하기 전에** 맞춰 본다 (연결한 뒤에 죽으면 토크가 걸린 채 남는다)
     _target_in = _target_input_for(_target_spec, args.policy_path, robot)
+    for _x in _extra_specs:
+        _x["target_in"] = _target_input_for(_x["target_spec"], _x["path"], robot)
     robot.connect()
     logger.info("Robot connected: %s (%d motors)", robot.name, len(robot.action_features))
 
-    # ── 2. 정책 로드 ──
-    local_path = _resolve_policy_path(args.policy_path)
-    logger.info("Loading policy from: %s", local_path)
-
-    # config.json에서 type 필드 읽기
-    config_json = json.loads((Path(local_path) / "config.json").read_text())
-    policy_type = config_json.get("type", "")
-
-    if policy_type not in POLICY_IMPORTS:
-        raise ValueError(f"Unsupported policy type: '{policy_type}'. Supported: {list(POLICY_IMPORTS.keys())}")
-
-    model_mod, model_cls, config_mod, config_cls = POLICY_IMPORTS[policy_type]
-
-    # policy 클래스 import & from_pretrained (서버 방식: 모델 자체 config 사용)
-    PolicyClass = getattr(importlib.import_module(model_mod), model_cls)
-    logger.info("Loading %s", model_cls)
-    policy = PolicyClass.from_pretrained(local_path)
-    policy_cfg = policy.config
-
+    # ── 2. 정책 로드 ── 더 올릴 정책이 있으면 이름마다 (feature/multi-policy.md). 첫 정책이 지금 정책이다
     device = get_safe_torch_device(args.device)
-    policy_cfg.device = args.device
-    policy_cfg.use_amp = args.use_amp
-    policy.eval()
-    policy.to(device)
-
-    # RTC 를 걸 수 있는 정책이면 설정을 만들어 둔다 — 체크포인트의 `rtc_config` 는 대개 None 이라
-    # 아래 오버라이드의 RTC 슬라이더가 "rtc_config is None" 으로 버려졌다. 켜기는 추론 스레드가 매번 한다.
-    # 가중치를 얼린다: RTC 가이던스는 enable_grad 안에서 디노이저를 돌리는데, 가중치가 grad 를 요구하면
-    # 매 스텝 네트워크 전체의 그래프를 쌓는다 (가이던스 자체는 출력에 대한 기울기만 쓴다).
-    _rtc_capable = hasattr(policy, "init_rtc_processor") and hasattr(policy_cfg, "rtc_config")
-    if _rtc_capable:
-        from lerobot.policies.rtc.configuration_rtc import RTCConfig
-        if policy_cfg.rtc_config is None:
-            policy_cfg.rtc_config = RTCConfig(enabled=False)
-        policy.init_rtc_processor()
-        policy.requires_grad_(False)
-        logger.info("RTC capable (execution_horizon=%s, max_guidance_weight=%s)",
-                    policy_cfg.rtc_config.execution_horizon, policy_cfg.rtc_config.max_guidance_weight)
+    _first = _load_policy(args.policy_name, args.policy_path, args.device, args.use_amp)
+    _slots[_first.name] = _first
+    for _x in _extra_specs:
+        _s = _load_policy(_x["name"], _x["path"], args.device, args.use_amp)
+        _s.action_space, _s.delta_spec, _s.target_in = _x["action_space"], _x["delta_spec"], _x["target_in"]
+        _slots[_s.name] = _s
+    _switch.attach(list(_slots), _first.name)
+    local_path, policy_type = _first.local_path, _first.type
+    policy, policy_cfg = _first.policy, _first.cfg
+    _rtc_capable = _first.rtc_capable
+    preprocessor, postprocessor, _rename_map = _first.preprocessor, _first.postprocessor, _first.rename_map
 
     # config 오버라이드 적용
     # (n_action_steps/use_chunk_size는 policy.config에 적용하지 않음 — actions_per_chunk로 별도 관리)
@@ -441,48 +565,9 @@ def main() -> None:
             continue
         setter = PARAM_SETTERS.get(key)
         if setter:
-            setter(policy, value)
+            for _s in _slots.values():
+                setter(_s.policy, value)
             logger.info("Config override: %s = %s", key, value)
-
-    # ── 3. 전처리/후처리 파이프라인 ──
-    preprocessor = None
-    postprocessor = None
-    try:
-        # SmolVLA 등 정책별 프로세서 레지스트리 등록
-        for _proc_mod in [
-            "lerobot.policies.smolvla.processor_smolvla",
-            "lerobot.policies.pi0.processor_pi0",
-            "lerobot.policies.pi05.processor_pi05",
-        ]:
-            try:
-                importlib.import_module(_proc_mod)
-            except Exception:
-                pass
-        from lerobot.policies.factory import make_pre_post_processors
-        preprocessor, postprocessor = make_pre_post_processors(
-            policy_cfg,
-            pretrained_path=local_path,
-            preprocessor_overrides={"device_processor": {"device": args.device}},
-            postprocessor_overrides={"device_processor": {"device": "cpu"}},
-        )
-        logger.info("Preprocessor/Postprocessor loaded via make_pre_post_processors")
-    except Exception as e:
-        logger.warning("Failed to load pre/post processors: %s (falling back to manual)", e)
-
-    # preprocessor의 rename_map 추출 (fallback용)
-    _rename_map = {}
-    try:
-        pre_json_path = Path(local_path) / "policy_preprocessor.json"
-        if pre_json_path.exists():
-            import json as _json
-            for step in _json.loads(pre_json_path.read_text()).get("steps", []):
-                if step.get("registry_name") == "rename_observations_processor":
-                    _rename_map = step.get("config", {}).get("rename_map", {})
-                    break
-        if _rename_map:
-            logger.info("Rename map: %s", _rename_map)
-    except Exception:
-        pass
 
     # ── 실행 기록 — 리스너보다 먼저 연다: 로딩 중에 큐에 쌓인 값도 "도중 변경"에 남게 ──
     import datetime as _dt
@@ -534,6 +619,9 @@ def main() -> None:
     if hasattr(policy, 'model') and hasattr(policy.model, 'vlm_with_expert'):
         _tokenizer = policy.model.vlm_with_expert.processor.tokenizer
 
+    if len(_slots) > 1:
+        _run_record.update(policies={n: s.local_path for n, s in _slots.items()}, policy=_first.name)
+        logger.info("Policies: %s (active %s)", ", ".join(_slots), _first.name)
     logger.info("Starting inference loop (fps=%d, device=%s, amp=%s)", args.fps, args.device, args.use_amp)
 
     # ── CSV 로그 (경로는 실행 기록과 같이 위에서 정했다) ──
@@ -699,6 +787,13 @@ def main() -> None:
         _spec = json.loads(args.delta_spec)
         _delta = DeltaRestorer(motor_names, list(_spec.get("delta_names") or []), dict(_spec.get("clamp") or {}))
         logger.info("Delta actions: %s (clamp %s)", _delta.names, _spec.get("clamp"))
+    # 정책마다 델타·목표 입력이 따로다 — 바꿀 때 같이 갈아끼운다 (feature/multi-policy.md)
+    _first.delta, _first.target_in = _delta, _target_in
+    for _s in _slots.values():
+        if _s is not _first and _s.action_space == DELTA_V1:
+            _s.delta = DeltaRestorer(motor_names, list(_s.delta_spec.get("delta_names") or []),
+                                     dict(_s.delta_spec.get("clamp") or {}))
+            logger.info("Delta actions (%s): %s (clamp %s)", _s.name, _s.delta.names, _s.delta_spec.get("clamp"))
 
     def _inference_thread_fn():
         """별도 스레드에서 predict_action_chunk() 실행 (서버 방식)."""
@@ -858,6 +953,36 @@ def main() -> None:
         while running:
             start_time = time.monotonic()
 
+            # 정책 바꾸기 (feature/multi-policy.md §2-3) — 추론 스레드가 쉴 때만 갈아끼운다.
+            # ⚠ 관측 슬롯을 **먼저** 비우고 추론 중 표시를 본다. 스레드는 표시를 올린 **뒤에** 관측을 읽으므로
+            #   둘 중 하나는 반드시 상대를 본다 — 섞이면 A 의 정규화로 편 관측을 B 가 읽는다.
+            # 파킹·필터 초기화·step=0 은 안 한다(리셋과 다른 점): 팔은 지금 자리에서 새 정책의 첫 청크로
+            # 이어진다 — 큐 모드면 청크 이어 붙이기가 직전에 보낸 액션에서 크로스페이드한다.
+            _want = _switch.pending()
+            if _want is not None:
+                _obs_for_inference = None
+                if not _inference_in_flight:
+                    _slot = _slots[_want]
+                    with _action_lock:
+                        _reset_gen += 1
+                        _obs_event.clear()
+                        _action_queue = []
+                        _ensembler.clear(step)
+                        _rtc_feed.clear()
+                        _effective_chunk_len = 1
+                        _latest_aux = None
+                    policy, policy_cfg = _slot.policy, _slot.cfg
+                    preprocessor, postprocessor, _rename_map = _slot.preprocessor, _slot.postprocessor, _slot.rename_map
+                    _rtc_capable, _stage_names = _slot.rtc_capable, _slot.stage_names
+                    _target_in, _delta = _slot.target_in, _slot.delta
+                    _tokenizer, _max_token_len, _cached_task = _slot.tokenizer, _slot.max_token_len, None
+                    try:
+                        policy.reset()
+                    except Exception as e:
+                        logger.warning("policy.reset() failed: %s", e)
+                    _switch.done(_want)
+                    logger.info("Policy → %s (%s)", _want, _slot.local_path)
+
             # 원위치+리셋: 원점 복귀 + 버퍼/필터/policy 초기화 후 첫 추론처럼 새로 시작.
             # (pause 상태와 무관하게 최상단에서 처리하고, 리셋 후에는 자동 재개)
             if _reset_requested:
@@ -921,6 +1046,11 @@ def main() -> None:
                     telemetry["target_pos"] = list(_current_target) if _current_target else None
                     if _waiting_target:
                         telemetry["waiting_target"] = True
+                # 일시정지 중에도 정책을 바꿀 수 있다(갈아끼우기는 이 분기보다 위다) — 화면이 그걸 보게
+                if len(_slots) > 1:
+                    telemetry["policy"] = _switch.active
+                if _switch.holding:
+                    telemetry["holding"] = True
                 print(json.dumps(telemetry), flush=True)
                 time.sleep(0.05)
                 continue
@@ -951,7 +1081,11 @@ def main() -> None:
             with _action_lock:
                 # 큐가 비어 직전 액션을 유지해도 이 스텝은 지나간 것이다
                 _queue_step = step
-                if _te_active:
+                if _switch.holding:
+                    # 유지 — 큐·앙상블을 꺼내지 않고 마지막 액션을 다시 보낸다(쥐라는 지령째로). 새 추론은 아래에서 막힌다
+                    action_np, action_dict = _latest_action_np, _latest_action_dict
+                    qsize_after = len(_ensembler) if _te_active else len(_action_queue)
+                elif _te_active:
                     # 이 스텝을 예측한 청크들의 가중 평균. 덮는 청크가 없으면 직전 액션 유지
                     ensembled = _ensembler.pop(step)
                     if ensembled is not None:
@@ -979,7 +1113,9 @@ def main() -> None:
             # 떨어져 중복 추론이 짝지어 발생함.
             # 시간 앙상블이면 매 스텝 — 평균할 청크가 매 스텝 있어야 한다. 추론이 제어보다 느리면
             # 연산 중 플래그에 걸려 끝나는 대로 다음 것을 돌린다.
-            if (_te_active or qsize_after <= _refill_lead) and not _obs_event.is_set() and not _inference_in_flight:
+            # 정책을 바꾸는 중이거나 유지 중이면 띄우지 않는다 — 바꿀 것은 돌던 추론이 끝나야 갈아끼운다
+            if (_te_active or qsize_after <= _refill_lead) and not _obs_event.is_set() and not _inference_in_flight \
+                    and not _switch.blocks():
                 # RTC 이어 받기는 관측과 같은 순간의 큐에서 뜬다. 델타 체크포인트는 앵커가 관측마다 달라
                 # 이전 청크의 원본(델타)을 새 청크 공간으로 옮길 수 없다 — RTC 를 안 건다.
                 rtc = None
@@ -1049,6 +1185,11 @@ def main() -> None:
             if step % 50 == 0 and torch.cuda.is_available():
                 telemetry["gpu_mem_mb"] = round(torch.cuda.memory_allocated() / 1024 / 1024)
                 telemetry["gpu_total_mb"] = round(torch.cuda.get_device_properties(0).total_memory / 1024 / 1024)
+            # 지금 정책·유지 — 게이트웨이가 이걸로 `active` 를 확인한다(요청만으로 바꿨다고 적지 않는다)
+            if len(_slots) > 1:
+                telemetry["policy"] = _switch.active
+            if _switch.holding:
+                telemetry["holding"] = True
             print(json.dumps(telemetry), flush=True)
 
             # CSV 로그

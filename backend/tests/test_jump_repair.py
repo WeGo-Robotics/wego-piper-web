@@ -174,7 +174,7 @@ def test_both_param_paths_reach_the_repairer_and_the_arm_is_attached():
     src = code_only(_WRAPPER)
     listener = src[src.index("def param_listener"):src.index("def _resolve_policy_path")]
     assert "_jump_repair.update_param(key, value)" in listener
-    overrides = src[src.index("for key, value in config_overrides.items():"):src.index("preprocessor = None")]
+    overrides = src[src.index("for key, value in config_overrides.items():"):src.index("import datetime as _dt")]
     assert "_jump_repair.update_param(key, value)" in overrides
     assert re.search(r"_jump_repair\.attach\(_fk, _arms, args\.fps\)", src)
     assert src.index("motor_names = list(robot.action_features") < src.index("piper_arms(args.robot_type, motor_names)")

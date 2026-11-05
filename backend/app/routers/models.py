@@ -23,7 +23,7 @@ from app.services.camera_config import (
     release_all_cameras,
 )
 from app.services.model_scanner import (
-    delete_checkpoints, delete_model, get_model, run_dir_of, scan_models, scan_runs,
+    delete_checkpoints, delete_model, extract_model_requirements, get_model, run_dir_of, scan_models, scan_runs,
 )
 from app.services.robot_config import ArmPrepareError, prepare_arms, resolve_robot_type
 from app.services.param_bridge import param_bridge
@@ -95,13 +95,18 @@ async def inference_policy():
     """지금 도는 정책 — 플러그인(MissionPlugin)이 "판단이 로봇에 닿는가"를 묻는 길 (feature/plugins.md §12-1).
 
     ACT 는 task 를 안 읽는다. 모르면 `takes_language: null` — 소비자는 낙관하지 않는다.
+
+    정책을 여럿 올렸으면(feature/multi-policy.md) `policies`(이름 → 체크포인트)·`active`·`holding` 이 같이
+    나가고 `checkpoint_path` 는 지금 정책의 것이다. `active` 는 wrapper 가 갈아끼운 뒤에 바뀐다.
     """
     cur = inference_state.get()
     if cur is None:
-        return {"running": False, "type": None, "takes_language": None, "checkpoint_path": None}
+        return {"running": False, "type": None, "takes_language": None, "checkpoint_path": None,
+                "policies": {}, "active": None, "holding": False}
     return {"running": True, "type": cur.policy_type or None,
             "takes_language": takes_language(cur.policy_type) if cur.policy_type else None,
-            "checkpoint_path": cur.checkpoint_path or None}
+            "checkpoint_path": cur.policies.get(cur.active, cur.checkpoint_path) or None,
+            "policies": dict(cur.policies), "active": cur.active or None, "holding": cur.holding}
 
 
 def _get_first_ready_follower_port() -> str | None:
@@ -219,6 +224,8 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
                 user_params.setdefault(key, spec["default"])
 
     if body.inference_mode == "server":
+        # 정책을 여럿 올렸으면 여기서 400 — 정책 서버는 하나만 돌린다 (feature/multi-policy.md)
+        _extra_policies_for(body)
         params = {
             "server_address": body.server_address,
             "robot_type": robot_type,
@@ -268,7 +275,109 @@ def _build_args_for(body, robot_type: str, robot_port: str | None) -> list[str]:
         # robot_port 는 첫 팔로 남겨 둔다 (wrapper 의 단팔 폴백 인자)
         params["robot_port"] = body.robot_ports[0]
         params["robot_ports"] = body.robot_ports
+    # 정책을 여럿 올리면(feature/multi-policy.md) 이름과 사양을 싣는다. 이름이 기본이고 하나뿐이면 아무것도
+    # 안 붙어 기존 명령이 한 글자도 안 바뀐다
+    extras = _extra_policies_for(body)
+    name = getattr(body, "policy_name", DEFAULT_POLICY_NAME)
+    if extras or name != DEFAULT_POLICY_NAME:
+        params["policy_name"] = name
+    if extras:
+        params["extra_policies"] = _extra_policies_arg(extras)
     return build_inference_args(params)
+
+
+# ── 여러 정책 (feature/multi-policy.md) ──
+
+DEFAULT_POLICY_NAME = "main"
+
+
+def _policy_name_ok(name: str) -> bool:
+    """wrapper/policy_slots.NAME_RE 와 같은 규칙 — 이름은 로그·텔레메트리·REST 에 그대로 나간다."""
+    return 0 < len(name) <= 40 and name.isascii() and all(c.isalnum() or c in "_-" for c in name)
+
+
+class ExtraPolicy(BaseModel):
+    name: str
+    checkpoint_path: str
+
+
+def _ckpt_config(path: str) -> dict:
+    try:
+        return json.loads((Path(path) / "config.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _action_len(cfg: dict) -> int:
+    shape = ((cfg.get("output_features") or {}).get("action") or {}).get("shape") or []
+    return int(shape[0]) if len(shape) == 1 else 0
+
+
+def _extra_policies_for(body) -> list[dict]:
+    """더 올릴 정책마다 첫 정책과 같은 검사를 하고 wrapper 에 실을 사양을 만든다. 돌릴 수 없으면 400.
+
+    장치를 건드리기 **전에** 부른다. 정책 종류·액션 길이가 첫 정책과 같아야 한다 — 한 로봇에서 바꿔 쓰고,
+    정책별 파라미터 판정(`foreign_to`)·`task` 판정이 정책 종류 하나를 기준으로 돈다.
+    액션 공간·목표 입력은 사람이 고르지 않는다 — 첫 정책처럼 체크포인트의 학습 데이터셋이 정한다."""
+    name = getattr(body, "policy_name", DEFAULT_POLICY_NAME)
+    if not _policy_name_ok(name):
+        raise HTTPException(400, f"정책 이름이 틀렸습니다: {name} — 영숫자·_·- 40자까지")
+    extras = getattr(body, "extra_policies", None) or []
+    if not extras:
+        return []
+    if body.inference_mode == "server":
+        raise HTTPException(400, "정책을 여럿 올리는 것은 로컬 추론에서만 됩니다 — 정책 서버는 정책 하나만 돌립니다")
+    first = _ckpt_config(body.checkpoint_path)
+    first_type = first.get("type") or body.policy_type
+    first_len = _action_len(first)
+    seen, out = {name}, []
+    for x in extras:
+        if not _policy_name_ok(x.name):
+            raise HTTPException(400, f"정책 이름이 틀렸습니다: {x.name} — 영숫자·_·- 40자까지")
+        if x.name in seen:
+            raise HTTPException(400, f"정책 이름이 겹칩니다: {x.name}")
+        seen.add(x.name)
+        cfg = _ckpt_config(x.checkpoint_path)
+        if not cfg:
+            raise HTTPException(400, f"정책 {x.name} 의 체크포인트를 읽을 수 없습니다: {x.checkpoint_path}")
+        kind = cfg.get("type")
+        if kind != first_type:
+            raise HTTPException(400, f"정책 {x.name} 의 종류({kind})가 첫 정책({first_type})과 다릅니다 — "
+                                     f"한 추론에는 같은 종류만 올립니다")
+        length = _action_len(cfg)
+        if first_len and length and length != first_len:
+            raise HTTPException(400, f"정책 {x.name} 의 액션 길이({length})가 첫 정책({first_len})과 다릅니다 — "
+                                     f"같은 로봇 구성으로 학습한 정책만 같이 올립니다")
+        # 카메라는 매핑된 것만 연결된다 — 학습 카메라 대조는 매핑에 없는 카메라를 "모름" 으로 넘기므로 여기서 본다.
+        # 빠지면 시작은 되고 그 정책으로 바꾸는 순간부터 매 추론이 관측 키 없음으로 죽는다.
+        # 매핑이 아예 없는 요청(CLI 초기화의 미리보기 등)은 첫 정책도 대조하지 않는다 — 같은 규칙
+        mapped = getattr(body, "camera_mapping", None) or {}
+        cams = [c["name"] for c in extract_model_requirements(cfg, Path(x.checkpoint_path))["required_cameras"]]
+        missing = [c for c in cams if c not in mapped] if mapped else []
+        if missing:
+            raise HTTPException(400, f"정책 {x.name} 이 쓰는 카메라({', '.join(missing)})가 매핑에 없습니다 — "
+                                     f"첫 정책과 같은 카메라로 학습한 정책만 같이 올립니다")
+        problem = checkpoint_dim_problem(x.checkpoint_path)
+        if problem:
+            raise HTTPException(400, problem)
+        space = action_space.resolve(Path(x.checkpoint_path))
+        if space["action_space"] == action_space.UNKNOWN:
+            raise HTTPException(400, action_space.unknown_message(space))
+        target = target_input.resolve(Path(x.checkpoint_path))
+        if target["input"] == target_input.UNKNOWN:
+            raise HTTPException(400, target_input.unknown_message(target))
+        out.append({"name": x.name, "path": x.checkpoint_path, "space": space, "target": target})
+    return out
+
+
+def _extra_policies_arg(extras: list[dict]) -> str:
+    """wrapper `--extra-policies` 값 (wrapper/policy_slots.parse_extra 가 읽는다)."""
+    return json.dumps([{
+        "name": x["name"], "path": x["path"],
+        "action_space": x["space"]["action_space"],
+        "delta_spec": x["space"]["spec"] if x["space"]["action_space"] == action_space.DELTA_V1 else {},
+        "target_spec": x["target"]["spec"] if x["target"]["input"] == target_input.TARGET_V1 else None,
+    } for x in extras], ensure_ascii=False, separators=(",", ":"))
 
 
 @router.get("")
@@ -444,6 +553,10 @@ class InferenceStartRequest(BaseModel):
     smoothing: str = "none"
     smoothing_window: int = 5
     debug_mode: bool = False
+    # 정책 여럿 (feature/multi-policy.md) — 같은 프로세스에 올려 두고 `POST /api/params/policy` 로 바꿔 쓴다.
+    # 첫 정책은 `checkpoint_path` 이고 이름이 `policy_name`. 로컬 모드만
+    policy_name: str = DEFAULT_POLICY_NAME
+    extra_policies: list[ExtraPolicy] = []
 
 
 class InferencePreviewRequest(BaseModel):
@@ -463,6 +576,9 @@ class InferencePreviewRequest(BaseModel):
     actions_per_chunk: int = 100
     params: dict = {}
     debug_mode: bool = False
+    # 미리보기가 실제 실행과 같은 명령을 보이게 — 시작 요청과 같은 필드
+    policy_name: str = DEFAULT_POLICY_NAME
+    extra_policies: list[ExtraPolicy] = []
 
 
 @router.post("/inference/preview")
@@ -510,6 +626,8 @@ async def start_inference(body: InferenceStartRequest):
     robot_port = body.robot_port or _get_first_ready_follower_port()
     if not is_bimanual and not robot_port:
         raise HTTPException(400, "등록된 follower가 없습니다. 로봇 페이지에서 먼저 등록하세요.")
+    # 더 올릴 정책도 장치를 건드리기 전에 본다 (feature/multi-policy.md)
+    extras = _extra_policies_for(body)
 
     # ⚠ **카메라를 먼저 준비한다.** `shm` 에서는 세그먼트에서 실제 해상도를 읽어
     # 인자에 싣는데, 연결 전이면 세그먼트가 없어 기본값(640x480)으로 떨어진다 —
@@ -527,6 +645,14 @@ async def start_inference(body: InferenceStartRequest):
         train_cameras.compare(trained["cameras"], train_cameras.live_cameras(body.camera_mapping)))
     if cam_errors:
         raise HTTPException(400, cam_errors[0])
+    # 더 올릴 정책도 같은 판정 — 바꿔 쓰는 정책마다 지금 카메라를 본다
+    for x in extras:
+        x["trained"] = train_cameras.resolve(Path(x["path"]))
+        x_errors, x_warnings = train_cameras.messages(
+            train_cameras.compare(x["trained"]["cameras"], train_cameras.live_cameras(body.camera_mapping)))
+        if x_errors:
+            raise HTTPException(400, x_errors[0])
+        cam_warnings += [w for w in x_warnings if w not in cam_warnings]
 
     # 작업 프로파일 — 학습 데이터와 다른 노출·색으로 추론하면 정책이 다른
     # 분포를 본다. 지정했으면 연결 뒤 한 번 적용하고, 없는 프로파일이면 막는다
@@ -553,6 +679,11 @@ async def start_inference(body: InferenceStartRequest):
         raise HTTPException(400, str(e))
 
     args = _build_args_for(body, robot_type, robot_port)
+    # 표식(액션 공간·목표 입력·학습 카메라)은 더 올릴 정책에도 남긴다 — 아래 첫 정책과 같은 이유
+    for x in extras:
+        action_space.remember(Path(x["path"]), x["space"])
+        target_input.remember(Path(x["path"]), x["target"])
+        train_cameras.remember(Path(x["path"]), x["trained"])
 
     slip_warns = _clear_arm_errors("inference-start", follower_ifaces)
 
@@ -577,7 +708,10 @@ async def start_inference(body: InferenceStartRequest):
         raise HTTPException(500, f"프로세스 시작 실패: {e}")
     # 무엇이 도는지 남긴다 — 오케스트레이터가 `task` 를 보내도 되는 정책인지
     # 알아야 한다 (`services/inference_state` 참고).
-    inference_state.set_running(body.policy_type, body.checkpoint_path)
+    inference_state.set_running(
+        body.policy_type, body.checkpoint_path,
+        policies={body.policy_name: body.checkpoint_path, **{x["name"]: x["path"] for x in extras}},
+        active=body.policy_name)
     return {"status": "started", "pid": process_manager.pid, "args": args,
             "mode": body.inference_mode, "camera_profile": profile_report,
             "arm_reset": {"warnings": slip_warns},

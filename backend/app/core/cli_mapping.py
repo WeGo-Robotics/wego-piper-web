@@ -67,6 +67,10 @@ def resolve_teleop_type(teleop_type: str) -> str:
 # wrapper 인자 매핑 (lerobot_wrapper.py 기준)
 INFERENCE_ARGS_MAP: dict[str, str] = {
     "checkpoint_path": "--policy-path",
+    # 정책을 여럿 올릴 때만 실린다 (routers/models._extra_policies_for, feature/multi-policy.md).
+    # extra_policies 는 이미 JSON 문자열로 온다 — 리스트로 주면 아래 콤마 규약에 걸린다
+    "policy_name": "--policy-name",
+    "extra_policies": "--extra-policies",
     "robot_type": "--robot-type",
     "robot_port": "--robot-port",
     # 양팔: "left,right" 콤마 목록. gRPC wrapper 와 같은 규약 — 이게 있으면
