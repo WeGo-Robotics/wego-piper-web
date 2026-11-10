@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useT } from '../i18n'
 import type { Model } from '../types/models'
-import type { ExtraPolicy, SlotProblems } from '../types/policySlots'
+import { extraCameras, unmatchedCameras, type ExtraPolicy, type SlotProblems } from '../types/policySlots'
 import CheckpointLabel from './CheckpointLabel'
 import PickerField from './PickerField'
 import WeightTableModal from './WeightTableModal'
@@ -30,6 +30,9 @@ export function ExtraPoliciesEditor({ firstName, onFirstName, extras, onChange, 
   const [picking, setPicking] = useState<number | null>(null)
   const set = (i: number, patch: Partial<ExtraPolicy>) =>
     onChange(extras.map((x, j) => (j === i ? { ...x, ...patch } : x)))
+  // "같은 카메라" 로 고를 수 있는 이름 — 첫 정책 카메라와 다른 정책이 "다른 카메라" 로 더한 줄
+  const cameraNames = [...(first?.requirements.required_cameras.map((c) => c.name) ?? []),
+    ...extraCameras(first, extras, models).map((r) => r.name)]
   const add = () => {
     const taken = new Set([firstName, ...extras.map((x) => x.name)])
     let n = extras.length + 2
@@ -53,13 +56,39 @@ export function ExtraPoliciesEditor({ firstName, onFirstName, extras, onChange, 
             <div className="flex items-center gap-2">
               <input value={x.name} onChange={(e) => set(i, { name: e.target.value.trim() })}
                 className={`w-28 shrink-0 ${inputClass}`} />
-              <PickerField empty={!x.model_id} placeholder={t('체크포인트 고르기')} onOpen={() => setPicking(i)}>
-                {m ? <CheckpointLabel model={m} models={models} />
-                  : <p className="truncate font-mono text-xs text-neutral-200" title={x.model_id}>{x.model_id}</p>}
-              </PickerField>
+              {/* min-w-0 — 없으면 긴 체크포인트 이름이 줄을 밀어 좁은 화면(3단)에서 카드 밖으로 나간다 */}
+              <div className="min-w-0 flex-1">
+                <PickerField empty={!x.model_id} placeholder={t('체크포인트 고르기')} onOpen={() => setPicking(i)}>
+                  {m ? <CheckpointLabel model={m} models={models} />
+                    : <p className="truncate font-mono text-xs text-neutral-200" title={x.model_id}>{x.model_id}</p>}
+                </PickerField>
+              </div>
               <button type="button" title={t('빼기')} onClick={() => onChange(extras.filter((_, j) => j !== i))}
                 className="shrink-0 rounded px-1.5 text-neutral-500 hover:bg-neutral-700 hover:text-white">✕</button>
             </div>
+            {/* 첫 정책에 없는 카메라 이름 — 같은 카메라를 다른 이름으로 학습했나, 정말 다른 카메라인가는 사람만 안다 */}
+            {unmatchedCameras(first, m).map((c) => {
+              const chosen = x.cameras?.[c] ?? ''
+              return (
+                <div key={c} className="pl-[7.5rem] flex items-center gap-2 text-[11px]">
+                  <span className="shrink-0 text-neutral-400">{t('카메라')} <span className="font-mono text-neutral-200">{c}</span></span>
+                  <select value={cameraNames.includes(chosen) ? chosen : ''}
+                    onChange={(e) => set(i, { cameras: { ...x.cameras, [c]: e.target.value } })}
+                    className="min-w-0 px-2 py-0.5 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500">
+                    <option value="">{t('어느 카메라인지 고르세요')}</option>
+                    {cameraNames.filter((n) => n !== c).map((n) => (
+                      <option key={n} value={n}>{t('같은 카메라: {cam}', { cam: n })}</option>
+                    ))}
+                    <option value={c}>{t('다른 카메라 — 따로 연결')}</option>
+                  </select>
+                </div>
+              )
+            })}
+            {unmatchedCameras(first, m).length > 0 && (
+              <p className="pl-[7.5rem] text-[10px] text-neutral-500">
+                {t('같은 카메라를 다른 이름으로 학습했으면 그 카메라를, 정말 다른 카메라면 "다른 카메라"를 고르세요(아래 카메라 목록에 줄이 생깁니다) — 잘못 이으면 정책이 엉뚱한 화면을 봅니다')}
+              </p>
+            )}
             {problems.rows[i] && <p className="pl-[7.5rem] text-[11px] text-red-400">✗ {problems.rows[i]}</p>}
           </div>
         )

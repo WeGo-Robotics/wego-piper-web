@@ -85,12 +85,16 @@ def test_extra_policy_argument():
     assert parse_extra("", "main") == []
     got = parse_extra(json.dumps([{"name": "place_a", "path": "/ck"}]), "pick")
     assert got == [{"name": "place_a", "path": "/ck", "action_space": "absolute", "delta_spec": {},
-                    "target_spec": None}]
+                    "target_spec": None, "cameras": {}}]
+    linked = parse_extra(json.dumps([{"name": "a", "path": "/x", "cameras": {"hand": "left_hand", "top": "top"}}]), "p")
+    assert linked[0]["cameras"] == {"hand": "left_hand"}, "이름이 같은 것은 잇기가 아니다"
     for bad in ([{"name": "pick", "path": "/x"}],                         # 첫 정책과 겹친다
                 [{"name": "a", "path": "/x"}, {"name": "a", "path": "/y"}],
                 [{"name": "a b", "path": "/x"}],
                 [{"name": "a", "path": ""}],
                 [{"name": "a", "path": "/x", "action_space": "relative"}],
+                [{"name": "a", "path": "/x", "cameras": ["hand"]}],
+                [{"name": "a", "path": "/x", "cameras": {"hand": ""}}],
                 {"name": "a"}):
         with pytest.raises(ValueError):
             parse_extra(json.dumps(bad), "pick")
@@ -137,7 +141,8 @@ def test_the_swap_neither_parks_nor_restarts_the_filter():
     block = _switch_block(_src())
     for banned in ("ParkingController", "step = 0", "_action_filter.reset()", "_latest_action_dict = None"):
         assert banned not in block, f"정책을 바꾸며 {banned} — 물건을 든 채 바꾸는 것이 목적이다"
-    for swapped in ("preprocessor", "postprocessor", "_rename_map", "_target_in", "_delta", "_stage_names"):
+    for swapped in ("preprocessor", "postprocessor", "_rename_map", "_camera_alias", "_target_in", "_delta",
+                    "_stage_names"):
         assert swapped + "," in block or swapped + " =" in block, f"{swapped} 를 안 갈아끼운다"
     assert "_reset_gen += 1" in block and "_action_queue = []" in block and "policy.reset()" in block
 
@@ -160,6 +165,27 @@ def test_extra_policies_are_checked_before_the_robot_connects():
     connect = src.index("robot.connect()")
     assert src.index("_check_slot_markers(_x)") < connect
     assert src.index('_target_input_for(_x["target_spec"]') < connect
+
+
+def test_a_linked_camera_must_be_open_before_the_robot_is_built():
+    """잇는 카메라가 `--cameras` 에 없으면 그 정책으로 바꾸는 순간부터 매 추론이 관측 키 없음으로 죽는다."""
+    src = _src()
+    assert src.index('if m not in cameras_cfg') < src.index("make_robot_from_config(robot_cfg)")
+
+
+def test_a_linked_camera_is_attached_under_the_policys_own_name():
+    """화면 보정을 거친 영상을 그 정책의 이름으로 단다 — 체크포인트의 rename 은 학습 때 이름에서 출발한다.
+    한 번에 계산해서 넣는다: a←b, b←c 를 차례로 넣으면 a 가 c 를 본다."""
+    src = _src()
+    prep = src[src.index("def _prepare_observation"):]
+    alias = prep.index("if _camera_alias:")
+    assert prep.index("_view_warp.apply(") < alias < prep.index("if _rename_map:")
+    assert "lerobot_obs.update({OBS_IMAGES + c: lerobot_obs[OBS_IMAGES + m] for c, m in _camera_alias.items()})" \
+        in prep[alias:alias + 200]
+    obs = {"observation.images.a": 1, "observation.images.b": 2, "observation.images.c": 3}
+    alias_map = {"a": "b", "b": "c"}
+    obs.update({"observation.images." + c: obs["observation.images." + m] for c, m in alias_map.items()})
+    assert obs == {"observation.images.a": 2, "observation.images.b": 3, "observation.images.c": 3}
 
 
 def test_policy_setters_reach_every_loaded_policy():
@@ -221,7 +247,7 @@ def test_extra_policies_carry_their_specs_in_the_wrappers_shape(tmp_path, lerobo
     args = _args(pick, [("place_a", place)], name="pick")
     raw = args[args.index("--extra-policies") + 1]
     assert parse_extra(raw, "pick") == [{"name": "place_a", "path": str(place), "action_space": "absolute",
-                                         "delta_spec": {}, "target_spec": None}]
+                                         "delta_spec": {}, "target_spec": None, "cameras": {}}]
 
 
 def test_a_delta_extra_carries_its_delta_spec(tmp_path, lerobot_home):
@@ -277,6 +303,56 @@ def test_an_extra_policy_needs_its_cameras_mapped(tmp_path, lerobot_home):
     assert e.value.status_code == 400 and "wrist" in e.value.detail
     assert _extra_policies_for(body({"top": "cam1", "wrist": "cam2"}))[0]["name"] == "place_a"
     assert _extra_policies_for(body({})), "매핑이 없는 요청은 첫 정책도 대조하지 않는다 — 같은 규칙"
+
+
+def _with_cams(ckpt: Path, *names: str) -> Path:
+    cfg = json.loads((ckpt / "config.json").read_text())
+    for n in names:
+        cfg["input_features"][f"observation.images.{n}"] = {"type": "VISUAL", "shape": [3, 480, 640]}
+    (ckpt / "config.json").write_text(json.dumps(cfg))
+    return ckpt
+
+
+@pytest.mark.parametrize("mapping, link, refused", [
+    ({"top": "c1", "left_hand": "c2"}, {}, "hand"),                                    # 고르지 않았다
+    ({"top": "c1", "left_hand": "c2"}, {"hand": "left_hand"}, None),                   # 같은 카메라, 다른 이름
+    ({"top": "c1", "left_hand": "c2", "hand": "c3"}, {"hand": "hand"}, None),          # 다른 카메라 — 매핑에 줄
+    ({"top": "c1", "left_hand": "c2"}, {"hand": "wrist"}, "hand→wrist"),              # 잇는 카메라가 매핑에 없다
+    ({"top": "c1", "left_hand": "c2"}, {"hand": "top"}, "같이 봅니다"),                 # 두 이름이 한 카메라
+    ({"top": "c1", "left_hand": "c2"}, {"hand": "left_hand", "side": "top"}, None),    # 안 쓰는 이름의 잇기는 버린다
+])
+def test_a_camera_under_another_name_is_linked_or_added(tmp_path, lerobot_home, mapping, link, refused):
+    """첫 정책은 top·left_hand, 함께 올릴 정책은 top·hand (실제 두 체크포인트가 이렇다, 2026-11-06).
+    hand 가 left_hand 와 같은 카메라인지 다른 카메라인지는 사람이 고른다."""
+    from app.routers.models import ExtraPolicy, InferencePreviewRequest, _build_args_for
+
+    pick = _with_cams(_ckpt(tmp_path, "pick"), "top", "left_hand")
+    place = _with_cams(_ckpt(tmp_path, "place"), "top", "hand")
+    req = InferencePreviewRequest(checkpoint_path=str(pick), robot_port="can0", camera_mapping=mapping,
+                                  extra_policies=[ExtraPolicy(name="place_a", checkpoint_path=str(place),
+                                                              cameras=link)])
+    if refused:
+        with pytest.raises(HTTPException) as e:
+            _build_args_for(req, "piper_follower", "can0")
+        assert e.value.status_code == 400 and refused in e.value.detail
+        return
+    args = _build_args_for(req, "piper_follower", "can0")
+    got = parse_extra(args[args.index("--extra-policies") + 1], "main")[0]
+    assert got["cameras"] == ({"hand": "left_hand"} if link.get("hand") == "left_hand" else {})
+
+
+def test_the_training_check_reads_a_linked_camera_under_the_policys_name():
+    """hand 를 left_hand 로 이었으면 hand 의 학습 해상도는 지금 left_hand 와 견준다 — 이름으로만 찾으면
+    "지금 없음" 으로 넘어가 비율이 다른 카메라를 그대로 돌린다."""
+    from app.routers import models as M
+    from app.services import slot_cameras
+
+    read = slot_cameras.reads(["top", "hand"], {"hand": "left_hand"})
+    live = {"top": {"width": 640, "height": 480}, "left_hand": {"width": 1280, "height": 720}}
+    assert slot_cameras.live_view(read, live) == {"top": live["top"], "hand": live["left_hand"]}
+    src = code_only(Path(M.__file__).read_text())
+    start = src[src.index("async def start_inference("):src.index("async def start_inference_custom")]
+    assert 'slot_cameras.live_view(x["reads"], live)' in start
 
 
 def test_start_refuses_before_touching_cameras(tmp_path, lerobot_home, monkeypatch):
@@ -357,12 +433,51 @@ def test_switching_without_inference_is_a_conflict(monkeypatch):
 def test_the_selection_remembers_the_policies():
     from app.routers import inference as I
 
-    asyncio.run(I.save_selection(I.SelectionRequest(
-        model_id="r/010000", policy_name="pick", extra_policies=[{"name": "place_a", "model_id": "r/020000"}])))
+    extra = {"name": "place_a", "model_id": "r/020000", "cameras": {"hand": "left_hand"}}
+    asyncio.run(I.save_selection(I.SelectionRequest(model_id="r/010000", policy_name="pick", extra_policies=[extra])))
     got = asyncio.run(I.get_selection())
-    assert got["policy_name"] == "pick" and got["extra_policies"] == [{"name": "place_a", "model_id": "r/020000"}]
+    assert got["policy_name"] == "pick" and got["extra_policies"] == [extra]
     asyncio.run(I.save_selection(I.SelectionRequest()))          # 다른 테스트에 남기지 않는다
     assert asyncio.run(I.get_selection())["extra_policies"] == []
+
+
+@pytest.fixture()
+def validate(monkeypatch):
+    """첫 정책 top·left_hand(학습 640x480), 함께 올릴 정책 top·hand(학습 640x480). 지금 hand 줄만 1280x720."""
+    from app.routers import inference as I
+    from app.services import train_cameras as T
+
+    cams = {"first": ["top", "left_hand"], "x": ["top", "hand"]}
+    monkeypatch.setattr(I, "get_model", lambda mid: mid in cams and {"path": f"/ck/{mid}", "requirements": {
+        "required_cameras": [{"name": n} for n in cams[mid]], "state_dim": 7, "action_dim": 7}})
+    monkeypatch.setattr(T, "resolve", lambda p: {"cameras": {n: {"width": 640, "height": 480} for n in cams[p.name]},
+                                                 "source": "dataset"})
+    monkeypatch.setattr(T, "live_cameras", lambda mapping: {
+        n: ({"width": 1280, "height": 720} if n == "hand" else {"width": 640, "height": 480}) for n in mapping})
+    monkeypatch.setattr(I.camera_manager, "get_ready_cameras", lambda: [{"id": i} for i in ("c1", "c2", "c3")])
+
+    def run(mapping, link):
+        body = I.ValidateRequest(model_id="first", follower_iface="can0", camera_mapping=mapping,
+                                 extra_policies=[I.ValidateExtra(model_id="x", cameras=link)])
+        return asyncio.run(I.validate_config(body))
+    return run
+
+
+def test_validate_sees_a_camera_only_an_extra_policy_reads(validate):
+    """"다른 카메라" 로 더한 줄을 "모델에 없는 카메라 매핑 무시됨" 이라 하면 거짓말이다 — 그 정책이 읽는다.
+    연결·해상도도 그 정책의 학습 카메라와 본다."""
+    out = validate({"top": "c1", "left_hand": "c2", "hand": "c3"}, {"hand": "hand"})
+    assert not any("무시됨" in w for w in out["warnings"])
+    assert out["extra_cameras"]["hand"]["status"] == "aspect" and any("'hand'" in e for e in out["errors"])
+    out = validate({"top": "c1", "left_hand": "c2", "hand": "gone"}, {"hand": "hand"})
+    assert any("'gone'" in e for e in out["errors"]), "그 정책만 쓰는 카메라도 등록을 본다"
+    assert any("매핑되지 않은 카메라: hand" in e for e in validate({"top": "c1", "left_hand": "c2"}, {"hand": "hand"})["errors"])
+
+
+def test_validate_reads_a_linked_camera_as_the_one_it_was_linked_to(validate):
+    out = validate({"top": "c1", "left_hand": "c2"}, {"hand": "left_hand"})
+    assert out["errors"] == [e for e in out["errors"] if "카메라" not in e], out["errors"]
+    assert out["extra_cameras"] == {}, "첫 정책 카메라의 줄은 첫 정책 판정 그대로다"
 
 
 def test_plugins_reach_both_routes_with_params_write():

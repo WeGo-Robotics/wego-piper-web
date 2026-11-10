@@ -5,7 +5,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.core.cli_mapping import checkpoint_dim_problem
-from app.services import target_input, train_cameras
+from app.services import slot_cameras, target_input, train_cameras
 from app.services.process_manager import process_manager
 from app.services.model_scanner import get_model
 from app.services.robot_manager import robot_manager
@@ -20,7 +20,7 @@ _last_selection: dict = {
     "follower_iface": "",
     "model_id": "",
     "camera_mapping": {},
-    # 함께 올릴 정책 (feature/multi-policy.md) — 첫 정책의 이름과 [{name, model_id}]
+    # 함께 올릴 정책 (feature/multi-policy.md) — 첫 정책의 이름과 [{name, model_id, cameras}]
     "policy_name": "main",
     "extra_policies": [],
 }
@@ -31,7 +31,8 @@ class SelectionRequest(BaseModel):
     model_id: str = ""
     camera_mapping: dict[str, str] = {}
     policy_name: str = "main"
-    extra_policies: list[dict[str, str]] = []
+    # 값에 카메라 잇기(`cameras`)가 dict 로 들어 있다 — 화면이 쓰고 화면이 읽는다
+    extra_policies: list[dict] = []
 
 
 @router.get("/selection")
@@ -64,12 +65,20 @@ async def inference_status():
     }
 
 
+class ValidateExtra(BaseModel):
+    model_id: str
+    cameras: dict[str, str] = {}  # 첫 정책에 없는 이름 → 매핑 이름 (services/slot_cameras.py)
+
+
 class ValidateRequest(BaseModel):
     model_id: str
     follower_iface: str
     # 양팔: [왼팔, 오른팔]. 주면 관절 수가 14 가 되고 팔 검증도 둘 다 한다.
     follower_ifaces: list[str] = []
     camera_mapping: dict[str, str]  # {"top": "/dev/video0", "hand": "/dev/video1"}
+    # 함께 올릴 정책 (feature/multi-policy.md) — 그 정책이 읽는 카메라도 매핑·등록·해상도를 본다.
+    # 나머지(종류·액션 길이·이름)는 화면이 미리 말하고 시작 API 가 다시 막는다
+    extra_policies: list[ValidateExtra] = []
 
 
 @router.post("/validate")
@@ -135,21 +144,30 @@ async def validate_config(body: ValidateRequest):
     camera_mapping = normalize_mapping(body.camera_mapping)
     required_names = {c["name"] for c in required_cameras}
     mapped_names = set(camera_mapping.keys())
+    # 함께 올릴 정책이 읽는 카메라 — 첫 정책에 없는 이름은 사람이 이은 매핑 이름으로 읽는다.
+    # 못 찾는 체크포인트는 건너뛴다(화면이 그 줄에서 "목록에 없음" 을 말한다)
+    extra_reads: list[tuple[dict, dict[str, str]]] = []
+    for x in body.extra_policies:
+        xm = get_model(x.model_id)
+        if xm:
+            tags = [c["name"] for c in xm.get("requirements", {}).get("required_cameras", [])]
+            extra_reads.append((xm, slot_cameras.reads(tags, x.cameras)))
+    needed_names = required_names | {m for _, r in extra_reads for m in r.values()}
 
     # 매핑되지 않은 카메라
-    missing = required_names - mapped_names
+    missing = needed_names - mapped_names
     if missing:
         errors.append(f"매핑되지 않은 카메라: {', '.join(missing)}")
 
     # 불필요한 매핑
-    extra = mapped_names - required_names
+    extra = mapped_names - needed_names
     if extra:
         warnings.append(f"모델에 없는 카메라 매핑 무시됨: {', '.join(extra)}")
 
     # 매핑된 카메라가 등록(ready)되어 있는지
     ready_cam_ids = {c["id"] for c in camera_manager.get_ready_cameras()}
     for cam_name, cam_id in camera_mapping.items():
-        if cam_name not in required_names:
+        if cam_name not in needed_names:
             continue
         if cam_id not in ready_cam_ids:
             errors.append(f"카메라 '{cam_id}'이(가) 등록되지 않았습니다 (매핑: {cam_name})")
@@ -158,10 +176,24 @@ async def validate_config(body: ValidateRequest):
     # ⚠ 예전에는 config 의 입력 크기(SmolVLA 는 베이스의 256×256)와 카메라의 요청값(안 정했으면 None →
     #   건너뜀)을 비교해서, 학습 640×480 · 지금 1280×720 인 채로 한 번도 울리지 않았다.
     trained = train_cameras.resolve(Path(model.get("path", "")))
+    live = train_cameras.live_cameras(camera_mapping)
     rows = train_cameras.compare(
         {k: v for k, v in trained["cameras"].items() if k in required_names},
-        {k: v for k, v in train_cameras.live_cameras(camera_mapping).items() if k in required_names})
+        {k: v for k, v in live.items() if k in required_names})
     cam_errors, cam_warnings = train_cameras.messages(rows)
+    # 함께 올릴 정책도 같은 판정 — 그 정책이 읽는 카메라를 그 정책의 이름으로 본다(시작 API 와 같다).
+    # 첫 정책이 안 쓰는 카메라("다른 카메라" 로 더한 줄)는 화면이 줄마다 보이도록 따로 싣는다
+    extra_rows: dict[str, dict] = {}
+    for xm, read in extra_reads:
+        xrows = train_cameras.compare(
+            {k: v for k, v in train_cameras.resolve(Path(xm.get("path", "")))["cameras"].items() if k in read},
+            slot_cameras.live_view(read, live))
+        x_errors, x_warnings = train_cameras.messages(xrows)
+        cam_errors += [e for e in x_errors if e not in cam_errors]
+        cam_warnings += [w for w in x_warnings if w not in cam_warnings]
+        for c, m in read.items():
+            if m not in required_names and c in xrows:
+                extra_rows.setdefault(m, xrows[c])
     errors += cam_errors
     warnings += cam_warnings
 
@@ -173,6 +205,7 @@ async def validate_config(body: ValidateRequest):
         "robot_joints": robot_joints,
         # 화면이 카메라 줄마다 학습/지금을 나란히 보인다 — 판정(비율 허용치)은 여기 한 곳이다
         "cameras": rows,
+        "extra_cameras": extra_rows,
         "train_cameras_source": trained["source"],
     }
 

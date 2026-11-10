@@ -13,7 +13,7 @@ from app.core.cli_mapping import (
 )
 from app.core.config import settings
 from app.core.inference_params import PARAM_SPEC, foreign_to
-from app.services import action_space, target_input, train_cameras
+from app.services import action_space, slot_cameras, target_input, train_cameras
 from app.core.policies import takes_language
 from app.services.exclusivity import Activity, require_idle
 from app.services.camera_config import (
@@ -299,6 +299,9 @@ def _policy_name_ok(name: str) -> bool:
 class ExtraPolicy(BaseModel):
     name: str
     checkpoint_path: str
+    # 첫 정책에 없는 카메라 이름 → 매핑 이름 (services/slot_cameras.py). 같은 카메라를 다른 이름으로 학습했으면
+    # 그 카메라로 잇는다. 없는 이름은 자기 이름 그대로 매핑에서 찾는다 — 다른 카메라면 매핑에 그 이름의 줄이 있다
+    cameras: dict[str, str] = {}
 
 
 def _ckpt_config(path: str) -> dict:
@@ -349,14 +352,15 @@ def _extra_policies_for(body) -> list[dict]:
             raise HTTPException(400, f"정책 {x.name} 의 액션 길이({length})가 첫 정책({first_len})과 다릅니다 — "
                                      f"같은 로봇 구성으로 학습한 정책만 같이 올립니다")
         # 카메라는 매핑된 것만 연결된다 — 학습 카메라 대조는 매핑에 없는 카메라를 "모름" 으로 넘기므로 여기서 본다.
-        # 빠지면 시작은 되고 그 정책으로 바꾸는 순간부터 매 추론이 관측 키 없음으로 죽는다.
-        # 매핑이 아예 없는 요청(CLI 초기화의 미리보기 등)은 첫 정책도 대조하지 않는다 — 같은 규칙
+        # 빠지면 시작은 되고 그 정책으로 바꾸는 순간부터 매 추론이 관측 키 없음으로 죽는다. 이름이 다른 같은
+        # 카메라는 사람이 이어 준 대로 읽는다(`cameras`). 매핑이 아예 없는 요청(CLI 초기화의 미리보기 등)은
+        # 첫 정책도 대조하지 않는다 — 같은 규칙
         mapped = getattr(body, "camera_mapping", None) or {}
-        cams = [c["name"] for c in extract_model_requirements(cfg, Path(x.checkpoint_path))["required_cameras"]]
-        missing = [c for c in cams if c not in mapped] if mapped else []
-        if missing:
-            raise HTTPException(400, f"정책 {x.name} 이 쓰는 카메라({', '.join(missing)})가 매핑에 없습니다 — "
-                                     f"첫 정책과 같은 카메라로 학습한 정책만 같이 올립니다")
+        tags = [c["name"] for c in extract_model_requirements(cfg, Path(x.checkpoint_path))["required_cameras"]]
+        reads = slot_cameras.reads(tags, x.cameras)
+        problem = slot_cameras.problem(x.name, reads, mapped or None)
+        if problem:
+            raise HTTPException(400, problem)
         problem = checkpoint_dim_problem(x.checkpoint_path)
         if problem:
             raise HTTPException(400, problem)
@@ -366,7 +370,7 @@ def _extra_policies_for(body) -> list[dict]:
         target = target_input.resolve(Path(x.checkpoint_path))
         if target["input"] == target_input.UNKNOWN:
             raise HTTPException(400, target_input.unknown_message(target))
-        out.append({"name": x.name, "path": x.checkpoint_path, "space": space, "target": target})
+        out.append({"name": x.name, "path": x.checkpoint_path, "space": space, "target": target, "reads": reads})
     return out
 
 
@@ -377,6 +381,7 @@ def _extra_policies_arg(extras: list[dict]) -> str:
         "action_space": x["space"]["action_space"],
         "delta_spec": x["space"]["spec"] if x["space"]["action_space"] == action_space.DELTA_V1 else {},
         "target_spec": x["target"]["spec"] if x["target"]["input"] == target_input.TARGET_V1 else None,
+        "cameras": slot_cameras.aliases(x["reads"]),
     } for x in extras], ensure_ascii=False, separators=(",", ":"))
 
 
@@ -641,15 +646,15 @@ async def start_inference(body: InferenceStartRequest):
     # 크기만 다르면 경고를 실어 시작한다 (feature/camera-resolution.md). 화면의 검증과 같은 판정이다.
     trained = (train_cameras.resolve(Path(body.checkpoint_path)) if body.checkpoint_path
                else {"cameras": {}, "source": "none"})
-    cam_errors, cam_warnings = train_cameras.messages(
-        train_cameras.compare(trained["cameras"], train_cameras.live_cameras(body.camera_mapping)))
+    live = train_cameras.live_cameras(body.camera_mapping)
+    cam_errors, cam_warnings = train_cameras.messages(train_cameras.compare(trained["cameras"], live))
     if cam_errors:
         raise HTTPException(400, cam_errors[0])
-    # 더 올릴 정책도 같은 판정 — 바꿔 쓰는 정책마다 지금 카메라를 본다
+    # 더 올릴 정책도 같은 판정 — 바꿔 쓰는 정책마다 그 정책이 읽는 카메라를 그 정책의 이름으로 본다
     for x in extras:
         x["trained"] = train_cameras.resolve(Path(x["path"]))
         x_errors, x_warnings = train_cameras.messages(
-            train_cameras.compare(x["trained"]["cameras"], train_cameras.live_cameras(body.camera_mapping)))
+            train_cameras.compare(x["trained"]["cameras"], slot_cameras.live_view(x["reads"], live)))
         if x_errors:
             raise HTTPException(400, x_errors[0])
         cam_warnings += [w for w in x_warnings if w not in cam_warnings]

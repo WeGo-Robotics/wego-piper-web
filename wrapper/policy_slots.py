@@ -29,9 +29,11 @@ ACTION_SPACES = ("absolute", "delta_v1")
 
 
 def parse_extra(raw: str, first: str) -> list[dict]:
-    """`--extra-policies` → `[{name, path, action_space, delta_spec, target_spec}]`. 틀리면 ValueError.
+    """`--extra-policies` → `[{name, path, action_space, delta_spec, target_spec, cameras}]`. 틀리면 ValueError.
 
-    `first` 는 첫 정책(`--policy-name`)의 이름이다 — 겹치면 어느 쪽으로 바꾸라는 것인지 모른다."""
+    `first` 는 첫 정책(`--policy-name`)의 이름이다 — 겹치면 어느 쪽으로 바꾸라는 것인지 모른다.
+    `cameras` 는 `{그 정책이 학습 때 부른 카메라 이름: --cameras 의 이름}` — 같은 카메라를 다른 이름으로 학습한
+    정책에 그 카메라 영상을 그 이름으로도 단다 (backend services/slot_cameras.py). 이름이 같은 것은 빼고 둔다."""
     if not raw:
         return []
     items = json.loads(raw)
@@ -52,9 +54,14 @@ def parse_extra(raw: str, first: str) -> list[dict]:
         space = it.get("action_space") or "absolute"
         if space not in ACTION_SPACES:
             raise ValueError(f"정책 {name} 의 액션 공간을 모른다: {space}")
+        cams = it.get("cameras") or {}
+        if not isinstance(cams, dict) or not all(isinstance(k, str) and k and isinstance(v, str) and v
+                                                 for k, v in cams.items()):
+            raise ValueError(f"정책 {name} 의 카메라 잇기가 틀렸다: {cams!r}")
         seen.add(name)
         out.append({"name": name, "path": path, "action_space": space,
-                    "delta_spec": it.get("delta_spec") or {}, "target_spec": it.get("target_spec") or None})
+                    "delta_spec": it.get("delta_spec") or {}, "target_spec": it.get("target_spec") or None,
+                    "cameras": {k: v for k, v in cams.items() if k != v}})
     return out
 
 

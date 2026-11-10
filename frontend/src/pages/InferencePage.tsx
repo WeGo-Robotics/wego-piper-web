@@ -27,7 +27,7 @@ import LiveCameraFrame from '../components/LiveCameraFrame'
 import CameraStreamSelect, { IdleStreams } from '../components/CameraStreamPicker'
 import { ExtraPoliciesEditor, PolicyBar } from '../components/PolicySlots'
 import {
-  DEFAULT_POLICY_NAME, blocksStart, slotProblems, slotRequest, type ExtraPolicy,
+  DEFAULT_POLICY_NAME, blocksStart, extraCameras, slotProblems, slotRequest, slotValidation, type ExtraPolicy,
 } from '../types/policySlots'
 import { useT } from '../i18n'
 
@@ -165,6 +165,8 @@ type ValidationResult = {
   valid: boolean; errors: string[]; warnings: string[]; robot_joints?: number
   /** 카메라별 학습/지금 대조 (backend services/train_cameras.py) */
   cameras?: Record<string, CameraCheck>
+  /** 함께 올릴 정책만 쓰는 카메라의 대조 — 그 정책의 학습 카메라와 견준다 */
+  extra_cameras?: Record<string, CameraCheck>
 }
 
 // 관절 수와 정책 목록은 백엔드에서 온다 —
@@ -416,6 +418,19 @@ export default function InferencePage() {
   const reqs = selectedModelData?.requirements
   // 함께 올릴 정책의 문제 — 판정 기준은 위 체크포인트다. 시작 API 가 장치 전에 다시 본다
   const slotIssues = slotProblems(t, policyName, extraPolicies, models, selectedModelData, inferenceMode)
+  // 매핑할 카메라 — 첫 정책의 것, 그다음 함께 올릴 정책만 쓰는 것("다른 카메라"). 줄마다 학습 해상도는 그 카메라를 쓰는 정책 것이다
+  const extraCams = extraCameras(selectedModelData, extraPolicies, models)
+  const cameraRows = [
+    ...(reqs?.required_cameras ?? []).map((c) => ({
+      name: c.name, note: c.model_name && c.model_name !== c.name ? c.model_name : '', only: '',
+      trained: selectedModelData?.train_cameras?.cameras[c.name], check: validation?.cameras?.[c.name],
+    })),
+    ...extraCams.map((r) => ({
+      name: r.name, note: '', only: t('{names} 전용', { names: r.users.join(', ') }),
+      trained: r.model.train_cameras?.cameras[r.name], check: validation?.extra_cameras?.[r.name],
+    })),
+  ]
+  const cameraKey = cameraRows.map((r) => r.name).join('\n')
   // 파라미터 패널/정책 표시 기준: 선택 모델의 policy_type 우선, 없으면 수동 선택값
   const activePolicy = selectedModelData?.policy_type ?? policyType
   // 시간 앙상블을 쓰는 정책인가(스펙) · 지금 켜져 있나. 로컬 wrapper 만 한다 — 서버 모드에선 효과가 없다.
@@ -440,25 +455,27 @@ export default function InferencePage() {
     if (pt) setPolicyType(pt)
   }, [selectedModelData?.policy_type])
 
+  // 매핑은 지금 줄만 남긴다 — 빠진 줄의 스트림이 남으면 선택기에서 "사용 중" 으로 막히고 쓰지도 않는 카메라를 연다
   useEffect(() => {
     if (!reqs) { setCameraMapping({}); setValidation(null); return }
     setCameraMapping((prev) => {
       const next: Record<string, string> = {}
-      for (const cam of reqs.required_cameras) { next[cam.name] = prev[cam.name] ?? '' }
+      for (const name of cameraKey ? cameraKey.split('\n') : []) { next[name] = prev[name] ?? '' }
       return next
     })
-  }, [selectedModel])
+  }, [selectedModel, cameraKey])
 
   useEffect(() => {
     // 양팔이면 두 팔 다 골라야 검증한다 — robot_joints 가 14 로 돌아온다
     const ifaces = robotMode === 'bimanual' ? [leftFollower, rightFollower] : [selectedFollower]
     if (!selectedModel || !reqs || !ifaces.every(Boolean)) { setValidation(null); return }
-    const allMapped = reqs.required_cameras.every((c) => cameraMapping[c.name])
+    const allMapped = (cameraKey ? cameraKey.split('\n') : []).every((name) => cameraMapping[name])
     if (!allMapped) { setValidation(null); return }
     api.post<ValidationResult>('/inference/validate', {
       model_id: selectedModel, follower_iface: ifaces[0],
       follower_ifaces: robotMode === 'bimanual' ? ifaces : [],
       camera_mapping: cameraMapping,
+      extra_policies: slotValidation(extraPolicies, models, selectedModelData),
     }).then((v) => {
       setValidation(v)
       if (v.valid) {
@@ -474,12 +491,12 @@ export default function InferencePage() {
             policy_type: policyType, actions_per_chunk: actionsPerChunk,
             aggregate_fn: aggregateFn, offset_correction: offsetCorrection,
             smoothing, smoothing_window: smoothingWindow, debug_mode: debugMode,
-            ...slotRequest(policyName, extraPolicies, models),
+            ...slotRequest(policyName, extraPolicies, models, selectedModelData),
           }).then((r) => { if (!cliEdited) setCliArgs(r.command) }).catch(() => {})
         }
       }
     }).catch(() => {})
-  }, [selectedModel, selectedFollower, robotMode, leftFollower, rightFollower, cameraMapping, mappedDims, inferenceMode, device, serverAddress, policyType, actionsPerChunk, aggregateFn, offsetCorrection, smoothing, smoothingWindow, debugMode, policyName, extraPolicies])
+  }, [selectedModel, selectedFollower, robotMode, leftFollower, rightFollower, cameraMapping, mappedDims, inferenceMode, device, serverAddress, policyType, actionsPerChunk, aggregateFn, offsetCorrection, smoothing, smoothingWindow, debugMode, policyName, extraPolicies, models, cameraKey])
 
   const saveSelectionRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => {
@@ -518,7 +535,7 @@ export default function InferencePage() {
         smoothing,
         smoothing_window: smoothingWindow,
         debug_mode: debugMode,
-        ...slotRequest(policyName, extraPolicies, models),
+        ...slotRequest(policyName, extraPolicies, models, selectedModelData),
       })
       // 프로파일이 못 덮은 카메라, 리셋이 드러낸 관절 슬립 — 문구는 백엔드가 만든다
       for (const w of r.camera_profile?.warnings ?? [])
@@ -543,7 +560,7 @@ export default function InferencePage() {
         policy_type: policyType, actions_per_chunk: actionsPerChunk,
         aggregate_fn: aggregateFn, offset_correction: offsetCorrection,
         smoothing, smoothing_window: smoothingWindow,
-        ...slotRequest(policyName, extraPolicies, models),
+        ...slotRequest(policyName, extraPolicies, models, selectedModelData),
       }).then((r) => setCliArgs(r.command)).catch(() => {})
     }
   }
@@ -743,21 +760,21 @@ export default function InferencePage() {
                   )}
                 </div>
                 <div className="space-y-2">
-                  <span className="text-xs text-neutral-400">{t('카메라 ({length}대):', { length: reqs.required_cameras.length })}</span>
+                  <span className="text-xs text-neutral-400">{t('카메라 ({length}대):', { length: cameraRows.length })}</span>
                   <IdleStreams streams={streams} connecting={connecting} onConnect={connectIdle} />
-                  {reqs.required_cameras.map((cam) => (
+                  {cameraRows.map((cam) => (
                     <div key={cam.name} className="space-y-0.5">
                       <div className="flex items-center gap-2 text-xs">
-                        <span className="w-24 text-neutral-300 font-medium">{cam.name}{cam.model_name && cam.model_name !== cam.name ? <span className="text-neutral-500 text-[10px] ml-1">({cam.model_name})</span> : ''}</span>
+                        <span className="w-24 text-neutral-300 font-medium">{cam.name}{cam.note ? <span className="text-neutral-500 text-[10px] ml-1">({cam.note})</span> : ''}{cam.only && <span className="block text-neutral-500 text-[10px] font-normal">{cam.only}</span>}</span>
                         <CameraStreamSelect value={cameraMapping[cam.name] ?? ''} streams={streams}
                           onChange={(v) => setCameraMapping((prev) => ({ ...prev, [cam.name]: v }))}
                           takenBy={(st) => Object.entries(cameraMapping).find(([k, v]) => v === st && k !== cam.name)?.[0] ?? ''}
                           className="flex-1 min-w-0 px-2 py-1 rounded bg-neutral-900 border border-neutral-700 text-neutral-100 focus:outline-none focus:border-blue-500" />
                         {cameraMapping[cam.name] ? <span className="text-green-400">✓</span> : <span className="text-neutral-500">-</span>}
                       </div>
-                      <CameraResolution trained={selectedModelData?.train_cameras?.cameras[cam.name]}
+                      <CameraResolution trained={cam.trained}
                         live={cameraMapping[cam.name] ? findStream(cameraMapping[cam.name], streams) : undefined}
-                        check={validation?.cameras?.[cam.name]} />
+                        check={cam.check} />
                     </div>
                   ))}
                   {Object.values(validation?.cameras ?? {}).some((c) => c.status === 'size' || c.status === 'aspect') && (
@@ -1025,7 +1042,7 @@ export default function InferencePage() {
 
       {/* 카메라 프리뷰 */}
       <CameraPreview
-        cameraNames={reqs?.required_cameras.map((c) => c.name) ?? (activeCameras.length > 0 ? activeCameras : Object.keys(cameraMapping))}
+        cameraNames={reqs ? cameraRows.map((c) => c.name) : (activeCameras.length > 0 ? activeCameras : Object.keys(cameraMapping))}
         cameraMapping={cameraMapping}
         streams={streams}
         trainCameras={selectedModelData?.train_cameras?.cameras}

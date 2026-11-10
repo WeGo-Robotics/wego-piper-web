@@ -361,7 +361,7 @@ def _load_policy(name: str, policy_path: str, device_name: str, use_amp: bool) -
         rename_map=rename_map, rtc_capable=rtc_capable,
         stage_names=list(getattr(policy_cfg, "stage_names", []) or []),
         tokenizer=tokenizer, max_token_len=getattr(policy_cfg, 'tokenizer_max_length', 48),
-        action_space=ABSOLUTE, delta_spec={}, target_in=None, delta=None)
+        action_space=ABSOLUTE, delta_spec={}, target_in=None, delta=None, camera_alias={})
 
 
 def _check_slot_markers(spec: dict) -> None:
@@ -475,6 +475,10 @@ def main() -> None:
         _dim = action_dim(_x["path"])
         if _first_dim and _dim and _dim != _first_dim:
             raise SystemExit(f"정책 {_x['name']} 의 액션 길이 {_dim} 가 첫 정책({_first_dim})과 다르다 — 시작하지 않는다")
+        # 이은 카메라가 안 열리면 그 정책으로 바꾸는 순간부터 매 추론이 관측 키 없음으로 죽는다
+        _lost = sorted({m for m in _x["cameras"].values() if m not in cameras_cfg})
+        if _lost:
+            raise SystemExit(f"정책 {_x['name']} 이 잇는 카메라({', '.join(_lost)})가 --cameras 에 없다 — 시작하지 않는다")
 
     # ── 액션 공간 대조 — 어긋나면 시작하지 않는다 (fail-closed) ──
     # 델타 체크포인트를 절대로 돌리면 액션 ≈ 0 → 팔이 영점 자세로 돌진하고, 절대 체크포인트를 델타로
@@ -525,12 +529,14 @@ def main() -> None:
     for _x in _extra_specs:
         _s = _load_policy(_x["name"], _x["path"], args.device, args.use_amp)
         _s.action_space, _s.delta_spec, _s.target_in = _x["action_space"], _x["delta_spec"], _x["target_in"]
+        _s.camera_alias = _x["cameras"]
         _slots[_s.name] = _s
     _switch.attach(list(_slots), _first.name)
     local_path, policy_type = _first.local_path, _first.type
     policy, policy_cfg = _first.policy, _first.cfg
     _rtc_capable = _first.rtc_capable
     preprocessor, postprocessor, _rename_map = _first.preprocessor, _first.postprocessor, _first.rename_map
+    _camera_alias = _first.camera_alias
 
     # config 오버라이드 적용
     # (n_action_steps/use_chunk_size는 policy.config에 적용하지 않음 — actions_per_chunk로 별도 관리)
@@ -633,7 +639,8 @@ def main() -> None:
         _tokenizer = policy.model.vlm_with_expert.processor.tokenizer
 
     if len(_slots) > 1:
-        _run_record.update(policies={n: s.local_path for n, s in _slots.items()}, policy=_first.name)
+        _run_record.update(policies={n: s.local_path for n, s in _slots.items()}, policy=_first.name,
+                           policy_cameras={n: s.camera_alias for n, s in _slots.items() if s.camera_alias})
         logger.info("Policies: %s (active %s)", ", ".join(_slots), _first.name)
     logger.info("Starting inference loop (fps=%d, device=%s, amp=%s)", args.fps, args.device, args.use_amp)
 
@@ -693,6 +700,10 @@ def main() -> None:
                 logger.info("화면 보정 적용 (%s): %s", fresh.summary(), ", ".join(warped))
             else:
                 logger.warning("화면 보정 스트림 %r 을 읽는 정책 카메라가 없다 — 펴지 않는다", fresh.stream)
+
+        # 1c. 같은 카메라를 다른 이름으로 학습한 정책 — 그 이름으로도 단다 (함께 올린 정책만, feature/multi-policy.md §3-2)
+        if _camera_alias:
+            lerobot_obs.update({OBS_IMAGES + c: lerobot_obs[OBS_IMAGES + m] for c, m in _camera_alias.items()})
 
         # 2. rename_map 적용 (side→camera1 등)
         if _rename_map:
@@ -994,6 +1005,7 @@ def main() -> None:
                         _latest_aux = None
                     policy, policy_cfg = _slot.policy, _slot.cfg
                     preprocessor, postprocessor, _rename_map = _slot.preprocessor, _slot.postprocessor, _slot.rename_map
+                    _camera_alias = _slot.camera_alias
                     _rtc_capable, _stage_names = _slot.rtc_capable, _slot.stage_names
                     _target_in, _delta = _slot.target_in, _slot.delta
                     _tokenizer, _max_token_len, _cached_task = _slot.tokenizer, _slot.max_token_len, None
