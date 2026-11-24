@@ -1,6 +1,7 @@
 # PIKA — Sense·Gripper 를 PIPER STUDIO 에 붙인다 (기획)
 
-상태: **☐ 기획 (2026-11-24).** 구현 전.
+상태: **◐ 1단계 — 장비 없이 끝까지 ☑ (2026-11-24).** 웹에서 추가 → 확장 화면에 자세 실시간 → 재시작 뒤 다시 붙기를
+가짜 자세(`ros2 topic pub`)로 확인했다. 남은 것: 실기(Sense·기지국·동글 — 장비 아직 없음), 확장 화면의 캘리브레이션 (§10).
 
 > 요청(2026-11-24): "PIKA 를 PIPER STUDIO 에 적용할 방법 기획. PIKA 는 ROS 도 필요하고 해서
 > 도커로 구성하는 게 좋을 것 같은데. 확장성이나 편리성 고려해서."
@@ -67,15 +68,31 @@ AgileX [pika_ros `ros2` 브랜치](https://github.com/agilexrobotics/pika_ros/tr
   어휘뿐이다: `usb-serial`(188)·`usb-raw`(189)·`hidraw` → `--device-cgroup-rule`. 늘 붙는 것: `ipc: host`,
   `/run/redis` 소켓, `network none`, 데이터 `/srv/piper-data/ext/<name>` → `/data`. `privileged`·`cap_add`·임의
   마운트는 어휘에 없다. 이미지를 고르는 사람이 곧 장치 권한을 주는 사람이라 허용 레지스트리가 1차 관문이다.
-- **카탈로그**: `UNIT_CATALOG` 은 그대로 정적이다. 확장은 `/srv/piper-data/config/extensions.json` 의 동적 항목으로
-  합쳐 보이고(`optional`), unitd 의 허용 목록 = 정적 + 등록된 확장. 테스트가 `deploy/systemd/*.service` 와
-  대조하는 규칙은 정적 쪽에만 걸린다.
-- **업데이트**: 같은 화면에서 새 태그 받기 → 재시작. 활동 중엔 막는다(`require_idle`).
-  **제거**: 유닛 정지·삭제·이미지 삭제. 데이터 볼륨(캘리브레이션·배정)은 묻고 지운다.
-- **확장 화면**: 플러그인 `ui: server` 의 유닉스 소켓 프록시([plugins.md §8](plugins.md))를 그대로 쓴다 —
-  소켓은 `/srv/piper-data/ext/<name>/run/ui.sock`, 경로는 `/ext/<name>/ui`. PIKA 의 배정·캘리브레이션·검수 화면은
-  pika-docker 저장소에 산다. 같은 탭 안에서 열어 heartbeat 를 끊지 않는다. 문장은 다국어 규칙을 따르고 사전은
-  확장이 든다.
+- **허용**: 허용 레지스트리(`ghcr.io/wego-robotics/` + `PIPER_EXT_REGISTRIES`)에서만 받는다. **이 기계에 이미 있는
+  이미지**는 받지 않고 쓴다 — docker 에 손이 닿는 사람이 이미 올린 것이다(개발 빌드 `pika-docker:dev`). 어느 쪽이든
+  라벨 매니페스트가 없으면 거절. 매니페스트 검사: 이름, `contract` 1, 장치 어휘, RPC 허브(핵심 데몬 이름·다른 확장과
+  겹치면 거절), `provides` 모양, `ui` 는 `server` 뿐.
+- **유닛**(`daemons/ext_unit.py` 의 고정 템플릿): **검사한 이미지 ID** 로 돈다 — 태그가 나중에 다른 이미지를 가리켜도
+  검사 안 한 것이 안 돈다. 장치가 있으면 `-v /dev:/dev`(뒤에 꽂힌 장치도 보이게) + 어휘의 `--device-cgroup-rule` 만
+  (열 수 있는 것은 그 major 뿐). hidraw major 는 `/proc/devices` 에서 읽고 unitd 가 뜰 때마다 유닛을 다시 쓴다.
+  `ExecStop` 은 `docker stop` — 이미지가 `STOPSIGNAL SIGINT` 여야 깔끔히 내린다(pika-docker 실측: SIGTERM 은
+  컨테이너 1번이 무시해 10초 뒤 SIGKILL, 자세 세그먼트가 남았다).
+- **등록부**: `UNIT_CATALOG` 은 그대로 정적이다. 확장은 unitd 소유 `~/.config/piper-web/extensions.json` 에 있고
+  (데이터 루트의 `config/` 는 게이트웨이 컨테이너가 root 로 만들어 사용자 unitd 가 못 쓴다 — 실측), 게이트웨이는
+  RPC(`ext_list`)로만 본다. unitd 의 허용 목록 = 정적 + 등록된 확장(`ext-<name>`, 종류 `extension`). 테스트가
+  `deploy/systemd/*.service` 와 대조하는 규칙은 정적 쪽에만 걸린다.
+- **업데이트**: 같은 주소로 다시 추가 — 받기 → 검사 → 새 ID 로 유닛을 다시 쓰고 재시작한다.
+  **제거**: 유닛 정지·삭제, **우리가 받은 이미지만** 삭제(이 기계에서 빌드한 것은 남긴다). 데이터(캘리브레이션·배정)는
+  남긴다 — 다시 추가하면 그대로 쓴다. 지우려면 API `purge=true`(안의 root 파일은 그 이미지로 지운다). 제거는 활동 중에
+  막는다(`require_idle`).
+- **누가**: 플러그인 토큰은 `*` 로도 `/api/system/extensions` 에 못 닿는다(`NEVER_PREFIXES`) — 장치 권한을 주는 일은
+  사람이 한다. 로그인이 꺼져 있으면 막지 않고 서비스 화면이 경고한다(결정 2026-11-24, §12-3).
+- **확장 화면**: 플러그인 `ui: server` 의 유닉스 소켓 프록시([plugins.md §8](plugins.md))를 함수로 나눠 같이 쓴다 —
+  소켓은 `<데이터 루트>/ext/<name>/run/ui.sock`(게이트웨이 컨테이너는 `PIPER_EXT_DIR=/data/ext`), 경로는
+  `/ext/<name>/ui/`(nginx·vite 에 한 줄씩). 확장은 소켓 주인을 데이터 디렉토리 주인(호스트 사용자)으로 넘기고 0660 —
+  소스로 도는 게이트웨이(사용자)도 붙는다. **새 창**으로 연다 — 메인 창이 남아 heartbeat·E-stop 이 산다(플러그인
+  화면과 같다). 문장은 다국어 규칙을 따르고 사전(`i18n/en.json`)은 확장이 든다. 언어는 앱이 저장한 `piper.lang` 을
+  같은 출처에서 읽고, 없으면 원문(한국어) — 앱과 같은 규칙이다.
 - **이 저장소에 PIKA 라는 이름이 남는 자리**: 추천 목록의 이미지 주소 한 줄과 이 문서뿐이다.
 
 ## 3. 컨테이너 안 (요약 — 자세한 것은 pika-docker `docs/design.md`)
@@ -96,7 +113,7 @@ AgileX [pika_ros `ros2` 브랜치](https://github.com/agilexrobotics/pika_ros/tr
 
 | 이름 | 내용 |
 |---|---|
-| `piper.pose.<id>` (shm, 새 레코드 `piper_shm.pose`) | `wall_ns`, 위치 xyz(m), 쿼터니언 xyzw, 벌림(mm), 플래그(`tracking_ok`·`encoder_ok`), 트리거 횟수 `trigger_seq`(두 번 쥐기 — 읽기 사이에 두 번 와도 안 놓친다) |
+| `piper.pose.<id>` (shm, `piper_shm.pose` ☑) | 80바이트 레코드, seqlock 슬롯 4: `wall_ns`(소스가 잰 시각), 위치 xyz(m, float64), 쿼터니언 xyzw, 벌림(mm — 없는 소스는 NaN → `None`), 플래그(`tracking_ok`·`encoder_ok`), 트리거 횟수 `trigger_seq`(두 번 쥐기 — 읽기 사이에 두 번 와도 안 놓친다. 소스가 재시작하면 0 부터 — 줄면 새 기준). 매직 `PIPO`. 세그먼트는 **첫 자세가 올 때** 생기고 소스가 내려가면 지운다 — 있는 것 자체가 "자세가 온다" 는 뜻 |
 | `piper.grip.<id>.{state,action}` (shm, 새 레코드) | 외부 그리퍼: 벌림(mm)·힘·enabled·전압·오류, action 에 데드맨 (§6). 전압이 있어야 화면이 "24V 가 안 들어왔다"(가이드의 첫 번째 문제)를 말한다 |
 | 버스 RPC 허브 (이름은 매니페스트) | 범용: `scan`·`info`·`attach`·`release`·`estop`. 캘리브레이션 같은 고유 기능은 확장 화면이 컨테이너 안에서 직접 한다 |
 | heartbeat | estopd·서비스 화면이 본다 |
@@ -215,7 +232,7 @@ T_목표 = T_팔로워정합 · R · (T_소스정합⁻¹ · T_소스) · R⁻¹
 | 단계 | pika-docker | 이 저장소 | 끝나는 기준 |
 |---|---|---|---|
 | 0 | ☑ 사내 문서 대조(토픽·주기·흔들림·제스처·축·IMU 없음), ☑ PR #18 `one_euro.py` 원본, ☑ 이미지 빌드·장비 없는 기동(2026-11-24, pika-docker `0b7a781`): 런타임 의존 `ldd` 통과·`serial` 은 죽은 의존·`network none` 에서 ROS 2 통신·`/pika_localization_status` 는 locator 가 낸다·두 단계 이미지 1.21GB(받는 양 280MB). 남은 것: 컨테이너 안 hidraw·동글 핫플러그, Sense 둘, `/pika_pose` 기준점(장비), **install.zip 재배포 조건** | — | 이 문서의 "0단계" 가 전부 사실로 바뀐다 |
-| 1 | 이미지·우리 런치·브리지·확장 화면(배정·캘리브레이션·검수) | `piper_shm.pose` + 장치 확장 추가(unitd pull·템플릿·동적 카탈로그·화면 프록시) | 웹에서 추가 → 확장 화면에 Sense 자세가 실시간, 유닛 재시작 뒤 다시 붙는다 |
+| 1 | ☑ 브리지(자세·벌림·추적·두 번 쥐기 → shm, heartbeat·RPC `scan`·`info`·`estop`·`restart`), ☑ 확장 화면(자세·궤적·값·장치·시리얼 배정), ☑ 시리얼은 고를 수 있을 때만(하나뿐·배정) + 꽂으면 다시 뜸. ☐ 캘리브레이션 화면·locator 재기동(장비) | ☑ `piper_shm.pose`, ☑ unitd 확장 추가·갱신·제거(허용 레지스트리·로컬 이미지·라벨 검사·고정 템플릿·이미지 ID), ☑ 게이트웨이 API·`/ext/<name>/ui` 프록시, ☑ 서비스 화면(추가·화면·제거·로그인 꺼짐 경고) | ☑(가짜 자세) 웹 API 로 `pika-docker:dev` 추가 → 화면 프록시로 자세 200Hz, 재시작 1.7초 만에 다시 붙음, 로그 화면에 저널. ☐ 실기 Sense |
 | 2 | `feedback`(진동) | PoseLeader + 텔레옵 패널 | `sim_follower1` → 실팔 순서로 단팔·양팔. 추적을 가리면 팔이 선다 |
 | 3 | — | (텔레옵 녹화는 코드 0줄 예상) | A 로 모은 데이터로 학습·추론 한 바퀴 |
 | 4 | `piper.grip` · 모터 | 외부 그리퍼(robotd)·TCP | 녹화·추론·E-stop 이 Pika 그리퍼를 쥐고 논다 |
@@ -237,4 +254,5 @@ T_목표 = T_팔로워정합 · R · (T_소스정합⁻¹ · T_소스) · R⁻¹
 2. 두 번 쥐기는 하나인데 업스트림은 한 번에 텔레옵 토글과 수집 시작을 **둘 다** 부른다. 제안: 도는 활동이
    정한다 — 텔레옵 중이면 정합, 손 수집 중이면 에피소드 시작/끝. 해제하려고 두 번 쥐는 동안 팔로워 그리퍼도
    두 번 여닫힌다 — 그대로 둘지, 제스처 동안 그리퍼를 잡아 둘지.
-3. 확장 추가를 로그인이 꺼진 상태에서도 허용할지 — 장치 권한을 주는 일이다.
+3. ☑ 확장 추가를 로그인이 꺼진 상태에서도 허용할지 — **허용 + 경고**(2026-11-24). 서비스 화면이 "이 네트워크의 누구나
+   확장을 더할 수 있고 확장은 USB·시리얼 장치 권한을 갖는다" 고 말한다. 플러그인 토큰은 어느 쪽이든 못 한다.

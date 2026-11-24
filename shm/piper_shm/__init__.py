@@ -13,6 +13,7 @@ from piper_shm.arm import (
     StateWriter,
 )
 from piper_shm.frames import Publisher, Subscriber
+from piper_shm.pose import PoseReader, PoseSegmentError, PoseWriter
 from piper_shm.segment import (
     Layout,
     SegmentError,
@@ -40,4 +41,6 @@ __all__ = [
     # 팔 — 카메라와 달리 **양방향**이라 이름이 방향을 말한다
     "StateWriter", "StateReader", "ActionWriter", "ActionReader",
     "ArmSegmentError", "JOINTS",
+    # 6자유도 자세 소스 — 장치 확장이 쓴다 (feature/pika.md §4)
+    "PoseWriter", "PoseReader", "PoseSegmentError",
 ]

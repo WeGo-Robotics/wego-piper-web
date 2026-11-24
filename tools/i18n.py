@@ -58,6 +58,8 @@ PY_SKIP_FILES = {
     "backend/app/services/episode_bundle.py",
     # 웹 채팅의 시스템 프롬프트 — 에이전트가 읽는 글이다 (feature/agent-cli.md §4-6)
     "backend/app/services/agent_chat_prompt.py",
+    # 장치 확장 유닛 파일 템플릿 — 사람이 systemctl --user cat 으로 읽는 주석이다 (feature/pika.md §2)
+    "daemons/ext_unit.py",
 }
 # 로그 줄은 화면에 안 나간다 (프로세스 로그 스트림은 번역하지 않는다)
 LOG_CALLS = {

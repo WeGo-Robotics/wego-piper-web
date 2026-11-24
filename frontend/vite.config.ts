@@ -31,6 +31,11 @@ export default defineConfig({
         target: 'http://localhost:8000',
         ws: true,
       },
+      // 장치 확장 자기 화면 (feature/pika.md §2) — `/ext/<name>/ui/…`, WS 포함
+      '^/ext/[^/]+/ui(/|$)': {
+        target: 'http://localhost:8000',
+        ws: true,
+      },
     },
   },
 })

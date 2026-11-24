@@ -141,7 +141,8 @@ ENV PIPER_VERSION=${PIPER_VERSION}
 # 두 python 진입점 모두 이 venv 를 가리키게 함 (compose 에서 override 가능)
 ENV PIPER_LOCAL_PYTHON=/opt/venv/bin/python \
     PIPER_GRPC_PYTHON=/opt/venv/bin/python \
-    PIPER_PLUGINS_DIR=/data/plugins
+    PIPER_PLUGINS_DIR=/data/plugins \
+    PIPER_EXT_DIR=/data/ext
 
 WORKDIR /app/backend
 EXPOSE 8000

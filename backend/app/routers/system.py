@@ -148,7 +148,16 @@ async def system_log_units():
     손으로 들면 카탈로그에 데몬을 더했을 때 조용히 갈라진다."""
     from piper_bus import contract as C
 
-    return {"units": C.log_unit_options()}
+    out = C.log_unit_options()
+    # 장치 확장은 등록부(unitd)에만 있다 — 계약의 정적 표에 못 넣는다 (feature/pika.md §2)
+    try:
+        if units.unitd_available():
+            got = await asyncio.to_thread(units._bus().rpc_call, C.UNITD, "ext_list", [], 5)
+            out += [{"id": f"ext-{e['name']}", "label": f"ext-{e['name']} — {e['title']}"}
+                    for e in got.get("extensions", [])]
+    except Exception as exc:
+        logger.debug("확장 목록 실패: %s", exc)
+    return {"units": out}
 
 
 @router.get("/logs")

@@ -71,13 +71,27 @@ def _client(sock: Path) -> httpx.AsyncClient:
                              timeout=httpx.Timeout(30.0, read=None))
 
 
+def offline_page(title: str, name: str) -> HTMLResponse:
+    return HTMLResponse(_OFFLINE_HTML.format(title=title, name=name), status_code=503)
+
+
 async def _proxy(request: Request, name: str, sock: Path, rel: str) -> Response:
-    if not sock.exists():
+    def offline() -> Response:
         title = registry.get(name).manifest.title if registry.get(name).manifest else name
-        return HTMLResponse(_OFFLINE_HTML.format(title=title, name=name), status_code=503)
+        return offline_page(title, name)
+
+    return await proxy_http(request, sock, rel, prefix=f"/plugins/{name}/ui",
+                            extra={"x-piper-plugin": name}, offline=offline)
+
+
+async def proxy_http(request: Request, sock: Path, rel: str, *, prefix: str, extra: dict[str, str],
+                     offline) -> Response:
+    """유닉스 소켓의 HTTP 서버로 넘긴다 — 플러그인 `ui: server` 와 장치 확장 화면(/ext/<name>/ui)이 같이 쓴다."""
+    if not sock.exists():
+        return offline()
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP}
-    headers["x-forwarded-prefix"] = f"/plugins/{name}/ui"
-    headers["x-piper-plugin"] = name
+    headers["x-forwarded-prefix"] = prefix
+    headers.update(extra)
     headers["host"] = "plugin"
     url = "/" + rel
     if request.url.query:
@@ -91,8 +105,7 @@ async def _proxy(request: Request, name: str, sock: Path, rel: str) -> Response:
         resp = await client.send(req, stream=True)
     except (httpx.ConnectError, httpx.ConnectTimeout):
         await client.aclose()
-        title = registry.get(name).manifest.title if registry.get(name).manifest else name
-        return HTMLResponse(_OFFLINE_HTML.format(title=title, name=name), status_code=503)
+        return offline()
     out_headers = {k: v for k, v in resp.headers.items() if k.lower() not in _HOP}
 
     async def body():
@@ -130,21 +143,31 @@ async def ui_ws(ws: WebSocket, name: str, rel: str = ""):
     except HTTPException:
         await ws.close(code=1008)
         return
-    if kind != "server" or not Path(target).exists():
-        await ws.close(code=1013)        # try again later — 플러그인이 꺼져 있다
+    if kind != "server":
+        await ws.close(code=1013)
+        return
+    await proxy_ws(ws, Path(target), rel, prefix=f"/plugins/{name}/ui", extra={"x-piper-plugin": name},
+                   label=f"plugin {name}")
+
+
+async def proxy_ws(ws: WebSocket, sock: Path, rel: str, *, prefix: str, extra: dict[str, str], label: str) -> None:
+    """WebSocket 을 유닉스 소켓으로 — `proxy_http` 의 짝."""
+    if not sock.exists():
+        await ws.close(code=1013)        # try again later — 꺼져 있다
         return
     from websockets.asyncio.client import unix_connect
 
+    target = sock
     uri = "ws://plugin/" + rel + (f"?{ws.url.query}" if ws.url.query else "")
-    extra = [(k, v) for k, v in ws.headers.items()
-             if k.lower() not in _HOP and not k.lower().startswith("sec-websocket")]
-    extra += [("x-forwarded-prefix", f"/plugins/{name}/ui"), ("x-piper-plugin", name)]
+    hdrs = [(k, v) for k, v in ws.headers.items()
+            if k.lower() not in _HOP and not k.lower().startswith("sec-websocket")]
+    hdrs += [("x-forwarded-prefix", prefix), *extra.items()]
     subprotocols = [p.strip() for p in ws.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
     try:
-        upstream = await unix_connect(str(target), uri=uri, additional_headers=extra,
+        upstream = await unix_connect(str(target), uri=uri, additional_headers=hdrs,
                                       subprotocols=subprotocols or None, open_timeout=10)
     except Exception as e:
-        logger.warning("플러그인 %s WS 연결 실패: %s", name, e)
+        logger.warning("%s WS 연결 실패: %s", label, e)
         await ws.close(code=1011)
         return
     await ws.accept(subprotocol=upstream.subprotocol)

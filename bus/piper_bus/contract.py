@@ -358,7 +358,7 @@ DAEMON_SOURCES: Final = {
     ESTOPD: ("daemons/estopd.py", "bus"),
     SO101D: ("daemons/so101d.py", "so101", "shm", "bus"),
     SIMD: ("daemons/simd.py", "sim", "robot", "shm", "bus"),
-    UNITD: ("daemons/unitd.py", "bus"),
+    UNITD: ("daemons/unitd.py", "daemons/unitd_ext.py", "daemons/ext_unit.py", "bus"),
 }
 
 # 데몬이 자기 보고에 싣는 **바깥 소프트웨어** (pip 배포명). 컨테이너 게이트웨이는

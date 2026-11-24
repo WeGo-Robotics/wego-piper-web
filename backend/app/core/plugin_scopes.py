@@ -51,7 +51,8 @@ SCOPES: Final[dict[str, tuple[Rule, ...]]] = {
 
 ALL: Final = "*"
 #: `*` 로도 못 가는 곳
-NEVER_PREFIXES: Final = ("/api/auth/",)
+#: 확장 추가는 이미지에 장치 권한(USB·시리얼)을 주는 일이라 사람의 행위다 (feature/pika.md §2)
+NEVER_PREFIXES: Final = ("/api/auth/", "/api/system/extensions")
 
 
 def known(scope: str) -> bool:

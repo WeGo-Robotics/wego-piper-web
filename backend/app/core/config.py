@@ -1,6 +1,7 @@
 from pydantic import Field
 from pydantic_settings import BaseSettings
 import sys
+import os
 from pathlib import Path
 import json
 import logging
@@ -91,6 +92,9 @@ class Settings(BaseSettings):
     # 사용자가 설치한 플러그인 폴더 (feature/plugins.md). 저장소의 번들 예제(`<repo>/plugins/`)는
     # 레지스트리가 함께 읽는다. 실행 중 설정·venv 는 이 아래 `.runtime/<name>/` 에.
     plugins_dir: Path = _BACKEND_DIR / "data" / "plugins"
+    # 장치 확장의 데이터 디렉토리들 — `<여기>/<name>/run/ui.sock` 이 확장 화면 (feature/pika.md §2).
+    # 호스트 unitd 가 `<데이터 루트>/ext/<name>` 에 만든다. 컨테이너는 그 루트를 /data 로 본다(PIPER_EXT_DIR=/data/ext).
+    ext_dir: Path = Path(os.environ.get("PIPER_DATA_ROOT") or "/srv/piper-data") / "ext"
 
     # 사람이 만든 시뮬 장면 (feature/sim-scene-editor.md). config_dir 아래인 이유:
     # 카메라 프로파일·프리셋과 같은 성격(사람이 쓴 작은 JSON)이고, 컨테이너에서 그 경로가

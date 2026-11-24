@@ -118,6 +118,7 @@ C4 3계층 다이어그램: [docs/architecture-c4.drawio](docs/architecture-c4.d
 | `GET /api/datasets/{id}/videos/{cam}/{chunk}/{file}` | chunk mp4 Range 서빙 (뷰어 동영상 모드) |
 | `/api/vision/*` | 검출(detectord 제어·검출·프리뷰·모델 카탈로그) + LLM 판단 테스트 |
 | `/api/detector/*` | 검출 학습 데이터셋 — 캡처·라벨·커스텀 가중치 학습 ([feature/detector-training.md](feature/detector-training.md)) |
+| `/api/system/extensions` · `/ext/<name>/ui/` | 장치 확장 — 웹에서 이미지 추가·갱신·제거(손은 unitd), 확장 화면 프록시 ([feature/pika.md](feature/pika.md) §2). 플러그인 토큰은 못 부른다 |
 | `/api/scenario/*` | 시나리오 설계기 — 템플릿 목록·계획 생성·작업판 PDF ([feature/scenario-designer.md](feature/scenario-designer.md)). 순수 계산, 저장 안 함. 녹화 연결은 `/api/recording/scenario*`, 실패 결정은 `/api/datasets/{id}/scenario*` |
 
 ## 인증

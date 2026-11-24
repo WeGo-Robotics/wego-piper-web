@@ -116,7 +116,8 @@ class AuthGate:
             # `/api/auth/*` 는 열린 접두사지만 **토큰을 든 플러그인에게는 닫혀 있다** —
             # 비밀번호를 바꾸거나 로그인을 끄는 것은 사람의 행위다 (`*` 라도).
             if any(path.startswith(p) for p in plugin_scopes.NEVER_PREFIXES):
-                await _forbid(scope, send, "플러그인은 로그인 설정을 만질 수 없습니다")
+                await _forbid(scope, send, "플러그인은 로그인 설정을 만질 수 없습니다" if path.startswith("/api/auth/")
+                              else "플러그인은 장치 확장을 더하거나 지울 수 없습니다")
                 return
             if _open(scope):
                 await self.app(scope, receive, send)

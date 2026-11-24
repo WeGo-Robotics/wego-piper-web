@@ -14,8 +14,8 @@ RPC 를 보내는 게 지금까지의 전부였는데, 그건 "끄기"가 못 �
 
 ## 무엇을 하는가 — 그리고 안 하는가
 
-- 허용 목록은 `piper_bus.contract.UNIT_CATALOG` 뿐이다. 남의 유닛은 이름을
-  알아도 못 만진다.
+- 허용 목록은 `piper_bus.contract.UNIT_CATALOG` + **등록된 장치 확장**(`unitd_ext`)뿐이다.
+  남의 유닛은 이름을 알아도 못 만진다.
 - **estopd 는 읽기 전용**(`UNIT_READONLY`). 안전장치에 원격 종료 경로를 다는 것은
   별개의 결정이다.
 - **자기 자신은 끄지 않는다**(`UNIT_SELF`) — 끄면 이 화면의 켜기/끄기가 같이 죽는다.
@@ -39,6 +39,10 @@ from pathlib import Path
 from piper_bus import contract as C
 from piper_bus.client import Bus, self_report
 
+# 장치 확장(feature/pika.md §2)은 옆 파일 — 이 데몬은 스크립트로 돌아 daemons/ 가 패키지가 아니다
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import unitd_ext as X  # noqa: E402
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] unitd: %(message)s",
@@ -53,11 +57,16 @@ _running = True
 ACTIONS = ("start", "stop", "restart", "enable", "disable")
 
 
+def catalog() -> dict[str, tuple[str, str]]:
+    """정적 카탈로그 + 등록된 장치 확장(`ext-<name>`, 종류 `extension`)."""
+    return {**C.UNIT_CATALOG, **{short: (title, "extension") for short, title in X.units().items()}}
+
+
 def unit_name(name: str) -> str:
     """`simd` / `piper-simd` / `piper-simd.service` → `piper-simd.service`. 카탈로그에
     없으면 ValueError — 남의 유닛은 이름을 알아도 못 만진다."""
     short = name.removesuffix(".service").removeprefix("piper-")
-    if short not in C.UNIT_CATALOG or "/" in short or ".." in short:
+    if short not in catalog() or "/" in short or ".." in short:
         raise ValueError(f"우리 유닛이 아닙니다: {name}")
     return f"piper-{short}.service"
 
@@ -97,7 +106,7 @@ class UnitHub:
         """카탈로그의 유닛 전부 — **설치 안 된 것도** 낸다(`installed: False`).
         화면이 "왜 simd 가 없지"를 보게 하려면 없는 것도 줄로 보여야 한다."""
         out: list[dict] = []
-        for short, (desc, kind) in C.UNIT_CATALOG.items():
+        for short, (desc, kind) in catalog().items():
             unit = f"piper-{short}.service"
             r = _systemctl("show", unit, "--property=ActiveState",
                            "--property=UnitFileState", "--property=ActiveEnterTimestamp",
@@ -370,6 +379,25 @@ class UnitHub:
     def logs(self, unit: str = "all", lines: int = 300, level: str = "info", since: str | None = None) -> dict:
         return fetch_logs(unit, lines, level, since)
 
+    # ── 장치 확장 (feature/pika.md §2) — 활동 판단은 게이트웨이가 하고 온다 ──
+
+    _installer = X.Installer()
+
+    def ext_list(self) -> dict:
+        return {"extensions": X.listing(), "registries": list(X.allowed_registries()),
+                "data_root": str(X.data_root())}
+
+    def ext_add(self, image: str) -> dict:
+        return self._installer.add(image)
+
+    def ext_status(self) -> dict:
+        return self._installer.status()
+
+    def ext_remove(self, name: str, purge: bool = False) -> dict:
+        if self._installer.status().get("state") == "running":
+            raise RuntimeError("확장 추가가 돌고 있습니다 — 끝난 뒤에 지우세요")
+        return X.remove(name, purge=bool(purge))
+
     def notes(self, version: str) -> str:
         """받아 둔 번들의 CHANGELOG 에서 그 버전의 절만. 없으면 빈 문자열."""
         if not is_version(version):
@@ -519,9 +547,9 @@ def log_units(name: str) -> list[str]:
     if name == "all":
         # glob(`piper-*`)보다 명시 목록이 빠르다 — journald 가 유닛 색인으로 바로 간다(실측 1초 차)
         return [f"piper-{s}.service"
-                for s in (*C.UNIT_CATALOG, *C.LOG_EXTRA_UNITS)]
+                for s in (*catalog(), *C.LOG_EXTRA_UNITS)]
     short = name.removeprefix("piper-").removesuffix(".service")
-    if short in C.UNIT_CATALOG or short in C.LOG_EXTRA_UNITS:
+    if short in catalog() or short in C.LOG_EXTRA_UNITS:
         return [f"piper-{short}.service"]
     raise ValueError(f"모르는 유닛입니다: {name}")
 
@@ -628,7 +656,8 @@ def collapse_repeats(rows: list[dict]) -> list[dict]:
     return out
 
 
-_METHODS = {"list", "control", "host_info", "update", "update_status", "notes", "logs"}
+_METHODS = {"list", "control", "host_info", "update", "update_status", "notes", "logs",
+            "ext_list", "ext_add", "ext_status", "ext_remove"}
 
 
 def serve(bus: Bus, hub: UnitHub) -> None:
@@ -682,6 +711,12 @@ def main() -> int:
     if _systemctl("--version").returncode != 0:
         logger.error("사용자 systemd 에 접속할 수 없습니다 — 이 데몬은 호스트에서만 뜻이 있다")
         return 1
+    try:
+        n = X.refresh_units()
+        if n:
+            logger.info("장치 확장 유닛 %d개를 다시 썼다", n)
+    except Exception as exc:
+        logger.warning("장치 확장 유닛을 다시 쓰지 못했다: %s", exc)
     serve(bus, UnitHub())
     logger.info("종료")
     return 0
