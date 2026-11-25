@@ -207,10 +207,12 @@ async def _stop_teleop() -> None:
     `teleop_session` 만 닫으면 그것들이 남는다.
     """
     from app.services.jog import jog_session
+    from app.services.pose_leader import pose_leaders
     from app.services.relay import relays
 
-    # 릴레이는 팔로워마다 하나다(양팔이면 둘) — `relays.stop()` 은 인자 없이 전부 닫는다
-    for session in (jog_session, relays):
+    # 릴레이는 팔로워마다 하나다(양팔이면 둘) — `relays.stop()` 은 인자 없이 전부 닫는다.
+    # 자세 리더는 릴레이 위에 선다 — 릴레이만 닫으면 아무도 안 읽는 가상 리더가 남아 화면이 "조종 중" 이라 한다
+    for session in (jog_session, pose_leaders, relays):
         try:
             session.stop()
         except Exception as exc:

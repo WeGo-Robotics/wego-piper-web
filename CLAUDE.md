@@ -97,6 +97,7 @@ C4 3계층 다이어그램: [docs/architecture-c4.drawio](docs/architecture-c4.d
 | `POST /api/estop/trigger` | 긴급 정지 |
 | `POST /api/estop/heartbeat` | heartbeat |
 | `POST /api/params` | 실시간 파라미터 변경 (버스) |
+| `/api/leader/pose/*` | 자세 조종 — 손에 든 자세 소스(`piper.pose.*`, PIKA Sense 등)로 팔로워를 끈다: 소스·시작·정합/해제·필터 ([feature/pika.md](feature/pika.md) §5). 가상 리더 `pose_<팔로워>` + 릴레이 |
 | `POST /api/params/policy` · `/hold` | 한 추론에 올려 둔 정책 중 하나로 바꾸기(파킹 없음) · 마지막 액션 유지 ([feature/multi-policy.md](feature/multi-policy.md)). 올리는 것은 `/inference/start` 의 `extra_policies` |
 | `GET /api/models` | 로컬 모델 목록 |
 | `POST /api/models/inference/start` | 추론 시작 |

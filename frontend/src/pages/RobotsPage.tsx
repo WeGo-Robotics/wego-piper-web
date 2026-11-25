@@ -3,6 +3,7 @@ import { useSystemMessage } from '../components/SystemMessages'
 import { api } from '../services/api'
 import AlignmentPanel from '../components/AlignmentPanel'
 import BimanualRelayPanel from '../components/BimanualRelayPanel'
+import PoseTeleopPanel from '../components/PoseTeleopPanel'
 import BusStatusPanel from '../components/BusStatusPanel'
 import DiagnosticsPanel from '../components/DiagnosticsPanel'
 import VersionPanel from '../components/VersionPanel'
@@ -533,6 +534,9 @@ export default function RobotsPage() {
   const [teleopArm, setTeleopArm] = useState<{ arm: string; side?: string } | null>(null)
   // 양팔 리더 조종 패널 (feature/bimanual.md §8) — 팔 한 대의 상세 창이 아니라 로봇 카드에 둔다
   const [bimanualOpen, setBimanualOpen] = useState(false)
+  // 자세 조종 패널 (feature/pika.md §5) — 자세 소스(장치 확장)가 있을 때만 버튼이 뜬다
+  const [poseOpen, setPoseOpen] = useState(false)
+  const [poseSources, setPoseSources] = useState(0)
   // 상세 창 (파킹/영점/조작 탭). 팔 하나에 고정된 모달 — 행 펼침은 긴 목록에서
   // 다른 행을 밀어낸다는 판단을 그대로 잇는다.
   const [detailIface, setDetailIface] = useState<string | null>(null)
@@ -595,7 +599,11 @@ export default function RobotsPage() {
     loadPorts()
     const iv1 = setInterval(loadPorts, 3000)
     const iv2 = setInterval(() => { refreshArms().catch(() => {}) }, 2000)
-    return () => { clearInterval(iv1); clearInterval(iv2) }
+    const poseSrc = () => api.get<{ sources: unknown[] }>('/leader/pose/sources')
+      .then((r) => setPoseSources(r.sources.length)).catch(() => {})
+    poseSrc()
+    const iv3 = setInterval(poseSrc, 3000)
+    return () => { clearInterval(iv1); clearInterval(iv2); clearInterval(iv3) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, loadPorts])
 
@@ -1113,8 +1121,21 @@ export default function RobotsPage() {
               {t('양팔 조종')}
             </button>
           )}
+          {(poseSources > 0 || poseOpen) && robotArms.some((a) => a.connected && a.role !== 'leader') && (
+            <button onClick={() => setPoseOpen((v) => !v)}
+              title={t('손에 든 자세 소스(PIKA Sense 등)로 팔로워를 조종 — 녹화 없이')}
+              className={`px-2.5 py-1 text-xs rounded text-white ${
+                poseOpen ? 'bg-teal-600' : 'bg-teal-800 hover:bg-teal-700'}`}>
+              {t('자세 조종')}
+            </button>
+          )}
         </div>
         {bimanualOpen && <BimanualRelayPanel onClose={() => setBimanualOpen(false)} />}
+        {poseOpen && (
+          <PoseTeleopPanel onClose={() => setPoseOpen(false)}
+            followers={robotArms.filter((a) => a.connected && a.role !== 'leader')
+              .map((a) => ({ iface: a.iface, label: a.iface, side: a.side }))} />
+        )}
         {robotArms.length + so101Arms.length === 0 ? (
           <p className="text-xs text-neutral-400">{t('등록된 로봇이 없습니다 — 포트에서 [연결]을 누르세요.')}</p>
         ) : (
